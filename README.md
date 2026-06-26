@@ -41,6 +41,7 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 | { type: "delivered" | "read"; transportMessageId; at }
 | { type: "failed"; transportMessageId; at; errorCode?; errorMessage? }
 | { type: "reply"; from; messageId; text; at }
+| { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 ```
 
 ## Deployment targets
