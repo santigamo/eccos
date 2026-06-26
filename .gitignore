@@ -1,0 +1,15 @@
+node_modules/
+data/
+*.db
+*.db-shm
+*.db-wal
+.env*
+!.env.example
+*.local.md
+dist/
+.wrangler/
+
+# Beads / Dolt files (local issue tracker, not published)
+.dolt/
+.beads-credential-key
+.beads/

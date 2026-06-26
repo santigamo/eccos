@@ -1,0 +1,51 @@
+{
+  "name": "eccos",
+  "version": "0.1.0",
+  "description": "Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API. A Kapso alternative you can run yourself.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Santiago García Monsalve",
+  "homepage": "https://github.com/santigamo/eccos#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/santigamo/eccos.git"
+  },
+  "bugs": {
+    "url": "https://github.com/santigamo/eccos/issues"
+  },
+  "keywords": [
+    "whatsapp",
+    "whatsapp-cloud-api",
+    "meta",
+    "gateway",
+    "webhook",
+    "hono",
+    "bun",
+    "cloudflare-workers",
+    "self-hosted",
+    "messaging"
+  ],
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/parser.test.ts tests/signature.test.ts tests/connect-api.test.ts tests/worker-config.test.ts",
+    "test:workers": "vitest run",
+    "test:all": "bun test && vitest run",
+    "deploy": "wrangler deploy",
+    "cf-types": "wrangler types",
+    "dev:worker": "wrangler dev"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.9",
+    "@cloudflare/workers-types": "^4.20250612.0",
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.20.0"
+  }
+}

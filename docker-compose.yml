@@ -1,0 +1,12 @@
+services:
+  eccos:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - eccos-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  eccos-data:

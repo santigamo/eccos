@@ -1,0 +1,36 @@
+# Git / VCS
+.git
+.gitignore
+.gitattributes
+
+# Dependencies (reinstalled inside the image)
+node_modules
+
+# Secrets & local data — never bake these into the image
+.env
+.env.*
+data/
+.wrangler/
+
+# Issue tracker & agent tooling
+.beads/
+.agents/
+.codex/
+.cursor/
+.claude/
+
+# Cloudflare Workers target (the Docker image runs the Bun target in src/)
+worker/
+worker-configuration.d.ts
+wrangler.jsonc
+wrangler.vitest.jsonc
+vitest.config.ts
+
+# Tests, docs, CI
+tests/
+docs/
+.github/
+*.md
+
+# Build output
+dist/

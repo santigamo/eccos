@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "eccos",
+  "main": "worker/worker.ts",
+  "compatibility_date": "2026-06-12",
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  "workers_dev": true,
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "ECCOS", "class_name": "EccosGateway" }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["EccosGateway"]
+    }
+  ],
+
+  "vars": {
+    "META_GRAPH_VERSION": "v24.0",
+    "FORWARD_MAX_ATTEMPTS": "6"
+  }
+}
