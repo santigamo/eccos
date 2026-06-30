@@ -1,27 +1,57 @@
-# Eccos
+<div align="center">
+
+![Eccos — self-hostable WhatsApp gateway on the official Meta Cloud API](docs/assets/banner.png)
+
+<h3>Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API</h3>
+
+<p>A <a href="https://kapso.ai">Kapso</a> alternative you run yourself — your app, your token, no message quota.</p>
 
 [![CI](https://github.com/santigamo/eccos/actions/workflows/ci.yml/badge.svg)](https://github.com/santigamo/eccos/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-25D366.svg)](./LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-000?logo=bun&logoColor=white)](https://bun.sh)
+[![Edge: Cloudflare Workers](https://img.shields.io/badge/edge-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-25D366.svg)](./CONTRIBUTING.md)
 
-**Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API.**
-A [Kapso](https://kapso.ai) alternative you can run yourself — no unofficial WhatsApp Web
-automation, no platform message quota. You bring your own Meta app + WhatsApp Business
-Account; Eccos holds the credentials and gives your apps a small, stable HTTP surface.
+</div>
 
-> Status: **v0 / thin wrapper.** Single tenant (one WABA / one phone number). Sends
-> messages, receives inbound + delivery statuses, and forwards normalized events to your
-> app. A Cloudflare Workers target adds an Embedded-Signup `/connect` flow and a read-only
-> dashboard. Multi-tenant onboarding is on the roadmap.
+---
 
-## Why
+Bring your own Meta app + WhatsApp Business Account. Eccos holds the credentials and gives your
+apps a small, stable HTTP surface: **send messages**, **receive inbound + delivery statuses**,
+and get **normalized events** forwarded to your backend.
 
-- Most OSS WhatsApp tools (Evolution API, WAHA, wuzapi, …) drive **unofficial WhatsApp
-  Web** → fragile and ban-prone. Official Cloud API options (Kapso, 360dialog, …) are
-  paid/closed and meter your messages.
-- Eccos is **OSS + official Cloud API + self-host**: run it on your own box, pay Meta
-  directly (service/inbound and in-window utility messages are free), keep full control.
+> **Status: v0 / thin wrapper.** Single tenant (one WABA / one phone number). The Cloudflare
+> Workers target adds an Embedded-Signup `/connect` flow and a read-only dashboard. Multi-tenant
+> onboarding is on the [roadmap](#-roadmap).
 
-## Architecture
+## ✨ Why Eccos
+
+- 🟢 **Official Cloud API** — built on Meta's WhatsApp Cloud API. No unofficial WhatsApp Web
+  automation, so no fragile sessions and no ban risk.
+- 🔓 **Self-host & own your token** — MIT-licensed, runs on your box. Eccos keeps your Meta
+  credentials; your apps just talk to a small HTTP surface.
+- 💸 **No message quota** — pay Meta directly. Service/inbound and in-window utility messages are
+  free, and nobody meters or marks up your traffic.
+- ⚡ **Two runtimes, one core** — run the **Bun** binary anywhere, or deploy to **Cloudflare
+  Workers** for zero-ops and a permanent HTTPS webhook URL (no tunnel needed).
+- 🔁 **Reliable forwarding** — inbound messages and statuses are normalized and forwarded to your
+  app, HMAC-signed and retried with exponential backoff.
+- 🪪 **Onboarding + dashboard** — the Workers target ships an Embedded Signup `/connect` flow and
+  a read-only ops `/dashboard`.
+
+## 🆚 How it compares
+
+| | **Eccos** | Cloud-API SaaS<br>(Kapso, 360dialog) | Unofficial<br>(Evolution API, WAHA, wuzapi) |
+|---|:---:|:---:|:---:|
+| WhatsApp API | ✅ Official Cloud API | ✅ Official Cloud API | ⚠️ Unofficial Web |
+| Ban risk | ✅ None | ✅ None | ❌ High |
+| Self-hosted | ✅ Yes | ❌ SaaS only | ✅ Yes |
+| Open source | ✅ MIT | ❌ Closed | ✅ Varies |
+| Message metering | ✅ Pay Meta direct | ❌ Metered / markup | — |
+| Cost | ✅ Free | 💰 Paid | ✅ Free |
+
+## 🧩 How it works
 
 ```
 your app  ──POST /v1/messages──▶  Eccos  ──▶  Meta Cloud API  ──▶  WhatsApp
@@ -44,10 +74,10 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 | { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 ```
 
-### How it runs on Cloudflare
+### On Cloudflare
 
-On Cloudflare, Eccos is just two pieces inside one box: a **Worker** at the edge that speaks
-HTTP and talks to Meta, and a single **Durable Object** that remembers everything and does the
+The Workers target is just two pieces inside one box: a **Worker** at the edge that speaks HTTP
+and talks to Meta, and a single **Durable Object** that remembers everything and does the
 retrying. The Worker keeps no state — it hands every message and event to the Durable Object,
 which stores them in its built-in **SQLite** and uses an **Alarm** to forward them to your app
 (retrying on failure).
@@ -89,10 +119,7 @@ _Orange = the stateful Durable Object primitives (SQLite + Alarm); peach = the s
 | **SQLite storage** _(inside the DO)_ | The database embedded in the Durable Object: inbound events, outbound log, the delivery queue, and onboarding config. |
 | **Alarms** _(inside the DO)_ | A timer that wakes the Durable Object to forward events to your app and retry with exponential backoff. |
 
-_The Bun self-host target does the same job with `bun:sqlite` and an in-process loop instead of a
-Durable Object — see the comparison below._
-
-## Deployment targets
+## 🎯 Deployment targets
 
 Eccos ships **two targets that share one pure core** (`src/core/`: parser, signature, send,
 templates). Pick whichever fits how you want to run it:
@@ -111,7 +138,7 @@ The Bun target is the auditable, run-it-anywhere binary. The Workers target trad
 "your box" for zero-ops and a permanent HTTPS URL (no tunnel needed for Meta webhooks), and
 is where the newer v1 features (connect, dashboard) live first.
 
-## Quickstart (local, Bun)
+## 🚀 Quickstart — local (Bun)
 
 ```bash
 bun install
@@ -124,7 +151,7 @@ To receive webhooks during development, expose the port (e.g. `ngrok http 3000` 
 `https://<public-host>/webhooks/meta` with your `META_WEBHOOK_VERIFY_TOKEN`. Subscribe the
 **`messages`** field.
 
-## Quickstart (self-host, Docker)
+## 🐳 Quickstart — self-host (Docker)
 
 ```bash
 cp .env.example .env   # fill in values
@@ -134,7 +161,7 @@ docker compose up -d
 SQLite data is persisted in the `eccos-data` volume. The bundled `.dockerignore` keeps your
 `.env` and local data out of the image.
 
-## Quickstart (Cloudflare Workers)
+## ☁️ Quickstart — Cloudflare Workers
 
 ```bash
 bun install
@@ -162,7 +189,7 @@ secrets must be set for the Worker to boot; the `/connect` (Embedded Signup) flo
 updates the effective `META_WABA_ID` / `META_PHONE_NUMBER_ID` at runtime in the Durable
 Object.
 
-## HTTP API
+## 📡 HTTP API
 
 | Method | Path              | Auth                   | Target | Purpose                              |
 |--------|-------------------|------------------------|--------|--------------------------------------|
@@ -199,7 +226,7 @@ curl -X POST http://localhost:3000/v1/messages \
 The body is a Meta message object minus `messaging_product` (Eccos injects it). Returns
 `{ "ok": true, "messages": [{ "id": "wamid..." }] }`.
 
-## Configuration
+## ⚙️ Configuration
 
 See [`.env.example`](./.env.example). Required: `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID`,
 `META_WABA_ID`, `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`, `ECCOS_API_KEY`. Forwarding
@@ -208,7 +235,7 @@ still stored, just not pushed. On the Workers target the same names are set with
 `wrangler secret`; the Embedded Signup flow additionally uses `META_APP_ID` and
 `META_ES_CONFIG_ID`.
 
-## Development
+## 🛠️ Development
 
 ```bash
 bun run typecheck      # tsc --noEmit
@@ -216,9 +243,10 @@ bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers integration tests for the Workers target
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventions.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventions, and
+[docs/BRAND.md](./docs/BRAND.md) for the visual identity if you're making assets.
 
-## Roadmap
+## 🗺️ Roadmap
 
 - [x] Embedded Signup `/connect` (single-tenant coexistence) — Workers target
 - [x] Read-only admin dashboard — Workers target
@@ -228,11 +256,11 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventio
 - [ ] Postgres storage option (Drizzle)
 - [ ] Outbound media + interactive message helpers
 
-## Contributing
+## 🤝 Contributing
 
 Issues and PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). For security reports, see
-[SECURITY.md](./SECURITY.md).
+[SECURITY.md](./SECURITY.md). Brand and asset guidelines live in [docs/BRAND.md](./docs/BRAND.md).
 
-## License
+## 📄 License
 
 MIT © Santiago García Monsalve
