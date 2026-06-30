@@ -5,6 +5,7 @@ data/
 *.db-wal
 .env*
 !.env.example
+.dev.vars
 *.local.md
 dist/
 .wrangler/

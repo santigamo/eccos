@@ -37,8 +37,8 @@ and get **normalized events** forwarded to your backend.
   on **Cloudflare Workers**.
 - ☁️ **All-in on Cloudflare** — the Workers target runs the entire gateway on Cloudflare
   primitives: a **Worker** + one **Durable Object** (SQLite storage + Alarms for retries). No
-  external database, queue or cron, and a permanent HTTPS webhook URL out of the box; native
-  Cloudflare Rate Limiting can be added to the send API as a roadmap item without external infra.
+  external database, queue or cron, and a permanent HTTPS webhook URL out of the box. Native
+  Cloudflare Rate Limiting throttles the send API (`POST /v1/messages`) — no external infra.
 - 🔁 **Reliable forwarding** — inbound messages and statuses are normalized and forwarded to your
   app, HMAC-signed and retried with exponential backoff.
 - 🪪 **Onboarding + dashboard** — the Workers target ships an Embedded Signup `/connect` flow and
@@ -126,7 +126,7 @@ _Orange = the stateful Durable Object primitives (SQLite + Alarm); peach = the s
 | **Durable Object** — `EccosGateway` (`worker/gateway.ts`) | One global, single-writer instance that owns all state and coordination | a stateful service + locking |
 | **DO SQLite storage** | Inbound events, outbound log, the delivery queue, onboarding config | a database |
 | **DO Alarms** | Wakes the DO to forward events and retry with exponential backoff | a job queue + cron |
-| **Rate Limiting binding** *(roadmap)* | Native Worker-side throttling for the send API | an external rate limiter |
+| **Rate Limiting binding** | Native throttling on `POST /v1/messages` (defensive; no-op if unbound) | an external rate limiter |
 | **`workers.dev` + TLS** | A permanent HTTPS URL for Meta's webhook — no tunnel, no domain setup | a domain, TLS & reverse proxy |
 | **Workers Observability** | Request logs at 100 % head-sampling | a logging/metrics stack |
 
@@ -266,7 +266,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventio
 - [ ] Shard Workers state: one Durable Object per WABA/phone
 - [ ] Self-serve onboarding for Tech Providers (connect *clients'* numbers)
 - [ ] Serverless storage path: per-tenant DO SQLite → D1 for cross-tenant SQL (10 GB cap) → Hyperdrive to external Postgres/MySQL only if required
-- [ ] Cloudflare Rate Limiting binding on the send API
+- [x] Cloudflare Rate Limiting on the send API (`POST /v1/messages`)
 - [ ] Cloudflare Queues + dead-letter queue for outbound forwarding
 - [ ] R2 for outbound media
 - [ ] Outbound media + interactive message helpers
