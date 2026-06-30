@@ -18,6 +18,43 @@ interface DeliveryRow {
 const FORWARD_FETCH_TIMEOUT_MS = 15_000;
 const ALARM_BATCH = 40;
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const OPERATOR_MAX_PAGE = 200;
+
+/** Operator-API row shapes (full columns), consumed via GatewayRPC. */
+export interface InboundRow {
+  id: number;
+  type: string;
+  transport_message_id: string | null;
+  message_id: string | null;
+  payload: string;
+  received_at: number;
+}
+
+export interface OutboundRow {
+  id: number;
+  transport_message_id: string | null;
+  recipient: string;
+  request: string;
+  status: string;
+  error: string | null;
+  created_at: number;
+}
+
+export interface DeliveryRecord {
+  id: number;
+  status: string;
+  attempts: number;
+  last_error: string | null;
+  next_attempt_at: number;
+  created_at: number;
+  payload: string;
+}
+
+export interface OperatorCounts {
+  inbound: number;
+  outbound: Record<string, number>;
+  deliveries: Record<string, number>;
+}
 
 export class EccosGateway extends DurableObject<Env> {
   sql: SqlStorage;
@@ -166,6 +203,98 @@ export class EccosGateway extends DurableObject<Env> {
     };
   }
 
+  // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---
+
+  listInbound(opts: { limit?: number; before?: number } = {}): InboundRow[] {
+    return this.sql
+      .exec(
+        `SELECT id, type, transport_message_id, message_id, payload, received_at
+         FROM inbound_events WHERE id < ? ORDER BY id DESC LIMIT ?`,
+        opts.before ?? Number.MAX_SAFE_INTEGER,
+        clampPage(opts.limit),
+      )
+      .toArray() as unknown as InboundRow[];
+  }
+
+  listOutbound(opts: { limit?: number; before?: number } = {}): OutboundRow[] {
+    return this.sql
+      .exec(
+        `SELECT id, transport_message_id, recipient, request, status, error, created_at
+         FROM outbound_messages WHERE id < ? ORDER BY id DESC LIMIT ?`,
+        opts.before ?? Number.MAX_SAFE_INTEGER,
+        clampPage(opts.limit),
+      )
+      .toArray() as unknown as OutboundRow[];
+  }
+
+  listDeliveries(opts: { status?: string; limit?: number; before?: number } = {}): DeliveryRecord[] {
+    const before = opts.before ?? Number.MAX_SAFE_INTEGER;
+    const limit = clampPage(opts.limit);
+    const cols = "id, status, attempts, last_error, next_attempt_at, created_at, payload";
+    if (opts.status) {
+      return this.sql
+        .exec(
+          `SELECT ${cols} FROM deliveries WHERE status = ? AND id < ? ORDER BY id DESC LIMIT ?`,
+          opts.status,
+          before,
+          limit,
+        )
+        .toArray() as unknown as DeliveryRecord[];
+    }
+    return this.sql
+      .exec(`SELECT ${cols} FROM deliveries WHERE id < ? ORDER BY id DESC LIMIT ?`, before, limit)
+      .toArray() as unknown as DeliveryRecord[];
+  }
+
+  getDelivery(id: number): DeliveryRecord | null {
+    const rows = this.sql
+      .exec(
+        `SELECT id, status, attempts, last_error, next_attempt_at, created_at, payload
+         FROM deliveries WHERE id = ?`,
+        id,
+      )
+      .toArray() as unknown as DeliveryRecord[];
+    return rows[0] ?? null;
+  }
+
+  getAllConfig(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const row of this.sql.exec("SELECT key, value FROM config").toArray()) {
+      out[row.key as string] = row.value as string;
+    }
+    return out;
+  }
+
+  getCounts(): OperatorCounts {
+    const inboundRow = this.sql.exec("SELECT COUNT(*) AS c FROM inbound_events").toArray()[0];
+    const byStatus = (table: "outbound_messages" | "deliveries"): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (const row of this.sql.exec(`SELECT status, COUNT(*) AS c FROM ${table} GROUP BY status`).toArray()) {
+        out[row.status as string] = Number(row.c);
+      }
+      return out;
+    };
+    return {
+      inbound: Number(inboundRow?.c ?? 0),
+      outbound: byStatus("outbound_messages"),
+      deliveries: byStatus("deliveries"),
+    };
+  }
+
+  /** Re-enqueue a delivery — retry a failed one or replay a delivered one. */
+  retryDelivery(id: number): { ok: boolean; previousStatus: string | null } {
+    const row = this.sql.exec("SELECT status FROM deliveries WHERE id = ?", id).toArray()[0];
+    if (!row) return { ok: false, previousStatus: null };
+    const now = Date.now();
+    this.sql.exec(
+      "UPDATE deliveries SET status='pending', attempts=0, last_error=NULL, next_attempt_at=? WHERE id=?",
+      now,
+      id,
+    );
+    this.ctx.storage.setAlarm(now);
+    return { ok: true, previousStatus: row.status as string };
+  }
+
   async alarm(): Promise<void> {
     const now = Date.now();
     const maxAttempts = Number(this.env.FORWARD_MAX_ATTEMPTS) || 6;
@@ -245,6 +374,12 @@ export class EccosGateway extends DurableObject<Env> {
 
 export function backoffMs(attempts: number): number {
   return Math.min(5_000 * 5 ** (attempts - 1), 3_600_000);
+}
+
+function clampPage(limit?: number): number {
+  const v = Math.floor(Number(limit));
+  if (!Number.isFinite(v) || v <= 0) return 50;
+  return Math.min(v, OPERATOR_MAX_PAGE);
 }
 
 async function sha256Hex(s: string): Promise<string> {

@@ -9,6 +9,7 @@ import { listTemplates } from "@eccos/core/templates";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 
 export { EccosGateway } from "./gateway";
+export { GatewayRPC } from "./rpc";
 
 type Bindings = Env;
 
