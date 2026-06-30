@@ -1,7 +1,7 @@
 {
   "name": "eccos",
   "version": "0.1.0",
-  "description": "Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API. A Kapso alternative you can run yourself.",
+  "description": "Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API. Runs as a Bun binary or entirely on Cloudflare Workers.",
   "type": "module",
   "license": "MIT",
   "author": "Santiago García Monsalve",
@@ -28,7 +28,7 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "wrangler types && tsc --noEmit",
     "test": "bun test tests/parser.test.ts tests/signature.test.ts tests/connect-api.test.ts tests/worker-config.test.ts",
     "test:workers": "vitest run",
     "test:all": "bun test && vitest run",
