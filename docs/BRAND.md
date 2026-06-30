@@ -17,8 +17,9 @@ a single WhatsApp-green glow.
 - Wordmark is the word **ECCOS**, set in a bold geometric sans-serif (see Typography).
 - **In imagery**: uppercase `ECCOS`. **In prose**: title-case `Eccos`.
 - Give the wordmark generous clear space (≥ the cap-height on every side). Never crowd it.
-- Pair it with the **echo-ripple mark** (concentric green ring arcs) for favicons/avatars where
-  the full wordmark is too small to read.
+- The standalone symbol is the **echo-ripple mark** — a source dot with concentric arcs
+  radiating outward (`assets/logo.svg`). Use it for favicons/avatars and anywhere the full
+  wordmark is too small to read.
 - Don't: stretch, rotate, add drop shadows/outlines/gradients to the letters, or recolor the
   wordmark to anything outside Ink / White / Eccos Green.
 
@@ -119,8 +120,19 @@ sips -Z 1440 source.png --out docs/assets/banner.png
 
 ## Asset inventory
 
-| Asset | Path | Notes |
+| Asset | Path | Use |
 |---|---|---|
-| README hero banner | `docs/assets/banner.png` | Light / gateway motif, 1440×621 |
+| **Logomark** (symbol) | `assets/logo.svg` | The echo-ripple mark, green on transparent — README/docs, light or dark |
+| **App icon** | `assets/icon.svg` | Green squircle + white mark; source for avatar & favicon |
+| **Favicon** | `assets/favicon.svg` · `assets/favicon-32.png` · `assets/favicon-16.png` | Browser tab / site icon (SVG + PNG fallbacks) |
+| **Avatar** | `assets/avatar.png` | 512×512 — GitHub / social profile image |
+| **Hero banner** | `assets/banner.png` | README header, 1440×621 |
 
-_Full-resolution sources are kept outside the repo; regenerate from the recipe above when needed._
+The icon set is hand-authored **SVG** (exact brand hex, infinitely scalable). PNGs are rasterized
+from the SVGs — regenerate with:
+
+```bash
+qlmanage -t -s 512 -o . icon.svg && sips -Z 512 icon.svg.png --out avatar.png   # macOS
+```
+
+_Full-resolution banner sources are kept outside the repo; regenerate from the recipe above._

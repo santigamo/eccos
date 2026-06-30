@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Eccos">
+  <g fill="none" stroke="#25D366" stroke-width="30" stroke-linecap="round">
+    <path d="M178 278 A58 58 0 0 1 236 336"/>
+    <path d="M178 218 A118 118 0 0 1 296 336"/>
+    <path d="M178 158 A178 178 0 0 1 356 336"/>
+  </g>
+  <circle cx="178" cy="336" r="30" fill="#25D366"/>
+</svg>
