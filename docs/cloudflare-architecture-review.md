@@ -42,7 +42,7 @@ Citations:
 
 ## Gaps
 
-- Rate limiting: `POST /v1/messages` is currently protected by static `ECCOS_API_KEY` bearer auth, but there is no native abuse or spike protection yet. Cloudflare's Rate Limiting binding can be configured in `wrangler` and enforced inside the Worker with `limit()`: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
+- Rate limiting: **Resolved (2026-06-30, `eccos-36z`).** On top of the static `ECCOS_API_KEY` bearer auth, `POST /v1/messages` now passes through the native Cloudflare Rate Limiting binding (`SEND_RATE_LIMITER`, 60/min, defensive 429) — native abuse/spike protection with no external infra: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
 - Dead-letter queue: failed subscriber forwarding attempts are retried and eventually pruned after retention, but exhausted deliveries are not separated into a DLQ for inspection or replay. Queues would provide this natively: https://developers.cloudflare.com/queues/configuration/dead-letter-queues/
 - Dashboard auth: the `/dashboard` surface is currently a self-hosted HTTP app concern. Cloudflare Zero Trust Access is a candidate for putting stronger auth in front of the dashboard without adding application-local user management.
 
@@ -58,12 +58,14 @@ This replaces the older "Postgres storage option (Drizzle)" framing with a Cloud
 
 ## Prioritized Recommendations
 
-| Priority | Recommendation | Rationale | Citation |
+_Status as of 2026-06-30 (✅ done · ⏳ open/deferred). Rationale for each item is in the sections above._
+
+| Priority | Recommendation | Status | Citation |
 |---|---|---|---|
-| P0 | Add Cloudflare Rate Limiting binding to `POST /v1/messages` | Static API-key auth does not protect against valid-key abuse or traffic spikes. | https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/ |
-| P0 | Document and guarantee `alarm()` idempotency in `EccosGateway` | Durable Object alarms can fire more than once, so forwarding retries must be safe to repeat. | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
-| P1 | Shard `EccosGateway` per WABA/phone | A singleton Durable Object is a documented bottleneck; one object per WABA/phone is the multi-tenant scale path. | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
-| P1 | Reframe the storage roadmap as DO SQLite -> D1 -> Hyperdrive | D1 is the native serverless SQL step; Hyperdrive is the Cloudflare-native route to external SQL if ever required. | https://developers.cloudflare.com/workers/platform/storage-options/ |
-| P2 | Evaluate Cloudflare Queues + DLQ for outbound forwarding | Queues add native retries, batching, autoscaling consumers, and DLQ handling, at the cost of another binding. | https://developers.cloudflare.com/queues/configuration/batching-retries/ |
-| P3 | Add R2 for outbound media, Access for dashboard auth, and Secrets Store for shared secret management | These are native Cloudflare services that improve scale, security, and operations without external infrastructure. | https://developers.cloudflare.com/workers/platform/storage-options/ |
+| P0 | Add Cloudflare Rate Limiting binding to `POST /v1/messages` | ✅ **Done** — `SEND_RATE_LIMITER` binding + defensive 429 guard (`eccos-36z`) | https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/ |
+| P0 | Document and guarantee `alarm()` idempotency in `EccosGateway` | ✅ **Done** — invariant documented + regression test (`eccos-qb9`) | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
+| P1 | Shard `EccosGateway` per WABA/phone | ⏳ **Open** — `eccos-6lv`, blocked by multi-tenant (`eccos-v80`) | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
+| P1 | Reframe the storage roadmap as DO SQLite -> D1 -> Hyperdrive | ✅ **Done** — README roadmap updated | https://developers.cloudflare.com/workers/platform/storage-options/ |
+| P2 | Evaluate Cloudflare Queues + DLQ for outbound forwarding | ⏳ **Deferred** — decision recorded (`eccos-t2w`): keep DO+Alarms for v0 | https://developers.cloudflare.com/queues/configuration/batching-retries/ |
+| P3 | Add R2 for outbound media, Access for dashboard auth, and Secrets Store for shared secret management | ⏳ **Future** — post-v1 roadmap | https://developers.cloudflare.com/workers/platform/storage-options/ |
 
