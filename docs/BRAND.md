@@ -3,10 +3,10 @@
 The visual identity for Eccos. Use this when creating any asset (banners, social cards,
 favicons, slides, diagrams) so everything stays consistent.
 
-The concept: **Eccos ≈ echoes.** Eccos is a *gateway* that relays WhatsApp messages between
-Meta and your app. The identity leans on two motifs — **echo ripples** (sound waves, a nod to
-the name) and a **gateway/portal** that messages flow through — over a clean, light surface with
-a single WhatsApp-green glow.
+The concept: Eccos is a *gateway* that relays WhatsApp messages between Meta and your app. The
+identity centers on a **gateway/portal** with a message bubble passing through it (the logomark),
+with **echo ripples** (a nod to the name, *Eccos ≈ echoes*) as a supporting accent — over a clean,
+light surface with a single WhatsApp-green glow.
 
 ![Eccos banner](./assets/banner.png)
 
@@ -17,9 +17,9 @@ a single WhatsApp-green glow.
 - Wordmark is the word **ECCOS**, set in a bold geometric sans-serif (see Typography).
 - **In imagery**: uppercase `ECCOS`. **In prose**: title-case `Eccos`.
 - Give the wordmark generous clear space (≥ the cap-height on every side). Never crowd it.
-- The standalone symbol is the **echo-ripple mark** — a source dot with concentric arcs
-  radiating outward (`assets/logo.svg`). Use it for favicons/avatars and anywhere the full
-  wordmark is too small to read.
+- The standalone symbol is the **gateway mark** — an arch/portal with a chat bubble passing
+  through (`assets/logo.svg`), distilled from the banner. Use it for favicons/avatars and
+  anywhere the full wordmark is too small to read.
 - Don't: stretch, rotate, add drop shadows/outlines/gradients to the letters, or recolor the
   wordmark to anything outside Ink / White / Eccos Green.
 
@@ -59,9 +59,10 @@ reproducible by anyone.
 
 ## Motifs & iconography
 
-- **Echo ripples** *(signature)* — concentric ring arcs radiating outward, like sound echoes.
-  The core brand shape; basis for the favicon/avatar.
-- **Gateway / portal** — an arch/doorway form: the "gateway" messages pass through.
+- **Gateway / portal** *(logomark)* — an arch/doorway with a message bubble passing through.
+  The core brand symbol (`assets/logo.svg`); basis for the favicon/avatar.
+- **Echo ripples** — concentric ring arcs radiating outward, like sound echoes (a nod to the
+  name); a supporting accent, used in the banner.
 - **Message bubbles** — small rounded chat bubbles, ideally shown **flowing in one direction**
   (left→right) to read as a relay.
 - **Network nodes** — faint dots/thin connectors, used sparingly, to hint "infrastructure."
@@ -122,7 +123,7 @@ sips -Z 1440 source.png --out docs/assets/banner.png
 
 | Asset | Path | Use |
 |---|---|---|
-| **Logomark** (symbol) | `assets/logo.svg` | The echo-ripple mark, green on transparent — README/docs, light or dark |
+| **Logomark** (symbol) | `assets/logo.svg` | Gateway + message-bubble mark, green on transparent — README/docs, light or dark |
 | **App icon** | `assets/icon.svg` | Green squircle + white mark; source for avatar & favicon |
 | **Favicon** | `assets/favicon.svg` · `assets/favicon-32.png` · `assets/favicon-16.png` | Browser tab / site icon (SVG + PNG fallbacks) |
 | **Avatar** | `assets/avatar.png` | 512×512 — GitHub / social profile image |
