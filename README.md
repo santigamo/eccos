@@ -4,7 +4,7 @@
 
 <h3>Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API</h3>
 
-<p>A <a href="https://kapso.ai">Kapso</a> alternative you run yourself — your app, your token, no message quota.</p>
+<p>Your app, your token, no message quota — running as a single Bun binary or <strong>entirely on Cloudflare</strong> (Workers + Durable Objects).</p>
 
 [![CI](https://github.com/santigamo/eccos/actions/workflows/ci.yml/badge.svg)](https://github.com/santigamo/eccos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-25D366.svg)](./LICENSE)
@@ -33,8 +33,11 @@ and get **normalized events** forwarded to your backend.
   credentials; your apps just talk to a small HTTP surface.
 - 💸 **No message quota** — pay Meta directly. Service/inbound and in-window utility messages are
   free, and nobody meters or marks up your traffic.
-- ⚡ **Two runtimes, one core** — run the **Bun** binary anywhere, or deploy to **Cloudflare
-  Workers** for zero-ops and a permanent HTTPS webhook URL (no tunnel needed).
+- ⚡ **Two runtimes, one core** — the same pure core ships as a self-hostable **Bun** binary or
+  on **Cloudflare Workers**.
+- ☁️ **All-in on Cloudflare** — the Workers target runs the entire gateway on Cloudflare
+  primitives: a **Worker** + one **Durable Object** (SQLite storage + Alarms for retries). No
+  external database, queue or cron, and a permanent HTTPS webhook URL out of the box.
 - 🔁 **Reliable forwarding** — inbound messages and statuses are normalized and forwarded to your
   app, HMAC-signed and retried with exponential backoff.
 - 🪪 **Onboarding + dashboard** — the Workers target ships an Embedded Signup `/connect` flow and
@@ -42,7 +45,7 @@ and get **normalized events** forwarded to your backend.
 
 ## 🆚 How it compares
 
-| | **Eccos** | Cloud-API SaaS<br>(Kapso, 360dialog) | Unofficial<br>(Evolution API, WAHA, wuzapi) |
+| | **Eccos** | Managed Cloud-API SaaS | Unofficial<br>(Evolution API, WAHA, wuzapi) |
 |---|:---:|:---:|:---:|
 | WhatsApp API | ✅ Official Cloud API | ✅ Official Cloud API | ⚠️ Unofficial Web |
 | Ban risk | ✅ None | ✅ None | ❌ High |
@@ -74,13 +77,13 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 | { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 ```
 
-### On Cloudflare
+### Built entirely on Cloudflare
 
-The Workers target is just two pieces inside one box: a **Worker** at the edge that speaks HTTP
-and talks to Meta, and a single **Durable Object** that remembers everything and does the
-retrying. The Worker keeps no state — it hands every message and event to the Durable Object,
-which stores them in its built-in **SQLite** and uses an **Alarm** to forward them to your app
-(retrying on failure).
+A WhatsApp gateway usually needs a server, a database, a job queue, a cron, and a public HTTPS
+endpoint. The Workers target folds **all of it** into **two Cloudflare primitives**: a stateless
+**Worker** at the edge, and a single **Durable Object** that owns its built-in **SQLite** and an
+**Alarm**-driven retry loop. The Worker keeps no state — it hands every message and event to the
+Durable Object. No external infrastructure at all.
 
 ```mermaid
 flowchart LR
@@ -112,12 +115,14 @@ flowchart LR
 
 _Orange = the stateful Durable Object primitives (SQLite + Alarm); peach = the stateless Worker._
 
-| Cloudflare primitive | What it is, in Eccos |
-|---|---|
-| **Worker** (`worker/worker.ts`) | The front door. Stateless HTTP: checks auth, calls the Meta API, hands all work to the Durable Object. Keeps nothing between requests. |
-| **Durable Object** — `EccosGateway` (`worker/gateway.ts`) | One global instance that holds all state and coordinates everything (the gateway's single brain). |
-| **SQLite storage** _(inside the DO)_ | The database embedded in the Durable Object: inbound events, outbound log, the delivery queue, and onboarding config. |
-| **Alarms** _(inside the DO)_ | A timer that wakes the Durable Object to forward events to your app and retry with exponential backoff. |
+| Cloudflare primitive | What it does in Eccos | Replaces |
+|---|---|---|
+| **Worker** (`worker/worker.ts`) | Stateless edge HTTP — auth, calls the Meta API, hands all state to the Durable Object | a web server |
+| **Durable Object** — `EccosGateway` (`worker/gateway.ts`) | One global, single-writer instance that owns all state and coordination | a stateful service + locking |
+| **DO SQLite storage** | Inbound events, outbound log, the delivery queue, onboarding config | a database |
+| **DO Alarms** | Wakes the DO to forward events and retry with exponential backoff | a job queue + cron |
+| **`workers.dev` + TLS** | A permanent HTTPS URL for Meta's webhook — no tunnel, no domain setup | a domain, TLS & reverse proxy |
+| **Workers Observability** | Request logs at 100 % head-sampling | a logging/metrics stack |
 
 ## 🎯 Deployment targets
 
