@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config";
-import { signPayload } from "../core/signature";
-import type { WhatsAppCallbackEvent } from "../core/types";
+import { signPayload } from "@eccos/core/signature";
+import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 
 interface DeliveryRow {
   id: number;

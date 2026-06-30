@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API. Runs as a Bun binary or entirely on Cloudflare Workers.",
   "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
   "license": "MIT",
   "author": "Santiago García Monsalve",
   "homepage": "https://github.com/santigamo/eccos#readme",
@@ -28,15 +29,16 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "typecheck": "wrangler types && tsc --noEmit",
-    "test": "bun test tests/parser.test.ts tests/signature.test.ts tests/connect-api.test.ts tests/worker-config.test.ts",
-    "test:workers": "vitest run",
-    "test:all": "bun test && vitest run",
-    "deploy": "wrangler deploy",
-    "cf-types": "wrangler types",
-    "dev:worker": "wrangler dev"
+    "typecheck": "tsc --noEmit -p packages/core && cd apps/gateway && wrangler types && tsc --noEmit && cd ../.. && tsc --noEmit -p tsconfig.json",
+    "test": "bun test packages/core/tests/parser.test.ts packages/core/tests/signature.test.ts apps/gateway/tests/connect-api.test.ts apps/gateway/tests/worker-config.test.ts",
+    "test:workers": "cd apps/gateway && vitest run",
+    "test:all": "bun run test && bun run test:workers",
+    "deploy": "cd apps/gateway && wrangler deploy",
+    "cf-types": "cd apps/gateway && wrangler types",
+    "dev:worker": "cd apps/gateway && wrangler dev"
   },
   "dependencies": {
+    "@eccos/core": "workspace:*",
     "hono": "^4.6.14",
     "zod": "^3.24.1"
   },

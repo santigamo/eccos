@@ -1,4 +1,4 @@
-import { parseCoreConfig, type CoreConfig } from "../src/core/config-schema";
+import { parseCoreConfig, type CoreConfig } from "@eccos/core/config-schema";
 
 let cached: CoreConfig | undefined;
 

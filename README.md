@@ -122,8 +122,8 @@ _Orange = the stateful Durable Object primitives (SQLite + Alarm); peach = the s
 
 | Cloudflare primitive | What it does in Eccos | Replaces |
 |---|---|---|
-| **Worker** (`worker/worker.ts`) | Stateless edge HTTP — auth, calls the Meta API, hands all state to the Durable Object | a web server |
-| **Durable Object** — `EccosGateway` (`worker/gateway.ts`) | One global, single-writer instance that owns all state and coordination | a stateful service + locking |
+| **Worker** (`apps/gateway/src/worker.ts`) | Stateless edge HTTP — auth, calls the Meta API, hands all state to the Durable Object | a web server |
+| **Durable Object** — `EccosGateway` (`apps/gateway/src/gateway.ts`) | One global, single-writer instance that owns all state and coordination | a stateful service + locking |
 | **DO SQLite storage** | Inbound events, outbound log, the delivery queue, onboarding config | a database |
 | **DO Alarms** | Wakes the DO to forward events and retry with exponential backoff | a job queue + cron |
 | **Rate Limiting binding** | Native throttling on `POST /v1/messages` (defensive; no-op if unbound) | an external rate limiter |
@@ -132,12 +132,12 @@ _Orange = the stateful Durable Object primitives (SQLite + Alarm); peach = the s
 
 ## 🎯 Deployment targets
 
-Eccos ships **two targets that share one pure core** (`src/core/`: parser, signature, send,
+Eccos ships **two targets that share one pure core** (`packages/core/`: parser, signature, send,
 templates). Pick whichever fits how you want to run it:
 
 | | **Bun** (self-host) | **Cloudflare Workers** |
 |---|---|---|
-| Code | `src/` | `worker/` |
+| Code | `src/` | `apps/gateway/` |
 | Storage | SQLite (`bun:sqlite`) | Durable Object (SQLite) |
 | Forwarding retries | in-process loop | Durable Object Alarms |
 | Deploy | Docker / single process | `wrangler deploy` |

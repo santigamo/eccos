@@ -1,0 +1,18 @@
+{
+  "name": "@eccos/gateway",
+  "version": "0.1.0",
+  "description": "Eccos Cloudflare Workers target — Hono + EccosGateway Durable Object.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "cf-types": "wrangler types",
+    "test:workers": "vitest run"
+  },
+  "dependencies": {
+    "@eccos/core": "workspace:*",
+    "hono": "^4.6.14",
+    "zod": "^3.24.1"
+  }
+}

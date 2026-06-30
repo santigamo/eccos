@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { overlayDoConfig } from "../worker/config";
-import type { CoreConfig } from "../src/core/config-schema";
+import { overlayDoConfig } from "../src/config";
+import type { CoreConfig } from "@eccos/core/config-schema";
 
 const BASE: CoreConfig = {
   META_GRAPH_VERSION: "v24.0",

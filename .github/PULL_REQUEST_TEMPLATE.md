@@ -3,9 +3,9 @@
 ## What & why
 
 ## Target(s)
-- [ ] Pure core (`src/core/`)
+- [ ] Pure core (`packages/core/`)
 - [ ] Bun target (`src/`)
-- [ ] Cloudflare Workers target (`worker/`)
+- [ ] Cloudflare Workers target (`apps/gateway/`)
 
 ## Checklist
 - [ ] `bun run typecheck` passes

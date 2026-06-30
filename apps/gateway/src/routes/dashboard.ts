@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { basicAuth } from "hono/basic-auth";
 import { getConfig, getEffectiveConfig } from "../config";
-import { listTemplates } from "../../src/core/templates";
+import { listTemplates } from "@eccos/core/templates";
 
 type HealthStatus = "healthy" | "degraded" | "unhealthy";
 

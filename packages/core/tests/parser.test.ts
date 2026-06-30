@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { parseMetaWebhook, parseMetaEchoes } from "../src/core/parser";
+import { parseMetaWebhook, parseMetaEchoes } from "@eccos/core/parser";
 
 const TS_SEC = "1700000000";
 const TS_MS = 1_700_000_000_000;

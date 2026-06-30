@@ -1,15 +1,7 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "ESNext",
-    "target": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "verbatimModuleSyntax": true,
-    "resolveJsonModule": true,
-    "noUncheckedIndexedAccess": true
+    "types": ["bun"]
   },
-  "include": ["src", "worker", "worker-configuration.d.ts"]
+  "include": ["src"]
 }

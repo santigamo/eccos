@@ -5,7 +5,7 @@ import { webhookRoutes } from "./routes/webhooks";
 import { messageRoutes } from "./routes/messages";
 import { templateRoutes } from "./routes/templates";
 import { startDeliveryLoop } from "./delivery/forward";
-import { constantTimeEqual } from "./core/signature";
+import { constantTimeEqual } from "@eccos/core/signature";
 
 const cfg = loadConfig();
 const db = openDb(cfg.DATABASE_PATH);

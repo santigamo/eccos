@@ -2,11 +2,11 @@ import { Hono } from "hono";
 import { getConfig, getEffectiveConfig } from "./config";
 import { connectRoutes } from "./routes/connect";
 import { dashboardRoutes } from "./routes/dashboard";
-import { constantTimeEqual, verifyMetaSignature } from "../src/core/signature";
-import { parseMetaWebhook, parseMetaEchoes } from "../src/core/parser";
-import { sendMessage } from "../src/core/send";
-import { listTemplates } from "../src/core/templates";
-import type { WhatsAppCallbackEvent } from "../src/core/types";
+import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
+import { parseMetaWebhook, parseMetaEchoes } from "@eccos/core/parser";
+import { sendMessage } from "@eccos/core/send";
+import { listTemplates } from "@eccos/core/templates";
+import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 
 export { EccosGateway } from "./gateway";
 

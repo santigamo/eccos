@@ -2,7 +2,8 @@
 
 Eccos is a self-hostable, open-source WhatsApp gateway on the official Meta Cloud API.
 Stack: **Bun + Hono + SQLite (`bun:sqlite`)**, TypeScript, Zod — plus a Cloudflare Workers
-target (`worker/`: Durable Object storage + Alarms forwarding, `/connect`, `/dashboard`).
+target (`apps/gateway/`: Durable Object storage + Alarms forwarding, `/connect`, `/dashboard`).
+The repo is a **Bun workspace**: shared `@eccos/core` package + per-target apps.
 
 ## Build & Test
 
@@ -16,31 +17,32 @@ bun run deploy         # wrangler deploy (Workers target)
 ```
 
 > Use `bun run test` + `bun run test:workers`, **not** a bare `bun test` — the latter globs the
-> Workers `tests/worker/*.spec.ts` files and errors on the `cloudflare:test` virtual module.
+> Workers `apps/gateway/tests/worker/*.spec.ts` files and errors on the `cloudflare:test` virtual module.
 
 ## Layout
 
-- `src/core/` — shared pure core (parser, types, send, templates, WebCrypto signature,
-  config-schema). Used by both the Bun target and the Cloudflare Workers target.
-- `src/config.ts` — Bun adapter: `loadConfig(process.env)` extends core schema with
-  `PORT` / `DATABASE_PATH`.
-- `src/db/client.ts` — opens SQLite and creates schema idempotently on boot (no migrate step).
-- `src/delivery/forward.ts` — persists + forwards events to the subscriber with retry/backoff.
-- `src/routes/` — Hono routers: `webhooks.ts` (public, signature-auth), `messages.ts` and
-  `templates.ts` (Bearer `ECCOS_API_KEY`).
-- `src/index.ts` — wires routes, API-key middleware on `/v1/*`, starts the delivery loop,
-  exports `{ port, fetch }` for Bun.
-- `worker/` — Cloudflare Workers target (connect, dashboard, DO-backed forwarding). New v1
-  features live here only. Bun feature parity is post-v1 backlog.
+Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/` (kept aside).
+
+- `packages/core/` (`@eccos/core`) — shared pure core (parser, types, send, templates, WebCrypto
+  signature, config-schema). Runtime-agnostic; imported by every target via bare specifier
+  (`@eccos/core/parser`, …). Keep it free of HTTP/DB concerns.
+- `apps/gateway/` — the **Cloudflare Workers** target: Hono app (`src/worker.ts`) + the
+  `EccosGateway` Durable Object (`src/gateway.ts`, SQLite storage + Alarms forwarding), plus
+  `/connect` (Embedded Signup) and `/dashboard`. Owns `wrangler.jsonc` + `vitest.config.ts`. New
+  v1 features live here. Tests in `apps/gateway/tests/` (`*.test.ts` Bun + `tests/worker/*.spec.ts`
+  vitest-pool-workers).
+- `src/` — the **Bun** self-host target (kept aside, retaken post-v1): Hono app, `bun:sqlite`
+  storage, in-process delivery loop, `loadConfig(process.env)` adding `PORT` / `DATABASE_PATH`.
+  Dockerised (`Dockerfile` runs `bun run src/index.ts`).
 
 ## Rules
 
 - Code, identifiers, comments, and user-facing strings are in **English**.
 - **Single tenant in v1.** One WABA/phone via env. Do not add multi-tenant tables/flows
   without an explicit roadmap decision.
-- Keep `src/core/` free of HTTP/DB concerns — pure Cloud API + parsing. Routes own I/O.
+- Keep `packages/core/` free of HTTP/DB concerns — pure Cloud API + parsing. Routes own I/O.
 - The `WhatsAppCallbackEvent` shape is the public forwarding contract; changing it is a
-  breaking change for any downstream subscriber. Add tests in `tests/parser.test.ts`
+  breaking change for any downstream subscriber. Add tests in `packages/core/tests/parser.test.ts`
   for any parser change.
 - Webhook handler must always return 200 quickly so Meta does not disable the subscription.
 - This repo is **public/OSS** — never commit real tokens, secrets, or `.env`.

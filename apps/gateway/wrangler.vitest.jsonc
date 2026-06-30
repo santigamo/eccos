@@ -1,7 +1,7 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
+  "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "eccos-test",
-  "main": "worker/worker.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-06-12",
   "workers_dev": true,
   "durable_objects": {

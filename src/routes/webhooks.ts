@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config";
-import { verifyMetaSignature } from "../core/signature";
-import { parseMetaWebhook } from "../core/parser";
+import { verifyMetaSignature } from "@eccos/core/signature";
+import { parseMetaWebhook } from "@eccos/core/parser";
 import { enqueueDelivery, processPending } from "../delivery/forward";
 
 /** Public Meta webhook routes (authenticated by signature, not API key). */

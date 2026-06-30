@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { signPayload, verifyMetaSignature, constantTimeEqual } from "../src/core/signature";
+import { signPayload, verifyMetaSignature, constantTimeEqual } from "@eccos/core/signature";
 
 describe("signature", () => {
   const secret = "test-app-secret";

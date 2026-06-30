@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { coreSchema, graphBaseUrl as coreGraphBaseUrl } from "./core/config-schema";
+import { coreSchema, graphBaseUrl as coreGraphBaseUrl } from "@eccos/core/config-schema";
 
 const bunSchema = coreSchema.extend({
   PORT: z.coerce.number().int().positive().default(3000),

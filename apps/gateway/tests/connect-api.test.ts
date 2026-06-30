@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { extractTokenTargetIds } from "../worker/meta/connect-api";
+import { extractTokenTargetIds } from "../src/meta/connect-api";
 
 describe("extractTokenTargetIds", () => {
   it("extracts unique WhatsApp granular scope targets", () => {

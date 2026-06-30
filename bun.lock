@@ -5,6 +5,7 @@
     "": {
       "name": "eccos",
       "dependencies": {
+        "@eccos/core": "workspace:*",
         "hono": "^4.6.14",
         "zod": "^3.24.1",
       },
@@ -15,6 +16,22 @@
         "typescript": "^5.7.2",
         "vitest": "^4.1.0",
         "wrangler": "^4.20.0",
+      },
+    },
+    "apps/gateway": {
+      "name": "@eccos/gateway",
+      "version": "0.1.0",
+      "dependencies": {
+        "@eccos/core": "workspace:*",
+        "hono": "^4.6.14",
+        "zod": "^3.24.1",
+      },
+    },
+    "packages/core": {
+      "name": "@eccos/core",
+      "version": "0.1.0",
+      "dependencies": {
+        "zod": "^3.24.1",
       },
     },
   },
@@ -38,6 +55,10 @@
     "@cloudflare/workers-types": ["@cloudflare/workers-types@4.20260612.1", "", {}, "sha512-PMQI7XP/wrMhxyjseUHoHj6XFqkHaf4utWQ/hhefVY8oMK2LJ730oeQ7H/nZSVMexZe39DzsdOx7sf1PqMr7+Q=="],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
+
+    "@eccos/core": ["@eccos/core@workspace:packages/core"],
+
+    "@eccos/gateway": ["@eccos/gateway@workspace:apps/gateway"],
 
     "@emnapi/core": ["@emnapi/core@1.10.0", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.1", "tslib": "^2.4.0" } }, "sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw=="],
 

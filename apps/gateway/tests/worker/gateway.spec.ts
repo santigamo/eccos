@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { EccosGateway } from "../../worker/gateway";
-import type { WhatsAppCallbackEvent } from "../../src/core/types";
+import { EccosGateway } from "../../src/gateway";
+import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import { singletonStub } from "./helpers";
 
 afterEach(async () => {

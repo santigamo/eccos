@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EccosGateway } from "../../worker/gateway";
+import { EccosGateway } from "../../src/gateway";
 import { singletonStub } from "./helpers";
 
 afterEach(async () => {

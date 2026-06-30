@@ -11,7 +11,7 @@ A clear and concise description of what went wrong.
 
 **Target**
 - [ ] Bun (`src/`) / Docker
-- [ ] Cloudflare Workers (`worker/`)
+- [ ] Cloudflare Workers (`apps/gateway/`)
 
 **To reproduce**
 Steps, the request you sent, and the response/behavior you got.

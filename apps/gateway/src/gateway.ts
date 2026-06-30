@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { signPayload } from "../src/core/signature";
-import type { WhatsAppCallbackEvent } from "../src/core/types";
+import { signPayload } from "@eccos/core/signature";
+import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 
 interface Env {
   SUBSCRIBER_WEBHOOK_URL?: string;

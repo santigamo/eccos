@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Config } from "../config";
-import { listTemplates } from "../core/templates";
+import { listTemplates } from "@eccos/core/templates";
 
 /** Authenticated templates surface: GET /v1/templates. */
 export function templateRoutes(cfg: Config): Hono {

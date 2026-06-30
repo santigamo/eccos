@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeHealth } from "../../worker/routes/dashboard";
+import { computeHealth } from "../../src/routes/dashboard";
 
 describe("computeHealth", () => {
   it("returns unhealthy when a delivery failed", () => {

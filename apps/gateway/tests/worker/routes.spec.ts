@@ -1,8 +1,8 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { signPayload } from "../../src/core/signature";
-import { EccosGateway } from "../../worker/gateway";
+import { signPayload } from "@eccos/core/signature";
+import { EccosGateway } from "../../src/gateway";
 import { basicAuthHeader, metaEnvelope, singletonStub } from "./helpers";
 
 function mockGraphFetch(): MockInstance<typeof fetch> {

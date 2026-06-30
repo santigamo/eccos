@@ -1,4 +1,4 @@
-import { graphBaseUrl, type CoreConfig } from "../../src/core/config-schema";
+import { graphBaseUrl, type CoreConfig } from "@eccos/core/config-schema";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
