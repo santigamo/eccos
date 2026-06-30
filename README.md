@@ -44,90 +44,53 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 | { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 ```
 
-### Cloudflare Workers topology
+### How it runs on Cloudflare
 
-The Workers target maps the gateway onto four Cloudflare primitives: a stateless **Worker**
-(the Hono router) sits at the edge and delegates all state to a single **Durable Object**,
-which owns its embedded **SQLite storage** and an **Alarm**-driven retry loop. The Worker
-terminates HTTP and talks to Meta; the Durable Object is the single source of truth and does
-the durable, retried event forwarding.
+On Cloudflare, Eccos is just two pieces inside one box: a **Worker** at the edge that speaks
+HTTP and talks to Meta, and a single **Durable Object** that remembers everything and does the
+retrying. The Worker keeps no state — it hands every message and event to the Durable Object,
+which stores them in its built-in **SQLite** and uses an **Alarm** to forward them to your app
+(retrying on failure).
 
 ```mermaid
-flowchart TB
-    app["Your app / subscriber"]
-    user(["WhatsApp user"])
-    admin(["Admin / browser"])
-
-    subgraph meta["Meta Cloud API · Graph"]
-        send_ep["POST /{phone}/messages"]
-        tmpl_ep["GET /{waba}/message_templates"]
-        oauth_ep["OAuth · debug_token<br/>phone_numbers · subscribed_apps"]
-        hook["Webhook delivery"]
-    end
+flowchart LR
+    meta["Meta Cloud API<br/>📱 WhatsApp"]
+    app["Your app<br/>(subscriber)"]
 
     subgraph cf["Cloudflare"]
-        subgraph worker["Worker · Hono — stateless edge"]
-            send_r["POST /v1/messages<br/>Bearer ECCOS_API_KEY"]
-            tmpl_r["GET /v1/templates"]
-            hook_r["GET · POST /webhooks/meta<br/>HMAC X-Hub-Signature-256"]
-            conn_r["GET /connect<br/>POST /connect/exchange"]
-            dash_r["GET /dashboard · basic auth"]
+        direction TB
+        worker["Worker — the edge<br/>handles HTTP, checks auth, calls Meta<br/>(keeps no state)"]
+        subgraph dobj["Durable Object — the memory (one instance)"]
+            direction LR
+            sqlite[("SQLite<br/>stores messages<br/>and events")]
+            alarm{{"Alarm<br/>forwards to your app,<br/>retries on failure"}}
         end
-
-        subgraph dobj["Durable Object · EccosGateway — singleton"]
-            store[("SQLite storage<br/>config · inbound_events<br/>outbound_messages · deliveries")]
-            alarm{{"Alarm<br/>retry · exp. backoff"}}
-        end
+        worker ==>|"hands off all state"| dobj
     end
 
-    app -->|"POST /v1/messages"| send_r
-    send_r -->|"sendMessage()"| send_ep
-    send_r -->|"logOutbound()"| store
-    send_ep -->|"WhatsApp"| user
+    app -->|"send a message"| worker
+    meta <-->|"messages and webhooks"| worker
+    alarm -->|"forward events"| app
 
-    user -->|"message · status · echo"| hook
-    hook -->|"POST"| hook_r
-    hook_r -->|"ingest(): dedupe + enqueue"| store
-    hook_r -.->|"setAlarm(now)"| alarm
-
-    alarm -->|"drain pending"| store
-    alarm -->|"forward · HMAC X-Eccos-Signature"| app
-    alarm -.->|"setAlarm(next)"| alarm
-
-    tmpl_r -->|"listTemplates()"| tmpl_ep
-
-    admin --> conn_r
-    admin --> dash_r
-    conn_r <-->|"Embedded Signup"| oauth_ep
-    conn_r -->|"saveConfig(WABA · phone)"| store
-    oauth_ep -.->|"registers callback URL"| hook
-    dash_r -->|"snapshot()"| store
-    store -.->|"effective WABA / phone"| send_r
-
-    classDef prim fill:#f6821f,stroke:#a85a12,color:#fff;
-    classDef edge fill:#fff3e6,stroke:#f6821f,color:#7a3e0a;
-    class store,alarm prim;
-    class send_r,tmpl_r,hook_r,conn_r,dash_r edge;
+    classDef ext fill:#eef,stroke:#99a,color:#223;
+    classDef edge2 fill:#fde2c6,stroke:#f6821f,color:#7a3e0a;
+    classDef stateful fill:#f6821f,stroke:#a85a12,color:#fff;
+    class meta,app ext;
+    class worker edge2;
+    class sqlite,alarm stateful;
 ```
 
-**Cloudflare primitives** (orange = stateful DO primitives, peach = Worker routes)
+_Orange = the stateful Durable Object primitives (SQLite + Alarm); peach = the stateless Worker._
 
-- **Worker** — `worker/worker.ts`. Stateless Hono app at the edge: terminates HTTP, checks
-  `Bearer` / HMAC auth, calls the Meta Graph API, and forwards every stateful operation to the
-  Durable Object through its stub. Holds no data between requests.
-- **Durable Object · `EccosGateway`** — `worker/gateway.ts`, bound as `ECCOS` (migration `v1`).
-  One global singleton (`idFromName("singleton")`) that serializes writes and is the source of
-  truth for the onboarded `META_WABA_ID` / `META_PHONE_NUMBER_ID` (overlaid over env on every
-  send and templates call).
-- **DO SQLite storage** — `ctx.storage.sql`. Four tables (`config`, `inbound_events`,
-  `outbound_messages`, `deliveries`) created once under `blockConcurrencyWhile`; inbound dedupe
-  via unique indexes, atomic writes via `transactionSync`.
-- **DO Alarms** — `ctx.storage.setAlarm()` + `alarm()`. The forwarding engine: drains pending
-  deliveries in batches of 40, signs + POSTs them to `SUBSCRIBER_WEBHOOK_URL`, retries with
-  exponential backoff up to `FORWARD_MAX_ATTEMPTS`, prunes rows past the 30-day retention, then
-  self-reschedules to the next due delivery.
-- **Observability & routing** — `wrangler.jsonc`: Workers logs at 100% head-sampling, and
-  `workers_dev: true` exposes the `*.workers.dev` URL that Meta points its webhook at.
+| Cloudflare primitive | What it is, in Eccos |
+|---|---|
+| **Worker** (`worker/worker.ts`) | The front door. Stateless HTTP: checks auth, calls the Meta API, hands all work to the Durable Object. Keeps nothing between requests. |
+| **Durable Object** — `EccosGateway` (`worker/gateway.ts`) | One global instance that holds all state and coordinates everything (the gateway's single brain). |
+| **SQLite storage** _(inside the DO)_ | The database embedded in the Durable Object: inbound events, outbound log, the delivery queue, and onboarding config. |
+| **Alarms** _(inside the DO)_ | A timer that wakes the Durable Object to forward events to your app and retry with exponential backoff. |
+
+_The Bun self-host target does the same job with `bun:sqlite` and an in-process loop instead of a
+Durable Object — see the comparison below._
 
 ## Deployment targets
 
