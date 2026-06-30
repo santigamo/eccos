@@ -52,6 +52,42 @@ describe("EccosGateway alarm", () => {
     });
   });
 
+  it("does not duplicate externally-visible delivery when alarm runs twice", async () => {
+    const event: WhatsAppCallbackEvent = {
+      type: "reply",
+      from: "34600000000",
+      messageId: "wamid.IDEMPOTENT",
+      text: "Only once",
+      at: 1_700_000_000_000,
+    };
+    await seedPendingDelivery(event);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === env.SUBSCRIBER_WEBHOOK_URL) {
+        return new Response("ok", { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      await instance.alarm();
+    });
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      await instance.alarm();
+    });
+
+    const subscriberCalls = fetchMock.mock.calls.filter(([url]) => String(url) === env.SUBSCRIBER_WEBHOOK_URL);
+    expect(subscriberCalls).toHaveLength(1);
+
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      const row = instance.sql
+        .exec("SELECT status, attempts FROM deliveries ORDER BY id DESC LIMIT 1")
+        .toArray()[0] as { status: string; attempts: number };
+      expect(row.status).toBe("delivered");
+      expect(row.attempts).toBe(1);
+    });
+  });
+
   it("increments attempts and schedules backoff on non-2xx", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("fail", { status: 500 }));
     const event: WhatsAppCallbackEvent = {

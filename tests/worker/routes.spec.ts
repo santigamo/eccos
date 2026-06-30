@@ -28,6 +28,7 @@ function mockGraphFetch(): MockInstance<typeof fetch> {
 }
 
 afterEach(async () => {
+  delete (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER;
   vi.restoreAllMocks();
   await reset();
 });
@@ -111,6 +112,26 @@ describe("routes", () => {
     });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ ok: true, messages: [{ id: "wamid.TEST" }] });
+  });
+
+  it("POST /v1/messages returns 429 when the optional send rate limiter rejects", async () => {
+    const limit = vi.fn(async () => ({ success: false }));
+    (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER = { limit };
+    const graphFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unexpected", { status: 200 }));
+
+    const res = await exports.default.fetch("http://example.com/v1/messages", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.ECCOS_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
+    });
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ ok: false, error: "rate limited" });
+    expect(limit).toHaveBeenCalledWith({ key: env.ECCOS_API_KEY });
+    expect(graphFetch).not.toHaveBeenCalled();
   });
 
   it("GET /v1/templates requires auth and returns Meta JSON", async () => {

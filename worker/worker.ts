@@ -59,6 +59,13 @@ app.use("/v1/*", async (c, next) => {
   if (!key || !constantTimeEqual(key, cfg.ECCOS_API_KEY)) {
     return c.json({ ok: false, error: "unauthorized" }, 401);
   }
+  const isSendRequest = c.req.method === "POST" && new URL(c.req.url).pathname === "/v1/messages";
+  if (isSendRequest && c.env.SEND_RATE_LIMITER) {
+    // Cloudflare Rate Limiting is per-location and eventually consistent:
+    // good abuse/spike protection, not an exact global quota counter.
+    const { success } = await c.env.SEND_RATE_LIMITER.limit({ key });
+    if (!success) return c.json({ ok: false, error: "rate limited" }, 429);
+  }
   await next();
 });
 

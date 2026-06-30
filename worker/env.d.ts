@@ -2,4 +2,5 @@
 interface Env {
   META_APP_ID?: string;
   META_ES_CONFIG_ID?: string;
+  SEND_RATE_LIMITER?: RateLimit;
 }

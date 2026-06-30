@@ -170,6 +170,9 @@ export class EccosGateway extends DurableObject<Env> {
     const now = Date.now();
     const maxAttempts = Number(this.env.FORWARD_MAX_ATTEMPTS) || 6;
 
+    // alarm() may fire more than once; the drain is idempotent because it only
+    // processes status='pending' rows, transitions them by id, and forwardOne()
+    // sends x-idempotency-key for subscriber-side dedupe.
     const rows = this.sql
       .exec(
         `SELECT id, payload, attempts, next_attempt_at FROM deliveries
