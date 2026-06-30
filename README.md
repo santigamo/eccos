@@ -44,6 +44,91 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 | { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 ```
 
+### Cloudflare Workers topology
+
+The Workers target maps the gateway onto four Cloudflare primitives: a stateless **Worker**
+(the Hono router) sits at the edge and delegates all state to a single **Durable Object**,
+which owns its embedded **SQLite storage** and an **Alarm**-driven retry loop. The Worker
+terminates HTTP and talks to Meta; the Durable Object is the single source of truth and does
+the durable, retried event forwarding.
+
+```mermaid
+flowchart TB
+    app["Your app / subscriber"]
+    user(["WhatsApp user"])
+    admin(["Admin / browser"])
+
+    subgraph meta["Meta Cloud API · Graph"]
+        send_ep["POST /{phone}/messages"]
+        tmpl_ep["GET /{waba}/message_templates"]
+        oauth_ep["OAuth · debug_token<br/>phone_numbers · subscribed_apps"]
+        hook["Webhook delivery"]
+    end
+
+    subgraph cf["Cloudflare"]
+        subgraph worker["Worker · Hono — stateless edge"]
+            send_r["POST /v1/messages<br/>Bearer ECCOS_API_KEY"]
+            tmpl_r["GET /v1/templates"]
+            hook_r["GET · POST /webhooks/meta<br/>HMAC X-Hub-Signature-256"]
+            conn_r["GET /connect<br/>POST /connect/exchange"]
+            dash_r["GET /dashboard · basic auth"]
+        end
+
+        subgraph dobj["Durable Object · EccosGateway — singleton"]
+            store[("SQLite storage<br/>config · inbound_events<br/>outbound_messages · deliveries")]
+            alarm{{"Alarm<br/>retry · exp. backoff"}}
+        end
+    end
+
+    app -->|"POST /v1/messages"| send_r
+    send_r -->|"sendMessage()"| send_ep
+    send_r -->|"logOutbound()"| store
+    send_ep -->|"WhatsApp"| user
+
+    user -->|"message · status · echo"| hook
+    hook -->|"POST"| hook_r
+    hook_r -->|"ingest(): dedupe + enqueue"| store
+    hook_r -.->|"setAlarm(now)"| alarm
+
+    alarm -->|"drain pending"| store
+    alarm -->|"forward · HMAC X-Eccos-Signature"| app
+    alarm -.->|"setAlarm(next)"| alarm
+
+    tmpl_r -->|"listTemplates()"| tmpl_ep
+
+    admin --> conn_r
+    admin --> dash_r
+    conn_r <-->|"Embedded Signup"| oauth_ep
+    conn_r -->|"saveConfig(WABA · phone)"| store
+    oauth_ep -.->|"registers callback URL"| hook
+    dash_r -->|"snapshot()"| store
+    store -.->|"effective WABA / phone"| send_r
+
+    classDef prim fill:#f6821f,stroke:#a85a12,color:#fff;
+    classDef edge fill:#fff3e6,stroke:#f6821f,color:#7a3e0a;
+    class store,alarm prim;
+    class send_r,tmpl_r,hook_r,conn_r,dash_r edge;
+```
+
+**Cloudflare primitives** (orange = stateful DO primitives, peach = Worker routes)
+
+- **Worker** — `worker/worker.ts`. Stateless Hono app at the edge: terminates HTTP, checks
+  `Bearer` / HMAC auth, calls the Meta Graph API, and forwards every stateful operation to the
+  Durable Object through its stub. Holds no data between requests.
+- **Durable Object · `EccosGateway`** — `worker/gateway.ts`, bound as `ECCOS` (migration `v1`).
+  One global singleton (`idFromName("singleton")`) that serializes writes and is the source of
+  truth for the onboarded `META_WABA_ID` / `META_PHONE_NUMBER_ID` (overlaid over env on every
+  send and templates call).
+- **DO SQLite storage** — `ctx.storage.sql`. Four tables (`config`, `inbound_events`,
+  `outbound_messages`, `deliveries`) created once under `blockConcurrencyWhile`; inbound dedupe
+  via unique indexes, atomic writes via `transactionSync`.
+- **DO Alarms** — `ctx.storage.setAlarm()` + `alarm()`. The forwarding engine: drains pending
+  deliveries in batches of 40, signs + POSTs them to `SUBSCRIBER_WEBHOOK_URL`, retries with
+  exponential backoff up to `FORWARD_MAX_ATTEMPTS`, prunes rows past the 30-day retention, then
+  self-reschedules to the next due delivery.
+- **Observability & routing** — `wrangler.jsonc`: Workers logs at 100% head-sampling, and
+  `workers_dev: true` exposes the `*.workers.dev` URL that Meta points its webhook at.
+
 ## Deployment targets
 
 Eccos ships **two targets that share one pure core** (`src/core/`: parser, signature, send,
