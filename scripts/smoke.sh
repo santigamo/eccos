@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# WS1.8 manual smoke — run against local wrangler dev or deployed workers.dev URL.
-# Usage: BASE_URL=https://eccos.<sub>.workers.dev ./scripts/ws1-smoke.sh
+# Eccos smoke test — run against a local `wrangler dev` or a deployed workers.dev URL.
+# Usage: BASE_URL=https://eccos.<sub>.workers.dev ./scripts/smoke.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -71,4 +71,4 @@ if [[ -n "${ECCOS_API_KEY:-}" ]]; then
 fi
 
 echo ""
-echo "WS1 smoke passed against $BASE_URL"
+echo "Smoke test passed against $BASE_URL"
