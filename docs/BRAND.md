@@ -1,140 +1,106 @@
 # Eccos — Brand & Style Guide
 
 The visual identity for Eccos. Use this when creating any asset (banners, social cards,
-favicons, slides, diagrams) so everything stays consistent.
+favicons, slides) so everything stays consistent.
 
 The concept: Eccos is a *gateway* that relays WhatsApp messages between Meta and your app. The
-logomark is the **initial "E" inside a chat bubble** — name + messaging in one mark. The wider
-identity uses a **gateway/portal** and **echo ripples** (*Eccos ≈ echoes*) as supporting motifs in
-the banner, over a clean, light surface with a single WhatsApp-green glow.
+identity is **premium glassmorphism** — translucent **stacked glass layers** (the relay / echo
+passing through, *Eccos ≈ echoes*) in an emerald-green→teal iridescent gradient, glowing on a
+deep dark surface. Dark-mode-first, modern, fancy.
 
-![Eccos banner](./assets/banner.png)
+![Eccos banner](./assets/banner.jpg)
 
 ---
 
 ## Logo / wordmark
 
-- Wordmark is the word **ECCOS**, set in a bold geometric sans-serif (see Typography).
+- **Logomark**: a stack of **translucent glass layers/tiles** with depth and inner glow
+  (`assets/avatar.png`). It reads as layered relay / echo and is the brand's hero shape.
+- **Wordmark**: the word **ECCOS** in a bold geometric sans-serif, white, on the dark surface.
 - **In imagery**: uppercase `ECCOS`. **In prose**: title-case `Eccos`.
-- Give the wordmark generous clear space (≥ the cap-height on every side). Never crowd it.
-- The standalone symbol is the **"E" chat-bubble mark** — the initial E set inside a rounded
-  message bubble (`assets/logo.svg`). Use it for favicons/avatars and anywhere the full wordmark
-  is too small to read.
-- Don't: stretch, rotate, add drop shadows/outlines/gradients to the letters, or recolor the
-  wordmark to anything outside Ink / White / Eccos Green.
+- **Favicon** is a *simplified, flat* version of the stacked layers (`assets/favicon.svg`) so it
+  stays legible at 16–32 px, where the full glass render turns to mush.
+- Give the mark generous clear space. Don't stretch, rotate, or flatten it into a dated glossy
+  "white glyph on a green squircle" app icon — keep the glass depth.
 
 ## Color palette
 
-Intentionally aligned with the **WhatsApp green family** — Eccos runs on the official WhatsApp
-Cloud API, so the green signals "official," while the echo/gateway motif keeps it distinct. One
-accent only (green); everything else is neutral.
+Built on the WhatsApp-green family (Eccos runs on the official WhatsApp Cloud API), pushed into
+a vibrant **emerald→teal iridescent** range for the glass, on near-black surfaces.
 
 | Token | Hex | Use |
 |---|---|---|
-| **Eccos Green** (primary) | `#25D366` | Primary accent: echo ripples, highlights, links/CTAs, the `PRs welcome` badge |
-| **Deep Teal** (secondary) | `#128C7E` | Depth, secondary accents, gradient stops |
-| **Dark Teal** | `#075E54` | Deepest accent, dark-surface tint |
-| **Bubble Green** (soft) | `#DCF8C6` | Soft glows, highlight fills, message bubbles |
-| **Ink** (text) | `#0B141A` | Wordmark on light surfaces, primary body text |
-| **Slate** (muted) | `#667781` | Secondary text, captions, borders |
-| **Paper** (light bg) | `#F7F9F8` | Default light background / surface |
-| **White** | `#FFFFFF` | Surfaces, wordmark on dark/green |
+| **Eccos Green** (primary) | `#25D366` | Brand anchor: accents, links/CTAs, the `PRs welcome` badge |
+| **Glow Green** (bright) | `#34E27A` | Glass highlights, the brightest gradient stop |
+| **Teal** (secondary) | `#0FB39A` | The cool end of the glass gradient |
+| **Iridescence** | cyan/blue hints | Emergent refraction in the glass — don't force a fixed hex |
+| **Charcoal** (surface) | `#0B141A` | Primary dark surface / background |
+| **Slate-dark** (raised) | `#10171D` | Cards, the favicon squircle |
+| **White** | `#FFFFFF` | Wordmark and text on dark |
+| **Paper** | `#F7F9F8` | Rare light-context surface |
 
-**Glow gradient** (the banner's signature): a soft radial gradient of **Eccos Green** at
-~10–15 % opacity fading to transparent, anchored in one corner over **Paper**.
-
-**Surfaces**: prefer the **light** treatment (Ink wordmark on Paper + green glow, as in the
-banner). A **dark** variant is allowed (White wordmark on Ink, green echo ripples) for hero
-images that need more drama — keep the same green accent.
+**Material — glass**: translucency, layered depth, soft inner glow, subtle reflections and a
+green halo. Surfaces are **dark by default**; the glass and glow provide the color.
 
 ## Typography
 
-Use **open-source (SIL OFL)** fonts only — this is an OSS project, assets should be
-reproducible by anyone.
+Open-source (SIL OFL) fonts only — assets should be reproducible by anyone.
 
-- **Display / wordmark** — a geometric sans: **Poppins** or **Montserrat** (SemiBold/Bold).
-  Slightly tight letter-spacing for the wordmark.
-- **Body / UI** — **Inter** (Regular/Medium).
+- **Display / wordmark** — geometric sans: **Poppins** or **Montserrat** (SemiBold/Bold), white.
+- **Body / UI** — **Inter**.
 - **Code / mono** — **JetBrains Mono**, or the system `ui-monospace` stack.
 
-## Motifs & iconography
+## Motif & principles
 
-- **"E" chat bubble** *(logomark)* — the initial E inside a rounded message bubble. The core
-  brand symbol (`assets/logo.svg`); basis for the favicon/avatar.
-- **Gateway / portal** — an arch/doorway messages pass through; a supporting motif in the banner.
-- **Echo ripples** — concentric ring arcs radiating outward, like sound echoes (a nod to the
-  name); a supporting accent, used in the banner.
-- **Message bubbles** — small rounded chat bubbles, ideally shown **flowing in one direction**
-  (left→right) to read as a relay.
-- **Network nodes** — faint dots/thin connectors, used sparingly, to hint "infrastructure."
-- **Line-art** — consistent thin stroke, rounded caps and joins. Flat, no fills unless it's the
-  green accent.
+- **Stacked glass layers** *(logomark)* — translucent tiles stacked with depth = relay / echo.
+  The core shape; the favicon is its flat, simplified form.
+- **Glow** — a soft green halo behind the glass on the dark surface.
 
-## Principles — do / don't
+**Do**: lead with the glass-layers motif; keep depth, translucency and the green glow; dark
+surfaces; one accent family (green→teal); the only in-image text is the wordmark `ECCOS`.
 
-**Do**
-- Flat vector, minimal, lots of negative space.
-- One accent color (green); keep everything else neutral.
-- High contrast; legible at small sizes.
-- Light surface with a single soft green glow (or the dark variant).
-- Put only the **wordmark** inside generated imagery — short and correctly spelled.
-
-**Don't**
-- No photos, people, 3D renders, or stock imagery.
-- No multiple competing colors, rainbow gradients, drop shadows, or skeuomorphism.
-- No baked-in body text / taglines inside images (generators garble them) — add real text as
-  HTML/markdown next to the image.
-- No gibberish lettering; if a generator can't spell `ECCOS`, regenerate.
-
-## Layout & formats
-
-- **Hero banner** — ratio ≈ **21:9** (source `2560×1104`). Wordmark left-of-center, motif on the
-  right, generous whitespace. Ship an optimized display copy ≤ `1440px` wide.
-- **Favicon / avatar** — `1:1`, the echo-ripple mark on White or Eccos Green.
-- **In READMEs** — center with `<div align="center">`, always set descriptive `alt` text.
+**Don't**: no flat "green squircle + white glyph" app-icon clichés; no photos of people; no
+competing colors; don't bake taglines/body copy into images (add real text next to them); don't
+use the detailed glass render at tiny sizes — use the flat favicon.
 
 ## Asset generation recipe
 
-The banner was generated with **MeiGen → `gpt-image-2`**, then downscaled. To make matching
-assets, reuse this recipe and just swap the subject line.
+The banner and logomark were generated with **Midjourney V8.1** (via MeiGen), then cropped and
+optimized. To make matching assets, reuse these prompts. *(Premium model — needs purchased
+MeiGen credits.)*
 
-**Settings:** `aspectRatio: "21:9"`, `resolution: "2K"`.
+**Logomark** — `model: midjourney-v8.1`, `aspectRatio: 1:1`, `resolution: 2K`:
 
-**Prompt template:**
+> A premium app icon: an isometric stack of translucent rounded glass tiles and layers with
+> depth, soft reflections and inner glow, in a vibrant emerald-green→teal iridescent gradient,
+> on a deep charcoal background. Ultra-clean, minimal, premium, centered. No text, no letters.
 
-> Wide minimalist hero banner for an open-source developer tool, GitHub README header. Soft
-> off-white / `Paper` background with a gentle WhatsApp-green (`#25D366`) gradient glow in one
-> corner. Bold modern geometric sans-serif wordmark **"ECCOS"** in dark charcoal, perfectly
-> spelled, large, left of center. To the right, **‹swap motif here›** — e.g. a clean line-art
-> *gateway/portal* channeling a stream of rounded message chat bubbles flowing left→right,
-> combined with concentric **echo ripple rings** in WhatsApp green. Flat vector illustration,
-> elegant, generous whitespace, professional, one accent color. No people, no photo, no extra
-> text besides the word ECCOS, no gibberish, correct spelling.
+**Banner** — `model: midjourney-v8.1`, `aspectRatio: 16:9`, `resolution: 2K`:
 
-**Post-process** (downscale + keep the repo lean):
+> Wide hero banner, dark-mode. Deep charcoal background with a soft emerald glow. On the left,
+> a large geometric sans-serif wordmark "ECCOS" in crisp white, perfectly spelled. On the
+> right, glassmorphism: translucent stacked rounded glass tiles with depth, reflections and
+> inner glow, emerald-green→teal iridescent gradient. Ultra-clean, premium, generous negative
+> space. No extra text besides ECCOS.
+
+**Post-process** (macOS, no extra tooling):
 
 ```bash
-sips -Z 1440 source.png --out docs/assets/banner.png
+sips -c 1262 2944 banner.png --out crop.png   # 16:9 → 21:9 hero, centered
+sips -Z 1440 crop.png --out banner-1440.png
+sips -s format jpeg -s formatOptions 82 banner-1440.png --out banner.jpg   # photographic → JPG
+sips -c 1500 1500 logo.png --out icon.png      # drop baked text, square
 ```
 
-> Rule of thumb: keep correctly-spelled text in-image to the **wordmark only**. Everything
-> else (taglines, badges, body copy) is real text placed next to the image.
+> Keep correctly-spelled in-image text to the wordmark only; everything else (taglines, badges)
+> is real text placed next to the image. For the favicon, hand-author the flat layers in SVG.
 
 ## Asset inventory
 
 | Asset | Path | Use |
 |---|---|---|
-| **Logomark** (symbol) | `assets/logo.svg` | "E" chat-bubble mark, green on transparent — README/docs, light or dark |
-| **App icon** | `assets/icon.svg` | Green squircle + white mark; source for avatar & favicon |
-| **Favicon** | `assets/favicon.svg` · `assets/favicon-32.png` · `assets/favicon-16.png` | Browser tab / site icon (SVG + PNG fallbacks) |
-| **Avatar** | `assets/avatar.png` | 512×512 — GitHub / social profile image |
-| **Hero banner** | `assets/banner.png` | README header, 1440×621 |
+| **Hero banner** | `assets/banner.jpg` | README header, 1440×617 (21:9), dark glass |
+| **Logomark / avatar** | `assets/avatar.png` | 512×512 glass stacked-layers — logo & GitHub/social avatar |
+| **Favicon** | `assets/favicon.svg` · `assets/favicon-32.png` · `assets/favicon-16.png` | Flat simplified layers (legible small) |
 
-The icon set is hand-authored **SVG** (exact brand hex, infinitely scalable). PNGs are rasterized
-from the SVGs — regenerate with:
-
-```bash
-qlmanage -t -s 512 -o . icon.svg && sips -Z 512 icon.svg.png --out avatar.png   # macOS
-```
-
-_Full-resolution banner sources are kept outside the repo; regenerate from the recipe above._
+_Full-resolution sources are kept outside the repo; regenerate from the recipe above when needed._

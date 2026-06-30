@@ -1,6 +1,6 @@
 <div align="center">
 
-![Eccos — self-hostable WhatsApp gateway on the official Meta Cloud API](docs/assets/banner.png)
+![Eccos — self-hostable WhatsApp gateway on the official Meta Cloud API](docs/assets/banner.jpg)
 
 <h3>Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API</h3>
 

@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Eccos">
-  <rect x="120" y="120" width="272" height="220" rx="46" fill="#25D366"/>
-  <path d="M176 336 L176 398 L236 340 Z" fill="#25D366"/>
-  <g stroke="#ffffff" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <path d="M200 170 V300"/><path d="M200 170 H322"/><path d="M200 235 H300"/><path d="M200 300 H322"/>
-  </g>
-</svg>
