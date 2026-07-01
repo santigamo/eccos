@@ -10,12 +10,14 @@
     "preview": "vite preview",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/"
   },
   "dependencies": {
     "@eccos/gateway-contract": "workspace:*",
     "@tanstack/react-router": "^1.170.16",
     "@tanstack/react-start": "^1.168.26",
+    "jose": "^6.2.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

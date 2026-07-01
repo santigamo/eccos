@@ -31,6 +31,11 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
   `/connect` (Embedded Signup) and `/dashboard`. Owns `wrangler.jsonc` + `vitest.config.ts`. New
   v1 features live here. Tests in `apps/gateway/tests/` (`*.test.ts` Bun + `tests/worker/*.spec.ts`
   vitest-pool-workers).
+- `apps/dashboard/` (`@eccos/dashboard`) — the **operator console**: a TanStack Start (React) app
+  on Cloudflare Workers that reads the gateway over an **RPC service binding** (`env.GATEWAY`,
+  entrypoint `GatewayRPC`) — the operator API is never exposed as public HTTP. A custom server
+  entry (`src/server.ts`) gates every request behind Cloudflare Access (`src/access.ts`) when
+  configured (no-op in local dev). Owns its own `wrangler.jsonc`. See `apps/dashboard/README.md`.
 - `src/` — the **Bun** self-host target (kept aside, retaken post-v1): Hono app, `bun:sqlite`
   storage, in-process delivery loop, `loadConfig(process.env)` adding `PORT` / `DATABASE_PATH`.
   Dockerised (`Dockerfile` runs `bun run src/index.ts`).

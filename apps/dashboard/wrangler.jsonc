@@ -1,7 +1,10 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "eccos-dashboard",
-  "main": "@tanstack/react-start/server-entry",
+  // Custom server entry (src/server.ts) — wraps the default TanStack Start fetch
+  // handler with the Cloudflare Access JWT gate. TanStack Start also resolves
+  // src/server.ts by convention; pointing `main` here keeps wrangler in sync.
+  "main": "src/server.ts",
   "compatibility_date": "2026-06-12",
   "compatibility_flags": ["nodejs_compat"],
 
@@ -11,6 +14,17 @@
   },
 
   "workers_dev": true,
+
+  // Cloudflare Access gate (defense-in-depth). Both empty = gate DISABLED (local
+  // dev / a deploy not yet behind Access). Set BOTH in production so the Worker
+  // re-verifies the Access JWT and can't be bypassed via the raw workers.dev URL:
+  //   ACCESS_TEAM_DOMAIN — your Zero Trust team domain, e.g. myteam.cloudflareaccess.com
+  //   ACCESS_AUD         — the Access application's Audience (AUD) tag
+  // Non-secret, so they live here (not `wrangler secret`). See README.md.
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  },
 
   // Service binding to the gateway Worker (wrangler name "eccos"), reaching its
   // RPC entrypoint `GatewayRPC`. The dashboard's server functions call

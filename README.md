@@ -149,6 +149,10 @@ The Bun target is the auditable, run-it-anywhere binary. The Workers target trad
 "your box" for zero-ops and a permanent HTTPS URL (no tunnel needed for Meta webhooks), and
 is where the newer v1 features (connect, dashboard) live first.
 
+The **operator console** is a separate Cloudflare Worker in `apps/dashboard/` — a TanStack Start
+(React) app that reads the gateway over an RPC service binding (never public HTTP) and can be
+locked down with Cloudflare Access. See [`apps/dashboard/README.md`](./apps/dashboard/README.md).
+
 ## 🚀 Quickstart — local (Bun)
 
 ```bash

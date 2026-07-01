@@ -24,6 +24,10 @@ Eccos is a **Bun workspace** (`packages/*` + `apps/*`) — a shared pure core + 
 - `apps/gateway/` — the **Cloudflare Workers** target: Hono app, a Durable Object (`EccosGateway`)
   for SQLite storage and Alarms-based forwarding, plus the `/connect` (Embedded Signup) and
   `/dashboard` routes. New v1 features land here first.
+- `apps/dashboard/` (`@eccos/dashboard`) — the **operator console**: a TanStack Start (React) app
+  on Cloudflare Workers that talks to the gateway over an **RPC service binding** (never public
+  HTTP) and re-verifies a Cloudflare Access JWT when placed behind Access. See its own
+  [`apps/dashboard/README.md`](./apps/dashboard/README.md).
 - `src/` — the **Bun** self-host target (kept aside, retaken post-v1): Hono app, `bun:sqlite`
   storage, in-process delivery loop. Built by the `Dockerfile`.
 
