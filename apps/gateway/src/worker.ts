@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { getConfig, getEffectiveConfig } from "./config";
 import { connectRoutes } from "./routes/connect";
-import { dashboardRoutes } from "./routes/dashboard";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
 import { parseMetaWebhook, parseMetaEchoes } from "@eccos/core/parser";
 import { sendMessage } from "@eccos/core/send";
@@ -16,7 +15,6 @@ type Bindings = Env;
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.route("/", connectRoutes());
-app.route("/", dashboardRoutes());
 
 function stub(c: { env: Bindings }) {
   return c.env.ECCOS.get(c.env.ECCOS.idFromName("singleton"));

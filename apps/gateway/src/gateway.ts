@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { signPayload } from "@eccos/core/signature";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
+import type { DeliveryRecord, InboundRow, OperatorCounts, OutboundRow } from "@eccos/gateway-contract";
 
 interface Env {
   SUBSCRIBER_WEBHOOK_URL?: string;
@@ -19,42 +20,6 @@ const FORWARD_FETCH_TIMEOUT_MS = 15_000;
 const ALARM_BATCH = 40;
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const OPERATOR_MAX_PAGE = 200;
-
-/** Operator-API row shapes (full columns), consumed via GatewayRPC. */
-export interface InboundRow {
-  id: number;
-  type: string;
-  transport_message_id: string | null;
-  message_id: string | null;
-  payload: string;
-  received_at: number;
-}
-
-export interface OutboundRow {
-  id: number;
-  transport_message_id: string | null;
-  recipient: string;
-  request: string;
-  status: string;
-  error: string | null;
-  created_at: number;
-}
-
-export interface DeliveryRecord {
-  id: number;
-  status: string;
-  attempts: number;
-  last_error: string | null;
-  next_attempt_at: number;
-  created_at: number;
-  payload: string;
-}
-
-export interface OperatorCounts {
-  inbound: number;
-  outbound: Record<string, number>;
-  deliveries: Record<string, number>;
-}
 
 export class EccosGateway extends DurableObject<Env> {
   sql: SqlStorage;
@@ -173,34 +138,6 @@ export class EccosGateway extends DurableObject<Env> {
     const rows = this.sql.exec(`SELECT value FROM config WHERE key = ?`, key).toArray();
     const row = rows[0];
     return row ? (row.value as string) : null;
-  }
-
-  snapshot(): {
-    outbound: unknown[];
-    inbound: unknown[];
-    deliveries: unknown[];
-  } {
-    return {
-      outbound: this.sql
-        .exec(
-          `SELECT transport_message_id, recipient, status, error, created_at
-         FROM outbound_messages ORDER BY id DESC LIMIT 50`,
-        )
-        .toArray(),
-      inbound: this.sql
-        .exec(
-          `SELECT type, payload, received_at
-         FROM inbound_events ORDER BY id DESC LIMIT 50`,
-        )
-        .toArray(),
-      deliveries: this.sql
-        .exec(
-          `SELECT id, status, attempts, last_error, next_attempt_at, created_at
-         FROM deliveries WHERE status IN ('pending','failed')
-         ORDER BY id DESC LIMIT 50`,
-        )
-        .toArray(),
-    };
   }
 
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---

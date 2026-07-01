@@ -1,0 +1,9 @@
+{
+  "name": "@eccos/gateway-contract",
+  "version": "0.1.0",
+  "description": "Eccos gateway operator RPC contract — types-only, single source of truth for the GatewayRPC surface shared by the gateway and dashboard Workers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

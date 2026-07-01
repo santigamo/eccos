@@ -3,7 +3,7 @@ import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import { EccosGateway } from "../../src/gateway";
-import { basicAuthHeader, metaEnvelope, singletonStub } from "./helpers";
+import { metaEnvelope, singletonStub } from "./helpers";
 
 function mockGraphFetch(): MockInstance<typeof fetch> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -186,28 +186,5 @@ describe("routes", () => {
       messageId: "wamid.SMOKE",
       text: "Smoke test",
     });
-  });
-});
-
-describe("dashboard route", () => {
-  it("GET /dashboard without auth returns 401", async () => {
-    const res = await exports.default.fetch("http://example.com/dashboard");
-    expect(res.status).toBe(401);
-    expect(res.headers.get("www-authenticate")).toMatch(/Basic/i);
-  });
-
-  it("GET /dashboard with basic auth returns health badge", async () => {
-    mockGraphFetch();
-
-    const res = await exports.default.fetch("http://example.com/dashboard", {
-      headers: { authorization: basicAuthHeader("eccos", env.ECCOS_API_KEY) },
-    });
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toMatch(/healthy|degraded|unhealthy/i);
-    expect(html).toContain("Outbound");
-    expect(html).toContain("Inbound");
-    expect(html).toContain("Deliveries");
-    expect(html).toContain("Templates");
   });
 });

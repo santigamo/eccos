@@ -1,11 +1,20 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getEffectiveConfig } from "./config";
 import { listTemplates } from "@eccos/core/templates";
-import type { DeliveryRecord, InboundRow, OperatorCounts, OutboundRow } from "./gateway";
+import type {
+  DeliveryListOpts,
+  DeliveryRecord,
+  GatewayApi,
+  GatewayStatus,
+  Health,
+  InboundRow,
+  ListOpts,
+  OperatorCounts,
+  OutboundRow,
+  TemplatesResult,
+} from "@eccos/gateway-contract";
 
-type HealthStatus = "healthy" | "degraded" | "unhealthy";
-
-function healthFromCounts(counts: OperatorCounts): HealthStatus {
+function healthFromCounts(counts: OperatorCounts): Health {
   if ((counts.deliveries.failed ?? 0) > 0) return "unhealthy";
   if ((counts.deliveries.pending ?? 0) > 10 || (counts.outbound.failed ?? 0) > 0) return "degraded";
   return "healthy";
@@ -20,23 +29,12 @@ function healthFromCounts(counts: OperatorCounts): HealthStatus {
  * thin readers plus a retry trigger. The public HTTP surface (`/v1/messages`,
  * `/v1/templates`, `/webhooks/meta`) is unchanged and stays in the Hono app.
  */
-export class GatewayRPC extends WorkerEntrypoint<Env> {
+export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   private get stub() {
     return this.env.ECCOS.get(this.env.ECCOS.idFromName("singleton"));
   }
 
-  async getStatus(): Promise<{
-    name: string;
-    version: string;
-    health: HealthStatus;
-    connection: {
-      wabaId: string | null;
-      phoneNumberId: string | null;
-      displayPhone: string | null;
-      connectedAt: string | null;
-    };
-    counts: OperatorCounts;
-  }> {
+  async getStatus(): Promise<GatewayStatus> {
     const stub = this.stub;
     const [counts, config] = await Promise.all([stub.getCounts(), stub.getAllConfig()]);
     return {
@@ -57,15 +55,15 @@ export class GatewayRPC extends WorkerEntrypoint<Env> {
     return this.stub.getAllConfig();
   }
 
-  listInbound(opts: { limit?: number; before?: number } = {}): Promise<InboundRow[]> {
+  listInbound(opts: ListOpts = {}): Promise<InboundRow[]> {
     return this.stub.listInbound(opts);
   }
 
-  listOutbound(opts: { limit?: number; before?: number } = {}): Promise<OutboundRow[]> {
+  listOutbound(opts: ListOpts = {}): Promise<OutboundRow[]> {
     return this.stub.listOutbound(opts);
   }
 
-  listDeliveries(opts: { status?: string; limit?: number; before?: number } = {}): Promise<DeliveryRecord[]> {
+  listDeliveries(opts: DeliveryListOpts = {}): Promise<DeliveryRecord[]> {
     return this.stub.listDeliveries(opts);
   }
 
@@ -78,7 +76,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> {
     return this.stub.retryDelivery(id);
   }
 
-  async listTemplates(limit = 100): Promise<{ ok: true; data: unknown } | { ok: false; error: unknown }> {
+  async listTemplates(limit = 100): Promise<TemplatesResult> {
     const cfg = await getEffectiveConfig(this.env, this.stub);
     return listTemplates(cfg, limit);
   }
