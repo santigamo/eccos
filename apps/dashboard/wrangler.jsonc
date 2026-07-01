@@ -1,0 +1,26 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eccos-dashboard",
+  "main": "@tanstack/react-start/server-entry",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  "workers_dev": true,
+
+  // Service binding to the gateway Worker (wrangler name "eccos"), reaching its
+  // RPC entrypoint `GatewayRPC`. The dashboard's server functions call
+  // `env.GATEWAY.getStatus()` over this binding — the gateway's operator API is
+  // never exposed as public HTTP.
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "eccos",
+      "entrypoint": "GatewayRPC"
+    }
+  ]
+}
