@@ -1,7 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
 import { signPayload } from "@eccos/core/signature";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import type { DeliveryRecord, InboundRow, OperatorCounts, OutboundRow } from "@eccos/gateway-contract";
+import type {
+  DeliveryRecord,
+  InboundRow,
+  OperatorCounts,
+  OutboundRow,
+  SetSubscriberConfigInput,
+  SubscriberConfig,
+} from "@eccos/gateway-contract";
 
 interface Env {
   SUBSCRIBER_WEBHOOK_URL?: string;
@@ -138,6 +145,21 @@ export class EccosGateway extends DurableObject<Env> {
     const rows = this.sql.exec(`SELECT value FROM config WHERE key = ?`, key).toArray();
     const row = rows[0];
     return row ? (row.value as string) : null;
+  }
+
+  /** Operator-visible forwarding target: DO config first, env fallback. Never exposes the secret. */
+  getSubscriberConfig(): SubscriberConfig {
+    const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? this.env.SUBSCRIBER_WEBHOOK_URL ?? null;
+    const hasSecret = Boolean(this.getConfigValue("SUBSCRIBER_SECRET") ?? this.env.SUBSCRIBER_SECRET);
+    return { url, hasSecret };
+  }
+
+  /** Rotate the forwarding target. Only overwrites the secret when a non-empty one is provided. */
+  setSubscriberConfig(input: SetSubscriberConfigInput): void {
+    this.saveConfig({ SUBSCRIBER_WEBHOOK_URL: input.url });
+    if (typeof input.secret === "string" && input.secret.length > 0) {
+      this.saveConfig({ SUBSCRIBER_SECRET: input.secret });
+    }
   }
 
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---
@@ -285,11 +307,12 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   private async forwardOne(payload: string): Promise<boolean> {
-    const url = this.env.SUBSCRIBER_WEBHOOK_URL;
+    const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? this.env.SUBSCRIBER_WEBHOOK_URL;
+    const secret = this.getConfigValue("SUBSCRIBER_SECRET") ?? this.env.SUBSCRIBER_SECRET;
     if (!url) return false;
     const headers: Record<string, string> = { "content-type": "application/json" };
-    if (this.env.SUBSCRIBER_SECRET) {
-      headers["x-eccos-signature"] = await signPayload(payload, this.env.SUBSCRIBER_SECRET);
+    if (secret) {
+      headers["x-eccos-signature"] = await signPayload(payload, secret);
     }
     let firstType = "events";
     try {

@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getEffectiveConfig } from "./config";
+import { subscribeApp } from "./meta/connect-api";
 import { listTemplates } from "@eccos/core/templates";
 import type {
   DeliveryListOpts,
@@ -11,6 +12,9 @@ import type {
   ListOpts,
   OperatorCounts,
   OutboundRow,
+  ResubscribeResult,
+  SetSubscriberConfigInput,
+  SubscriberConfig,
   TemplatesResult,
 } from "@eccos/gateway-contract";
 
@@ -79,5 +83,38 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async listTemplates(limit = 100): Promise<TemplatesResult> {
     const cfg = await getEffectiveConfig(this.env, this.stub);
     return listTemplates(cfg, limit);
+  }
+
+  /** Operator-visible forwarding target (DO config first, env fallback). Never returns the secret. */
+  getSubscriberConfig(): Promise<SubscriberConfig> {
+    return this.stub.getSubscriberConfig();
+  }
+
+  /** Rotate the forwarding target. Persists to DO config; the secret is only stored when provided. */
+  async setSubscriberConfig(input: SetSubscriberConfigInput): Promise<{ ok: true }> {
+    await this.stub.setSubscriberConfig(input);
+    return { ok: true };
+  }
+
+  /**
+   * Re-subscribe this app to the WABA's webhooks on Meta. The external call lives here
+   * (not the DO) so the DO stays the state owner. Uses the persisted META_ACCESS_TOKEN —
+   * the transient Embedded Signup business token is never stored — and the configured
+   * callback URL (DO config `META_WEBHOOK_CALLBACK_URL`, env fallback).
+   */
+  async resubscribe(): Promise<ResubscribeResult> {
+    try {
+      const cfg = await getEffectiveConfig(this.env, this.stub);
+      const callbackUrl =
+        (await this.stub.getConfigValue("META_WEBHOOK_CALLBACK_URL")) ??
+        (this.env as { META_WEBHOOK_CALLBACK_URL?: string }).META_WEBHOOK_CALLBACK_URL;
+      if (!callbackUrl) {
+        return { ok: false, error: "resubscribe: META_WEBHOOK_CALLBACK_URL is not configured" };
+      }
+      await subscribeApp(cfg, cfg.META_WABA_ID, cfg.META_ACCESS_TOKEN, callbackUrl);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
   }
 }

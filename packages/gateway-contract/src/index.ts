@@ -58,6 +58,20 @@ export type ListOpts = { limit?: number; before?: number };
 
 export type DeliveryListOpts = ListOpts & { status?: string };
 
+/** Outbound-forwarding target as seen by the operator. The secret is NEVER exposed. */
+export interface SubscriberConfig {
+  url: string | null;
+  hasSecret: boolean;
+}
+
+/** Rotate the forwarding target. `url` is always set; `secret` is only set when provided. */
+export interface SetSubscriberConfigInput {
+  url: string;
+  secret?: string;
+}
+
+export type ResubscribeResult = { ok: true } | { ok: false; error: string };
+
 export interface GatewayApi {
   getStatus(): Promise<GatewayStatus>;
   getConfig(): Promise<Record<string, string>>;
@@ -67,4 +81,7 @@ export interface GatewayApi {
   getDelivery(id: number): Promise<DeliveryRecord | null>;
   retryDelivery(id: number): Promise<{ ok: boolean; previousStatus: string | null }>;
   listTemplates(limit?: number): Promise<TemplatesResult>;
+  getSubscriberConfig(): Promise<SubscriberConfig>;
+  setSubscriberConfig(input: SetSubscriberConfigInput): Promise<{ ok: true }>;
+  resubscribe(): Promise<ResubscribeResult>;
 }
