@@ -3,15 +3,37 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { listDeliveries, retryDelivery } from "../server/gateway";
 import { Page, StatusTag, Unreachable, fmtTs, styles } from "../ui";
 
+// Matches the gateway's default operator page size (clampPage → 50). A full page
+// means there may be older rows to page into; a short page is the end.
+const PAGE_SIZE = 50;
+// The delivery lifecycle vocabulary, so the filter is stable even when the
+// current (server-filtered) page doesn't contain every status.
+const KNOWN_STATUSES = ["pending", "delivered", "failed"] as const;
+
+type DeliveriesSearch = { status?: string; before?: number };
+
 export const Route = createFileRoute("/deliveries")({
-  loader: () => listDeliveries(),
+  validateSearch: (search: Record<string, unknown>): DeliveriesSearch => {
+    const status =
+      typeof search.status === "string" && search.status.length > 0
+        ? search.status
+        : undefined;
+    const beforeNum = Number(search.before);
+    const before =
+      Number.isFinite(beforeNum) && beforeNum > 0 ? Math.floor(beforeNum) : undefined;
+    return { status, before };
+  },
+  loaderDeps: ({ search }) => ({ status: search.status, before: search.before }),
+  loader: ({ deps }) =>
+    listDeliveries({ data: { status: deps.status, before: deps.before } }),
   component: DeliveriesPage,
 });
 
 function DeliveriesPage() {
   const result = Route.useLoaderData();
+  const { status, before } = Route.useSearch();
+  const navigate = Route.useNavigate();
   const router = useRouter();
-  const [filter, setFilter] = useState("all");
   const [retrying, setRetrying] = useState<number | null>(null);
 
   if (!result.ok) {
@@ -23,8 +45,17 @@ function DeliveriesPage() {
   }
 
   const rows = result.data;
-  const statuses = Array.from(new Set(rows.map((d) => d.status))).sort();
-  const visible = filter === "all" ? rows : rows.filter((d) => d.status === filter);
+  const activeStatus = status ?? "all";
+  const statuses = Array.from(
+    new Set<string>([
+      ...KNOWN_STATUSES,
+      ...rows.map((d) => d.status),
+      ...(status ? [status] : []),
+    ]),
+  ).sort();
+
+  const oldestId = rows.at(-1)?.id;
+  const canLoadOlder = rows.length === PAGE_SIZE && oldestId !== undefined;
 
   async function onRetry(id: number) {
     setRetrying(id);
@@ -36,17 +67,27 @@ function DeliveriesPage() {
     }
   }
 
-  const filterControl =
-    statuses.length > 0 ? (
-      <select style={styles.select} value={filter} onChange={(e) => setFilter(e.target.value)}>
-        <option value="all">all statuses</option>
-        {statuses.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </select>
-    ) : undefined;
+  function onFilterChange(value: string) {
+    // Switching filter resets pagination back to the latest page.
+    navigate({
+      search: (prev) => ({ ...prev, status: value === "all" ? undefined : value, before: undefined }),
+    });
+  }
+
+  const filterControl = (
+    <select
+      style={styles.select}
+      value={activeStatus}
+      onChange={(e) => onFilterChange(e.target.value)}
+    >
+      <option value="all">all statuses</option>
+      {statuses.map((s) => (
+        <option key={s} value={s}>
+          {s}
+        </option>
+      ))}
+    </select>
+  );
 
   return (
     <Page title="Deliveries" actions={filterControl}>
@@ -63,14 +104,16 @@ function DeliveriesPage() {
             </tr>
           </thead>
           <tbody>
-            {visible.length === 0 ? (
+            {rows.length === 0 ? (
               <tr>
                 <td style={styles.empty} colSpan={6}>
-                  {rows.length === 0 ? "No deliveries." : "No deliveries match this filter."}
+                  {status || before !== undefined
+                    ? "No deliveries match this view."
+                    : "No deliveries."}
                 </td>
               </tr>
             ) : (
-              visible.map((d) => (
+              rows.map((d) => (
                 <tr key={d.id}>
                   <td style={styles.tdNum}>{d.id}</td>
                   <td style={styles.td}>
@@ -95,6 +138,36 @@ function DeliveriesPage() {
           </tbody>
         </table>
       </div>
+
+      <div style={pager}>
+        {before !== undefined ? (
+          <button
+            type="button"
+            style={styles.button}
+            onClick={() => navigate({ search: (prev) => ({ ...prev, before: undefined }) })}
+          >
+            ← Latest
+          </button>
+        ) : null}
+        <button
+          type="button"
+          style={styles.button}
+          disabled={!canLoadOlder}
+          onClick={() =>
+            oldestId !== undefined &&
+            navigate({ search: (prev) => ({ ...prev, before: oldestId }) })
+          }
+        >
+          Load older →
+        </button>
+      </div>
     </Page>
   );
 }
+
+const pager = {
+  display: "flex",
+  gap: 8,
+  marginTop: 14,
+  justifyContent: "flex-end",
+} as const;

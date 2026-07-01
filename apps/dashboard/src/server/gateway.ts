@@ -1,11 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
 import type {
+  DeliveryListOpts,
   DeliveryRecord,
   GatewayApi,
   GatewayStatus,
   InboundRow,
   OutboundRow,
+  ResubscribeResult,
+  SubscriberConfig,
 } from "@eccos/gateway-contract";
 
 // Re-export the shared contract types the routes render against, so the whole
@@ -18,6 +21,9 @@ export type {
   InboundRow,
   OperatorCounts,
   OutboundRow,
+  ResubscribeResult,
+  SetSubscriberConfigInput,
+  SubscriberConfig,
 } from "@eccos/gateway-contract";
 
 /**
@@ -45,13 +51,14 @@ export type GatewayStatusResult =
 /**
  * Read the `GATEWAY` service binding and invoke the gateway's RPC entrypoint.
  *
- * `wrangler types` types `env.GATEWAY` as a bare cross-worker `Service` it can't
- * resolve to `GatewayRPC`, so we narrow it to the shared `GatewayApi` contract —
- * the same interface the gateway's `GatewayRPC implements`. This is the single
- * type that ties the two Workers together.
+ * `env.GATEWAY` is re-typed as a `Service` over the shared `GatewayApi` contract
+ * in `src/env.d.ts` — the same interface the gateway's `GatewayRPC implements` —
+ * so no cast is needed here. That declaration is the single type tying the two
+ * Workers together. The runtime `if (!gateway)` guard still covers a genuinely
+ * missing binding (e.g. running the dashboard without the gateway).
  */
 async function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<Result<T>> {
-  const gateway = (env as unknown as { GATEWAY?: GatewayApi }).GATEWAY;
+  const gateway = env.GATEWAY;
   if (!gateway) {
     return { ok: false, error: "GATEWAY service binding is not configured" };
   }
@@ -70,9 +77,12 @@ export const getGatewayStatus = createServerFn({ method: "GET" }).handler(
   },
 );
 
-export const listDeliveries = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<DeliveryRecord[]>> => withGateway((gateway) => gateway.listDeliveries()),
-);
+export const listDeliveries = createServerFn({ method: "GET" })
+  .validator((opts: DeliveryListOpts | undefined) => opts)
+  .handler(
+    ({ data }): Promise<Result<DeliveryRecord[]>> =>
+      withGateway((gateway) => gateway.listDeliveries(data)),
+  );
 
 export const listInbound = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<InboundRow[]>> => withGateway((gateway) => gateway.listInbound()),
@@ -93,3 +103,29 @@ export const retryDelivery = createServerFn({ method: "POST" })
     ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> =>
       withGateway((gateway) => gateway.retryDelivery(data)),
   );
+
+// --- Operator actions (settings page) ---
+
+/** Read the current outbound-forwarding target. The secret is never exposed. */
+export const getSubscriberConfig = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<SubscriberConfig>> =>
+    withGateway((gateway) => gateway.getSubscriberConfig()),
+);
+
+/** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
+export const setSubscriberConfig = createServerFn({ method: "POST" })
+  .validator((input: { url: string; secret?: string }) => input)
+  .handler(
+    ({ data }): Promise<Result<{ ok: true }>> =>
+      withGateway((gateway) => gateway.setSubscriberConfig(data)),
+  );
+
+/**
+ * Re-run the Meta webhook subscription handshake. Two layers: the outer
+ * `Result` reports gateway reachability; the inner `ResubscribeResult` reports
+ * whether Meta accepted the (re)subscription.
+ */
+export const resubscribe = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<ResubscribeResult>> =>
+    withGateway((gateway) => gateway.resubscribe()),
+);

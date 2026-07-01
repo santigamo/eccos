@@ -33,6 +33,7 @@ const NAV_LINKS = [
   { to: "/inbound", label: "Inbound", exact: false },
   { to: "/outbound", label: "Outbound", exact: false },
   { to: "/templates", label: "Templates", exact: false },
+  { to: "/settings", label: "Settings", exact: false },
 ] as const;
 
 function Nav() {
