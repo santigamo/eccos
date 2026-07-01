@@ -1,6 +1,6 @@
 # Production Readiness
 
-> Snapshot: **2026-07-01**, on top of `main@bf3009b` (working tree, pre-commit).
+> Snapshot: **2026-07-01**, `main@b1b20fc` plus the round-2 lint/hardening follow-up (committed).
 > Owner: Santi (@santigamo). This file is the single source of truth for Eccos's
 > production-readiness posture: profile, per-artifact claims, gate status, waivers,
 > evidence, and remaining gaps. Update it whenever a gate's status changes.
@@ -33,7 +33,7 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 
 | # | Gate | Status | Notes |
 |---|------|--------|-------|
-| 1 | Change control / CI | 🟡 | Dashboard now covered in CI (`eccos-a5r`), least-privilege `permissions`, Biome wired **non-blocking**. No automated prod-deploy gate (manual by design). Residual: make lint blocking after cleanup. |
+| 1 | Change control / CI | ✅ | Dashboard covered in CI (`eccos-a5r`), least-privilege `permissions`, **Biome lint blocking and green** (`eccos-bwr`). No automated prod-deploy gate (manual by design). |
 | 2 | Setup & auth surfaces | 🟡 | `/connect` is now fail-closed (`eccos-13d`). Dashboard edge auth (Cloudflare Access) is code-ready but **not yet enabled at the account level** — 🕓 waived, tracked `eccos-45t`. |
 | 3 | Operational readiness | 🟡 | `/ready` deep check + structured JSON logging w/ correlation IDs + `docs/operations.md` (`eccos-ggy`). Residual: alerting/monitoring not wired. |
 | 4 | Packaging contract | ➖ | **N/A.** `@eccos/core` and `@eccos/gateway-contract` are internal `workspace:*` packages with no publish intent for v1 (`eccos-1js`, decided). Re-open if they become public SDKs. |
@@ -50,12 +50,12 @@ All gates below were run locally on the working tree (post-remediation):
 | Check | Command | Result |
 |-------|---------|--------|
 | Types | `bun run typecheck` | ✅ exit 0 (worker types regenerated w/ `RETENTION_DAYS`) |
-| Unit (Bun) | `bun run test` | ✅ 41 pass / 4 files |
+| Unit (Bun) | `bun run test` | ✅ 42 pass / 4 files |
 | Workers | `bun run test:workers` | ✅ 41 pass / 8 files |
 | Dashboard types | `apps/dashboard: bun run typecheck` | ✅ exit 0 |
 | Dashboard tests | `apps/dashboard: bun run test` | ✅ 35 pass / 3 files |
 | Dashboard build | `apps/dashboard: bunx vite build` | ✅ built |
-| Lint | `bun run lint` (Biome) | 🟡 45 findings, **non-blocking** in CI (pre-existing style; cleanup is a follow-up) |
+| Lint | `bun run lint` (Biome) | ✅ 0 findings — **blocking** in CI (`eccos-bwr`) |
 
 **Not run:** no `wrangler deploy`, no live post-deploy smoke, no restore drill. Those remain
 unproven and are called out in Gate 9 / Gate 5.
@@ -66,8 +66,6 @@ unproven and are called out in Gate 9 / Gate 5.
   level. Defense-in-depth JWT re-verification exists in code (`apps/dashboard/src/access.ts`)
   but is a no-op until `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are set. **Condition:** do not
   expose the dashboard on a public URL until `eccos-45t` is done.
-- **W-2 — Biome lint non-blocking (Gate 1).** Enforced as `continue-on-error` to avoid
-  failing CI on 45 pre-existing style findings. **Condition:** clean up, then flip to blocking.
 
 ## Remaining gaps (open beads)
 

@@ -17,12 +17,13 @@ export async function exchangeCodeForToken(
   code: string,
   redirectUri?: string,
 ): Promise<string> {
-  const url =
-    `${graphBaseUrl(cfg)}/oauth/access_token` +
-    `?client_id=${encodeURIComponent(cfg.META_APP_ID ?? "")}` +
-    `&client_secret=${encodeURIComponent(cfg.META_APP_SECRET)}` +
-    `&code=${encodeURIComponent(code)}` +
-    (redirectUri ? `&redirect_uri=${encodeURIComponent(redirectUri)}` : "");
+  const query = [
+    `client_id=${encodeURIComponent(cfg.META_APP_ID ?? "")}`,
+    `client_secret=${encodeURIComponent(cfg.META_APP_SECRET)}`,
+    `code=${encodeURIComponent(code)}`,
+  ];
+  if (redirectUri) query.push(`redirect_uri=${encodeURIComponent(redirectUri)}`);
+  const url = `${graphBaseUrl(cfg)}/oauth/access_token?${query.join("&")}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   const json = (await res.json().catch(() => null)) as { access_token?: string } | null;
   if (!res.ok || !json?.access_token) throw graphError("exchange", res, json);

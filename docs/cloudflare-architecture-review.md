@@ -44,7 +44,7 @@ Citations:
 
 - Rate limiting: **Resolved (2026-06-30, `eccos-36z`).** On top of the static `ECCOS_API_KEY` bearer auth, `POST /v1/messages` now passes through the native Cloudflare Rate Limiting binding (`SEND_RATE_LIMITER`, 60/min, defensive 429) — native abuse/spike protection with no external infra: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
 - Dead-letter queue: failed subscriber forwarding attempts are retried and eventually pruned after retention, but exhausted deliveries are not separated into a DLQ for inspection or replay. Queues would provide this natively: https://developers.cloudflare.com/queues/configuration/dead-letter-queues/
-- Dashboard auth: the `/dashboard` surface is currently a self-hosted HTTP app concern. Cloudflare Zero Trust Access is a candidate for putting stronger auth in front of the dashboard without adding application-local user management.
+- Dashboard auth: **Implemented in code (`apps/dashboard`).** The operator console is now a separate Worker that reaches the gateway over a private RPC service binding (never public HTTP) and re-verifies a Cloudflare Access JWT on every request (`apps/dashboard/src/access.ts`), enforced whenever `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are set. The remaining step is enabling the account-level Zero Trust Access application (`eccos-45t`); until that is done a bare deploy leaves the vars empty and is therefore unauthenticated, so do not expose it publicly.
 
 ## Roadmap Storage Guidance
 

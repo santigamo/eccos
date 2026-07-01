@@ -16,6 +16,7 @@
       "*.db",
       "worker-configuration.d.ts",
       "**/worker-configuration.d.ts",
+      "**/routeTree.gen.ts",
       "bun.lock",
       ".beads"
     ]
@@ -23,7 +24,10 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "style": {
+        "noUnusedTemplateLiteral": "off"
+      }
     }
   },
   "formatter": {
@@ -37,5 +41,17 @@
   },
   "organizeImports": {
     "enabled": false
-  }
+  },
+  "overrides": [
+    {
+      "include": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/tests/**"],
+      "linter": {
+        "rules": {
+          "style": { "noNonNullAssertion": "off" },
+          "suspicious": { "noExplicitAny": "off" },
+          "performance": { "noDelete": "off" }
+        }
+      }
+    }
+  ]
 }

@@ -23,10 +23,10 @@ export async function verifyMetaSignature(
   appSecret: string,
 ): Promise<boolean> {
   if (!header || !header.startsWith("sha256=")) return false;
-  const expected = "sha256=" + (await hmacSha256Hex(appSecret, rawBody));
+  const expected = `sha256=${await hmacSha256Hex(appSecret, rawBody)}`;
   return constantTimeEqual(header, expected);
 }
 
 export async function signPayload(rawBody: string, secret: string): Promise<string> {
-  return "sha256=" + (await hmacSha256Hex(secret, rawBody));
+  return `sha256=${await hmacSha256Hex(secret, rawBody)}`;
 }

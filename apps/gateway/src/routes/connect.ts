@@ -194,11 +194,13 @@ export function connectRoutes() {
       return c.json({ ok: false, error: "unauthorized" }, 401);
     }
 
-    const { code, waba_id, redirect_uri } = await c.req.json<{
-      code?: string;
-      waba_id?: string;
-      redirect_uri?: string;
-    }>();
+    let body: { code?: string; waba_id?: string; redirect_uri?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ ok: false, error: "invalid JSON body" }, 400);
+    }
+    const { code, waba_id, redirect_uri } = body;
     if (!code) return c.json({ ok: false, error: "missing code" }, 400);
     const result = await exchangeAndPersist(c, code, waba_id, redirect_uri);
     return c.json(result, result.ok ? 200 : 502);

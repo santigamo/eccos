@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { signPayload } from "@eccos/core/signature";
-import { EccosGateway } from "../../src/gateway";
+import type { EccosGateway } from "../../src/gateway";
 import { metaEnvelope, singletonStub } from "./helpers";
 
 function mockGraphFetch(): MockInstance<typeof fetch> {

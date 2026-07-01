@@ -41,8 +41,4 @@ jobs:
           bunx vite build
 
       - name: Lint (Biome)
-        # Biome was just introduced (recommended rules) and the existing tree has not been
-        # fully audited/reformatted against it yet. Non-blocking until that follow-up lands
-        # (see bd issue tracker); flip this off once the repo is clean under `bun run lint`.
-        continue-on-error: true
         run: bun run lint

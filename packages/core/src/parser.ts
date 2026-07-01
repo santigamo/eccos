@@ -169,12 +169,13 @@ export function parseMetaEchoes(payload: unknown): WhatsAppCallbackEvent[] {
   const entries = Array.isArray(root.entry) ? root.entry : [];
   const events: WhatsAppCallbackEvent[] = [];
   for (const entry of entries) {
-    const changes = Array.isArray(asRecord(entry)?.changes) ? (asRecord(entry)!.changes as unknown[]) : [];
+    const entryRec = asRecord(entry);
+    const changes = Array.isArray(entryRec?.changes) ? (entryRec?.changes as unknown[]) : [];
     for (const change of changes) {
       const cr = asRecord(change);
       if (cr?.field !== "smb_message_echoes") continue;
       const value = asRecord(cr?.value);
-      const echoes = Array.isArray(value?.message_echoes) ? (value!.message_echoes as unknown[]) : [];
+      const echoes = Array.isArray(value?.message_echoes) ? (value?.message_echoes as unknown[]) : [];
       for (const e of echoes) {
         const rec = asRecord(e);
         if (!rec) continue;

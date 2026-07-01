@@ -250,6 +250,22 @@ describe("POST /connect/exchange operator auth (F4b, route-level)", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("returns 400 for a malformed JSON body with valid auth (no config write)", async () => {
+    const app = connectRoutes();
+    const calls: Record<string, string>[] = [];
+    const res = await app.request(
+      "http://localhost/connect/exchange",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${TEST_API_KEY}` },
+        body: "{ not valid json",
+      },
+      makeEnv(calls),
+    );
+    expect(res.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
   it("allows the exchange with a valid Bearer API key (happy path)", async () => {
     globalThis.fetch = mockMetaFetch();
     const app = connectRoutes();
