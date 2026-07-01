@@ -40,6 +40,9 @@
 
   "vars": {
     "META_GRAPH_VERSION": "v24.0",
-    "FORWARD_MAX_ATTEMPTS": "6"
+    "FORWARD_MAX_ATTEMPTS": "6",
+    // Days to keep delivered/failed deliveries, inbound_events, and outbound_messages
+    // before the DO alarm() prunes them. Optional; the DO falls back to 30 when unset.
+    "RETENTION_DAYS": "30"
   }
 }

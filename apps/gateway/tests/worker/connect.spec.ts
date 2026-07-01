@@ -30,7 +30,10 @@ describe("POST /connect/exchange", () => {
 
     const res = await exports.default.fetch("http://example.com/connect/exchange", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${env.ECCOS_API_KEY}`,
+      },
       body: JSON.stringify({ code: "oauth-code", waba_id: "WABA123" }),
     });
     expect(res.status).toBe(200);

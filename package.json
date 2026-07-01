@@ -33,6 +33,8 @@
     "test": "bun test packages/core/tests/parser.test.ts packages/core/tests/signature.test.ts apps/gateway/tests/connect-api.test.ts apps/gateway/tests/worker-config.test.ts",
     "test:workers": "cd apps/gateway && vitest run",
     "test:all": "bun run test && bun run test:workers",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
     "deploy": "cd apps/gateway && wrangler deploy",
     "cf-types": "cd apps/gateway && wrangler types",
     "dev:worker": "cd apps/gateway && wrangler dev"
@@ -43,6 +45,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "1.9.4",
     "@cloudflare/vitest-pool-workers": "^0.16.9",
     "@cloudflare/workers-types": "^4.20250612.0",
     "@types/bun": "^1.1.14",

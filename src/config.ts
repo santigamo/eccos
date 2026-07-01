@@ -4,6 +4,9 @@ import { coreSchema, graphBaseUrl as coreGraphBaseUrl } from "@eccos/core/config
 const bunSchema = coreSchema.extend({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_PATH: z.string().min(1).default("./data/eccos.db"),
+  // Days to keep delivered/failed deliveries, inbound_events, and outbound_messages
+  // before the delivery loop prunes them. Mirrors the Workers target's RETENTION_DAYS.
+  RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 });
 export type Config = z.infer<typeof bunSchema>;
 export const graphBaseUrl = coreGraphBaseUrl;

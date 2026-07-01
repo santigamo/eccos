@@ -1,8 +1,59 @@
 import { Hono, type Context } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { getConfig } from "../config";
 import { exchangeCodeForToken, findWabaPhoneNumbers, listPhoneNumbers, subscribeApp } from "../meta/connect-api";
+import { constantTimeEqual } from "@eccos/core/signature";
 
 type ConnectContext = Context<{ Bindings: Env }>;
+
+/** Short-lived cookie carrying the OAuth `state` for the GET /connect CSRF check (F4a). */
+const STATE_COOKIE = "eccos_connect_state";
+const STATE_COOKIE_MAX_AGE_SECONDS = 300;
+
+/**
+ * The Meta redirect back to /connect is a top-level GET navigation, so a
+ * `SameSite=Lax` cookie is sent along with it while still blocking CSRF forms
+ * (POST) and cross-site subresource requests.
+ */
+function setOAuthStateCookie(c: ConnectContext, state: string): void {
+  setCookie(c, STATE_COOKIE, state, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/connect",
+    maxAge: STATE_COOKIE_MAX_AGE_SECONDS,
+  });
+}
+
+function clearOAuthStateCookie(c: ConnectContext): void {
+  deleteCookie(c, STATE_COOKIE, { path: "/connect" });
+}
+
+/** Constant-time comparison; missing query/cookie state always fails closed. */
+export function oauthStateIsValid(queryState: string | null, cookieState: string | undefined): boolean {
+  if (!queryState || !cookieState) return false;
+  return constantTimeEqual(queryState, cookieState);
+}
+
+/** Mirrors the /v1/* auth check in worker.ts: Bearer prefix, else the raw x-api-key header. */
+export function extractApiKey(
+  authorizationHeader: string | undefined,
+  apiKeyHeader: string | undefined,
+): string | undefined {
+  if (authorizationHeader?.startsWith("Bearer ")) return authorizationHeader.slice(7);
+  return apiKeyHeader;
+}
+
+/** Same fail-closed contract as the /v1/* gate: no key, or a mismatching key, is unauthorized. */
+export function isAuthorized(
+  authorizationHeader: string | undefined,
+  apiKeyHeader: string | undefined,
+  expectedKey: string,
+): boolean {
+  const key = extractApiKey(authorizationHeader, apiKeyHeader);
+  if (!key) return false;
+  return constantTimeEqual(key, expectedKey);
+}
 
 type ExchangeResult =
   | {
@@ -86,6 +137,12 @@ export function connectRoutes() {
     const redirectUri = new URL("/connect", c.req.url).href;
     const code = url.searchParams.get("code");
     if (code) {
+      const queryState = url.searchParams.get("state");
+      const cookieState = getCookie(c, STATE_COOKIE);
+      clearOAuthStateCookie(c);
+      if (!oauthStateIsValid(queryState, cookieState)) {
+        return c.html(resultPage({ ok: false, error: "invalid or missing OAuth state" }), 400);
+      }
       const result = await exchangeAndPersist(c, code, undefined, redirectUri);
       return c.html(resultPage(result), result.ok ? 200 : 502);
     }
@@ -99,13 +156,15 @@ export function connectRoutes() {
     const cfg = getConfig(c.env);
     const appId = cfg.META_APP_ID ?? "";
     const configId = cfg.META_ES_CONFIG_ID ?? "";
+    const state = crypto.randomUUID();
+    setOAuthStateCookie(c, state);
     const params = new URLSearchParams({
       client_id: appId,
       redirect_uri: redirectUri,
       response_type: "code",
       config_id: configId,
       override_default_response_type: "true",
-      state: crypto.randomUUID(),
+      state,
     });
     params.set(
       "extras",
@@ -126,6 +185,15 @@ export function connectRoutes() {
   });
 
   app.post("/connect/exchange", async (c) => {
+    // Public-network reachable, but mutates the connected WABA/phone config (F4b):
+    // gate it exactly like /v1/* in worker.ts before touching exchangeAndPersist.
+    const cfg = getConfig(c.env);
+    const authorizationHeader = c.req.header("authorization") ?? undefined;
+    const apiKeyHeader = c.req.header("x-api-key") ?? undefined;
+    if (!isAuthorized(authorizationHeader, apiKeyHeader, cfg.ECCOS_API_KEY)) {
+      return c.json({ ok: false, error: "unauthorized" }, 401);
+    }
+
     const { code, waba_id, redirect_uri } = await c.req.json<{
       code?: string;
       waba_id?: string;

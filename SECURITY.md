@@ -3,6 +3,11 @@
 Eccos handles credentials for the Meta WhatsApp Cloud API and verifies signed webhooks, so
 we take security seriously.
 
+For a deeper, code-grounded write-up of assets, trust boundaries, attack surfaces, and residual
+risks, see [`docs/threat-model.md`](docs/threat-model.md). For what personal data Eccos stores,
+for how long, and how an operator can inspect/export/delete it, see
+[`docs/privacy.md`](docs/privacy.md).
+
 ## Reporting a vulnerability
 
 **Please do not open a public issue for security vulnerabilities.**
@@ -30,6 +35,15 @@ stability and watch the repository for advisories.
   `SUBSCRIBER_SECRET` so your subscriber can verify they came from Eccos.
 - **Secrets** live only in `.env` (Bun target, gitignored) or as `wrangler secret` values
   (Workers target) — never in the repository or in logs.
+
+## Data handling & logging
+
+- Message content (inbound reply/echo text, outbound request bodies), API tokens, and other
+  secrets are **not written to logs**, on either target. The Workers target's structured JSON
+  logging (`apps/gateway/src/worker.ts`, `logEvent()`) is restricted at the type level to ids,
+  counts, booleans, and enum-like strings (`LogMeta`) — never bodies, phone numbers, or secret
+  values; the Bun target logs only a boot message and delivery-loop errors. See
+  [`docs/privacy.md`](docs/privacy.md#5-data-handling-in-logs) for the full breakdown.
 
 ## Hardening notes
 

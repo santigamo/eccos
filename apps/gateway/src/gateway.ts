@@ -14,6 +14,9 @@ interface Env {
   SUBSCRIBER_WEBHOOK_URL?: string;
   SUBSCRIBER_SECRET?: string;
   FORWARD_MAX_ATTEMPTS: string;
+  /** Retention window (days) for pruning delivered/failed deliveries, inbound_events,
+   * and outbound_messages. Optional wrangler var; falls back to DEFAULT_RETENTION_DAYS. */
+  RETENTION_DAYS?: string;
 }
 
 interface DeliveryRow {
@@ -25,7 +28,7 @@ interface DeliveryRow {
 
 const FORWARD_FETCH_TIMEOUT_MS = 15_000;
 const ALARM_BATCH = 40;
-const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_RETENTION_DAYS = 30;
 const OPERATOR_MAX_PAGE = 200;
 
 export class EccosGateway extends DurableObject<Env> {
@@ -257,6 +260,12 @@ export class EccosGateway extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const now = Date.now();
     const maxAttempts = Number(this.env.FORWARD_MAX_ATTEMPTS) || 6;
+    // Guards (not just `||`) because a misconfigured value here feeds a destructive
+    // DELETE window, unlike maxAttempts above.
+    const retentionDaysRaw = Number(this.env.RETENTION_DAYS);
+    const retentionDays =
+      Number.isFinite(retentionDaysRaw) && retentionDaysRaw > 0 ? retentionDaysRaw : DEFAULT_RETENTION_DAYS;
+    const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
 
     // alarm() may fire more than once; the drain is idempotent because it only
     // processes status='pending' rows, transitions them by id, and forwardOne()
@@ -290,13 +299,19 @@ export class EccosGateway extends DurableObject<Env> {
       } else if (attempts >= maxAttempts) {
         this.sql.exec(`UPDATE deliveries SET status='failed', attempts=?, last_error=? WHERE id=?`, attempts, error, row.id);
       } else {
-        this.sql.exec(`UPDATE deliveries SET attempts=?, last_error=?, next_attempt_at=? WHERE id=?`, attempts, error, now + backoffMs(attempts), row.id);
+        this.sql.exec(
+          `UPDATE deliveries SET attempts=?, last_error=?, next_attempt_at=? WHERE id=?`,
+          attempts,
+          error,
+          now + withJitter(backoffMs(attempts)),
+          row.id,
+        );
       }
     }
 
-    this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, now - RETENTION_MS);
-    this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, now - RETENTION_MS);
-    this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, now - RETENTION_MS);
+    this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, now - retentionMs);
+    this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, now - retentionMs);
+    this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, now - retentionMs);
 
     const nextRows = this.sql
       .exec(`SELECT MIN(next_attempt_at) AS next FROM deliveries WHERE status='pending'`)
@@ -334,6 +349,17 @@ export class EccosGateway extends DurableObject<Env> {
 
 export function backoffMs(attempts: number): number {
   return Math.min(5_000 * 5 ** (attempts - 1), 3_600_000);
+}
+
+/**
+ * Applies bounded ("equal") jitter of +/-10% to a backoff duration so that many
+ * deliveries that fail around the same time don't all retry at the exact same
+ * instant (thundering herd). `backoffMs` itself stays deterministic (it's asserted
+ * with exact values in tests); only the scheduled `next_attempt_at` gets jittered.
+ */
+export function withJitter(ms: number, random: () => number = Math.random): number {
+  const spread = ms * 0.1;
+  return Math.round(ms - spread + random() * spread * 2);
 }
 
 function clampPage(limit?: number): number {

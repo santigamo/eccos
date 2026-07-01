@@ -22,8 +22,9 @@ apps a small, stable HTTP surface: **send messages**, **receive inbound + delive
 and get **normalized events** forwarded to your backend.
 
 > **Status: v0 / thin wrapper.** Single tenant (one WABA / one phone number). The Cloudflare
-> Workers target adds an Embedded-Signup `/connect` flow and a read-only dashboard. Multi-tenant
-> onboarding is on the [roadmap](#-roadmap).
+> Workers target adds an Embedded-Signup `/connect` flow; a separate operator console Worker
+> (`apps/dashboard/`) gives read-only ops visibility over a private RPC binding, gated by
+> Cloudflare Access. Multi-tenant onboarding is on the [roadmap](#-roadmap).
 
 ## ✨ Why Eccos
 
@@ -41,8 +42,9 @@ and get **normalized events** forwarded to your backend.
   Cloudflare Rate Limiting throttles the send API (`POST /v1/messages`) — no external infra.
 - 🔁 **Reliable forwarding** — inbound messages and statuses are normalized and forwarded to your
   app, HMAC-signed and retried with exponential backoff.
-- 🪪 **Onboarding + dashboard** — the Workers target ships an Embedded Signup `/connect` flow and
-  a read-only ops `/dashboard`.
+- 🪪 **Onboarding + operator console** — the Workers target ships an Embedded Signup `/connect`
+  flow, plus a separate operator console Worker (`apps/dashboard/`) for read-only ops visibility,
+  reachable only over a private RPC binding and gated by Cloudflare Access.
 
 ## 🆚 How it compares
 
@@ -142,16 +144,21 @@ templates). Pick whichever fits how you want to run it:
 | Forwarding retries | in-process loop | Durable Object Alarms |
 | Deploy | Docker / single process | `wrangler deploy` |
 | Embedded Signup `/connect` | — | ✅ |
-| Read-only `/dashboard` | — | ✅ |
 | Best for | owning the box and the token | zero-ops + a stable HTTPS webhook URL |
 
 The Bun target is the auditable, run-it-anywhere binary. The Workers target trades literal
 "your box" for zero-ops and a permanent HTTPS URL (no tunnel needed for Meta webhooks), and
-is where the newer v1 features (connect, dashboard) live first.
+is where the newer v1 features (`/connect`, plus the operator console below) live first.
 
-The **operator console** is a separate Cloudflare Worker in `apps/dashboard/` — a TanStack Start
-(React) app that reads the gateway over an RPC service binding (never public HTTP) and can be
-locked down with Cloudflare Access. See [`apps/dashboard/README.md`](./apps/dashboard/README.md).
+### 🕹️ Operator console
+
+The operator console lives in [`apps/dashboard/`](./apps/dashboard/) as its **own** Cloudflare
+Worker (a TanStack Start / React app) — it is **not** a route on the gateway. It reaches the
+gateway only over a private **RPC service binding** (`env.GATEWAY`, entrypoint `GatewayRPC`); the
+gateway itself exposes **no public dashboard HTTP surface**. The console is secured with
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) (the
+Worker also re-verifies the Access JWT itself, as defense-in-depth). See
+[`apps/dashboard/README.md`](./apps/dashboard/README.md) for setup.
 
 ## 🚀 Quickstart — local (Bun)
 
@@ -215,7 +222,9 @@ Object.
 | GET    | `/v1/templates`   | Bearer `ECCOS_API_KEY` | both   | List message templates              |
 | GET    | `/connect`        | Meta OAuth             | Workers| Embedded Signup (coexistence) flow  |
 | POST   | `/connect/exchange` | Meta OAuth code      | Workers| Exchange OAuth code → store WABA/phone |
-| GET    | `/dashboard`      | basic auth (`eccos` / `ECCOS_API_KEY`) | Workers | Read-only ops dashboard |
+
+The gateway has no public dashboard route — the operator console is a separate Worker; see
+[Operator console](#-operator-console) above.
 
 ### Send example
 
@@ -264,8 +273,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventio
 ## 🗺️ Roadmap
 
 - [x] Embedded Signup `/connect` (single-tenant coexistence) — Workers target
-- [x] Read-only admin dashboard — Workers target
-- [ ] Bun-target parity for `/connect` + `/dashboard`
+- [x] Operator console (`apps/dashboard/`) — separate Worker, RPC-only, Cloudflare Access
+- [ ] Bun-target parity for `/connect` (and an operator-console equivalent)
 - [ ] Multi-tenant: multiple WABAs/numbers per instance
 - [ ] Shard Workers state: one Durable Object per WABA/phone
 - [ ] Self-serve onboarding for Tech Providers (connect *clients'* numbers)

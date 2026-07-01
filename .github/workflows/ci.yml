@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least-privilege default: workflow only needs to read the repo checkout.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: typecheck & test
@@ -28,3 +32,17 @@ jobs:
 
       - name: Worker tests (vitest-pool-workers)
         run: bun run test:workers
+
+      - name: Dashboard (typecheck, test, build)
+        run: |
+          cd apps/dashboard
+          bun run typecheck
+          bun run test
+          bunx vite build
+
+      - name: Lint (Biome)
+        # Biome was just introduced (recommended rules) and the existing tree has not been
+        # fully audited/reformatted against it yet. Non-blocking until that follow-up lands
+        # (see bd issue tracker); flip this off once the repo is clean under `bun run lint`.
+        continue-on-error: true
+        run: bun run lint

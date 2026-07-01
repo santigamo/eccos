@@ -65,6 +65,19 @@ function backoffMs(attempts: number): number {
   return Math.min(5_000 * 5 ** (attempts - 1), 3_600_000);
 }
 
+/**
+ * Prunes rows older than `cfg.RETENTION_DAYS` (default 30). Mirrors the Workers
+ * target's alarm()-time retention: terminal deliveries (delivered/failed), plus all
+ * inbound_events and outbound_messages, regardless of status.
+ */
+export function pruneOldRows(db: Database, cfg: Config, now = Date.now()): void {
+  const retentionMs = cfg.RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const cutoff = now - retentionMs;
+  db.query(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`).run(cutoff);
+  db.query(`DELETE FROM inbound_events WHERE received_at < ?`).run(cutoff);
+  db.query(`DELETE FROM outbound_messages WHERE created_at < ?`).run(cutoff);
+}
+
 export async function processPending(db: Database, cfg: Config): Promise<void> {
   const now = Date.now();
   const rows = db
@@ -96,6 +109,8 @@ export async function processPending(db: Database, cfg: Config): Promise<void> {
       ).run(attempts, result.error ?? null, now + backoffMs(attempts), row.id);
     }
   }
+
+  pruneOldRows(db, cfg, now);
 }
 
 export function startDeliveryLoop(db: Database, cfg: Config): ReturnType<typeof setInterval> {

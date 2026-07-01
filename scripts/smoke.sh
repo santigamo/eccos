@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Eccos smoke test — run against a local `wrangler dev` or a deployed workers.dev URL.
-# Usage: BASE_URL=https://eccos.<sub>.workers.dev ./scripts/smoke.sh
+# Exits non-zero on the first failed check (set -e + `curl -f`), so it's safe to gate a
+# deploy on its exit code.
+# Usage:
+#   ./scripts/smoke.sh https://eccos.<sub>.workers.dev
+#   BASE_URL=https://eccos.<sub>.workers.dev ./scripts/smoke.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,7 +17,8 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-BASE_URL="${BASE_URL:-http://localhost:8787}"
+# Positional arg wins over BASE_URL env, which wins over the local wrangler-dev default.
+BASE_URL="${1:-${BASE_URL:-http://localhost:8787}}"
 
 required=(META_APP_SECRET META_WEBHOOK_VERIFY_TOKEN)
 for v in "${required[@]}"; do
