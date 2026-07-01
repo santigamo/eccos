@@ -13,6 +13,10 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-25D366.svg)](./CONTRIBUTING.md)
 
+<br />
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/santigamo/eccos/tree/main/apps/gateway)
+
 </div>
 
 ---
@@ -204,6 +208,23 @@ wrangler secret put META_ES_CONFIG_ID
 
 bun run deploy                   # wrangler deploy
 ```
+
+### One-click deploy
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/santigamo/eccos/tree/main/apps/gateway)
+
+The button deploys the **gateway Worker** (`apps/gateway/`); the operator console
+(`apps/dashboard/`) is a separate Worker you deploy on its own. Two things to know about the
+guided flow:
+
+- **Monorepo:** Eccos is a Bun workspace and the gateway imports `@eccos/core` /
+  `@eccos/gateway-contract` via `workspace:*`. If Cloudflare's build can't resolve them, point the
+  build's install/root at the **repo root** (run `bun install` at the root, deploy `apps/gateway`).
+- **Secrets:** the button provisions bindings but not secret values — set the six required secrets
+  (listed above) with `wrangler secret put` or in the dashboard after the first deploy.
+
+The `bun install → wrangler secret put → bun run deploy` steps above are the reliable path; see
+[`docs/deployment.md`](./docs/deployment.md) for the full env matrix, smoke test, and rollback.
 
 Non-secret vars (`META_GRAPH_VERSION`, `FORWARD_MAX_ATTEMPTS`) live in `wrangler.jsonc`.
 Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta`. All six required
