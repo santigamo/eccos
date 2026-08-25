@@ -18,7 +18,15 @@
     "head_sampling_rate": 1
   },
 
-  // Left on until eccos.chat is on Cloudflare nameservers; the custom domain
-  // is added here as a route once the zone is active.
+  // Custom domains. `custom_domain: true` makes Cloudflare create and manage the
+  // DNS records itself — there is nothing to add by hand in the DNS tab. Both
+  // hostnames serve the same site; the canonical <link> in every page points at
+  // the apex, so this costs nothing in search.
+  "routes": [
+    { "pattern": "eccos.chat", "custom_domain": true },
+    { "pattern": "www.eccos.chat", "custom_domain": true }
+  ],
+
+  // Kept on during setup so there is a URL to test against before DNS settles.
   "workers_dev": true
 }
