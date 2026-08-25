@@ -2,6 +2,9 @@
    Eccos — eccos.chat design system
    Dark near-black canvas, 1264px column with full-height border rails, diagonal
    hatch dividers, big-and-light Inter headings with one Geist Pixel phrase each.
+   Two rules hold the system together: nothing rounds a corner — every edge is
+   square, so shapes read as extensions of the 1px rails — and every uppercase
+   micro-label speaks in Geist Pixel, the machine voice, while prose stays Inter.
    Self-hosted fonts, self-hosted imagery, zero third-party requests.
    ========================================================================== */
 
@@ -93,7 +96,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 :focus-visible {
   outline: 2px solid var(--glow);
   outline-offset: 3px;
-  border-radius: 6px;
+  border-radius: 0;
 }
 
 .sr {
@@ -111,7 +114,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   top: -60px;
   z-index: 100;
   padding: 10px 16px;
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--text);
   color: #070c0f;
   font-size: 0.875rem;
@@ -156,14 +159,32 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   );
 }
 
-/* ---------- the pixel word ---------- */
+/* ---------- the pixel voice ---------- */
 
+/* One accent phrase per heading, in the machine face. */
 .px {
   font-family: var(--pixel);
   font-weight: 400;
   font-size: 0.92em;
   letter-spacing: 0;
   white-space: nowrap;
+}
+
+/* And every uppercase micro-label on the site — the facts strip, the mode tags,
+   the overlines, the table heads. One rule owns the whole register, so a new
+   label only has to pick up an existing class to speak in the same voice.
+   Geist Pixel carries its own rhythm, so the tracking these labels needed in
+   Inter comes back down to a hair; its cap height matches Inter's almost
+   exactly, so 12px here reads the same size as 12px there. */
+.cell,
+.tag,
+.label,
+.dtable thead th {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* ---------- buttons, tags, ticks ---------- */
@@ -176,7 +197,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   height: 40px;
   padding: 0 22px;
   border: 1px solid transparent;
-  border-radius: 32px;
+  border-radius: 0;
   font-size: 0.875rem;
   font-weight: 500;
   line-height: 1;
@@ -200,12 +221,11 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 
+/* squared chips: same 1px edge as everything else, so they sit on the grid */
 .tag {
-  padding: 4px 11px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  border-radius: 0;
+  line-height: 1.1;
   white-space: nowrap;
 }
 .tag-live { background: rgba(37, 211, 102, 0.13); color: var(--glow); border: 1px solid rgba(37, 211, 102, 0.3); }
@@ -227,16 +247,15 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   top: 0.62em;
   width: 7px;
   height: 7px;
-  border-radius: 2px;
+  border-radius: 0;
   background: linear-gradient(135deg, var(--glow), var(--teal));
 }
 
+/* colour steps up from --faint to --muted: the pixel face has thinner stems
+   than Inter at this size, and needed the extra weight to stay readable */
 .label {
   margin: 0 0 2px;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.11em;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .ic {
@@ -304,7 +323,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   height: 38px;
   padding: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.05);
   color: var(--text);
   cursor: pointer;
@@ -388,10 +407,8 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   padding: 22px 18px;
   border-left: 1px solid var(--line);
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   line-height: 1.35;
-  letter-spacing: 0.085em;
-  text-transform: uppercase;
   transition: background 0.25s var(--ease), color 0.25s var(--ease);
 }
 .cell:first-child { border-left: 0; }
@@ -439,13 +456,15 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* ---------- the animated diagrams ---------- */
 
 .dg { flex: 1 1 auto; width: 100%; max-width: 600px; height: auto; }
+/* diagram type is machine voice too — the nodes and captions are labels on a
+   schematic, not prose. Left in sentence case: these are proper names. */
 .dg text {
-  font-family: var(--font);
+  font-family: var(--pixel);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   fill: var(--muted);
   text-anchor: middle;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 /* opaque fills so the travelling pulse disappears behind each node */
 .dg .node rect { fill: #0c1317; stroke: var(--line-strong); stroke-width: 1; }
@@ -456,7 +475,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .dg .wire-strong { stroke: rgba(52, 226, 122, 0.5); stroke-width: 1.4; stroke-dasharray: none; }
 .dg .pulse { fill: var(--glow); }
 .dg .pulse-halo { fill: rgba(52, 226, 122, 0.16); }
-.dg .cap { font-size: 12px; fill: var(--faint); }
+.dg .cap { font-size: 12px; fill: var(--muted); }
 
 /* row A — relay + retry */
 .dg-relay .pulse { animation: dgTravel 4.4s linear infinite; }
@@ -517,7 +536,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* row C — direct link */
 .dg-direct .drop path { fill: none; stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 4 6; animation: dgDash 2.4s linear infinite; }
 .dg-direct .pulse-2 { animation: dgBounce 6s ease-in-out infinite; }
-.dg-direct .cap-static { fill: var(--faint); font-size: 12px; }
+.dg-direct .cap-static { fill: var(--muted); font-size: 12px; }
 
 @keyframes dgBounce {
   0%       { transform: translateX(150px); opacity: 0; }
@@ -620,10 +639,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .dtable tr > *:last-child { padding-right: var(--gut); }
 .dtable thead th {
   padding-block: 18px 13px;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.11em;
-  color: var(--faint);
+  color: var(--muted);
 }
 .dtable tbody th {
   width: 40%;
@@ -671,7 +687,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .provider-card {
   padding: clamp(22px, 2.4vw, 32px);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.022);
 }
 .provider-card .note-line {
@@ -792,7 +808,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   padding: 18px 20px;
   border: 1px solid var(--line);
   border-left: 2px solid var(--teal);
-  border-radius: 0 12px 12px 0;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.022);
   color: var(--muted);
   font-size: 0.9375rem;
