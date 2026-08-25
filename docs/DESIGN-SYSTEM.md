@@ -108,7 +108,7 @@ the brightest frame (hero: left+bottom scrim; footer: the glass wash).
 - **Stat cells**: `.statnum` in pixel face `clamp(2.25rem, 4.8vw, 3.5rem)`,
   count-up on first view; caption muted, ≤30ch.
 - **Masthead**: sticky, blur backdrop over `rgba(7,12,15,.7)`, 1px bottom
-  rule. Brand = `logo-64.png` at 26px + ECCOS wordmark (Inter 600, tracked).
+  rule. Brand = `logomark.png` at 28px + ECCOS wordmark (Inter 600, tracked).
   Below 760px the nav is an absolute drawer behind a hamburger
   (`aria-expanded`, Esc closes, click-outside closes); the toggle group takes
   `margin-left: auto` **because the drawer's absolute nav removes the auto
@@ -163,7 +163,7 @@ its own container; decorative images `alt=""` + explicit `width/height` +
 |---|---|
 | `assets/hero-silk.jpg` | Hero fallback, footer glass background, final-CTA glow. 2400px, emerald silk (generation recipe in BRAND.md) |
 | `assets/own-account.jpg` / `own-infra.jpg` / `own-data.jpg` | Trio cards: glass key / glass stack / glass vault, 1200px |
-| `assets/logo-64.png` | Nav + footer brand mark (26px/22px display) |
+| `assets/logomark.png` | Nav + footer brand mark (28px/24px display) |
 | `assets/avatar.png` | Full 512px logomark: apple-touch-icon, social avatars |
 | `assets/banner.jpg` | OG image (approved wordmark banner) — do not swap casually |
 | `assets/favicon.svg` + `-16/-32.png` | Flat simplified layers |
