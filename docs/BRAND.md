@@ -1,7 +1,9 @@
 # Eccos — Brand & Style Guide
 
 The visual identity for Eccos. Use this when creating any asset (banners, social cards,
-favicons, slides) so everything stays consistent.
+favicons, slides) so everything stays consistent. For how this identity behaves as the
+eccos.chat website — tokens, layout grid, components, motion, invariants — see
+**[DESIGN-SYSTEM.md](./DESIGN-SYSTEM.md)**.
 
 The concept: Eccos is a *gateway* that relays WhatsApp messages between Meta and your app. The
 identity is **premium glassmorphism** — translucent **stacked glass layers** (the relay / echo
@@ -45,10 +47,19 @@ green halo. Surfaces are **dark by default**; the glass and glow provide the col
 ## Typography
 
 Open-source (SIL OFL) fonts only — assets should be reproducible by anyone.
+Since the August 2026 site redesign the pairing is fixed (see
+[DESIGN-SYSTEM.md](./DESIGN-SYSTEM.md) for the full rules):
 
-- **Display / wordmark** — geometric sans: **Poppins** or **Montserrat** (SemiBold/Bold), white.
-- **Body / UI** — **Inter**.
-- **Code / mono** — **JetBrains Mono**, or the system `ui-monospace` stack.
+- **Everything prose** — **Inter Variable** (one file, weights 100–900 + optical
+  size). Headings are set **weight 400**, big and light. The ECCOS wordmark in
+  UI is Inter 600, letterspaced.
+- **The machine voice** — **Geist Pixel (Square)**: one accent phrase per
+  heading, plus every uppercase micro-label (tags, kickers, table headers,
+  diagram labels, stat numbers). Never used for body text or buttons.
+- **Code / mono** — the system `ui-monospace` stack.
+
+Both faces are self-hosted in `apps/site/public/assets/fonts/` with their OFL
+license copies. Never load a font from a third-party host.
 
 ## Motif & principles
 
@@ -99,8 +110,16 @@ sips -c 1500 1500 logo.png --out icon.png      # drop baked text, square
 
 | Asset | Path | Use |
 |---|---|---|
-| **Hero banner** | `assets/banner.jpg` | README header, 1440×617 (21:9), dark glass |
-| **Logomark / avatar** | `assets/avatar.png` | 512×512 glass stacked-layers — logo & GitHub/social avatar |
+| **Hero banner** | `assets/banner.jpg` | README header + OG image, 1440×617 (21:9), dark glass |
+| **Logomark / avatar** | `assets/avatar.png` | 512×512 glass stacked-layers — GitHub/social avatar, apple-touch-icon |
+| **Logomark small** | `assets/logo-64.png` | 64px plateless cut of the logomark — site nav + footer |
 | **Favicon** | `assets/favicon.svg` · `assets/favicon-32.png` · `assets/favicon-16.png` | Flat simplified layers (legible small) |
+| **Silk texture** | `assets/hero-silk.jpg` | Emerald iridescent silk — hero shader fallback, footer glass background |
+| **Glass trio** | `assets/own-account.jpg` · `own-infra.jpg` · `own-data.jpg` | Glass key / stack / vault illustrations, landing "Built so you own it" |
 
-_Full-resolution sources are kept outside the repo; regenerate from the recipe above when needed._
+The silk texture and the glass trio were generated with **Higgsfield
+(`nano_banana_2`, 2K)** in the glass style above — deep charcoal ground,
+emerald→teal iridescent glass, soft glow, no text. Regenerate in that style
+(any capable model works; keep prompts to the recipe pattern above).
+
+_Full-resolution sources are kept outside the repo; regenerate from the recipes when needed._
