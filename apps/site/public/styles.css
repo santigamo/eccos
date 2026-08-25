@@ -680,7 +680,6 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .never .ic { color: var(--green); align-self: center; }
 
 /* two-column tables (pricing) fit any viewport — no forced horizontal scroll */
-.dtable-slim { min-width: 0; }
 
 .stats {
   display: grid;

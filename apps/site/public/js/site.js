@@ -46,6 +46,12 @@
 
   var nums = [].slice.call(document.querySelectorAll(".num[data-count]"));
 
+  // Thousands separators, so the animation lands on "1,950" and not "1950",
+  // which reads as a year.
+  function group(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
   function countUp(el) {
     var target = parseInt(el.getAttribute("data-count"), 10);
     if (isNaN(target) || target === 0) return;
@@ -56,9 +62,9 @@
       if (!t0) t0 = now;
       var k = Math.min((now - t0) / dur, 1);
       var eased = 1 - Math.pow(1 - k, 3);
-      el.textContent = String(Math.round(start + (target - start) * eased));
+      el.textContent = group(Math.round(start + (target - start) * eased));
       if (k < 1) window.requestAnimationFrame(step);
-      else el.textContent = String(target);
+      else el.textContent = group(target);
     }
     el.textContent = "0";
     window.requestAnimationFrame(step);

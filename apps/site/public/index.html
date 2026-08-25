@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Eccos — open-source WhatsApp gateway</title>
-<meta name="description" content="An open-source WhatsApp gateway on the official Meta Cloud API, for developers who connect client numbers in coexistence. Self-host it, or let us run it: priced per connected number, messages never billed.">
+<title>Eccos · open-source WhatsApp gateway</title>
+<meta name="description" content="An open-source WhatsApp gateway on the official Meta Cloud API. Priced per connected number, never per message, coexistence built in. One number or fifty, yours or your clients'. Self-host it, or let us run it.">
 <meta name="theme-color" content="#0b141a">
 <link rel="canonical" href="https://eccos.chat/">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/assets/avatar.png">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Eccos — open-source WhatsApp gateway">
-<meta property="og:description" content="Connect your clients' numbers to the official WhatsApp Cloud API in coexistence. Priced per connected number; messages are measured, never billed.">
+<meta property="og:title" content="Eccos · open-source WhatsApp gateway">
+<meta property="og:description" content="Numbers stay answerable from the phone while your automation sends through the API. Priced per connected number, messages unlimited. Self-host it, or let us run it.">
 <meta property="og:url" content="https://eccos.chat/">
 <meta property="og:image" content="https://eccos.chat/assets/banner.jpg">
 <meta name="twitter:card" content="summary_large_image">
@@ -52,8 +52,8 @@
     <a class="brand" href="/"><img src="/assets/logomark.png" alt="" width="128" height="128" decoding="async">ECCOS</a>
     <nav class="nav" id="primary-nav" aria-label="Primary">
       <a href="#how">How it works</a>
-      <a href="#run">Run it</a>
       <a href="#pricing">Pricing</a>
+      <a href="#run">Run it</a>
       <a href="#data">Your data</a>
       <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
     </nav>
@@ -75,16 +75,17 @@
     <div class="hero-bg" aria-hidden="true"></div>
     <div class="hero-scrim" aria-hidden="true"></div>
     <div class="wrap hero-inner">
-      <h1 class="reveal">The WhatsApp gateway<br class="br-lg"> you <span class="px">actually own</span></h1>
+      <h1 class="reveal">The WhatsApp gateway<br class="br-lg"> priced <span class="px">per number</span></h1>
       <p class="lede reveal">
-        You automate WhatsApp for clinics, salons, local businesses. Eccos connects
-        their numbers to the official Cloud API in coexistence: the staff keep
-        answering from the phone, your product sends through the API, and nobody
-        meters the messages. Self-host it, or let us run it.
+        Eccos puts WhatsApp numbers on Meta's official Cloud API and relays
+        everything between them and your systems. One number or fifty, yours or
+        your clients', fully automated or still answered by hand from the phone.
+        Priced per connected number, never per message, and every business pays
+        Meta directly for its own conversations. Open source under MIT.
       </p>
       <div class="actions reveal">
-        <a class="btn btn-primary" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host on GitHub</a>
-        <a class="btn btn-ghost" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
+        <a class="btn btn-primary" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
+        <a class="btn btn-ghost" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host on GitHub</a>
       </div>
     </div>
   </section>
@@ -96,61 +97,23 @@
     <ul class="cells">
       <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Official Meta Cloud API</li>
       <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>Open source · MIT</li>
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>Coexistence supported</li>
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>You pay Meta directly</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>Coexistence built in</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>Businesses pay Meta directly</li>
       <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>EU data residency</li>
     </ul>
   </section>
 
   <div class="hatch" aria-hidden="true"></div>
 
-  <!-- §3 metered billing ----------------------------------------------- -->
-  <section class="band" id="metered" aria-labelledby="met-h">
-    <div class="wrap statement">
-      <h2 id="met-h" class="reveal">What per-message pricing <span class="px">really bills</span></h2>
-      <p class="reveal">
-        Coexistence changes the arithmetic. Your client's staff keep answering from
-        the phone, and a gateway that charges per message counts those too. It bills
-        the whole WhatsApp life of the business, not what your product sends. One
-        clinic, measured in production, June 2026:
-      </p>
-    </div>
-    <div class="stats">
-      <div class="stat reveal">
-        <p class="statnum">~1,950</p>
-        <p class="statcap">incoming messages from patients that month</p>
-      </div>
-      <div class="stat reveal">
-        <p class="statnum">~1,500</p>
-        <p class="statcap">replies the staff typed by hand from the phone</p>
-      </div>
-      <div class="stat reveal">
-        <p class="statnum">~180</p>
-        <p class="statcap">automated reminders, everything the product sent</p>
-      </div>
-    </div>
-    <div class="wrap wrap-tight">
-      <p class="reveal">
-        Around 3,600 messages went on the bill. The product sent 180 of them, about
-        5%. Asked by email, the provider confirmed that every message counts.
-      </p>
-      <p class="reveal">
-        For a studio billing each client a flat monthly fee, that is a cost that moves
-        with traffic you do not govern. You cannot budget it. Eccos charges per
-        connected number: messages are measured, and never billed.
-      </p>
-    </div>
-  </section>
-
-  <div class="hatch" aria-hidden="true"></div>
-
-  <!-- §4 statement + feature rows -------------------------------------- -->
+  <!-- §3 statement + feature rows -------------------------------------- -->
   <section class="band" id="how" aria-labelledby="how-h">
     <div class="wrap statement">
       <h2 id="how-h" class="reveal">The gateway between Meta and <span class="px">your systems</span></h2>
       <p class="reveal">
-        Your client connects their own WhatsApp Business Account through Embedded
-        Signup. From that moment, Eccos does two things on your behalf.
+        The number might belong to a client you run WhatsApp for, to a user of your
+        product, or to you. Either way it connects as its own WhatsApp Business
+        Account through Meta's Embedded Signup, and from then on Eccos does two
+        things with it.
       </p>
     </div>
 
@@ -158,9 +121,9 @@
       <div class="row-text reveal">
         <h3>Receives and forwards</h3>
         <p>
-          It takes the events Meta sends about the number: incoming messages, delivery
-          and read receipts, and the echoes of replies typed from the phone. It forwards
-          them to an endpoint you choose, retrying when that endpoint is down.
+          It takes every event Meta sends about the number, incoming messages and
+          delivery and read receipts alike, and forwards each one to the endpoint
+          you choose, retrying when that endpoint is down.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -184,8 +147,9 @@
       <div class="row-text reveal">
         <h3>Sends</h3>
         <p>
-          It sends the messages your product asks it to send, templates and media
-          included, through the official Cloud API.
+          It sends the messages your system asks it to send, templates and media
+          included, through the official Cloud API. The sent and delivered receipts
+          come back through the same pipe.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -209,12 +173,13 @@
 
     <article class="row">
       <div class="row-text reveal">
-        <h3>Connect with Embedded Signup</h3>
+        <h3>The phone keeps answering</h3>
         <p>
-          Your clients keep full ownership of their accounts, and you run the
-          automation from your own systems. No third-party platform sits between them
-          and Meta: the account stays theirs, and conversation charges are billed by
-          Meta directly, to them.
+          Meta calls it coexistence: the number stays live in the WhatsApp app while
+          the API sends alongside it. Whoever holds the phone keeps answering by
+          hand, and those typed replies reach your endpoint as echo events. Numbers
+          that live only on the API work just as well; coexistence is there for the
+          ones that don't.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -233,31 +198,126 @@
 
   <div class="hatch" aria-hidden="true"></div>
 
-  <!-- §5 ownership trio ------------------------------------------------ -->
-  <section class="band" aria-labelledby="own-h">
-    <div class="wrap statement solo">
-      <h2 id="own-h" class="reveal">Built so you <span class="px">own it</span></h2>
+  <!-- §4 the meter ----------------------------------------------------- -->
+  <section class="band" id="meter" aria-labelledby="meter-h">
+    <div class="wrap statement">
+      <h2 id="meter-h" class="reveal">The meter counts <span class="px">everything</span></h2>
+      <p class="reveal">
+        Per-message platforms count every message on a number: what your automation
+        sends, what customers write in, and every reply the owner types by hand.
+        One real month from a physiotherapy clinic, June 2026, read from its
+        per-message provider's own panel:
+      </p>
     </div>
-    <div class="trio">
-      <article class="own reveal">
-        <div class="own-media"><img src="/assets/own-account.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
-        <h3 class="own-title">Their account</h3>
-        <p>Each client connects their own WhatsApp Business Account through Embedded
-          Signup and pays Meta directly for conversations.</p>
-      </article>
-      <article class="own reveal">
-        <div class="own-media"><img src="/assets/own-infra.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
-        <h3 class="own-title">Your infrastructure</h3>
-        <p>The full gateway is open source under the MIT licence. Run it as a single
-          Bun binary or entirely on Cloudflare Workers and Durable Objects, on
-          infrastructure you control.</p>
-      </article>
-      <article class="own reveal">
-        <div class="own-media"><img src="/assets/own-data.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
-        <h3 class="own-title">Their data</h3>
-        <p>Each client's data is isolated: never combined across businesses, never sold,
-          and never used for advertising or to train models.</p>
-      </article>
+
+    <div class="stats">
+      <div class="stat reveal">
+        <p class="statnum">~<span class="num" data-count="1950">1,950</span></p>
+        <p class="statcap">patient messages coming in over the month</p>
+      </div>
+      <div class="stat reveal">
+        <p class="statnum">~<span class="num" data-count="1500">1,500</span></p>
+        <p class="statcap">replies the physio typed by hand on her phone</p>
+      </div>
+      <div class="stat reveal">
+        <p class="statnum">~<span class="num" data-count="180">180</span></p>
+        <p class="statcap">reminders the automation actually sent</p>
+      </div>
+    </div>
+
+    <div class="wrap wrap-tight">
+      <p class="reveal">
+        The month closed at about 3,600 billed messages, roughly 180 of them sent by
+        software. Asked about the ratio, the provider confirmed that every message
+        counts, and that the one available lever was disabling inbound processing,
+        which switches the inbox off with it.
+      </p>
+      <p class="reveal">
+        Eccos does not have that lever because it does not have that meter: the
+        gateway is priced per connected number, and the conversation charges
+        WhatsApp does have are billed by Meta to the clinic directly. Some APIs
+        avoid the problem the other way, by requiring a number that is not
+        registered in the WhatsApp app at all; that keeps the meter simple and
+        leaves the phone silent. The clinic above is Eccos's first production
+        deployment.
+      </p>
+    </div>
+  </section>
+
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §5 pricing ------------------------------------------------------- -->
+  <section class="band" id="pricing" aria-labelledby="pricing-h">
+    <div class="wrap statement">
+      <p class="label reveal">Eccos Cloud · Early access</p>
+      <h2 id="pricing-h" class="reveal">Flat per number, <span class="px">unlimited messages</span></h2>
+      <p class="reveal">
+        One subscription covers every number you connect and every message those
+        numbers move. Meta does not let Tech Providers bill message usage;
+        conversation charges go from Meta to each business directly, on that
+        business's own payment method. So the meter is not discounted here. It
+        does not exist.
+      </p>
+    </div>
+
+    <div class="tablewrap reveal" tabindex="0" role="region" aria-label="Eccos Cloud pricing">
+      <table class="dtable">
+        <thead>
+          <tr>
+            <th scope="col">Connected numbers</th>
+            <th scope="col">Per month</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">The first number</th>
+            <td>€5</td>
+          </tr>
+          <tr>
+            <th scope="row">Numbers 2–5</th>
+            <td>+€3 per number (five numbers: €17)</td>
+          </tr>
+          <tr>
+            <th scope="row">Numbers 6–15</th>
+            <td>€19 flat</td>
+          </tr>
+          <tr>
+            <th scope="row">Numbers 16–50</th>
+            <td>€49 flat</td>
+          </tr>
+          <tr>
+            <th scope="row">Beyond 50</th>
+            <td>€49, plus €1 per number past 50</td>
+          </tr>
+          <tr>
+            <th scope="row">Messages</th>
+            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Unlimited, on every plan</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="strip">
+      <p>Ten numbers come to €19 a month. Messages included, all of them.</p>
+      <a class="btn btn-ghost btn-sm" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Ask for early access</a>
+    </div>
+
+    <div class="wrap wrap-tight">
+      <p class="reveal">
+        Eccos Cloud is in early access and not yet generally available: Meta's
+        review of our Tech Provider verification is in progress, and until it
+        clears we cannot onboard third-party accounts. The pricing above is what
+        it opens with. There is no free tier; the sandbox is free without a card
+        for as long as you like, on Meta's test number, and production starts a
+        14-day trial with a card.
+      </p>
+      <p class="reveal">
+        If you would rather hold the keys yourself: self-hosting the same
+        MIT-licensed code on Cloudflare costs the $5/month Workers plan that
+        Durable Objects require, and up to about half a million events a month
+        that flat fee is the whole bill. The first cloud number costs €5. Pick
+        the five that suits you.
+      </p>
     </div>
   </section>
 
@@ -274,11 +334,13 @@
           <h3>Self-hosted</h3>
           <span class="tag tag-live">Available now</span>
         </div>
-        <p>The full gateway, open source under the MIT licence, on infrastructure you control.</p>
+        <p>The full gateway, open source under the MIT licence, on infrastructure you
+          control. Nothing about you or the businesses you connect ever reaches us.</p>
         <p class="label">What's included</p>
         <ul class="ticks">
           <li>Single-binary deploy on Bun</li>
           <li>Or Cloudflare Workers + Durable Objects</li>
+          <li>Operator dashboard, delivery queue in view</li>
           <li>Your deployment talks to Meta directly</li>
           <li>Nothing is ever sent to us</li>
         </ul>
@@ -289,13 +351,14 @@
           <h3>Eccos Cloud</h3>
           <span class="tag tag-soon">Early access</span>
         </div>
-        <p>A hosted version for developers who would rather not run infrastructure or
-          go through Meta verification themselves. We operate the gateway; your clients
-          connect their WhatsApp Business Accounts the same way.</p>
+        <p>The same gateway, operated for you. Each business connects through the
+          same flow; you get the dashboard, the queue and the API without running
+          infrastructure.</p>
         <p class="label">What to expect</p>
         <ul class="ticks">
           <li>We run the gateway for you</li>
           <li>Same Embedded Signup flow</li>
+          <li>Flat per number, messages unlimited</li>
           <li>Onboarded case by case while we open it up</li>
           <li>Not yet generally available</li>
         </ul>
@@ -310,116 +373,48 @@
 
   <div class="hatch" aria-hidden="true"></div>
 
-  <!-- §7 pricing ------------------------------------------------------- -->
-  <section class="band" id="pricing" aria-labelledby="price-h">
-    <div class="wrap statement">
-      <h2 id="price-h" class="reveal">Priced by the number, <span class="px">not the message</span></h2>
-      <p class="reveal">
-        Eccos Cloud is in early access and not yet generally available: Meta's Tech
-        Provider verification is submitted and under review, and until it clears we
-        cannot onboard third parties. This is the tariff it opens with. All of it;
-        there is no sales call.
-      </p>
+  <!-- §7 ownership trio ------------------------------------------------ -->
+  <section class="band" aria-labelledby="own-h">
+    <div class="wrap statement solo">
+      <h2 id="own-h" class="reveal">Everyone keeps <span class="px">what's theirs</span></h2>
     </div>
-
-    <div class="tablewrap reveal" tabindex="0" role="region" aria-label="Eccos Cloud pricing by connected numbers">
-      <table class="dtable dtable-slim">
-        <thead>
-          <tr>
-            <th scope="col">Connected numbers</th>
-            <th scope="col">Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <th scope="row">First number</th>
-            <td>5 €/month</td>
-          </tr>
-          <tr>
-            <th scope="row">Numbers 2 to 5</th>
-            <td>+3 €/month each</td>
-          </tr>
-          <tr>
-            <th scope="row">Studio · 6 to 15 numbers</th>
-            <td>19 €/month</td>
-          </tr>
-          <tr>
-            <th scope="row">Agency · 16 to 50 numbers</th>
-            <td>49 €/month</td>
-          </tr>
-          <tr>
-            <th scope="row">Beyond 50</th>
-            <td>+1 €/month per number</td>
-          </tr>
-          <tr>
-            <th scope="row">Messages, on every plan</th>
-            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Unlimited</span></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="wrap wrap-tight">
-      <p class="reveal">
-        Messages are measured and never charged. The per-number price is the whole
-        bill, however much the staff and their customers write.
-      </p>
-      <p class="reveal">
-        The sandbox is permanent and free: Meta's test number, no card. Production is
-        a 14-day trial with a card. There is no free tier, because the free tier
-        already exists: it is the self-host.
-      </p>
-      <p class="reveal">
-        Not that self-hosting is 0 €. Cloudflare charges $5 a month for the paid plan
-        Durable Objects require, so the honest comparison is $5 to Cloudflare against
-        5 € to us, updates included.
-      </p>
-      <p class="reveal">
-        The expensive part was never the code; it is Meta. Offering Embedded Signup
-        takes your own app with Business Verification, App Review and Access
-        Verification, weeks in manual review queues, and Meta keeps breaking things:
-        API versions, template categories. Self-host and that maintenance is yours. On
-        the cloud it is ours, with a signed data processing agreement, EU
-        jurisdiction, configurable retention, and deletion per phone number.
-      </p>
-    </div>
-
-    <div class="strip">
-      <p>Early access is onboarded case by case. An email puts you in the queue.</p>
-      <a class="btn btn-primary btn-sm" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Ask for early access</a>
+    <div class="trio">
+      <article class="own reveal">
+        <div class="own-media"><img src="/assets/own-account.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <h3 class="own-title">Their account</h3>
+        <p>Each connected business brings its own WhatsApp Business Account through
+          Embedded Signup and puts its own payment method on file with Meta.
+          Conversation charges never pass through us, so they are never marked up.</p>
+      </article>
+      <article class="own reveal">
+        <div class="own-media"><img src="/assets/own-infra.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <h3 class="own-title">Your infrastructure</h3>
+        <p>The gateway is open source under the MIT licence. Deploy it as a single
+          Bun binary or on Cloudflare Workers and Durable Objects, in your own
+          account, or have Eccos Cloud run the same code for you.</p>
+      </article>
+      <article class="own reveal">
+        <div class="own-media"><img src="/assets/own-data.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <h3 class="own-title">Their data</h3>
+        <p>Each business's data stays isolated: never combined across businesses,
+          never sold, never used for advertising or to train models. When someone
+          asks to be forgotten, the gateway deletes by phone number and shows
+          per-table counts as the receipt.</p>
+      </article>
     </div>
   </section>
 
   <div class="hatch" aria-hidden="true"></div>
 
-  <!-- §8 the exit ------------------------------------------------------ -->
-  <section class="band" id="exit" aria-labelledby="exit-h">
-    <div class="wrap statement">
-      <h2 id="exit-h" class="reveal">The gateway you can <span class="px">stop paying for</span> without stopping using</h2>
-      <p class="reveal">
-        The hosted gateways in this market are closed: the day you stop paying, you
-        stop using, and leaving means rebuilding on another one. Eccos Cloud runs the
-        same MIT-licensed gateway you can self-host. If the price stops making sense,
-        or you outgrow us, or we disappear, you deploy the same code on your own
-        Cloudflare account, bring your own Meta verification, and keep going.
-      </p>
-      <p class="reveal">
-        The self-host is why the cloud cannot raise your price. It is the guarantee,
-        not the competition.
-      </p>
-    </div>
-  </section>
-
-  <div class="hatch" aria-hidden="true"></div>
-
-  <!-- §9 data ---------------------------------------------------------- -->
+  <!-- §8 data ---------------------------------------------------------- -->
   <section class="band" id="data" aria-labelledby="data-h">
     <div class="wrap statement">
       <h2 id="data-h" class="reveal">How your data is <span class="px">handled</span></h2>
       <p class="reveal">
         In the hosted version, data obtained from the WhatsApp Cloud API (message
-        events, delivery statuses, phone number and account identifiers) is processed
-        for one purpose only: delivering each business its own messages and events.
+        events, delivery statuses, phone number and account identifiers) is
+        processed for one purpose only: delivering each business its own messages
+        and events.
       </p>
     </div>
 
@@ -465,7 +460,7 @@
           </tr>
           <tr>
             <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Deleted on request</th>
-            <td>Yes: each business's data, in full</td>
+            <td>Yes: by phone number, in full (GDPR Article 17)</td>
             <td>Under your control</td>
           </tr>
         </tbody>
@@ -490,19 +485,19 @@
     <div class="wrap wrap-tight">
       <p class="reveal">
         Eccos is a pass-through gateway, not an archive: your own systems remain your
-        system of record. The full detail, including subprocessors and the caveats we chose
-        to declare rather than round away, is in the <a href="/privacy">Privacy Policy</a>.
+        system of record. The full detail, including subprocessors and the caveats we
+        chose to declare rather than round away, is in the <a href="/privacy">Privacy Policy</a>.
       </p>
       <p class="reveal">
         Self-hosted deployments send us nothing at all: the data never leaves the
-        infrastructure you operate.
+        infrastructure the business itself operates.
       </p>
     </div>
   </section>
 
   <div class="hatch" aria-hidden="true"></div>
 
-  <!-- §10 provider ----------------------------------------------------- -->
+  <!-- §9 provider ------------------------------------------------------ -->
   <section class="band" id="provider" aria-labelledby="prov-h">
     <div class="wrap provider">
       <div class="provider-lead reveal">
@@ -530,14 +525,14 @@
 
   <div class="hatch" aria-hidden="true"></div>
 
-  <!-- §11 final CTA ---------------------------------------------------- -->
+  <!-- §10 final CTA ---------------------------------------------------- -->
   <section class="band cta" aria-labelledby="cta-h">
     <div class="cta-glow" aria-hidden="true"></div>
     <div class="wrap cta-inner">
-      <h2 id="cta-h" class="reveal">Their account. Their data. <span class="px">Your gateway.</span></h2>
+      <h2 id="cta-h" class="reveal">One number or fifty. <span class="px">Never per message.</span></h2>
       <div class="actions reveal">
-        <a class="btn btn-primary" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host on GitHub</a>
-        <a class="btn btn-ghost" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
+        <a class="btn btn-primary" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
+        <a class="btn btn-ghost" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host on GitHub</a>
       </div>
     </div>
   </section>
@@ -555,8 +550,8 @@
         <nav class="foot-col" aria-label="Product">
           <p class="label">Product</p>
           <a href="#how">How it works</a>
-          <a href="#run">Run it</a>
           <a href="#pricing">Pricing</a>
+          <a href="#run">Run it</a>
           <a href="#data">Your data</a>
         </nav>
         <nav class="foot-col" aria-label="Legal">
