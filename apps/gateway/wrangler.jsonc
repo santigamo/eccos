@@ -17,19 +17,19 @@
     ]
   },
 
-  "unsafe": {
-    "bindings": [
-      {
-        "name": "SEND_RATE_LIMITER",
-        "type": "ratelimit",
-        "namespace_id": "1001",
-        "simple": {
-          "limit": 60,
-          "period": 60
-        }
+  // Rate limiting went GA with a top-level "ratelimits" key; the old
+  // "unsafe.bindings" form still works but makes every deploy warn about
+  // experimental fields. Same namespace_id, so the limiter keeps its state.
+  "ratelimits": [
+    {
+      "name": "SEND_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 60,
+        "period": 60
       }
-    ]
-  },
+    }
+  ],
 
   "migrations": [
     {

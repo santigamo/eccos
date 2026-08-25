@@ -144,6 +144,53 @@ describe("EccosGateway alarm", () => {
     });
   });
 
+  // A failed delivery has to say WHY it failed: a missing subscriber URL and a
+  // destination that rejects are opposite diagnoses, and an operator reading the
+  // queue can only act on them if last_error tells them apart.
+  it("records the upstream status code as the failure reason", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 502 }));
+    await seedPendingDelivery({
+      type: "delivered",
+      transportMessageId: "wamid.REASON502",
+      at: 1_700_000_000_000,
+    });
+
+    await runDurableObjectAlarm(singletonStub());
+
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      const row = instance.sql
+        .exec("SELECT last_error FROM deliveries ORDER BY id DESC LIMIT 1")
+        .toArray()[0] as { last_error: string };
+      expect(row.last_error).toBe("subscriber returned 502");
+    });
+  });
+
+  it("distinguishes a missing subscriber URL from a rejecting subscriber", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    await seedPendingDelivery({
+      type: "delivered",
+      transportMessageId: "wamid.NOURL",
+      at: 1_700_000_000_000,
+    });
+
+    // Empty string in DO config wins over the env fallback, exercising the real
+    // "operator cleared the forwarding target" path rather than mutating env.
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      instance.saveConfig({ SUBSCRIBER_WEBHOOK_URL: "" });
+    });
+
+    await runDurableObjectAlarm(singletonStub());
+
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      const row = instance.sql
+        .exec("SELECT last_error FROM deliveries ORDER BY id DESC LIMIT 1")
+        .toArray()[0] as { last_error: string };
+      expect(row.last_error).toBe("no subscriber URL configured");
+    });
+    // Nothing was sent: with no target there is no request to make.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   // Retention (split content/delivery windows + redaction) is covered in
   // tests/worker/retention.spec.ts.
 });

@@ -36,6 +36,10 @@ interface DeliveryRow {
   next_attempt_at: number;
 }
 
+/** Result of one forward attempt. The failure branch carries why, so the reason
+ * can be stored in `deliveries.last_error` and read back by an operator. */
+type ForwardOutcome = { ok: true } | { ok: false; reason: string };
+
 const FORWARD_FETCH_TIMEOUT_MS = 15_000;
 const ALARM_BATCH = 40;
 const DEFAULT_CONTENT_RETENTION_DAYS = 30;
@@ -452,8 +456,9 @@ export class EccosGateway extends DurableObject<Env> {
       let ok = false;
       let error: string | null = null;
       try {
-        ok = await this.forwardOne(row.payload);
-        if (!ok) error = "subscriber non-2xx or no URL";
+        const outcome = await this.forwardOne(row.payload);
+        ok = outcome.ok;
+        if (!outcome.ok) error = outcome.reason;
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
       }
@@ -503,10 +508,17 @@ export class EccosGateway extends DurableObject<Env> {
     if (next != null) this.ctx.storage.setAlarm(next);
   }
 
-  private async forwardOne(payload: string): Promise<boolean> {
+  /**
+   * Forwards one delivery. Returns the reason on failure rather than a bare
+   * boolean: "no subscriber URL configured" and "subscriber returned 502" are
+   * opposite diagnoses (missing config vs a destination that rejects), and
+   * collapsing them into one string means the delivery queue cannot tell an
+   * operator which one happened.
+   */
+  private async forwardOne(payload: string): Promise<ForwardOutcome> {
     const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? this.env.SUBSCRIBER_WEBHOOK_URL;
     const secret = this.getConfigValue("SUBSCRIBER_SECRET") ?? this.env.SUBSCRIBER_SECRET;
-    if (!url) return false;
+    if (!url) return { ok: false, reason: "no subscriber URL configured" };
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (secret) {
       headers["x-eccos-signature"] = await signPayload(payload, secret);
@@ -525,7 +537,7 @@ export class EccosGateway extends DurableObject<Env> {
       body: payload,
       signal: AbortSignal.timeout(FORWARD_FETCH_TIMEOUT_MS),
     });
-    return res.ok;
+    return res.ok ? { ok: true } : { ok: false, reason: `subscriber returned ${res.status}` };
   }
 }
 
