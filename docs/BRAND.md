@@ -116,7 +116,7 @@ sips -c 1500 1500 logo.png --out icon.png      # drop baked text, square
 |---|---|---|
 | **Hero banner** | `assets/banner.jpg` | README header + OG image, 1440×617 (21:9), dark glass |
 | **Logomark / avatar** | `assets/avatar.png` | 512×512 glass stacked-layers — GitHub/social avatar, apple-touch-icon |
-| **Logomark small** | `assets/logomark.png` | 128px transparent cut of the logomark — site nav + footer |
+| **Logomark small** | `assets/logomark.png` · `logomark-light.png` | 128px transparent cuts of the logomark — site nav + footer, night / daylight render per theme |
 | **Favicon** | `assets/favicon.svg` · `assets/favicon-32.png` · `assets/favicon-16.png` | Flat simplified layers (legible small) |
 | **Silk texture** | `assets/hero-silk.jpg` | Emerald iridescent silk — hero shader fallback, footer glass background (dark theme) |
 | **Nacre texture** | `assets/hero-silk-light.jpg` | Mother-of-pearl silk on ivory — the same uses in the light theme |

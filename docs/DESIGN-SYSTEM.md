@@ -72,7 +72,7 @@ a product feature.
 | Token | Value | Use |
 |---|---|---|
 | `--green` | `#25D366` | Brand anchor: links, ticks, focus ring, tag-live |
-| `--glow` | `#34E27A` | Bright end of the CTA/glass gradient |
+| `--glow` | `#34E27A` | CTA hover tone, glass highlights |
 | `--teal` | `#0FB39A` | Cool end of the gradient |
 | `--cyan` | `#22D3EE` | Shader iridescence only — not a UI accent |
 | `--text` | `#F2F6F4` | Headings, emphasized text |
@@ -125,7 +125,7 @@ reading as dead RGB white.
 surfaces (1.9:1). Accent text and links use `--ink-green: #0b7a4b` (5.1:1);
 table heads / secondary accents `--ink-teal: #0a6b5c` (6.1:1); meaning-
 bearing marks (✓ ticks, facts icons) `#0f9d58` (3.4:1, graphic floor).
-Vivid green survives only as **filled surfaces**: the primary CTA sweep
+Vivid green survives only as **filled surfaces**: the solid primary CTA
 (dark `#06120c` text on it) and the `tag-live` stamp.
 
 **Shadows carry the brand.** Dark depth is luminance; light depth is shadow.
@@ -165,10 +165,10 @@ favicon stay dark — dark is the canonical brand rendering.
 ## Components
 
 - **Buttons** (`.btn`): 40px tall, square, 0 radius, Inter 0.875rem, padding
-  0 22px; hover lifts 1px. **Primary** = the brand sweep
-  `linear-gradient(105deg, var(--glow), var(--teal))` on `#06120c` text
-  (11.2:1 → 7.2:1 across the sweep) with green glow shadow
-  `0 6px 26px rgba(37,211,102,.24)`; hover brightens to `#4bea8c → #14c7ab`.
+  0 22px; hover lifts 1px. **Primary** = solid `var(--green)` on `#06120c`
+  text (9.7:1); hover brightens to `var(--glow)` (11.2:1). One confident
+  tone, no gradients on buttons — with the glow shadow in dark and the
+  caustic in light.
   **Ghost** = `rgba(255,255,255,.08)` + `--line-strong` border; hover/focus
   border turns `rgba(37,211,102,.45)`. `.btn-sm` = 34px. Primary is for the
   one action we actually want per band; everything else is ghost.
@@ -186,7 +186,8 @@ favicon stay dark — dark is the canonical brand rendering.
 - **Stat cells**: `.statnum` in pixel face `clamp(2.25rem, 4.8vw, 3.5rem)`,
   count-up on first view; caption muted, ≤30ch.
 - **Masthead**: sticky, blur backdrop over `rgba(7,12,15,.7)`, 1px bottom
-  rule. Brand = `logomark.png` at 28px + ECCOS wordmark (Inter 600, tracked).
+  rule. Brand = the logomark at 28px (theme pair, see Assets) + ECCOS
+  wordmark (Inter 600, tracked); nav links Inter 500.
   The right-hand `.bar-end` group holds the **theme toggle** (36px square,
   before the CTA, outside the drawer) — present on all six documents. Below
   760px the nav is an absolute drawer behind a hamburger (`aria-expanded`,
@@ -248,7 +249,7 @@ its own container; decorative images `alt=""` + explicit `width/height` +
 | `assets/hero-silk-light.jpg` | The same three uses in the light theme — 2400×1018 nacre/mother-of-pearl on ivory |
 | `assets/own-account.jpg` / `own-infra.jpg` / `own-data.jpg` | Trio cards (dark): glass key / glass stack / glass vault, 1200px |
 | `assets/own-*-light.jpg` | Trio cards (light): the same objects as daylight product shots — emerald glass on ivory studio ground with colored caustic shadows, 1024px |
-| `assets/logomark.png` | Nav + footer brand mark (28px/24px display) |
+| `assets/logomark.png` / `logomark-light.png` | Nav + footer brand mark (28px/24px display) — night render / daylight render, swapped per theme via `<picture>` (same frame fraction, 128px) |
 | `assets/avatar.png` | Full 512px logomark: apple-touch-icon, social avatars |
 | `assets/banner.jpg` | OG image (approved wordmark banner) — do not swap casually |
 | `assets/favicon.svg` + `-16/-32.png` | Flat simplified layers |

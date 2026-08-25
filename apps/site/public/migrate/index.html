@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration guide: Eccos Cloud to self-host — Eccos</title>
+<meta name="description" content="An honest cloud-to-self-host migration guide for Eccos: what you can and cannot export, deploying the Bun/Docker build, configuring your own Meta credentials, re-pointing the webhook and subscriber, smoke testing, and decommissioning Eccos Cloud only after validation.">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9f8">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070c0f">
+<link rel="canonical" href="https://eccos.chat/migrate">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
+<link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+<!-- theme override, applied before the stylesheet so an override never flashes -->
+<script>(function(){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})();</script>
+<link rel="stylesheet" href="/styles.css">
+<script defer src="/js/site.js"></script>
+<script defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="masthead">
+  <div class="shell">
+    <a class="brand" href="/"><img src="/assets/logomark.png" alt="" width="128" height="128" decoding="async">ECCOS</a>
+    <nav class="nav" aria-label="Primary">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/data-deletion">Data deletion</a>
+      <a href="/migrate" aria-current="page">Migration</a>
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav>
+    <div class="bar-end">
+      <button id="theme-toggle" class="theme-toggle" type="button" data-mode="auto" aria-label="Theme: auto" title="Theme: auto">
+        <svg class="tt-ic tt-ic-auto" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2.75" y="2.75" width="10.5" height="10.5"/><path d="M8 2.75h5.25v10.5H8z" fill="currentColor" stroke="none"/></svg>
+        <svg class="tt-ic tt-ic-sun" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="5" height="5"/><path d="M8 1v1.9M8 13.1V15M1 8h1.9M13.1 8H15M3.05 3.05 4.4 4.4M11.6 11.6l1.35 1.35M12.95 3.05 11.6 4.4M4.4 11.6l-1.35 1.35"/></svg>
+        <svg class="tt-ic tt-ic-moon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2a4 4 0 0 0 6 6 6 6 0 1 1-6-6Z"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="shell doc" id="main">
+
+  <h1>Migration guide: Eccos Cloud to self-host</h1>
+  <p class="lede">
+    How to move a number from <a href="/">Eccos Cloud</a>, the hosted version of the
+    <a href="https://github.com/santigamo/eccos" rel="noreferrer">Eccos</a> gateway, onto a
+    deployment you run yourself on the <a href="https://github.com/santigamo/eccos#quickstart-self-host-docker">Bun or Docker build</a>.
+    The steps below mirror what the code actually lets you do. There is no automatic
+    <em>export everything and move it</em> button, and no scripted Durable&nbsp;Object migration: the
+    honest path is to capture what the operator surface exposes, stand up the new deployment with
+    your own credentials, re-point the webhook and subscriber, validate, and only then shut Cloud
+    down. That path is what this page documents.
+  </p>
+
+  <section>
+    <h2>Read this first: what moves, and what cannot</h2>
+    <p>
+      Eccos Cloud stores data in a Cloudflare Durable Object (<code>EccosGateway</code>) with four
+      tables: <code>inbound_events</code>, <code>outbound_messages</code>, <code>deliveries</code>,
+      and <code>config</code>. The operator console reads all of it over a private RPC surface
+      (<code>GatewayRPC</code>). That same surface is what you page through to take a snapshot, and
+      it is scoped in ways that matter here:
+    </p>
+    <ul>
+      <li><code>getStatus()</code> — health plus the connected <strong>WABA id</strong>, <strong>phone number id</strong>, display number, and connected-at timestamp.</li>
+      <li><code>getConfig()</code> — filtered stored <code>config</code> rows, including the subscriber forwarding URL and the Meta webhook callback URL. The internal <code>getAllConfig()</code> method is not exposed to the operator.</li>
+      <li><code>listInbound()</code>, <code>listOutbound()</code>, <code>listDeliveries()</code> — paginated, newest-first read of stored history. Each call returns at most <strong>200 rows</strong> (default 50) and pages with the <code>before</code> cursor (<code>id&nbsp;&lt;&nbsp;before</code>). <code>listDeliveries()</code> also filters by <code>status</code>, and <code>listTemplates(limit)</code> lists the WABA's message templates.</li>
+      <li><code>getSubscriberConfig()</code> — the forwarding <strong>URL</strong> and a boolean <code>hasSecret</code>. The <code>SUBSCRIBER_SECRET</code> <em>value</em> is never returned.</li>
+    </ul>
+    <div class="note">
+      <p>
+        <strong>These genuinely do not transfer, and no export will produce them:</strong>
+        the Meta tokens (<code>META_ACCESS_TOKEN</code>, the Embedded Signup Business Integration
+        System User token), <code>META_APP_SECRET</code>, <code>META_WEBHOOK_VERIFY_TOKEN</code>,
+        <code>ECCOS_API_KEY</code>, and the <code>SUBSCRIBER_SECRET</code> value — none of these are
+        ever readable through the operator surface, and the gateway never logs them either; the
+        live <strong>Durable Object itself, its <code>DurableObjectId</code>, and its Alarm schedule</strong>
+        (the retry loop / cron), which are platform state and cannot be copied; and the
+        <strong>Embedded Signup OAuth connection</strong>, whose token is transient, is discarded after
+        subscribing, and is not transportable to another infrastructure owner. You re-create all of
+        these by hand in the new deployment with credentials you own.
+      </p>
+    </div>
+    <p>
+      Two more honest limitations. Message content ages out: on Cloud, <code>inbound_events</code>
+      and <code>outbound_messages</code> are deleted after the content window (default <strong>30 days</strong>),
+      and terminal <code>deliveries</code> rows are <strong>redacted in place</strong> (payload emptied)
+      on the same schedule. So whatever older history a snapshot could capture is already gone or
+      payload-less. And because the gateway is a pass-through, <strong>your subscriber is the system of
+      record</strong>: if your backend already archived the forwarded events, the migration may not need
+      any message history at all — only the connection and subscriber configuration.
+    </p>
+  </section>
+
+  <section>
+    <h2>Step 1 — Capture what you can, while Cloud is still up</h2>
+    <p>
+      Before you change anything, write down what the current Cloud deployment knows. From the
+      operator console (or the equivalent RPC calls), record:
+    </p>
+    <ul>
+      <li>the connected <strong>WABA id</strong>, <strong>phone number id</strong>, display number, and connected-at date;</li>
+      <li>the <strong>subscriber forwarding URL</strong> your endpoint listens on, and note that you will need to <strong>re-supply the signature secret</strong> (it is never shown);</li>
+      <li>any relevant <code>config</code> values the dashboard exposes — in particular the <code>SUBSCRIBER_WEBHOOK_URL</code> and the Meta webhook callback URL Cloud used;</li>
+      <li>if you want a record of <strong>recent</strong> history, page through <code>listInbound</code>, <code>listOutbound</code>, and <code>listDeliveries</code> (cursor <code>before</code>, up to 200 rows per call) and save the JSON/JSONL to a file. This is a snapshot of what is still within retention, not a database, and <strong>there is no built-in path to replay it into a new deployment</strong> — treat it as an archive, not a restore mechanism.</li>
+    </ul>
+    <p>
+      There is deliberately no &ldquo;export all&rdquo; button or bulk-download endpoint today. If a full
+      long-lived archive matters, your own subscriber, not the gateway, is where it should live.
+    </p>
+  </section>
+
+  <section>
+    <h2>Step 2 — Deploy the self-hosted build</h2>
+    <p>
+      The Bun build is a single binary over a SQLite file; <code>docker compose</code> wraps it for you.
+      From a checkout of the repo:
+    </p>
+    <div class="note">
+      <p><code>cp .env.example .env</code> … then fill in the values below, and <code>docker compose up -d</code>.</p>
+    </div>
+    <p>
+      The container serves on <code>:3000</code> and keeps its database at
+      <code>DATABASE_PATH=/app/data/eccos.db</code> on the <code>eccos-data</code> volume
+      (see <code>docker-compose.yml</code>). Liveness is <code>GET /health</code>.
+    </p>
+    <p>
+      Set the same six secrets the Cloud deployment needed, but as environment variables in
+      <code>.env</code> (not Cloudflare secrets): <code>META_ACCESS_TOKEN</code>,
+      <code>META_PHONE_NUMBER_ID</code>, <code>META_WABA_ID</code>, <code>META_APP_SECRET</code>,
+      <code>META_WEBHOOK_VERIFY_TOKEN</code>, and <code>ECCOS_API_KEY</code>. Also set
+      <code>SUBSCRIBER_WEBHOOK_URL</code> and <code>SUBSCRIBER_SECRET</code> when you forward
+      events. The Bun target config is validated by <code>src/config.ts</code> on boot, so a missing
+      value fails fast at startup instead of later.
+    </p>
+  </section>
+
+  <section>
+    <h2>Step 3 — Own Meta credentials and re-establish the connection</h2>
+    <p>
+      On the self-hosted build the WABA/phone connection is configuration, not an OAuth handshake:
+      you provide your own Meta app's credentials in <code>.env</code> and Eccos talks to Meta
+      directly. Concretely:
+    </p>
+    <ul>
+      <li>Use your own Meta App and WhatsApp Business Account. Create a permanent <strong>System User</strong> token with the <code>whatsapp_business_messaging</code> and <code>whatsapp_business_management</code> permissions and put it in <code>META_ACCESS_TOKEN</code>, with the matching <code>META_PHONE_NUMBER_ID</code> and <code>META_WABA_ID</code>.</li>
+      <li>The number stays connected through Meta, the same as before: whoever owns the WhatsApp Business Account keeps it, and Meta still bills that account directly. Coexistence (the phone app continuing to answer) is unchanged.</li>
+      <li>The Embedded Signup <code>/connect</code> flow that Cloud used is a Workers-target convenience; its OAuth connection is <strong>not portable</strong> to the Bun build, which does not run <code>/connect</code> yet. On Bun you simply put those ids directly in the environment.</li>
+    </ul>
+    <p>
+      Because this is a new Meta-aware deployment, please triple-check the phone number id and WABA
+      id against what you recorded in Step 1. A fresh <code>META_ACCESS_TOKEN</code> is expected and
+      healthy — the migration deliberately does not carry the old one across.
+    </p>
+  </section>
+
+  <section>
+    <h2>Step 4 — Re-point the webhook and the subscriber</h2>
+    <p>Two destinations need to point at the new deployment or stay intact:</p>
+    <ul>
+      <li><strong>The Meta webhook subscription → your gateway.</strong> Meta must call your self-host. Point Meta's webhook callback URL at <code>https://&lt;public-host&gt;/webhooks/meta</code> with your <code>META_WEBHOOK_VERIFY_TOKEN</code>, and subscribe the <code>messages</code> field. The Bun build needs a <strong>publicly reachable</strong> endpoint for Meta to reach (expose the port with ngrok or a Cloudflare Tunnel in development, or put it behind a real public URL in production).</li>
+      <li><strong>The gateway → your subscriber.</strong> Set <code>SUBSCRIBER_WEBHOOK_URL</code> to your backend and <code>SUBSCRIBER_SECRET</code> to the shared secret the gateway signs forwarded events with (<code>X-Eccos-Signature: sha256=…</code>). Your receiver verifies that signature with the same secret. On the self-hosted build these are environment variables; the Cloud dashboard's settings screen and its <em>resubscribe</em> convenience are Workers-target features &mdash; on Bun you manage the target in <code>.env</code> and verify with a smoke test instead.</li>
+    </ul>
+    <p>
+      During the cutover there is a brief window where the two deployments could both receive events
+      if Meta still points at the old Worker. That is fine, but do not run both payloads to your
+      subscriber permanently &mdash; switch the webhook once and then decommission the old side (Step 6).
+    </p>
+  </section>
+
+  <section>
+    <h2>Step 5 — Smoke-test the self-host before trusting it</h2>
+    <p>
+      Validate every link of the chain before moving any traffic:
+    </p>
+    <ul>
+      <li><strong>Health and config:</strong> <code>curl http://localhost:3000/health</code> returns <code>{"ok":true}</code>, and the process booted without a config error.</li>
+      <li><strong>Webhook challenge:</strong> <code>GET /webhooks/meta?hub.mode=subscribe&amp;hub.verify_token=&lt;token&gt;&amp;hub.challenge=…</code> echoes your challenge back; a wrong token returns <code>403</code>.</li>
+      <li><strong>Signed inbound + signature verification:</strong> POST a <code>statuses</code> payload signed with <code>X-Hub-Signature-256</code> (HMAC-SHA256 with <code>META_APP_SECRET</code>) — a valid signature returns <code>200</code>, an invalid one <code>401</code>.</li>
+      <li><strong>Send API:</strong> <code>POST /v1/messages</code> with a Bearer <code>ECCOS_API_KEY</code> sends a message or template; without the key it returns <code>401</code>. Templates list via <code>GET /v1/templates</code>.</li>
+      <li><strong>Forwarding:</strong> confirm your subscriber receives the <code>{ events: […] }</code> payload signed with <code>SUBSCRIBER_SECRET</code>.</li>
+    </ul>
+    <p>
+      The repo ships <code>scripts/smoke.sh</code>, which runs the health check, the webhook
+      challenge (valid and invalid token), signed POSTs (valid / invalid signature / invalid JSON),
+      and the send-API auth check end-to-end and exits non-zero on the first failure. Point it at
+      your self-host with <code>BASE_URL=http://localhost:3000 ./scripts/smoke.sh</code> for the
+      Bun build.
+    </p>
+  </section>
+
+  <section>
+    <h2>Step 6 — Validate end-to-end, then decommission Cloud, not before</h2>
+    <p>
+      Only shut Eccos Cloud down once the self-host is proven in production, not merely booting:
+    </p>
+    <ul>
+      <li>sending a message from your apps produces a <code>delivered</code> receipt back on the self-host;</li>
+      <li>a real inbound message from a customer arrives, is stored, and arrives at your subscriber with a valid signature;</li>
+      <li>retries work: with your subscriber briefly down, a forward is retried and then marked <code>failed</code> with the last error visible in the self-host store.</li>
+    </ul>
+    <div class="note">
+      <p>
+        When those hold, decommissioning Cloud is reversible-in-spirit but destructive-in-fact:
+        delete or roll back the Cloudflare gateway Worker (and its Durable Object), remove the
+        <code>/connect</code> app from Meta, and revoke/rotate anything that only Cloud used. From
+        that point the data in the old Durable Object is gone there &mdash; which is why the
+        compile-what-you-can step and your subscriber's own archive, not the gateway, are the durable
+        copy. See <code>docs/deployment.md</code> for rollback mechanics.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Related pages</h2>
+    <p>
+      <a href="/privacy">Privacy Policy</a> ·
+      <a href="/terms">Terms of Service</a> ·
+      <a href="/data-deletion">Data deletion</a> ·
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">Source &amp; deployment guide</a> ·
+      <a href="https://github.com/santigamo/eccos/blob/main/README.md#quickstart-self-host-docker" rel="noreferrer">Bun/Docker quickstart</a> ·
+      <a href="https://github.com/santigamo/eccos/blob/main/docs/privacy.md" rel="noreferrer">docs/privacy.md (what the code stores)</a> ·
+      <a href="/">About Eccos</a>
+    </p>
+  </section>
+
+  <p class="updated">Last updated: August 2026</p>
+
+</main>
+
+<footer class="foot">
+  <div class="band foot-top">
+    <div class="wrap foot-grid">
+      <p class="disclaimer">
+        Eccos is an independent project and is not affiliated with, endorsed by, or
+        sponsored by Meta Platforms. WhatsApp is a trademark of Meta.
+      </p>
+      <div class="foot-cols">
+        <nav class="foot-col" aria-label="Product">
+          <p class="label">Product</p>
+          <a href="/#how">How it works</a>
+          <a href="/#run">Run it</a>
+          <a href="/#data">Your data</a>
+        </nav>
+        <nav class="foot-col" aria-label="Legal">
+          <p class="label">Legal</p>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="/data-deletion">Data deletion</a>
+          <a href="/migrate">Migration</a>
+          <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
+        </nav>
+        <nav class="foot-col" aria-label="Connect">
+          <p class="label">Connect</p>
+          <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+          <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>
+        </nav>
+      </div>
+    </div>
+    <div class="foot-brand">
+      <img src="/assets/logomark.png" alt="" width="128" height="128" loading="lazy" decoding="async">
+      <span>© 2026 Santiago García Monsalve</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
