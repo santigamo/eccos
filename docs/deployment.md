@@ -39,7 +39,7 @@ are per-Worker: run `wrangler secret put` from inside the Worker's directory (`a
 | `FORWARD_MAX_ATTEMPTS` | `6` | Max delivery attempts before a forwarded event is marked failed |
 | `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted and terminal `deliveries` rows are redacted to metadata-only. The deprecated `RETENTION_DAYS` is still honored as a fallback for this value |
 | `DELIVERY_RETENTION_DAYS` | `90` | Delivery-audit window: past it, terminal (`delivered`/`failed`) `deliveries` rows are deleted entirely. See [docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows) |
-| `DO_JURISDICTION` | unset | Optional Durable Object jurisdiction: `eu`, `fedramp`, or `fedramp-high` (Cloudflare has no `us` jurisdiction). Unset/empty = no jurisdiction, i.e. the DO is created wherever the first request lands. An invalid value makes every DO-touching request fail with a clear error instead of being silently ignored |
+| `DO_JURISDICTION` | `eu` in this repo; unset = no jurisdiction | Optional Durable Object jurisdiction: `eu`, `fedramp`, or `fedramp-high` (Cloudflare has no `us` jurisdiction). Unset/empty = no jurisdiction, i.e. the DO is created wherever the first request lands. An invalid value makes every DO-touching request fail with a clear error instead of being silently ignored |
 
 > **CRITICAL — set `DO_JURISDICTION` before you have production data, and never change it
 > afterwards.** A jurisdiction produces a *different* `DurableObjectId` for the same name
@@ -49,6 +49,13 @@ are per-Worker: run `wrangler secret put` from inside the Worker's directory (`a
 > WABA/phone and subscriber settings) stays behind in the old object, invisible to the running
 > gateway, and the number must be re-onboarded. If you need EU data residency, set
 > `DO_JURISDICTION = "eu"` in `wrangler.jsonc` → `vars` as part of the *first* deploy.
+
+> **Self-hosters upgrading from an earlier version:** `wrangler.jsonc` in this repo ships with
+> `DO_JURISDICTION = "eu"`, the value the hosted deployment runs. If your deployment already has
+> data and is *not* pinned to the EU, **delete that line before you deploy** — otherwise the
+> gateway starts talking to a new, empty Durable Object and your connected number, history, and
+> delivery queue are left behind in the old one. A fresh deploy can keep it, change it to another
+> supported jurisdiction, or drop it, whichever matches where your data has to live.
 
 ### `apps/dashboard` — non-secret vars (`apps/dashboard/wrangler.jsonc` → `vars`)
 

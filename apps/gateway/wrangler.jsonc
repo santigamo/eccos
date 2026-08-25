@@ -48,11 +48,14 @@
     "CONTENT_RETENTION_DAYS": "30",
     // Delivery-audit window: after these days, terminal (delivered/failed)
     // deliveries rows are deleted entirely. Optional; default 90.
-    "DELIVERY_RETENTION_DAYS": "90"
-    // DO_JURISDICTION is intentionally NOT set here: absent/empty keeps the current
-    // behavior (the Durable Object is created wherever the first request lands).
-    // Set it to "eu" (or "fedramp"/"fedramp-high") BEFORE the deployment holds
-    // production data — changing it later points at a NEW, EMPTY Durable Object
-    // and does not migrate data. See docs/deployment.md.
+    "DELIVERY_RETENTION_DAYS": "90",
+    // EU data residency: the Durable Object is pinned to Cloudflare's EU
+    // jurisdiction. Valid values: "eu", "fedramp", "fedramp-high" (there is no
+    // "us"); empty/absent creates the DO wherever the first request lands.
+    // UPGRADING AN EXISTING DEPLOYMENT? Adding, changing, or removing this value
+    // points the gateway at a NEW, EMPTY Durable Object — nothing is migrated.
+    // Self-hosters with existing data must remove this line before deploying.
+    // See docs/deployment.md.
+    "DO_JURISDICTION": "eu"
   }
 }
