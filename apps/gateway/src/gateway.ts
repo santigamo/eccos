@@ -48,6 +48,11 @@ const MAX_CONTENT_RETENTION_DAYS = 90;
 const DEFAULT_DELIVERY_RETENTION_DAYS = 90;
 const OPERATOR_MAX_PAGE = 200;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Retention only needs to run periodically, not on every alarm. alarm() fires
+ * once per ingest, so sweeping there ran thousands of scans a day to delete the
+ * same zero rows. */
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+const LAST_SWEEP_KEY = "__last_sweep_at__";
 
 /**
  * Sentinel written to `deliveries.payload` when message content is redacted
@@ -127,6 +132,15 @@ export class EccosGateway extends DurableObject<Env> {
       );`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_pending
         ON deliveries (status, next_attempt_at);`);
+      // Retention sweeps filter on these timestamps. Without an index each sweep
+      // is a full table scan, and Cloudflare bills rows *scanned* as rows read —
+      // so an unindexed sweep turns into a cost that grows with stored history.
+      this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_created
+        ON deliveries (created_at);`);
+      this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_received
+        ON inbound_events (received_at);`);
+      this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_outbound_created
+        ON outbound_messages (created_at);`);
     });
   }
 
@@ -488,6 +502,23 @@ export class EccosGateway extends DurableObject<Env> {
     //    (payload redacted in place; id/status/attempts/last_error/timestamps survive).
     //  - delivery window: the redacted audit rows themselves are deleted.
     // Rows still `pending` are never touched by age.
+    const lastSweep = Number(this.getConfigValue(LAST_SWEEP_KEY) ?? 0);
+    if (now - lastSweep >= SWEEP_INTERVAL_MS) {
+      this.pruneExpired(now, contentDays, deliveryDays);
+      this.saveConfig({ [LAST_SWEEP_KEY]: String(now) });
+    }
+
+    const nextRows = this.sql
+      .exec(`SELECT MIN(next_attempt_at) AS next FROM deliveries WHERE status='pending'`)
+      .toArray();
+    const nextRow = nextRows[0];
+    const next = nextRow ? (nextRow.next as number | null) : null;
+    if (next != null) this.ctx.storage.setAlarm(next);
+  }
+
+  /** Applies both retention windows. Called at most once an hour from alarm();
+   * exposed so tests can drive it directly instead of racing the throttle. */
+  pruneExpired(now: number, contentDays: number, deliveryDays: number): void {
     const contentCutoff = now - contentDays * DAY_MS;
     const deliveryCutoff = now - deliveryDays * DAY_MS;
     this.sql.exec(
@@ -499,13 +530,6 @@ export class EccosGateway extends DurableObject<Env> {
     this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, deliveryCutoff);
-
-    const nextRows = this.sql
-      .exec(`SELECT MIN(next_attempt_at) AS next FROM deliveries WHERE status='pending'`)
-      .toArray();
-    const nextRow = nextRows[0];
-    const next = nextRow ? (nextRow.next as number | null) : null;
-    if (next != null) this.ctx.storage.setAlarm(next);
   }
 
   /**

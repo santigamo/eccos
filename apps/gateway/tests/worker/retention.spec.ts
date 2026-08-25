@@ -1,4 +1,4 @@
-import { runInDurableObject, reset } from "cloudflare:test";
+import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { REDACTED_PAYLOAD, resolveRetentionDays, type EccosGateway } from "../../src/gateway";
 import { singletonStub } from "./helpers";
@@ -150,6 +150,28 @@ describe("resolveRetentionDays", () => {
     expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "" }).contentDays).toBe(30);
     expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "0" }).deliveryDays).toBe(90);
     expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "abc" }).deliveryDays).toBe(90);
+  });
+
+  it("sweeps at most once an hour instead of on every alarm", async () => {
+    // The sweep used to run at the end of every alarm(), i.e. once per ingest,
+    // scanning the whole table to delete the same zero rows. It is now throttled.
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      instance.saveConfig({ __last_sweep_at__: String(Date.now()) });
+      insertDelivery(instance, { ageDays: 200, status: "delivered" });
+    });
+
+    await runDurableObjectAlarm(singletonStub());
+
+    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      const rows = instance.sql.exec("SELECT COUNT(*) AS c FROM deliveries").toArray();
+      // Still there: the throttle skipped the sweep even though the row is 200 days old.
+      expect(Number(rows[0]!.c)).toBeGreaterThan(0);
+
+      // Driving the prune directly still removes it, so the window itself is intact.
+      instance.pruneExpired(Date.now(), 30, 90);
+      const after = instance.sql.exec("SELECT COUNT(*) AS c FROM deliveries").toArray();
+      expect(Number(after[0]!.c)).toBe(0);
+    });
   });
 
   it("honors a custom delivery window", () => {
