@@ -679,6 +679,9 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .never { display: inline-flex; align-items: baseline; gap: 8px; color: var(--text); }
 .never .ic { color: var(--green); align-self: center; }
 
+/* two-column tables (pricing) fit any viewport — no forced horizontal scroll */
+.dtable-slim { min-width: 0; }
+
 .stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
