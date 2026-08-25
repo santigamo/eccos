@@ -1,0 +1,11 @@
+{
+  "name": "@eccos/site",
+  "version": "0.1.0",
+  "description": "eccos.chat — public site: landing plus the legal pages Meta requires (privacy, terms, data deletion). Static assets on Cloudflare Workers; no framework, no build step.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  }
+}

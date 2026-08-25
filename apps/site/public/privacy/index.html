@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Eccos</title>
+<meta name="description" content="How personal data is handled in Eccos Cloud: GDPR roles, data categories, retention periods, subprocessors, international transfers, and your rights.">
+<meta name="theme-color" content="#0b141a">
+<link rel="canonical" href="https://eccos.chat/privacy">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="shell">
+    <a class="brand" href="/"><img src="/assets/favicon.svg" alt="">ECCOS</a>
+    <nav class="nav">
+      <a href="/privacy" aria-current="page">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/data-deletion">Data deletion</a>
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="shell doc">
+
+  <h1>Privacy Policy</h1>
+  <p class="lede">
+    How personal data is handled in <a href="/">Eccos</a>, the WhatsApp gateway we
+    build and operate. Eccos comes in two forms, self-hosted and Eccos Cloud, and
+    they differ radically in what, if anything, we process.
+  </p>
+
+  <section>
+    <h2>Who we are</h2>
+    <p>Eccos and this website are operated by a sole trader (empresario individual) registered in Spain:</p>
+    <dl class="identity">
+      <dt>Name</dt><dd>Santiago García Monsalve</dd>
+      <dt>Tax ID (NIF)</dt><dd>21105416H</dd>
+      <dt>Address</dt><dd>Passeig del Riu, 54, planta 1º, puerta 2ª — 08241 Manresa (Barcelona), Spain</dd>
+      <dt>Phone</dt><dd>+34 697 98 18 79</dd>
+      <dt>Email</dt><dd><a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a></dd>
+    </dl>
+    <p style="margin-top:22px">
+      The full legal notice required by Spanish law (LSSI-CE) is at
+      <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">imsanti.dev/aviso-legal</a> (in Spanish).
+    </p>
+  </section>
+
+  <section>
+    <h2>Two modes, two very different roles</h2>
+    <p>
+      <strong>Self-hosted.</strong> The Eccos software is open source (MIT) and
+      businesses can deploy it entirely on their own Cloudflare account. In that
+      case we process no personal data at all: the deployment talks to Meta
+      directly, nothing is ever sent to us, and we have no access to it. This
+      policy simply does not apply to data handled by a self-hosted deployment —
+      the business operating it is responsible for its own deployment.
+    </p>
+    <p>
+      <strong>Eccos Cloud.</strong> The hosted version, which we operate (currently
+      in early access, not yet generally available). Here Santiago García Monsalve
+      acts as a <strong>data processor</strong> within the meaning of Article 28
+      GDPR, on behalf of each client business, which remains the
+      <strong>data controller</strong> for its own conversations. A data processing
+      agreement is put in place with each Eccos Cloud client.
+    </p>
+    <p>
+      <strong>This website.</strong> For data you send to us directly — for example
+      when you email us — Santiago García Monsalve is the data controller.
+    </p>
+  </section>
+
+  <section>
+    <h2>Data processed in Eccos Cloud</h2>
+    <p>The gateway stores four kinds of records for each connected WhatsApp Business Account:</p>
+    <ul>
+      <li><strong>Configuration</strong> — the client's gateway settings: account identifiers and the endpoint events are forwarded to.</li>
+      <li><strong>Inbound events</strong> — incoming messages and status events received from the WhatsApp Cloud API, including message content and the sender's phone number.</li>
+      <li><strong>Outbound messages</strong> — messages the client asks the gateway to send, with their delivery status.</li>
+      <li><strong>Delivery queue</strong> — pending forwards to the client's endpoint; each entry also contains the full message payload until it is redacted (see retention below).</li>
+    </ul>
+    <p>
+      This data is processed for one purpose only: delivering each business its own
+      messages and events. It is never combined or cross-referenced across
+      businesses, never sold, rented, or shared with data brokers, and never used
+      for advertising or to train models.
+    </p>
+  </section>
+
+  <section>
+    <h2>Purpose and legal basis</h2>
+    <ul>
+      <li><strong>Eccos Cloud:</strong> we process data only on the documented instructions of the client, under the data processing agreement (Article 28 GDPR). The client, as controller, is responsible for its own legal basis towards the people it messages.</li>
+      <li><strong>Email to us:</strong> we process your address and the content of your message to respond to you — steps taken at your request prior to a contract (Article 6(1)(b) GDPR) and our legitimate interest in handling correspondence (Article 6(1)(f)).</li>
+      <li><strong>This website:</strong> these pages are static files served from Cloudflare's edge. They set no cookies, run no analytics, and load nothing from third-party servers. Cloudflare processes the request metadata inherent in serving any web page, as described in its own privacy policy.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Retention</h2>
+    <ul>
+      <li><strong>Message content</strong> — inbound events, outbound messages, and the payload stored in the delivery queue — is kept for <strong>30 days</strong> by default. Each client can configure this between 7 and 90 days.</li>
+      <li><strong>Delivery records</strong> are then redacted: the message payload is removed and only delivery metadata (such as timestamps and delivery outcome) remains, for up to <strong>90 days</strong>.</li>
+      <li><strong>Point-in-time recovery.</strong> The Cloudflare Durable Objects underlying the service keep a 30-day restorable history of their storage. The effective worst-case retention is therefore the configured retention <em>plus up to 30 days</em>. This is a backup mechanism operated by our infrastructure subprocessor; we prefer to declare it rather than round it away.</li>
+      <li><strong>Correspondence</strong> with us is kept as ordinary business correspondence, for as long as the matter it concerns and any legal obligations require.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>A gateway, not a system of record</h2>
+    <p>
+      Eccos is a pass-through gateway. The authoritative copy of every conversation
+      lives in the systems behind the endpoint each business connects, not in the
+      gateway. Retention inside Eccos Cloud exists only so messages can be delivered
+      reliably, retried when an endpoint is down, and recent problems diagnosed. If
+      your business needs an archive of its WhatsApp conversations — for example for
+      clinical or customer records — you must keep it in your own systems; the
+      gateway will not keep one for you.
+    </p>
+  </section>
+
+  <section>
+    <h2>Special categories of data</h2>
+    <p>
+      Message content is whatever end users choose to type. Businesses in fields
+      such as healthcare may therefore receive special-category data (Article 9
+      GDPR) through their conversations — a patient describing symptoms to a clinic,
+      for instance. Eccos Cloud treats all message content as opaque: it is
+      forwarded and briefly stored for delivery, not inspected or classified. It
+      remains the client's responsibility, as controller, to have a lawful basis for
+      processing such data and to judge whether WhatsApp is an appropriate channel
+      for it.
+    </p>
+    <p>
+      To be explicit about what we do not offer: Eccos Cloud currently holds no
+      security certifications such as ISO 27001, and no HIPAA Business Associate
+      Agreement is available.
+    </p>
+  </section>
+
+  <section>
+    <h2>Where the data lives; international transfers</h2>
+    <p>
+      Eccos Cloud runs on Cloudflare Workers and Durable Objects. The Durable
+      Objects that store gateway data are pinned to Cloudflare's European Union
+      jurisdiction, so <strong>message content at rest is confined to the EU</strong>.
+      We deliberately do not call this &ldquo;total data residency&rdquo;, because it
+      is not: Workers execute globally at Cloudflare's edge, and the Durable Object
+      identifier is registered outside the jurisdiction for billing purposes.
+    </p>
+    <p>
+      Separately, the WhatsApp Cloud API itself processes messages in Meta's data
+      centers — by default in the United States — unless the business enables Meta's
+      Local Storage feature, which confines message content to a chosen region.
+      Pinning the gateway to the EU does not confine what passes through Meta.
+    </p>
+    <p>
+      Where data leaves the European Economic Area, the transfers rely on the
+      safeguards in each provider's data processing terms: the EU Standard
+      Contractual Clauses and, where the provider holds a current certification, the
+      EU–U.S. Data Privacy Framework.
+    </p>
+  </section>
+
+  <section>
+    <h2>Subprocessors</h2>
+    <ul>
+      <li><strong>Cloudflare, Inc.</strong> — hosting infrastructure (Workers, Durable Objects, storage). <a href="https://www.cloudflare.com/privacypolicy/" rel="noreferrer">Privacy policy</a>.</li>
+      <li><strong>Meta Platforms</strong> — the WhatsApp Cloud API through which all messages necessarily flow. <a href="https://www.facebook.com/privacy/policy/" rel="noreferrer">Privacy policy</a>.</li>
+    </ul>
+    <p>Eccos Cloud uses no other subprocessors.</p>
+  </section>
+
+  <section>
+    <h2>Your rights</h2>
+    <p>
+      Under the GDPR you have the rights of access, rectification, erasure,
+      restriction of processing, data portability, and objection. To exercise them,
+      email <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a> with enough
+      information to identify you and your request.
+    </p>
+    <p>
+      If you are an end user of a business that uses Eccos Cloud — for example, a
+      customer or patient who messaged that business on WhatsApp — that business is
+      the controller of your data, and your request should go to it. See
+      <a href="/data-deletion">Data deletion</a> for how deletion works in practice.
+      As processor, we assist each controller in responding to such requests, as
+      Article 28 requires.
+    </p>
+    <p>
+      You also have the right to lodge a complaint with the Spanish supervisory
+      authority, the Agencia Española de Protección de Datos
+      (<a href="https://www.aepd.es" rel="noreferrer">aepd.es</a>).
+    </p>
+  </section>
+
+  <section>
+    <h2>Related pages</h2>
+    <p>
+      <a href="/terms">Terms of Service</a> ·
+      <a href="/data-deletion">Data deletion</a> ·
+      <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a> ·
+      <a href="/">About Eccos</a>
+    </p>
+  </section>
+
+  <p class="updated">Last updated: August 2026</p>
+
+</main>
+
+<footer class="foot">
+  <div class="shell">
+    <p>Eccos is an independent project and is not affiliated with, endorsed by, or sponsored by Meta Platforms. WhatsApp is a trademark of Meta.</p>
+    <nav>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/data-deletion">Data deletion</a>
+      <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

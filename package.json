@@ -37,7 +37,9 @@
     "format": "biome format --write .",
     "deploy": "cd apps/gateway && wrangler deploy",
     "cf-types": "cd apps/gateway && wrangler types",
-    "dev:worker": "cd apps/gateway && wrangler dev"
+    "dev:worker": "cd apps/gateway && wrangler dev",
+    "dev:site": "cd apps/site && wrangler dev",
+    "deploy:site": "cd apps/site && wrangler deploy"
   },
   "dependencies": {
     "@eccos/core": "workspace:*",

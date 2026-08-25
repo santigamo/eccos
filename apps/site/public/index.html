@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eccos — open-source WhatsApp gateway</title>
+<meta name="description" content="An open-source WhatsApp gateway on the official Meta Cloud API. Self-host it, or let us run it for you. You keep your own WhatsApp Business Account and pay Meta directly.">
+<meta name="theme-color" content="#0b141a">
+<link rel="canonical" href="https://eccos.chat/">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/avatar.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Eccos — open-source WhatsApp gateway">
+<meta property="og:description" content="Run WhatsApp support and notifications from your own systems, without a platform metering your messages.">
+<meta property="og:url" content="https://eccos.chat/">
+<meta property="og:image" content="https://eccos.chat/assets/banner.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="shell">
+    <a class="brand" href="/"><img src="/assets/favicon.svg" alt="">ECCOS</a>
+    <nav class="nav">
+      <a href="#how">How it works</a>
+      <a href="#run">Run it</a>
+      <a href="#data">Your data</a>
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <div class="shell">
+      <span class="eyebrow">Open source · MIT</span>
+      <h1>The WhatsApp gateway you <span class="gradient">actually own</span></h1>
+      <p class="lede">
+        Eccos runs on the official WhatsApp Cloud API. Run it yourself, or let us
+        run it for you. Either way you keep your own WhatsApp Business Account and
+        pay Meta directly for conversations, with no platform metering your messages.
+      </p>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host it →</a>
+        <a class="btn btn-ghost" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Ask for early access</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="how">
+    <div class="shell">
+      <h2>What it does</h2>
+      <p>
+        A business connects its own WhatsApp Business Account through Embedded
+        Signup. From that moment Eccos does two things on that business's behalf.
+      </p>
+      <div class="grid">
+        <article class="card">
+          <h3>Receives and forwards</h3>
+          <p>
+            It takes the events Meta sends about that account — incoming messages,
+            delivery and read receipts — and forwards them to an endpoint the
+            business chooses, retrying when that endpoint is down.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Sends</h3>
+          <p>
+            It sends the messages the business asks it to send, including templates
+            and media, through the official Cloud API.
+          </p>
+        </article>
+      </div>
+      <p style="margin-top:28px">
+        Businesses use it to run WhatsApp support and notifications from their own
+        systems, without a third-party platform sitting between them and Meta.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="run">
+    <div class="shell">
+      <h2>Two ways to run it</h2>
+      <div class="grid">
+
+        <article class="card">
+          <div class="card-head">
+            <h3>Self-hosted</h3>
+            <span class="tag tag-live">Available now</span>
+          </div>
+          <p>
+            The full gateway is open source under the MIT licence. Deploy it as a
+            single Bun binary or entirely on Cloudflare Workers and Durable Objects,
+            on infrastructure you control.
+          </p>
+          <p><strong>Nothing is sent to us:</strong> your deployment talks to Meta directly.</p>
+          <p><a href="https://github.com/santigamo/eccos" rel="noreferrer">Source and deployment guide on GitHub →</a></p>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <h3>Eccos Cloud</h3>
+            <span class="tag tag-soon">Early access</span>
+          </div>
+          <p>
+            A hosted version for businesses that would rather not run infrastructure.
+            We operate the gateway for you and you connect your WhatsApp Business
+            Account the same way.
+          </p>
+          <p>
+            This version is being onboarded case by case while we open it up, and is
+            not yet generally available.
+          </p>
+          <p><a href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Ask for early access →</a></p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="data">
+    <div class="shell">
+      <h2>How your data is handled</h2>
+      <p>
+        In the hosted version, data obtained from the WhatsApp Cloud API — message
+        events, delivery statuses, phone number and account identifiers — is
+        processed for one purpose only: delivering each business its own messages
+        and events.
+      </p>
+      <div class="grid">
+        <article class="card">
+          <h3>What we never do</h3>
+          <ul class="ticks">
+            <li>Never combined or cross-referenced across businesses.</li>
+            <li>Never sold, rented, or shared with data brokers.</li>
+            <li>Never used for advertising or to train models.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>What we do</h3>
+          <ul class="ticks">
+            <li>Message content is kept 30 days by default, configurable between 7 and 90.</li>
+            <li>Storage is pinned to Cloudflare's European Union jurisdiction.</li>
+            <li>Each business's data is isolated, and is deleted on request.</li>
+          </ul>
+        </article>
+      </div>
+      <p style="margin-top:28px">
+        Eccos is a pass-through gateway, not an archive: your own systems remain
+        your system of record. The full detail, including subprocessors and the
+        caveats we chose to declare rather than round away, is in the
+        <a href="/privacy">Privacy Policy</a>.
+      </p>
+      <p>
+        Self-hosted deployments send us nothing at all: the data never leaves the
+        infrastructure the business itself operates.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="provider">
+    <div class="shell">
+      <h2>Who provides this service</h2>
+      <p>
+        Eccos is built and operated by a sole trader (empresario individual)
+        registered in Spain. Because the provider is a natural person, there is no
+        Companies House entry; the corresponding registration is with the Spanish
+        Tax Agency's business census.
+      </p>
+      <dl class="identity">
+        <dt>Provider</dt><dd>Santiago García Monsalve</dd>
+        <dt>Tax ID (NIF)</dt><dd>21105416H</dd>
+        <dt>Registered address</dt><dd>Passeig del Riu, 54, planta 1º, puerta 2ª — 08241 Manresa (Barcelona), Spain</dd>
+        <dt>Phone</dt><dd>+34 697 98 18 79</dd>
+        <dt>Email</dt><dd><a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a></dd>
+      </dl>
+      <p style="margin-top:24px">
+        Full legal notice, as required by Spanish law (LSSI-CE), at
+        <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">imsanti.dev/aviso-legal</a> (in Spanish).
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="shell">
+    <p>Eccos is an independent project and is not affiliated with, endorsed by, or sponsored by Meta Platforms. WhatsApp is a trademark of Meta.</p>
+    <nav>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/data-deletion">Data deletion</a>
+      <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>
