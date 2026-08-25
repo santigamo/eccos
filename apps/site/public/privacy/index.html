@@ -5,12 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy Policy — Eccos</title>
 <meta name="description" content="How personal data is handled in Eccos Cloud: GDPR roles, data categories, retention periods, subprocessors, international transfers, and your rights.">
-<meta name="theme-color" content="#0b141a">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9f8">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070c0f">
 <link rel="canonical" href="https://eccos.chat/privacy">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
 <link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+<!-- theme override, applied before the stylesheet so an override never flashes -->
+<script>(function(){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})();</script>
 <link rel="stylesheet" href="/styles.css">
+<script defer src="/js/site.js"></script>
 <script defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
 </head>
 <body>
@@ -26,6 +30,13 @@
       <a href="/data-deletion">Data deletion</a>
       <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
     </nav>
+    <div class="bar-end">
+      <button id="theme-toggle" class="theme-toggle" type="button" data-mode="auto" aria-label="Theme: auto" title="Theme: auto">
+        <svg class="tt-ic tt-ic-auto" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2.75" y="2.75" width="10.5" height="10.5"/><path d="M8 2.75h5.25v10.5H8z" fill="currentColor" stroke="none"/></svg>
+        <svg class="tt-ic tt-ic-sun" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="5" height="5"/><path d="M8 1v1.9M8 13.1V15M1 8h1.9M13.1 8H15M3.05 3.05 4.4 4.4M11.6 11.6l1.35 1.35M12.95 3.05 11.6 4.4M4.4 11.6l-1.35 1.35"/></svg>
+        <svg class="tt-ic tt-ic-moon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2a4 4 0 0 0 6 6 6 6 0 1 1-6-6Z"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 

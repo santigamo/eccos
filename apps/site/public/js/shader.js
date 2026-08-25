@@ -8,9 +8,14 @@
    glint at the brightest folds, then vignetted to black towards the left and
    bottom so the hero copy always clears AA contrast.
 
-   Bails out (leaving the CSS hero-silk.jpg fallback visible) when the visitor
-   prefers reduced motion, when WebGL is unavailable, or when the context is
-   lost. Paused off-screen and while the tab is hidden.
+   The same weave is read twice. u_light = 0 is that nocturnal silk, untouched;
+   u_light = 1 is its daylight reading — nacre on paper, form carried by the
+   troughs and the vignette inverted so the edges bleach into the page. The two
+   are cross-faded on the page's "eccos:theme" event, live, with no re-init.
+
+   Bails out (leaving the CSS --hero-fallback still image visible) when the
+   visitor prefers reduced motion, when WebGL is unavailable, or when the
+   context is lost. Paused off-screen and while the tab is hidden.
    ========================================================================== */
 
 (function () {
@@ -37,6 +42,7 @@
     "#endif",
     "uniform vec2 uRes;",
     "uniform float uTime;",
+    "uniform float u_light;",
 
     "float hash(vec2 p){",
     "  p = fract(p * vec2(123.34, 456.21));",
@@ -110,17 +116,38 @@
 
     "  float glint = clamp((inten - 0.72) / 0.28, 0.0, 1.0);",
     "  glint = glint * glint * smoothstep(0.70, 1.0, fold);",
-    "  col = mix(col, warm, glint * 0.34);",
 
+    /* night — the canonical dark palette, arithmetic untouched */
+    "  vec3 night = mix(col, warm, glint * 0.34);",
     "  float lum = inten * (0.52 + 0.62 * fold);",
-    "  vec3 rgb = col * lum * 1.35 + vec3(0.010, 0.032, 0.030) * fold;",
+    "  night = night * lum * 1.35 + vec3(0.010, 0.032, 0.030) * fold;",
 
     "  float left   = smoothstep(0.02, 0.66, st.x);",
     "  float bottom = smoothstep(-0.02, 0.44, st.y);",
     "  float top    = 1.0 - smoothstep(0.68, 1.06, st.y);",
     "  float right  = 1.0 - smoothstep(0.84, 1.06, st.x);",
-    "  rgb *= left * bottom * mix(0.55, 1.0, top) * mix(0.62, 1.0, right);",
+    "  float edge = left * bottom * mix(0.55, 1.0, top) * mix(0.62, 1.0, right);",
+    "  night *= edge;",
 
+    /* day — the same weave as matter, not emission. The sheet starts ivory and
+       is shaped downwards: the fold valleys and the gaps between threads sink
+       towards a teal-grey, so form comes from shadow the way it does on paper.
+       The interference hue is a low-amplitude pigment wash (headline ink still
+       clears ~12:1 over the brightest band), the warm glint turns pale gold,
+       and the vignette inverts — edges bleach towards --bg instead of to black,
+       kept at 82% so the nacre never fully dissolves into the page. */
+    "  vec3 ivory  = vec3(0.955, 0.970, 0.962);",
+    "  vec3 trough = vec3(0.665, 0.790, 0.755);",
+    "  vec3 gold   = vec3(0.970, 0.900, 0.720);",
+    "  vec3 paper  = vec3(0.969, 0.976, 0.973);",
+    "  float weave = 1.0 - clamp(inten * 1.35, 0.0, 1.0);",
+    "  float shade = clamp((1.0 - fold) * 0.80 + weave * 0.20, 0.0, 1.0);",
+    "  vec3 day = mix(ivory, trough, shade * 0.88);",
+    "  day = mix(day, col, clamp(inten, 0.0, 1.0) * 0.50 * (0.35 + 0.65 * fold));",
+    "  day = mix(day, gold, glint * 0.34);",
+    "  day = mix(day, paper, (1.0 - edge) * 0.72);",
+
+    "  vec3 rgb = mix(night, day, u_light);",
     "  rgb += (hash(frag + fract(t)) - 0.5) * 0.0045;",
     "  gl_FragColor = vec4(max(rgb, 0.0), 1.0);",
     "}"
@@ -180,6 +207,17 @@
 
   var uRes = gl.getUniformLocation(prog, "uRes");
   var uTime = gl.getUniformLocation(prog, "uTime");
+  var uLight = gl.getUniformLocation(prog, "u_light");
+
+  /* Which palette to run. Same resolution rule as site.js: an explicit
+     data-theme override wins, otherwise follow the system. */
+  function isLight() {
+    var attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "light" || attr === "dark") return attr === "light";
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+  }
+
+  gl.uniform1f(uLight, isLight() ? 1.0 : 0.0);
 
   bg.parentNode.insertBefore(canvas, bg.nextSibling);
 
@@ -278,6 +316,15 @@
   }, { passive: true });
 
   document.addEventListener("visibilitychange", sync);
+
+  /* site.js announces every effective-theme change; swap the palette in place
+     and repaint once, even while the loop is parked off-screen. */
+  window.addEventListener("eccos:theme", function (e) {
+    var light = e && e.detail && e.detail.theme ? e.detail.theme === "light" : isLight();
+    if (!alive) return;
+    gl.uniform1f(uLight, light ? 1.0 : 0.0);
+    if (!raf) window.requestAnimationFrame(frame);
+  });
 
   if ("IntersectionObserver" in window) {
     new IntersectionObserver(function (entries) {

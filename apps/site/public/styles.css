@@ -6,6 +6,14 @@
    square, so shapes read as extensions of the 1px rails — and every uppercase
    micro-label speaks in Geist Pixel, the machine voice, while prose stays Inter.
    Self-hosted fonts, self-hosted imagery, zero third-party requests.
+
+   Two themes, one machine. Dark is the machine running at night: colour is
+   light — emission, glow, silk. Light is the technical datasheet of that same
+   machine in daylight: colour is matter — ink, pigment, refraction. The glass
+   stops emitting and starts refracting, so it casts tinted caustic shadows on
+   paper instead of glowing in the dark. Dark is canonical and lives in :root;
+   light is a pure token swap in two guarded blocks, so every component rule
+   below is written once and reads its values from the tokens.
    ========================================================================== */
 
 @font-face {
@@ -26,10 +34,17 @@
 
 /* ---------- tokens ---------- */
 
+/* Dark is the canonical theme, so :root *is* the dark theme. Anything a
+   component needs that differs between the two hours of the machine lives
+   here as a token — including the ones that are simply "nothing" in the dark
+   (the shadow tokens, the paper grain), so components can reference them
+   unconditionally and the light blocks stay a pure value swap. */
 :root {
+  /* surfaces: dark stacks luminance, light stacks shadow */
   --bg: #070c0f;
   --panel: #0b141a;
   --raised: #101a20;
+  --well: #0b141a;
 
   --line: rgba(255, 255, 255, 0.07);
   --line-strong: rgba(255, 255, 255, 0.12);
@@ -43,6 +58,115 @@
   --teal: #0fb39a;
   --cyan: #22d3ee;
 
+  /* Accent *text*. In the dark these are simply the accents themselves; on
+     paper the vivid green drops to 1.9:1 and has to be re-inked, so every
+     accent that carries type goes through these two and never through
+     --green/--glow directly. */
+  --ink-green: var(--glow);
+  --ink-teal: var(--teal);
+
+  /* Depth. In the dark there is none — the depth is luminance — so the shadow
+     tokens are zero, fully transparent shadows: valid inside a comma list,
+     paint nothing. They carry TWO of them because the light values are
+     two-layer, and box-shadow only interpolates between lists of equal
+     length — without the matching count, flipping the theme leaves the
+     transition stranded on the old value. --caustic is the green glow the
+     primary button already carries; on paper the same token becomes the
+     emerald wash daylight leaves under glass. */
+  --shadow-0: 0 0 0 rgba(0, 0, 0, 0), 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-1: 0 0 0 rgba(0, 0, 0, 0), 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-2: 0 0 0 rgba(0, 0, 0, 0), 0 0 0 rgba(0, 0, 0, 0);
+  --caustic: 0 6px 26px rgba(37, 211, 102, 0.24);
+  --caustic-hi: 0 10px 34px rgba(37, 211, 102, 0.38);
+  --drawer-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  --logo-lift: none;
+
+  /* washes and fills: every "a hair lighter than the ground" rgba the dark
+     theme used to hardcode, so paper can go the other way */
+  --hover-fill: rgba(255, 255, 255, 0.03);
+  --row-hover: rgba(255, 255, 255, 0.022);
+  --card-bg: rgba(255, 255, 255, 0.022);
+  --card-edge: rgba(0, 0, 0, 0);
+  --band-well: transparent;
+  --strip-bg: rgba(255, 255, 255, 0.018);
+  --vis-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.016), rgba(255, 255, 255, 0));
+  --hatch-bg: transparent;
+  --hatch-line: rgba(255, 255, 255, 0.055);
+  --nav-bg: rgba(7, 12, 15, 0.72);
+  --ctl-fill: rgba(255, 255, 255, 0.05);
+  --ctl-fill-hover: rgba(255, 255, 255, 0.1);
+  --ctl-edge: var(--line-strong);
+  --ghost-fill: rgba(255, 255, 255, 0.08);
+  --ghost-fill-hover: rgba(255, 255, 255, 0.14);
+  --ghost-edge: var(--line-strong);
+  --ghost-edge-hover: rgba(37, 211, 102, 0.45);
+
+  /* the machine voice, re-inked on paper (see the light block) */
+  --label-ink: var(--muted);
+  --th-ink: var(--muted);
+  --stat-ink: inherit;
+  --foot-ink: var(--faint);
+  --tag-live-bg: rgba(37, 211, 102, 0.13);
+  --tag-live-ink: var(--glow);
+  --tag-live-edge: rgba(37, 211, 102, 0.3);
+  --tag-soon-bg: rgba(255, 255, 255, 0.06);
+  --tag-soon-edge: var(--line-strong);
+
+  /* marks: green that is a *shape*, not type — ticks, bullets, icons */
+  --mark: var(--green);
+  --tick-mark: linear-gradient(135deg, var(--glow), var(--teal));
+  --display-gradient: linear-gradient(105deg, var(--glow) 0%, var(--green) 44%, var(--teal) 100%);
+  --note-edge: var(--teal);
+  --table-rule: var(--line);
+  --table-rule-w: 1px;
+
+  /* imagery and the scrims that keep type over it at ≥4.5:1 */
+  --hero-fallback: url("/assets/hero-silk.jpg");
+  --hero-fallback-bg: #04080a;
+  --hero-fallback-opacity: 0.55;
+  --hero-scrim:
+    linear-gradient(90deg, rgba(7, 12, 15, 0.95) 0%, rgba(7, 12, 15, 0.78) 30%,
+      rgba(7, 12, 15, 0.28) 64%, rgba(7, 12, 15, 0) 88%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(7, 12, 15, 0.4) 32%, rgba(7, 12, 15, 0) 70%);
+  --cta-scrim: radial-gradient(120% 90% at 50% 50%, rgba(7, 12, 15, 0.25) 0%,
+    rgba(7, 12, 15, 0.86) 62%, var(--bg) 100%);
+  --cta-glow-opacity: 0.42;
+  --foot-bg: #05080a;
+  --foot-wash: linear-gradient(180deg, var(--bg) 0%, rgba(7, 12, 15, 0.885) 26%,
+    rgba(7, 12, 15, 0.86) 100%);
+  --own-vignette:
+    linear-gradient(180deg, rgba(7, 12, 15, 0.42) 0%, rgba(7, 12, 15, 0) 34%,
+      rgba(7, 12, 15, 0.2) 66%, var(--bg) 100%),
+    linear-gradient(90deg, rgba(7, 12, 15, 0.5) 0%, rgba(7, 12, 15, 0) 22%,
+      rgba(7, 12, 15, 0) 78%, rgba(7, 12, 15, 0.5) 100%);
+
+  /* the schematics. --dg-ink draws the structure, --dg-accent the live path;
+     the rest exist because the dark drawing uses a different alpha at each
+     depth and that ladder has to survive verbatim. */
+  --dg-ink: var(--line-strong);
+  --dg-rail: var(--line);
+  --dg-node: #0c1317;
+  --dg-node-alt: #0b1d16;
+  --dg-accent: rgba(52, 226, 122, 0.34);
+  --dg-wire: rgba(52, 226, 122, 0.5);
+  --dg-mark: var(--glow);
+  --dg-halo: rgba(52, 226, 122, 0.16);
+  --dg-retry: rgba(52, 226, 122, 0.55);
+  --dg-retry-head: rgba(52, 226, 122, 0.75);
+  --dg-retry-ink: rgba(52, 226, 122, 0.8);
+  --dg-msg: #0e1519;
+  --dg-msg-line: rgba(236, 244, 240, 0.42);
+  --dg-msg-line-2: rgba(236, 244, 240, 0.24);
+
+  /* paper grain: a light-only layer. `display` is a token so the dark theme
+     never creates the composited layer at all. */
+  --grain: none;
+  --grain-display: none;
+  --grain-opacity: 0;
+
+  /* how far a reveal travels: dark emerges out of the dark, light prints */
+  --rise: 12px;
+
   --font: "Inter Var", Inter, ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --pixel: "Geist Pixel", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -52,6 +176,237 @@
   --measure: 68ch;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+
+/* ---------- light: the same machine, at noon ---------- */
+
+/* Two guards, one token set. `data-theme` on <html> is an explicit override —
+   absent means follow the system, and the media block is what follows it.
+   The values below are the ONLY difference between the two themes; not one
+   component rule is duplicated. Ground is paper (#f7f9f8), never white; the
+   charcoal that was the panel in the dark becomes the ink. Depth arrives as
+   hairline + tinted shadow, and the glass casts caustics instead of glowing.
+
+   The ink law, hard: --green/--glow never carry type here (1.9:1 on paper).
+   Type accents go through --ink-green (5.1:1) and --ink-teal (6.1:1); the
+   vivid green survives on surfaces — the CTA sweep under near-black type, the
+   "Available now" stamp, the marks on the schematics. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f7f9f8;
+    --panel: #ffffff;
+    --raised: #ffffff;
+    --well: #eef3f0;
+
+    --line: rgba(11, 20, 26, 0.1);
+    --line-strong: rgba(11, 20, 26, 0.16);
+
+    --text: #0b141a;
+    --muted: rgba(11, 20, 26, 0.64);
+    --faint: rgba(11, 20, 26, 0.6);
+
+    --green: #25d366;
+    --glow: #34e27a;
+    --teal: #0fb39a;
+    --cyan: #22d3ee;
+    --ink-green: #0b7a4b;
+    --ink-teal: #0a6b5c;
+
+    --shadow-0: 0 0 0 rgba(13, 60, 48, 0), 0 0 0 rgba(13, 60, 48, 0);
+    --shadow-1: 0 1px 2px rgba(13, 60, 48, 0.06), 0 4px 12px rgba(13, 60, 48, 0.07);
+    --shadow-2: 0 2px 4px rgba(13, 60, 48, 0.07), 0 12px 32px rgba(13, 60, 48, 0.1);
+    --caustic: 0 24px 64px rgba(37, 211, 102, 0.16);
+    --caustic-hi: 0 30px 76px rgba(37, 211, 102, 0.24);
+    --drawer-shadow: 0 18px 40px rgba(13, 60, 48, 0.16);
+    --logo-lift: drop-shadow(0 1px 2px rgba(13, 60, 48, 0.22));
+
+    --hover-fill: rgba(11, 20, 26, 0.035);
+    --row-hover: rgba(11, 20, 26, 0.03);
+    --card-bg: var(--panel);
+    --card-edge: var(--line-strong);
+    --band-well: var(--well);
+    --strip-bg: var(--well);
+    --vis-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.5));
+    --hatch-bg: var(--well);
+    --hatch-line: rgba(11, 20, 26, 0.12);
+    --nav-bg: rgba(247, 249, 248, 0.85);
+    --ctl-fill: transparent;
+    --ctl-fill-hover: var(--well);
+    --ctl-edge: rgba(11, 20, 26, 0.28);
+    --ghost-fill: transparent;
+    --ghost-fill-hover: var(--well);
+    --ghost-edge: rgba(11, 20, 26, 0.42);
+    --ghost-edge-hover: var(--text);
+
+    --label-ink: var(--ink-green);
+    --th-ink: var(--ink-teal);
+    --stat-ink: var(--ink-green);
+    --foot-ink: var(--muted);
+    --tag-live-bg: var(--green);
+    --tag-live-ink: #06120c;
+    --tag-live-edge: #1cb857;
+    --tag-soon-bg: transparent;
+    --tag-soon-edge: rgba(11, 20, 26, 0.34);
+
+    --mark: #0f9d58;
+    --tick-mark: linear-gradient(135deg, #0f9d58, var(--ink-teal));
+    --display-gradient: linear-gradient(105deg, var(--ink-green) 0%, #0f9d58 44%, var(--ink-teal) 100%);
+    --note-edge: var(--ink-teal);
+    --table-rule: var(--text);
+    --table-rule-w: 2px;
+
+    --hero-fallback: url("/assets/hero-silk-light.jpg");
+    --hero-fallback-bg: #eef2f0;
+    --hero-fallback-opacity: 0.85;
+    --hero-scrim:
+      linear-gradient(90deg, rgba(247, 249, 248, 0.95) 0%, rgba(247, 249, 248, 0.8) 30%,
+        rgba(247, 249, 248, 0.26) 64%, rgba(247, 249, 248, 0) 88%),
+      linear-gradient(0deg, var(--bg) 0%, rgba(247, 249, 248, 0.42) 32%, rgba(247, 249, 248, 0) 70%);
+    --cta-scrim: radial-gradient(120% 90% at 50% 50%, rgba(247, 249, 248, 0.5) 0%,
+      rgba(247, 249, 248, 0.88) 62%, var(--bg) 100%);
+    --cta-glow-opacity: 0.5;
+    --foot-bg: var(--bg);
+    --foot-wash: linear-gradient(180deg, var(--bg) 0%, rgba(247, 249, 248, 0.9) 26%,
+      rgba(247, 249, 248, 0.88) 100%);
+    --own-vignette:
+      linear-gradient(180deg, rgba(247, 249, 248, 0.1) 0%, rgba(247, 249, 248, 0) 30%,
+        rgba(247, 249, 248, 0.14) 70%, rgba(247, 249, 248, 0.5) 100%),
+      linear-gradient(90deg, rgba(247, 249, 248, 0.26) 0%, rgba(247, 249, 248, 0) 22%,
+        rgba(247, 249, 248, 0) 78%, rgba(247, 249, 248, 0.26) 100%);
+
+    --dg-ink: rgba(11, 20, 26, 0.34);
+    --dg-rail: rgba(11, 20, 26, 0.18);
+    --dg-node: #ffffff;
+    --dg-node-alt: #e9f7ef;
+    --dg-accent: rgba(11, 122, 75, 0.4);
+    --dg-wire: #0f9d58;
+    --dg-mark: #0f9d58;
+    --dg-halo: rgba(37, 211, 102, 0.22);
+    --dg-retry: rgba(11, 122, 75, 0.5);
+    --dg-retry-head: rgba(11, 122, 75, 0.75);
+    --dg-retry-ink: var(--ink-green);
+    --dg-msg: #ffffff;
+    --dg-msg-line: rgba(11, 20, 26, 0.4);
+    --dg-msg-line-2: rgba(11, 20, 26, 0.2);
+
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.043 0 0 0 0 0.078 0 0 0 0 0.102 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23g)'/%3E%3C/svg%3E");
+    --grain-display: block;
+    --grain-opacity: 0.045;
+
+    --rise: 8px;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #f7f9f8;
+  --panel: #ffffff;
+  --raised: #ffffff;
+  --well: #eef3f0;
+
+  --line: rgba(11, 20, 26, 0.1);
+  --line-strong: rgba(11, 20, 26, 0.16);
+
+  --text: #0b141a;
+  --muted: rgba(11, 20, 26, 0.64);
+  --faint: rgba(11, 20, 26, 0.6);
+
+  --green: #25d366;
+  --glow: #34e27a;
+  --teal: #0fb39a;
+  --cyan: #22d3ee;
+  --ink-green: #0b7a4b;
+  --ink-teal: #0a6b5c;
+
+  --shadow-0: 0 0 0 rgba(13, 60, 48, 0), 0 0 0 rgba(13, 60, 48, 0);
+  --shadow-1: 0 1px 2px rgba(13, 60, 48, 0.06), 0 4px 12px rgba(13, 60, 48, 0.07);
+  --shadow-2: 0 2px 4px rgba(13, 60, 48, 0.07), 0 12px 32px rgba(13, 60, 48, 0.1);
+  --caustic: 0 24px 64px rgba(37, 211, 102, 0.16);
+  --caustic-hi: 0 30px 76px rgba(37, 211, 102, 0.24);
+  --drawer-shadow: 0 18px 40px rgba(13, 60, 48, 0.16);
+  --logo-lift: drop-shadow(0 1px 2px rgba(13, 60, 48, 0.22));
+
+  --hover-fill: rgba(11, 20, 26, 0.035);
+  --row-hover: rgba(11, 20, 26, 0.03);
+  --card-bg: var(--panel);
+  --card-edge: var(--line-strong);
+  --band-well: var(--well);
+  --strip-bg: var(--well);
+  --vis-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.5));
+  --hatch-bg: var(--well);
+  --hatch-line: rgba(11, 20, 26, 0.12);
+  --nav-bg: rgba(247, 249, 248, 0.85);
+  --ctl-fill: transparent;
+  --ctl-fill-hover: var(--well);
+  --ctl-edge: rgba(11, 20, 26, 0.28);
+  --ghost-fill: transparent;
+  --ghost-fill-hover: var(--well);
+  --ghost-edge: rgba(11, 20, 26, 0.42);
+  --ghost-edge-hover: var(--text);
+
+  --label-ink: var(--ink-green);
+  --th-ink: var(--ink-teal);
+  --stat-ink: var(--ink-green);
+  --foot-ink: var(--muted);
+  --tag-live-bg: var(--green);
+  --tag-live-ink: #06120c;
+  --tag-live-edge: #1cb857;
+  --tag-soon-bg: transparent;
+  --tag-soon-edge: rgba(11, 20, 26, 0.34);
+
+  --mark: #0f9d58;
+  --tick-mark: linear-gradient(135deg, #0f9d58, var(--ink-teal));
+  --display-gradient: linear-gradient(105deg, var(--ink-green) 0%, #0f9d58 44%, var(--ink-teal) 100%);
+  --note-edge: var(--ink-teal);
+  --table-rule: var(--text);
+  --table-rule-w: 2px;
+
+  --hero-fallback: url("/assets/hero-silk-light.jpg");
+  --hero-fallback-bg: #eef2f0;
+  --hero-fallback-opacity: 0.85;
+  --hero-scrim:
+    linear-gradient(90deg, rgba(247, 249, 248, 0.95) 0%, rgba(247, 249, 248, 0.8) 30%,
+      rgba(247, 249, 248, 0.26) 64%, rgba(247, 249, 248, 0) 88%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(247, 249, 248, 0.42) 32%, rgba(247, 249, 248, 0) 70%);
+  --cta-scrim: radial-gradient(120% 90% at 50% 50%, rgba(247, 249, 248, 0.26) 0%,
+    rgba(247, 249, 248, 0.8) 62%, var(--bg) 100%);
+  --cta-glow-opacity: 0.8;
+  --foot-bg: var(--bg);
+  --foot-wash: linear-gradient(180deg, var(--bg) 0%, rgba(247, 249, 248, 0.9) 26%,
+    rgba(247, 249, 248, 0.88) 100%);
+  --own-vignette:
+    linear-gradient(180deg, rgba(247, 249, 248, 0.1) 0%, rgba(247, 249, 248, 0) 30%,
+      rgba(247, 249, 248, 0.14) 70%, rgba(247, 249, 248, 0.5) 100%),
+    linear-gradient(90deg, rgba(247, 249, 248, 0.26) 0%, rgba(247, 249, 248, 0) 22%,
+      rgba(247, 249, 248, 0) 78%, rgba(247, 249, 248, 0.26) 100%);
+
+  --dg-ink: rgba(11, 20, 26, 0.34);
+  --dg-rail: rgba(11, 20, 26, 0.18);
+  --dg-node: #ffffff;
+  --dg-node-alt: #e9f7ef;
+  --dg-accent: rgba(11, 122, 75, 0.4);
+  --dg-wire: #0f9d58;
+  --dg-mark: #0f9d58;
+  --dg-halo: rgba(37, 211, 102, 0.22);
+  --dg-retry: rgba(11, 122, 75, 0.5);
+  --dg-retry-head: rgba(11, 122, 75, 0.75);
+  --dg-retry-ink: var(--ink-green);
+  --dg-msg: #ffffff;
+  --dg-msg-line: rgba(11, 20, 26, 0.4);
+  --dg-msg-line-2: rgba(11, 20, 26, 0.2);
+
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.043 0 0 0 0 0.078 0 0 0 0 0.102 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23g)'/%3E%3C/svg%3E");
+  --grain-display: block;
+  --grain-opacity: 0.045;
+
+  --rise: 8px;
+}
+
+/* The one light treatment that cannot be a token: ::selection has no "browser
+   default" value to hand back to the dark theme, so it is scoped instead of
+   tokenised — green tape over near-black type, the way a marker leaves it. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) ::selection { background: var(--green); color: #06120c; }
+}
+:root[data-theme="light"] ::selection { background: var(--green); color: #06120c; }
 
 *,
 *::before,
@@ -75,7 +430,25 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Paper grain — light only. A fixed 120px noise tile of the brand ink, at an
+   effective ~2%: perceptible as tooth at arm's length, gone when you look at
+   it, and the reason the page reads as stock rather than as dead RGB white.
+   One composited layer, never animated, and `display: none` in the dark, so
+   it costs the dark theme nothing at all. */
+body::after {
+  content: "";
+  display: var(--grain-display);
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: var(--grain);
+  background-size: 120px 120px;
+}
+
 img { max-width: 100%; height: auto; display: block; }
+picture { display: block; }
 
 h1, h2, h3 {
   margin: 0;
@@ -90,11 +463,11 @@ h1, h2, h3 {
 p { margin: 0 0 1em; }
 p:last-child { margin-bottom: 0; }
 
-a { color: var(--glow); text-decoration: none; }
+a { color: var(--ink-green); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 :focus-visible {
-  outline: 2px solid var(--glow);
+  outline: 2px solid var(--ink-green);
   outline-offset: 3px;
   border-radius: 0;
 }
@@ -116,7 +489,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   padding: 10px 16px;
   border-radius: 0;
   background: var(--text);
-  color: #070c0f;
+  color: var(--bg);
   font-size: 0.875rem;
   font-weight: 500;
   transition: top 0.18s var(--ease);
@@ -148,13 +521,17 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .wrap { padding: clamp(52px, 6.6vw, 96px) var(--gut); }
 .wrap-tight { padding-block: clamp(34px, 3.6vw, 48px); }
 
+/* On paper the hatch stops being a texture and becomes what it always was in
+   the drawing it borrows from: a hatched section on a sunken well. Same 64px,
+   same 45°, ink instead of light. */
 .hatch {
   height: 64px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+  background-color: var(--hatch-bg);
   background-image: repeating-linear-gradient(
     45deg,
-    rgba(255, 255, 255, 0.055) 0 1px,
+    var(--hatch-line) 0 1px,
     rgba(255, 255, 255, 0) 1px 8px
   );
 }
@@ -210,24 +587,30 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* The primary action carries the brand's own accent family — glow-green into
    teal, the same gradient the glass logomark is lit with — over near-black
    type. Both ends clear 4.5:1 against #06120c (11.2:1 at the glow end, 7.2:1
-   at the teal end), so the label holds anywhere along the sweep. */
+   at the teal end), so the label holds anywhere along the sweep — which is
+   why this is the one place the vivid green survives the move to paper
+   untouched. What changes is what it does to the air around it: in the dark
+   it glows; in daylight it stops emitting and refracts, dropping a tight
+   shadow and a wide emerald caustic on the page beneath. */
 .btn-primary {
   background-image: linear-gradient(105deg, var(--glow) 0%, var(--teal) 100%);
   color: #06120c;
-  box-shadow: 0 6px 26px rgba(37, 211, 102, 0.24);
+  box-shadow: var(--shadow-2), var(--caustic);
 }
 .btn-primary:hover {
   background-image: linear-gradient(105deg, #4bea8c 0%, #14c7ab 100%);
-  box-shadow: 0 10px 34px rgba(37, 211, 102, 0.38);
+  box-shadow: var(--shadow-2), var(--caustic-hi);
 }
 
+/* Ghost is a tint of the ground in the dark and a drawn outline on paper —
+   the same button, described the way each medium describes things. */
 .btn-ghost {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: var(--line-strong);
+  background: var(--ghost-fill);
+  border-color: var(--ghost-edge);
   color: var(--text);
 }
 .btn-ghost:hover,
-.btn-ghost:focus-visible { background: rgba(255, 255, 255, 0.14); border-color: rgba(37, 211, 102, 0.45); }
+.btn-ghost:focus-visible { background: var(--ghost-fill-hover); border-color: var(--ghost-edge-hover); }
 
 .btn-sm { height: 34px; padding: 0 16px; font-size: 0.8125rem; }
 
@@ -240,8 +623,12 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   line-height: 1.1;
   white-space: nowrap;
 }
-.tag-live { background: rgba(37, 211, 102, 0.13); color: var(--glow); border: 1px solid rgba(37, 211, 102, 0.3); }
-.tag-soon { background: rgba(255, 255, 255, 0.06); color: var(--muted); border: 1px solid var(--line-strong); }
+/* In the dark the live tag is a lit tint. On paper a tint of a colour that
+   cannot carry type is useless, so it inverts into a stamp: solid brand green
+   under near-black, the way a price tag is printed. The neutral tag keeps its
+   register and becomes a plain ink outline. */
+.tag-live { background: var(--tag-live-bg); color: var(--tag-live-ink); border: 1px solid var(--tag-live-edge); }
+.tag-soon { background: var(--tag-soon-bg); color: var(--muted); border: 1px solid var(--tag-soon-edge); }
 
 .ticks { margin: 0; padding: 0; list-style: none; }
 .ticks li {
@@ -260,14 +647,16 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   width: 7px;
   height: 7px;
   border-radius: 0;
-  background: linear-gradient(135deg, var(--glow), var(--teal));
+  background: var(--tick-mark);
 }
 
 /* colour steps up from --faint to --muted: the pixel face has thinner stems
-   than Inter at this size, and needed the extra weight to stay readable */
+   than Inter at this size, and needed the extra weight to stay readable.
+   On paper the kickers go one step further and take the ink green — the
+   machine voice stamped rather than lit. */
 .label {
   margin: 0 0 2px;
-  color: var(--muted);
+  color: var(--label-ink);
 }
 
 .ic {
@@ -287,7 +676,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   position: sticky;
   top: 0;
   z-index: 60;
-  background: rgba(7, 12, 15, 0.72);
+  background: var(--nav-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
@@ -311,8 +700,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   letter-spacing: 0.12em;
 }
 .brand:hover { text-decoration: none; }
-/* Transparent logomark: no plate, so no radius to round. */
-.brand img { width: 28px; height: 28px; }
+/* Transparent logomark: no plate, so no radius to round. It was drawn to be
+   lit from behind; on paper it gets a shadow instead of a glow, so the glass
+   sits on the page rather than floating in it. */
+.brand img { width: 28px; height: 28px; filter: var(--logo-lift); }
 
 .nav {
   display: flex;
@@ -334,9 +725,9 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   width: 38px;
   height: 38px;
   padding: 0;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--ctl-edge);
   border-radius: 0;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--ctl-fill);
   color: var(--text);
   cursor: pointer;
 }
@@ -344,6 +735,47 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .nav-toggle .ic-shut { display: none; }
 .nav-toggle[aria-expanded="true"] .ic-open { display: none; }
 .nav-toggle[aria-expanded="true"] .ic-shut { display: block; }
+
+/* ---------- the hour switch ---------- */
+
+/* One square, 36px, sitting in the bar with the other controls — visible at
+   every width, including next to the burger, because the theme is a property
+   of the reader and not of the menu. It cycles auto → light → dark → auto;
+   `data-mode` on the button is the whole state, and each icon is shown by the
+   mode it belongs to, so the control never says one thing and does another. */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--ctl-edge);
+  border-radius: 0;
+  background: var(--ctl-fill);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.18s var(--ease), background 0.18s var(--ease),
+    border-color 0.18s var(--ease);
+}
+.theme-toggle:hover { color: var(--text); background: var(--ctl-fill-hover); }
+.theme-toggle:focus-visible { outline: 2px solid var(--ink-green); outline-offset: 2px; }
+
+.tt-ic {
+  display: none;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+.theme-toggle[data-mode="auto"] .tt-ic-auto,
+.theme-toggle[data-mode="light"] .tt-ic-sun,
+.theme-toggle[data-mode="dark"] .tt-ic-moon,
+.theme-toggle:not([data-mode]) .tt-ic-auto { display: block; }
 
 /* ---------- §1 hero ---------- */
 
@@ -354,11 +786,14 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   align-items: center;
 }
 
+/* The shader's fallback still image. Dark gets the emerald silk; daylight gets
+   the nacre print of the same frame, carried more openly because paper does
+   not swallow an image the way near-black does. */
 .hero-bg {
   position: absolute;
   inset: 0;
-  background: #04080a url("/assets/hero-silk.jpg") center right / cover no-repeat;
-  opacity: 0.55;
+  background: var(--hero-fallback-bg) var(--hero-fallback) center right / cover no-repeat;
+  opacity: var(--hero-fallback-opacity);
 }
 
 .hero-canvas {
@@ -373,14 +808,15 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 }
 .hero-canvas.ready { opacity: 1; }
 
+/* Same job in both hours: guarantee the headline ≥4.5:1 over whatever the
+   shader is doing behind it, and let the right edge stay picture. Only the
+   colour of the wash changes — near-black wash in the dark, paper wash by
+   day, so the hero melts into the page instead of sinking into it. */
 .hero-scrim {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background:
-    linear-gradient(90deg, rgba(7, 12, 15, 0.95) 0%, rgba(7, 12, 15, 0.78) 30%,
-      rgba(7, 12, 15, 0.28) 64%, rgba(7, 12, 15, 0) 88%),
-    linear-gradient(0deg, var(--bg) 0%, rgba(7, 12, 15, 0.4) 32%, rgba(7, 12, 15, 0) 70%);
+  background: var(--hero-scrim);
 }
 
 .hero-inner { position: relative; z-index: 3; width: 100%; }
@@ -404,6 +840,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- §2 facts strip ---------- */
 
+/* On paper the strip sinks: a well the colour of the hatch, so the five facts
+   read as a printed band set into the sheet rather than a lit shelf. */
+.facts { background: var(--band-well); }
+
 .facts .cells {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -424,8 +864,8 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   transition: background 0.25s var(--ease), color 0.25s var(--ease);
 }
 .cell:first-child { border-left: 0; }
-.cell:hover { background: rgba(255, 255, 255, 0.03); color: var(--text); }
-.cell .ic { color: var(--green); }
+.cell:hover { background: var(--hover-fill); color: var(--text); }
+.cell .ic { color: var(--mark); }
 
 /* ---------- §3 statement bands ---------- */
 
@@ -462,7 +902,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   justify-content: center;
   padding: clamp(28px, 3.4vw, 44px) clamp(18px, 2.6vw, 36px);
   border-left: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.016), rgba(255, 255, 255, 0));
+  background: var(--vis-wash);
 }
 
 /* ---------- the animated diagrams ---------- */
@@ -478,15 +918,19 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   text-anchor: middle;
   letter-spacing: 0;
 }
-/* opaque fills so the travelling pulse disappears behind each node */
-.dg .node rect { fill: #0c1317; stroke: var(--line-strong); stroke-width: 1; }
+/* Every colour in the schematics goes through a token, because a drawing is
+   the one place the two hours differ most: in the dark it is a lit circuit,
+   on paper it is an engineering drawing — ink for the structure, brand green
+   for the live path, and node fills that stay OPAQUE in both (the travelling
+   pulse has to disappear behind each box). */
+.dg .node rect { fill: var(--dg-node); stroke: var(--dg-ink); stroke-width: 1; }
 .dg .node text { fill: var(--text); }
-.dg .node-mid rect { fill: #0b1d16; stroke: rgba(52, 226, 122, 0.34); }
-.dg .node-relay rect { fill: #0b1d16; stroke: rgba(52, 226, 122, 0.34); }
-.dg .wire { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 5; }
-.dg .wire-strong { stroke: rgba(52, 226, 122, 0.5); stroke-width: 1.4; stroke-dasharray: none; }
-.dg .pulse { fill: var(--glow); }
-.dg .pulse-halo { fill: rgba(52, 226, 122, 0.16); }
+.dg .node-mid rect { fill: var(--dg-node-alt); stroke: var(--dg-accent); }
+.dg .node-relay rect { fill: var(--dg-node-alt); stroke: var(--dg-accent); }
+.dg .wire { stroke: var(--dg-ink); stroke-width: 1; stroke-dasharray: 3 5; }
+.dg .wire-strong { stroke: var(--dg-wire); stroke-width: 1.4; stroke-dasharray: none; }
+.dg .pulse { fill: var(--dg-mark); }
+.dg .pulse-halo { fill: var(--dg-halo); }
 .dg .cap { font-size: 12px; fill: var(--muted); }
 
 /* row A — relay + retry */
@@ -495,13 +939,14 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .dg-relay .retry { opacity: 0.6; animation: dgRetry 13.2s ease-in-out infinite; }
 .dg-relay .retry-arc {
   fill: none;
-  stroke: rgba(52, 226, 122, 0.55);
+  stroke: var(--dg-retry);
   stroke-width: 1.3;
   stroke-dasharray: 6 5;
   animation: dgDash 1.1s linear infinite;
 }
-.dg-relay .retry-head { fill: none; stroke: rgba(52, 226, 122, 0.75); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.dg-relay .retry text { font-size: 12px; fill: rgba(52, 226, 122, 0.8); }
+.dg-relay .retry-head { fill: none; stroke: var(--dg-retry-head); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+/* the one word inside a diagram that is type and not a mark, so it re-inks */
+.dg-relay .retry text { font-size: 12px; fill: var(--dg-retry-ink); }
 
 @keyframes dgTravel {
   0%   { transform: translateX(24px);  opacity: 0; }
@@ -519,11 +964,11 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 @keyframes dgDash { to { stroke-dashoffset: -22; } }
 
 /* row B — send + ticks */
-.dg-send .rail path { stroke: var(--line); stroke-width: 1; }
-.dg-send .msg rect { fill: #0e1519; stroke: var(--line-strong); stroke-width: 1; }
-.dg-send .msg-line { stroke: rgba(236, 244, 240, 0.42); stroke-width: 2.4; stroke-linecap: round; }
-.dg-send .msg-line.short { stroke: rgba(236, 244, 240, 0.24); }
-.dg-send .tick { fill: none; stroke: var(--glow); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transform-box: fill-box; transform-origin: center; }
+.dg-send .rail path { stroke: var(--dg-rail); stroke-width: 1; }
+.dg-send .msg rect { fill: var(--dg-msg); stroke: var(--dg-ink); stroke-width: 1; }
+.dg-send .msg-line { stroke: var(--dg-msg-line); stroke-width: 2.4; stroke-linecap: round; }
+.dg-send .msg-line.short { stroke: var(--dg-msg-line-2); }
+.dg-send .tick { fill: none; stroke: var(--dg-mark); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transform-box: fill-box; transform-origin: center; }
 .dg-send .msg { animation: dgSlide 5.2s var(--ease) infinite; }
 .dg-send .tick-1, .dg-send .cap-1 { animation: dgFade1 5.2s ease-in-out infinite; }
 .dg-send .tick-2, .dg-send .cap-2 { animation: dgFade2 5.2s ease-in-out infinite; }
@@ -546,7 +991,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 }
 
 /* row C — direct link */
-.dg-direct .drop path { fill: none; stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 4 6; animation: dgDash 2.4s linear infinite; }
+.dg-direct .drop path { fill: none; stroke: var(--dg-ink); stroke-width: 1; stroke-dasharray: 4 6; animation: dgDash 2.4s linear infinite; }
 .dg-direct .pulse-2 { animation: dgBounce 6s ease-in-out infinite; }
 .dg-direct .cap-static { fill: var(--muted); font-size: 12px; }
 
@@ -573,17 +1018,25 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .own { border-left: 1px solid var(--line); padding-bottom: clamp(26px, 3vw, 36px); }
 .own:first-child { border-left: 0; }
 
-.own-media { position: relative; margin-bottom: 22px; }
+/* The renders arrive in a <picture> so the daylight variants can be served by
+   media query with no duplicate DOM; <picture> is inline by default, whose
+   baseline gap would leave the ::after overlay taller than the image, so it
+   is blocked out with the img (see the base `picture` rule).
+   In the dark the vignette drowns the plate's edges in --bg so it dissolves
+   into the band. On paper it barely touches them: the plate keeps a hairline
+   and a shadow instead, and reads as a print laid on the page. */
+.own-media {
+  position: relative;
+  margin-bottom: 22px;
+  box-shadow: var(--shadow-1);
+}
 .own-media img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
 .own-media::after {
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg, rgba(7, 12, 15, 0.42) 0%, rgba(7, 12, 15, 0) 34%,
-      rgba(7, 12, 15, 0.2) 66%, var(--bg) 100%),
-    linear-gradient(90deg, rgba(7, 12, 15, 0.5) 0%, rgba(7, 12, 15, 0) 22%,
-      rgba(7, 12, 15, 0) 78%, rgba(7, 12, 15, 0.5) 100%);
+  border: 1px solid var(--card-edge);
+  background: var(--own-vignette);
 }
 
 /* The lead used to be a bold run inside the paragraph and disappeared into it.
@@ -636,13 +1089,17 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   flex-wrap: wrap;
   padding: 24px var(--gut);
   border-top: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.018);
+  background: var(--strip-bg);
 }
 .strip p { margin: 0; color: var(--muted); font-size: 0.9375rem; }
 
 /* ---------- §7 data ---------- */
 
-.tablewrap { overflow-x: auto; border-top: 1px solid var(--line); }
+/* Print convention on paper: the table opens on a heavy 2px ink rule and the
+   rows stay hairlines under it, the way a rate card is set. In the dark that
+   ladder does not exist — everything is the same 1px line — so the rule and
+   its weight are both tokens. */
+.tablewrap { overflow-x: auto; border-top: var(--table-rule-w) solid var(--table-rule); }
 .tablewrap:focus-visible { outline-offset: -2px; }
 
 .dtable {
@@ -663,7 +1120,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .dtable tr > *:last-child { padding-right: var(--gut); }
 .dtable thead th {
   padding-block: 18px 13px;
-  color: var(--muted);
+  color: var(--th-ink);
 }
 .dtable tbody th {
   width: 40%;
@@ -674,10 +1131,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .dtable tbody tr:last-child th,
 .dtable tbody tr:last-child td { border-bottom: 0; }
 .dtable tbody tr:hover th,
-.dtable tbody tr:hover td { background: rgba(255, 255, 255, 0.022); }
+.dtable tbody tr:hover td { background: var(--row-hover); }
 
 .never { display: inline-flex; align-items: baseline; gap: 8px; color: var(--text); }
-.never .ic { color: var(--green); align-self: center; }
+.never .ic { color: var(--mark); align-self: center; }
 
 /* two-column tables (pricing) fit any viewport — no forced horizontal scroll */
 
@@ -696,6 +1153,9 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+/* Only the counted digits take the accent — the "~" and the "7–" that frame
+   them stay ink, so the number reads as a measurement and not as a headline. */
+.statnum .num { color: var(--stat-ink); }
 .statcap { margin: 0; color: var(--muted); font-size: 0.875rem; max-width: 30ch; }
 
 .wrap-tight p { color: var(--muted); max-width: 62ch; }
@@ -710,11 +1170,15 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .provider-lead h2 { font-size: clamp(1.625rem, 3.4vw, 2.5rem); max-width: 14ch; }
 .provider-lead p { margin-top: 18px; color: var(--muted); max-width: 46ch; }
 
+/* The site's one real card. In the dark it is a shade of the ground; on paper
+   it lifts off it — white stock, hairline, tinted shadow. Never borderless
+   floating white: the hairline is half the print language. */
 .provider-card {
   padding: clamp(22px, 2.4vw, 32px);
   border: 1px solid var(--line);
   border-radius: 0;
-  background: rgba(255, 255, 255, 0.022);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-1);
 }
 .provider-card .note-line {
   margin: 22px 0 0;
@@ -746,15 +1210,15 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .cta-glow {
   position: absolute;
   inset: -18%;
-  background: url("/assets/hero-silk.jpg") center / cover no-repeat;
+  background: var(--hero-fallback) center / cover no-repeat;
   filter: blur(52px) saturate(1.2);
-  opacity: 0.42;
+  opacity: var(--cta-glow-opacity);
 }
 .cta::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(120% 90% at 50% 50%, rgba(7, 12, 15, 0.25) 0%, rgba(7, 12, 15, 0.86) 62%, var(--bg) 100%);
+  background: var(--cta-scrim);
 }
 .cta-inner { position: relative; z-index: 2; margin-inline: auto; }
 .cta h2 { font-size: clamp(1.75rem, 4.4vw, 3.25rem); max-width: 30ch; margin-inline: auto; }
@@ -767,21 +1231,24 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
    its brightest region (64% 57% of the frame), under a flat dark wash that
    leaves roughly a sixth of it showing. Measured off the rendered page, the
    brightest patch of silk still carries the fine print at 4.9:1 against
-   --faint, so contrast holds everywhere over it. */
-.foot-top { position: relative; overflow: hidden; background: #05080a; }
+   --faint, so contrast holds everywhere over it.
+   Daylight runs the identical construction on the nacre print under a paper
+   wash; the fine print there steps up from --faint to --muted (--foot-ink),
+   because a wash on paper leaves more of the image showing than a wash on
+   near-black does. */
+.foot-top { position: relative; overflow: hidden; background: var(--foot-bg); }
 .foot-top::before {
   content: "";
   position: absolute;
   inset: -8%;
-  background: url("/assets/hero-silk.jpg") 64% 57% / cover no-repeat;
+  background: var(--hero-fallback) 64% 57% / cover no-repeat;
   filter: blur(3px) saturate(1.06);
 }
 .foot-top::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, var(--bg) 0%, rgba(7, 12, 15, 0.885) 26%,
-    rgba(7, 12, 15, 0.86) 100%);
+  background: var(--foot-wash);
 }
 .foot-top > * { position: relative; z-index: 1; }
 
@@ -791,7 +1258,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   gap: clamp(28px, 4vw, 64px);
   padding-block: clamp(40px, 4.4vw, 56px);
 }
-.disclaimer { margin: 0; max-width: 46ch; color: var(--faint); font-size: 0.875rem; }
+.disclaimer { margin: 0; max-width: 46ch; color: var(--foot-ink); font-size: 0.875rem; }
 
 .foot-cols { display: grid; grid-template-columns: repeat(3, minmax(0, auto)); gap: 26px clamp(28px, 3.4vw, 56px); }
 .foot-col { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; font-size: 0.875rem; }
@@ -806,10 +1273,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   gap: 11px;
   padding: 20px var(--gut);
   border-top: 1px solid var(--line);
-  color: var(--faint);
+  color: var(--foot-ink);
   font-size: 0.8125rem;
 }
-.foot-brand img { width: 24px; height: 24px; }
+.foot-brand img { width: 24px; height: 24px; filter: var(--logo-lift); }
 
 /* ---------- legal documents (/privacy, /terms, /data-deletion) ---------- */
 
@@ -845,9 +1312,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .note {
   padding: 18px 20px;
   border: 1px solid var(--line);
-  border-left: 2px solid var(--teal);
+  border-left: 2px solid var(--note-edge);
   border-radius: 0;
-  background: rgba(255, 255, 255, 0.022);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-1);
   color: var(--muted);
   font-size: 0.9375rem;
 }
@@ -877,8 +1345,12 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .center .lede { margin-inline: auto; }
 .center .actions { justify-content: center; margin-top: 30px; }
 
+/* The one place a gradient carries type. It survives on paper only because it
+   is display-size (≥3rem, so the 3:1 large-text floor applies) and because the
+   sweep itself re-inks: ink green through a deep signal green into ink teal,
+   never the vivid #25d366 that sits at 1.9:1 on a sheet of paper. */
 .gradient {
-  background: linear-gradient(105deg, var(--glow) 0%, var(--green) 44%, var(--teal) 100%);
+  background: var(--display-gradient);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -886,13 +1358,23 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- reveal ---------- */
 
+/* In the dark, content *emerges*: it rises out of the near-black as it fades
+   up. On paper it *prints*: the travel shortens to a hair (--rise), and where
+   an element carries a shadow token the shadow arrives with it, so the ink
+   looks like it settles onto the sheet rather than floating in from off-page.
+   Timing and easing are the same in both; the dark theme's shadow tokens are
+   empty, so the second gesture simply does not exist there. */
 @media (prefers-reduced-motion: no-preference) {
   .js .reveal {
     opacity: 0;
-    transform: translateY(12px);
-    transition: opacity 0.7s var(--ease), transform 0.7s var(--ease);
+    transform: translateY(var(--rise));
+    transition: opacity 0.7s var(--ease), transform 0.7s var(--ease),
+      box-shadow 0.7s var(--ease);
   }
   .js .reveal.in { opacity: 1; transform: none; }
+  .js .own-media { transition: box-shadow 0.7s var(--ease); }
+  .js .reveal:not(.in) .own-media,
+  .js .provider-card.reveal:not(.in) { box-shadow: var(--shadow-0); }
   .js .hero-inner .reveal:nth-child(2) { transition-delay: 0.12s; }
   .js .hero-inner .reveal:nth-child(3) { transition-delay: 0.24s; }
 }
@@ -931,7 +1413,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
     margin: 0;
     padding: 0;
     background: var(--bg);
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--drawer-shadow);
     border-bottom: 1px solid var(--line);
   }
   .js .has-menu .nav.open { display: flex; }
@@ -943,6 +1425,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
      auto margins go with it, and the group would collapse against the brand —
      so the group has to pin itself. */
   .has-menu .bar-end { margin-left: auto; }
+
+  /* The legal/404 mastheads have no drawer; when their bar wraps at narrow
+     widths the toggle would sit orphaned at the left of its own row. */
+  .masthead:not(.has-menu) .bar-end { margin-left: auto; }
 
   /* without JS the bar simply wraps, so every link stays reachable */
   html:not(.js) .masthead.has-menu .shell { flex-wrap: wrap; padding-block: 10px; }

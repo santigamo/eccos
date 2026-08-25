@@ -1,8 +1,9 @@
 /* ============================================================================
-   Eccos — landing behaviour: entrance reveals, stat count-up, the mobile menu
-   and the diagram play-state. Vanilla, no dependencies, no external requests.
-   Everything degrades to "already visible / already final" without JS and
-   under prefers-reduced-motion.
+   Eccos — site behaviour: the theme toggle, entrance reveals, stat count-up,
+   the mobile menu and the diagram play-state. Vanilla, no dependencies, no
+   external requests. Everything degrades to "already visible / already final"
+   without JS and under prefers-reduced-motion. Loaded on every page: the theme
+   toggle lives in the masthead of the landing, the legal shells and the 404.
    ========================================================================== */
 
 (function () {
@@ -11,7 +12,106 @@
   var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var hasIO = "IntersectionObserver" in window;
 
-  /* ---------- 1. entrance reveals ---------- */
+  /* ---------- 1. theme: auto -> light -> dark -> auto ----------
+
+     The <head> snippet has already stamped an override on <html> before the
+     stylesheet parsed, so there is no flash to undo here. This wires the
+     button, keeps the two theme-color metas and the light <picture> sources in
+     sync with an override, and announces every effective-theme change on the
+     window as "eccos:theme" so the hero shader can re-tune without a re-init.
+
+     data-theme absent = auto (follow the system). Never "auto" as a value. */
+
+  var root = document.documentElement;
+  var KEY = "eccos-theme";
+  var MODES = ["auto", "light", "dark"];
+  var LIGHT_MQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+
+  var themeBtn = document.getElementById("theme-toggle");
+  var metas = [].slice.call(document.querySelectorAll('meta[name="theme-color"]'));
+  /* the authored per-scheme values, so returning to auto restores them exactly */
+  var metaAuto = metas.map(function (m) { return m.getAttribute("content"); });
+  var lightSrcs = [].slice.call(document.querySelectorAll(".own-src-light"));
+  var SRC_AUTO = "(prefers-color-scheme: light)";
+
+  function storedMode() {
+    try {
+      var v = localStorage.getItem(KEY);
+      return v === "light" || v === "dark" ? v : "auto";
+    } catch (e) {
+      return "auto";
+    }
+  }
+
+  function storeMode(mode) {
+    try {
+      if (mode === "auto") localStorage.removeItem(KEY);
+      else localStorage.setItem(KEY, mode);
+    } catch (e) {}
+  }
+
+  function effectiveTheme() {
+    var attr = root.getAttribute("data-theme");
+    if (attr === "light" || attr === "dark") return attr;
+    return LIGHT_MQ && LIGHT_MQ.matches ? "light" : "dark";
+  }
+
+  function emitTheme(theme) {
+    var ev;
+    try {
+      ev = new CustomEvent("eccos:theme", { detail: { theme: theme } });
+    } catch (e) {
+      ev = document.createEvent("CustomEvent");
+      ev.initCustomEvent("eccos:theme", false, false, { theme: theme });
+    }
+    window.dispatchEvent(ev);
+  }
+
+  function applyMode(mode) {
+    if (mode === "auto") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", mode);
+    storeMode(mode);
+
+    if (themeBtn) {
+      themeBtn.setAttribute("data-mode", mode);
+      themeBtn.setAttribute("aria-label", "Theme: " + mode);
+      themeBtn.setAttribute("title", "Theme: " + mode);
+    }
+
+    var theme = effectiveTheme();
+
+    /* an override has to win over the metas' own media queries, so both carry
+       the effective colour; auto hands them back their authored values */
+    metas.forEach(function (m, i) {
+      m.setAttribute("content", mode === "auto" ? metaAuto[i] : theme === "light" ? "#f7f9f8" : "#070c0f");
+    });
+
+    /* same trick for the daylight art: the <source> media attr is what the
+       no-JS path follows, so an override rewrites it rather than duplicating
+       the DOM. <picture> re-runs its selection when the attribute changes. */
+    var srcMedia = mode === "auto" ? SRC_AUTO : theme === "light" ? "all" : "not all";
+    lightSrcs.forEach(function (s) { s.setAttribute("media", srcMedia); });
+
+    emitTheme(theme);
+  }
+
+  var themeMode = storedMode();
+  applyMode(themeMode);
+
+  if (themeBtn) {
+    themeBtn.addEventListener("click", function () {
+      themeMode = MODES[(MODES.indexOf(themeMode) + 1) % MODES.length];
+      applyMode(themeMode);
+    });
+  }
+
+  if (LIGHT_MQ) {
+    var onScheme = function () { if (themeMode === "auto") applyMode("auto"); };
+    if (LIGHT_MQ.addEventListener) LIGHT_MQ.addEventListener("change", onScheme);
+    else if (LIGHT_MQ.addListener) LIGHT_MQ.addListener(onScheme);
+  }
+
+  /* ---------- 2. entrance reveals ---------- */
 
   var reveals = [].slice.call(document.querySelectorAll(".reveal"));
 
@@ -42,7 +142,7 @@
     });
   }
 
-  /* ---------- 2. stat count-up ---------- */
+  /* ---------- 3. stat count-up ---------- */
 
   var nums = [].slice.call(document.querySelectorAll(".num[data-count]"));
 
@@ -81,7 +181,7 @@
     nums.forEach(function (el) { nio.observe(el); });
   }
 
-  /* ---------- 3. mobile menu ---------- */
+  /* ---------- 4. mobile menu ---------- */
 
   var toggle = document.getElementById("nav-toggle");
   var nav = document.getElementById("primary-nav");
@@ -120,7 +220,7 @@
     }, { passive: true });
   }
 
-  /* ---------- 4. diagrams only animate while on screen ---------- */
+  /* ---------- 5. diagrams only animate while on screen ---------- */
 
   var diagrams = [].slice.call(document.querySelectorAll(".dg"));
 

@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Eccos · open-source WhatsApp gateway</title>
 <meta name="description" content="An open-source WhatsApp gateway on the official Meta Cloud API. Priced per connected number, never per message, coexistence built in. One number or fifty, yours or your clients'. Self-host it, or let us run it.">
-<meta name="theme-color" content="#0b141a">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9f8">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070c0f">
 <link rel="canonical" href="https://eccos.chat/">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
@@ -18,6 +19,8 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>
+<!-- theme override, applied before the stylesheet so an override never flashes -->
+<script>(function(){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})();</script>
 <link rel="stylesheet" href="/styles.css">
 <script>document.documentElement.className += " js";</script>
 <script defer src="/js/shader.js"></script>
@@ -58,6 +61,11 @@
       <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
     </nav>
     <div class="bar-end">
+      <button id="theme-toggle" class="theme-toggle" type="button" data-mode="auto" aria-label="Theme: auto" title="Theme: auto">
+        <svg class="tt-ic tt-ic-auto" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2.75" y="2.75" width="10.5" height="10.5"/><path d="M8 2.75h5.25v10.5H8z" fill="currentColor" stroke="none"/></svg>
+        <svg class="tt-ic tt-ic-sun" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="5" height="5"/><path d="M8 1v1.9M8 13.1V15M1 8h1.9M13.1 8H15M3.05 3.05 4.4 4.4M11.6 11.6l1.35 1.35M12.95 3.05 11.6 4.4M4.4 11.6l-1.35 1.35"/></svg>
+        <svg class="tt-ic tt-ic-moon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2a4 4 0 0 0 6 6 6 6 0 1 1-6-6Z"/></svg>
+      </button>
       <a class="btn btn-primary btn-sm nav-cta" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
       <button class="nav-toggle" type="button" id="nav-toggle" aria-expanded="false" aria-controls="primary-nav">
         <svg class="ic ic-open" aria-hidden="true"><use href="#i-menu"/></svg>
@@ -380,21 +388,21 @@
     </div>
     <div class="trio">
       <article class="own reveal">
-        <div class="own-media"><img src="/assets/own-account.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-account-light.jpg"><img src="/assets/own-account.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
         <h3 class="own-title">Their account</h3>
         <p>Each connected business brings its own WhatsApp Business Account through
           Embedded Signup and puts its own payment method on file with Meta.
           Conversation charges never pass through us, so they are never marked up.</p>
       </article>
       <article class="own reveal">
-        <div class="own-media"><img src="/assets/own-infra.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-infra-light.jpg"><img src="/assets/own-infra.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
         <h3 class="own-title">Your infrastructure</h3>
         <p>The gateway is open source under the MIT licence. Deploy it as a single
           Bun binary or on Cloudflare Workers and Durable Objects, in your own
           account, or have Eccos Cloud run the same code for you.</p>
       </article>
       <article class="own reveal">
-        <div class="own-media"><img src="/assets/own-data.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-data-light.jpg"><img src="/assets/own-data.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
         <h3 class="own-title">Their data</h3>
         <p>Each business's data stays isolated: never combined across businesses,
           never sold, never used for advertising or to train models. When someone

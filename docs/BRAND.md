@@ -8,7 +8,10 @@ eccos.chat website — tokens, layout grid, components, motion, invariants — s
 The concept: Eccos is a *gateway* that relays WhatsApp messages between Meta and your app. The
 identity is **premium glassmorphism** — translucent **stacked glass layers** (the relay / echo
 passing through, *Eccos ≈ echoes*) in an emerald-green→teal iridescent gradient, glowing on a
-deep dark surface. Dark-mode-first, modern, fancy.
+deep dark surface. Dark-mode-first, modern, fancy. Since August 2026 the website also has a
+**daylight reading** — the same glass refracting on paper (nacre, caustic shadows) instead of
+glowing in the dark; dark stays the canonical rendering for marketing assets (OG, README,
+banner). Rules in [DESIGN-SYSTEM.md](./DESIGN-SYSTEM.md).
 
 ![Eccos banner](./assets/banner.jpg)
 
@@ -39,7 +42,8 @@ a vibrant **emerald→teal iridescent** range for the glass, on near-black surfa
 | **Charcoal** (surface) | `#0B141A` | Primary dark surface / background |
 | **Slate-dark** (raised) | `#10171D` | Cards, the favicon squircle |
 | **White** | `#FFFFFF` | Wordmark and text on dark |
-| **Paper** | `#F7F9F8` | Rare light-context surface |
+| **Paper** | `#F7F9F8` | The light-theme ground on eccos.chat |
+| **Ink green** | `#0B7A4B` | Accent *text* on light surfaces (vivid green never carries text on paper) |
 
 **Material — glass**: translucency, layered depth, soft inner glow, subtle reflections and a
 green halo. Surfaces are **dark by default**; the glass and glow provide the color.
@@ -114,12 +118,20 @@ sips -c 1500 1500 logo.png --out icon.png      # drop baked text, square
 | **Logomark / avatar** | `assets/avatar.png` | 512×512 glass stacked-layers — GitHub/social avatar, apple-touch-icon |
 | **Logomark small** | `assets/logomark.png` | 128px transparent cut of the logomark — site nav + footer |
 | **Favicon** | `assets/favicon.svg` · `assets/favicon-32.png` · `assets/favicon-16.png` | Flat simplified layers (legible small) |
-| **Silk texture** | `assets/hero-silk.jpg` | Emerald iridescent silk — hero shader fallback, footer glass background |
-| **Glass trio** | `assets/own-account.jpg` · `own-infra.jpg` · `own-data.jpg` | Glass key / stack / vault illustrations, landing "Built so you own it" |
+| **Silk texture** | `assets/hero-silk.jpg` | Emerald iridescent silk — hero shader fallback, footer glass background (dark theme) |
+| **Nacre texture** | `assets/hero-silk-light.jpg` | Mother-of-pearl silk on ivory — the same uses in the light theme |
+| **Glass trio** | `assets/own-account.jpg` · `own-infra.jpg` · `own-data.jpg` | Glass key / stack / vault illustrations, landing trio (dark theme) |
+| **Glass trio, daylight** | `assets/own-*-light.jpg` | The same objects as daylight product shots: emerald glass on ivory with colored caustic shadows (light theme) |
 
 The silk texture and the glass trio were generated with **Higgsfield
 (`nano_banana_2`, 2K)** in the glass style above — deep charcoal ground,
 emerald→teal iridescent glass, soft glow, no text. Regenerate in that style
 (any capable model works; keep prompts to the recipe pattern above).
+Their **daylight counterparts** (`*-light.jpg`) use the same recipes with the
+ground flipped: "bright ivory-white studio surface, soft natural daylight,
+colored caustic light patterns and teal-tinted refraction shadows"; the nacre
+texture swaps the silk for "mother-of-pearl, near-white ivory, low-amplitude
+emerald/teal/cyan interference, pale gold glints, form from soft teal-grey
+shadow in the troughs".
 
 _Full-resolution sources are kept outside the repo; regenerate from the recipes when needed._

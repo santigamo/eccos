@@ -84,6 +84,84 @@ Iridescence (cyan, warm glints) exists only inside the shader and generated
 imagery. Any text over imagery needs a scrim that guarantees ≥4.5:1 against
 the brightest frame (hero: left+bottom scrim; footer: the glass wash).
 
+The table above is the **dark** palette — the canonical brand rendering.
+Since the August 2026 light theme, every theme-varying value is a token
+defined three times (dark `:root` + the two light blocks); the light values
+follow.
+
+## The light theme (the daylight reading)
+
+Added August 2026. Light is **not dark inverted** — it is the same machine at
+another hour. At night the glass *emits* (glow, luminous silk: color is
+light); in daylight it *refracts* (caustics, colored shadows: color is
+matter — ink, pigment). Dark's personality is the machine running at night;
+light's is the **technical datasheet** of that machine: paper ground,
+hairlines, engineering-drawing hatch. The parity test: in a side-by-side,
+neither mode may look like the derived one.
+
+**Architecture (dark-first).** `:root` carries the dark theme and every token
+light needs (dark values, even when that value is "nothing"). Light applies
+in two guarded blocks with identical token sets:
+`@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) }`
+and `:root[data-theme="light"]`. `<html data-theme="light|dark">` is an
+explicit user override; the attribute **absent** means "follow the system"
+(never `data-theme="auto"`). The override persists in
+`localStorage["eccos-theme"]` (reads/writes in try/catch). A tiny inline
+head snippet applies it before the stylesheet loads (no FOUC) on all six
+documents. On every effective-theme change `site.js` dispatches the window
+CustomEvent **`eccos:theme`** (`detail: {theme}`) — the shader listens, the
+`theme-color` metas update, and the trio `<picture class="own-pic">` sources
+swap (`media="all"` / `"not all"` / restored query). The header toggle
+(`#theme-toggle`, 36px square, sun/moon/auto icons) cycles
+auto → light → dark → auto and exists on all six documents.
+
+**Light palette.** Ground is *paper*, not white: `--bg: #f7f9f8` (BRAND.md's
+Paper), panels `#ffffff`, sunken wells `--well: #eef3f0`, text = the dark
+charcoal as **ink** (`#0b141a`, 17.6:1). A barely-there grain overlay
+(inline SVG `feTurbulence`, ~4.5% opacity, light only) keeps the paper from
+reading as dead RGB white.
+
+**The ink law (hard).** Vivid `#25d366`/`#34e27a` never carry text on light
+surfaces (1.9:1). Accent text and links use `--ink-green: #0b7a4b` (5.1:1);
+table heads / secondary accents `--ink-teal: #0a6b5c` (6.1:1); meaning-
+bearing marks (✓ ticks, facts icons) `#0f9d58` (3.4:1, graphic floor).
+Vivid green survives only as **filled surfaces**: the primary CTA sweep
+(dark `#06120c` text on it) and the `tag-live` stamp.
+
+**Shadows carry the brand.** Dark depth is luminance; light depth is shadow.
+Shadows are tinted with the brand's cool green (`rgba(13,60,48,…)`), and key
+elements add the **caustic**: a wide soft emerald wash beneath
+(`--caustic`), reading as daylight through glass above — the physical
+translation of the dark glow. Tokens `--shadow-0/1/2` keep two
+comma-separated layers in *both* themes (dark's transparent) so `box-shadow`
+interpolates across a theme flip.
+
+**Material moves per component** (all tokenized — see `--tag-live-*`,
+`--table-rule`, `--hatch-*`, `--dg-*`, `--nav-bg`, `--foot-*` in
+`styles.css`): machine-voice kickers re-ink to `--ink-green`; "Available
+now" inverts into a solid green stamp with dark text; "Early access" becomes
+an ink outline; the data table goes print-convention (2px `--text` top
+rule); hatch bands and rails read as ink on paper; diagrams get white nodes
+with ink wires and `#0f9d58` marks; the footer keeps the silk under a paper
+wash (`hero-silk-light.jpg`). Reveals *print* instead of *emerge*:
+`--rise` drops 12px → 8px and the shadow arrives with the reveal.
+
+**Shader, daylight reading** (`u_light` uniform, mixed in one pass; at
+`u_light = 0` the dark output is bit-identical): the same weave starts from
+ivory and is shaped *downwards* — fold valleys sink toward a teal-grey
+trough (form from shadow, as on paper), the hue lays on as a low-amplitude
+pigment wash, the warm glint turns pale gold, and the vignette inverts:
+edges bleach toward `--bg` at 72% so the nacre melts into the page without
+fully dissolving. Retunes live on `eccos:theme`, no re-init. Fallback image:
+`hero-silk-light.jpg` via the `--hero-fallback` token.
+
+**Regression rules.** (1) Dark must render identically with no override on a
+dark-system machine — the light theme is *additive*. (2) Any new
+theme-varying color must be a token defined in `:root` **and both** light
+blocks; a hardcoded color in a component rule is off-system. (3) All the
+contrast floors above hold in both themes. (4) OG image, README banner and
+favicon stay dark — dark is the canonical brand rendering.
+
 ## Components
 
 - **Buttons** (`.btn`): 40px tall, square, 0 radius, Inter 0.875rem, padding
@@ -109,10 +187,13 @@ the brightest frame (hero: left+bottom scrim; footer: the glass wash).
   count-up on first view; caption muted, ≤30ch.
 - **Masthead**: sticky, blur backdrop over `rgba(7,12,15,.7)`, 1px bottom
   rule. Brand = `logomark.png` at 28px + ECCOS wordmark (Inter 600, tracked).
-  Below 760px the nav is an absolute drawer behind a hamburger
-  (`aria-expanded`, Esc closes, click-outside closes); the toggle group takes
-  `margin-left: auto` **because the drawer's absolute nav removes the auto
-  margins that centred it** — regression to watch when touching the header.
+  The right-hand `.bar-end` group holds the **theme toggle** (36px square,
+  before the CTA, outside the drawer) — present on all six documents. Below
+  760px the nav is an absolute drawer behind a hamburger (`aria-expanded`,
+  Esc closes, click-outside closes); both `.bar-end` variants take
+  `margin-left: auto` there — `.has-menu` **because the drawer's absolute nav
+  removes the auto margins that centred it**, `:not(.has-menu)` (legal/404)
+  so a wrapped toggle row pins right — regressions to watch in the header.
 - **Footer**: one compact block — disclaimer + Product/Legal/Connect columns
   (machine-voice titles) + © row — over `hero-silk.jpg` as a faint glass
   background: image at `64% 57%` (its brightest region), `blur(3px)`, under a
@@ -132,9 +213,11 @@ reduced-motion and no-JS story.
   Palette keyed emerald→teal→cyan with a warm glint (`vec3(.78,.53,.35)`)
   only at the brightest folds; vignette to black at left/bottom for the copy.
   DPR cap 1.5 + total-pixel ceiling + adaptive 0.7 downscale; rAF pauses when
-  the hero leaves the viewport or the tab hides. Fallback chain (reduced
-  motion, no WebGL, context loss, no JS): no canvas — CSS shows
-  `hero-silk.jpg` at .55 opacity under the same scrims.
+  the hero leaves the viewport or the tab hides. The `u_light` uniform mixes
+  in the daylight/nacre reading (see the light-theme section). Fallback chain
+  (reduced motion, no WebGL, context loss, no JS): no canvas — CSS shows the
+  `--hero-fallback` silk (`hero-silk.jpg` / `hero-silk-light.jpg`) under the
+  same scrims.
 - **Reveals**: `.reveal` rises 12px / fades in 0.7s `--ease`
   (`cubic-bezier(.22,.61,.36,1)`); hero children staggered 0 / .12s / .24s on
   load; the rest on first intersection (threshold .15, rootMargin −4%
@@ -161,8 +244,10 @@ its own container; decorative images `alt=""` + explicit `width/height` +
 
 | Asset | Use |
 |---|---|
-| `assets/hero-silk.jpg` | Hero fallback, footer glass background, final-CTA glow. 2400px, emerald silk (generation recipe in BRAND.md) |
-| `assets/own-account.jpg` / `own-infra.jpg` / `own-data.jpg` | Trio cards: glass key / glass stack / glass vault, 1200px |
+| `assets/hero-silk.jpg` | Hero fallback, footer glass background, final-CTA glow — dark. 2400px, emerald silk (generation recipe in BRAND.md) |
+| `assets/hero-silk-light.jpg` | The same three uses in the light theme — 2400×1018 nacre/mother-of-pearl on ivory |
+| `assets/own-account.jpg` / `own-infra.jpg` / `own-data.jpg` | Trio cards (dark): glass key / glass stack / glass vault, 1200px |
+| `assets/own-*-light.jpg` | Trio cards (light): the same objects as daylight product shots — emerald glass on ivory studio ground with colored caustic shadows, 1024px |
 | `assets/logomark.png` | Nav + footer brand mark (28px/24px display) |
 | `assets/avatar.png` | Full 512px logomark: apple-touch-icon, social avatars |
 | `assets/banner.jpg` | OG image (approved wordmark banner) — do not swap casually |
