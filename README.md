@@ -6,6 +6,8 @@
 
 <p>Your app, your token, no message quota — running as a single Bun binary or <strong>entirely on Cloudflare</strong> (Workers + Durable Objects).</p>
 
+<p><a href="https://eccos.chat"><strong>eccos.chat</strong></a></p>
+
 [![CI](https://github.com/santigamo/eccos/actions/workflows/ci.yml/badge.svg)](https://github.com/santigamo/eccos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-25D366.svg)](./LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-000?logo=bun&logoColor=white)](https://bun.sh)
@@ -296,8 +298,10 @@ bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers integration tests for the Workers target
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventions, and
-[docs/BRAND.md](./docs/BRAND.md) for the visual identity if you're making assets.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventions. If you're
+making assets or touching [eccos.chat](https://eccos.chat) (`apps/site/`), the visual identity
+lives in [docs/BRAND.md](./docs/BRAND.md) and the site's design rules — tokens, the two laws,
+motion, and the legal invariants — in [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SYSTEM.md).
 
 ## 🗺️ Roadmap
 
@@ -316,7 +320,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventio
 ## 🤝 Contributing
 
 Issues and PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). For security reports, see
-[SECURITY.md](./SECURITY.md). Brand and asset guidelines live in [docs/BRAND.md](./docs/BRAND.md).
+[SECURITY.md](./SECURITY.md). Brand and asset guidelines live in [docs/BRAND.md](./docs/BRAND.md);
+the eccos.chat design system in [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SYSTEM.md).
 
 ## 📄 License
 
