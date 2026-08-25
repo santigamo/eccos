@@ -280,7 +280,8 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   letter-spacing: 0.12em;
 }
 .brand:hover { text-decoration: none; }
-.brand img { width: 26px; height: 26px; border-radius: 7px; }
+/* Transparent logomark: no plate, so no radius to round. */
+.brand img { width: 28px; height: 28px; }
 
 .nav {
   display: flex;
@@ -754,7 +755,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   color: var(--faint);
   font-size: 0.8125rem;
 }
-.foot-brand img { width: 22px; height: 22px; border-radius: 6px; }
+.foot-brand img { width: 24px; height: 24px; }
 
 /* ---------- legal documents (/privacy, /terms, /data-deletion) ---------- */
 
