@@ -16,187 +16,420 @@
 <meta property="og:url" content="https://eccos.chat/">
 <meta property="og:image" content="https://eccos.chat/assets/banner.jpg">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
+<script>document.documentElement.className += " js";</script>
+<script defer src="/js/shader.js"></script>
+<script defer src="/js/site.js"></script>
 <script defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
 </head>
 <body>
 
-<header class="masthead">
+<a class="skip" href="#main">Skip to content</a>
+
+<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.6 13.4 3.6v4.1c0 3.2-2.2 5.6-5.4 6.7C4.8 13.3 2.6 10.9 2.6 7.7V3.6Z"/><path d="m5.6 7.9 1.7 1.7 3.1-3.3"/></symbol>
+    <symbol id="i-code" viewBox="0 0 16 16"><path d="m5.6 4.4-3.4 3.6 3.4 3.6"/><path d="m10.4 4.4 3.4 3.6-3.4 3.6"/></symbol>
+    <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.6 9.4a2.7 2.7 0 0 0 3.9 0l2.1-2.2a2.75 2.75 0 0 0-3.9-3.9L8 4.2"/><path d="M9.4 6.6a2.7 2.7 0 0 0-3.9 0L3.4 8.8a2.75 2.75 0 0 0 3.9 3.9L8 11.8"/></symbol>
+    <symbol id="i-card" viewBox="0 0 16 16"><rect x="1.8" y="3.6" width="12.4" height="8.8" rx="1.8"/><path d="M1.8 6.8h12.4"/><path d="M4.4 9.8h2.8"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M1.9 8h12.2"/><path d="M8 1.8c1.8 2 2.7 4 2.7 6.2S9.8 12.2 8 14.2C6.2 12.2 5.3 10.2 5.3 8S6.2 3.8 8 1.8Z"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 16 16"><path d="m8 1.9 6.1 3.2L8 8.3 1.9 5.1Z"/><path d="m1.9 8.7 6.1 3.2 6.1-3.2"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 16 16"><path d="M7.5 1.9H14v6.5l-6 6a1.3 1.3 0 0 1-1.9 0L2 10.3a1.3 1.3 0 0 1 0-1.9Z"/><path d="M11 5h.01"/></symbol>
+    <symbol id="i-mega" viewBox="0 0 16 16"><path d="M2.4 6.2h2.3l6-3.3v10.2l-6-3.3H2.4Z"/><path d="M12.6 6.4a2.6 2.6 0 0 1 0 3.2"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.4V8l2.4 1.6"/></symbol>
+    <symbol id="i-server" viewBox="0 0 16 16"><rect x="2" y="2.6" width="12" height="4.4" rx="1.4"/><rect x="2" y="9" width="12" height="4.4" rx="1.4"/><path d="M4.6 4.8h.01"/><path d="M4.6 11.2h.01"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.8 4.4h10.4"/><path d="M5.5 4.4V3.2c0-.7.5-1.2 1.2-1.2h2.6c.7 0 1.2.5 1.2 1.2v1.2"/><path d="m4.3 4.4.7 8.5c0 .7.6 1.2 1.2 1.2h3.6c.6 0 1.2-.5 1.2-1.2l.7-8.5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="m3 8.4 3.2 3.2L13 4.7"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 16 16"><path d="M2 4.5h12"/><path d="M2 8h12"/><path d="M2 11.5h12"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16"><path d="m3.6 3.6 8.8 8.8"/><path d="m12.4 3.6-8.8 8.8"/></symbol>
+  </defs>
+</svg>
+
+<header class="masthead has-menu">
   <div class="shell">
-    <a class="brand" href="/"><img src="/assets/favicon.svg" alt="">ECCOS</a>
-    <nav class="nav">
+    <a class="brand" href="/"><img src="/assets/logo-64.png" alt="" width="512" height="512" decoding="async">ECCOS</a>
+    <nav class="nav" id="primary-nav" aria-label="Primary">
       <a href="#how">How it works</a>
       <a href="#run">Run it</a>
       <a href="#data">Your data</a>
       <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
     </nav>
+    <div class="bar-end">
+      <a class="btn btn-primary btn-sm nav-cta" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
+      <button class="nav-toggle" type="button" id="nav-toggle" aria-expanded="false" aria-controls="primary-nav">
+        <svg class="ic ic-open" aria-hidden="true"><use href="#i-menu"/></svg>
+        <svg class="ic ic-shut" aria-hidden="true"><use href="#i-close"/></svg>
+        <span class="sr">Menu</span>
+      </button>
+    </div>
   </div>
 </header>
 
-<main>
+<main id="main">
 
-  <section class="hero">
-    <div class="shell">
-      <span class="eyebrow">Open source · MIT</span>
-      <h1>The WhatsApp gateway you <span class="gradient">actually own</span></h1>
-      <p class="lede">
-        Eccos runs on the official WhatsApp Cloud API. Run it yourself, or let us
-        run it for you. Either way you keep your own WhatsApp Business Account and
-        pay Meta directly for conversations, with no platform metering your messages.
+  <!-- §1 hero ---------------------------------------------------------- -->
+  <section class="band hero" id="hero" aria-label="Eccos">
+    <div class="hero-bg" aria-hidden="true"></div>
+    <div class="hero-scrim" aria-hidden="true"></div>
+    <div class="wrap hero-inner">
+      <h1 class="reveal">The WhatsApp gateway<br class="br-lg"> you <span class="px">actually own</span></h1>
+      <p class="lede reveal">
+        Eccos runs on the official WhatsApp Cloud API. Self-host it, or let us run it
+        for you — either way you keep your own WhatsApp Business Account and pay Meta
+        directly, with no platform metering your messages.
       </p>
-      <div class="actions">
-        <a class="btn btn-primary" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host it →</a>
+      <div class="actions reveal">
+        <a class="btn btn-primary" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host on GitHub</a>
+        <a class="btn btn-ghost" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
+      </div>
+    </div>
+  </section>
+
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §2 facts strip --------------------------------------------------- -->
+  <section class="band facts" aria-label="At a glance">
+    <ul class="cells">
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Official Meta Cloud API</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>Open source · MIT</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>Embedded Signup</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>You pay Meta directly</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>EU data residency</li>
+    </ul>
+  </section>
+
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §3 statement + §4 feature rows ----------------------------------- -->
+  <section class="band" id="how" aria-labelledby="how-h">
+    <div class="wrap statement">
+      <h2 id="how-h" class="reveal">The gateway between Meta and <span class="px">your systems</span></h2>
+      <p class="reveal">
+        A business connects its own WhatsApp Business Account through Embedded Signup.
+        From that moment, Eccos does two things on its behalf.
+      </p>
+    </div>
+
+    <article class="row">
+      <div class="row-text reveal">
+        <h3>Receives and forwards</h3>
+        <p>
+          It takes the events Meta sends about the account — incoming messages, delivery
+          and read receipts — and forwards them to an endpoint the business chooses,
+          retrying when that endpoint is down.
+        </p>
+      </div>
+      <div class="row-vis reveal">
+        <svg class="dg dg-relay" viewBox="0 0 520 240" role="img" aria-label="Meta sends events to Eccos, which forwards them to your endpoint and retries when that endpoint is down.">
+          <line class="wire" x1="20" y1="112" x2="500" y2="112"/>
+          <circle class="pulse-halo" cx="0" cy="112" r="11"/>
+          <circle class="pulse" cx="0" cy="112" r="4.5"/>
+          <g class="node"><rect x="20" y="84" width="118" height="56" rx="13"/><text x="79" y="117">Meta</text></g>
+          <g class="node node-mid"><rect x="201" y="84" width="118" height="56" rx="13"/><text x="260" y="117">Eccos</text></g>
+          <g class="node"><rect x="382" y="84" width="118" height="56" rx="13"/><text x="441" y="117">Your endpoint</text></g>
+          <g class="retry">
+            <path class="retry-arc" d="M441 148 C 441 205, 260 205, 260 152"/>
+            <path class="retry-head" d="m254 158 6-6 6 6"/>
+            <text x="350" y="222">retry</text>
+          </g>
+        </svg>
+      </div>
+    </article>
+
+    <article class="row">
+      <div class="row-text reveal">
+        <h3>Sends</h3>
+        <p>
+          It sends the messages the business asks it to send — including templates and
+          media — through the official Cloud API.
+        </p>
+      </div>
+      <div class="row-vis reveal">
+        <svg class="dg dg-send" viewBox="0 0 520 240" role="img" aria-label="A message leaves Eccos through the Cloud API and comes back marked sent, then delivered.">
+          <line class="wire" x1="40" y1="120" x2="480" y2="120"/>
+          <g class="rail"><path d="M40 100v40"/><path d="M480 100v40"/></g>
+          <g class="msg">
+            <rect x="0" y="94" width="118" height="52" rx="12"/>
+            <path class="msg-line" d="M16 114h74"/>
+            <path class="msg-line short" d="M16 128h48"/>
+          </g>
+          <g class="marks">
+            <path class="tick tick-1" d="m374 104 7 7 14-15"/>
+            <path class="tick tick-2" d="m390 104 7 7 14-15"/>
+          </g>
+          <text class="cap cap-1" x="295" y="178">sent</text>
+          <text class="cap cap-2" x="398" y="178">delivered</text>
+        </svg>
+      </div>
+    </article>
+
+    <article class="row">
+      <div class="row-text reveal">
+        <h3>Connect with Embedded Signup</h3>
+        <p>
+          Businesses run WhatsApp support and notifications from their own systems,
+          without a third-party platform sitting between them and Meta. The account stays
+          theirs; conversation charges are billed by Meta directly.
+        </p>
+      </div>
+      <div class="row-vis reveal">
+        <svg class="dg dg-direct" viewBox="0 0 520 240" role="img" aria-label="The business account is connected directly to Meta, with Eccos relaying underneath.">
+          <line class="wire wire-strong" x1="150" y1="72" x2="370" y2="72"/>
+          <g class="node"><rect x="20" y="44" width="130" height="56" rx="13"/><text x="85" y="77">Business</text></g>
+          <g class="node"><rect x="370" y="44" width="130" height="56" rx="13"/><text x="435" y="77">Meta</text></g>
+          <circle class="pulse pulse-2" cx="0" cy="72" r="4.5"/>
+          <g class="drop"><path d="M85 100v46h115"/><path d="M435 100v46H320"/></g>
+          <g class="node node-relay"><rect x="200" y="122" width="120" height="48" rx="12"/><text x="260" y="151">Eccos</text></g>
+          <text class="cap cap-static" x="260" y="204">account stays yours · Meta bills you</text>
+        </svg>
+      </div>
+    </article>
+  </section>
+
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §5 ownership trio ------------------------------------------------ -->
+  <section class="band" aria-labelledby="own-h">
+    <div class="wrap statement solo">
+      <h2 id="own-h" class="reveal">Built so you <span class="px">own it</span></h2>
+    </div>
+    <div class="trio">
+      <article class="own reveal">
+        <div class="own-media"><img src="/assets/own-account.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <p><strong>Your account.</strong> Businesses connect their own WhatsApp Business
+          Account through Embedded Signup and pay Meta directly for conversations.</p>
+      </article>
+      <article class="own reveal">
+        <div class="own-media"><img src="/assets/own-infra.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <p><strong>Your infrastructure.</strong> The full gateway is open source under the
+          MIT licence — deploy it as a single Bun binary or entirely on Cloudflare Workers
+          and Durable Objects, on infrastructure you control.</p>
+      </article>
+      <article class="own reveal">
+        <div class="own-media"><img src="/assets/own-data.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></div>
+        <p><strong>Your data.</strong> Each business's data is isolated — never combined
+          across businesses, never sold, and never used for advertising or to train models.</p>
+      </article>
+    </div>
+  </section>
+
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §6 modes --------------------------------------------------------- -->
+  <section class="band" id="run" aria-labelledby="run-h">
+    <div class="wrap statement solo">
+      <h2 id="run-h" class="reveal">Two ways to <span class="px">run it</span></h2>
+    </div>
+    <div class="modes">
+      <article class="mode reveal">
+        <div class="mode-head">
+          <h3>Self-hosted</h3>
+          <span class="tag tag-live">Available now</span>
+        </div>
+        <p>The full gateway, open source under the MIT licence, on infrastructure you control.</p>
+        <p class="label">What's included</p>
+        <ul class="ticks">
+          <li>Single-binary deploy on Bun</li>
+          <li>Or Cloudflare Workers + Durable Objects</li>
+          <li>Your deployment talks to Meta directly</li>
+          <li>Nothing is ever sent to us</li>
+        </ul>
+        <a class="btn btn-primary" href="https://github.com/santigamo/eccos" rel="noreferrer">Source &amp; deployment guide</a>
+      </article>
+      <article class="mode reveal">
+        <div class="mode-head">
+          <h3>Eccos Cloud</h3>
+          <span class="tag tag-soon">Early access</span>
+        </div>
+        <p>A hosted version for businesses that would rather not run infrastructure. We
+          operate the gateway; you connect your WhatsApp Business Account the same way.</p>
+        <p class="label">What to expect</p>
+        <ul class="ticks">
+          <li>We run the gateway for you</li>
+          <li>Same Embedded Signup flow</li>
+          <li>Onboarded case by case while we open it up</li>
+          <li>Not yet generally available</li>
+        </ul>
         <a class="btn btn-ghost" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Ask for early access</a>
-      </div>
+      </article>
+    </div>
+    <div class="strip">
+      <p>Everything lives on GitHub — issues and PRs welcome.</p>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub →</a>
     </div>
   </section>
 
-  <section class="band" id="how">
-    <div class="shell">
-      <h2>What it does</h2>
-      <p>
-        A business connects its own WhatsApp Business Account through Embedded
-        Signup. From that moment Eccos does two things on that business's behalf.
-      </p>
-      <div class="grid">
-        <article class="card">
-          <h3>Receives and forwards</h3>
-          <p>
-            It takes the events Meta sends about that account — incoming messages,
-            delivery and read receipts — and forwards them to an endpoint the
-            business chooses, retrying when that endpoint is down.
-          </p>
-        </article>
-        <article class="card">
-          <h3>Sends</h3>
-          <p>
-            It sends the messages the business asks it to send, including templates
-            and media, through the official Cloud API.
-          </p>
-        </article>
-      </div>
-      <p style="margin-top:28px">
-        Businesses use it to run WhatsApp support and notifications from their own
-        systems, without a third-party platform sitting between them and Meta.
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §7 data ---------------------------------------------------------- -->
+  <section class="band" id="data" aria-labelledby="data-h">
+    <div class="wrap statement">
+      <h2 id="data-h" class="reveal">How your data is <span class="px">handled</span></h2>
+      <p class="reveal">
+        In the hosted version, data obtained from the WhatsApp Cloud API — message events,
+        delivery statuses, phone number and account identifiers — is processed for one
+        purpose only: delivering each business its own messages and events.
       </p>
     </div>
-  </section>
 
-  <section class="band" id="run">
-    <div class="shell">
-      <h2>Two ways to run it</h2>
-      <div class="grid">
+    <div class="tablewrap reveal" tabindex="0" role="region" aria-label="Data handling, hosted versus self-hosted">
+      <table class="dtable">
+        <thead>
+          <tr>
+            <th scope="col">Data handling</th>
+            <th scope="col">Eccos Cloud</th>
+            <th scope="col">Self-hosted</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-layers"/></svg>Combined or cross-referenced across businesses</th>
+            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Never</span></td>
+            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Never</span></td>
+          </tr>
+          <tr>
+            <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg>Sold, rented, or shared with data brokers</th>
+            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Never</span></td>
+            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Never</span></td>
+          </tr>
+          <tr>
+            <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-mega"/></svg>Used for advertising or to train models</th>
+            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Never</span></td>
+            <td><span class="never"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Never</span></td>
+          </tr>
+          <tr>
+            <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-clock"/></svg>Message content retention</th>
+            <td>30 days by default, configurable 7–90</td>
+            <td>You decide</td>
+          </tr>
+          <tr>
+            <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>Storage jurisdiction</th>
+            <td>Pinned to Cloudflare's European Union jurisdiction</td>
+            <td>Your infrastructure</td>
+          </tr>
+          <tr>
+            <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-server"/></svg>Sent to our servers</th>
+            <td>Only each business's own events, to deliver them</td>
+            <td>Nothing at all</td>
+          </tr>
+          <tr>
+            <th scope="row"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Deleted on request</th>
+            <td>Yes — each business's data, in full</td>
+            <td>Under your control</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-        <article class="card">
-          <div class="card-head">
-            <h3>Self-hosted</h3>
-            <span class="tag tag-live">Available now</span>
-          </div>
-          <p>
-            The full gateway is open source under the MIT licence. Deploy it as a
-            single Bun binary or entirely on Cloudflare Workers and Durable Objects,
-            on infrastructure you control.
-          </p>
-          <p><strong>Nothing is sent to us:</strong> your deployment talks to Meta directly.</p>
-          <p><a href="https://github.com/santigamo/eccos" rel="noreferrer">Source and deployment guide on GitHub →</a></p>
-        </article>
-
-        <article class="card">
-          <div class="card-head">
-            <h3>Eccos Cloud</h3>
-            <span class="tag tag-soon">Early access</span>
-          </div>
-          <p>
-            A hosted version for businesses that would rather not run infrastructure.
-            We operate the gateway for you and you connect your WhatsApp Business
-            Account the same way.
-          </p>
-          <p>
-            This version is being onboarded case by case while we open it up, and is
-            not yet generally available.
-          </p>
-          <p><a href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Ask for early access →</a></p>
-        </article>
-
+    <div class="stats">
+      <div class="stat reveal">
+        <p class="statnum"><span class="num" data-count="30">30</span></p>
+        <p class="statcap">days message content is kept by default</p>
+      </div>
+      <div class="stat reveal">
+        <p class="statnum">7–<span class="num" data-count="90">90</span></p>
+        <p class="statcap">the configurable retention window, in days</p>
+      </div>
+      <div class="stat reveal">
+        <p class="statnum"><span class="num" data-count="0">0</span></p>
+        <p class="statcap">bytes sold, shared with brokers, or used for ads or training</p>
       </div>
     </div>
-  </section>
 
-  <section class="band" id="data">
-    <div class="shell">
-      <h2>How your data is handled</h2>
-      <p>
-        In the hosted version, data obtained from the WhatsApp Cloud API — message
-        events, delivery statuses, phone number and account identifiers — is
-        processed for one purpose only: delivering each business its own messages
-        and events.
+    <div class="wrap wrap-tight">
+      <p class="reveal">
+        Eccos is a pass-through gateway, not an archive — your own systems remain your
+        system of record. The full detail, including subprocessors and the caveats we chose
+        to declare rather than round away, is in the <a href="/privacy">Privacy Policy</a>.
       </p>
-      <div class="grid">
-        <article class="card">
-          <h3>What we never do</h3>
-          <ul class="ticks">
-            <li>Never combined or cross-referenced across businesses.</li>
-            <li>Never sold, rented, or shared with data brokers.</li>
-            <li>Never used for advertising or to train models.</li>
-          </ul>
-        </article>
-        <article class="card">
-          <h3>What we do</h3>
-          <ul class="ticks">
-            <li>Message content is kept 30 days by default, configurable between 7 and 90.</li>
-            <li>Storage is pinned to Cloudflare's European Union jurisdiction.</li>
-            <li>Each business's data is isolated, and is deleted on request.</li>
-          </ul>
-        </article>
-      </div>
-      <p style="margin-top:28px">
-        Eccos is a pass-through gateway, not an archive: your own systems remain
-        your system of record. The full detail, including subprocessors and the
-        caveats we chose to declare rather than round away, is in the
-        <a href="/privacy">Privacy Policy</a>.
-      </p>
-      <p>
+      <p class="reveal">
         Self-hosted deployments send us nothing at all: the data never leaves the
         infrastructure the business itself operates.
       </p>
     </div>
   </section>
 
-  <section class="band" id="provider">
-    <div class="shell">
-      <h2>Who provides this service</h2>
-      <p>
-        Eccos is built and operated by a sole trader (empresario individual)
-        registered in Spain. Because the provider is a natural person, there is no
-        Companies House entry; the corresponding registration is with the Spanish
-        Tax Agency's business census.
-      </p>
-      <dl class="identity">
-        <dt>Provider</dt><dd>Santiago García Monsalve</dd>
-        <dt>Tax ID (NIF)</dt><dd>21105416H</dd>
-        <dt>Registered address</dt><dd>Passeig del Riu, 54, planta 1º, puerta 2ª — 08241 Manresa (Barcelona), Spain</dd>
-        <dt>Phone</dt><dd>+34 697 98 18 79</dd>
-        <dt>Email</dt><dd><a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a></dd>
-      </dl>
-      <p style="margin-top:24px">
-        Full legal notice, as required by Spanish law (LSSI-CE), at
-        <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">imsanti.dev/aviso-legal</a> (in Spanish).
-      </p>
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §8 provider ------------------------------------------------------ -->
+  <section class="band" id="provider" aria-labelledby="prov-h">
+    <div class="wrap provider">
+      <div class="provider-lead reveal">
+        <h2 id="prov-h">Who provides <span class="px">this service</span></h2>
+        <p>
+          Eccos is built and operated by a sole trader (empresario individual) registered in
+          Spain. Because the provider is a natural person, there is no Companies House entry;
+          the corresponding registration is with the Spanish Tax Agency's business census.
+        </p>
+      </div>
+      <div class="provider-card reveal">
+        <dl class="identity">
+          <dt>Provider</dt><dd>Santiago García Monsalve</dd>
+          <dt>Tax ID (NIF)</dt><dd>21105416H</dd>
+          <dt>Registered address</dt><dd>Passeig del Riu, 54, planta 1º, puerta 2ª — 08241 Manresa (Barcelona), Spain</dd>
+          <dt>Phone</dt><dd>+34 697 98 18 79</dd>
+          <dt>Email</dt><dd><a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a></dd>
+        </dl>
+        <p class="note-line">
+          Full legal notice, as required by Spanish law (LSSI-CE), at
+          <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">imsanti.dev/aviso-legal</a> (in Spanish).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <div class="hatch" aria-hidden="true"></div>
+
+  <!-- §9 final CTA ----------------------------------------------------- -->
+  <section class="band cta" aria-labelledby="cta-h">
+    <div class="cta-glow" aria-hidden="true"></div>
+    <div class="wrap cta-inner">
+      <h2 id="cta-h" class="reveal">Your account. Your data. <span class="px">Your gateway.</span></h2>
+      <div class="actions reveal">
+        <a class="btn btn-primary" href="https://github.com/santigamo/eccos" rel="noreferrer">Self-host on GitHub</a>
+        <a class="btn btn-ghost" href="mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access">Get early access</a>
+      </div>
     </div>
   </section>
 
 </main>
 
 <footer class="foot">
-  <div class="shell">
-    <p>Eccos is an independent project and is not affiliated with, endorsed by, or sponsored by Meta Platforms. WhatsApp is a trademark of Meta.</p>
-    <nav>
-      <a href="/privacy">Privacy</a>
-      <a href="/terms">Terms</a>
-      <a href="/data-deletion">Data deletion</a>
-      <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
-      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
-    </nav>
+  <div class="band foot-top">
+    <div class="wrap foot-grid">
+      <p class="disclaimer">
+        Eccos is an independent project and is not affiliated with, endorsed by, or
+        sponsored by Meta Platforms. WhatsApp is a trademark of Meta.
+      </p>
+      <div class="foot-cols">
+        <nav class="foot-col" aria-label="Product">
+          <p class="label">Product</p>
+          <a href="#how">How it works</a>
+          <a href="#run">Run it</a>
+          <a href="#data">Your data</a>
+        </nav>
+        <nav class="foot-col" aria-label="Legal">
+          <p class="label">Legal</p>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="/data-deletion">Data deletion</a>
+          <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
+        </nav>
+        <nav class="foot-col" aria-label="Connect">
+          <p class="label">Connect</p>
+          <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+          <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>
+        </nav>
+      </div>
+    </div>
+  </div>
+  <div class="band foot-band">
+    <div class="foot-brand">
+      <img src="/assets/logo-64.png" alt="" width="512" height="512" loading="lazy" decoding="async">
+      <span>© 2026 Santiago García Monsalve</span>
+    </div>
   </div>
 </footer>
 

@@ -7,15 +7,19 @@
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0b141a">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 <script defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
 </head>
 <body>
 
+<a class="skip" href="#main">Skip to content</a>
+
 <header class="masthead">
   <div class="shell">
-    <a class="brand" href="/"><img src="/assets/favicon.svg" alt="">ECCOS</a>
-    <nav class="nav">
+    <a class="brand" href="/"><img src="/assets/logo-64.png" alt="" width="512" height="512" decoding="async">ECCOS</a>
+    <nav class="nav" aria-label="Primary">
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
       <a href="/data-deletion">Data deletion</a>
@@ -24,11 +28,48 @@
   </div>
 </header>
 
-<main class="shell center">
-  <h1 class="gradient" style="font-size:clamp(3rem,9vw,5rem);margin:0 0 14px;letter-spacing:-0.03em">404</h1>
+<main class="shell center" id="main">
+  <h1 class="gradient">404</h1>
   <p class="lede">That page does not exist. The message went through, the route did not.</p>
   <div class="actions"><a class="btn btn-primary" href="/">Back to Eccos →</a></div>
 </main>
+
+<footer class="foot">
+  <div class="band foot-top">
+    <div class="wrap foot-grid">
+      <p class="disclaimer">
+        Eccos is an independent project and is not affiliated with, endorsed by, or
+        sponsored by Meta Platforms. WhatsApp is a trademark of Meta.
+      </p>
+      <div class="foot-cols">
+        <nav class="foot-col" aria-label="Product">
+          <p class="label">Product</p>
+          <a href="/#how">How it works</a>
+          <a href="/#run">Run it</a>
+          <a href="/#data">Your data</a>
+        </nav>
+        <nav class="foot-col" aria-label="Legal">
+          <p class="label">Legal</p>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="/data-deletion">Data deletion</a>
+          <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
+        </nav>
+        <nav class="foot-col" aria-label="Connect">
+          <p class="label">Connect</p>
+          <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+          <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>
+        </nav>
+      </div>
+    </div>
+  </div>
+  <div class="band foot-band">
+    <div class="foot-brand">
+      <img src="/assets/logo-64.png" alt="" width="512" height="512" loading="lazy" decoding="async">
+      <span>© 2026 Santiago García Monsalve</span>
+    </div>
+  </div>
+</footer>
 
 </body>
 </html>

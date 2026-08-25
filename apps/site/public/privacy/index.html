@@ -9,15 +9,18 @@
 <link rel="canonical" href="https://eccos.chat/privacy">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/assets/favicon-32.png" sizes="32x32">
+<link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 <script defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
 </head>
 <body>
 
+<a class="skip" href="#main">Skip to content</a>
+
 <header class="masthead">
   <div class="shell">
-    <a class="brand" href="/"><img src="/assets/favicon.svg" alt="">ECCOS</a>
-    <nav class="nav">
+    <a class="brand" href="/"><img src="/assets/logo-64.png" alt="" width="512" height="512" decoding="async">ECCOS</a>
+    <nav class="nav" aria-label="Primary">
       <a href="/privacy" aria-current="page">Privacy</a>
       <a href="/terms">Terms</a>
       <a href="/data-deletion">Data deletion</a>
@@ -26,7 +29,7 @@
   </div>
 </header>
 
-<main class="shell doc">
+<main class="shell doc" id="main">
 
   <h1>Privacy Policy</h1>
   <p class="lede">
@@ -214,15 +217,39 @@
 </main>
 
 <footer class="foot">
-  <div class="shell">
-    <p>Eccos is an independent project and is not affiliated with, endorsed by, or sponsored by Meta Platforms. WhatsApp is a trademark of Meta.</p>
-    <nav>
-      <a href="/privacy">Privacy</a>
-      <a href="/terms">Terms</a>
-      <a href="/data-deletion">Data deletion</a>
-      <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
-      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
-    </nav>
+  <div class="band foot-top">
+    <div class="wrap foot-grid">
+      <p class="disclaimer">
+        Eccos is an independent project and is not affiliated with, endorsed by, or
+        sponsored by Meta Platforms. WhatsApp is a trademark of Meta.
+      </p>
+      <div class="foot-cols">
+        <nav class="foot-col" aria-label="Product">
+          <p class="label">Product</p>
+          <a href="/#how">How it works</a>
+          <a href="/#run">Run it</a>
+          <a href="/#data">Your data</a>
+        </nav>
+        <nav class="foot-col" aria-label="Legal">
+          <p class="label">Legal</p>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="/data-deletion">Data deletion</a>
+          <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
+        </nav>
+        <nav class="foot-col" aria-label="Connect">
+          <p class="label">Connect</p>
+          <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+          <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>
+        </nav>
+      </div>
+    </div>
+  </div>
+  <div class="band foot-band">
+    <div class="foot-brand">
+      <img src="/assets/logo-64.png" alt="" width="512" height="512" loading="lazy" decoding="async">
+      <span>© 2026 Santiago García Monsalve</span>
+    </div>
   </div>
 </footer>
 
