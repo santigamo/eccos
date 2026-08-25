@@ -8,6 +8,14 @@ function clean(env: Record<string, string | undefined>): Record<string, string |
   return out;
 }
 
+/**
+ * Durable Object jurisdictions Cloudflare actually supports. Note there is no
+ * "us" jurisdiction on Cloudflare — data-residency pinning is only offered for
+ * the EU and FedRAMP environments.
+ */
+export const DO_JURISDICTIONS = ["eu", "fedramp", "fedramp-high"] as const;
+export type DoJurisdiction = (typeof DO_JURISDICTIONS)[number];
+
 export const coreSchema = z.object({
   META_GRAPH_VERSION: z.string().min(1).default("v24.0"),
   META_ACCESS_TOKEN: z.string().min(1),
@@ -21,6 +29,13 @@ export const coreSchema = z.object({
   FORWARD_MAX_ATTEMPTS: z.coerce.number().int().positive().default(6),
   META_APP_ID: z.string().min(1).optional(),
   META_ES_CONFIG_ID: z.string().min(1).optional(),
+  /**
+   * Optional Durable Object jurisdiction (Workers target only). Empty/absent keeps
+   * the current behavior: the DO is created wherever the first request lands.
+   * CRITICAL: changing this after data exists points the gateway at a NEW, EMPTY
+   * Durable Object — existing data is NOT migrated. Set it before going live.
+   */
+  DO_JURISDICTION: z.enum(DO_JURISDICTIONS).optional(),
 });
 export type CoreConfig = z.infer<typeof coreSchema>;
 

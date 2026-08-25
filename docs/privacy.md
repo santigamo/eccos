@@ -34,25 +34,27 @@ own `SUBSCRIBER_WEBHOOK_URL`.
 
 ## 2. Retention
 
-Both targets now prune `inbound_events`, `outbound_messages`, and terminal (`delivered`/`failed`)
-`deliveries` rows older than a configurable retention window — **30 days by default**, adjustable
-per target:
+Both targets prune old rows on an ongoing basis; the Workers target uses a **split** retention
+model so message content ages out before the operational audit trail does:
 
 - **Workers target (`apps/gateway/`, the active v1 target):** `EccosGateway.alarm()`
-  (`apps/gateway/src/gateway.ts`) prunes on every alarm tick:
-  ```
-  const retentionDays = Number(this.env.RETENTION_DAYS) || DEFAULT_RETENTION_DAYS; // 30
-  const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
-  DELETE FROM deliveries        WHERE status IN ('delivered','failed') AND created_at  < now - retentionMs
-  DELETE FROM inbound_events     WHERE received_at < now - retentionMs
-  DELETE FROM outbound_messages  WHERE created_at  < now - retentionMs
-  ```
-  `RETENTION_DAYS` is set as a plain (non-secret) `vars` entry in `apps/gateway/wrangler.jsonc`
-  (default `"30"`); an operator can change it there (or unset it, which falls back to the
-  in-code `DEFAULT_RETENTION_DAYS = 30`) and redeploy — no code edit required. Pruning runs as a
-  side effect of the alarm that also drains the delivery queue, so if there is no inbound traffic
-  (no alarm fires), stale rows can persist slightly past the configured window until the next
-  alarm.
+  (`apps/gateway/src/gateway.ts`) prunes on every alarm tick with two windows:
+  - **`CONTENT_RETENTION_DAYS`** (default **30**, clamped to **7–90**): past it, `inbound_events`
+    and `outbound_messages` rows are **deleted**, and terminal (`delivered`/`failed`)
+    `deliveries` rows are **redacted in place** — `payload` (the stored copy of the forwarded
+    event batch, i.e. the message content) is emptied while `id`, `status`, `attempts`,
+    `last_error`, `next_attempt_at`, and `created_at` survive. After this window no message
+    content or phone number remains anywhere in storage.
+  - **`DELIVERY_RETENTION_DAYS`** (default **90**): past it, the metadata-only terminal
+    `deliveries` rows are deleted entirely.
+
+  Both are plain (non-secret) `vars` entries in `apps/gateway/wrangler.jsonc`; the deprecated
+  single `RETENTION_DAYS` is still honored as a fallback for `CONTENT_RETENTION_DAYS` so
+  existing deployments keep their window. All values are guard-railed
+  (`resolveRetentionDays()`): invalid values fall back to the defaults rather than feeding a
+  destructive window. Pruning runs as a side effect of the alarm that also drains the delivery
+  queue, so if there is no inbound traffic (no alarm fires), stale rows can persist slightly
+  past the configured window until the next alarm.
 - **Bun target (`src/`):** `pruneOldRows()` (`src/delivery/forward.ts`) runs the equivalent three
   `DELETE`s using `cfg.RETENTION_DAYS` (validated by the Zod config schema in `src/config.ts`,
   `z.coerce.number().int().positive().default(30)` — set via the `RETENTION_DAYS` env var / `.env`
@@ -154,12 +156,36 @@ API to build for this.
   the `EccosGateway` Durable Object's SQL storage.
 
 **Delete (Workers target):**
-- Normal operation already deletes rows automatically after ~30 days (§2).
-- There is **no operator-facing "purge now" action** in the current `GatewayApi` — `retryDelivery`
-  re-enqueues a delivery, it does not delete anything. To wipe data immediately today, an operator
-  must either wait for the next alarm-driven prune, or delete/reset the Durable Object (e.g. via a
-  new `wrangler.jsonc` migration that deletes the `EccosGateway` class) — which also removes the
-  `config` table (WABA id, phone number id, subscriber config) and requires re-onboarding.
+- Normal operation already removes message content automatically after ~30 days and the
+  remaining delivery metadata after ~90 (§2).
+- <a id="erasure"></a>**Per-number erasure (GDPR Art. 17)** — `EccosGateway.eraseByPhone(phone)`,
+  exposed as `GatewayRPC.eraseByPhone()` (operator RPC, service binding only) and as
+  `POST /v1/privacy/erasure` with body `{"phone": "+34..."}` behind the same Bearer
+  `ECCOS_API_KEY` gate as the rest of `/v1` (the number travels in the body, never the URL, so
+  it can't leak into request logs). It removes every stored trace of one phone number and
+  returns per-table counts as evidence of the erasure. How it matches:
+  - the input and stored numbers are normalized to digits-only and compared for exact equality —
+    pass the full international number (`+34 600 00 00 00`, `34600000000`, … all match the same
+    stored contact; a national short form does not);
+  - `outbound_messages` rows are matched on `recipient` and deleted; `inbound_events` rows are
+    matched on the `from`/`to` inside the normalized event JSON (replies/echoes) and deleted;
+  - status events (`delivered`/`read`/`failed`) carry only a Meta message id, no phone — they are
+    linked through the message ids of the deleted outbound/echo rows and deleted too;
+  - `deliveries` batches (which can mix several numbers' events) are rewritten without the
+    erased number's events; a batch left empty is redacted in place when terminal (the
+    metadata row remains as erasure evidence) or deleted when still pending.
+
+  Known limitations: (a) status events whose outbound/echo row already aged out of retention
+  can no longer be linked to the number — by then they contain no phone number or content,
+  only a Meta message id; (b) a phone number quoted inside the free text of *another*
+  contact's message is not matched (that row is the other data subject's content); (c) erasure
+  covers this gateway's storage only — events already forwarded to your
+  `SUBSCRIBER_WEBHOOK_URL` live in your downstream system and must be erased there separately.
+- Beyond that there is **no full "purge everything now" action** in `GatewayApi`. To wipe the
+  entire store immediately, an operator must either wait for the alarm-driven prune, or
+  delete/reset the Durable Object (e.g. via a new `wrangler.jsonc` migration that deletes the
+  `EccosGateway` class) — which also removes the `config` table (WABA id, phone number id,
+  subscriber config) and requires re-onboarding.
 
 **Export / delete (Bun target):**
 - Simpler, because it's a plain file: `DATABASE_PATH` (default `./data/eccos.db`, see
@@ -171,10 +197,13 @@ API to build for this.
 ## 7. Recommendations
 
 1. ~~Make retention configurable (`RETENTION_DAYS`) rather than a hardcoded constant.~~ **Done** —
-   both targets now read `RETENTION_DAYS` (default 30 days); see §2.
+   and since split into `CONTENT_RETENTION_DAYS` (30, clamped 7–90) + `DELIVERY_RETENTION_DAYS`
+   (90) on the Workers target, with payload redaction in between; see §2.
 2. ~~Add pruning to the Bun target.~~ **Done** — `pruneOldRows()` now runs on every
-   `processPending()` call in `src/delivery/forward.ts`; see §2.
-3. Consider a single "export all as JSON" / "purge all now" operator action in the dashboard, so
-   operators don't need direct DO/SQLite access for basic data-subject requests. **Not yet
-   implemented** — the operator RPC surface (§6) still only offers paginated reads and
-   `retryDelivery`, no bulk export or immediate purge.
+   `processPending()` call in `src/delivery/forward.ts`; see §2. (Still the single legacy
+   window — split retention lands when the Bun target is retaken post-v1.)
+3. ~~Support data-subject erasure requests without direct DO/SQLite access.~~ **Done** —
+   `eraseByPhone` (RPC + `POST /v1/privacy/erasure`) erases one number and returns evidence
+   counts; see §6. Remaining: a single "export all as JSON" / "purge all now" operator action —
+   the RPC surface still only offers paginated reads, `retryDelivery`, and `eraseByPhone`, no
+   bulk export or full immediate purge, and the dashboard has no erasure UI yet.

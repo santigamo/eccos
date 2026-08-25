@@ -226,11 +226,18 @@ guided flow:
 The `bun install → wrangler secret put → bun run deploy` steps above are the reliable path; see
 [`docs/deployment.md`](./docs/deployment.md) for the full env matrix, smoke test, and rollback.
 
-Non-secret vars (`META_GRAPH_VERSION`, `FORWARD_MAX_ATTEMPTS`) live in `wrangler.jsonc`.
+Non-secret vars (`META_GRAPH_VERSION`, `FORWARD_MAX_ATTEMPTS`, `CONTENT_RETENTION_DAYS`,
+`DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in `wrangler.jsonc`.
 Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta`. All six required
 secrets must be set for the Worker to boot; the `/connect` (Embedded Signup) flow then
 updates the effective `META_WABA_ID` / `META_PHONE_NUMBER_ID` at runtime in the Durable
 Object.
+
+> **Data residency:** to pin the Durable Object to a Cloudflare jurisdiction (e.g. `"eu"`),
+> set `DO_JURISDICTION` **on the first deploy, before any production data exists**. Changing
+> it later derives a different `DurableObjectId` — a new, **empty** Durable Object — and does
+> **not** migrate the existing data (messages, delivery queue, connected WABA/phone config).
+> Details in [docs/deployment.md](./docs/deployment.md).
 
 ## 📡 HTTP API
 
@@ -241,6 +248,7 @@ Object.
 | POST   | `/webhooks/meta`  | `X-Hub-Signature-256`  | both   | Inbound messages + delivery statuses |
 | POST   | `/v1/messages`    | Bearer `ECCOS_API_KEY` | both   | Send a message                       |
 | GET    | `/v1/templates`   | Bearer `ECCOS_API_KEY` | both   | List message templates              |
+| POST   | `/v1/privacy/erasure` | Bearer `ECCOS_API_KEY` | Workers | Erase all data for one phone number (GDPR Art. 17) |
 | GET    | `/connect`        | Meta OAuth             | Workers| Embedded Signup (coexistence) flow  |
 | POST   | `/connect/exchange` | Meta OAuth code      | Workers| Exchange OAuth code → store WABA/phone |
 

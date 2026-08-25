@@ -3,6 +3,8 @@ import { signPayload } from "@eccos/core/signature";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   DeliveryRecord,
+  EraseByPhoneResult,
+  ErasureCounts,
   InboundRow,
   OperatorCounts,
   OutboundRow,
@@ -14,8 +16,16 @@ interface Env {
   SUBSCRIBER_WEBHOOK_URL?: string;
   SUBSCRIBER_SECRET?: string;
   FORWARD_MAX_ATTEMPTS: string;
-  /** Retention window (days) for pruning delivered/failed deliveries, inbound_events,
-   * and outbound_messages. Optional wrangler var; falls back to DEFAULT_RETENTION_DAYS. */
+  /** Content retention window (days): past it, `inbound_events` and `outbound_messages`
+   * rows are deleted and terminal `deliveries` rows keep only metadata (payload redacted).
+   * Optional wrangler var; default 30, clamped to [7, 90]. */
+  CONTENT_RETENTION_DAYS?: string;
+  /** Delivery-audit retention window (days): past it, terminal `deliveries` rows are
+   * deleted entirely. Optional wrangler var; default 90. */
+  DELIVERY_RETENTION_DAYS?: string;
+  /** @deprecated Legacy single retention window. Honored as a fallback for
+   * `CONTENT_RETENTION_DAYS` when that var is unset, so existing deployments keep
+   * their configured content window. Migrate to the split vars above. */
   RETENTION_DAYS?: string;
 }
 
@@ -28,8 +38,45 @@ interface DeliveryRow {
 
 const FORWARD_FETCH_TIMEOUT_MS = 15_000;
 const ALARM_BATCH = 40;
-const DEFAULT_RETENTION_DAYS = 30;
+const DEFAULT_CONTENT_RETENTION_DAYS = 30;
+const MIN_CONTENT_RETENTION_DAYS = 7;
+const MAX_CONTENT_RETENTION_DAYS = 90;
+const DEFAULT_DELIVERY_RETENTION_DAYS = 90;
 const OPERATOR_MAX_PAGE = 200;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Sentinel written to `deliveries.payload` when message content is redacted
+ * (content retention expiry, or GDPR erasure of a batch whose events were all
+ * removed). The column stays `TEXT NOT NULL`; a real payload is always a
+ * non-empty JSON object string, so the empty string is unambiguous.
+ */
+export const REDACTED_PAYLOAD = "";
+
+/**
+ * Split retention windows, resolved from env with destructive-operation guards:
+ * a non-numeric or non-positive value falls back to the default instead of
+ * feeding a DELETE window, and the content window is clamped to [7, 90] days.
+ * The deprecated `RETENTION_DAYS` is honored as the content window when
+ * `CONTENT_RETENTION_DAYS` is unset (backwards compatibility for existing
+ * deployments), still subject to the same clamp.
+ */
+export function resolveRetentionDays(env: {
+  CONTENT_RETENTION_DAYS?: string;
+  DELIVERY_RETENTION_DAYS?: string;
+  RETENTION_DAYS?: string;
+}): { contentDays: number; deliveryDays: number } {
+  const positive = (raw: string | undefined): number | undefined => {
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  const contentRaw =
+    positive(env.CONTENT_RETENTION_DAYS) ?? positive(env.RETENTION_DAYS) ?? DEFAULT_CONTENT_RETENTION_DAYS;
+  const contentDays = Math.min(Math.max(contentRaw, MIN_CONTENT_RETENTION_DAYS), MAX_CONTENT_RETENTION_DAYS);
+  const deliveryDays = positive(env.DELIVERY_RETENTION_DAYS) ?? DEFAULT_DELIVERY_RETENTION_DAYS;
+  return { contentDays, deliveryDays };
+}
 
 export class EccosGateway extends DurableObject<Env> {
   sql: SqlStorage;
@@ -243,10 +290,15 @@ export class EccosGateway extends DurableObject<Env> {
     };
   }
 
-  /** Re-enqueue a delivery — retry a failed one or replay a delivered one. */
+  /** Re-enqueue a delivery — retry a failed one or replay a delivered one.
+   * Redacted rows (payload emptied by content retention or erasure) are metadata-only
+   * and cannot be replayed. */
   retryDelivery(id: number): { ok: boolean; previousStatus: string | null } {
-    const row = this.sql.exec("SELECT status FROM deliveries WHERE id = ?", id).toArray()[0];
+    const row = this.sql.exec("SELECT status, payload FROM deliveries WHERE id = ?", id).toArray()[0];
     if (!row) return { ok: false, previousStatus: null };
+    if ((row.payload as string) === REDACTED_PAYLOAD) {
+      return { ok: false, previousStatus: row.status as string };
+    }
     const now = Date.now();
     this.sql.exec(
       "UPDATE deliveries SET status='pending', attempts=0, last_error=NULL, next_attempt_at=? WHERE id=?",
@@ -257,15 +309,131 @@ export class EccosGateway extends DurableObject<Env> {
     return { ok: true, previousStatus: row.status as string };
   }
 
+  /**
+   * Right-to-erasure (GDPR Art. 17): removes every trace of a phone number from
+   * the three data tables, within whatever is still inside the retention window.
+   *
+   * Matching strategy (`docs/privacy.md` §"Erasure"):
+   *  - the input and every stored number are normalized to digits-only, then
+   *    compared for exact equality — pass the full international number;
+   *  - `outbound_messages` rows are matched on `recipient` and deleted; their
+   *    `transport_message_id`s (wamids) are collected first;
+   *  - `inbound_events` rows are matched on the normalized `from`/`to` inside the
+   *    event JSON (reply/echo) and deleted; their `messageId`s join the wamid set,
+   *    and status rows (`delivered`/`read`/`failed` — which carry only a wamid, no
+   *    phone) are deleted via that set;
+   *  - `deliveries` batches are rewritten without the matching events; a batch
+   *    left empty is redacted in place when terminal (metadata survives as
+   *    erasure/audit evidence) or deleted when still pending (nothing left to
+   *    forward).
+   *
+   * Returns per-table counts so the operator can evidence the erasure.
+   */
+  eraseByPhone(phone: string): EraseByPhoneResult {
+    const digits = normalizePhoneNumber(phone);
+    if (!digits) {
+      return { ok: false, error: "invalid phone number: expected at least 5 digits" };
+    }
+    const counts: ErasureCounts = {
+      inboundEventsDeleted: 0,
+      outboundMessagesDeleted: 0,
+      deliveriesRedacted: 0,
+      deliveriesDeleted: 0,
+    };
+    this.ctx.storage.transactionSync(() => {
+      // 1. Outbound messages to that number: collect wamids, then delete the rows.
+      //    `recipient` is caller-supplied and may be formatted ("+34 600-00-00-00"),
+      //    so no SQL prefilter is safe here — every row is normalized in JS. Fine at
+      //    single-tenant volumes bounded by the retention window.
+      const wamids = new Set<string>();
+      const outboundIds: number[] = [];
+      for (const row of this.sql
+        .exec(`SELECT id, recipient, transport_message_id FROM outbound_messages`)
+        .toArray()) {
+        if (normalizePhoneNumber(row.recipient as string) !== digits) continue;
+        outboundIds.push(row.id as number);
+        if (row.transport_message_id) wamids.add(row.transport_message_id as string);
+      }
+
+      // 2. Inbound events whose normalized event JSON references the number
+      //    (`from` on replies, `to` on echoes). Meta always emits these digits-only,
+      //    so LIKE on the contiguous digit run is a safe prefilter; the exact
+      //    normalized comparison in JS then rules out substring false positives.
+      //    Their message ids join the wamid set so related status events are
+      //    erased too.
+      const inboundIds = new Set<number>();
+      for (const row of this.sql
+        .exec(`SELECT id, payload FROM inbound_events WHERE payload LIKE ?`, `%${digits}%`)
+        .toArray()) {
+        let ev: Record<string, unknown>;
+        try {
+          ev = JSON.parse(row.payload as string) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        const evPhone = typeof ev.from === "string" ? ev.from : typeof ev.to === "string" ? ev.to : null;
+        if (evPhone === null || normalizePhoneNumber(evPhone) !== digits) continue;
+        inboundIds.add(row.id as number);
+        if (typeof ev.messageId === "string") wamids.add(ev.messageId);
+      }
+      for (const id of inboundIds) {
+        this.sql.exec(`DELETE FROM inbound_events WHERE id = ?`, id);
+        counts.inboundEventsDeleted++;
+      }
+
+      // 3. Status events (delivered/read/failed) carry only a wamid — link them
+      //    through the wamids collected above.
+      for (const wamid of wamids) {
+        const deleted = this.sql
+          .exec(`DELETE FROM inbound_events WHERE transport_message_id = ? OR message_id = ? RETURNING id`, wamid, wamid)
+          .toArray();
+        counts.inboundEventsDeleted += deleted.length;
+      }
+
+      for (const id of outboundIds) {
+        this.sql.exec(`DELETE FROM outbound_messages WHERE id = ?`, id);
+        counts.outboundMessagesDeleted++;
+      }
+
+      // 4. Delivery batches may mix events for several numbers: rewrite each
+      //    affected batch keeping the unrelated events.
+      for (const row of this.sql
+        .exec(`SELECT id, status, payload FROM deliveries WHERE payload != ?`, REDACTED_PAYLOAD)
+        .toArray()) {
+        let batch: { events?: unknown };
+        try {
+          batch = JSON.parse(row.payload as string) as { events?: unknown };
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(batch.events)) continue;
+        const kept = batch.events.filter((ev) => !erasureTargetsEvent(ev, digits, wamids));
+        if (kept.length === batch.events.length) continue;
+        if (kept.length > 0) {
+          this.sql.exec(
+            `UPDATE deliveries SET payload = ? WHERE id = ?`,
+            JSON.stringify({ ...batch, events: kept }),
+            row.id,
+          );
+          counts.deliveriesRedacted++;
+        } else if (row.status === "pending") {
+          this.sql.exec(`DELETE FROM deliveries WHERE id = ?`, row.id);
+          counts.deliveriesDeleted++;
+        } else {
+          this.sql.exec(`UPDATE deliveries SET payload = ? WHERE id = ?`, REDACTED_PAYLOAD, row.id);
+          counts.deliveriesRedacted++;
+        }
+      }
+    });
+    return { ok: true, phone: digits, counts };
+  }
+
   async alarm(): Promise<void> {
     const now = Date.now();
     const maxAttempts = Number(this.env.FORWARD_MAX_ATTEMPTS) || 6;
-    // Guards (not just `||`) because a misconfigured value here feeds a destructive
-    // DELETE window, unlike maxAttempts above.
-    const retentionDaysRaw = Number(this.env.RETENTION_DAYS);
-    const retentionDays =
-      Number.isFinite(retentionDaysRaw) && retentionDaysRaw > 0 ? retentionDaysRaw : DEFAULT_RETENTION_DAYS;
-    const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
+    // Guarded + clamped (not just `||`) because misconfigured values here feed
+    // destructive DELETE/UPDATE windows, unlike maxAttempts above.
+    const { contentDays, deliveryDays } = resolveRetentionDays(this.env);
 
     // alarm() may fire more than once; the drain is idempotent because it only
     // processes status='pending' rows, transitions them by id, and forwardOne()
@@ -309,9 +477,23 @@ export class EccosGateway extends DurableObject<Env> {
       }
     }
 
-    this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, now - retentionMs);
-    this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, now - retentionMs);
-    this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, now - retentionMs);
+    // Split retention (docs/data-lifecycle.md):
+    //  - content window: message content is removed everywhere — inbound/outbound
+    //    rows are deleted and terminal deliveries keep only operational metadata
+    //    (payload redacted in place; id/status/attempts/last_error/timestamps survive).
+    //  - delivery window: the redacted audit rows themselves are deleted.
+    // Rows still `pending` are never touched by age.
+    const contentCutoff = now - contentDays * DAY_MS;
+    const deliveryCutoff = now - deliveryDays * DAY_MS;
+    this.sql.exec(
+      `UPDATE deliveries SET payload = ? WHERE status IN ('delivered','failed') AND created_at < ? AND payload != ?`,
+      REDACTED_PAYLOAD,
+      contentCutoff,
+      REDACTED_PAYLOAD,
+    );
+    this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, contentCutoff);
+    this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, contentCutoff);
+    this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, deliveryCutoff);
 
     const nextRows = this.sql
       .exec(`SELECT MIN(next_attempt_at) AS next FROM deliveries WHERE status='pending'`)
@@ -360,6 +542,30 @@ export function backoffMs(attempts: number): number {
 export function withJitter(ms: number, random: () => number = Math.random): number {
   const spread = ms * 0.1;
   return Math.round(ms - spread + random() * spread * 2);
+}
+
+/**
+ * Normalizes a phone number for erasure matching: strips every non-digit
+ * character (`+34 600-00-00-00` → `34600000000`). Returns null when fewer than
+ * 5 digits remain (same minimum as `/v1/messages`).
+ */
+export function normalizePhoneNumber(input: string): string | null {
+  const digits = input.replace(/\D/g, "");
+  return digits.length >= 5 ? digits : null;
+}
+
+/** True when a normalized event in a delivery batch belongs to the erased number,
+ * either directly (`from`/`to`) or through a collected message id (statuses). */
+function erasureTargetsEvent(ev: unknown, digits: string, wamids: Set<string>): boolean {
+  if (!ev || typeof ev !== "object") return false;
+  const e = ev as Record<string, unknown>;
+  for (const key of ["from", "to"] as const) {
+    if (typeof e[key] === "string" && normalizePhoneNumber(e[key] as string) === digits) return true;
+  }
+  for (const key of ["transportMessageId", "messageId"] as const) {
+    if (typeof e[key] === "string" && wamids.has(e[key] as string)) return true;
+  }
+  return false;
 }
 
 function clampPage(limit?: number): number {

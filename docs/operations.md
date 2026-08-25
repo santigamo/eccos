@@ -166,10 +166,11 @@ single-tenant volume; revisit if traffic grows enough to make log volume/cost a 
 
 There is no separate dead-letter queue. A delivery that exhausts `FORWARD_MAX_ATTEMPTS` (default
 6) just sits as a `deliveries` row with `status='failed'` in the same Durable Object SQLite table
-— alongside `delivered` and still-retrying `pending` rows — until it ages past the retention
-window (`RETENTION_DAYS`, default 30; see
-[docs/data-lifecycle.md#retention-retention_days](./data-lifecycle.md#retention-retention_days)),
-at which point it is hard-deleted with no archive.
+— alongside `delivered` and still-retrying `pending` rows. Past the content retention window
+(`CONTENT_RETENTION_DAYS`, default 30) its `payload` is redacted — metadata (`attempts`,
+`last_error`, timestamps) survives but the row can no longer be replayed — and past the delivery
+window (`DELIVERY_RETENTION_DAYS`, default 90) the row is hard-deleted with no archive; see
+[docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows).
 
 **Inspect today:** the dashboard's Deliveries page (`apps/dashboard`, route `/deliveries`) lists
 rows with server-side status filtering and pagination, showing `attempts`, `last_error`, and the
@@ -181,8 +182,10 @@ it doubles as a manual re-send). That calls `GatewayRPC.retryDelivery(id)` →
 `last_error`, and re-arms the alarm — the next alarm tick attempts the forward again. This is a
 one-row-at-a-time operator action; there is no "retry all failed" bulk action.
 
-**Caveat:** replay only works while the row still exists. Once it's pruned past
-`RETENTION_DAYS` there's nothing to replay from inside the running system — the closest thing is
+**Caveat:** replay only works while the row still holds its payload. Once the content window
+(`CONTENT_RETENTION_DAYS`) redacts it — or an erasure request empties it — `retryDelivery`
+refuses the row, and once it's deleted past `DELIVERY_RETENTION_DAYS` there's nothing left at
+all to replay from inside the running system — the closest thing is
 an application-level RPC export as described in
 [docs/data-lifecycle.md#backup--restore](./data-lifecycle.md#backup--restore), which this repo
 does not ship today.

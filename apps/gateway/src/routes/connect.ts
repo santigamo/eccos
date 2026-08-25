@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { getConfig } from "../config";
+import { getGatewayStub } from "../gateway-stub";
 import { exchangeCodeForToken, findWabaPhoneNumbers, listPhoneNumbers, subscribeApp } from "../meta/connect-api";
 import { constantTimeEqual } from "@eccos/core/signature";
 
@@ -109,7 +110,7 @@ async function exchangeAndPersist(
     await subscribeApp(cfg, resolvedWabaId, businessToken, callbackUrl);
 
     const displayPhoneNumber = phones[0]?.display_phone_number ?? "";
-    const stub = c.env.ECCOS.get(c.env.ECCOS.idFromName("singleton"));
+    const stub = getGatewayStub(c.env);
     await stub.saveConfig({
       META_WABA_ID: resolvedWabaId,
       META_PHONE_NUMBER_ID: phoneNumberId,

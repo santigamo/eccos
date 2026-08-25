@@ -111,31 +111,54 @@ copy off the host. **Restore** is the reverse: stop the container, replace the f
 extract the tarball back into the volume), start the container again — `openDb()` will find
 the existing file and skip table creation for anything that already exists.
 
-## Retention (`RETENTION_DAYS`)
+## Retention (split content / delivery windows)
 
 Both targets prune old rows on an ongoing basis rather than growing the database forever.
-Default is **30 days**, overridable per target:
 
-| Target | Where it's read | How to override |
+**Workers target (`apps/gateway`)** — retention is split in two windows, because message
+content lives in *three* tables (`deliveries.payload` carries a full copy of each forwarded
+event batch) while the operational audit trail (did the forward succeed, how many attempts,
+what error) should outlive the content itself:
+
+| Var (`apps/gateway/wrangler.jsonc` → `vars`) | Default | Effect when a row ages past it |
 |---|---|---|
-| Workers (`apps/gateway`) | `EccosGateway.alarm()`, `this.env.RETENTION_DAYS` (falls back to 30 when unset/invalid) | `RETENTION_DAYS` in `apps/gateway/wrangler.jsonc` → `vars` |
-| Bun (`src/`) | `pruneOldRows()` in `src/delivery/forward.ts`, `cfg.RETENTION_DAYS` (Zod default 30) | `RETENTION_DAYS` env var (`.env` or process env) |
+| `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, and `created_at` survive |
+| `DELIVERY_RETENTION_DAYS` | **90** | terminal `deliveries` rows are **deleted** entirely, by `created_at` |
 
-What gets pruned, in both targets, once a row is older than the retention window:
+So after ~30 days no message content (bodies, phone numbers) exists anywhere, but the
+metadata-only delivery rows remain another ~60 days as operational/audit evidence. A redacted
+delivery row (`payload = ''`) can no longer be replayed — `retryDelivery` refuses it — and the
+dashboard shows it with an empty payload. Rows still `pending` are never touched by age.
 
-- `deliveries` rows in a **terminal** status (`delivered` or `failed`), by `created_at`.
-  Rows still `pending` are never pruned by age — they're only removed by reaching a
-  terminal status first.
-- `inbound_events`, by `received_at` — pruned unconditionally past the window (this table has
-  no status column; every parsed webhook event ages out).
-- `outbound_messages`, by `created_at` — pruned unconditionally past the window, regardless of
-  `sent`/`failed` status.
+Backwards compatibility: the deprecated single `RETENTION_DAYS` var is still honored as the
+value of `CONTENT_RETENTION_DAYS` when the latter is unset (subject to the same 7–90 clamp),
+so existing deployments keep their configured content window; `DELIVERY_RETENTION_DAYS`
+defaults to 90 for them. Migrate to the split vars — `RETENTION_DAYS` will be removed.
+All three values are guarded: non-numeric or non-positive values fall back to the defaults
+instead of feeding a destructive window (`resolveRetentionDays()` in
+`apps/gateway/src/gateway.ts`).
+
+**Bun target (`src/`, kept aside until post-v1)** — still uses the single legacy window:
+`pruneOldRows()` in `src/delivery/forward.ts` deletes rows in all three tables past
+`cfg.RETENTION_DAYS` (Zod default 30, `.env` or process env). It has no redaction step yet;
+split retention lands there when the target is retaken.
 
 Pruning cadence: the Workers target prunes as part of every `alarm()` invocation (which also
 drives delivery retries, so it runs at least as often as there's pending work, and is
 re-armed by `setAlarm()`); the Bun target prunes once per delivery-loop tick
-(`processPending()`, every 5s via `startDeliveryLoop()`). Both are simple `DELETE ... WHERE
-<timestamp> < cutoff` statements — cheap at single-tenant volumes, safe to run frequently.
+(`processPending()`, every 5s via `startDeliveryLoop()`). Both are simple `DELETE`/`UPDATE
+... WHERE <timestamp> < cutoff` statements — cheap at single-tenant volumes, safe to run
+frequently.
+
+## Right to erasure (`eraseByPhone`)
+
+Independent of retention, the Workers target can erase every stored trace of a single phone
+number on demand (GDPR Art. 17): `EccosGateway.eraseByPhone(phone)`, exposed to operators as
+`GatewayRPC.eraseByPhone()` (service binding) and as `POST /v1/privacy/erasure`
+(`{"phone": "+34..."}`, Bearer `ECCOS_API_KEY`). It deletes matching `inbound_events` and
+`outbound_messages` rows, rewrites `deliveries` batches to drop the number's events (redacting
+or deleting batches left empty), and returns per-table counts as erasure evidence. Details and
+limitations in [docs/privacy.md](./privacy.md#erasure).
 
 Retention only controls **application data pruning**. It does not shrink the file
 automatically (`bun:sqlite`) or reclaim space in DO SQLite storage; expect the on-disk size to

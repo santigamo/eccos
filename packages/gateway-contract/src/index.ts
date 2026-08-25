@@ -35,6 +35,9 @@ export interface DeliveryRecord {
   last_error: string | null;
   next_attempt_at: number;
   created_at: number;
+  /** The forwarded `{ events: [...] }` JSON. An empty string means the payload was
+   * REDACTED (content retention expiry or erasure): only metadata remains and the
+   * row can no longer be replayed. */
   payload: string;
 }
 
@@ -72,6 +75,22 @@ export interface SetSubscriberConfigInput {
 
 export type ResubscribeResult = { ok: true } | { ok: false; error: string };
 
+/** Per-table effect counts of an erasure request — returned so the operator can
+ * evidence the deletion towards the data subject / client. */
+export interface ErasureCounts {
+  inboundEventsDeleted: number;
+  outboundMessagesDeleted: number;
+  /** Delivery rows whose payload was rewritten (matching events removed) or fully redacted. */
+  deliveriesRedacted: number;
+  /** Pending delivery rows deleted because no events remained to forward. */
+  deliveriesDeleted: number;
+}
+
+/** `phone` echoes the normalized (digits-only) number the match ran against. */
+export type EraseByPhoneResult =
+  | { ok: true; phone: string; counts: ErasureCounts }
+  | { ok: false; error: string };
+
 export interface GatewayApi {
   getStatus(): Promise<GatewayStatus>;
   getConfig(): Promise<Record<string, string>>;
@@ -84,4 +103,7 @@ export interface GatewayApi {
   getSubscriberConfig(): Promise<SubscriberConfig>;
   setSubscriberConfig(input: SetSubscriberConfigInput): Promise<{ ok: true }>;
   resubscribe(): Promise<ResubscribeResult>;
+  /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
+   * number across inbound_events, outbound_messages, and deliveries. */
+  eraseByPhone(phone: string): Promise<EraseByPhoneResult>;
 }

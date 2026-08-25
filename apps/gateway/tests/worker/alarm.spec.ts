@@ -144,33 +144,8 @@ describe("EccosGateway alarm", () => {
     });
   });
 
-  it("deletes terminal deliveries older than 30 days (D3)", async () => {
-    const old = Date.now() - 31 * 24 * 60 * 60 * 1000;
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
-      instance.sql.exec(
-        `INSERT INTO deliveries (payload, status, attempts, last_error, next_attempt_at, created_at)
-         VALUES (?, 'delivered', 1, NULL, ?, ?)`,
-        JSON.stringify({ events: [] }),
-        old,
-        old,
-      );
-    });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
-    await seedPendingDelivery({
-      type: "delivered",
-      transportMessageId: "wamid.RETENTION",
-      at: 1_700_000_000_000,
-    });
-
-    await runDurableObjectAlarm(singletonStub());
-
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
-      const stale = instance.sql
-        .exec("SELECT COUNT(*) AS c FROM deliveries WHERE created_at < ?", Date.now() - 30 * 24 * 60 * 60 * 1000)
-        .toArray()[0]!.c;
-      expect(stale).toBe(0);
-    });
-  });
+  // Retention (split content/delivery windows + redaction) is covered in
+  // tests/worker/retention.spec.ts.
 });
 
 describe("backoffMs", () => {

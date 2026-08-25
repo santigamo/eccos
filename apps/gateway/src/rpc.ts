@@ -1,10 +1,12 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getEffectiveConfig } from "./config";
+import { getGatewayStub } from "./gateway-stub";
 import { subscribeApp } from "./meta/connect-api";
 import { listTemplates } from "@eccos/core/templates";
 import type {
   DeliveryListOpts,
   DeliveryRecord,
+  EraseByPhoneResult,
   GatewayApi,
   GatewayStatus,
   Health,
@@ -35,7 +37,7 @@ function healthFromCounts(counts: OperatorCounts): Health {
  */
 export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   private get stub() {
-    return this.env.ECCOS.get(this.env.ECCOS.idFromName("singleton"));
+    return getGatewayStub(this.env);
   }
 
   async getStatus(): Promise<GatewayStatus> {
@@ -94,6 +96,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async setSubscriberConfig(input: SetSubscriberConfigInput): Promise<{ ok: true }> {
     await this.stub.setSubscriberConfig(input);
     return { ok: true };
+  }
+
+  /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
+   * number across the gateway tables. Returns per-table counts as erasure evidence. */
+  eraseByPhone(phone: string): Promise<EraseByPhoneResult> {
+    return this.stub.eraseByPhone(phone);
   }
 
   /**

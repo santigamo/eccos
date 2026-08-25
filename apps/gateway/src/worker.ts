@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { getConfig, getEffectiveConfig } from "./config";
+import { getGatewayStub } from "./gateway-stub";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
 import { parseMetaWebhook, parseMetaEchoes } from "@eccos/core/parser";
@@ -17,7 +18,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.route("/", connectRoutes());
 
 function stub(c: { env: Bindings }) {
-  return c.env.ECCOS.get(c.env.ECCOS.idFromName("singleton"));
+  return getGatewayStub(c.env);
 }
 
 // --- Structured logging ------------------------------------------------------
@@ -202,6 +203,26 @@ app.post("/v1/messages", async (c) => {
   await stub(c).logOutbound(result.id, recipient, JSON.stringify(body), "sent", null);
   logEvent("outbound_send", cid, 200, { messageType, messageId: result.id, ok: true });
   return c.json({ ok: true, messages: [{ id: result.id }] });
+});
+
+// Right-to-erasure (GDPR Art. 17). The phone travels in the JSON body — never in
+// the URL — so it cannot leak into request logs. Gated by the /v1/* auth above.
+app.post("/v1/privacy/erasure", async (c) => {
+  const cid = correlationId(c);
+  const json = await c.req.json().catch(() => null);
+  const phone = json && typeof json === "object" ? (json as Record<string, unknown>).phone : undefined;
+  if (typeof phone !== "string" || phone.trim().length === 0) {
+    logEvent("privacy_erasure", cid, 400, { reason: "invalid_body" });
+    return c.json({ ok: false, error: "invalid body: expected { phone: string }" }, 400);
+  }
+  const result = await stub(c).eraseByPhone(phone);
+  if (!result.ok) {
+    logEvent("privacy_erasure", cid, 400, { reason: "invalid_phone" });
+    return c.json(result, 400);
+  }
+  // SAFETY: log the per-table counts only — never the phone number itself.
+  logEvent("privacy_erasure", cid, 200, { ...result.counts });
+  return c.json(result);
 });
 
 app.get("/v1/templates", async (c) => {

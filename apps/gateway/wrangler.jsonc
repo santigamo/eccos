@@ -41,8 +41,18 @@
   "vars": {
     "META_GRAPH_VERSION": "v24.0",
     "FORWARD_MAX_ATTEMPTS": "6",
-    // Days to keep delivered/failed deliveries, inbound_events, and outbound_messages
-    // before the DO alarm() prunes them. Optional; the DO falls back to 30 when unset.
-    "RETENTION_DAYS": "30"
+    // Split retention (docs/data-lifecycle.md). Content window: after these days,
+    // inbound_events and outbound_messages rows are deleted and terminal deliveries
+    // keep only metadata (payload redacted). Optional; default 30, clamped to 7-90.
+    // The legacy RETENTION_DAYS var is still honored as a fallback for this value.
+    "CONTENT_RETENTION_DAYS": "30",
+    // Delivery-audit window: after these days, terminal (delivered/failed)
+    // deliveries rows are deleted entirely. Optional; default 90.
+    "DELIVERY_RETENTION_DAYS": "90"
+    // DO_JURISDICTION is intentionally NOT set here: absent/empty keeps the current
+    // behavior (the Durable Object is created wherever the first request lands).
+    // Set it to "eu" (or "fedramp"/"fedramp-high") BEFORE the deployment holds
+    // production data — changing it later points at a NEW, EMPTY Durable Object
+    // and does not migrate data. See docs/deployment.md.
   }
 }
