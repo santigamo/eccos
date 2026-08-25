@@ -304,26 +304,28 @@
     }
   }
 
+  /* The silk only moves at night. By day the hero is the still nacre
+     photograph (CSS hides the canvas too), so the loop parks whenever the
+     effective theme is light and wakes when the visitor returns to the dark. */
   function sync() {
-    if (visible && !document.hidden) start();
+    if (visible && !document.hidden && !isLight()) start();
     else stop();
   }
 
   resize();
   window.addEventListener("resize", function () {
     resize();
-    if (!raf) window.requestAnimationFrame(frame);
+    if (!raf && !isLight()) window.requestAnimationFrame(frame);
   }, { passive: true });
 
   document.addEventListener("visibilitychange", sync);
 
-  /* site.js announces every effective-theme change; swap the palette in place
-     and repaint once, even while the loop is parked off-screen. */
+  /* site.js announces every effective-theme change: park by day, run by night */
   window.addEventListener("eccos:theme", function (e) {
     var light = e && e.detail && e.detail.theme ? e.detail.theme === "light" : isLight();
     if (!alive) return;
     gl.uniform1f(uLight, light ? 1.0 : 0.0);
-    if (!raf) window.requestAnimationFrame(frame);
+    sync();
   });
 
   if ("IntersectionObserver" in window) {
