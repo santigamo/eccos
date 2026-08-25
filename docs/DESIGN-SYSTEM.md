@@ -152,8 +152,12 @@ ivory and is shaped *downwards* — fold valleys sink toward a teal-grey
 trough (form from shadow, as on paper), the hue lays on as a low-amplitude
 pigment wash, the warm glint turns pale gold, and the vignette inverts:
 edges bleach toward `--bg` at 72% so the nacre melts into the page without
-fully dissolving. Retunes live on `eccos:theme`, no re-init. Fallback image:
-`hero-silk-light.jpg` via the `--hero-fallback` token.
+fully dissolving. Retunes live on `eccos:theme`, no re-init. And unlike the dark hour, the
+day canvas is a **veil, not a replacement**: `--hero-canvas-opacity` drops
+it to 0.55 over the photographic nacre (`hero-silk-light.jpg`, always
+painted beneath via `--hero-fallback`), so the still texture carries the
+richness and the shader carries the motion — procedural bands alone can
+never match the photograph, and an opaque canvas was erasing it.
 
 **Regression rules.** (1) Dark must render identically with no override on a
 dark-system machine — the light theme is *additive*. (2) Any new
