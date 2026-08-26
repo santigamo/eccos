@@ -55,6 +55,7 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-glow: #34e27a;
   --radius-xs: 0;
   --radius-sm: 0;
   --radius-md: 0;
@@ -92,7 +93,7 @@
   --accent-foreground: #e6e9ef;
   --destructive: #e03131;
   --border: rgba(255, 255, 255, 0.07);
-  --input: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.12);
   --ring: #25d366;
   --chart-1: #25d366;
   --chart-2: #0fb39a;
@@ -110,11 +111,12 @@
   --radius-4xl: 0;
   --radius-full: 0;
   --sidebar: #0b141a;
-  --sidebar-foreground: #f2f6f4;
+  /* Rest-state nav ink is muted so hover/active visibly brighten to full --text. */
+  --sidebar-foreground: rgba(236, 244, 240, 0.72);
   --sidebar-primary: #25d366;
   --sidebar-primary-foreground: #06120c;
-  --sidebar-accent: #101a20;
-  --sidebar-accent-foreground: #e6e9ef;
+  --sidebar-accent: rgba(255, 255, 255, 0.07);
+  --sidebar-accent-foreground: #f2f6f4;
   --sidebar-border: rgba(255, 255, 255, 0.07);
   --sidebar-ring: #25d366;
   --destructive-foreground: #ff7777;
@@ -126,6 +128,22 @@
   --warning-foreground: #f0a020;
   --invert: #f2f6f4;
   --invert-foreground: #070c0f;
+
+  /* Landing-aligned token contract (canonical source: apps/site/public/styles.css) */
+  --line: rgba(255, 255, 255, 0.07); /* structural hairlines (same as --border) */
+  --line-strong: rgba(255, 255, 255, 0.12); /* interactive edges: inputs, ghost buttons */
+  --ghost-fill: rgba(255, 255, 255, 0.08);
+  --ghost-fill-hover: rgba(255, 255, 255, 0.14);
+  --ghost-edge-hover: rgba(37, 211, 102, 0.45); /* hover edge turns green — landing signature */
+  --hatch-line: rgba(255, 255, 255, 0.055);
+  --nav-bg: rgba(7, 12, 15, 0.72); /* masthead wash under backdrop blur */
+  --caustic: 0 6px 26px rgba(37, 211, 102, 0.24); /* primary CTA glow shadow (dark) */
+  --caustic-hi: 0 10px 34px rgba(37, 211, 102, 0.38);
+  --tag-live-bg: rgba(37, 211, 102, 0.13);
+  --tag-live-ink: #34e27a;
+  --tag-live-edge: rgba(37, 211, 102, 0.3);
+  --tag-soon-bg: rgba(255, 255, 255, 0.06);
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 @layer base {
@@ -136,10 +154,43 @@
     @apply bg-background text-foreground;
     font-family: "Inter Variable", sans-serif;
   }
+  /* Atmosphere: fixed, non-interactive glow so the dark isn't dead
+     (the landing's silk/glow translated). */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(900px 480px at 78% -10%, rgba(37, 211, 102, 0.07), transparent 60%),
+      radial-gradient(700px 420px at -8% 108%, rgba(15, 179, 154, 0.05), transparent 60%);
+  }
+  /* The app content is static flow, so it would paint below a positioned
+     z-index:0 layer. Lift every body child one step above the glow. Base-layer
+     rule, so any Tailwind position/z utility still wins. */
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
   html {
     @apply font-sans;
   }
   ::selection {
     background-color: rgba(37, 211, 102, 0.2);
+  }
+}
+
+@layer components {
+  /* Chapter divider from the landing — opens every dashboard page. */
+  .hatch-band {
+    height: 24px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background-image: repeating-linear-gradient(
+      45deg,
+      var(--hatch-line) 0 1px,
+      transparent 1px 8px
+    );
   }
 }

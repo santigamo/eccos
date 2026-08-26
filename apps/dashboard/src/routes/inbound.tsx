@@ -54,14 +54,14 @@ function InboundPage() {
 
   if (!result.ok) {
     return (
-      <Page title="Inbound">
+      <Page title="Inbound" kicker="Logs">
         <Unreachable error={result.error} />
       </Page>
     );
   }
 
   return (
-    <Page title="Inbound">
+    <Page title="Inbound" kicker="Logs">
       <LogGrid
         columns={columns}
         data={rows}

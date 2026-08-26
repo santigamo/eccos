@@ -44,6 +44,9 @@ export function LogGrid<TData extends object>({
         header:
           "font-pixel text-[11px] tracking-wider uppercase",
         headerRow: "bg-muted/40",
+        // Quiet row hover — visible on the dark ground, never a highlight.
+        // Last in the row's cn(), so it wins over the default hover:bg-muted/40.
+        bodyRow: "hover:bg-white/[.03]",
       }}
       tableLayout={{
         dense: true,
@@ -60,8 +63,18 @@ export function LogGrid<TData extends object>({
       isLoading={isLoading}
       loadingMode="skeleton"
     >
+      {/*
+        The panel edge lives here, not on DataGridContainer: that component's
+        `border` prop is a no-op, and a border inside the scroll viewport would
+        scroll away with the rows. On the scroll root the frame stays put while
+        the body scrolls under the sticky header, and `bg-card` gives the table
+        the same panel ground the routes used to inherit from the page frame.
+        The max-height also leaves room for the page header band, so the grid
+        scrolls inside its own panel instead of pushing the page into a second
+        scrollbar.
+      */}
       <DataGridScrollArea
-        className="w-full min-h-0 max-h-[calc(100svh-var(--header-height,3rem))]"
+        className="w-full min-h-0 max-h-[calc(100svh-var(--header-height,3rem)-10rem)] border border-border bg-card"
         orientation="vertical"
       >
         <DataGridContainer>

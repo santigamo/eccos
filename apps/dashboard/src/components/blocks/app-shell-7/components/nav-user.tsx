@@ -1,1 +1,0 @@
-// Removed — demo user component not needed for Eccos dashboard

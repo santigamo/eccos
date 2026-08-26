@@ -49,7 +49,7 @@ function DeliveriesPage() {
 
   if (!result.ok) {
     return (
-      <Page title="Deliveries">
+      <Page title="Deliveries" kicker="Logs">
         <Unreachable error={result.error} />
       </Page>
     );
@@ -164,7 +164,7 @@ function DeliveriesPage() {
   );
 
   return (
-    <Page title="Deliveries" actions={filterControl}>
+    <Page title="Deliveries" kicker="Logs" actions={filterControl}>
       <LogGrid
         columns={deliveriesColumns}
         data={rows}

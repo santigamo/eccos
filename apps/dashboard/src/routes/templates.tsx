@@ -57,7 +57,7 @@ function TemplatesPage() {
 
   if (!result.ok) {
     return (
-      <Page title="Templates">
+      <Page title="Templates" kicker="Cloud API">
         <Unreachable error={result.error} />
       </Page>
     );
@@ -71,9 +71,9 @@ function TemplatesPage() {
         ? templates.error
         : JSON.stringify(templates.error, null, 2);
     return (
-      <Page title="Templates">
-        <Frame variant="ghost" spacing="sm">
-          <FramePanel>
+      <Page title="Templates" kicker="Cloud API">
+        <Frame variant="default" spacing="sm">
+          <FramePanel fit>
             <FrameHeader>
               <FrameTitle>Failed to load templates</FrameTitle>
               <FrameDescription>
@@ -98,7 +98,7 @@ function TemplatesPage() {
       ? (payload.data as TemplateItem[])
       : [];
   return (
-    <Page title="Templates">
+    <Page title="Templates" kicker="Cloud API">
       <LogGrid
         columns={columns}
         data={items}

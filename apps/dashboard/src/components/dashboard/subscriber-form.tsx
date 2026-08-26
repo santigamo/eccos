@@ -24,8 +24,8 @@ function NoticeBox({ notice }: { notice: Notice | null }) {
       aria-atomic="true"
       className={
         notice.ok
-          ? "bg-success/10 text-success mt-3 border border-success/20 p-3 text-xs whitespace-pre-wrap break-words"
-          : "bg-destructive/10 text-destructive mt-3 border border-destructive/20 p-3 text-xs whitespace-pre-wrap break-words"
+          ? "bg-success/10 text-success mt-3 block border border-success/20 p-3 text-xs whitespace-pre-wrap break-words"
+          : "bg-destructive/10 text-destructive mt-3 block border border-destructive/20 p-3 text-xs whitespace-pre-wrap break-words"
       }
     >
       {notice.text}
@@ -62,7 +62,7 @@ export function SubscriberForm({ config }: { config: SubscriberConfig }) {
 
   return (
     <Frame variant="default" spacing="sm">
-      <FramePanel>
+      <FramePanel fit>
         <FrameHeader>
           <FrameTitle>Subscriber forwarding target</FrameTitle>
           <FrameDescription>
@@ -109,10 +109,12 @@ export function SubscriberForm({ config }: { config: SubscriberConfig }) {
               placeholder="leave blank to keep existing"
             />
             <p className="mt-1 text-muted-foreground text-xs">
-              Write-only. The stored secret is never displayed{"\u2014"} only whether one is set.
+              Write-only. The stored secret is never displayed {"\u2014"} only whether one is set.
             </p>
           </div>
-          <Button type="submit" disabled={saving}>
+          {/* `self-start`: a submit button in a flex column stretches to the
+              column width by default, which reads as a banner, not a control. */}
+          <Button type="submit" className="w-fit self-start" disabled={saving}>
             {saving ? "Saving\u2026" : "Save"}
           </Button>
         </form>

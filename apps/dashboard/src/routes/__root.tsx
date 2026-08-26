@@ -10,6 +10,7 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Eccos — Operator Console" },
+      { name: "theme-color", content: "#070c0f" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
@@ -27,6 +28,10 @@ export const Route = createRootRoute({
         type: "font/woff2",
         crossOrigin: "anonymous",
       },
+      { rel: "icon", href: "/assets/favicon.svg", type: "image/svg+xml" },
+      { rel: "icon", href: "/assets/favicon-32.png", type: "image/png", sizes: "32x32" },
+      { rel: "icon", href: "/assets/favicon-16.png", type: "image/png", sizes: "16x16" },
+      { rel: "apple-touch-icon", href: "/assets/avatar.png" },
     ],
   }),
   component: RootComponent,

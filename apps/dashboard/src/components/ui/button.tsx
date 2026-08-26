@@ -8,15 +8,20 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        // Primary brightens on hover (never dims) and carries the brand glow.
+        default:
+          "bg-primary text-primary-foreground shadow-(--caustic) hover:bg-glow hover:shadow-(--caustic-hi)",
+        // Ghost fill + interactive edge; the edge turns green on hover.
         outline:
-          "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border-(--line-strong) bg-(--ghost-fill) text-foreground hover:border-(--ghost-edge-hover) hover:bg-(--ghost-fill-hover) hover:text-foreground aria-expanded:border-(--ghost-edge-hover) aria-expanded:bg-(--ghost-fill-hover) aria-expanded:text-foreground",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
-          "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+          "hover:bg-(--ghost-fill-hover) hover:text-foreground aria-expanded:bg-(--ghost-fill-hover) aria-expanded:text-foreground",
+        // Dark ink is --destructive-foreground (#ff7777): #e03131 as text on
+        // #070c0f is ~3.9:1.
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:text-destructive-foreground dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

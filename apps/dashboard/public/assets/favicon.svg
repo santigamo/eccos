@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Eccos">
+  <!-- The logomark's glass stack, flattened for tiny sizes: square plate (nothing
+       rounds a corner), three isometric tiers, emerald to teal, sharp edges. -->
+  <rect width="512" height="512" fill="#0b141a"/>
+  <!-- bottom tier -->
+  <polygon points="116,341 256,411 256,443 116,373" fill="#0b8a77"/>
+  <polygon points="396,341 256,411 256,443 396,373" fill="#0d9d86"/>
+  <polygon points="256,271 396,341 256,411 116,341" fill="#0fb39a"/>
+  <!-- middle tier -->
+  <polygon points="116,241 256,311 256,343 116,273" fill="#14976d"/>
+  <polygon points="396,241 256,311 256,343 396,273" fill="#17ab7c"/>
+  <polygon points="256,171 396,241 256,311 116,241" fill="#1fc48f"/>
+  <!-- top tier -->
+  <polygon points="116,141 256,211 256,243 116,173" fill="#21ab5b"/>
+  <polygon points="396,141 256,211 256,243 396,173" fill="#28c468"/>
+  <polygon points="256,71 396,141 256,211 116,141" fill="#34e27a"/>
+</svg>

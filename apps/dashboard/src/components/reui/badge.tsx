@@ -16,9 +16,10 @@ const badgeVariants = cva(
         default: "bg-primary text-primary-foreground",
         outline: "border-border bg-transparent dark:bg-input/32",
         secondary: "bg-secondary text-secondary-foreground",
-        info: "bg-info text-white",
-        success: "bg-success text-white",
-        warning: "bg-warning text-white",
+        // Vivid fills carry near-black ink, never white (white on #25d366 is 1.9:1).
+        info: "bg-info text-[#06120c]",
+        success: "bg-success text-[#06120c]",
+        warning: "bg-warning text-[#06120c]",
         destructive: "bg-destructive text-white",
         focus: "bg-focus text-focus-foreground",
         invert: "bg-invert text-invert-foreground",
@@ -30,8 +31,10 @@ const badgeVariants = cva(
           "border-success/15 bg-success/10 text-success-foreground dark:border-success/25 dark:bg-success/15 dark:text-success",
         "info-light":
           "border-info/15 bg-info/10 text-info-foreground dark:border-info/25 dark:bg-info/15 dark:text-info",
+        // On dark the ink stays --destructive-foreground (#ff7777); --destructive
+        // (#e03131) is a fill color and reads at ~3.9:1 as small text.
         "destructive-light":
-          "border-destructive/15 bg-destructive/10 text-destructive-foreground dark:border-destructive/25 dark:bg-destructive/15 dark:text-destructive",
+          "border-destructive/15 bg-destructive/10 text-destructive-foreground dark:border-destructive/25 dark:bg-destructive/15 dark:text-destructive-foreground",
         "invert-light":
           "border-invert/15 bg-invert/10 text-foreground dark:border-invert/45 dark:bg-invert/35 dark:text-invert-foreground",
         "focus-light":
