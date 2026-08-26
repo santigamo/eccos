@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EccosGateway } from "../../src/gateway";
-import { singletonStub } from "./helpers";
+import { getGatewayStubForWaba } from "../../src/gateway-stub";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -43,7 +43,7 @@ describe("POST /connect/exchange", () => {
       phone_number_id: "PNID",
     });
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA123"), async (instance: EccosGateway) => {
       expect(instance.getConfigValue("META_PHONE_NUMBER_ID")).toBe("PNID");
       expect(instance.getConfigValue("META_WABA_ID")).toBe("WABA123");
       expect(instance.getConfigValue("DISPLAY_PHONE_NUMBER")).toBe("+34 600 000 000");

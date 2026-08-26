@@ -1,0 +1,1 @@
+// Removed — demo system stats component not needed for Eccos dashboard

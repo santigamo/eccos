@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { getConfig } from "../config";
-import { getGatewayStub } from "../gateway-stub";
+import { getGatewayStubForWaba } from "../gateway-stub";
 import { exchangeCodeForToken, findWabaPhoneNumbers, listPhoneNumbers, subscribeApp } from "../meta/connect-api";
 import { constantTimeEqual } from "@eccos/core/signature";
 
@@ -107,16 +107,16 @@ async function exchangeAndPersist(
     if (!phoneNumberId) return { ok: false, error: "no phone numbers under WABA" };
 
     const callbackUrl = new URL("/webhooks/meta", c.req.url).href;
-    await subscribeApp(cfg, resolvedWabaId, businessToken, callbackUrl);
-
     const displayPhoneNumber = phones[0]?.display_phone_number ?? "";
-    const stub = getGatewayStub(c.env);
+    const stub = getGatewayStubForWaba(c.env, resolvedWabaId);
     await stub.saveConfig({
       META_WABA_ID: resolvedWabaId,
       META_PHONE_NUMBER_ID: phoneNumberId,
       DISPLAY_PHONE_NUMBER: displayPhoneNumber,
       CONNECTED_AT: String(Date.now()),
+      META_WEBHOOK_CALLBACK_URL: callbackUrl,
     });
+    await subscribeApp(cfg, resolvedWabaId, businessToken, callbackUrl);
 
     return {
       ok: true,

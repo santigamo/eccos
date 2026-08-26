@@ -44,6 +44,18 @@
   },
   "overrides": [
     {
+      "include": [
+        "apps/dashboard/src/components/reui/**",
+        "apps/dashboard/src/components/ui/**",
+        "apps/site/public/js/**"
+      ],
+      "linter": {
+        "rules": {
+          "recommended": false
+        }
+      }
+    },
+    {
       "include": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/tests/**"],
       "linter": {
         "rules": {

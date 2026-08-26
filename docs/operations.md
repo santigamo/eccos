@@ -14,7 +14,7 @@ deploy/rollback mechanics and the environment-variable matrix, see
 |---|---|---|
 | **Webhook ack latency** (`POST /webhooks/meta` response time) | p99 < 500 ms | The handler only verifies the signature, parses the payload, and writes to the Durable Object (`ingest()`) — it never waits on the downstream subscriber forward, which happens later via the DO alarm. Meta expects a fast response and will eventually disable a webhook subscription that times out or errors repeatedly, so this is the one latency budget that really matters. |
 | **Forwarding success rate** (`deliveries` reaching `delivered`, not `failed`) | > 99% over a rolling day | A `deliveries` row only reaches `failed` after `FORWARD_MAX_ATTEMPTS` (default 6) exponential-backoff attempts (5s, ×5 per attempt, capped at 1h — see `backoffMs()` in `apps/gateway/src/gateway.ts`). Sustained failures almost always mean the *subscriber* endpoint (`SUBSCRIBER_WEBHOOK_URL`) is down or rejecting requests, not Eccos itself. |
-| **Outbound send success rate** (`POST /v1/messages` → `outbound_messages.status`) | > 99% "sent" | A "failed" row means the Meta Graph API call itself failed (bad token, invalid template/number, rate limit) — check `outbound_messages.error` via the dashboard's Outbound page. |
+| **Outbound send success rate** (`POST /v1/wabas/<WABA_ID>/messages` → `outbound_messages.status`) | > 99% "sent" | A "failed" row means the Meta Graph API call itself failed (bad token, invalid template/number, rate limit) — check `outbound_messages.error` via the dashboard's Outbound page. |
 | **Readiness** (`GET /ready`) | 200 except during active incidents | Unlike liveness, a 503 here means "don't route real traffic here" — see below. |
 
 There is no SLA and no automated alerting shipped in this repo (see Follow-ups). These numbers
@@ -66,7 +66,7 @@ Checks two things, and reports **booleans and key names only — never secret va
 1. **Config presence** — the six required secrets (see `docs/deployment.md`) are non-empty in
    the Worker's environment.
 2. **Durable Object reachability** — a cheap existing RPC (`getConfigValue`, a single indexed
-   `SELECT`) is called against the singleton `EccosGateway` instance, bounded by a 2s timeout, so
+   `SELECT`) is called against the active `EccosGateway` instance, bounded by a 2s timeout, so
    a stuck/unreachable DO fails the check instead of hanging the probe.
 
 Returns `200` only when both pass, `503` otherwise. Use this for post-deploy verification, and as
@@ -98,9 +98,9 @@ Every line has the same envelope:
   | `webhook_invalid_json` | `POST /webhooks/meta` | Body didn't parse as JSON (400) |
   | `webhook_ingested` | `POST /webhooks/meta` | Payload parsed and written to the DO (200) |
   | `v1_unauthorized` | `/v1/*` | Missing/invalid `ECCOS_API_KEY` (401) |
-  | `v1_rate_limited` | `POST /v1/messages` | Cloudflare Rate Limiting rejected the request (429) |
-  | `outbound_send` | `POST /v1/messages` | Result of a Graph API send (200/400/502) |
-  | `templates_list` | `GET /v1/templates` | Result of listing templates (200/502) |
+  | `v1_rate_limited` | `POST /v1/wabas/<WABA_ID>/messages` | Cloudflare Rate Limiting rejected the request (429) |
+  | `outbound_send` | `POST /v1/wabas/<WABA_ID>/messages` | Result of a Graph API send (200/400/502) |
+  | `templates_list` | `GET /v1/wabas/<WABA_ID>/templates` | Result of listing templates (200/502) |
   | `readiness_check` | `GET /ready` | Result of the readiness probe (200/503) |
 
 - Everything else in a line is **safe metadata only** — ids (`messageId`), counts
@@ -190,14 +190,10 @@ an application-level RPC export as described in
 [docs/data-lifecycle.md#backup--restore](./data-lifecycle.md#backup--restore), which this repo
 does not ship today.
 
-**Why this is proportionate for now, and where it stops scaling:** this whole mechanism is a
-query-and-retry loop against **one** Durable Object (`idFromName("singleton")`) backing the
-entire tenant, which is fine at single-operator/single-number volume but becomes the throughput
-ceiling and the single point of contention as soon as there's more than one WABA/phone or
-meaningfully more traffic. See **eccos-6lv** (shard `EccosGateway` per WABA/phone, drop the
-singleton DO) and its dependency **eccos-v80** (multi-tenant: multiple WABAs/phone numbers per
-instance) for the roadmap items that would need to land before this DLQ-by-table-row approach
-needs to become a real queue with bulk replay.
+**Why this is proportionate for now, and where it stops scaling:** each WABA owns its query-and-
+retry loop in a separate Durable Object. This removes cross-tenant contention, while the per-WABA
+10 GB storage ceiling and serialized retry work remain. Follow the export and deployment guidance
+in [docs/deployment.md](./deployment.md) before adding a WABA with existing data.
 
 ## Follow-ups
 

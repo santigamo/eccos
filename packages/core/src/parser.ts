@@ -1,5 +1,11 @@
 import type { WhatsAppCallbackEvent } from "./types";
 
+export interface MetaWebhookBatch {
+  wabaId: string;
+  phoneNumberId: string | null;
+  events: WhatsAppCallbackEvent[];
+}
+
 // ---------------------------------------------------------------------------
 // Meta Cloud API native webhook shape:
 //   { object: "whatsapp_business_account",
@@ -129,15 +135,37 @@ function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent
   return events;
 }
 
-export function parseMetaWebhook(payload: unknown): WhatsAppCallbackEvent[] {
+function phoneNumberId(value: Record<string, unknown>): string | null {
+  return getString(asRecord(value.metadata)?.phone_number_id);
+}
+
+function addBatch(
+  batches: Map<string, MetaWebhookBatch>,
+  wabaId: string,
+  phoneId: string | null,
+  events: WhatsAppCallbackEvent[],
+): void {
+  if (events.length === 0) return;
+  const key = `${wabaId}\u0000${phoneId ?? ""}`;
+  const existing = batches.get(key);
+  if (existing) {
+    existing.events.push(...events);
+    return;
+  }
+  batches.set(key, { wabaId, phoneNumberId: phoneId, events });
+}
+
+export function parseMetaWebhookBatches(payload: unknown): MetaWebhookBatch[] {
   const root = asRecord(payload);
   if (!root || root.object !== "whatsapp_business_account") return [];
 
   const entries = Array.isArray(root.entry) ? root.entry : [];
-  const events: WhatsAppCallbackEvent[] = [];
+  const batches = new Map<string, MetaWebhookBatch>();
 
   for (const entry of entries) {
     const entryRecord = asRecord(entry);
+    const wabaId = getString(entryRecord?.id);
+    if (!wabaId) continue;
     const changes = Array.isArray(entryRecord?.changes) ? entryRecord.changes : [];
     for (const change of changes) {
       const changeRecord = asRecord(change);
@@ -145,11 +173,15 @@ export function parseMetaWebhook(payload: unknown): WhatsAppCallbackEvent[] {
       if (field !== undefined && field !== "messages") continue;
       const value = asRecord(changeRecord?.value);
       if (!value) continue;
-      events.push(...parseChangeValue(value));
+      addBatch(batches, wabaId, phoneNumberId(value), parseChangeValue(value));
     }
   }
 
-  return events;
+  return [...batches.values()];
+}
+
+export function parseMetaWebhook(payload: unknown): WhatsAppCallbackEvent[] {
+  return parseMetaWebhookBatches(payload).flatMap((batch) => batch.events);
 }
 
 function parseEchoEntry(echo: Record<string, unknown>): WhatsAppCallbackEvent | null {
@@ -162,27 +194,36 @@ function parseEchoEntry(echo: Record<string, unknown>): WhatsAppCallbackEvent | 
   return { type: "echo", to, messageId, text, at };
 }
 
-/** Parse smb_message_echoes changes into echo events (text only in v1). */
-export function parseMetaEchoes(payload: unknown): WhatsAppCallbackEvent[] {
+export function parseMetaEchoesBatches(payload: unknown): MetaWebhookBatch[] {
   const root = asRecord(payload);
   if (!root || root.object !== "whatsapp_business_account") return [];
   const entries = Array.isArray(root.entry) ? root.entry : [];
-  const events: WhatsAppCallbackEvent[] = [];
+  const batches = new Map<string, MetaWebhookBatch>();
   for (const entry of entries) {
     const entryRec = asRecord(entry);
+    const wabaId = getString(entryRec?.id);
+    if (!wabaId) continue;
     const changes = Array.isArray(entryRec?.changes) ? (entryRec?.changes as unknown[]) : [];
     for (const change of changes) {
       const cr = asRecord(change);
       if (cr?.field !== "smb_message_echoes") continue;
       const value = asRecord(cr?.value);
+      if (!value) continue;
       const echoes = Array.isArray(value?.message_echoes) ? (value?.message_echoes as unknown[]) : [];
+      const events: WhatsAppCallbackEvent[] = [];
       for (const e of echoes) {
         const rec = asRecord(e);
         if (!rec) continue;
         const ev = parseEchoEntry(rec);
         if (ev) events.push(ev);
       }
+      addBatch(batches, wabaId, phoneNumberId(value), events);
     }
   }
-  return events;
+  return [...batches.values()];
+}
+
+/** Parse smb_message_echoes changes into echo events (text only in v1). */
+export function parseMetaEchoes(payload: unknown): WhatsAppCallbackEvent[] {
+  return parseMetaEchoesBatches(payload).flatMap((batch) => batch.events);
 }

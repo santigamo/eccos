@@ -3,7 +3,7 @@ import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:tes
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backoffMs, type EccosGateway } from "../../src/gateway";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { singletonStub } from "./helpers";
+import { gatewayStub } from "./helpers";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 async function seedPendingDelivery(event: WhatsAppCallbackEvent) {
-  await singletonStub().ingest([event]);
+  await gatewayStub().ingest([event]);
 }
 
 describe("EccosGateway alarm", () => {
@@ -37,7 +37,7 @@ describe("EccosGateway alarm", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       await instance.alarm();
     });
 
@@ -46,7 +46,7 @@ describe("EccosGateway alarm", () => {
       fetchMock.mock.calls.some(([url]) => String(url) === env.SUBSCRIBER_WEBHOOK_URL),
     ).toBe(true);
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql.exec("SELECT status FROM deliveries ORDER BY id DESC LIMIT 1").toArray()[0];
       expect(row?.status).toBe("delivered");
     });
@@ -69,17 +69,17 @@ describe("EccosGateway alarm", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       await instance.alarm();
     });
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       await instance.alarm();
     });
 
     const subscriberCalls = fetchMock.mock.calls.filter(([url]) => String(url) === env.SUBSCRIBER_WEBHOOK_URL);
     expect(subscriberCalls).toHaveLength(1);
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
         .exec("SELECT status, attempts FROM deliveries ORDER BY id DESC LIMIT 1")
         .toArray()[0] as { status: string; attempts: number };
@@ -99,9 +99,9 @@ describe("EccosGateway alarm", () => {
     await seedPendingDelivery(event);
 
     const before = Date.now();
-    await runDurableObjectAlarm(singletonStub());
+    await runDurableObjectAlarm(gatewayStub());
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
         .exec("SELECT status, attempts, next_attempt_at FROM deliveries ORDER BY id DESC LIMIT 1")
         .toArray()[0] as { status: string; attempts: number; next_attempt_at: number };
@@ -121,7 +121,7 @@ describe("EccosGateway alarm", () => {
     };
 
     await seedPendingDelivery(event);
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
         .exec("SELECT id FROM deliveries ORDER BY id DESC LIMIT 1")
         .toArray()[0] as { id: number };
@@ -129,13 +129,13 @@ describe("EccosGateway alarm", () => {
     });
 
     for (let i = 0; i < 3; i++) {
-      await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+      await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
         instance.sql.exec("UPDATE deliveries SET next_attempt_at = ? WHERE status = 'pending'", Date.now());
       });
-      await runDurableObjectAlarm(singletonStub());
+      await runDurableObjectAlarm(gatewayStub());
     }
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
         .exec("SELECT status, attempts FROM deliveries ORDER BY id DESC LIMIT 1")
         .toArray()[0] as { status: string; attempts: number };
@@ -155,9 +155,9 @@ describe("EccosGateway alarm", () => {
       at: 1_700_000_000_000,
     });
 
-    await runDurableObjectAlarm(singletonStub());
+    await runDurableObjectAlarm(gatewayStub());
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
         .exec("SELECT last_error FROM deliveries ORDER BY id DESC LIMIT 1")
         .toArray()[0] as { last_error: string };
@@ -175,13 +175,13 @@ describe("EccosGateway alarm", () => {
 
     // Empty string in DO config wins over the env fallback, exercising the real
     // "operator cleared the forwarding target" path rather than mutating env.
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       instance.saveConfig({ SUBSCRIBER_WEBHOOK_URL: "" });
     });
 
-    await runDurableObjectAlarm(singletonStub());
+    await runDurableObjectAlarm(gatewayStub());
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
         .exec("SELECT last_error FROM deliveries ORDER BY id DESC LIMIT 1")
         .toArray()[0] as { last_error: string };

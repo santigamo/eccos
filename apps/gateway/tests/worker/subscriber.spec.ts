@@ -5,7 +5,9 @@ import { signPayload } from "@eccos/core/signature";
 import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { singletonStub } from "./helpers";
+import { gatewayStub } from "./helpers";
+
+const TEST_WABA_ID = "WABA_TEST";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -21,43 +23,43 @@ describe("subscriber config (feature A)", () => {
     const rpc = makeRpc();
     const secret = "s3cr3t-rotation-value";
 
-    expect(await rpc.setSubscriberConfig({ url: "https://new.example/hook", secret })).toEqual({
+    expect(await rpc.setSubscriberConfig({ url: "https://new.example/hook", secret }, TEST_WABA_ID)).toEqual({
       ok: true,
     });
 
-    const cfg = await rpc.getSubscriberConfig();
+    const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID);
     expect(cfg).toEqual({ url: "https://new.example/hook", hasSecret: true });
     // The secret must not leak through the read model in any shape.
     expect(JSON.stringify(cfg)).not.toContain(secret);
     expect(Object.values(cfg)).not.toContain(secret);
 
     // ...but it was persisted internally so forwardOne can sign with it.
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       expect(i.getConfigValue("SUBSCRIBER_SECRET")).toBe(secret);
     });
   });
 
   it("setSubscriberConfig without a secret keeps the existing one (url-only rotation)", async () => {
     const rpc = makeRpc();
-    await rpc.setSubscriberConfig({ url: "https://first.example/hook", secret: "keep-me" });
-    await rpc.setSubscriberConfig({ url: "https://second.example/hook" });
+    await rpc.setSubscriberConfig({ url: "https://first.example/hook", secret: "keep-me" }, TEST_WABA_ID);
+    await rpc.setSubscriberConfig({ url: "https://second.example/hook" }, TEST_WABA_ID);
 
-    const cfg = await rpc.getSubscriberConfig();
+    const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID);
     expect(cfg).toEqual({ url: "https://second.example/hook", hasSecret: true });
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       expect(i.getConfigValue("SUBSCRIBER_SECRET")).toBe("keep-me");
     });
   });
 
   it("falls back to env when no DO config is set", async () => {
-    const cfg = await makeRpc().getSubscriberConfig();
+    const cfg = await makeRpc().getSubscriberConfig(TEST_WABA_ID);
     expect(cfg).toEqual({ url: env.SUBSCRIBER_WEBHOOK_URL, hasSecret: true });
   });
 
   it("forwardOne prefers the DO config override URL + secret over env", async () => {
     const overrideUrl = "https://override.example/hook";
     const overrideSecret = "override-secret";
-    await makeRpc().setSubscriberConfig({ url: overrideUrl, secret: overrideSecret });
+    await makeRpc().setSubscriberConfig({ url: overrideUrl, secret: overrideSecret }, TEST_WABA_ID);
 
     const event: WhatsAppCallbackEvent = {
       type: "reply",
@@ -66,11 +68,11 @@ describe("subscriber config (feature A)", () => {
       text: "hola",
       at: 1_700_000_000_000,
     };
-    await singletonStub().ingest([event]);
+    await gatewayStub().ingest([event]);
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
 
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       await i.alarm();
     });
 
@@ -101,7 +103,7 @@ describe("resubscribe (feature B)", () => {
   }
 
   async function setCallbackUrl(url: string) {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       i.saveConfig({ META_WEBHOOK_CALLBACK_URL: url });
     });
   }
@@ -110,7 +112,7 @@ describe("resubscribe (feature B)", () => {
     await setCallbackUrl("https://worker.test/webhooks/meta");
     const fetchMock = mockSubscribedApps(200);
 
-    const res = await makeRpc().resubscribe();
+    const res = await makeRpc().resubscribe(TEST_WABA_ID);
 
     expect(res).toEqual({ ok: true });
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/subscribed_apps"));
@@ -124,7 +126,7 @@ describe("resubscribe (feature B)", () => {
     await setCallbackUrl("https://worker.test/webhooks/meta");
     mockSubscribedApps(400);
 
-    const res = await makeRpc().resubscribe();
+    const res = await makeRpc().resubscribe(TEST_WABA_ID);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("subscribed_apps");
   });
@@ -132,7 +134,7 @@ describe("resubscribe (feature B)", () => {
   it("returns { ok: false } without calling Meta when no callback URL is configured", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
 
-    const res = await makeRpc().resubscribe();
+    const res = await makeRpc().resubscribe(TEST_WABA_ID);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("META_WEBHOOK_CALLBACK_URL");
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/subscribed_apps"))).toBe(false);

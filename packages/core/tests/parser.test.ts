@@ -1,5 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { parseMetaWebhook, parseMetaEchoes } from "@eccos/core/parser";
+import {
+  parseMetaEchoes,
+  parseMetaEchoesBatches,
+  parseMetaWebhook,
+  parseMetaWebhookBatches,
+} from "@eccos/core/parser";
 
 const TS_SEC = "1700000000";
 const TS_MS = 1_700_000_000_000;
@@ -12,6 +17,43 @@ function envelope(value: Record<string, unknown>) {
 }
 
 describe("parseMetaWebhook", () => {
+  it("groups events by WABA and phone number without changing the public event shape", () => {
+    const batches = parseMetaWebhookBatches({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA_A",
+          changes: [
+            {
+              field: "messages",
+              value: {
+                metadata: { phone_number_id: "PHONE_A" },
+                messages: [{ from: "34600000000", id: "wamid.A", timestamp: TS_SEC, type: "text", text: { body: "A" } }],
+              },
+            },
+          ],
+        },
+        {
+          id: "WABA_B",
+          changes: [
+            {
+              field: "messages",
+              value: {
+                metadata: { phone_number_id: "PHONE_B" },
+                statuses: [{ id: "wamid.B", status: "delivered", timestamp: TS_SEC }],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(batches).toHaveLength(2);
+    expect(batches[0]).toMatchObject({ wabaId: "WABA_A", phoneNumberId: "PHONE_A" });
+    expect(batches[0]?.events[0]).toMatchObject({ type: "reply", messageId: "wamid.A" });
+    expect(batches[1]).toMatchObject({ wabaId: "WABA_B", phoneNumberId: "PHONE_B" });
+    expect(batches[1]?.events[0]).toMatchObject({ type: "delivered", transportMessageId: "wamid.B" });
+  });
+
   it("parses a delivered status", () => {
     const events = parseMetaWebhook(
       envelope({ statuses: [{ id: "wamid.D", status: "delivered", timestamp: TS_SEC }] }),
@@ -171,6 +213,12 @@ const ECHO_PAYLOAD = {
 };
 
 describe("parseMetaEchoes", () => {
+  it("preserves WABA and phone metadata for echo routing", () => {
+    const batches = parseMetaEchoesBatches(ECHO_PAYLOAD);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({ wabaId: "WABA_ID", phoneNumberId: "PHONE_NUMBER_ID" });
+  });
+
   it("parses a text echo from smb_message_echoes", () => {
     const events = parseMetaEchoes(ECHO_PAYLOAD);
     expect(events).toHaveLength(1);

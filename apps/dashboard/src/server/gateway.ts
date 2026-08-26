@@ -11,6 +11,8 @@ import type {
   SubscriberConfig,
 } from "@eccos/gateway-contract";
 
+type DashboardListOpts = Omit<DeliveryListOpts, "wabaId">;
+
 // Re-export the shared contract types the routes render against, so the whole
 // dashboard reads the operator surface from a single source of truth
 // (`@eccos/gateway-contract`) — no more hand-mirrored shapes.
@@ -69,39 +71,47 @@ async function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<
   }
 }
 
+function configuredWabaId(): string {
+  const wabaId = env.GATEWAY_WABA_ID?.trim();
+  if (!wabaId) throw new Error("GATEWAY_WABA_ID is not configured");
+  return wabaId;
+}
+
 /** Status page loader — kept returning `{ status }` for the existing route. */
 export const getGatewayStatus = createServerFn({ method: "GET" }).handler(
   async (): Promise<GatewayStatusResult> => {
-    const res = await withGateway((gateway) => gateway.getStatus());
+    const res = await withGateway((gateway) => gateway.getStatus(configuredWabaId()));
     return res.ok ? { ok: true, status: res.data } : res;
   },
 );
 
 export const listDeliveries = createServerFn({ method: "GET" })
-  .validator((opts: DeliveryListOpts | undefined) => opts)
+  .validator((opts: DashboardListOpts | undefined) => opts)
   .handler(
     ({ data }): Promise<Result<DeliveryRecord[]>> =>
-      withGateway((gateway) => gateway.listDeliveries(data)),
+      withGateway((gateway) => gateway.listDeliveries({ ...data, wabaId: configuredWabaId() })),
   );
 
 export const listInbound = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<InboundRow[]>> => withGateway((gateway) => gateway.listInbound()),
+  (): Promise<Result<InboundRow[]>> =>
+    withGateway((gateway) => gateway.listInbound({ wabaId: configuredWabaId() })),
 );
 
 export const listOutbound = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<OutboundRow[]>> => withGateway((gateway) => gateway.listOutbound()),
+  (): Promise<Result<OutboundRow[]>> =>
+    withGateway((gateway) => gateway.listOutbound({ wabaId: configuredWabaId() })),
 );
 
 export const listTemplates = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<TemplatesResult>> =>
-    withGateway(async (gateway) => (await gateway.listTemplates()) as TemplatesResult),
+    withGateway(async (gateway) => (await gateway.listTemplates(configuredWabaId())) as TemplatesResult),
 );
 
 export const retryDelivery = createServerFn({ method: "POST" })
   .validator((id: number) => id)
   .handler(
     ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> =>
-      withGateway((gateway) => gateway.retryDelivery(data)),
+      withGateway((gateway) => gateway.retryDelivery(data, configuredWabaId())),
   );
 
 // --- Operator actions (settings page) ---
@@ -109,7 +119,7 @@ export const retryDelivery = createServerFn({ method: "POST" })
 /** Read the current outbound-forwarding target. The secret is never exposed. */
 export const getSubscriberConfig = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<SubscriberConfig>> =>
-    withGateway((gateway) => gateway.getSubscriberConfig()),
+    withGateway((gateway) => gateway.getSubscriberConfig(configuredWabaId())),
 );
 
 /** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
@@ -117,7 +127,7 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
   .validator((input: { url: string; secret?: string }) => input)
   .handler(
     ({ data }): Promise<Result<{ ok: true }>> =>
-      withGateway((gateway) => gateway.setSubscriberConfig(data)),
+      withGateway((gateway) => gateway.setSubscriberConfig(data, configuredWabaId())),
   );
 
 /**
@@ -127,5 +137,5 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
  */
 export const resubscribe = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ResubscribeResult>> =>
-    withGateway((gateway) => gateway.resubscribe()),
+    withGateway((gateway) => gateway.resubscribe(configuredWabaId())),
 );

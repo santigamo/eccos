@@ -57,7 +57,7 @@ export interface GatewayStatus {
 
 export type TemplatesResult = { ok: true; data: unknown } | { ok: false; error: unknown };
 
-export type ListOpts = { limit?: number; before?: number };
+export type ListOpts = { wabaId: string; limit?: number; before?: number };
 
 export type DeliveryListOpts = ListOpts & { status?: string };
 
@@ -92,18 +92,18 @@ export type EraseByPhoneResult =
   | { ok: false; error: string };
 
 export interface GatewayApi {
-  getStatus(): Promise<GatewayStatus>;
-  getConfig(): Promise<Record<string, string>>;
-  listInbound(opts?: ListOpts): Promise<InboundRow[]>;
-  listOutbound(opts?: ListOpts): Promise<OutboundRow[]>;
-  listDeliveries(opts?: DeliveryListOpts): Promise<DeliveryRecord[]>;
-  getDelivery(id: number): Promise<DeliveryRecord | null>;
-  retryDelivery(id: number): Promise<{ ok: boolean; previousStatus: string | null }>;
-  listTemplates(limit?: number): Promise<TemplatesResult>;
-  getSubscriberConfig(): Promise<SubscriberConfig>;
-  setSubscriberConfig(input: SetSubscriberConfigInput): Promise<{ ok: true }>;
-  resubscribe(): Promise<ResubscribeResult>;
+  getStatus(wabaId: string): Promise<GatewayStatus>;
+  getConfig(wabaId: string): Promise<Record<string, string>>;
+  listInbound(opts: ListOpts): Promise<InboundRow[]>;
+  listOutbound(opts: ListOpts): Promise<OutboundRow[]>;
+  listDeliveries(opts: DeliveryListOpts): Promise<DeliveryRecord[]>;
+  getDelivery(id: number, wabaId: string): Promise<DeliveryRecord | null>;
+  retryDelivery(id: number, wabaId: string): Promise<{ ok: boolean; previousStatus: string | null }>;
+  listTemplates(wabaId: string, limit?: number): Promise<TemplatesResult>;
+  getSubscriberConfig(wabaId: string): Promise<SubscriberConfig>;
+  setSubscriberConfig(input: SetSubscriberConfigInput, wabaId: string): Promise<{ ok: true }>;
+  resubscribe(wabaId: string): Promise<ResubscribeResult>;
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
    * number across inbound_events, outbound_messages, and deliveries. */
-  eraseByPhone(phone: string): Promise<EraseByPhoneResult>;
+  eraseByPhone(phone: string, wabaId: string): Promise<EraseByPhoneResult>;
 }

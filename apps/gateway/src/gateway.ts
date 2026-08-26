@@ -83,7 +83,10 @@ export function resolveRetentionDays(env: {
   const contentRaw =
     positive(env.CONTENT_RETENTION_DAYS) ?? positive(env.RETENTION_DAYS) ?? DEFAULT_CONTENT_RETENTION_DAYS;
   const contentDays = Math.min(Math.max(contentRaw, MIN_CONTENT_RETENTION_DAYS), MAX_CONTENT_RETENTION_DAYS);
-  const deliveryDays = positive(env.DELIVERY_RETENTION_DAYS) ?? DEFAULT_DELIVERY_RETENTION_DAYS;
+  const deliveryDays = Math.max(
+    contentDays,
+    positive(env.DELIVERY_RETENTION_DAYS) ?? DEFAULT_DELIVERY_RETENTION_DAYS,
+  );
   return { contentDays, deliveryDays };
 }
 
@@ -583,7 +586,7 @@ export function withJitter(ms: number, random: () => number = Math.random): numb
 /**
  * Normalizes a phone number for erasure matching: strips every non-digit
  * character (`+34 600-00-00-00` → `34600000000`). Returns null when fewer than
- * 5 digits remain (same minimum as `/v1/messages`).
+   * 5 digits remain (same minimum as the send API).
  */
 export function normalizePhoneNumber(input: string): string | null {
   const digits = input.replace(/\D/g, "");

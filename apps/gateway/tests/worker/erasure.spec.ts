@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { REDACTED_PAYLOAD, normalizePhoneNumber, type EccosGateway } from "../../src/gateway";
-import { singletonStub } from "./helpers";
+import { gatewayStub } from "./helpers";
 
 afterEach(async () => {
   await reset();
@@ -68,7 +68,7 @@ function seed(i: EccosGateway) {
 
 describe("EccosGateway.eraseByPhone", () => {
   it("erases every trace of the phone across the three tables and reports counts", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const ids = seed(i);
       // The formatted input must normalize to the stored digits.
       const result = i.eraseByPhone("+34 600 000 001");
@@ -113,7 +113,7 @@ describe("EccosGateway.eraseByPhone", () => {
   });
 
   it("is idempotent — a second erasure affects nothing", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       seed(i);
       i.eraseByPhone(PHONE_A);
       const second = i.eraseByPhone(PHONE_A);
@@ -131,7 +131,7 @@ describe("EccosGateway.eraseByPhone", () => {
   });
 
   it("does not match numbers that merely contain the digits as a substring", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       // A longer number containing PHONE_A's digits, and a message text quoting them.
       i.logOutbound("wamid.LONG", `9${PHONE_A}9`, "{}", "sent", null);
       i.sql.exec(
@@ -149,7 +149,7 @@ describe("EccosGateway.eraseByPhone", () => {
   });
 
   it("rejects inputs with fewer than 5 digits", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const result = i.eraseByPhone("+3-4");
       expect(result).toEqual({ ok: false, error: "invalid phone number: expected at least 5 digits" });
     });
@@ -166,8 +166,8 @@ describe("normalizePhoneNumber", () => {
   });
 });
 
-describe("POST /v1/privacy/erasure", () => {
-  const url = "http://example.com/v1/privacy/erasure";
+describe("POST /v1/wabas/WABA_TEST/privacy/erasure", () => {
+  const url = "http://example.com/v1/wabas/WABA_TEST/privacy/erasure";
   const authed = (body: unknown) =>
     exports.default.fetch(url, {
       method: "POST",
@@ -201,7 +201,7 @@ describe("POST /v1/privacy/erasure", () => {
   });
 
   it("erases and returns the per-table counts", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       seed(i);
     });
     const res = await authed({ phone: "+34 600 000 001" });

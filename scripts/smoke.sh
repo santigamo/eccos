@@ -20,7 +20,7 @@ fi
 # Positional arg wins over BASE_URL env, which wins over the local wrangler-dev default.
 BASE_URL="${1:-${BASE_URL:-http://localhost:8787}}"
 
-required=(META_APP_SECRET META_WEBHOOK_VERIFY_TOKEN)
+required=(META_APP_SECRET META_WEBHOOK_VERIFY_TOKEN META_WABA_ID)
 for v in "${required[@]}"; do
   if [[ -z "${!v:-}" ]]; then
     echo "Missing env: $v (set in .env or export before running)" >&2
@@ -42,7 +42,7 @@ echo "==> webhook challenge (invalid token -> 403)"
 code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/webhooks/meta?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=x")"
 [[ "$code" == "403" ]]
 
-BODY='{"object":"whatsapp_business_account","entry":[{"changes":[{"field":"messages","value":{"statuses":[{"id":"wamid.SMOKE","status":"delivered","timestamp":"1700000000","recipient_id":"34600000000"}]}}]}]}'
+BODY='{"object":"whatsapp_business_account","entry":[{"id":"'"$META_WABA_ID"'","changes":[{"field":"messages","value":{"statuses":[{"id":"wamid.SMOKE","status":"delivered","timestamp":"1700000000","recipient_id":"34600000000"}]}}]}]}'
 SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$META_APP_SECRET" -hex | sed 's/^.* //')"
 
 echo "==> webhook POST (valid signature)"
@@ -68,8 +68,8 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/webhooks/meta"
 [[ "$code" == "400" ]]
 
 if [[ -n "${ECCOS_API_KEY:-}" ]]; then
-  echo "==> /v1/messages unauthorized -> 401"
-  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/v1/messages" \
+  echo "==> scoped send unauthorized -> 401"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/v1/wabas/$META_WABA_ID/messages" \
     -H "content-type: application/json" \
     -d '{"to":"34600000000","type":"text","text":{"body":"hi"}}')"
   [[ "$code" == "401" ]]

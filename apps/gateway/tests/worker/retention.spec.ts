@@ -1,7 +1,7 @@
 import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { REDACTED_PAYLOAD, resolveRetentionDays, type EccosGateway } from "../../src/gateway";
-import { singletonStub } from "./helpers";
+import { gatewayStub } from "./helpers";
 
 afterEach(async () => {
   await reset();
@@ -38,7 +38,7 @@ describe("split retention", () => {
     let failedId = 0;
     let freshId = 0;
     let pendingId = 0;
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       redactedId = insertDelivery(i, { ageDays: 31, status: "delivered" });
       failedId = insertDelivery(i, { ageDays: 31, status: "failed", lastError: "boom" });
       freshId = insertDelivery(i, { ageDays: 5, status: "delivered" });
@@ -54,7 +54,7 @@ describe("split retention", () => {
   });
 
   it("keeps all metadata on a redacted row — only payload is emptied", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const id = insertDelivery(i, { ageDays: 31, status: "failed", lastError: "subscriber non-2xx" });
       const before = i.getDelivery(id)!;
       await i.alarm();
@@ -72,7 +72,7 @@ describe("split retention", () => {
   });
 
   it("deletes terminal deliveries past the delivery window (90 days)", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const gone1 = insertDelivery(i, { ageDays: 91, status: "delivered" });
       const gone2 = insertDelivery(i, { ageDays: 95, status: "failed", lastError: "boom" });
       const keptRedacted = insertDelivery(i, { ageDays: 89, status: "delivered" });
@@ -88,7 +88,7 @@ describe("split retention", () => {
   });
 
   it("prunes inbound_events and outbound_messages past the content window", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const old = Date.now() - 31 * DAY_MS;
       const fresh = Date.now() - 1 * DAY_MS;
       i.sql.exec(
@@ -113,7 +113,7 @@ describe("split retention", () => {
   });
 
   it("refuses to retry/replay a redacted delivery", async () => {
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const id = insertDelivery(i, { ageDays: 31, status: "delivered" });
       await i.alarm();
       expect(i.getDelivery(id)?.payload).toBe(REDACTED_PAYLOAD);
@@ -155,14 +155,14 @@ describe("resolveRetentionDays", () => {
   it("sweeps at most once an hour instead of on every alarm", async () => {
     // The sweep used to run at the end of every alarm(), i.e. once per ingest,
     // scanning the whole table to delete the same zero rows. It is now throttled.
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       instance.saveConfig({ __last_sweep_at__: String(Date.now()) });
       insertDelivery(instance, { ageDays: 200, status: "delivered" });
     });
 
-    await runDurableObjectAlarm(singletonStub());
+    await runDurableObjectAlarm(gatewayStub());
 
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const rows = instance.sql.exec("SELECT COUNT(*) AS c FROM deliveries").toArray();
       // Still there: the throttle skipped the sweep even though the row is 200 days old.
       expect(Number(rows[0]!.c)).toBeGreaterThan(0);
@@ -177,5 +177,9 @@ describe("resolveRetentionDays", () => {
   it("honors a custom delivery window", () => {
     expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "30" }).deliveryDays).toBe(30);
     expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "180" }).deliveryDays).toBe(180);
+    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "60", DELIVERY_RETENTION_DAYS: "30" })).toEqual({
+      contentDays: 60,
+      deliveryDays: 60,
+    });
   });
 });

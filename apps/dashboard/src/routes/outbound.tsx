@@ -1,14 +1,60 @@
+import { useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { createColumnHelper } from "@tanstack/react-table";
+import { LogGrid } from "../components/grid/log-grid";
+import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listOutbound } from "../server/gateway";
-import { Page, StatusTag, Unreachable, fmtTs, styles } from "../ui";
+import type { OutboundRow } from "../server/gateway";
+import { Page, StatusTag, Unreachable, fmtTs } from "../ui";
 
 export const Route = createFileRoute("/outbound")({
   loader: () => listOutbound(),
   component: OutboundPage,
 });
 
+const columnHelper = createColumnHelper<DataGridFeatures, OutboundRow>();
+
+const columns = [
+  columnHelper.accessor("created_at", {
+    id: "created_at",
+    header: "Created",
+    cell: (info) => (
+      <span className="font-mono text-xs">{fmtTs(info.getValue())}</span>
+    ),
+    meta: { cellClassName: "align-top whitespace-nowrap" },
+  }),
+  columnHelper.accessor("recipient", {
+    id: "recipient",
+    header: "Recipient",
+    cell: (info) => info.getValue(),
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("status", {
+    id: "status",
+    header: "Status",
+    cell: (info) => <StatusTag status={info.getValue()} />,
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("transport_message_id", {
+    id: "transport_message_id",
+    header: "Transport ID",
+    cell: (info) => (
+      <span className="font-mono text-xs">{info.getValue() ?? "\u2014"}</span>
+    ),
+    meta: { cellClassName: "text-foreground/80 break-all" },
+  }),
+  columnHelper.accessor("error", {
+    id: "error",
+    header: "Error",
+    cell: (info) => info.getValue() ?? "\u2014",
+    meta: { cellClassName: "text-foreground/80 break-words" },
+  }),
+];
+
 function OutboundPage() {
   const result = Route.useLoaderData();
+  const rows = useMemo(() => (result.ok ? result.data : []), [result]);
+
   if (!result.ok) {
     return (
       <Page title="Outbound">
@@ -17,43 +63,14 @@ function OutboundPage() {
     );
   }
 
-  const rows = result.data;
   return (
     <Page title="Outbound">
-      <div style={styles.tableWrap}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Created</th>
-              <th style={styles.th}>Recipient</th>
-              <th style={styles.th}>Status</th>
-              <th style={styles.th}>Transport ID</th>
-              <th style={styles.th}>Error</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td style={styles.empty} colSpan={5}>
-                  No outbound messages.
-                </td>
-              </tr>
-            ) : (
-              rows.map((o) => (
-                <tr key={o.id}>
-                  <td style={styles.tdMono}>{fmtTs(o.created_at)}</td>
-                  <td style={styles.td}>{o.recipient}</td>
-                  <td style={styles.td}>
-                    <StatusTag status={o.status} />
-                  </td>
-                  <td style={styles.tdMono}>{o.transport_message_id ?? "—"}</td>
-                  <td style={styles.td}>{o.error ?? "—"}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <LogGrid
+        columns={columns}
+        data={rows}
+        emptyMessage="No outbound messages."
+        getRowId={(row) => String(row.id)}
+      />
     </Page>
   );
 }

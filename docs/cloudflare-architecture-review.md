@@ -8,7 +8,7 @@ Eccos is accurately described as maximally serverless and zero external infrastr
 
 Eccos is not maximally idiomatic in two places:
 
-- The Workers target currently sends all stateful work to one global Durable Object instance via `idFromName("singleton")`. That is acceptable for v0 single-tenant simplicity, but Cloudflare documents a single global Durable Object as a bottleneck and recommends partitioning by resource.
+- The Workers target sends each WABA to a versioned Durable Object name that includes its jurisdiction. Cloudflare documents a single global Durable Object as a bottleneck and recommends partitioning by resource.
 - The outbound forwarding retry loop is a hand-rolled queue on Durable Object SQLite and Alarms. That is a legitimate lowest-layer / fewest-moving-parts choice, but it trades away native Queues features such as automatic retry policy, autoscaling consumers, and a dead-letter queue.
 
 ## What The Review Validates
@@ -21,9 +21,13 @@ Eccos is not maximally idiomatic in two places:
 
 ## Non-Idiomatic Points
 
-### Singleton Durable Object
+### Per-WABA Durable Object
 
-The current `EccosGateway` singleton is a deliberate v0 simplification for one WABA / one phone number. It should not be presented as the scaling endpoint: Cloudflare calls a single global Durable Object a documented anti-pattern, and the platform limit guidance puts a single object around 500-1,000 requests per second for simple operations.
+Eccos routes each WABA to `v1:<jurisdiction-or-auto>:waba:<WABA_ID>`. Cloudflare calls a single
+global Durable Object a documented anti-pattern, and the platform limit guidance puts a single
+object around 500-1,000 requests per second for simple operations. Existing data must be exported
+and imported before deploying this routing scheme because Cloudflare does not move SQLite data
+between Durable Objects.
 
 Citations:
 
@@ -42,7 +46,7 @@ Citations:
 
 ## Gaps
 
-- Rate limiting: **Resolved (2026-06-30, `eccos-36z`).** On top of the static `ECCOS_API_KEY` bearer auth, `POST /v1/messages` now passes through the native Cloudflare Rate Limiting binding (`SEND_RATE_LIMITER`, 60/min, defensive 429) — native abuse/spike protection with no external infra: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
+- Rate limiting: **Resolved (2026-06-30, `eccos-36z`).** On top of the static `ECCOS_API_KEY` bearer auth, `POST /v1/wabas/<WABA_ID>/messages` now passes through the native Cloudflare Rate Limiting binding (`SEND_RATE_LIMITER`, 60/min, defensive 429) — native abuse/spike protection with no external infra: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
 - Dead-letter queue: failed subscriber forwarding attempts are retried and eventually pruned after retention, but exhausted deliveries are not separated into a DLQ for inspection or replay. Queues would provide this natively: https://developers.cloudflare.com/queues/configuration/dead-letter-queues/
 - Dashboard auth: **Implemented in code (`apps/dashboard`).** The operator console is now a separate Worker that reaches the gateway over a private RPC service binding (never public HTTP) and re-verifies a Cloudflare Access JWT on every request (`apps/dashboard/src/access.ts`), enforced whenever `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are set. The remaining step is enabling the account-level Zero Trust Access application (`eccos-45t`); until that is done a bare deploy leaves the vars empty and is therefore unauthenticated, so do not expose it publicly.
 
@@ -58,14 +62,14 @@ This replaces the older "Postgres storage option (Drizzle)" framing with a Cloud
 
 ## Prioritized Recommendations
 
-_Status as of 2026-06-30 (✅ done · ⏳ open/deferred). Rationale for each item is in the sections above._
+_Status as of 2026-08-25 (✅ done · ⏳ open/deferred). Rationale for each item is in the sections above._
 
 | Priority | Recommendation | Status | Citation |
 |---|---|---|---|
-| P0 | Add Cloudflare Rate Limiting binding to `POST /v1/messages` | ✅ **Done** — `SEND_RATE_LIMITER` binding + defensive 429 guard (`eccos-36z`) | https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/ |
+| P0 | Add Cloudflare Rate Limiting binding to `POST /v1/wabas/<WABA_ID>/messages` | ✅ **Done** — `SEND_RATE_LIMITER` binding + defensive 429 guard (`eccos-36z`) | https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/ |
 | P0 | Document and guarantee `alarm()` idempotency in `EccosGateway` | ✅ **Done** — invariant documented + regression test (`eccos-qb9`) | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
-| P1 | Shard `EccosGateway` per WABA/phone | ⏳ **Open** — `eccos-6lv`, blocked by multi-tenant (`eccos-v80`) | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
+| P1 | Add tenant routing foundation | ✅ **Implemented** — canonical WABA+jurisdiction key and explicit RPC/HTTP selectors (`eccos-ay8`) | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
+| P1 | Shard `EccosGateway` per WABA | ✅ **Implemented** — webhook batches and stateful routes resolve one object per WABA (`eccos-vml`/`eccos-6lv`) | https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/ |
 | P1 | Reframe the storage roadmap as DO SQLite -> D1 -> Hyperdrive | ✅ **Done** — README roadmap updated | https://developers.cloudflare.com/workers/platform/storage-options/ |
 | P2 | Evaluate Cloudflare Queues + DLQ for outbound forwarding | ⏳ **Deferred** — decision recorded (`eccos-t2w`): keep DO+Alarms for v0 | https://developers.cloudflare.com/queues/configuration/batching-retries/ |
 | P3 | Add R2 for outbound media, Access for dashboard auth, and Secrets Store for shared secret management | ⏳ **Future** — post-v1 roadmap | https://developers.cloudflare.com/workers/platform/storage-options/ |
-

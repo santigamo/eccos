@@ -40,6 +40,7 @@ let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
 
 mock.module("cloudflare:workers", () => ({
   env: {
+    GATEWAY_WABA_ID: "waba-1",
     get GATEWAY() {
       return gatewayBinding;
     },
@@ -127,7 +128,7 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
     const res = await listDeliveries({ data: { status: "failed", before: 100 } });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data[0]?.status).toBe("failed");
-    expect(receivedOpts).toEqual({ status: "failed", before: 100 });
+    expect(receivedOpts).toEqual({ status: "failed", before: 100, wabaId: "waba-1" });
   });
 
   test("unreachable: throw is surfaced as { ok: false }", async () => {

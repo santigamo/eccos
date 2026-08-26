@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getEffectiveConfig } from "./config";
-import { getGatewayStub } from "./gateway-stub";
+import { getGatewayStubForWaba } from "./gateway-stub";
 import { subscribeApp } from "./meta/connect-api";
 import { listTemplates } from "@eccos/core/templates";
 import type {
@@ -26,82 +26,110 @@ function healthFromCounts(counts: OperatorCounts): Health {
   return "healthy";
 }
 
+const PRIVATE_CONFIG_KEYS = new Set([
+  "META_ACCESS_TOKEN",
+  "META_APP_SECRET",
+  "META_WEBHOOK_VERIFY_TOKEN",
+  "ECCOS_API_KEY",
+  "SUBSCRIBER_SECRET",
+]);
+
+function publicConfig(config: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(config).filter(([key]) => !PRIVATE_CONFIG_KEYS.has(key)));
+}
+
 /**
  * Operator API for the Eccos dashboard.
  *
  * RPC-only: reachable solely through a Cloudflare service binding
  * (entrypoint "GatewayRPC") from the dashboard Worker — never exposed as public
  * HTTP. All state lives in the EccosGateway Durable Object; these methods are
- * thin readers plus a retry trigger. The public HTTP surface (`/v1/messages`,
- * `/v1/templates`, `/webhooks/meta`) is unchanged and stays in the Hono app.
+ * thin readers plus a retry trigger. The public HTTP surface (`/v1/wabas/:wabaId/*`,
+ * `/webhooks/meta`) stays in the Hono app.
  */
 export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
-  private get stub() {
-    return getGatewayStub(this.env);
+  private stubFor(wabaId: string) {
+    return getGatewayStubForWaba(this.env, wabaId);
   }
 
-  async getStatus(): Promise<GatewayStatus> {
-    const stub = this.stub;
-    const [counts, config] = await Promise.all([stub.getCounts(), stub.getAllConfig()]);
+  private async scoped(wabaId: string) {
+    const stub = this.stubFor(wabaId);
+    const config = await getEffectiveConfig(this.env, stub);
+    if (config.META_WABA_ID !== wabaId) throw new Error(`WABA "${wabaId}" is not configured`);
+    return { stub, config };
+  }
+
+  async getStatus(wabaId: string): Promise<GatewayStatus> {
+    const { stub, config } = await this.scoped(wabaId);
+    const [counts, stored] = await Promise.all([stub.getCounts(), stub.getAllConfig()]);
     return {
       name: "eccos",
       version: "0.1.0",
       health: healthFromCounts(counts),
       connection: {
-        wabaId: config.META_WABA_ID ?? null,
-        phoneNumberId: config.META_PHONE_NUMBER_ID ?? null,
-        displayPhone: config.DISPLAY_PHONE_NUMBER ?? null,
-        connectedAt: config.CONNECTED_AT ?? null,
+        wabaId: stored.META_WABA_ID ?? config.META_WABA_ID ?? null,
+        phoneNumberId: stored.META_PHONE_NUMBER_ID ?? config.META_PHONE_NUMBER_ID ?? null,
+        displayPhone: stored.DISPLAY_PHONE_NUMBER ?? null,
+        connectedAt: stored.CONNECTED_AT ?? null,
       },
       counts,
     };
   }
 
-  getConfig(): Promise<Record<string, string>> {
-    return this.stub.getAllConfig();
+  async getConfig(wabaId: string): Promise<Record<string, string>> {
+    const { stub } = await this.scoped(wabaId);
+    return publicConfig(await stub.getAllConfig());
   }
 
-  listInbound(opts: ListOpts = {}): Promise<InboundRow[]> {
-    return this.stub.listInbound(opts);
+  async listInbound(opts: ListOpts): Promise<InboundRow[]> {
+    const { stub } = await this.scoped(opts.wabaId);
+    return stub.listInbound(opts);
   }
 
-  listOutbound(opts: ListOpts = {}): Promise<OutboundRow[]> {
-    return this.stub.listOutbound(opts);
+  async listOutbound(opts: ListOpts): Promise<OutboundRow[]> {
+    const { stub } = await this.scoped(opts.wabaId);
+    return stub.listOutbound(opts);
   }
 
-  listDeliveries(opts: DeliveryListOpts = {}): Promise<DeliveryRecord[]> {
-    return this.stub.listDeliveries(opts);
+  async listDeliveries(opts: DeliveryListOpts): Promise<DeliveryRecord[]> {
+    const { stub } = await this.scoped(opts.wabaId);
+    return stub.listDeliveries(opts);
   }
 
-  getDelivery(id: number): Promise<DeliveryRecord | null> {
-    return this.stub.getDelivery(id);
+  async getDelivery(id: number, wabaId: string): Promise<DeliveryRecord | null> {
+    const { stub } = await this.scoped(wabaId);
+    return stub.getDelivery(id);
   }
 
   /** Retry a failed delivery (or replay a delivered one) — re-enqueues + wakes the alarm. */
-  retryDelivery(id: number): Promise<{ ok: boolean; previousStatus: string | null }> {
-    return this.stub.retryDelivery(id);
+  async retryDelivery(id: number, wabaId: string): Promise<{ ok: boolean; previousStatus: string | null }> {
+    const { stub } = await this.scoped(wabaId);
+    return stub.retryDelivery(id);
   }
 
-  async listTemplates(limit = 100): Promise<TemplatesResult> {
-    const cfg = await getEffectiveConfig(this.env, this.stub);
+  async listTemplates(wabaId: string, limit = 100): Promise<TemplatesResult> {
+    const { config: cfg } = await this.scoped(wabaId);
     return listTemplates(cfg, limit);
   }
 
   /** Operator-visible forwarding target (DO config first, env fallback). Never returns the secret. */
-  getSubscriberConfig(): Promise<SubscriberConfig> {
-    return this.stub.getSubscriberConfig();
+  async getSubscriberConfig(wabaId: string): Promise<SubscriberConfig> {
+    const { stub } = await this.scoped(wabaId);
+    return stub.getSubscriberConfig();
   }
 
   /** Rotate the forwarding target. Persists to DO config; the secret is only stored when provided. */
-  async setSubscriberConfig(input: SetSubscriberConfigInput): Promise<{ ok: true }> {
-    await this.stub.setSubscriberConfig(input);
+  async setSubscriberConfig(input: SetSubscriberConfigInput, wabaId: string): Promise<{ ok: true }> {
+    const { stub } = await this.scoped(wabaId);
+    await stub.setSubscriberConfig(input);
     return { ok: true };
   }
 
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
    * number across the gateway tables. Returns per-table counts as erasure evidence. */
-  eraseByPhone(phone: string): Promise<EraseByPhoneResult> {
-    return this.stub.eraseByPhone(phone);
+  async eraseByPhone(phone: string, wabaId: string): Promise<EraseByPhoneResult> {
+    const { stub } = await this.scoped(wabaId);
+    return stub.eraseByPhone(phone);
   }
 
   /**
@@ -110,11 +138,11 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * the transient Embedded Signup business token is never stored — and the configured
    * callback URL (DO config `META_WEBHOOK_CALLBACK_URL`, env fallback).
    */
-  async resubscribe(): Promise<ResubscribeResult> {
+  async resubscribe(wabaId: string): Promise<ResubscribeResult> {
     try {
-      const cfg = await getEffectiveConfig(this.env, this.stub);
+      const { stub, config: cfg } = await this.scoped(wabaId);
       const callbackUrl =
-        (await this.stub.getConfigValue("META_WEBHOOK_CALLBACK_URL")) ??
+        (await stub.getConfigValue("META_WEBHOOK_CALLBACK_URL")) ??
         (this.env as { META_WEBHOOK_CALLBACK_URL?: string }).META_WEBHOOK_CALLBACK_URL;
       if (!callbackUrl) {
         return { ok: false, error: "resubscribe: META_WEBHOOK_CALLBACK_URL is not configured" };

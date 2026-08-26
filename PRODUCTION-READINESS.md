@@ -38,7 +38,7 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 | 3 | Operational readiness | 🟡 | `/ready` deep check + structured JSON logging w/ correlation IDs + `docs/operations.md` (`eccos-ggy`). Residual: alerting/monitoring not wired. |
 | 4 | Packaging contract | ➖ | **N/A.** `@eccos/core` and `@eccos/gateway-contract` are internal `workspace:*` packages with no publish intent for v1 (`eccos-1js`, decided). Re-open if they become public SDKs. |
 | 5 | Data lifecycle | 🟡 | Configurable `RETENTION_DAYS` on both targets, Bun-target pruning parity, `docs/data-lifecycle.md` (`eccos-rv2`). Residual: scripted backup/export + a real restore drill. |
-| 6 | Integration resilience | 🟡 | Retry jitter added; DLQ/manual-replay documented (`eccos-8fu`, `docs/operations.md`). Residual: real DLQ (Queues) and singleton-DO sharding (`eccos-6lv`/`eccos-v80`). |
+| 6 | Integration resilience | 🟡 | Retry jitter added; DLQ/manual-replay documented (`eccos-8fu`, `docs/operations.md`). Residual: real DLQ (Queues). |
 | 7 | Privacy & security | 🟡 | `docs/threat-model.md` + `docs/privacy.md` + `SECURITY.md` data-handling/logging section (`eccos-501`). Logs exclude bodies/tokens by **convention** (typed `LogMeta`), not enforced by a lint. |
 | 8 | Product UI | 🟡 | Dashboard data-layer + render smoke tests (35 dashboard tests) + `docs/ui-qa-checklist.md` (`eccos-1nx`). Residual: automated visual regression (Playwright). |
 | 9 | Deployment contract | 🟡 | `docs/deployment.md` (secrets matrix, deploy, rollback) + `scripts/smoke.sh <url>`. Residual: **no prod deploy or live smoke has been executed/recorded** (`eccos-ouw`). |
@@ -73,7 +73,7 @@ unproven and are called out in Gate 9 / Gate 5.
 |------|-----|
 | `eccos-45t` | Enable Cloudflare Access in front of the dashboard (account-level) |
 | `eccos-ouw` | Execute + record a real prod deploy and post-deploy smoke |
-| `eccos-6lv` / `eccos-v80` | Shard the singleton DO / multi-tenant (scale + real DLQ) |
+| `eccos-v80` | Multi-tenant onboarding, tenant auth, and multi-phone control plane |
 | `eccos-3zm` | Persist callback URL at `/connect` for zero-config resubscribe |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
 

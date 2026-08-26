@@ -19,7 +19,7 @@ What an attacker would want, and where it lives:
 | `META_ACCESS_TOKEN` | Permanent Meta System User token — can send messages and read templates as your WABA | Secret: `wrangler secret` (Workers) / `.env` (Bun). Never persisted to the DO or SQLite. |
 | `META_APP_SECRET` | Verifies inbound webhook signatures; also used server-side to exchange OAuth codes | Secret: `wrangler secret` / `.env` |
 | `META_WEBHOOK_VERIFY_TOKEN` | Shared value Meta echoes back on webhook subscription (`GET /webhooks/meta`) | Secret: `wrangler secret` / `.env` |
-| `ECCOS_API_KEY` | Bearer key gating `POST /v1/messages` and `GET /v1/templates` | Secret: `wrangler secret` / `.env` |
+| `ECCOS_API_KEY` | Bearer key gating `POST /v1/wabas/<WABA_ID>/messages` and `GET /v1/wabas/<WABA_ID>/templates` | Secret: `wrangler secret` / `.env` |
 | `SUBSCRIBER_SECRET` | HMAC key Eccos uses to sign forwarded events (`X-Eccos-Signature`) so the subscriber can trust them | Secret, or rotatable via the dashboard's "settings" operator action (`apps/gateway/src/gateway.ts` `setSubscriberConfig`) |
 | Message content | Inbound reply/echo text, delivery/read/failed statuses, phone numbers (`from`/`to`), Meta message ids | DO SQLite (`inbound_events`, `outbound_messages`, `deliveries` in `apps/gateway/src/gateway.ts`) / `bun:sqlite` (Bun target, `src/db/client.ts`) |
 | The transient Embedded-Signup business token | 60-day token returned by `exchangeCodeForToken` during `/connect` | In-memory only for the duration of one request (`apps/gateway/src/routes/connect.ts`); **not persisted** — confirmed by reading `exchangeAndPersist`, which only saves `META_WABA_ID` / `META_PHONE_NUMBER_ID` / `DISPLAY_PHONE_NUMBER` / `CONNECTED_AT` to DO config |
@@ -32,7 +32,7 @@ Meta Cloud API            (untrusted network, but requests are HMAC-signed)
      │  POST /webhooks/meta (X-Hub-Signature-256)
      ▼
 Gateway Worker  ───────────────▶  Subscriber webhook   (your app; X-Eccos-Signature)
-     ▲  POST /v1/messages            (operator-owned, outside this repo's trust boundary)
+     ▲  POST /v1/wabas/<WABA_ID>/messages            (operator-owned, outside this repo's trust boundary)
      │  (Bearer / x-api-key)
 your backend / integrations
 
@@ -84,7 +84,7 @@ unauthenticated, but it does not leak secrets or message data.
 
 - **Surface:** requires a Bearer token or `x-api-key` equal to `ECCOS_API_KEY`, checked with
   `constantTimeEqual` (`apps/gateway/src/worker.ts`).
-- **Rate limiting:** `POST /v1/messages` is additionally throttled by Cloudflare's native Rate
+- **Rate limiting:** `POST /v1/wabas/<WABA_ID>/messages` is additionally throttled by Cloudflare's native Rate
   Limiting binding (`SEND_RATE_LIMITER`, 60/min per key, `wrangler.jsonc`) — the code comment in
   `worker.ts` is explicit that this is "per-location and eventually consistent: good abuse/spike
   protection, not an exact global quota counter."
@@ -154,8 +154,8 @@ unauthenticated, but it does not leak secrets or message data.
 | Unauthorized WABA rebind via `/connect/exchange` | `ECCOS_API_KEY` gate (`isAuthorized`, `constantTimeEqual`) on `POST /connect/exchange`, plus a `state`-cookie CSRF check on `GET /connect`'s callback, plus requiring a valid single-use Meta OAuth `code` (see §3.3) | Low. Both previously-identified gaps (no auth on the exchange endpoint, no CSRF state check on the callback) are now closed in code. |
 | Dashboard reached directly on `*.workers.dev`, bypassing Access at the edge | In-Worker `enforceAccess` re-verification, fail-closed | Only enforced once `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` are configured — a fresh, un-configured deploy is fully open. This is documented but relies on the operator completing setup before exposing the URL. |
 | Operator console leaking message content to the wrong person | Access JWT gate (edge + in-Worker) restricts *who* reaches the dashboard at all | The dashboard renders raw inbound message text (`apps/dashboard/src/routes/inbound.tsx`, `inboundSummary()` reads `ev.text`) to anyone who passes the Access policy — so the Access policy *is* the access-control boundary for message content, not a separate per-page permission. |
-| DoS via flooding `/webhooks/meta` with invalid signatures | Cloudflare edge DDoS protection (platform-level, outside this repo) | No application-level rate limiting on the two public unauthenticated routes (`GET`/`POST /webhooks/meta`), unlike `/v1/messages`. Each invalid POST still costs one HMAC computation before rejection. |
-| Single Durable Object as a availability/scale bottleneck | N/A (architectural choice, not a security control) | `idFromName("singleton")` means all reads/writes for the one tenant serialize through one DO instance — appropriate for single-tenant v1, but worth knowing it's not a distributed system. |
+| DoS via flooding `/webhooks/meta` with invalid signatures | Cloudflare edge DDoS protection (platform-level, outside this repo) | No application-level rate limiting on the two public unauthenticated routes (`GET`/`POST /webhooks/meta`), unlike `/v1/wabas/<WABA_ID>/messages`. Each invalid POST still costs one HMAC computation before rejection. |
+| Per-WABA Durable Object as an availability/scale boundary | N/A (architectural choice, not a security control) | Each WABA's reads/writes serialize through its own versioned DO; tenant state is not a global singleton, but there is no cross-region replica. |
 | Secrets/content in logs | The Workers target's `logEvent()` (`apps/gateway/src/worker.ts`) emits one structured JSON line per notable route outcome (event name, correlation id from `cf-ray`, HTTP status, and an explicit `LogMeta` allowlist typed as `string \| number \| boolean \| null \| undefined` — no nested objects). Every call site passes only ids, counts, booleans, or enum-like strings (`mode`, `path`, `bodyBytes`, `eventCount`, `messageType`, `messageId`, `limit`/`count`, `configOk`/`missingConfig` key names) — never a recipient number, message body, or secret value; the code carries an explicit "never pass message bodies, full phone numbers, tokens, API keys, or signatures" comment. The Bun target (`src/`) still has only two `console.*` calls total (`src/index.ts` boot message, `src/delivery/forward.ts` delivery-loop error), neither logging a secret or body. | Cloudflare Workers observability is enabled at `head_sampling_rate: 1` (`apps/gateway/wrangler.jsonc`) — captures whatever *is* logged. The `LogMeta` type prevents accidentally passing a whole object/body, but a developer could still pass a string field containing sensitive text at a future call site — this is a strong convention plus a type-level guard, not an automated content scan. See `docs/privacy.md`. |
 
 ## 5. Out of scope / explicitly not modeled

@@ -1,13 +1,17 @@
+import { useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { createColumnHelper } from "@tanstack/react-table";
+import { LogGrid } from "../components/grid/log-grid";
+import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listInbound } from "../server/gateway";
-import { Page, Unreachable, fmtTs, styles } from "../ui";
+import type { InboundRow } from "../server/gateway";
+import { Page, Unreachable, fmtTs } from "../ui";
 
 export const Route = createFileRoute("/inbound")({
   loader: () => listInbound(),
   component: InboundPage,
 });
 
-/** One-line human summary of a stored inbound event payload. */
 function inboundSummary(payload: string): string {
   try {
     const ev = JSON.parse(payload) as Record<string, unknown>;
@@ -19,8 +23,35 @@ function inboundSummary(payload: string): string {
   }
 }
 
+const columnHelper = createColumnHelper<DataGridFeatures, InboundRow>();
+
+const columns = [
+  columnHelper.accessor("received_at", {
+    id: "received_at",
+    header: "Received",
+    cell: (info) => (
+      <span className="font-mono text-xs">{fmtTs(info.getValue())}</span>
+    ),
+    meta: { cellClassName: "align-top whitespace-nowrap" },
+  }),
+  columnHelper.accessor("type", {
+    id: "type",
+    header: "Type",
+    cell: (info) => info.getValue(),
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("payload", {
+    id: "summary",
+    header: "Summary",
+    cell: (info) => inboundSummary(info.getValue()),
+    meta: { cellClassName: "text-foreground/80 break-words" },
+  }),
+];
+
 function InboundPage() {
   const result = Route.useLoaderData();
+  const rows = useMemo(() => (result.ok ? result.data : []), [result]);
+
   if (!result.ok) {
     return (
       <Page title="Inbound">
@@ -29,37 +60,14 @@ function InboundPage() {
     );
   }
 
-  const rows = result.data;
   return (
     <Page title="Inbound">
-      <div style={styles.tableWrap}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Received</th>
-              <th style={styles.th}>Type</th>
-              <th style={styles.th}>Summary</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td style={styles.empty} colSpan={3}>
-                  No inbound events.
-                </td>
-              </tr>
-            ) : (
-              rows.map((e) => (
-                <tr key={e.id}>
-                  <td style={styles.tdMono}>{fmtTs(e.received_at)}</td>
-                  <td style={styles.td}>{e.type}</td>
-                  <td style={styles.td}>{inboundSummary(e.payload)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <LogGrid
+        columns={columns}
+        data={rows}
+        emptyMessage="No inbound events."
+        getRowId={(row) => String(row.id)}
+      />
     </Page>
   );
 }

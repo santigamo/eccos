@@ -160,7 +160,7 @@ API to build for this.
   remaining delivery metadata after ~90 (§2).
 - <a id="erasure"></a>**Per-number erasure (GDPR Art. 17)** — `EccosGateway.eraseByPhone(phone)`,
   exposed as `GatewayRPC.eraseByPhone()` (operator RPC, service binding only) and as
-  `POST /v1/privacy/erasure` with body `{"phone": "+34..."}` behind the same Bearer
+  `POST /v1/wabas/<WABA_ID>/privacy/erasure` with body `{"phone": "+34..."}` behind the same Bearer
   `ECCOS_API_KEY` gate as the rest of `/v1` (the number travels in the body, never the URL, so
   it can't leak into request logs). It removes every stored trace of one phone number and
   returns per-table counts as evidence of the erasure. How it matches:
@@ -186,6 +186,16 @@ API to build for this.
   delete/reset the Durable Object (e.g. via a new `wrangler.jsonc` migration that deletes the
   `EccosGateway` class) — which also removes the `config` table (WABA id, phone number id,
   subscriber config) and requires re-onboarding.
+- Since this doc was written, the operator console gained the subscriber-target settings
+  page (`apps/dashboard/src/routes/settings.tsx`), which reads `getSubscriberConfig()` and calls
+  `setSubscriberConfig()` / `resubscribe()`. `getSubscriberConfig()` still never returns the
+  secret value.
+- **Cloud → self-host:** the operator surface's paginated reads are also the migration
+  mechanism. What transfers, what does not, and the full cutover steps are documented on
+  [eccos.chat/migrate](https://eccos.chat/migrate) (guide source:
+  `apps/site/public/migrate/index.html`) — the short version: no Meta token, operator secret,
+  `DurableObjectId`/Alarm, or Embedded Signup OAuth connection is ever exportable; re-create
+  them in the new deployment and decommission Cloud only after an end-to-end smoke test.
 
 **Export / delete (Bun target):**
 - Simpler, because it's a plain file: `DATABASE_PATH` (default `./data/eccos.db`, see
@@ -203,7 +213,9 @@ API to build for this.
    `processPending()` call in `src/delivery/forward.ts`; see §2. (Still the single legacy
    window — split retention lands when the Bun target is retaken post-v1.)
 3. ~~Support data-subject erasure requests without direct DO/SQLite access.~~ **Done** —
-   `eraseByPhone` (RPC + `POST /v1/privacy/erasure`) erases one number and returns evidence
-   counts; see §6. Remaining: a single "export all as JSON" / "purge all now" operator action —
-   the RPC surface still only offers paginated reads, `retryDelivery`, and `eraseByPhone`, no
-   bulk export or full immediate purge, and the dashboard has no erasure UI yet.
+   `eraseByPhone` (RPC + `POST /v1/wabas/<WABA_ID>/privacy/erasure`) erases one number and returns evidence
+   counts; see §6 — though the operator console has no per-number erasure UI yet (the dashboard
+   currently exposes the subscriber-target settings and resubscribe only). Remaining: a single
+   "export all as JSON" / "purge all now" operator action — the RPC surface still only offers
+   paginated reads, `retryDelivery`, and `eraseByPhone`, no bulk export or full immediate purge.
+   Cloud → self-host cutover is guided by [eccos.chat/migrate](https://eccos.chat/migrate).

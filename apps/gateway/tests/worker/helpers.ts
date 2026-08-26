@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
+import { getGatewayStubForWaba } from "../../src/gateway-stub";
 
-export function singletonStub() {
-  return env.ECCOS.get(env.ECCOS.idFromName("singleton"));
+export function gatewayStub() {
+  return getGatewayStubForWaba(env, env.META_WABA_ID);
 }
 
 export function metaEnvelope(value: Record<string, unknown>) {

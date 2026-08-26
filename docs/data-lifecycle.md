@@ -154,7 +154,7 @@ frequently.
 
 Independent of retention, the Workers target can erase every stored trace of a single phone
 number on demand (GDPR Art. 17): `EccosGateway.eraseByPhone(phone)`, exposed to operators as
-`GatewayRPC.eraseByPhone()` (service binding) and as `POST /v1/privacy/erasure`
+`GatewayRPC.eraseByPhone()` (service binding) and as `POST /v1/wabas/<WABA_ID>/privacy/erasure`
 (`{"phone": "+34..."}`, Bearer `ECCOS_API_KEY`). It deletes matching `inbound_events` and
 `outbound_messages` rows, rewrites `deliveries` batches to drop the number's events (redacting
 or deleting batches left empty), and returns per-table counts as erasure evidence. Details and
@@ -174,7 +174,7 @@ These are the realistic numbers for a v1, single-tenant deployment — not multi
 |---|---|---|
 | **RPO** (data loss window) | ~0 in the common case (Cloudflare's DO SQLite durability); up to "since your last application-level export" if you rely on a scripted export and the DO itself is lost | Since your last file/volume backup — minutes to a day, depending on how often you schedule the `.backup` / volume snapshot above |
 | **RTO** (time to restore service) | Minutes: redeploy the Worker (`bun run deploy`), no data to restore in the common case; longer if replaying an application-level export | Minutes: restore the volume/file and restart the container (`docker compose up -d`) |
-| Assumptions | Single DO instance (`idFromName("singleton")`), no cross-region replica to fail over to | Single host, single named volume; no HA/replica — losing the host means restoring from your last backup |
+| Assumptions | One versioned DO per WABA, with no cross-region replica to fail over to | Single host, single named volume; no HA/replica — losing the host means restoring from your last backup |
 
 There is no automatic failover, no multi-region replication, and no continuous backup job
 shipped in this repo for either target — both are appropriate for a single operator running

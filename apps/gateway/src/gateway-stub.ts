@@ -1,12 +1,29 @@
-import { DO_JURISDICTIONS, type DoJurisdiction } from "@eccos/core/config-schema";
+import {
+  DO_JURISDICTIONS,
+  type DoJurisdiction,
+} from "@eccos/core/config-schema";
 import type { EccosGateway } from "./gateway";
+
+export const GATEWAY_ROUTING_VERSION = "v1";
+
+export function normalizeWabaId(wabaId: string): string {
+  const normalized = wabaId.trim();
+  if (!normalized || !/^[A-Za-z0-9_-]+$/.test(normalized)) {
+    throw new Error("Invalid WABA ID for Durable Object routing");
+  }
+  return normalized;
+}
+
+export function gatewayObjectName(wabaId: string, jurisdiction: DoJurisdiction | undefined): string {
+  return `${GATEWAY_ROUTING_VERSION}:${jurisdiction ?? "auto"}:waba:${normalizeWabaId(wabaId)}`;
+}
 
 /**
  * Single source of truth for resolving the EccosGateway Durable Object stub.
  *
- * Every call site MUST go through `getGatewayStub` — deriving the id ad hoc with
- * `env.ECCOS.idFromName("singleton")` would silently ignore `DO_JURISDICTION`
- * and split traffic across two different Durable Objects.
+ * Every call site MUST go through `getGatewayStubForWaba` — deriving the id ad hoc
+ * would silently ignore `DO_JURISDICTION` and split traffic across two different
+ * Durable Objects.
  *
  * CRITICAL — jurisdiction changes do not migrate data: a jurisdiction produces a
  * different `DurableObjectId` for the same name, i.e. a brand-new, EMPTY Durable
@@ -36,9 +53,8 @@ export function resolveDoJurisdiction(env: { DO_JURISDICTION?: string }): DoJuri
   );
 }
 
-/** Returns the singleton EccosGateway stub, honoring `DO_JURISDICTION` when set. */
-export function getGatewayStub(env: Env): DurableObjectStub<EccosGateway> {
+export function getGatewayStubForWaba(env: Env, wabaId: string): DurableObjectStub<EccosGateway> {
   const jurisdiction = resolveDoJurisdiction(env);
   const ns = jurisdiction ? env.ECCOS.jurisdiction(jurisdiction) : env.ECCOS;
-  return ns.get(ns.idFromName("singleton"));
+  return ns.get(ns.idFromName(gatewayObjectName(wabaId, jurisdiction)));
 }

@@ -20,7 +20,7 @@ are per-Worker: run `wrangler secret put` from inside the Worker's directory (`a
 | `META_WABA_ID` | WhatsApp Business Account id |
 | `META_APP_SECRET` | Meta App Secret — verifies inbound `X-Hub-Signature-256` |
 | `META_WEBHOOK_VERIFY_TOKEN` | Arbitrary string Meta echoes back on the `GET` webhook challenge |
-| `ECCOS_API_KEY` | Bearer key your apps use to call `POST /v1/messages` / `GET /v1/templates` |
+| `ECCOS_API_KEY` | Bearer key your apps use to call the scoped Workers send/template routes |
 
 ### `apps/gateway` — optional secrets
 
@@ -42,8 +42,8 @@ are per-Worker: run `wrangler secret put` from inside the Worker's directory (`a
 | `DO_JURISDICTION` | `eu` in this repo; unset = no jurisdiction | Optional Durable Object jurisdiction: `eu`, `fedramp`, or `fedramp-high` (Cloudflare has no `us` jurisdiction). Unset/empty = no jurisdiction, i.e. the DO is created wherever the first request lands. An invalid value makes every DO-touching request fail with a clear error instead of being silently ignored |
 
 > **CRITICAL — set `DO_JURISDICTION` before you have production data, and never change it
-> afterwards.** A jurisdiction produces a *different* `DurableObjectId` for the same name
-> (`idFromName("singleton")`), which means a **brand-new, empty Durable Object**. Setting or
+> afterwards.** A jurisdiction produces a *different* `DurableObjectId` for the same WABA routing
+> key, which means a **brand-new, empty Durable Object**. Setting or
 > changing the jurisdiction on an existing deployment does **not** migrate anything: all stored
 > state (inbound/outbound history, the delivery queue, and the `config` table with the connected
 > WABA/phone and subscriber settings) stays behind in the old object, invisible to the running
@@ -57,16 +57,34 @@ are per-Worker: run `wrangler secret put` from inside the Worker's directory (`a
 > delivery queue are left behind in the old one. A fresh deploy can keep it, change it to another
 > supported jurisdiction, or drop it, whichever matches where your data has to live.
 
+> **WABA routing is mandatory.** The object name is
+> `v1:<jurisdiction-or-auto>:waba:<WABA_ID>`. Changing the WABA, jurisdiction, routing version, or
+> namespace derives a different Durable Object; Cloudflare does not move SQLite data between
+> objects. Export and import existing data before deploying this routing scheme, then verify counts,
+> subscriber configuration, and the smoke test.
+
+All stateful HTTP routes are scoped by WABA:
+
+| Method | Route |
+|---|---|
+| `POST` | `/v1/wabas/<WABA_ID>/messages` |
+| `GET` | `/v1/wabas/<WABA_ID>/templates` |
+| `POST` | `/v1/wabas/<WABA_ID>/privacy/erasure` |
+
+The RPC methods require an explicit WABA ID. The dashboard receives its operator scope through
+`GATEWAY_WABA_ID`; it does not infer a tenant or fall back to a global object.
+
 ### `apps/dashboard` — non-secret vars (`apps/dashboard/wrangler.jsonc` → `vars`)
 
 | Var | Default | Purpose |
 |---|---|---|
 | `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty = Access gate disabled |
 | `ACCESS_AUD` | `""` | Cloudflare Access application Audience (AUD) tag |
+| `GATEWAY_WABA_ID` | required | WABA scope passed to every dashboard RPC call; set it to the same WABA configured in the gateway |
 
 The dashboard has no secrets of its own; it reaches the gateway via the `GATEWAY` service
-binding declared in `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP) — nothing to
-configure at deploy time beyond that binding already pointing at the gateway Worker name (`eccos`).
+binding declared in `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP). Configure
+`GATEWAY_WABA_ID` alongside the binding; the dashboard never guesses a tenant.
 
 > Do not put real values from the table above in `.env` for a Workers deploy — `.env` is only
 > read by the Bun target and by `scripts/smoke.sh` for local/CI checks. Use `wrangler secret put`.
@@ -105,7 +123,8 @@ assume it's reachable.
 
 `scripts/smoke.sh` exercises the deployed Worker end-to-end: `/health`, the webhook `GET`
 challenge (valid + invalid token), a signed `POST /webhooks/meta` (valid signature, invalid
-signature, invalid JSON), and — if `ECCOS_API_KEY` is set — an unauthorized `/v1/messages` call.
+signature, invalid JSON), and — if `ECCOS_API_KEY` is set — an unauthorized
+`/v1/wabas/<WABA_ID>/messages` call.
 It uses `set -euo pipefail` and `curl -f`, so it exits non-zero on the first failed check —
 safe to gate a deploy pipeline on its exit code.
 

@@ -11,11 +11,11 @@ The console has **no public HTTP surface into the gateway**. It talks to the gat
 (wrangler name `eccos`) over a **service binding** to its RPC entrypoint `GatewayRPC`:
 
 ```
-browser ──▶ dashboard Worker ──(RPC service binding: env.GATEWAY.getStatus())──▶ gateway Worker
+browser ──▶ dashboard Worker ──(RPC service binding: env.GATEWAY.getStatus(wabaId))──▶ gateway Worker
 ```
 
-Server functions in `src/server/gateway.ts` call `env.GATEWAY.<method>()` directly; the gateway's
-operator API is never exposed over the network. The binding is declared in
+Server functions in `src/server/gateway.ts` call `env.GATEWAY.<method>(wabaId)` directly; the
+gateway's operator API is never exposed over the network. The binding is declared in
 [`wrangler.jsonc`](./wrangler.jsonc) (`services[].entrypoint = "GatewayRPC"`) and its type is
 tightened in [`src/env.d.ts`](./src/env.d.ts). If the gateway isn't reachable, each page renders a
 graceful "unreachable" state instead of crashing.
@@ -27,11 +27,15 @@ The console and the gateway are two separate Workers, so run **both** locally �
 
 ```bash
 # terminal 1 — the gateway Worker (provides the GATEWAY binding target)
-cd apps/gateway && bunx wrangler dev
+cd apps/gateway && bunx wrangler dev --var DO_JURISDICTION:
 
 # terminal 2 — the dashboard (TanStack Start via Vite, in workerd)
-cd apps/dashboard && bunx vite dev
+cd apps/dashboard && printf 'GATEWAY_WABA_ID=WABA_DEMO\n' > .dev.vars && bunx vite dev
 ```
+
+The empty `DO_JURISDICTION` override is needed because local workerd does not implement
+Cloudflare Durable Object jurisdiction restrictions. Replace `WABA_DEMO` with the gateway's
+`META_WABA_ID`; `.dev.vars` is local-only and ignored by Git.
 
 Then open the URL Vite prints. Without the gateway running, the pages still load and show the
 "unreachable" state. Other scripts: `bunx vite build` (production build), `bun run typecheck`

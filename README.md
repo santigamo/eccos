@@ -29,7 +29,8 @@ and get **normalized events** forwarded to your backend.
 
 > **Status: v0 / thin wrapper.** Single tenant (one WABA / one phone number). The Cloudflare
 > Workers target adds an Embedded-Signup `/connect` flow; a separate operator console Worker
-> (`apps/dashboard/`) gives read-only ops visibility over a private RPC binding, gated by
+> (`apps/dashboard/`) gives read-only ops visibility plus two operator actions (subscriber
+> target + resubscribe, and per-number GDPR erasure) over a private RPC binding, gated by
 > Cloudflare Access. Multi-tenant onboarding is on the [roadmap](#-roadmap).
 
 ## ✨ Why Eccos
@@ -43,14 +44,15 @@ and get **normalized events** forwarded to your backend.
 - ⚡ **Two runtimes, one core** — the same pure core ships as a self-hostable **Bun** binary or
   on **Cloudflare Workers**.
 - ☁️ **All-in on Cloudflare** — the Workers target runs the entire gateway on Cloudflare
-  primitives: a **Worker** + one **Durable Object** (SQLite storage + Alarms for retries). No
-  external database, queue or cron, and a permanent HTTPS webhook URL out of the box. Native
-  Cloudflare Rate Limiting throttles the send API (`POST /v1/messages`) — no external infra.
+  primitives: a **Worker** + one **Durable Object per WABA** (SQLite storage + Alarms for retries).
+  No external database, queue or cron, and a permanent HTTPS webhook URL out of the box. Native
+  Cloudflare Rate Limiting throttles the scoped send API — no external infra.
 - 🔁 **Reliable forwarding** — inbound messages and statuses are normalized and forwarded to your
   app, HMAC-signed and retried with exponential backoff.
 - 🪪 **Onboarding + operator console** — the Workers target ships an Embedded Signup `/connect`
-  flow, plus a separate operator console Worker (`apps/dashboard/`) for read-only ops visibility,
-  reachable only over a private RPC binding and gated by Cloudflare Access.
+  flow, plus a separate operator console Worker (`apps/dashboard/`) for ops visibility — status,
+  inbound/outbound/deliveries, the subscriber target and resubscribe, and per-number GDPR
+  erasure — reachable only over a private RPC binding and gated by Cloudflare Access.
 
 ## 🆚 How it compares
 
@@ -66,16 +68,16 @@ and get **normalized events** forwarded to your backend.
 ## 🧩 How it works
 
 ```
-your app  ──POST /v1/messages──▶  Eccos  ──▶  Meta Cloud API  ──▶  WhatsApp
+     your app  ──POST /v1/wabas/<WABA_ID>/messages──▶  Eccos  ──▶  Meta Cloud API  ──▶  WhatsApp
 your app  ◀──forward (HMAC)────   Eccos  ◀──  Meta webhook    ◀──  WhatsApp
 ```
 
-- **Outbound:** `POST /v1/messages` (Bearer `ECCOS_API_KEY`) → Meta `/{phone}/messages`.
+- **Outbound:** Workers use `POST /v1/wabas/<WABA_ID>/messages` (Bearer `ECCOS_API_KEY`) → Meta `/{phone}/messages`.
 - **Inbound:** Meta calls `POST /webhooks/meta`; Eccos verifies `X-Hub-Signature-256`,
   normalizes the payload, and forwards `{ events: [...] }` to your `SUBSCRIBER_WEBHOOK_URL`,
   signed `X-Eccos-Signature: sha256=<hex>` with `SUBSCRIBER_SECRET`. Failed forwards retry
   with exponential backoff.
-- **Templates:** `GET /v1/templates` proxies the WABA's `message_templates`.
+- **Templates:** Workers use `GET /v1/wabas/<WABA_ID>/templates` to proxy the WABA's `message_templates`.
 
 Normalized event shape (`WhatsAppCallbackEvent`):
 
@@ -90,13 +92,13 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 
 A WhatsApp gateway usually needs a server, a database, a job queue, a cron, and a public HTTPS
 endpoint. The Workers target folds **all of it** into **two Cloudflare primitives**: a stateless
-**Worker** at the edge, and a single **Durable Object** that owns its built-in **SQLite** and an
-**Alarm**-driven retry loop. The Worker keeps no state — it hands every message and event to the
-Durable Object. No external infrastructure at all.
+**Worker** at the edge, and one or more **Durable Objects** that own built-in **SQLite** and
+**Alarm**-driven retry loops. Each WABA routes to its own versioned object. The Worker keeps no
+state — it hands every message and event to the appropriate object. No external infrastructure at
+all.
 
-In v0 this is intentionally one Durable Object instance (`idFromName("singleton")`) because Eccos
-is still single-tenant. That keeps the first deployment small and auditable; the scale and
-multi-tenant path is one Durable Object per WABA/phone, which is already on the roadmap.
+The object name is versioned with the WABA and jurisdiction frozen into the routing key; see [the
+deployment runbook](./docs/deployment.md) before deploying.
 
 ```mermaid
 flowchart LR
@@ -106,7 +108,7 @@ flowchart LR
     subgraph cf["Cloudflare"]
         direction TB
         worker["Worker — the edge<br/>handles HTTP, checks auth, calls Meta<br/>(keeps no state)"]
-        subgraph dobj["Durable Object — the memory (one instance)"]
+        subgraph dobj["Durable Object — the memory (one per WABA)"]
             direction LR
             sqlite[("SQLite<br/>stores messages<br/>and events")]
             alarm{{"Alarm<br/>forwards to your app,<br/>retries on failure"}}
@@ -131,7 +133,7 @@ _Orange = the stateful Durable Object primitives (SQLite + Alarm); peach = the s
 | Cloudflare primitive | What it does in Eccos | Replaces |
 |---|---|---|
 | **Worker** (`apps/gateway/src/worker.ts`) | Stateless edge HTTP — auth, calls the Meta API, hands all state to the Durable Object | a web server |
-| **Durable Object** — `EccosGateway` (`apps/gateway/src/gateway.ts`) | One global, single-writer instance that owns all state and coordination | a stateful service + locking |
+| **Durable Object** — `EccosGateway` (`apps/gateway/src/gateway.ts`) | One versioned, single-writer instance per WABA | a stateful service + locking |
 | **DO SQLite storage** | Inbound events, outbound log, the delivery queue, onboarding config | a database |
 | **DO Alarms** | Wakes the DO to forward events and retry with exponential backoff | a job queue + cron |
 | **Rate Limiting binding** | Native throttling on `POST /v1/messages` (defensive; no-op if unbound) | an external rate limiter |
@@ -229,7 +231,8 @@ The `bun install → wrangler secret put → bun run deploy` steps above are the
 [`docs/deployment.md`](./docs/deployment.md) for the full env matrix, smoke test, and rollback.
 
 Non-secret vars (`META_GRAPH_VERSION`, `FORWARD_MAX_ATTEMPTS`, `CONTENT_RETENTION_DAYS`,
-`DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in `wrangler.jsonc`.
+`DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in
+`wrangler.jsonc`.
 Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta`. All six required
 secrets must be set for the Worker to boot; the `/connect` (Embedded Signup) flow then
 updates the effective `META_WABA_ID` / `META_PHONE_NUMBER_ID` at runtime in the Durable
@@ -241,6 +244,13 @@ Object.
 > **not** migrate the existing data (messages, delivery queue, connected WABA/phone config).
 > Details in [docs/deployment.md](./docs/deployment.md).
 
+> **Moving from Eccos Cloud to a self-host?** The migration guide lives at
+> [eccos.chat/migrate](https://eccos.chat/migrate) (source: `apps/site/public/migrate/index.html`).
+> Short version: there is no automatic export — you page through the operator RPC reads for what
+> is still within retention, redeploy with your own Meta credentials, re-point the webhook and
+> subscriber, smoke-test, and only then decommission Cloud. Meta tokens, operator secrets, the
+> `DurableObjectId`/Alarm, and the Embedded Signup OAuth connection are not portable.
+
 ## 📡 HTTP API
 
 | Method | Path              | Auth                   | Target | Purpose                              |
@@ -248,9 +258,11 @@ Object.
 | GET    | `/health`         | none                   | both   | Liveness                             |
 | GET    | `/webhooks/meta`  | verify token (query)   | both   | Meta subscription challenge          |
 | POST   | `/webhooks/meta`  | `X-Hub-Signature-256`  | both   | Inbound messages + delivery statuses |
-| POST   | `/v1/messages`    | Bearer `ECCOS_API_KEY` | both   | Send a message                       |
-| GET    | `/v1/templates`   | Bearer `ECCOS_API_KEY` | both   | List message templates              |
-| POST   | `/v1/privacy/erasure` | Bearer `ECCOS_API_KEY` | Workers | Erase all data for one phone number (GDPR Art. 17) |
+| POST   | `/v1/messages`    | Bearer `ECCOS_API_KEY` | Bun    | Send a message                       |
+| POST   | `/v1/wabas/<id>/messages` | Bearer `ECCOS_API_KEY` | Workers | Send through the scoped WABA |
+| GET    | `/v1/templates`   | Bearer `ECCOS_API_KEY` | Bun    | List message templates              |
+| GET    | `/v1/wabas/<id>/templates` | Bearer `ECCOS_API_KEY` | Workers | List templates for the scoped WABA |
+| POST   | `/v1/wabas/<id>/privacy/erasure` | Bearer `ECCOS_API_KEY` | Workers | Erase within a selected WABA |
 | GET    | `/connect`        | Meta OAuth             | Workers| Embedded Signup (coexistence) flow  |
 | POST   | `/connect/exchange` | Meta OAuth code      | Workers| Exchange OAuth code → store WABA/phone |
 
@@ -309,10 +321,10 @@ motion, and the legal invariants — in [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SY
 - [x] Operator console (`apps/dashboard/`) — separate Worker, RPC-only, Cloudflare Access
 - [ ] Bun-target parity for `/connect` (and an operator-console equivalent)
 - [ ] Multi-tenant: multiple WABAs/numbers per instance
-- [ ] Shard Workers state: one Durable Object per WABA/phone
+- [x] Shard Workers state: one Durable Object per WABA with jurisdiction in the routing key
 - [ ] Self-serve onboarding for Tech Providers (connect *clients'* numbers)
 - [ ] Serverless storage path: per-tenant DO SQLite → D1 for cross-tenant SQL (10 GB cap) → Hyperdrive to external Postgres/MySQL only if required
-- [x] Cloudflare Rate Limiting on the send API (`POST /v1/messages`)
+- [x] Cloudflare Rate Limiting on the scoped Workers send API
 - [ ] Cloudflare Queues + dead-letter queue for outbound forwarding
 - [ ] R2 for outbound media
 - [ ] Outbound media + interactive message helpers

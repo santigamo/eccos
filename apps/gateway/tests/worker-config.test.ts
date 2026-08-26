@@ -1,6 +1,10 @@
 import { describe, it, expect } from "bun:test";
 import { overlayDoConfig } from "../src/config";
-import { resolveDoJurisdiction } from "../src/gateway-stub";
+import {
+  gatewayObjectName,
+  normalizeWabaId,
+  resolveDoJurisdiction,
+} from "../src/gateway-stub";
 import { parseCoreConfig, type CoreConfig } from "@eccos/core/config-schema";
 
 const BASE: CoreConfig = {
@@ -59,6 +63,19 @@ describe("resolveDoJurisdiction", () => {
     expect(() => resolveDoJurisdiction({ DO_JURISDICTION: "EU" })).toThrow(/Invalid DO_JURISDICTION/);
     expect(() => resolveDoJurisdiction({ DO_JURISDICTION: "europe" })).toThrow(/does NOT migrate data/);
   });
+});
+
+describe("tenant routing", () => {
+  it("uses an immutable versioned WABA key with jurisdiction included", () => {
+    expect(gatewayObjectName(" WABA_123 ", "eu")).toBe("v1:eu:waba:WABA_123");
+    expect(gatewayObjectName("WABA_123", undefined)).toBe("v1:auto:waba:WABA_123");
+  });
+
+  it("rejects empty or unsafe WABA ids", () => {
+    expect(() => normalizeWabaId(" ")).toThrow(/Invalid WABA ID/);
+    expect(() => normalizeWabaId("waba/123")).toThrow(/Invalid WABA ID/);
+  });
+
 });
 
 describe("coreSchema DO_JURISDICTION", () => {

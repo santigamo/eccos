@@ -1,13 +1,13 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createColumnHelper } from "@tanstack/react-table";
+import { LogGrid } from "../components/grid/log-grid";
+import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listDeliveries, retryDelivery } from "../server/gateway";
+import type { DeliveryRecord } from "../server/gateway";
 import { Page, StatusTag, Unreachable, fmtTs, styles } from "../ui";
 
-// Matches the gateway's default operator page size (clampPage → 50). A full page
-// means there may be older rows to page into; a short page is the end.
 const PAGE_SIZE = 50;
-// The delivery lifecycle vocabulary, so the filter is stable even when the
-// current (server-filtered) page doesn't contain every status.
 const KNOWN_STATUSES = ["pending", "delivered", "failed"] as const;
 
 type DeliveriesSearch = { status?: string; before?: number };
@@ -29,12 +29,15 @@ export const Route = createFileRoute("/deliveries")({
   component: DeliveriesPage,
 });
 
+const columnHelper = createColumnHelper<DataGridFeatures, DeliveryRecord>();
+
 function DeliveriesPage() {
   const result = Route.useLoaderData();
   const { status, before } = Route.useSearch();
   const navigate = Route.useNavigate();
   const router = useRouter();
   const [retrying, setRetrying] = useState<number | null>(null);
+  const rows = useMemo(() => (result.ok ? result.data : []), [result]);
 
   if (!result.ok) {
     return (
@@ -44,7 +47,6 @@ function DeliveriesPage() {
     );
   }
 
-  const rows = result.data;
   const activeStatus = status ?? "all";
   const statuses = Array.from(
     new Set<string>([
@@ -67,83 +69,106 @@ function DeliveriesPage() {
     }
   }
 
+  const deliveriesColumns = [
+    columnHelper.accessor("id", {
+      id: "id",
+      header: "ID",
+      cell: (info) => (
+        <span className="font-mono text-xs tabular-nums">{info.getValue()}</span>
+      ),
+      meta: { cellClassName: "text-right whitespace-nowrap" },
+    }),
+    columnHelper.accessor("status", {
+      id: "status",
+      header: "Status",
+      cell: (info) => <StatusTag status={info.getValue()} />,
+      meta: { cellClassName: "whitespace-nowrap" },
+    }),
+    columnHelper.accessor("attempts", {
+      id: "attempts",
+      header: "Attempts",
+      cell: (info) => info.getValue(),
+      meta: { cellClassName: "text-right whitespace-nowrap" },
+    }),
+    columnHelper.accessor("next_attempt_at", {
+      id: "next_attempt_at",
+      header: "Next attempt",
+      cell: (info) => (
+        <span className="font-mono text-xs">{fmtTs(info.getValue())}</span>
+      ),
+      meta: { cellClassName: "whitespace-nowrap" },
+    }),
+    columnHelper.accessor("last_error", {
+      id: "last_error",
+      header: "Last error",
+      cell: (info) => info.getValue() ?? "\u2014",
+      meta: { cellClassName: "text-foreground/80 break-words" },
+    }),
+    columnHelper.display({
+      id: "action",
+      header: "Action",
+      cell: (info) => {
+        const record = info.row.original;
+        return (
+          <button
+            type="button"
+            className={styles.button}
+            disabled={retrying === record.id}
+            onClick={() => onRetry(record.id)}
+          >
+            {retrying === record.id ? "\u2026" : "Retry"}
+          </button>
+        );
+      },
+    }),
+  ];
+
   function onFilterChange(value: string) {
-    // Switching filter resets pagination back to the latest page.
     navigate({
       search: (prev) => ({ ...prev, status: value === "all" ? undefined : value, before: undefined }),
     });
   }
 
   const filterControl = (
-    <select
-      style={styles.select}
-      value={activeStatus}
-      onChange={(e) => onFilterChange(e.target.value)}
-    >
-      <option value="all">all statuses</option>
-      {statuses.map((s) => (
-        <option key={s} value={s}>
-          {s}
-        </option>
-      ))}
-    </select>
+    <>
+      <label className="sr-only" htmlFor="delivery-status-filter">
+        Filter deliveries by status
+      </label>
+      <select
+        id="delivery-status-filter"
+        name="status"
+        className={styles.select}
+        value={activeStatus}
+        onChange={(e) => onFilterChange(e.target.value)}
+      >
+        <option value="all">all statuses</option>
+        {statuses.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+    </>
   );
 
   return (
     <Page title="Deliveries" actions={filterControl}>
-      <div style={styles.tableWrap}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>ID</th>
-              <th style={styles.th}>Status</th>
-              <th style={styles.th}>Attempts</th>
-              <th style={styles.th}>Next attempt</th>
-              <th style={styles.th}>Last error</th>
-              <th style={styles.th}>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td style={styles.empty} colSpan={6}>
-                  {status || before !== undefined
-                    ? "No deliveries match this view."
-                    : "No deliveries."}
-                </td>
-              </tr>
-            ) : (
-              rows.map((d) => (
-                <tr key={d.id}>
-                  <td style={styles.tdNum}>{d.id}</td>
-                  <td style={styles.td}>
-                    <StatusTag status={d.status} />
-                  </td>
-                  <td style={styles.tdNum}>{d.attempts}</td>
-                  <td style={styles.tdMono}>{fmtTs(d.next_attempt_at)}</td>
-                  <td style={styles.td}>{d.last_error ?? "—"}</td>
-                  <td style={styles.td}>
-                    <button
-                      type="button"
-                      style={styles.button}
-                      disabled={retrying === d.id}
-                      onClick={() => onRetry(d.id)}
-                    >
-                      {retrying === d.id ? "…" : "Retry"}
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <LogGrid
+        columns={deliveriesColumns}
+        data={rows}
+        emptyMessage={
+          status || before !== undefined
+            ? "No deliveries match this view."
+            : "No deliveries."
+        }
+        getRowId={(row) => String(row.id)}
+      />
 
-      <div style={pager}>
+      <div className="flex gap-2 mt-3 justify-end">
         {before !== undefined ? (
           <button
             type="button"
-            style={styles.button}
+            className={styles.button}
             onClick={() => navigate({ search: (prev) => ({ ...prev, before: undefined }) })}
           >
             ← Latest
@@ -151,7 +176,7 @@ function DeliveriesPage() {
         ) : null}
         <button
           type="button"
-          style={styles.button}
+          className={styles.button}
           disabled={!canLoadOlder}
           onClick={() =>
             oldestId !== undefined &&
@@ -164,10 +189,3 @@ function DeliveriesPage() {
     </Page>
   );
 }
-
-const pager = {
-  display: "flex",
-  gap: 8,
-  marginTop: 14,
-  justifyContent: "flex-end",
-} as const;

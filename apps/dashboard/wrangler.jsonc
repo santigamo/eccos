@@ -23,13 +23,13 @@
   // Non-secret, so they live here (not `wrangler secret`). See README.md.
   "vars": {
     "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
+    "ACCESS_AUD": "",
+    "GATEWAY_WABA_ID": ""
   },
 
   // Service binding to the gateway Worker (wrangler name "eccos"), reaching its
-  // RPC entrypoint `GatewayRPC`. The dashboard's server functions call
-  // `env.GATEWAY.getStatus()` over this binding — the gateway's operator API is
-  // never exposed as public HTTP.
+  // RPC entrypoint `GatewayRPC`. GATEWAY_WABA_ID selects the WABA for every
+  // dashboard request; the gateway's operator API is never exposed as public HTTP.
   "services": [
     {
       "binding": "GATEWAY",

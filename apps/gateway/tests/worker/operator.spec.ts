@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { singletonStub } from "./helpers";
+import { gatewayStub } from "./helpers";
+
+const TEST_WABA_ID = "WABA_TEST";
 
 afterEach(async () => {
   await reset();
@@ -16,9 +18,9 @@ function makeRpc() {
 
 /** 1 inbound reply (+1 pending delivery), 2 outbound (1 sent, 1 failed), 4 config keys. */
 async function seed() {
-  await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+  await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
     i.saveConfig({
-      META_WABA_ID: "WABA1",
+       META_WABA_ID: TEST_WABA_ID,
       META_PHONE_NUMBER_ID: "PNID1",
       DISPLAY_PHONE_NUMBER: "+34600000000",
       CONNECTED_AT: "1700000000000",
@@ -39,7 +41,7 @@ async function seed() {
 describe("EccosGateway operator reads", () => {
   it("listInbound returns full columns", async () => {
     await seed();
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const rows = i.listInbound();
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ type: "reply", message_id: "wamid.M1" });
@@ -49,7 +51,7 @@ describe("EccosGateway operator reads", () => {
 
   it("listOutbound returns both sent and failed with full columns", async () => {
     await seed();
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const rows = i.listOutbound();
       expect(rows).toHaveLength(2);
       expect(rows.map((r) => r.status).sort()).toEqual(["failed", "sent"]);
@@ -59,7 +61,7 @@ describe("EccosGateway operator reads", () => {
 
   it("listDeliveries includes all statuses (unlike snapshot) and filters by status", async () => {
     await seed();
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       expect(i.listDeliveries()).toHaveLength(1);
       expect(i.listDeliveries({ status: "pending" })).toHaveLength(1);
       expect(i.listDeliveries({ status: "delivered" })).toHaveLength(0);
@@ -68,7 +70,7 @@ describe("EccosGateway operator reads", () => {
 
   it("getDelivery returns a row or null", async () => {
     await seed();
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const [d] = i.listDeliveries();
       expect(i.getDelivery(d!.id)?.id).toBe(d!.id);
       expect(i.getDelivery(999_999)).toBeNull();
@@ -77,7 +79,7 @@ describe("EccosGateway operator reads", () => {
 
   it("getCounts aggregates by status", async () => {
     await seed();
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const c = i.getCounts();
       expect(c.inbound).toBe(1);
       expect(c.outbound).toEqual({ sent: 1, failed: 1 });
@@ -87,7 +89,7 @@ describe("EccosGateway operator reads", () => {
 
   it("retryDelivery re-enqueues a failed delivery and resets attempts", async () => {
     await seed();
-    await runInDurableObject(singletonStub(), async (i: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const [d] = i.listDeliveries();
       i.sql.exec("UPDATE deliveries SET status='failed', attempts=6, last_error='boom' WHERE id=?", d!.id);
       expect(i.retryDelivery(d!.id)).toEqual({ ok: true, previousStatus: "failed" });
@@ -103,11 +105,11 @@ describe("EccosGateway operator reads", () => {
 describe("GatewayRPC", () => {
   it("getStatus reports health, connection and counts", async () => {
     await seed();
-    const status = await makeRpc().getStatus();
+    const status = await makeRpc().getStatus(TEST_WABA_ID);
     expect(status.name).toBe("eccos");
     expect(status.health).toBe("degraded"); // 1 failed outbound, 0 failed deliveries
     expect(status.connection).toMatchObject({
-      wabaId: "WABA1",
+      wabaId: TEST_WABA_ID,
       phoneNumberId: "PNID1",
       displayPhone: "+34600000000",
     });
@@ -117,8 +119,19 @@ describe("GatewayRPC", () => {
   it("listDeliveries + retryDelivery work over RPC", async () => {
     await seed();
     const rpc = makeRpc();
-    const deliveries = await rpc.listDeliveries();
+    const deliveries = await rpc.listDeliveries({ wabaId: TEST_WABA_ID });
     expect(deliveries).toHaveLength(1);
-    expect((await rpc.retryDelivery(deliveries[0]!.id)).ok).toBe(true);
+    expect((await rpc.retryDelivery(deliveries[0]!.id, TEST_WABA_ID)).ok).toBe(true);
+  });
+
+  it("getConfig never returns private config values", async () => {
+    await seed();
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.saveConfig({ SUBSCRIBER_SECRET: "subscriber-secret", META_ACCESS_TOKEN: "access-token" });
+    });
+    const config = await makeRpc().getConfig(TEST_WABA_ID);
+    expect(config).toMatchObject({ META_WABA_ID: TEST_WABA_ID, META_PHONE_NUMBER_ID: "PNID1" });
+    expect(config).not.toHaveProperty("SUBSCRIBER_SECRET");
+    expect(config).not.toHaveProperty("META_ACCESS_TOKEN");
   });
 });

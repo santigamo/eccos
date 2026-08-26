@@ -1,4 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { createColumnHelper } from "@tanstack/react-table";
+import { LogGrid } from "../components/grid/log-grid";
+import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listTemplates } from "../server/gateway";
 import { Page, StatusTag, Unreachable, styles } from "../ui";
 
@@ -13,8 +16,37 @@ interface TemplateItem {
   status?: string;
 }
 
+const columnHelper = createColumnHelper<DataGridFeatures, TemplateItem>();
+
+const columns = [
+  columnHelper.accessor("name", {
+    id: "name",
+    header: "Name",
+    cell: (info) => (
+      <span className="font-mono text-xs">{info.getValue() ?? "\u2014"}</span>
+    ),
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("language", {
+    id: "language",
+    header: "Language",
+    cell: (info) => info.getValue() ?? "\u2014",
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("status", {
+    id: "status",
+    header: "Status",
+    cell: (info) => {
+      const status = info.getValue();
+      return status ? <StatusTag status={status} /> : "\u2014";
+    },
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+];
+
 function TemplatesPage() {
   const result = Route.useLoaderData();
+
   if (!result.ok) {
     return (
       <Page title="Templates">
@@ -23,8 +55,8 @@ function TemplatesPage() {
     );
   }
 
-  // Second layer: the gateway was reachable but the Meta templates fetch failed.
   const templates = result.data;
+
   if (!templates.ok) {
     const detail =
       typeof templates.error === "string"
@@ -32,9 +64,9 @@ function TemplatesPage() {
         : JSON.stringify(templates.error, null, 2);
     return (
       <Page title="Templates">
-        <section style={styles.card}>
-          <h2 style={styles.cardTitle}>Failed to load templates</h2>
-          <pre style={styles.errorBox}>{detail}</pre>
+        <section className={styles.card}>
+          <h2 className={styles.cardTitle}>Failed to load templates</h2>
+          <pre className={styles.errorBox}>{detail}</pre>
         </section>
       </Page>
     );
@@ -44,36 +76,12 @@ function TemplatesPage() {
   const items = data.data ?? [];
   return (
     <Page title="Templates">
-      <div style={styles.tableWrap}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Name</th>
-              <th style={styles.th}>Language</th>
-              <th style={styles.th}>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 ? (
-              <tr>
-                <td style={styles.empty} colSpan={3}>
-                  No templates found.
-                </td>
-              </tr>
-            ) : (
-              items.map((t, i) => (
-                <tr key={`${t.name ?? "?"}-${t.language ?? i}`}>
-                  <td style={styles.tdMono}>{t.name ?? "—"}</td>
-                  <td style={styles.td}>{t.language ?? "—"}</td>
-                  <td style={styles.td}>
-                    {t.status ? <StatusTag status={t.status} /> : "—"}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <LogGrid
+        columns={columns}
+        data={items}
+        emptyMessage="No templates found."
+        getRowId={(row, index) => `${row.name ?? "?"}-${row.language ?? index}`}
+      />
     </Page>
   );
 }

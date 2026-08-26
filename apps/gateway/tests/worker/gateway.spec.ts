@@ -3,7 +3,7 @@ import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EccosGateway } from "../../src/gateway";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { singletonStub } from "./helpers";
+import { gatewayStub } from "./helpers";
 
 afterEach(async () => {
   await reset();
@@ -16,7 +16,7 @@ describe("EccosGateway", () => {
       transportMessageId: "wamid.D",
       at: 1_700_000_000_000,
     };
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const result = instance.ingest([event]);
       expect(result.received).toBe(1);
       const inbound = instance.sql.exec("SELECT COUNT(*) AS c FROM inbound_events").toArray()[0]!.c;
@@ -32,7 +32,7 @@ describe("EccosGateway", () => {
       transportMessageId: "wamid.D",
       at: 1_700_000_000_000,
     };
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       instance.ingest([event]);
       instance.ingest([event]);
       const inbound = instance.sql.exec("SELECT COUNT(*) AS c FROM inbound_events").toArray()[0]!.c;
@@ -50,7 +50,7 @@ describe("EccosGateway", () => {
       text: "Hola",
       at: 1_700_000_000_000,
     };
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       instance.ingest([reply, reply]);
       const inbound = instance.sql.exec("SELECT COUNT(*) AS c FROM inbound_events").toArray()[0]!.c;
       const deliveries = instance.sql.exec("SELECT COUNT(*) AS c FROM deliveries").toArray()[0]!.c;
@@ -60,7 +60,7 @@ describe("EccosGateway", () => {
   });
 
   it("logOutbound inserts into outbound_messages", async () => {
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       instance.logOutbound("wamid.OUT", "34600000000", '{"to":"34600000000"}', "sent", null);
       const rows = instance.sql
         .exec(
@@ -76,7 +76,7 @@ describe("EccosGateway", () => {
   });
 
   it("saveConfig + getConfigValue round-trip", async () => {
-    await runInDurableObject(singletonStub(), async (instance: EccosGateway) => {
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       instance.saveConfig({ META_PHONE_NUMBER_ID: "PNID" });
       expect(instance.getConfigValue("META_PHONE_NUMBER_ID")).toBe("PNID");
     });

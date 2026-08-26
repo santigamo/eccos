@@ -13,7 +13,11 @@
     "skipLibCheck": true,
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "baseUrl": "."
   },
   "include": ["src", "vite.config.ts", "worker-configuration.d.ts"]
 }
