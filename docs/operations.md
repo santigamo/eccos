@@ -1,10 +1,10 @@
 # Operations (Cloudflare Workers target)
 
 Day-2 operations for `apps/gateway/` running as a Cloudflare Worker: what "healthy" means,
-what gets logged, how to look at it, and what to do when something breaks. Written for a
-**single-tenant self-host** (one operator, one WABA/phone, one Durable Object) — these are
-practical targets to notice and react to problems, not contractual multi-tenant SLAs. For
-deploy/rollback mechanics and the environment-variable matrix, see
+what gets logged, how to look at it, and what to do when something breaks. Written for the
+current **single-tenant product surface** (one operator/account and one configured WABA/phone
+per deployment) — these are practical targets to notice and react to problems, not contractual
+multi-tenant SLAs. For deploy/rollback mechanics and the environment-variable matrix, see
 [docs/deployment.md](./deployment.md); for retention/backup, see
 [docs/data-lifecycle.md](./data-lifecycle.md).
 
@@ -20,6 +20,12 @@ deploy/rollback mechanics and the environment-variable matrix, see
 There is no SLA and no automated alerting shipped in this repo (see Follow-ups). These numbers
 are what to eyeball in `wrangler tail` / the dashboard, and thresholds worth an operator's
 attention if they slip.
+
+Each alarm invocation selects at most 40 pending deliveries and forwards them through a pool of
+at most six concurrent subscriber requests per Durable Object. Each request has a 5-second
+timeout. Delivery rows do not have a FIFO guarantee across the pool; event order within one
+forwarded batch is preserved, and subscribers must deduplicate retries with
+`x-idempotency-key`.
 
 ## Health vs. readiness
 
@@ -192,7 +198,7 @@ does not ship today.
 
 **Why this is proportionate for now, and where it stops scaling:** each WABA owns its query-and-
 retry loop in a separate Durable Object. This removes cross-tenant contention, while the per-WABA
-10 GB storage ceiling and serialized retry work remain. Follow the export and deployment guidance
+10 GB storage ceiling and bounded six-request retry pool remain. Follow the export and deployment guidance
 in [docs/deployment.md](./deployment.md) before adding a WABA with existing data.
 
 ## Follow-ups

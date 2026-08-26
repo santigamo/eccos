@@ -1,6 +1,7 @@
 # Production Readiness
 
-> Snapshot: **2026-07-01**, `main@b1b20fc` plus the round-2 lint/hardening follow-up (committed).
+> Baseline snapshot: **2026-07-01**, `main@b1b20fc` plus the round-2 lint/hardening follow-up
+> (committed). The commercial gate below is a living addendum updated **2026-08-26**.
 > Owner: Santi (@santigamo). This file is the single source of truth for Eccos's
 > production-readiness posture: profile, per-artifact claims, gate status, waivers,
 > evidence, and remaining gaps. Update it whenever a gate's status changes.
@@ -73,13 +74,68 @@ unproven and are called out in Gate 9 / Gate 5.
 |------|-----|
 | `eccos-45t` | Enable Cloudflare Access in front of the dashboard (account-level) |
 | `eccos-ouw` | Execute + record a real prod deploy and post-deploy smoke |
-| `eccos-v80` | Multi-tenant onboarding, tenant auth, and multi-phone control plane |
+| `eccos-v80` | Multi-tenant onboarding, tenant auth, and multi-phone control plane — the technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
 | `eccos-3zm` | Persist callback URL at `/connect` for zero-config resubscribe |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
+
+## First paid Eccos Cloud customer gate
+
+**Canonical.** Eccos may be self-hosted and dogfooded (Physeo) at any time, but **Eccos Cloud
+must not charge a third party — or start a paid third-party trial — until multi-tenant
+product isolation is complete.** This section is the single source of truth for that
+commercial gate. It is distinct from, and narrower than, the technical `PRODUCTION-READY`
+claim below and from any later business/billing work.
+
+### Scope
+
+- **Blocked until the gate clears:** charging any third-party Eccos Cloud customer, and
+  starting any paid third-party trial. No onboarding of external paying tenants.
+- **Not blocked (can proceed now):** self-hosting, the Physeo dogfood, the Eccos Cloud
+  *pricing model* (the per-number plan is a business decision, not a gate), and building
+  the multi-tenant infrastructure itself.
+- The **physical WABA sharding** already in place (one Durable Object per WABA,
+  `eccos-6lv` / `eccos-vml`, closed) is **data-plane sharding, not commercial
+  multi-tenancy**. It separates state per WABA but is **not sufficient** to take money from
+  third parties. The active blocker is **`eccos-v80`** — not the already-closed `eccos-6lv`.
+
+### Technical acceptance criteria (all required, tracked under `eccos-v80`)
+
+- Account-scoped authentication (a tenant identity, not a single global API key).
+- A durable **account → WABA → phone** registry mapping each tenant to its numbers.
+- Per-tenant credentials — no cross-tenant leakage of Meta/API secrets.
+- Account-bound `/connect` (Embedded Signup) — onboarding ties a WABA to its owning account.
+- At least **two numbers** configured and exercised in production-shaped isolation.
+- **Send / read / retry / export / erasure** all scoped to the owning tenant.
+- **Negative isolation tests**: prove tenant A cannot read, send, retry, export, or erase
+  tenant B's data (and vice-versa), including concurrent access.
+
+### External / legal / ops criteria (required where applicable)
+
+- Meta **Tech Provider** enablement, **App Review**, and **Access** approval as applicable
+  (`eccos-n0o`).
+- GDPR **DPA**/processing agreement covering the cloud operator role (`eccos-8yy`).
+- **Cloudflare Access** in front of the operator dashboard (see W-1 / `eccos-45t`).
+- A recorded **deployment + smoke** (see Gate 9 / `eccos-ouw`).
+- A validated **permanent System User token** (see `eccos-jf7` / `eccos-s3i`).
+- A healthy production gateway and real subscriber, with the current incident resolved
+  (`eccos-u9x` / `eccos-jf7`).
+
+The complete release gate is tracked in `eccos-dci`; it remains blocked until every required
+dependency above is closed.
+
+### Necessary ≠ sufficient
+
+Closing this gate is the **necessary** prerequisite to charging, but it is **not sufficient**
+by itself: billing, invoicing/payment collection, support load, and the commercial decision
+to actually open the product to third parties are separate work that lives outside this
+gate and may be done after it. Nothing in this section authorises charging; it only defines
+the technical/legal/ops bar that must be met first.
 
 ## `PRODUCTION-READY` claim
 
 **Not yet.** The service is a strong **candidate**: all local gates pass and every finding
 from the readiness review has been addressed in code or documentation. Before claiming
 `PRODUCTION-READY`, close at minimum: **W-1** (`eccos-45t`, dashboard auth) and **Gate 9**
-(`eccos-ouw`, a recorded prod deploy + smoke).
+(`eccos-ouw`, a recorded prod deploy + smoke). `PRODUCTION-READY` is a *technical* posture;
+it does **not** by itself permit charging third parties — the first paid customer gate above
+(or a superseding decision) does.

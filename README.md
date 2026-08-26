@@ -27,11 +27,16 @@ Bring your own Meta app + WhatsApp Business Account. Eccos holds the credentials
 apps a small, stable HTTP surface: **send messages**, **receive inbound + delivery statuses**,
 and get **normalized events** forwarded to your backend.
 
-> **Status: v0 / thin wrapper.** Single tenant (one WABA / one phone number). The Cloudflare
-> Workers target adds an Embedded-Signup `/connect` flow; a separate operator console Worker
-> (`apps/dashboard/`) gives read-only ops visibility plus two operator actions (subscriber
-> target + resubscribe, and per-number GDPR erasure) over a private RPC binding, gated by
-> Cloudflare Access. Multi-tenant onboarding is on the [roadmap](#-roadmap).
+> **Status: v0 / thin wrapper.** Single-tenant in spirit (one WABA / one phone number per
+> deployment) plus data-plane sharding: each WABA routes to its own Durable Object, which is
+> **sharding, not paid multi-tenancy** — it separates state per WABA but is not the account
+> scoping, registry, or tenant isolation required to onboard third-party customers. The
+> Cloudflare Workers target adds an Embedded-Signup `/connect` flow; a separate operator
+> console Worker (`apps/dashboard/`) gives read-only ops visibility plus two operator actions
+> (subscriber target + resubscribe, and per-number GDPR erasure) over a private RPC binding,
+> gated by Cloudflare Access. **Eccos Cloud remains early access**: we do not charge third
+> parties (nor start paid third-party trials) until multi-tenant product isolation is
+> complete. Multi-tenant onboarding is on the [roadmap](#-roadmap).
 
 ## ✨ Why Eccos
 
@@ -322,8 +327,11 @@ motion, and the legal invariants — in [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SY
 - [x] Embedded Signup `/connect` (single-tenant coexistence) — Workers target
 - [x] Operator console (`apps/dashboard/`) — separate Worker, RPC-only, Cloudflare Access
 - [ ] Bun-target parity for `/connect` (and an operator-console equivalent)
-- [ ] Multi-tenant: multiple WABAs/numbers per instance
+- [ ] Multi-tenant: multiple WABAs/numbers per instance — **commercial prerequisite: Eccos Cloud
+      must not charge third parties (or start paid trials) before this and the isolation gate
+      (`eccos-v80`) are complete**; see [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md)
 - [x] Shard Workers state: one Durable Object per WABA with jurisdiction in the routing key
+      (data-plane sharding; not paid multi-tenancy)
 - [ ] Self-serve onboarding for Tech Providers (connect *clients'* numbers)
 - [ ] Serverless storage path: per-tenant DO SQLite → D1 for cross-tenant SQL (10 GB cap) → Hyperdrive to external Postgres/MySQL only if required
 - [x] Cloudflare Rate Limiting on the scoped Workers send API

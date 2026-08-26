@@ -40,8 +40,9 @@ interface DeliveryRow {
  * can be stored in `deliveries.last_error` and read back by an operator. */
 type ForwardOutcome = { ok: true } | { ok: false; reason: string };
 
-const FORWARD_FETCH_TIMEOUT_MS = 15_000;
+const FORWARD_FETCH_TIMEOUT_MS = 5_000;
 const ALARM_BATCH = 40;
+const ALARM_MAX_CONCURRENCY = 6;
 const DEFAULT_CONTENT_RETENTION_DAYS = 30;
 const MIN_CONTENT_RETENTION_DAYS = 7;
 const MAX_CONTENT_RETENTION_DAYS = 90;
@@ -469,34 +470,15 @@ export class EccosGateway extends DurableObject<Env> {
       )
       .toArray() as unknown as DeliveryRow[];
 
-    for (const row of rows) {
-      let ok = false;
-      let error: string | null = null;
-      try {
-        const outcome = await this.forwardOne(row.payload);
-        ok = outcome.ok;
-        if (!outcome.ok) error = outcome.reason;
-      } catch (e) {
-        error = e instanceof Error ? e.message : String(e);
-      }
-      const attempts = row.attempts + 1;
-      if (ok) {
-        this.sql.exec(
-          `UPDATE deliveries SET status='delivered', attempts=?, last_error=NULL WHERE id=?`,
-          attempts,
-          row.id,
-        );
-      } else if (attempts >= maxAttempts) {
-        this.sql.exec(`UPDATE deliveries SET status='failed', attempts=?, last_error=? WHERE id=?`, attempts, error, row.id);
-      } else {
-        this.sql.exec(
-          `UPDATE deliveries SET attempts=?, last_error=?, next_attempt_at=? WHERE id=?`,
-          attempts,
-          error,
-          now + withJitter(backoffMs(attempts)),
-          row.id,
-        );
-      }
+    let workerError: unknown;
+    let hasWorkerError = false;
+    try {
+      await runBoundedPool(rows, ALARM_MAX_CONCURRENCY, (row) =>
+        this.processDelivery(row, maxAttempts),
+      );
+    } catch (error) {
+      workerError = error;
+      hasWorkerError = true;
     }
 
     // Split retention (docs/data-lifecycle.md):
@@ -517,6 +499,7 @@ export class EccosGateway extends DurableObject<Env> {
     const nextRow = nextRows[0];
     const next = nextRow ? (nextRow.next as number | null) : null;
     if (next != null) this.ctx.storage.setAlarm(next);
+    if (hasWorkerError) throw workerError;
   }
 
   /** Applies both retention windows. Called at most once an hour from alarm();
@@ -564,12 +547,73 @@ export class EccosGateway extends DurableObject<Env> {
       body: payload,
       signal: AbortSignal.timeout(FORWARD_FETCH_TIMEOUT_MS),
     });
-    return res.ok ? { ok: true } : { ok: false, reason: `subscriber returned ${res.status}` };
+    const ok = res.ok;
+    if (res.body) await res.body.cancel().catch(() => undefined);
+    return ok ? { ok: true } : { ok: false, reason: `subscriber returned ${res.status}` };
+  }
+
+  private async processDelivery(row: DeliveryRow, maxAttempts: number): Promise<void> {
+    let ok = false;
+    let error: string | null = null;
+    try {
+      const outcome = await this.forwardOne(row.payload);
+      ok = outcome.ok;
+      if (!outcome.ok) error = outcome.reason;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    const attempts = row.attempts + 1;
+    if (ok) {
+      this.sql.exec(
+        `UPDATE deliveries SET status='delivered', attempts=?, last_error=NULL WHERE id=?`,
+        attempts,
+        row.id,
+      );
+    } else if (attempts >= maxAttempts) {
+      this.sql.exec(`UPDATE deliveries SET status='failed', attempts=?, last_error=? WHERE id=?`, attempts, error, row.id);
+    } else {
+      this.sql.exec(
+        `UPDATE deliveries SET attempts=?, last_error=?, next_attempt_at=? WHERE id=?`,
+        attempts,
+        error,
+        Date.now() + withJitter(backoffMs(attempts)),
+        row.id,
+      );
+    }
   }
 }
 
 export function backoffMs(attempts: number): number {
   return Math.min(5_000 * 5 ** (attempts - 1), 3_600_000);
+}
+
+export async function runBoundedPool<T>(
+  items: T[],
+  concurrency: number,
+  work: (item: T) => Promise<void>,
+): Promise<void> {
+  const errors: unknown[] = [];
+  const queue = items.map((item) => ({ item }));
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const next = queue.shift();
+      if (!next) return;
+      try {
+        await work(next.item);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  };
+  const workers: Promise<void>[] = [];
+  const workerCount = Math.min(Math.max(0, Math.floor(concurrency)), items.length);
+  for (let i = 0; i < workerCount; i++) {
+    workers.push(worker());
+  }
+  const workerResults = await Promise.allSettled(workers);
+  const workerFailure = workerResults.find((result) => result.status === "rejected");
+  if (workerFailure?.status === "rejected") throw workerFailure.reason;
+  if (errors.length > 0) throw errors[0];
 }
 
 /**

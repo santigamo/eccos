@@ -45,7 +45,8 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
 
 - Code, identifiers, comments, and user-facing strings are in **English**.
 - **Single tenant in v1.** One WABA/phone via env. Do not add multi-tenant tables/flows
-  without an explicit roadmap decision.
+  without an explicit roadmap decision. The Workers' per-WABA data-plane sharding does not
+  clear the paid-customer isolation gate; see `PRODUCTION-READINESS.md`.
 - Keep `packages/core/` free of HTTP/DB concerns — pure Cloud API + parsing. Routes own I/O.
 - The `WhatsAppCallbackEvent` shape is the public forwarding contract; changing it is a
   breaking change for any downstream subscriber. Add tests in `packages/core/tests/parser.test.ts`

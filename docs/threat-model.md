@@ -160,8 +160,10 @@ unauthenticated, but it does not leak secrets or message data.
 
 ## 5. Out of scope / explicitly not modeled
 
-- Multi-tenant isolation — this is a single-tenant system by design (see `CLAUDE.md`); there is
-  nothing to isolate between tenants because there is only one.
+- Multi-tenant customer isolation — the Workers data plane is sharded per WABA, but account-level
+  tenant isolation is not implemented; Eccos remains single-tenant for product purposes. The
+  first-paid-customer gate in `PRODUCTION-READINESS.md` must clear before third-party Cloud
+  customers are charged.
 - Physical/host security of a self-hosted Bun deployment (Docker image, VM, disk encryption) — the
   operator's own infrastructure, not this codebase.
 - Meta's own platform security (Graph API auth, WABA-level abuse controls) — trusted upstream.
