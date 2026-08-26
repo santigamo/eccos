@@ -52,7 +52,7 @@ export function StatusTag({ status }: { status: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center border px-2 py-[3px] font-pixel text-[11px] leading-[1.1] tracking-[0.04em] uppercase",
+        "inline-flex items-center border px-2 py-[3px] text-[11px] leading-[1.1] font-medium tracking-wider uppercase",
         TONE_CLASSES[tone]
       )}
     >
@@ -107,7 +107,7 @@ export function StatusCounts({
   return (
     <ul
       aria-label={`${label} by status`}
-      className="mt-3 flex list-none flex-wrap items-center gap-x-2 gap-y-1 p-0 font-pixel text-xs tracking-[0.04em] uppercase"
+      className="mt-3 flex list-none flex-wrap items-center gap-x-2 gap-y-1 p-0 text-[11px] font-medium tracking-wider uppercase"
     >
       {entries.map(([status, n], i) => {
         const className = cn(

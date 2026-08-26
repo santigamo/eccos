@@ -269,7 +269,7 @@ function StatusPanel({
     <Frame variant="default" spacing="sm" className={className}>
       <FramePanel fit={fit}>
         <FrameHeader>
-          <FrameTitle className="font-pixel text-xs font-normal tracking-[0.04em] uppercase text-muted-foreground">
+          <FrameTitle className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground">
             {title}
           </FrameTitle>
         </FrameHeader>

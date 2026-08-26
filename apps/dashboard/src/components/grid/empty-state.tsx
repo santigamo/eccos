@@ -24,7 +24,7 @@ export function GridEmptyState({
 }) {
   return (
     <div className="mx-auto flex max-w-xs flex-col items-center gap-2 py-4 text-center">
-      <p className="font-pixel text-xs tracking-[0.04em] uppercase text-muted-foreground">
+      <p className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground">
         {label}
       </p>
       <p className="text-sm text-muted-foreground">{description}</p>

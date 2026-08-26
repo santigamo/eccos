@@ -80,7 +80,7 @@ export function SubscriberForm({ config }: { config: SubscriberConfig }) {
           <div>
             <label
               htmlFor="subscriber-url"
-              className="block mb-1 text-xs font-pixel text-muted-foreground tracking-wider uppercase"
+              className="block mb-1 text-[11px] font-medium text-muted-foreground tracking-wider uppercase"
             >
               Forwarding URL
             </label>
@@ -96,7 +96,7 @@ export function SubscriberForm({ config }: { config: SubscriberConfig }) {
           <div>
             <label
               htmlFor="subscriber-secret"
-              className="block mb-1 text-xs font-pixel text-muted-foreground tracking-wider uppercase"
+              className="block mb-1 text-[11px] font-medium text-muted-foreground tracking-wider uppercase"
             >
               Signing secret
             </label>
