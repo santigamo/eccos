@@ -20,10 +20,14 @@ The landing's **two laws** apply verbatim:
 1. **Nothing rounds a corner.** Every `--radius-*` token is 0 and the vendored
    shadcn/reui components carry an explicit `rounded-none` pass. A new component
    shipping with a radius is off-system.
-2. **Two voices.** Uppercase micro-labels at 10–13px are **Geist Pixel**
-   (`font-pixel`, tracking 0.04em) in `--muted`-or-stronger ink: page kickers,
-   table headers, form labels, tags, stat numbers, the version stamp. Prose,
-   headings, nav items and buttons are **Inter**. No third voice, no third font.
+2. **Two voices.** Uppercase micro-labels are **Geist Pixel** (`font-pixel`,
+   tracking 0.04em) in `--muted`-or-stronger ink: page kickers, table headers,
+   form labels, tags, stat numbers, the version stamp. Prose, headings, nav
+   items and buttons are **Inter**. No third voice, no third font.
+   **Sizes: 12px (`text-xs`) is the standard register, 11px the compact floor
+   (tags, the version stamp, the nav group label) — never smaller: a pixel
+   face off its grid blurs.** The face renders with grayscale antialiasing
+   (see `.font-pixel` in `app.css`).
 
 Both faces are self-hosted in `apps/dashboard/public/assets/fonts/` with their OFL
 licenses, preloaded in `__root.tsx`. Never load a font from a third-party host.

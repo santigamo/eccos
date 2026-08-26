@@ -21,7 +21,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="px-4 pb-4">
-        <p className="text-muted-foreground font-pixel text-[10px] tracking-wider uppercase">
+        <p className="text-muted-foreground font-pixel text-[11px] tracking-wider uppercase">
           v0.1.0
         </p>
       </SidebarFooter>

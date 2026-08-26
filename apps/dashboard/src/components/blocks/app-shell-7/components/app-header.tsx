@@ -14,7 +14,7 @@ export function AppHeader() {
           </span>
         </div>
 
-        <span className="text-muted-foreground font-pixel ml-auto text-[11px] tracking-[0.04em] uppercase">
+        <span className="text-muted-foreground font-pixel ml-auto text-xs tracking-[0.04em] uppercase">
           Operator Console
         </span>
       </div>

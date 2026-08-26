@@ -46,7 +46,7 @@ export function LogGrid<TData extends object>({
       className="w-full"
       tableClassNames={{
         header:
-          "font-pixel text-[11px] tracking-wider uppercase",
+          "font-pixel text-xs tracking-wider uppercase",
         // Solid: the sticky header floats over rows scrolling beneath it, and
         // the container is now translucent glass — a tinted header would let
         // them bleed through.

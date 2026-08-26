@@ -188,6 +188,12 @@
   ::selection {
     background-color: rgba(37, 211, 102, 0.2);
   }
+  /* Pixel faces blur under subpixel smoothing at small sizes — grayscale AA
+     keeps the stems crisp. 11px is the machine voice's floor (12px standard). */
+  .font-pixel {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 @layer components {

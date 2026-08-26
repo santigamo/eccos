@@ -240,7 +240,7 @@ function FactCell({
 }) {
   return (
     <div className="p-5">
-      <p className="font-pixel text-[11px] tracking-[0.04em] uppercase text-muted-foreground">
+      <p className="font-pixel text-xs tracking-[0.04em] uppercase text-muted-foreground">
         {kicker}
       </p>
       <p className="mt-2 font-pixel text-4xl tabular-nums text-foreground">
@@ -269,7 +269,7 @@ function StatusPanel({
     <Frame variant="default" spacing="sm" className={className}>
       <FramePanel fit={fit}>
         <FrameHeader>
-          <FrameTitle className="font-pixel text-[11px] font-normal tracking-[0.04em] uppercase text-muted-foreground">
+          <FrameTitle className="font-pixel text-xs font-normal tracking-[0.04em] uppercase text-muted-foreground">
             {title}
           </FrameTitle>
         </FrameHeader>

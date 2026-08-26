@@ -17,7 +17,7 @@ export function NavMain() {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel className="text-muted-foreground font-pixel text-[10px] tracking-[0.04em] uppercase in-data-[state=collapsed]:hidden">
+      <SidebarGroupLabel className="text-muted-foreground font-pixel text-[11px] tracking-[0.04em] uppercase in-data-[state=collapsed]:hidden">
         Navigation
       </SidebarGroupLabel>
       <SidebarGroupContent>
