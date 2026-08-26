@@ -91,8 +91,10 @@ The console's dark is lit, not dead — three layers, all under the content:
   the rAF loop parks itself when the pointer rests. Everything else stays quiet
   — do not add a second ambient motion.
 
-The masthead is the landing's: `--nav-bg` wash under a 14px backdrop blur, 1px
-bottom rule.
+The masthead keeps the landing's construction (`--nav-bg` wash under a 14px
+backdrop blur, 1px bottom rule) but its wash joined the glass family —
+`rgba(13, 26, 27, 0.55)`, a deliberate console deviation from the site's
+`rgba(7, 12, 15, 0.72)` so the atmosphere reads through the bar too.
 
 ## Interaction contrast (the console's own law)
 

@@ -142,7 +142,9 @@
   --ghost-fill-hover: rgba(255, 255, 255, 0.14);
   --ghost-edge-hover: rgba(37, 211, 102, 0.45); /* hover edge turns green — landing signature */
   --hatch-line: rgba(255, 255, 255, 0.055);
-  --nav-bg: rgba(7, 12, 15, 0.72); /* masthead wash under backdrop blur */
+  /* Console deviation from the site's rgba(7,12,15,.72): the masthead joins
+     the glass family so the atmosphere reads through it too. */
+  --nav-bg: rgba(13, 26, 27, 0.55);
   --caustic: 0 6px 26px rgba(37, 211, 102, 0.24); /* primary CTA glow shadow (dark) */
   --caustic-hi: 0 10px 34px rgba(37, 211, 102, 0.38);
   --tag-live-bg: rgba(37, 211, 102, 0.13);
