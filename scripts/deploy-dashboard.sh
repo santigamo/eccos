@@ -16,4 +16,6 @@ if [[ -z "${GATEWAY_WABA_ID:-}" ]]; then
 fi
 
 cd "$ROOT/apps/dashboard"
-wrangler deploy --var "GATEWAY_WABA_ID=$GATEWAY_WABA_ID" "$@"
+# wrangler v4 `--var` takes KEY:VALUE (a colon); KEY=VALUE silently becomes a
+# var *named* "KEY=VALUE" and leaves the real var empty.
+wrangler deploy --var "GATEWAY_WABA_ID:$GATEWAY_WABA_ID" "$@"
