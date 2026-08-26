@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useEffect, type ReactNode } from "react"
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 
@@ -58,9 +58,71 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
         >
           Skip to main content
         </a>
+        <CursorLight />
         {children}
         <Scripts />
       </body>
     </html>
   )
+}
+
+/**
+ * The lantern (see #cursor-light in app.css). The trailing lerp is what makes
+ * it read as "lighting the way" rather than a cursor decoration. The rAF loop
+ * parks itself while the light has caught up and the pointer is still.
+ */
+function CursorLight() {
+  useEffect(() => {
+    const el = document.getElementById("cursor-light")
+    if (!el) return
+    if (
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      window.matchMedia("(pointer: coarse)").matches
+    ) {
+      return
+    }
+
+    const HALF = 600 // half the element's 1200px box
+    let targetX = 0
+    let targetY = 0
+    let x = 0
+    let y = 0
+    let raf = 0
+    let running = false
+    let lit = false
+
+    const tick = () => {
+      x += (targetX - x) * 0.08
+      y += (targetY - y) * 0.08
+      el.style.transform = `translate3d(${x - HALF}px, ${y - HALF}px, 0)`
+      if (Math.abs(targetX - x) + Math.abs(targetY - y) < 0.5) {
+        running = false
+        return
+      }
+      raf = requestAnimationFrame(tick)
+    }
+
+    const onMove = (e: MouseEvent) => {
+      targetX = e.clientX
+      targetY = e.clientY
+      if (!lit) {
+        lit = true
+        x = targetX
+        y = targetY
+        el.style.opacity = "1"
+      }
+      if (!running) {
+        running = true
+        raf = requestAnimationFrame(tick)
+      }
+    }
+
+    window.addEventListener("mousemove", onMove, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener("mousemove", onMove)
+    }
+  }, [])
+
+  return <div id="cursor-light" aria-hidden="true" />
 }

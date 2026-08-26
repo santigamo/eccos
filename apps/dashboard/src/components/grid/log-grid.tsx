@@ -47,7 +47,10 @@ export function LogGrid<TData extends object>({
       tableClassNames={{
         header:
           "font-pixel text-[11px] tracking-wider uppercase",
-        headerRow: "bg-muted/40",
+        // Solid: the sticky header floats over rows scrolling beneath it, and
+        // the container is now translucent glass — a tinted header would let
+        // them bleed through.
+        headerRow: "bg-muted",
         // Quiet row hover — visible on the dark ground, never a highlight.
         // Last in the row's cn(), so it wins over the default hover:bg-muted/40.
         bodyRow: "hover:bg-white/[.03]",

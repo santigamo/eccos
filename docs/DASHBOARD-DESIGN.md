@@ -65,10 +65,34 @@ Every route renders the same skeleton (the `Page` component in `src/ui.tsx`):
    the viewport (`flex min-h-full flex-col`) so structure reaches the bottom and
    the void reads as intentional.
 
-**Atmosphere**: a fixed, non-interactive emerald glow (`body::before`, two radial
-gradients at ≤7% alpha) keeps the dark from reading dead — the console's translation
-of the landing's silk. The masthead is the landing's: `--nav-bg` wash under a 14px
-backdrop blur, 1px bottom rule.
+## Atmosphere, glass, and the lantern
+
+The console's dark is lit, not dead — three layers, all under the content:
+
+- **Ambient glow** (`body::before`): three fixed radials — emerald top-right
+  (10%), a faint mid-page veil (3.5%), teal bottom-right (7%) — so the light
+  travels the page diagonally instead of pooling in one corner. The content
+  column must stay transparent for it to work: `SidebarInset` gets
+  `bg-transparent` (its default `bg-background` is opaque and blocks the floor).
+- **Glass surfaces**: the big surfaces are translucent — `--card` and
+  `--sidebar` are `rgba(13, 26, 27, 0.55)`. The tint is **teal-shifted off
+  BRAND.md's charcoal**: `#0b141a` is blue-dominant (B=26 > G=20) and under
+  emerald light simultaneous contrast makes it read navy; the resting composite
+  still lands in the charcoal family. The raised family (`--popover`,
+  `--secondary`, `--muted`, `--accent`) is `#0f1d1e` for the same reason.
+  **Floating surfaces stay solid** (popovers, dropdowns, selects sit over text),
+  and the sticky table header row is solid `bg-muted` so scrolled rows never
+  bleed through it.
+- **The lantern** (`#cursor-light` + the `CursorLight` component in
+  `__root.tsx`): a faint green light (6%, 1200px) that *trails* the pointer with
+  a lerp — the console's one spectacle, as the silk shader is the landing's.
+  It paints under the lifted content, so it lights the floor between panels,
+  never the text. Gone on coarse pointers and under `prefers-reduced-motion`;
+  the rAF loop parks itself when the pointer rests. Everything else stays quiet
+  — do not add a second ambient motion.
+
+The masthead is the landing's: `--nav-bg` wash under a 14px backdrop blur, 1px
+bottom rule.
 
 ## Interaction contrast (the console's own law)
 
