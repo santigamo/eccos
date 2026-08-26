@@ -6,6 +6,9 @@ The design language of eccos.chat, established in the August 2026 redesign
 records the **intent and the rules**, so future changes stay coherent.
 Brand identity (logo, palette origins, asset generation recipes) lives in
 [BRAND.md](./BRAND.md) — this doc is how that brand behaves *as a website*.
+How it behaves as the **operator console** (`apps/dashboard`) is in
+[DASHBOARD-DESIGN.md](./DASHBOARD-DESIGN.md), which copies this file's token
+values — changing them here means re-copying there.
 
 ---
 

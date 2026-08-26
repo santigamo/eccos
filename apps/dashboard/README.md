@@ -5,6 +5,11 @@ A small **operator console** for an Eccos gateway: a [TanStack Start](https://ta
 outbound logs and templates, and exposes a few operator actions (retry a delivery, rotate the
 subscriber-forwarding target, re-run the Meta webhook subscription).
 
+The console's visual language — what it inherits from the eccos.chat landing, the
+interaction-contrast rules, and the data rules (evidence links, facts strip, empty
+states) — is documented in [docs/DASHBOARD-DESIGN.md](../../docs/DASHBOARD-DESIGN.md).
+Read it before styling anything here.
+
 ## How it reaches the gateway (RPC-only)
 
 The console has **no public HTTP surface into the gateway**. It talks to the gateway Worker
