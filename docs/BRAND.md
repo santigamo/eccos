@@ -24,7 +24,10 @@ banner). Rules in [DESIGN-SYSTEM.md](./DESIGN-SYSTEM.md).
 - **Wordmark**: the word **ECCOS** in a bold geometric sans-serif, white, on the dark surface.
 - **In imagery**: uppercase `ECCOS`. **In prose**: title-case `Eccos`.
 - **Favicon** is a *simplified, flat* version of the stacked layers (`assets/favicon.svg`) so it
-  stays legible at 16–32 px, where the full glass render turns to mush.
+  stays legible at 16–32 px, where the full glass render turns to mush. Since the August 2026
+  redesign it is the **isometric stack on a square charcoal plate** — sharp corners only, per
+  the website's square law (see DESIGN-SYSTEM.md); the PNGs are rasterised from the same
+  geometry.
 - Give the mark generous clear space. Don't stretch, rotate, or flatten it into a dated glossy
   "white glyph on a green squircle" app icon — keep the glass depth.
 
@@ -40,7 +43,7 @@ a vibrant **emerald→teal iridescent** range for the glass, on near-black surfa
 | **Teal** (secondary) | `#0FB39A` | The cool end of the glass gradient |
 | **Iridescence** | cyan/blue hints | Emergent refraction in the glass — don't force a fixed hex |
 | **Charcoal** (surface) | `#0B141A` | Primary dark surface / background |
-| **Slate-dark** (raised) | `#10171D` | Cards, the favicon squircle |
+| **Slate-dark** (raised) | `#10171D` | Cards, raised surfaces |
 | **White** | `#FFFFFF` | Wordmark and text on dark |
 | **Paper** | `#F7F9F8` | The light-theme ground on eccos.chat |
 | **Ink green** | `#0B7A4B` | Accent *text* on light surfaces (vivid green never carries text on paper) |

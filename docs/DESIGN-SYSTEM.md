@@ -255,7 +255,7 @@ its own container; decorative images `alt=""` + explicit `width/height` +
 | `assets/logomark.png` / `logomark-light.png` | Nav + footer brand mark (28px/24px display) — night render / daylight render, swapped per theme via `<picture>` (same frame fraction, 128px) |
 | `assets/avatar.png` | Full 512px logomark: apple-touch-icon, social avatars |
 | `assets/banner.jpg` | OG image (approved wordmark banner) — do not swap casually |
-| `assets/favicon.svg` + `-16/-32.png` | Flat simplified layers |
+| `assets/favicon.svg` + `-16/-32.png` | The logomark's stack flattened: three sharp isometric tiers, emerald→teal, on a square `#0b141a` plate — no radii, per the square law |
 | `assets/fonts/*` | The two faces + OFL license copies (keep the licenses) |
 
 New imagery must be **generated in the brand glass style** (BRAND.md prompts;
