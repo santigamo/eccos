@@ -52,9 +52,11 @@ re-copy; the two must not drift independently):
 
 `--line` (structural hairlines, = `--border`) · `--line-strong` (interactive edges)
 · `--ghost-fill` / `--ghost-fill-hover` / `--ghost-edge-hover` (the green hover edge)
-· `--hatch-line` · `--nav-bg` (masthead wash) · `--caustic` / `--caustic-hi` (primary
-CTA glow shadow) · `--tag-live-*` / `--tag-soon-bg` (status tag anatomy) · `--ease`
+· `--hatch-line` · `--caustic` / `--caustic-hi` (primary CTA glow shadow)
+· `--tag-live-*` / `--tag-soon-bg` (status tag anatomy) · `--ease`
 · `--color-glow` (#34e27a, in `@theme`, so `bg-glow` exists as a utility).
+`--nav-bg` started as a copy but is a **documented console deviation** — it joined
+the glass family (see "Atmosphere, glass, and the lantern").
 
 Any new theme-varying value must be a token here — a hardcoded color in a component
 rule is off-system. The semantic inks are fixed: **warning `#f0a020`**, **destructive
