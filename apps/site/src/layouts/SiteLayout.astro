@@ -1,4 +1,6 @@
 ---
+import { getAbsoluteLocaleUrl, getRelativeLocaleUrl } from "astro:i18n";
+
 type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate";
 
 interface Props {
@@ -20,16 +22,22 @@ const {
   active,
   locale = "en",
 } = Astro.props;
-const es = locale === "es";
+const pageLocale = landing ? (Astro.currentLocale ?? locale) : locale;
+const es = pageLocale === "es";
+const alternateLocale = es ? "en" : "es";
+const localeHome = getRelativeLocaleUrl(pageLocale);
+const alternateHome = getRelativeLocaleUrl(alternateLocale);
+const esUrl = getAbsoluteLocaleUrl("es");
+const enUrl = getAbsoluteLocaleUrl("en");
 const hasPixelPreload = landing || notFound;
 const hasMigrationLink = landing || active === "migrate";
 const ogDescription = es
   ? "Uno o cincuenta números, tuyos o de tus clientes. Precio por número, sin cargos de Eccos por mensaje. Self-hosted o Cloud en acceso anticipado."
   : "Numbers stay answerable from the phone while your automation sends through the API. Priced per connected number, messages unlimited. Self-host it, or let us run it.";
-const ogUrl = canonical ?? (es ? "https://eccos.chat/" : "https://eccos.chat/en");
+const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 ---
 <!doctype html>
-<html lang={locale}>
+<html lang={pageLocale}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -39,9 +47,9 @@ const ogUrl = canonical ?? (es ? "https://eccos.chat/" : "https://eccos.chat/en"
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9f8">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070c0f">
 {canonical && <link rel="canonical" href={canonical}>}
-{landing && <link rel="alternate" hreflang="es" href="https://eccos.chat/">}
-{landing && <link rel="alternate" hreflang="en" href="https://eccos.chat/en">}
-{landing && <link rel="alternate" hreflang="x-default" href="https://eccos.chat/">}
+{landing && <link rel="alternate" hreflang="es" href={esUrl}>}
+{landing && <link rel="alternate" hreflang="en" href={enUrl}>}
+{landing && <link rel="alternate" hreflang="x-default" href={esUrl}>}
 <link rel="icon" href="/assets/favicon.svg?v=2" type="image/svg+xml">
 {!notFound && <link rel="icon" href="/assets/favicon-32.png?v=2" sizes="32x32">}
 {landing && <link rel="apple-touch-icon" href="/assets/avatar.png">}
@@ -58,6 +66,7 @@ const ogUrl = canonical ?? (es ? "https://eccos.chat/" : "https://eccos.chat/en"
 {hasPixelPreload && <link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>}
 <!-- theme override, applied before the stylesheet so an override never flashes -->
 <script is:inline>(function(){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})();</script>
+{landing && pageLocale === "es" && <script is:inline>(function(){try{if(location.pathname!=="/"&&location.pathname!=="")return;var saved=localStorage.getItem("eccos-locale");if(saved==="en"){location.replace("/en");return}if(saved==="es")return;var languages=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||""];for(var i=0;i<languages.length;i++){var code=String(languages[i]).toLowerCase().split("-")[0];if(code==="en"){location.replace("/en");return}if(code==="es")return}}catch(e){}})();</script>}
 <link rel="stylesheet" href="/styles.css">
 {landing && <script is:inline>document.documentElement.className += " js";</script>}
 {landing && <script is:inline defer src="/js/shader.js"></script>}
@@ -89,7 +98,7 @@ const ogUrl = canonical ?? (es ? "https://eccos.chat/" : "https://eccos.chat/en"
 
 <header class={landing ? "masthead has-menu" : "masthead"}>
   <div class="shell">
-    <a class="brand" href={es ? "/" : "/en"}><picture><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/logomark-light.png"><img src="/assets/logomark.png" alt="" width="128" height="128" decoding="async"></picture>ECCOS</a>
+    <a class="brand" href={localeHome}><picture><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/logomark-light.png"><img src="/assets/logomark.png" alt="" width="128" height="128" decoding="async"></picture>ECCOS</a>
     {landing ? <nav class="nav" id="primary-nav" aria-label={es ? "Navegación principal" : "Primary"}>
       <a href="#how">{es ? "Cómo funciona" : "How it works"}</a>
       <a href="#pricing">{es ? "Precios" : "Pricing"}</a>
@@ -109,7 +118,7 @@ const ogUrl = canonical ?? (es ? "https://eccos.chat/" : "https://eccos.chat/en"
         <svg class="tt-ic tt-ic-sun" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="5" height="5"/><path d="M8 1v1.9M8 13.1V15M1 8h1.9M13.1 8H15M3.05 3.05 4.4 4.4M11.6 11.6l1.35 1.35M12.95 3.05 11.6 4.4M4.4 11.6l-1.35 1.35"/></svg>
         <svg class="tt-ic tt-ic-moon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2a4 4 0 0 0 6 6 6 6 0 1 1-6-6Z"/></svg>
       </button>
-      {landing && <a class="lang-switch" href={es ? "/en" : "/"} lang={es ? "en" : "es"} hreflang={es ? "en" : "es"}>{es ? "English" : "Español"}</a>}
+      {landing && <a class="lang-switch" href={alternateHome} lang={alternateLocale} hreflang={alternateLocale}>{es ? "English" : "Español"}</a>}
       {landing && <a class="btn btn-primary btn-sm nav-cta" href={es ? "mailto:hello@imsanti.dev?subject=Acceso%20anticipado%20a%20Eccos%20Cloud" : "mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access"}>{es ? "Acceso anticipado" : "Get early access"}</a>}
       {landing && <button class="nav-toggle" type="button" id="nav-toggle" aria-expanded="false" aria-controls="primary-nav">
         <svg class="ic ic-open" aria-hidden="true"><use href="#i-menu"/></svg>
@@ -133,10 +142,10 @@ const ogUrl = canonical ?? (es ? "https://eccos.chat/" : "https://eccos.chat/en"
       <div class="foot-cols">
         <nav class="foot-col" aria-label={es ? "Producto" : "Product"}>
           <p class="label">{es ? "Producto" : "Product"}</p>
-          {landing ? <a href="#how">{es ? "Cómo funciona" : "How it works"}</a> : <a href={es ? "/#how" : "/en#how"}>{es ? "Cómo funciona" : "How it works"}</a>}
+          {landing ? <a href="#how">{es ? "Cómo funciona" : "How it works"}</a> : <a href={`${localeHome}#how`}>{es ? "Cómo funciona" : "How it works"}</a>}
            {landing && <a href="#pricing">{es ? "Precios" : "Pricing"}</a>}
-          <a href={landing ? "#run" : es ? "/#run" : "/en#run"}>{es ? "Cómo usarlo" : "Run it"}</a>
-          <a href={landing ? "#data" : es ? "/#data" : "/en#data"}>{es ? "Tus datos" : "Your data"}</a>
+          <a href={landing ? "#run" : `${localeHome}#run`}>{es ? "Cómo usarlo" : "Run it"}</a>
+          <a href={landing ? "#data" : `${localeHome}#data`}>{es ? "Tus datos" : "Your data"}</a>
         </nav>
         <nav class="foot-col" aria-label="Legal">
           <p class="label">Legal</p>

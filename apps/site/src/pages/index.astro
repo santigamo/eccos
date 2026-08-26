@@ -1,13 +1,13 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
 import content from "../page-content/landing.es.html?raw";
+import { getAbsoluteLocaleUrl } from "astro:i18n";
 ---
 <SiteLayout
   title="Eccos · gateway de WhatsApp de código abierto"
   description="Gateway de WhatsApp de código abierto sobre la Cloud API oficial de Meta. Precio por número conectado, nunca por mensaje, con coexistence integrada. Uno o cincuenta números, tuyos o de tus clientes. Despliega Eccos tú mismo o deja que lo gestionemos por ti."
-  canonical="https://eccos.chat/"
+  canonical={getAbsoluteLocaleUrl("es")}
   landing
-  locale="es"
 >
   <Fragment set:html={content} />
 </SiteLayout>

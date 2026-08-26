@@ -117,6 +117,15 @@
     });
   }
 
+  var localeSwitch = document.querySelector(".lang-switch");
+  if (localeSwitch) {
+    localeSwitch.addEventListener("click", function () {
+      var locale = localeSwitch.getAttribute("hreflang");
+      if (locale !== "en" && locale !== "es") return;
+      try { localStorage.setItem("eccos-locale", locale); } catch (e) {}
+    });
+  }
+
   if (LIGHT_MQ) {
     var onScheme = function () { if (themeMode === "auto") applyMode("auto"); };
     if (LIGHT_MQ.addEventListener) LIGHT_MQ.addEventListener("change", onScheme);
