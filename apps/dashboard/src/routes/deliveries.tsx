@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
+import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listDeliveries, retryDelivery } from "../server/gateway";
@@ -84,7 +85,10 @@ function DeliveriesPage() {
       cell: (info) => (
         <span className="font-mono text-xs tabular-nums">{info.getValue()}</span>
       ),
-      meta: { cellClassName: "text-right whitespace-nowrap" },
+      meta: {
+        headerClassName: "text-right",
+        cellClassName: "text-right whitespace-nowrap",
+      },
     }),
     columnHelper.accessor("status", {
       id: "status",
@@ -96,7 +100,10 @@ function DeliveriesPage() {
       id: "attempts",
       header: "Attempts",
       cell: (info) => info.getValue(),
-      meta: { cellClassName: "text-right whitespace-nowrap" },
+      meta: {
+        headerClassName: "text-right",
+        cellClassName: "text-right whitespace-nowrap",
+      },
     }),
     columnHelper.accessor("next_attempt_at", {
       id: "next_attempt_at",
@@ -117,12 +124,19 @@ function DeliveriesPage() {
       header: "Action",
       cell: (info) => {
         const record = info.row.original;
+        // Retry is only meaningful on a failed delivery: a pending one is
+        // already queued and a delivered one is done. Every other row holds
+        // the column's rhythm with a muted em-dash instead of a dead button.
+        if (record.status !== "failed") {
+          return <span className="text-muted-foreground">\u2014</span>;
+        }
         return (
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="rounded-none"
+            aria-label={`Retry delivery ${record.id}`}
             disabled={retrying === record.id}
             onClick={() => onRetry(record.id)}
           >
@@ -163,16 +177,39 @@ function DeliveriesPage() {
     </>
   );
 
+  // A narrowed view that came back empty is a different message from a gateway
+  // that has never forwarded anything: the first one has a way out.
+  const isNarrowed = status !== undefined || before !== undefined;
+
+  const emptyState = isNarrowed ? (
+    <GridEmptyState
+      label="NO MATCHES"
+      description="No deliveries match this view."
+      action={
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-sm"
+          onClick={() => navigate({ search: () => ({}) })}
+        >
+          Clear filters
+        </Button>
+      }
+    />
+  ) : (
+    <GridEmptyState
+      label="NO DELIVERIES YET"
+      description="Forward attempts to your subscriber will appear here."
+    />
+  );
+
   return (
     <Page title="Deliveries" kicker="Logs" actions={filterControl}>
       <LogGrid
         columns={deliveriesColumns}
         data={rows}
-        emptyMessage={
-          status || before !== undefined
-            ? "No deliveries match this view."
-            : "No deliveries."
-        }
+        emptyMessage={emptyState}
         getRowId={(row) => String(row.id)}
       />
 

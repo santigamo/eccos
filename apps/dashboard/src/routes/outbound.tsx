@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
+import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listOutbound } from "../server/gateway";
@@ -68,7 +69,12 @@ function OutboundPage() {
       <LogGrid
         columns={columns}
         data={rows}
-        emptyMessage="No outbound messages."
+        emptyMessage={
+          <GridEmptyState
+            label="NO OUTBOUND MESSAGES YET"
+            description="Messages sent through the gateway API will appear here."
+          />
+        }
         getRowId={(row) => String(row.id)}
       />
     </Page>

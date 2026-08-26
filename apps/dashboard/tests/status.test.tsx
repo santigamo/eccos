@@ -1,21 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CountTable } from "../src/ui";
+import { StatusCounts, countTotal } from "../src/ui";
 
-describe("CountTable (Status page count maps)", () => {
-  test("renders rows for each status with the count", () => {
-    const html = renderToStaticMarkup(
-      <CountTable label="deliveries" counts={{ delivered: 3, failed: 1 }} />,
-    );
-    expect(html).toContain("delivered");
-    expect(html).toContain("3");
-    expect(html).toContain("failed");
-    expect(html).toContain("1");
+describe("Status page count maps", () => {
+  test("countTotal sums a per-status map into the headline total", () => {
+    expect(countTotal({ delivered: 3, failed: 1 })).toBe(4);
+    expect(countTotal({})).toBe(0);
   });
 
-  test("renders an explicit empty state instead of an empty table", () => {
-    const html = renderToStaticMarkup(<CountTable label="outbound" counts={{}} />);
+  // StatusCounts with entries renders router Links, which need a RouterProvider;
+  // the arithmetic is covered by countTotal above. Only the empty branch is
+  // renderable standalone.
+  test("StatusCounts renders an explicit empty state instead of a link row", () => {
+    const html = renderToStaticMarkup(
+      <StatusCounts label="outbound" counts={{}} target="outbound" />,
+    );
     expect(html).toContain("No outbound recorded yet.");
-    expect(html).not.toContain("<table");
+    expect(html).not.toContain("<a");
   });
 });

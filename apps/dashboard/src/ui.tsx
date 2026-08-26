@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { Link } from "@tanstack/react-router"
 
 import {
   Frame,
@@ -60,35 +61,86 @@ export function StatusTag({ status }: { status: string }) {
   )
 }
 
-export function CountTable({
+/**
+ * Ink for a count entry. Colour is spent only on states an operator has to act
+ * on, so the exceptions carry; everything else stays muted.
+ */
+const COUNT_INK: Record<string, string> = {
+  failed: "text-[#ff7777]",
+  rejected: "text-[#ff7777]",
+  unhealthy: "text-[#ff7777]",
+  pending: "text-[#f0a020]",
+  degraded: "text-[#f0a020]",
+}
+
+/** Quiet at rest, underlined on hover — a count that admits it is a door. */
+export const COUNT_LINK =
+  "underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+
+/** Sum of a per-status count map — the headline number of a facts cell. */
+export function countTotal(counts: Record<string, number>): number {
+  let total = 0
+  for (const n of Object.values(counts)) total += n
+  return total
+}
+
+/**
+ * One machine-voice row of per-status counts, each linking into the log view
+ * that holds the rows behind the number.
+ */
+export function StatusCounts({
   counts,
   label,
+  target,
 }: {
-  counts: Record<string, number>;
-  label: string;
+  counts: Record<string, number>
+  label: string
+  /** Log view these counts are evidence for. */
+  target: "deliveries" | "outbound"
 }) {
-  const entries = Object.entries(counts);
+  const entries = Object.entries(counts)
   if (entries.length === 0) {
-    return <p className="text-muted-foreground text-sm">No {label} recorded yet.</p>;
+    return (
+      <p className="mt-3 text-muted-foreground text-sm">No {label} recorded yet.</p>
+    )
   }
   return (
-    <table aria-label={`${label} by status`} className="w-full border-collapse">
-      <thead className="sr-only">
-        <tr>
-          <th>Status</th>
-          <th>Count</th>
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map(([status, n]) => (
-          <tr key={status}>
-            <td className="py-1.5 pr-2 text-foreground/80 text-sm border-b border-(--frame-panel-border-color)">{status}</td>
-            <td className="py-1.5 pl-2 text-right font-pixel tabular-nums text-foreground border-b border-(--frame-panel-border-color)">{n}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+    <ul
+      aria-label={`${label} by status`}
+      className="mt-3 flex list-none flex-wrap items-center gap-x-2 gap-y-1 p-0 font-pixel text-[11px] tracking-[0.04em] uppercase"
+    >
+      {entries.map(([status, n], i) => {
+        const className = cn(
+          COUNT_LINK,
+          COUNT_INK[status.toLowerCase()] ??
+            "text-muted-foreground hover:text-foreground",
+        )
+        const body = (
+          <>
+            {status} <span className="tabular-nums">{n}</span>
+          </>
+        )
+        return (
+          <li key={status} className="flex items-center gap-2">
+            {i > 0 ? (
+              <span aria-hidden="true" className="text-muted-foreground/50">
+                ·
+              </span>
+            ) : null}
+            {target === "deliveries" ? (
+              <Link to="/deliveries" search={{ status }} className={className}>
+                {body}
+              </Link>
+            ) : (
+              <Link to="/outbound" className={className}>
+                {body}
+              </Link>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
 }
 
 /** Error card for the `{ ok: false }` (gateway unreachable / RPC threw) state. */

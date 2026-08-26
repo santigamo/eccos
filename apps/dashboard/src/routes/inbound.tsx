@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
+import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listInbound } from "../server/gateway";
@@ -65,7 +66,12 @@ function InboundPage() {
       <LogGrid
         columns={columns}
         data={rows}
-        emptyMessage="No inbound events."
+        emptyMessage={
+          <GridEmptyState
+            label="NO INBOUND EVENTS YET"
+            description="Messages and statuses received from Meta will appear here."
+          />
+        }
         getRowId={(row) => String(row.id)}
       />
     </Page>

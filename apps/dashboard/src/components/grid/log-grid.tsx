@@ -22,7 +22,11 @@ export function LogGrid<TData extends object>({
   // biome-ignore lint/suspicious/noExplicitAny: TanStack v9 keeps ColumnDef TValue invariant across accessor columns.
   columns: ColumnDef<DataGridFeatures, TData, any>[]
   data: TData[]
-  emptyMessage?: string
+  // ReactNode, not just string: routes pass a structured <GridEmptyState />
+  // block. The data grid renders it inside its own full-width `<td colSpan>`
+  // (header row still visible above), and its provider already keeps unstable
+  // inline-ReactNode prop identities out of the context value.
+  emptyMessage?: ReactNode
   footer?: ReactNode
   getRowId?: (row: TData, index: number) => string
   isLoading?: boolean

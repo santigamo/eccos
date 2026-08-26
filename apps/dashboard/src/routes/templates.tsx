@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
+import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listTemplates } from "../server/gateway";
@@ -102,7 +103,12 @@ function TemplatesPage() {
       <LogGrid
         columns={columns}
         data={items}
-        emptyMessage="No templates found."
+        emptyMessage={
+          <GridEmptyState
+            label="NO TEMPLATES"
+            description="Message templates approved for this WABA will appear here."
+          />
+        }
         getRowId={(row) => row.id ?? `${row.name ?? "?"}-${row.language ?? "?"}`}
       />
     </Page>
