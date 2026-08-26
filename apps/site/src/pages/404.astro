@@ -1,0 +1,7 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import content from "../page-content/404.html?raw";
+---
+<SiteLayout title="Not found — Eccos" notFound>
+  <Fragment set:html={content} />
+</SiteLayout>

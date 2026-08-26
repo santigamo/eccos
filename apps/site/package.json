@@ -1,11 +1,22 @@
 {
   "name": "@eccos/site",
   "version": "0.1.0",
-  "description": "eccos.chat — public site: landing plus the legal pages Meta requires (privacy, terms, data deletion). Static assets on Cloudflare Workers; no framework, no build step.",
+  "description": "eccos.chat — public site: landing plus the legal pages Meta requires (privacy, terms, data deletion). Astro static build on Cloudflare Workers.",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "dev": "astro dev",
+    "build": "astro build",
+    "check": "astro check",
+    "preview": "astro preview",
+    "dev:worker": "astro build && wrangler dev",
+    "deploy": "astro build && wrangler deploy"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "astro": "^7.2.7"
   }
 }

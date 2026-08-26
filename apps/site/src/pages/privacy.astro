@@ -1,0 +1,12 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import content from "../page-content/privacy.html?raw";
+---
+<SiteLayout
+  title="Privacy Policy — Eccos"
+  description="How personal data is handled in Eccos Cloud: GDPR roles, data categories, retention periods, subprocessors, international transfers, and your rights."
+  canonical="https://eccos.chat/privacy"
+  active="privacy"
+>
+  <Fragment set:html={content} />
+</SiteLayout>

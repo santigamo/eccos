@@ -1,0 +1,12 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import content from "../page-content/migrate.html?raw";
+---
+<SiteLayout
+  title="Migration guide: Eccos Cloud to self-host — Eccos"
+  description="An honest cloud-to-self-host migration guide for Eccos: what you can and cannot export, deploying the Bun/Docker build, configuring your own Meta credentials, re-pointing the webhook and subscriber, smoke testing, and decommissioning Eccos Cloud only after validation."
+  canonical="https://eccos.chat/migrate"
+  active="migrate"
+>
+  <Fragment set:html={content} />
+</SiteLayout>

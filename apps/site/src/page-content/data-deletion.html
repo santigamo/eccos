@@ -1,0 +1,108 @@
+<main class="shell doc" id="main">
+
+  <h1>Data Deletion</h1>
+  <p class="lede">
+    How to have data deleted from Eccos Cloud, the hosted version of the
+    <a href="/">Eccos</a> WhatsApp gateway. This page also serves as the data
+    deletion instructions URL that Meta requires for apps built on its platform.
+  </p>
+
+  <section>
+    <h2>Most data deletes itself</h2>
+    <p>
+      Eccos Cloud is a pass-through gateway, not an archive. Message content —
+      incoming messages, outgoing messages, and the payloads in the delivery queue —
+      is deleted automatically after <strong>30 days</strong> by default (each
+      business can configure between 7 and 90 days). Delivery records are then
+      redacted, keeping only delivery metadata for up to <strong>90 days</strong>.
+      Details are in the <a href="/privacy">Privacy Policy</a>. The instructions
+      below are for deleting data <em>before</em> those windows elapse, or for
+      deleting everything tied to an account.
+    </p>
+  </section>
+
+  <section>
+    <h2>If you messaged a business on WhatsApp</h2>
+    <p>
+      If you are an end user — for example, a customer or patient who exchanged
+      WhatsApp messages with a business that uses Eccos Cloud — the controller of
+      your data is <strong>that business</strong>, not us. Please send your deletion
+      request to the business you messaged; under the GDPR it must handle it, and we
+      will carry out any deletion it instructs us to perform.
+    </p>
+    <p>
+      If you write to us directly, we will not ignore you: acting as processor, we
+      will refer your request to the business concerned where we can identify it, and
+      assist it in responding.
+    </p>
+  </section>
+
+  <section>
+    <h2>If you are a business using Eccos Cloud</h2>
+    <p>
+      Email
+      <a href="mailto:hello@imsanti.dev?subject=Eccos%20data%20deletion%20request">hello@imsanti.dev</a>
+      with the subject &ldquo;Eccos data deletion request&rdquo;, from the contact
+      address registered with your account, and include:
+    </p>
+    <ul>
+      <li>The WhatsApp Business phone number connected to Eccos Cloud.</li>
+      <li>The end-user phone number(s) whose data should be deleted, in international format (e.g. +34…) — or state that <em>all</em> stored data should be deleted.</li>
+      <li>Whether your account configuration should also be deleted (full account closure).</li>
+    </ul>
+    <p>
+      We may ask a follow-up question if the request does not let us identify the
+      data unambiguously.
+    </p>
+  </section>
+
+  <section>
+    <h2>What deletion covers</h2>
+    <p>
+      For the phone numbers concerned, we delete all stored inbound events, outbound
+      messages, and delivery records, including the redacted delivery metadata. On
+      full account closure we also delete the account configuration.
+    </p>
+  </section>
+
+  <section>
+    <h2>Timelines, and one honest caveat</h2>
+    <p>
+      We acknowledge valid requests without undue delay and complete the deletion
+      within 30 days of receiving them.
+    </p>
+    <div class="note">
+      <p>
+        One caveat, declared rather than hidden: the Cloudflare storage underlying
+        Eccos Cloud keeps a 30-day point-in-time recovery history. Data removed from
+        the live system can therefore persist inside that recovery mechanism for up
+        to 30 further days before it becomes unrecoverable. During that window the
+        historical copies exist only within the infrastructure provider's backup
+        system; they are not part of the live gateway.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Self-hosted deployments</h2>
+    <p>
+      If the Eccos gateway you interacted with is self-hosted, we hold no data at
+      all: the deployment runs entirely on the infrastructure of the business
+      operating it, and nothing ever reaches us. Please direct your request to
+      whoever operates that deployment.
+    </p>
+  </section>
+
+  <section>
+    <h2>Related pages</h2>
+    <p>
+      <a href="/privacy">Privacy Policy</a> ·
+      <a href="/terms">Terms of Service</a> ·
+      <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a> ·
+      <a href="/">About Eccos</a>
+    </p>
+  </section>
+
+  <p class="updated">Last updated: August 2026</p>
+
+</main>

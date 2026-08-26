@@ -1,0 +1,12 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import content from "../page-content/terms.html?raw";
+---
+<SiteLayout
+  title="Terms of Service — Eccos"
+  description="Terms governing the Eccos software (MIT-licensed) and the Eccos Cloud hosted service: responsibilities, warranties, limitation of liability, and applicable law."
+  canonical="https://eccos.chat/terms"
+  active="terms"
+>
+  <Fragment set:html={content} />
+</SiteLayout>

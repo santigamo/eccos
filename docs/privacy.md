@@ -193,7 +193,7 @@ API to build for this.
 - **Cloud → self-host:** the operator surface's paginated reads are also the migration
   mechanism. What transfers, what does not, and the full cutover steps are documented on
   [eccos.chat/migrate](https://eccos.chat/migrate) (guide source:
-  `apps/site/public/migrate/index.html`) — the short version: no Meta token, operator secret,
+  `apps/site/src/page-content/migrate.html`) — the short version: no Meta token, operator secret,
   `DurableObjectId`/Alarm, or Embedded Signup OAuth connection is ever exportable; re-create
   them in the new deployment and decommission Cloud only after an end-to-end smoke test.
 

@@ -1,0 +1,164 @@
+---
+type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate";
+
+interface Props {
+  title: string;
+  description?: string;
+  canonical?: string;
+  landing?: boolean;
+  notFound?: boolean;
+  active?: ActivePage;
+  locale?: "en" | "es";
+}
+
+const {
+  title,
+  description,
+  canonical,
+  landing = false,
+  notFound = false,
+  active,
+  locale = "en",
+} = Astro.props;
+const es = locale === "es";
+const hasPixelPreload = landing || notFound;
+const hasMigrationLink = landing || active === "migrate";
+const ogDescription = es
+  ? "Uno o cincuenta números, tuyos o de tus clientes. Precio por número, sin cargos de Eccos por mensaje. Self-hosted o Cloud en acceso anticipado."
+  : "Numbers stay answerable from the phone while your automation sends through the API. Priced per connected number, messages unlimited. Self-host it, or let us run it.";
+const ogUrl = canonical ?? (es ? "https://eccos.chat/" : "https://eccos.chat/en");
+---
+<!doctype html>
+<html lang={locale}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+{description && <meta name="description" content={description}>}
+{notFound && <meta name="robots" content="noindex">}
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9f8">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070c0f">
+{canonical && <link rel="canonical" href={canonical}>}
+{landing && <link rel="alternate" hreflang="es" href="https://eccos.chat/">}
+{landing && <link rel="alternate" hreflang="en" href="https://eccos.chat/en">}
+{landing && <link rel="alternate" hreflang="x-default" href="https://eccos.chat/">}
+<link rel="icon" href="/assets/favicon.svg?v=2" type="image/svg+xml">
+{!notFound && <link rel="icon" href="/assets/favicon-32.png?v=2" sizes="32x32">}
+{landing && <link rel="apple-touch-icon" href="/assets/avatar.png">}
+{landing && <meta property="og:type" content="website">}
+{landing && <meta property="og:title" content={title}>}
+{landing && <meta property="og:description" content={ogDescription}>}
+{landing && <meta property="og:url" content={ogUrl}>}
+{landing && <meta property="og:locale" content={es ? "es_ES" : "en_US"}>}
+{landing && <meta property="og:locale:alternate" content={es ? "en_US" : "es_ES"}>}
+{landing && <meta property="og:image" content="https://eccos.chat/assets/banner.jpg">}
+{landing && <meta property="og:image:alt" content={es ? "Eccos, gateway open source para WhatsApp" : "Eccos, an open-source WhatsApp gateway"}>}
+{landing && <meta name="twitter:card" content="summary_large_image">}
+<link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+{hasPixelPreload && <link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>}
+<!-- theme override, applied before the stylesheet so an override never flashes -->
+<script is:inline>(function(){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})();</script>
+<link rel="stylesheet" href="/styles.css">
+{landing && <script is:inline>document.documentElement.className += " js";</script>}
+{landing && <script is:inline defer src="/js/shader.js"></script>}
+<script is:inline defer src="/js/site.js"></script>
+<script is:inline defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
+</head>
+<body>
+
+<a class="skip" href="#main">{es ? "Saltar al contenido" : "Skip to content"}</a>
+
+{landing && <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.6 13.4 3.6v4.1c0 3.2-2.2 5.6-5.4 6.7C4.8 13.3 2.6 10.9 2.6 7.7V3.6Z"/><path d="m5.6 7.9 1.7 1.7 3.1-3.3"/></symbol>
+    <symbol id="i-code" viewBox="0 0 16 16"><path d="m5.6 4.4-3.4 3.6 3.4 3.6"/><path d="m10.4 4.4 3.4 3.6-3.4 3.6"/></symbol>
+    <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.6 9.4a2.7 2.7 0 0 0 3.9 0l2.1-2.2a2.75 2.75 0 0 0-3.9-3.9L8 4.2"/><path d="M9.4 6.6a2.7 2.7 0 0 0-3.9 0L3.4 8.8a2.75 2.75 0 0 0 3.9 3.9L8 11.8"/></symbol>
+    <symbol id="i-card" viewBox="0 0 16 16"><rect x="1.8" y="3.6" width="12.4" height="8.8" rx="1.8"/><path d="M1.8 6.8h12.4"/><path d="M4.4 9.8h2.8"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M1.9 8h12.2"/><path d="M8 1.8c1.8 2 2.7 4 2.7 6.2S9.8 12.2 8 14.2C6.2 12.2 5.3 10.2 5.3 8S6.2 3.8 8 1.8Z"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 16 16"><path d="m8 1.9 6.1 3.2L8 8.3 1.9 5.1Z"/><path d="m1.9 8.7 6.1 3.2 6.1-3.2"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 16 16"><path d="M7.5 1.9H14v6.5l-6 6a1.3 1.3 0 0 1-1.9 0L2 10.3a1.3 1.3 0 0 1 0-1.9Z"/><path d="M11 5h.01"/></symbol>
+    <symbol id="i-mega" viewBox="0 0 16 16"><path d="M2.4 6.2h2.3l6-3.3v10.2l-6-3.3H2.4Z"/><path d="M12.6 6.4a2.6 2.6 0 0 1 0 3.2"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.4V8l2.4 1.6"/></symbol>
+    <symbol id="i-server" viewBox="0 0 16 16"><rect x="2" y="2.6" width="12" height="4.4" rx="1.4"/><rect x="2" y="9" width="12" height="4.4" rx="1.4"/><path d="M4.6 4.8h.01"/><path d="M4.6 11.2h.01"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.8 4.4h10.4"/><path d="M5.5 4.4V3.2c0-.7.5-1.2 1.2-1.2h2.6c.7 0 1.2.5 1.2 1.2v1.2"/><path d="m4.3 4.4.7 8.5c0 .7.6 1.2 1.2 1.2h3.6c.6 0 1.2-.5 1.2-1.2l.7-8.5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="m3 8.4 3.2 3.2L13 4.7"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 16 16"><path d="M2 4.5h12"/><path d="M2 8h12"/><path d="M2 11.5h12"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16"><path d="m3.6 3.6 8.8 8.8"/><path d="m12.4 3.6-8.8 8.8"/></symbol>
+  </defs>
+</svg>}
+
+<header class={landing ? "masthead has-menu" : "masthead"}>
+  <div class="shell">
+    <a class="brand" href={es ? "/" : "/en"}><picture><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/logomark-light.png"><img src="/assets/logomark.png" alt="" width="128" height="128" decoding="async"></picture>ECCOS</a>
+    {landing ? <nav class="nav" id="primary-nav" aria-label={es ? "Navegación principal" : "Primary"}>
+      <a href="#how">{es ? "Cómo funciona" : "How it works"}</a>
+      <a href="#pricing">{es ? "Precios" : "Pricing"}</a>
+      <a href="#run">{es ? "Cómo usarlo" : "Run it"}</a>
+      <a href="#data">{es ? "Tus datos" : "Your data"}</a>
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav> : <nav class="nav" aria-label="Primary">
+      <a href="/privacy" aria-current={active === "privacy" ? "page" : undefined}>Privacy</a>
+      <a href="/terms" aria-current={active === "terms" ? "page" : undefined}>Terms</a>
+      <a href="/data-deletion" aria-current={active === "data-deletion" ? "page" : undefined}>Data deletion</a>
+      {active === "migrate" && <a href="/migrate" aria-current="page">Migration</a>}
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav>}
+    <div class="bar-end">
+      <button id="theme-toggle" class="theme-toggle" type="button" data-mode="auto" data-theme-label={es ? "Tema" : "Theme"} data-theme-auto={es ? "automático" : "auto"} data-theme-light={es ? "claro" : "light"} data-theme-dark={es ? "oscuro" : "dark"} aria-label={es ? "Tema: automático" : "Theme: auto"} title={es ? "Tema: automático" : "Theme: auto"}>
+        <svg class="tt-ic tt-ic-auto" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2.75" y="2.75" width="10.5" height="10.5"/><path d="M8 2.75h5.25v10.5H8z" fill="currentColor" stroke="none"/></svg>
+        <svg class="tt-ic tt-ic-sun" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="5" height="5"/><path d="M8 1v1.9M8 13.1V15M1 8h1.9M13.1 8H15M3.05 3.05 4.4 4.4M11.6 11.6l1.35 1.35M12.95 3.05 11.6 4.4M4.4 11.6l-1.35 1.35"/></svg>
+        <svg class="tt-ic tt-ic-moon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2a4 4 0 0 0 6 6 6 6 0 1 1-6-6Z"/></svg>
+      </button>
+      {landing && <a class="lang-switch" href={es ? "/en" : "/"} lang={es ? "en" : "es"} hreflang={es ? "en" : "es"}>{es ? "English" : "Español"}</a>}
+      {landing && <a class="btn btn-primary btn-sm nav-cta" href={es ? "mailto:hello@imsanti.dev?subject=Acceso%20anticipado%20a%20Eccos%20Cloud" : "mailto:hello@imsanti.dev?subject=Eccos%20Cloud%20early%20access"}>{es ? "Acceso anticipado" : "Get early access"}</a>}
+      {landing && <button class="nav-toggle" type="button" id="nav-toggle" aria-expanded="false" aria-controls="primary-nav">
+        <svg class="ic ic-open" aria-hidden="true"><use href="#i-menu"/></svg>
+        <svg class="ic ic-shut" aria-hidden="true"><use href="#i-close"/></svg>
+        <span class="sr">{es ? "Menú" : "Menu"}</span>
+      </button>}
+    </div>
+  </div>
+</header>
+
+<slot />
+
+<footer class="foot">
+  <div class="band foot-top">
+    <div class="wrap foot-grid">
+      <p class="disclaimer">
+        {es
+          ? "Eccos es un proyecto independiente y no está afiliado, respaldado ni patrocinado por Meta Platforms. WhatsApp es una marca de Meta."
+          : "Eccos is an independent project and is not affiliated with, endorsed by, or sponsored by Meta Platforms. WhatsApp is a trademark of Meta."}
+      </p>
+      <div class="foot-cols">
+        <nav class="foot-col" aria-label={es ? "Producto" : "Product"}>
+          <p class="label">{es ? "Producto" : "Product"}</p>
+          {landing ? <a href="#how">{es ? "Cómo funciona" : "How it works"}</a> : <a href={es ? "/#how" : "/en#how"}>{es ? "Cómo funciona" : "How it works"}</a>}
+           {landing && <a href="#pricing">{es ? "Precios" : "Pricing"}</a>}
+          <a href={landing ? "#run" : es ? "/#run" : "/en#run"}>{es ? "Cómo usarlo" : "Run it"}</a>
+          <a href={landing ? "#data" : es ? "/#data" : "/en#data"}>{es ? "Tus datos" : "Your data"}</a>
+        </nav>
+        <nav class="foot-col" aria-label="Legal">
+          <p class="label">Legal</p>
+          <a href="/privacy">{es ? "Privacidad" : "Privacy"}</a>
+          <a href="/terms">{es ? "Términos" : "Terms"}</a>
+          <a href="/data-deletion">{es ? "Eliminación de datos" : "Data deletion"}</a>
+          {hasMigrationLink && <a href="/migrate">{es ? "Migración" : "Migration"}</a>}
+          <a href="https://www.imsanti.dev/aviso-legal" rel="noreferrer">Aviso legal</a>
+        </nav>
+        <nav class="foot-col" aria-label={es ? "Contacto" : "Connect"}>
+          <p class="label">{es ? "Contacto" : "Connect"}</p>
+          <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+          <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>
+        </nav>
+      </div>
+    </div>
+    <div class="foot-brand">
+      <picture><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/logomark-light.png"><img src="/assets/logomark.png" alt="" width="128" height="128" loading="lazy" decoding="async"></picture>
+      <span>© 2026 Santiago García Monsalve</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

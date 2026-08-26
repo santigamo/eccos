@@ -1,0 +1,12 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import content from "../page-content/data-deletion.html?raw";
+---
+<SiteLayout
+  title="Data Deletion — Eccos"
+  description="How to have data deleted from Eccos Cloud, and the data deletion instructions URL required for apps built on the Meta platform."
+  canonical="https://eccos.chat/data-deletion"
+  active="data-deletion"
+>
+  <Fragment set:html={content} />
+</SiteLayout>

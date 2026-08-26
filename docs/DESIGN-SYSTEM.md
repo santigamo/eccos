@@ -110,13 +110,13 @@ and `:root[data-theme="light"]`. `<html data-theme="light|dark">` is an
 explicit user override; the attribute **absent** means "follow the system"
 (never `data-theme="auto"`). The override persists in
 `localStorage["eccos-theme"]` (reads/writes in try/catch). A tiny inline
-head snippet applies it before the stylesheet loads (no FOUC) on all six
-documents. On every effective-theme change `site.js` dispatches the window
+head snippet applies it before the stylesheet loads (no FOUC) on every
+published page. On every effective-theme change `site.js` dispatches the window
 CustomEvent **`eccos:theme`** (`detail: {theme}`) — the shader listens, the
 `theme-color` metas update, and the trio `<picture class="own-pic">` sources
 swap (`media="all"` / `"not all"` / restored query). The header toggle
 (`#theme-toggle`, 36px square, sun/moon/auto icons) cycles
-auto → light → dark → auto and exists on all six documents.
+auto → light → dark → auto and exists on every published page.
 
 **Light palette.** Ground is *paper*, not white: `--bg: #f7f9f8` (BRAND.md's
 Paper), panels `#ffffff`, sunken wells `--well: #eef3f0`, text = the dark
@@ -293,8 +293,8 @@ These outrank aesthetics. Before shipping any site change, verify:
 - **New section** = a `.band` (+ preceding `.hatch` if it starts a chapter),
   a heading with one `.px` phrase, `.reveal` on its content blocks, values
   from the tokens — no new colors, no new fonts, no radii.
-- **New page** = copy the shell of an existing page: head (meta + favicon +
-  font preload + `styles.css` + Umami), masthead, footer, skip link,
-  `id="main"`. Then the content in `.doc` typography.
+- **New page** = add a route in `apps/site/src/pages/`, render it through
+  `SiteLayout.astro`, and keep published document markup in
+  `apps/site/src/page-content/`. Then the content in `.doc` typography.
 - When in doubt, diff your work against the two laws first, the invariants
   second, and Arion's rhythm (big quiet bands, 1px lines, one spectacle) last.

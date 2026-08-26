@@ -722,6 +722,9 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .nav a:hover { color: var(--text); text-decoration: none; }
 .nav a[aria-current="page"] { color: var(--text); }
 
+.lang-switch { color: var(--muted); font-size: 0.875rem; font-weight: 500; }
+.lang-switch:hover { color: var(--text); text-decoration: none; }
+
 .bar-end { display: flex; align-items: center; gap: 10px; }
 
 .nav-toggle {

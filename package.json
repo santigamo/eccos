@@ -38,9 +38,10 @@
     "deploy": "cd apps/gateway && wrangler deploy",
     "cf-types": "cd apps/gateway && wrangler types",
     "dev:worker": "cd apps/gateway && wrangler dev",
-    "dev:site": "cd apps/site && wrangler dev",
-    "deploy:site": "cd apps/site && wrangler deploy",
-    "check:site-links": "./scripts/check-site-links.sh"
+    "dev:site": "cd apps/site && bun run dev",
+    "deploy:site": "cd apps/site && bun run deploy",
+    "check:site": "cd apps/site && bun run check && bun run build && cd ../.. && ./scripts/check-site-links.sh",
+    "check:site-links": "cd apps/site && bun run build && cd ../.. && ./scripts/check-site-links.sh"
   },
   "dependencies": {
     "@eccos/core": "workspace:*",

@@ -6,7 +6,7 @@
 
 <p>Your app, your token, no message quota — running as a single Bun binary or <strong>entirely on Cloudflare</strong> (Workers + Durable Objects).</p>
 
-<p><a href="https://eccos.chat"><strong>eccos.chat</strong></a></p>
+<p><a href="https://eccos.chat"><strong>eccos.chat</strong></a> · <a href="https://eccos.chat/">Español</a> · <a href="https://eccos.chat/en">English</a></p>
 
 [![CI](https://github.com/santigamo/eccos/actions/workflows/ci.yml/badge.svg)](https://github.com/santigamo/eccos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-25D366.svg)](./LICENSE)
@@ -245,7 +245,7 @@ Object.
 > Details in [docs/deployment.md](./docs/deployment.md).
 
 > **Moving from Eccos Cloud to a self-host?** The migration guide lives at
-> [eccos.chat/migrate](https://eccos.chat/migrate) (source: `apps/site/public/migrate/index.html`).
+> [eccos.chat/migrate](https://eccos.chat/migrate) (source: `apps/site/src/page-content/migrate.html`).
 > Short version: there is no automatic export — you page through the operator RPC reads for what
 > is still within retention, redeploy with your own Meta credentials, re-point the webhook and
 > subscriber, smoke-test, and only then decommission Cloud. Meta tokens, operator secrets, the
@@ -308,6 +308,8 @@ still stored, just not pushed. On the Workers target the same names are set with
 bun run typecheck      # tsc --noEmit
 bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers integration tests for the Workers target
+bun run check:site     # Astro check, static build, and generated-site link check
+bun run dev:site       # Astro development server for apps/site
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the repository layout and conventions. If you're

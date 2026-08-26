@@ -1,40 +1,43 @@
 #!/usr/bin/env bash
-# Eccos site link checker — verify every internal href/src/anchor in the static
-# pages under apps/site/public resolves, and that no page links a route that
-# does not exist. Run from the repo root:
+# Eccos site link checker — verify every internal href/src/anchor in the generated
+# pages under apps/site/dist resolves, and that no page links a route that does
+# not exist. Run from the repo root after building the site:
 #
 #   ./scripts/check-site-links.sh
 #
-# Pure shell + grep + python3; no dependencies. Exits non-zero on the first
+# Pure shell + rg + python3; no dependencies. Exits non-zero on the first
 # problem found (safe to gate a deploy on its exit code).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PUBLIC="$ROOT/apps/site/public"
-cd "$PUBLIC"
+SITE_ROOT="${SITE_ROOT:-$ROOT/apps/site/dist}"
+if [[ ! -d "$SITE_ROOT" ]]; then
+  echo "site output directory not found: $SITE_ROOT (run bun run check:site first)" >&2
+  exit 1
+fi
+cd "$SITE_ROOT"
 
 fail=0
 
-# Every HTML file in public/ (index + subdirectories like privacy/, migrate/).
-PAGES=$(find . -name "index.html" -type f | sort)
+# Every generated HTML file in dist/ (index, subdirectories, and 404.html).
+PAGES=$(rg --files -g '*.html' | sort)
 if [[ -z "$PAGES" ]]; then
-  echo "no pages found under $PUBLIC" >&2
+  echo "no pages found under $SITE_ROOT" >&2
   exit 1
 fi
 
-echo "==> checking pages in apps/site/public"
+echo "==> checking pages in $SITE_ROOT"
 echo "$PAGES"
 
 for page in $PAGES; do
   file="${page#./}"
-  dir="$(dirname "$file")"
 
   # Internal hrefs/srcs that point at the site itself (/, /privacy, assets…).
   # Skip: external http(s), mailto, fragment-only, and query-only hrefs.
   refs="$(
-    grep -oE '(href|src)="[^"]+"' "$file" \
+    rg -o '(href|src)="[^"]+"' "$file" \
       | sed -E 's/^(href|src)="//; s/"$//' \
-      | grep -E '^/' || true
+      | rg '^/' || true
   )"
 
   for ref in $refs; do
@@ -54,7 +57,7 @@ for page in $PAGES; do
   done
 
   # Same-page anchors: every href="#x" must have a matching id in the page.
-  python3 - "$file" <<'PY'
+  if ! python3 - "$file" <<'PY'
 import re, sys
 src = open(sys.argv[1], encoding="utf-8").read()
 ids = set(re.findall(r'id="([^"]+)"', src))
@@ -64,7 +67,9 @@ if missing:
     print(f"  MISSING ANCHOR: {sys.argv[1]} -> {missing}", file=sys.stderr)
     sys.exit(1)
 PY
-  if [[ $? -ne 0 ]]; then fail=1; fi
+  then
+    fail=1
+  fi
 done
 
 if [[ $fail -ne 0 ]]; then

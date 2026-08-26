@@ -67,6 +67,17 @@
     window.dispatchEvent(ev);
   }
 
+  function themeModeWord(mode) {
+    var attr = themeBtn && themeBtn.getAttribute("data-theme-" + mode);
+    if (attr) return attr;
+    return mode.charAt(0).toUpperCase() + mode.slice(1);
+  }
+
+  function themeLabelWord() {
+    var attr = themeBtn && themeBtn.getAttribute("data-theme-label");
+    return attr || "Theme";
+  }
+
   function applyMode(mode) {
     if (mode === "auto") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", mode);
@@ -74,8 +85,9 @@
 
     if (themeBtn) {
       themeBtn.setAttribute("data-mode", mode);
-      themeBtn.setAttribute("aria-label", "Theme: " + mode);
-      themeBtn.setAttribute("title", "Theme: " + mode);
+      var txt = themeLabelWord() + ": " + themeModeWord(mode);
+      themeBtn.setAttribute("aria-label", txt);
+      themeBtn.setAttribute("title", txt);
     }
 
     var theme = effectiveTheme();
@@ -148,8 +160,9 @@
 
   // Thousands separators, so the animation lands on "1,950" and not "1950",
   // which reads as a year.
+  var groupSep = root.getAttribute("lang") === "es" ? "." : ",";
   function group(n) {
-    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, groupSep);
   }
 
   function countUp(el) {

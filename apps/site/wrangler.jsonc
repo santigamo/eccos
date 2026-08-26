@@ -3,10 +3,10 @@
   "name": "eccos-site",
   "compatibility_date": "2026-06-12",
 
-  // Pure static-assets Worker: no `main`, no server code. Everything under
-  // public/ is served straight from Cloudflare's edge.
+  // Pure static-assets Worker: no `main`, no server code. Astro's build output
+  // is served straight from Cloudflare's edge.
   "assets": {
-    "directory": "./public",
+    "directory": "./dist",
     // Serve "/privacy" itself with a 200 (auto-trailing-slash would 307 it to
     // "/privacy/"). These URLs go into Meta's app settings; no redirect hop.
     "html_handling": "drop-trailing-slash",
