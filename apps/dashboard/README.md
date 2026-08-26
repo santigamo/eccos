@@ -41,6 +41,23 @@ Then open the URL Vite prints. Without the gateway running, the pages still load
 "unreachable" state. Other scripts: `bunx vite build` (production build), `bun run typecheck`
 (`tsc --noEmit`), `bun run test` (the isolated Access unit check in `tests/`).
 
+## Deploying (reproducible WABA scope)
+
+`GATEWAY_WABA_ID` picks the WABA every dashboard RPC call targets. It is **per-deployment**, so it
+is not hard-coded in [`wrangler.jsonc`](./wrangler.jsonc) — the var there stays empty and the
+helper below injects it at deploy time instead of relying on a hand-typed `wrangler` flag:
+
+```bash
+# from the repo root; the helper validates GATEWAY_WABA_ID and forwards it to wrangler
+GATEWAY_WABA_ID=123456789012345 ./scripts/deploy-dashboard.sh
+
+# equivalently, put it in .env (same KEY=VALUE format as the other per-Worker vars)
+echo 'GATEWAY_WABA_ID=123456789012345' >> .env && ./scripts/deploy-dashboard.sh
+```
+
+Set `GATEWAY_WABA_ID` to the same WABA configured in the gateway (`META_WABA_ID`); the dashboard
+never guesses a tenant. `bun run deploy` from `apps/dashboard` invokes the same validated helper.
+
 ## Securing with Cloudflare Access
 
 The dashboard ships with **no edge authentication**. Do **not** leave it publicly reachable

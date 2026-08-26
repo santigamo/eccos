@@ -5,7 +5,15 @@ import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listDeliveries, retryDelivery } from "../server/gateway";
 import type { DeliveryRecord } from "../server/gateway";
-import { Page, StatusTag, Unreachable, fmtTs, styles } from "../ui";
+import { Page, StatusTag, Unreachable, fmtTs } from "../ui";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const PAGE_SIZE = 50;
 const KNOWN_STATUSES = ["pending", "delivered", "failed"] as const;
@@ -110,14 +118,16 @@ function DeliveriesPage() {
       cell: (info) => {
         const record = info.row.original;
         return (
-          <button
+          <Button
             type="button"
-            className={styles.button}
+            variant="outline"
+            size="sm"
+            className="rounded-none"
             disabled={retrying === record.id}
             onClick={() => onRetry(record.id)}
           >
             {retrying === record.id ? "\u2026" : "Retry"}
-          </button>
+          </Button>
         );
       },
     }),
@@ -134,20 +144,22 @@ function DeliveriesPage() {
       <label className="sr-only" htmlFor="delivery-status-filter">
         Filter deliveries by status
       </label>
-      <select
-        id="delivery-status-filter"
-        name="status"
-        className={styles.select}
+      <Select
         value={activeStatus}
-        onChange={(e) => onFilterChange(e.target.value)}
+        onValueChange={(value) => onFilterChange(value ?? "all")}
       >
-        <option value="all">all statuses</option>
-        {statuses.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger id="delivery-status-filter" size="sm" className="h-7 rounded-none">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="start" className="min-w-(--anchor-width)">
+          <SelectItem value="all">all statuses</SelectItem>
+          {statuses.map((s) => (
+            <SelectItem key={s} value={s}>
+              {s}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </>
   );
 
@@ -166,17 +178,21 @@ function DeliveriesPage() {
 
       <div className="flex gap-2 mt-3 justify-end">
         {before !== undefined ? (
-          <button
+          <Button
             type="button"
-            className={styles.button}
+            variant="outline"
+            size="sm"
+            className="rounded-none"
             onClick={() => navigate({ search: (prev) => ({ ...prev, before: undefined }) })}
           >
             ← Latest
-          </button>
+          </Button>
         ) : null}
-        <button
+        <Button
           type="button"
-          className={styles.button}
+          variant="outline"
+          size="sm"
+          className="rounded-none"
           disabled={!canLoadOlder}
           onClick={() =>
             oldestId !== undefined &&
@@ -184,7 +200,7 @@ function DeliveriesPage() {
           }
         >
           Load older →
-        </button>
+        </Button>
       </div>
     </Page>
   );

@@ -61,7 +61,7 @@ export function LogGrid<TData extends object>({
       loadingMode="skeleton"
     >
       <DataGridScrollArea
-        className="max-h-[70vh]"
+        className="w-full min-h-0 max-h-[calc(100svh-var(--header-height,3rem))]"
         orientation="vertical"
       >
         <DataGridContainer>

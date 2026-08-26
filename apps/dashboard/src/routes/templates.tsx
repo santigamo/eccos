@@ -3,7 +3,14 @@ import { createColumnHelper } from "@tanstack/react-table";
 import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listTemplates } from "../server/gateway";
-import { Page, StatusTag, Unreachable, styles } from "../ui";
+import {
+  Frame,
+  FrameDescription,
+  FrameHeader,
+  FramePanel,
+  FrameTitle,
+} from "../components/reui/frame";
+import { Page, StatusTag, Unreachable } from "../ui";
 
 export const Route = createFileRoute("/templates")({
   loader: () => listTemplates(),
@@ -11,6 +18,7 @@ export const Route = createFileRoute("/templates")({
 });
 
 interface TemplateItem {
+  id?: string;
   name?: string;
   language?: string;
   status?: string;
@@ -64,23 +72,38 @@ function TemplatesPage() {
         : JSON.stringify(templates.error, null, 2);
     return (
       <Page title="Templates">
-        <section className={styles.card}>
-          <h2 className={styles.cardTitle}>Failed to load templates</h2>
-          <pre className={styles.errorBox}>{detail}</pre>
-        </section>
+        <Frame variant="ghost" spacing="sm">
+          <FramePanel>
+            <FrameHeader>
+              <FrameTitle>Failed to load templates</FrameTitle>
+              <FrameDescription>
+                The gateway returned an error while loading message templates.
+              </FrameDescription>
+            </FrameHeader>
+            <pre className="mt-2 overflow-auto border border-destructive/20 bg-destructive/10 p-3 text-destructive text-xs whitespace-pre-wrap break-words">
+              {detail}
+            </pre>
+          </FramePanel>
+        </Frame>
       </Page>
     );
   }
 
-  const data = (templates.data as { data?: TemplateItem[] } | null) ?? {};
-  const items = data.data ?? [];
+  const payload = templates.data;
+  const items =
+    typeof payload === "object" &&
+    payload !== null &&
+    "data" in payload &&
+    Array.isArray(payload.data)
+      ? (payload.data as TemplateItem[])
+      : [];
   return (
     <Page title="Templates">
       <LogGrid
         columns={columns}
         data={items}
         emptyMessage="No templates found."
-        getRowId={(row, index) => `${row.name ?? "?"}-${row.language ?? index}`}
+        getRowId={(row) => row.id ?? `${row.name ?? "?"}-${row.language ?? "?"}`}
       />
     </Page>
   );

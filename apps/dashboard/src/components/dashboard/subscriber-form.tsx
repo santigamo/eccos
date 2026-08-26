@@ -75,7 +75,7 @@ export function SubscriberForm({ config }: { config: SubscriberConfig }) {
         <form
           onSubmit={onSubmit}
           aria-busy={saving}
-          className="mt-3 space-y-3"
+          className="mt-3 flex flex-col gap-3"
         >
           <div>
             <label
