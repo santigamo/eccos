@@ -15,6 +15,10 @@
 
   "workers_dev": true,
 
+  "routes": [
+    { "pattern": "app.eccos.chat", "custom_domain": true }
+  ],
+
   // Cloudflare Access gate (defense-in-depth). Both empty = gate DISABLED (local
   // dev / a deploy not yet behind Access). Set BOTH in production so the Worker
   // re-verifies the Access JWT and can't be bypassed via the raw workers.dev URL:
