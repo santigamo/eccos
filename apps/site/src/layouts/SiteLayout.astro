@@ -1,5 +1,6 @@
 ---
 import { getAbsoluteLocaleUrl, getRelativeLocaleUrl } from "astro:i18n";
+import { ClientRouter } from "astro:transitions";
 
 type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate";
 
@@ -37,10 +38,11 @@ const ogDescription = es
 const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 ---
 <!doctype html>
-<html lang={pageLocale}>
+<html lang={pageLocale} transition:animate="fade">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<ClientRouter />
 <title>{title}</title>
 {description && <meta name="description" content={description}>}
 {notFound && <meta name="robots" content="noindex">}
@@ -65,11 +67,10 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 <link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
 {hasPixelPreload && <link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>}
 <!-- theme override, applied before the stylesheet so an override never flashes -->
-<script is:inline>(function(){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})();</script>
+<script is:inline>(function(){function sync(doc){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")doc.documentElement.setAttribute("data-theme",t);else doc.documentElement.removeAttribute("data-theme")}catch(e){}}sync(document);document.documentElement.classList.add("js");document.addEventListener("astro:before-swap",function(e){sync(e.newDocument);if(document.documentElement.classList.contains("js"))e.newDocument.documentElement.classList.add("js")})})();</script>
 {landing && pageLocale === "es" && <script is:inline>(function(){try{if(location.pathname!=="/"&&location.pathname!=="")return;var saved=localStorage.getItem("eccos-locale");if(saved==="en"){location.replace("/en");return}if(saved==="es")return;var languages=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||""];for(var i=0;i<languages.length;i++){var code=String(languages[i]).toLowerCase().split("-")[0];if(code==="en"){location.replace("/en");return}if(code==="es")return}}catch(e){}})();</script>}
 <link rel="stylesheet" href="/styles.css">
-{landing && <script is:inline>document.documentElement.className += " js";</script>}
-{landing && <script is:inline defer src="/js/shader.js"></script>}
+{landing && <script is:inline defer src="/js/shader.js" data-astro-rerun></script>}
 <script is:inline defer src="/js/site.js"></script>
 <script is:inline defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
 </head>

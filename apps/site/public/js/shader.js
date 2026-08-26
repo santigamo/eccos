@@ -21,6 +21,8 @@
 (function () {
   "use strict";
 
+  if (window.__eccosShaderCleanup) window.__eccosShaderCleanup();
+
   var hero = document.getElementById("hero");
   if (!hero) return;
 
@@ -313,35 +315,55 @@
   }
 
   resize();
-  window.addEventListener("resize", function () {
+  function onResize() {
     resize();
     if (!raf && !isLight()) window.requestAnimationFrame(frame);
-  }, { passive: true });
+  }
+  window.addEventListener("resize", onResize, { passive: true });
 
   document.addEventListener("visibilitychange", sync);
 
   /* site.js announces every effective-theme change: park by day, run by night */
-  window.addEventListener("eccos:theme", function (e) {
+  function onTheme(e) {
     var light = e && e.detail && e.detail.theme ? e.detail.theme === "light" : isLight();
     if (!alive) return;
     gl.uniform1f(uLight, light ? 1.0 : 0.0);
     sync();
-  });
+  }
+  window.addEventListener("eccos:theme", onTheme);
 
+  var visibilityObserver = null;
   if ("IntersectionObserver" in window) {
-    new IntersectionObserver(function (entries) {
+    visibilityObserver = new IntersectionObserver(function (entries) {
       visible = entries[0].isIntersecting;
       sync();
-    }, { threshold: 0 }).observe(hero);
+    }, { threshold: 0 });
+    visibilityObserver.observe(hero);
   }
 
-  canvas.addEventListener("webglcontextlost", function (e) {
+  function onContextLost(e) {
     e.preventDefault();
     alive = false;
     stop();
     canvas.classList.remove("ready");
     if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
-  });
+  }
+  canvas.addEventListener("webglcontextlost", onContextLost);
+
+  function cleanup() {
+    if (!alive) return;
+    alive = false;
+    stop();
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("visibilitychange", sync);
+    window.removeEventListener("eccos:theme", onTheme);
+    if (visibilityObserver) visibilityObserver.disconnect();
+    canvas.removeEventListener("webglcontextlost", onContextLost);
+    if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+  }
+
+  document.addEventListener("astro:before-swap", cleanup, { once: true });
+  window.__eccosShaderCleanup = cleanup;
 
   sync();
 })();

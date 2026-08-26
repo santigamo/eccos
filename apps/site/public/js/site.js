@@ -9,6 +9,20 @@
 (function () {
   "use strict";
 
+  var cleanup = null;
+  var activeThemeTransition = null;
+  var countUpHasRun = false;
+
+  function init() {
+  if (cleanup) cleanup();
+
+  var disposers = [];
+  var observers = [];
+  function listen(target, type, handler, options) {
+    target.addEventListener(type, handler, options);
+    disposers.push(function () { target.removeEventListener(type, handler, options); });
+  }
+
   var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var hasIO = "IntersectionObserver" in window;
 
@@ -107,19 +121,62 @@
     emitTheme(theme);
   }
 
+  function transitionMode(mode) {
+    if (reduced || typeof document.startViewTransition !== "function" || root.hasAttribute("data-astro-transition")) {
+      applyMode(mode);
+      return;
+    }
+
+    if (activeThemeTransition) {
+      try { activeThemeTransition.skipTransition(); } catch (e) {}
+      activeThemeTransition = null;
+    }
+
+    root.setAttribute("data-eccos-theme-transition", "");
+    var applied = false;
+    try {
+      var viewTransition = document.startViewTransition(function () {
+        applied = true;
+        applyMode(mode);
+      });
+      activeThemeTransition = viewTransition;
+      var finish = function () {
+        if (activeThemeTransition !== viewTransition) return;
+        activeThemeTransition = null;
+        root.removeAttribute("data-eccos-theme-transition");
+      };
+      var timeout = window.setTimeout(finish, 700);
+      if (viewTransition.finished) viewTransition.finished.then(function () {
+        window.clearTimeout(timeout);
+        finish();
+      }, function () {
+        window.clearTimeout(timeout);
+        finish();
+      });
+      else {
+        window.clearTimeout(timeout);
+        finish();
+      }
+    } catch (e) {
+      if (!applied) applyMode(mode);
+      root.removeAttribute("data-eccos-theme-transition");
+      activeThemeTransition = null;
+    }
+  }
+
   var themeMode = storedMode();
   applyMode(themeMode);
 
   if (themeBtn) {
-    themeBtn.addEventListener("click", function () {
+    listen(themeBtn, "click", function () {
       themeMode = MODES[(MODES.indexOf(themeMode) + 1) % MODES.length];
-      applyMode(themeMode);
+      transitionMode(themeMode);
     });
   }
 
   var localeSwitch = document.querySelector(".lang-switch");
   if (localeSwitch) {
-    localeSwitch.addEventListener("click", function () {
+    listen(localeSwitch, "click", function () {
       var locale = localeSwitch.getAttribute("hreflang");
       if (locale !== "en" && locale !== "es") return;
       try { localStorage.setItem("eccos-locale", locale); } catch (e) {}
@@ -127,9 +184,12 @@
   }
 
   if (LIGHT_MQ) {
-    var onScheme = function () { if (themeMode === "auto") applyMode("auto"); };
-    if (LIGHT_MQ.addEventListener) LIGHT_MQ.addEventListener("change", onScheme);
-    else if (LIGHT_MQ.addListener) LIGHT_MQ.addListener(onScheme);
+    var onScheme = function () { if (themeMode === "auto") transitionMode("auto"); };
+    if (LIGHT_MQ.addEventListener) listen(LIGHT_MQ, "change", onScheme);
+    else if (LIGHT_MQ.addListener) {
+      LIGHT_MQ.addListener(onScheme);
+      disposers.push(function () { LIGHT_MQ.removeListener(onScheme); });
+    }
   }
 
   /* ---------- 2. entrance reveals ---------- */
@@ -156,6 +216,7 @@
         io.unobserve(entry.target);
       });
     }, { threshold: 0.15, rootMargin: "0px 0px -4% 0px" });
+    observers.push(io);
 
     reveals.forEach(function (el) {
       if (heroKids.indexOf(el) !== -1) return;
@@ -192,7 +253,8 @@
     window.requestAnimationFrame(step);
   }
 
-  if (!reduced && hasIO && nums.length) {
+  if (!reduced && hasIO && nums.length && !countUpHasRun) {
+    countUpHasRun = true;
     var nio = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         if (!entry.isIntersecting) return;
@@ -200,6 +262,7 @@
         countUp(entry.target);
       });
     }, { threshold: 0.6 });
+    observers.push(nio);
     nums.forEach(function (el) { nio.observe(el); });
   }
 
@@ -217,13 +280,13 @@
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
     }
 
-    toggle.addEventListener("click", function () { setOpen(!open); });
+    listen(toggle, "click", function () { setOpen(!open); });
 
-    nav.addEventListener("click", function (e) {
+    listen(nav, "click", function (e) {
       if (e.target.tagName === "A") setOpen(false);
     });
 
-    document.addEventListener("keydown", function (e) {
+    listen(document, "keydown", function (e) {
       if (!open) return;
       if (e.key === "Escape" || e.key === "Esc") {
         setOpen(false);
@@ -231,13 +294,13 @@
       }
     });
 
-    document.addEventListener("click", function (e) {
+    listen(document, "click", function (e) {
       if (!open) return;
       if (nav.contains(e.target) || toggle.contains(e.target)) return;
       setOpen(false);
     });
 
-    window.addEventListener("resize", function () {
+    listen(window, "resize", function () {
       if (open && window.innerWidth >= 760) setOpen(false);
     }, { passive: true });
   }
@@ -262,8 +325,28 @@
       });
       applyPlayState();
     }, { threshold: 0.05 });
+    observers.push(dio);
 
     diagrams.forEach(function (el) { dio.observe(el); });
-    document.addEventListener("visibilitychange", applyPlayState);
+    listen(document, "visibilitychange", applyPlayState);
   }
+
+  cleanup = function () {
+    disposers.forEach(function (dispose) { dispose(); });
+    observers.forEach(function (observer) { observer.disconnect(); });
+  };
+  }
+
+  document.addEventListener("astro:before-swap", function () {
+    if (cleanup) {
+      cleanup();
+      cleanup = null;
+    }
+    if (activeThemeTransition) {
+      try { activeThemeTransition.skipTransition(); } catch (e) {}
+      activeThemeTransition = null;
+    }
+    document.documentElement.removeAttribute("data-eccos-theme-transition");
+  });
+  document.addEventListener("astro:page-load", init);
 })();

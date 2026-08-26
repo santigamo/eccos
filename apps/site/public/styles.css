@@ -411,6 +411,23 @@
 }
 :root[data-theme="light"] ::selection { background: var(--green); color: #06120c; }
 
+@keyframes eccos-theme-transition-out {
+  to { opacity: 0; }
+}
+
+@keyframes eccos-theme-transition-in {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-eccos-theme-transition]::view-transition-old(root) {
+    animation: eccos-theme-transition-out 0.22s var(--ease) both;
+  }
+  html[data-eccos-theme-transition]::view-transition-new(root) {
+    animation: eccos-theme-transition-in 0.22s var(--ease) both;
+  }
+}
+
 *,
 *::before,
 *::after { box-sizing: border-box; }
