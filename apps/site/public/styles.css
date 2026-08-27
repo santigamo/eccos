@@ -369,9 +369,9 @@
     linear-gradient(90deg, rgba(247, 249, 248, 0.95) 0%, rgba(247, 249, 248, 0.8) 30%,
       rgba(247, 249, 248, 0.26) 64%, rgba(247, 249, 248, 0) 88%),
     linear-gradient(0deg, var(--bg) 0%, rgba(247, 249, 248, 0.42) 32%, rgba(247, 249, 248, 0) 70%);
-  --cta-scrim: radial-gradient(120% 90% at 50% 50%, rgba(247, 249, 248, 0.26) 0%,
-    rgba(247, 249, 248, 0.8) 62%, var(--bg) 100%);
-  --cta-glow-opacity: 0.8;
+  --cta-scrim: radial-gradient(120% 90% at 50% 50%, rgba(247, 249, 248, 0.5) 0%,
+    rgba(247, 249, 248, 0.88) 62%, var(--bg) 100%);
+  --cta-glow-opacity: 0.5;
   --foot-bg: var(--bg);
   --foot-wash: linear-gradient(180deg, var(--bg) 0%, rgba(247, 249, 248, 0.9) 26%,
     rgba(247, 249, 248, 0.88) 100%);
