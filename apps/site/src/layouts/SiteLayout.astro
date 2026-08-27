@@ -72,7 +72,10 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 <link rel="stylesheet" href="/styles.css">
 {landing && <script is:inline defer src="/js/shader.js" data-astro-rerun></script>}
 <script is:inline defer src="/js/site.js"></script>
-<script is:inline defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99"></script>
+<!-- Umami. `data-domains` keeps the tracker idle on workers.dev previews and
+     localhost; owner-traffic exclusion is handled in the Umami dashboard
+     (Exclude IPs) plus the native `umami.disabled` localStorage flag. -->
+<script is:inline defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99" data-domains="eccos.chat,www.eccos.chat" data-do-not-track="true"></script>
 </head>
 <body>
 

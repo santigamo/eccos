@@ -349,4 +349,46 @@
     document.documentElement.removeAttribute("data-eccos-theme-transition");
   });
   document.addEventListener("astro:page-load", init);
+
+  /* ---------- 6. Umami event tracking ----------
+
+     One delegated capture-phase click listener names every meaningful link
+     click ("area-click") and sends href, label text and owning section id as
+     event properties. Registered once per window (it must survive the
+     astro:before-swap / astro:page-load cycle, unlike everything above) and
+     silently inert when the tracker never loaded. */
+
+  function trackEvent(name, props) {
+    if (!window.umami || typeof window.umami.track !== "function") return;
+    try { window.umami.track(name, props); } catch (e) {}
+  }
+
+  function eventArea(link) {
+    var href = link.getAttribute("href") || "";
+    if (/^mailto:/i.test(href)) return "email";
+    if (/github\.com\/santigamo\/eccos/i.test(href)) return "github";
+    if (/^https?:\/\//i.test(href) && !/^https?:\/\/(www\.)?eccos\.chat/i.test(href)) return "outbound";
+    if (link.classList.contains("lang-switch")) return "lang";
+    return "nav";
+  }
+
+  function sectionOf(el) {
+    var sec = el.closest("section[id], footer[id], [id]");
+    return sec ? sec.id : "";
+  }
+
+  if (!window.__eccosTracked) {
+    window.__eccosTracked = true;
+    document.addEventListener("click", function (e) {
+      var target = e.target;
+      if (!target || !target.closest) return;
+      var link = target.closest("a[href]");
+      if (!link) return;
+      trackEvent(eventArea(link) + "-click", {
+        href: link.getAttribute("href"),
+        text: (link.textContent || "").trim().slice(0, 60),
+        section: sectionOf(link)
+      });
+    }, true);
+  }
 })();
