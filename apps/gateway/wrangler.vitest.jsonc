@@ -5,9 +5,15 @@
   "compatibility_date": "2026-06-12",
   "workers_dev": true,
   "durable_objects": {
-    "bindings": [{ "name": "ECCOS", "class_name": "EccosGateway" }]
+    "bindings": [
+      { "name": "ECCOS", "class_name": "EccosGateway" },
+      { "name": "CONTROL_PLANE", "class_name": "EccosControlPlane" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EccosGateway"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["EccosGateway"] },
+    { "tag": "v2", "new_sqlite_classes": ["EccosControlPlane"] }
+  ],
   "vars": {
     "META_GRAPH_VERSION": "v24.0",
     "META_ACCESS_TOKEN": "test-access-token",
@@ -20,6 +26,8 @@
     "SUBSCRIBER_SECRET": "test-subscriber-secret",
     "META_APP_ID": "test-app-id",
     "META_ES_CONFIG_ID": "test-config-id",
-    "FORWARD_MAX_ATTEMPTS": "3"
+    "FORWARD_MAX_ATTEMPTS": "3",
+    "ECCOS_MULTI_TENANT": "false",
+    "ECCOS_ADMIN_API_KEY": "test-admin-key"
   }
 }

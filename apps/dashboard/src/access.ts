@@ -20,6 +20,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 export interface AccessEnv {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  GATEWAY_ACCOUNT_ID?: string;
 }
 
 const JWT_HEADER = "Cf-Access-Jwt-Assertion";
@@ -88,8 +89,10 @@ export async function enforceAccess(
   const teamDomainRaw = env.ACCESS_TEAM_DOMAIN?.trim();
   const audience = env.ACCESS_AUD?.trim();
 
-  // Not configured → no gate (local dev / fresh deploy without Access).
-  if (!teamDomainRaw || !audience) return null;
+  // An account-scoped deployment must never silently become a public dashboard.
+  if (!teamDomainRaw || !audience) {
+    return env.GATEWAY_ACCOUNT_ID?.trim() ? forbidden() : null;
+  }
 
   const teamDomain = normalizeTeamDomain(teamDomainRaw);
   if (!teamDomain) return null;

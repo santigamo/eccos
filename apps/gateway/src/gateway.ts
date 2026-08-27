@@ -5,16 +5,19 @@ import type {
   DeliveryRecord,
   EraseByPhoneResult,
   ErasureCounts,
+  GatewayExport,
   InboundRow,
   OperatorCounts,
   OutboundRow,
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
+import { PRIVATE_CONFIG_KEYS } from "./private-config-keys";
 
 interface Env {
   SUBSCRIBER_WEBHOOK_URL?: string;
   SUBSCRIBER_SECRET?: string;
+  ECCOS_MULTI_TENANT?: string;
   FORWARD_MAX_ATTEMPTS: string;
   /** Content retention window (days): past it, `inbound_events` and `outbound_messages`
    * rows are deleted and terminal `deliveries` rows keep only metadata (payload redacted).
@@ -55,6 +58,126 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const LAST_SWEEP_KEY = "__last_sweep_at__";
 
+function parseIpv4Address(hostname: string): number[] | null {
+  const octets = hostname.split(".");
+  if (octets.length !== 4 || !octets.every((part) => /^\d+$/.test(part))) return null;
+  const parsed = octets.map(Number);
+  return parsed.every((part) => part >= 0 && part <= 255) ? parsed : null;
+}
+
+function parseIpv6Address(hostname: string): number[] | null {
+  if (!hostname.includes(":")) return null;
+  let value = hostname;
+  if (value.includes(".")) {
+    const separator = value.lastIndexOf(":");
+    if (separator < 0) return null;
+    const ipv4 = parseIpv4Address(value.slice(separator + 1));
+    if (!ipv4) return null;
+    const a = ipv4[0];
+    const b = ipv4[1];
+    const c = ipv4[2];
+    const d = ipv4[3];
+    if (a === undefined || b === undefined || c === undefined || d === undefined) return null;
+    const high = (a << 8) | b;
+    const low = (c << 8) | d;
+    value = `${value.slice(0, separator + 1)}${high.toString(16)}:${low.toString(16)}`;
+  }
+
+  const sections = value.split("::");
+  if (sections.length > 2) return null;
+  const parseSection = (section: string): number[] | null => {
+    if (!section) return [];
+    const parts = section.split(":");
+    if (!parts.every((part) => /^[0-9a-f]{1,4}$/i.test(part))) return null;
+    return parts.map((part) => Number.parseInt(part, 16));
+  };
+  const left = parseSection(sections[0] ?? "");
+  const right = parseSection(sections.length === 2 ? sections[1] ?? "" : "");
+  if (!left || !right) return null;
+  if (sections.length === 1) return left.length === 8 ? left : null;
+  if (left.length + right.length >= 8) return null;
+  return [...left, ...Array.from({ length: 8 - left.length - right.length }, () => 0), ...right];
+}
+
+function isPrivateIpv4Address(octets: number[]): boolean {
+  const [a, b] = octets;
+  if (a === undefined || b === undefined) return false;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && (b === 0 || b === 168)) ||
+    (a === 198 && b >= 18 && b <= 19) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    a >= 224
+  );
+}
+
+function isPrivateSubscriberHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "local" ||
+    hostname.endsWith(".local")
+  ) {
+    return true;
+  }
+
+  if (/^\d+$/.test(hostname.replaceAll(".", ""))) return true;
+
+  const ipv4 = parseIpv4Address(hostname);
+  if (ipv4) return isPrivateIpv4Address(ipv4);
+
+  const ipv6 = parseIpv6Address(hostname);
+  if (!ipv6) return false;
+  const first = ipv6[0] ?? 0;
+  const high = ipv6[6] ?? 0;
+  const low = ipv6[7] ?? 0;
+  const embeddedIpv4 = [high >> 8, high & 0xff, low >> 8, low & 0xff];
+  const isMapped = ipv6.slice(0, 5).every((part) => part === 0) && ipv6[5] === 0xffff;
+  const isIpv4Compatible = ipv6.slice(0, 6).every((part) => part === 0);
+  return (
+    (isMapped || isIpv4Compatible) && isPrivateIpv4Address(embeddedIpv4)
+  ) || (
+    ipv6.every((part) => part === 0) ||
+    (ipv6.slice(0, 7).every((part) => part === 0) && ipv6[7] === 1) ||
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xffc0) === 0xfec0 ||
+    (first & 0xff00) === 0xff00
+  );
+}
+
+export function validateSubscriberUrl(rawUrl: string): string {
+  const value = rawUrl.trim();
+  if (!value) throw new Error("invalid subscriber URL: must not be empty");
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("invalid subscriber URL: must be a valid URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("invalid subscriber URL: must use https");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("invalid subscriber URL: credentials are not allowed");
+  }
+  if (isPrivateSubscriberHostname(parsed.hostname)) {
+    throw new Error("invalid subscriber URL: private hosts are not allowed");
+  }
+  return value;
+}
+
+/**
+ * Config-table keys that are secrets/raw credentials and must never leave the
+ * DO — filtered out of `exportData()` (and mirrored by the RPC layer's own
+ * filter). Anything else in the `config` table is considered safe connection
+ * metadata (WABA/phone ids, callback URL, display phone, connected-at).
+ */
 /**
  * Sentinel written to `deliveries.payload` when message content is redacted
  * (content retention expiry, or GDPR erasure of a batch whose events were all
@@ -107,6 +230,7 @@ export class EccosGateway extends DurableObject<Env> {
         type        TEXT NOT NULL,
         transport_message_id TEXT,
         message_id  TEXT,
+        phone_number_id TEXT,
         payload     TEXT NOT NULL,
         received_at INTEGER NOT NULL
       );`);
@@ -120,6 +244,7 @@ export class EccosGateway extends DurableObject<Env> {
         id                   INTEGER PRIMARY KEY AUTOINCREMENT,
         transport_message_id TEXT,
         recipient            TEXT NOT NULL,
+        phone_number_id      TEXT,
         request              TEXT NOT NULL,
         status               TEXT NOT NULL,
         error                TEXT,
@@ -127,6 +252,7 @@ export class EccosGateway extends DurableObject<Env> {
       );`);
       this.sql.exec(`CREATE TABLE IF NOT EXISTS deliveries (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        phone_number_id TEXT,
         payload         TEXT NOT NULL,
         status          TEXT NOT NULL DEFAULT 'pending',
         attempts        INTEGER NOT NULL DEFAULT 0,
@@ -145,6 +271,15 @@ export class EccosGateway extends DurableObject<Env> {
         ON inbound_events (received_at);`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_outbound_created
         ON outbound_messages (created_at);`);
+      const ensureColumn = (table: string, column: string): void => {
+        const columns = this.sql.exec(`PRAGMA table_info(${table})`).toArray();
+        if (!columns.some((row) => row.name === column)) {
+          this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+        }
+      };
+      ensureColumn("inbound_events", "phone_number_id");
+      ensureColumn("outbound_messages", "phone_number_id");
+      ensureColumn("deliveries", "phone_number_id");
     });
   }
 
@@ -156,15 +291,17 @@ export class EccosGateway extends DurableObject<Env> {
       for (const ev of events) {
         const tmid = "transportMessageId" in ev ? ev.transportMessageId : null;
         const mid = "messageId" in ev ? ev.messageId : null;
+        const phoneNumberId = ev.phoneNumberId?.trim() || null;
         const insertedRows = this.sql
           .exec(
             `INSERT OR IGNORE INTO inbound_events
-               (type, transport_message_id, message_id, payload, received_at)
-             VALUES (?, ?, ?, ?, ?)
+               (type, transport_message_id, message_id, phone_number_id, payload, received_at)
+             VALUES (?, ?, ?, ?, ?, ?)
              RETURNING id`,
             ev.type,
             tmid,
             mid,
+            phoneNumberId,
             JSON.stringify(ev),
             now,
           )
@@ -172,9 +309,12 @@ export class EccosGateway extends DurableObject<Env> {
         if (insertedRows.length > 0) inserted++;
       }
       if (inserted > 0) {
+        const phoneIds = new Set(events.map((event) => event.phoneNumberId?.trim() || null));
+        const phoneNumberId = phoneIds.size === 1 ? [...phoneIds][0] ?? null : null;
         this.sql.exec(
-          `INSERT INTO deliveries (payload, status, attempts, next_attempt_at, created_at)
-           VALUES (?, 'pending', 0, ?, ?)`,
+          `INSERT INTO deliveries (phone_number_id, payload, status, attempts, next_attempt_at, created_at)
+           VALUES (?, ?, 'pending', 0, ?, ?)`,
+          phoneNumberId,
           JSON.stringify({ events }),
           now,
           now,
@@ -191,13 +331,15 @@ export class EccosGateway extends DurableObject<Env> {
     requestJson: string,
     status: "sent" | "failed",
     errorJson: string | null,
+    phoneNumberId?: string | null,
   ): void {
     this.sql.exec(
       `INSERT INTO outbound_messages
-         (transport_message_id, recipient, request, status, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (transport_message_id, recipient, phone_number_id, request, status, error, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       transportMessageId,
       recipient,
+      phoneNumberId?.trim() || null,
       requestJson,
       status,
       errorJson,
@@ -221,17 +363,26 @@ export class EccosGateway extends DurableObject<Env> {
 
   /** Operator-visible forwarding target: DO config first, env fallback. Never exposes the secret. */
   getSubscriberConfig(): SubscriberConfig {
-    const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? this.env.SUBSCRIBER_WEBHOOK_URL ?? null;
-    const hasSecret = Boolean(this.getConfigValue("SUBSCRIBER_SECRET") ?? this.env.SUBSCRIBER_SECRET);
+    const allowEnvFallback = this.env.ECCOS_MULTI_TENANT?.trim().toLowerCase() !== "true";
+    const url =
+      this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ??
+      (allowEnvFallback ? this.env.SUBSCRIBER_WEBHOOK_URL : null) ??
+      null;
+    const hasSecret = Boolean(
+      this.getConfigValue("SUBSCRIBER_SECRET") ?? (allowEnvFallback ? this.env.SUBSCRIBER_SECRET : undefined),
+    );
     return { url, hasSecret };
   }
 
   /** Rotate the forwarding target. Only overwrites the secret when a non-empty one is provided. */
   setSubscriberConfig(input: SetSubscriberConfigInput): void {
-    this.saveConfig({ SUBSCRIBER_WEBHOOK_URL: input.url });
+    const entries: Record<string, string> = {
+      SUBSCRIBER_WEBHOOK_URL: validateSubscriberUrl(input.url),
+    };
     if (typeof input.secret === "string" && input.secret.length > 0) {
-      this.saveConfig({ SUBSCRIBER_SECRET: input.secret });
+      entries.SUBSCRIBER_SECRET = input.secret;
     }
+    this.saveConfig(entries);
   }
 
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---
@@ -239,7 +390,7 @@ export class EccosGateway extends DurableObject<Env> {
   listInbound(opts: { limit?: number; before?: number } = {}): InboundRow[] {
     return this.sql
       .exec(
-        `SELECT id, type, transport_message_id, message_id, payload, received_at
+        `SELECT id, type, transport_message_id, message_id, phone_number_id, payload, received_at
          FROM inbound_events WHERE id < ? ORDER BY id DESC LIMIT ?`,
         opts.before ?? Number.MAX_SAFE_INTEGER,
         clampPage(opts.limit),
@@ -250,7 +401,7 @@ export class EccosGateway extends DurableObject<Env> {
   listOutbound(opts: { limit?: number; before?: number } = {}): OutboundRow[] {
     return this.sql
       .exec(
-        `SELECT id, transport_message_id, recipient, request, status, error, created_at
+        `SELECT id, transport_message_id, recipient, phone_number_id, request, status, error, created_at
          FROM outbound_messages WHERE id < ? ORDER BY id DESC LIMIT ?`,
         opts.before ?? Number.MAX_SAFE_INTEGER,
         clampPage(opts.limit),
@@ -261,7 +412,7 @@ export class EccosGateway extends DurableObject<Env> {
   listDeliveries(opts: { status?: string; limit?: number; before?: number } = {}): DeliveryRecord[] {
     const before = opts.before ?? Number.MAX_SAFE_INTEGER;
     const limit = clampPage(opts.limit);
-    const cols = "id, status, attempts, last_error, next_attempt_at, created_at, payload";
+    const cols = "id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, payload";
     if (opts.status) {
       return this.sql
         .exec(
@@ -277,10 +428,37 @@ export class EccosGateway extends DurableObject<Env> {
       .toArray() as unknown as DeliveryRecord[];
   }
 
+  private listAllInbound(): InboundRow[] {
+    return this.sql
+      .exec(
+        `SELECT id, type, transport_message_id, message_id, phone_number_id, payload, received_at
+         FROM inbound_events ORDER BY id DESC`,
+      )
+      .toArray() as unknown as InboundRow[];
+  }
+
+  private listAllOutbound(): OutboundRow[] {
+    return this.sql
+      .exec(
+        `SELECT id, transport_message_id, recipient, phone_number_id, request, status, error, created_at
+         FROM outbound_messages ORDER BY id DESC`,
+      )
+      .toArray() as unknown as OutboundRow[];
+  }
+
+  private listAllDeliveries(): DeliveryRecord[] {
+    return this.sql
+      .exec(
+        `SELECT id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, payload
+         FROM deliveries ORDER BY id DESC`,
+      )
+      .toArray() as unknown as DeliveryRecord[];
+  }
+
   getDelivery(id: number): DeliveryRecord | null {
     const rows = this.sql
       .exec(
-        `SELECT id, status, attempts, last_error, next_attempt_at, created_at, payload
+        `SELECT id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, payload
          FROM deliveries WHERE id = ?`,
         id,
       )
@@ -294,6 +472,27 @@ export class EccosGateway extends DurableObject<Env> {
       out[row.key as string] = row.value as string;
     }
     return out;
+  }
+
+  /**
+   * Tenant-scoped data-plane export: every stored inbound event, outbound
+   * message, and delivery (existing row shapes, newest first), plus the
+   * non-secret connection metadata/config (secrets and raw credentials are
+   * filtered — see EXPORT_PRIVATE_CONFIG_KEYS). Deterministic and JSON-serializable:
+   * fixed key order, tables ordered inbound → outbound → deliveries → config,
+   * rows ordered by id within each table, and no runtime values (timestamps,
+   * ids) beyond what is already stored. Single snapshot: no limit/pagination —
+   * a tenants' full retained history at single-tenant v1 volumes.
+   */
+  exportData(): GatewayExport {
+    return {
+      inbound: this.listAllInbound(),
+      outbound: this.listAllOutbound(),
+      deliveries: this.listAllDeliveries(),
+      config: Object.fromEntries(
+        Object.entries(this.getAllConfig()).filter(([key]) => !PRIVATE_CONFIG_KEYS.has(key)),
+      ),
+    };
   }
 
   getCounts(): OperatorCounts {
@@ -432,8 +631,17 @@ export class EccosGateway extends DurableObject<Env> {
         const kept = batch.events.filter((ev) => !erasureTargetsEvent(ev, digits, wamids));
         if (kept.length === batch.events.length) continue;
         if (kept.length > 0) {
+          const keptPhoneIds = new Set(
+            kept.flatMap((event) => {
+              if (!event || typeof event !== "object") return [];
+              const phoneNumberId = (event as Record<string, unknown>).phoneNumberId;
+              return typeof phoneNumberId === "string" && phoneNumberId.trim() !== "" ? [phoneNumberId] : [];
+            }),
+          );
+          const phoneNumberId = keptPhoneIds.size === 1 ? [...keptPhoneIds][0] ?? null : null;
           this.sql.exec(
-            `UPDATE deliveries SET payload = ? WHERE id = ?`,
+            `UPDATE deliveries SET phone_number_id = ?, payload = ? WHERE id = ?`,
+            phoneNumberId,
             JSON.stringify({ ...batch, events: kept }),
             row.id,
           );
@@ -526,9 +734,16 @@ export class EccosGateway extends DurableObject<Env> {
    * operator which one happened.
    */
   private async forwardOne(payload: string): Promise<ForwardOutcome> {
-    const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? this.env.SUBSCRIBER_WEBHOOK_URL;
-    const secret = this.getConfigValue("SUBSCRIBER_SECRET") ?? this.env.SUBSCRIBER_SECRET;
-    if (!url) return { ok: false, reason: "no subscriber URL configured" };
+    const allowEnvFallback = this.env.ECCOS_MULTI_TENANT?.trim().toLowerCase() !== "true";
+    const rawUrl = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? (allowEnvFallback ? this.env.SUBSCRIBER_WEBHOOK_URL : undefined);
+    const secret = this.getConfigValue("SUBSCRIBER_SECRET") ?? (allowEnvFallback ? this.env.SUBSCRIBER_SECRET : undefined);
+    if (!rawUrl) return { ok: false, reason: "no subscriber URL configured" };
+    let url: string;
+    try {
+      url = validateSubscriberUrl(rawUrl);
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (secret) {
       headers["x-eccos-signature"] = await signPayload(payload, secret);
@@ -545,6 +760,7 @@ export class EccosGateway extends DurableObject<Env> {
       method: "POST",
       headers,
       body: payload,
+      redirect: "error",
       signal: AbortSignal.timeout(FORWARD_FETCH_TIMEOUT_MS),
     });
     const ok = res.ok;

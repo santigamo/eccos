@@ -1,4 +1,4 @@
-import { graphBaseUrl, type CoreConfig } from "./config-schema";
+import { graphBaseUrl, type MetaAppConfig } from "./config-schema";
 
 export type SendResult =
   | { ok: true; id: string }
@@ -10,10 +10,14 @@ export type SendResult =
  * `{ to, type: "template", template: {...} }`.
  */
 export async function sendMessage(
-  cfg: CoreConfig,
+  cfg: MetaAppConfig,
   body: Record<string, unknown>,
 ): Promise<SendResult> {
-  const url = `${graphBaseUrl(cfg)}/${cfg.META_PHONE_NUMBER_ID}/messages`;
+  const phoneNumberId = cfg.META_PHONE_NUMBER_ID;
+  if (!phoneNumberId) {
+    return { ok: false, status: 0, error: "META_PHONE_NUMBER_ID is not configured" };
+  }
+  const url = `${graphBaseUrl(cfg)}/${phoneNumberId}/messages`;
 
   let res: Response;
   try {

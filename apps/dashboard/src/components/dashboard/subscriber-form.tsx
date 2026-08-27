@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
 import {
   setSubscriberConfig,
@@ -33,12 +33,16 @@ function NoticeBox({ notice }: { notice: Notice | null }) {
   );
 }
 
-export function SubscriberForm({ config }: { config: SubscriberConfig }) {
+export function SubscriberForm({ config, wabaId }: { config: SubscriberConfig; wabaId?: string }) {
   const router = useRouter();
   const [url, setUrl] = useState(config.url ?? "");
   const [secret, setSecret] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+
+  useEffect(() => {
+    setUrl(config.url ?? "");
+  }, [config.url]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -47,7 +51,7 @@ export function SubscriberForm({ config }: { config: SubscriberConfig }) {
     try {
       const trimmed = secret.trim();
       const payload = trimmed ? { url, secret: trimmed } : { url };
-      const res = await setSubscriberConfig({ data: payload });
+      const res = await setSubscriberConfig({ data: { ...payload, wabaId } });
       if (res.ok) {
         setSecret("");
         setNotice({ ok: true, text: "Saved. Forwarding target updated." });

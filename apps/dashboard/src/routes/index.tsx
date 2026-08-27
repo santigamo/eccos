@@ -8,7 +8,8 @@ import {
 } from "../components/reui/frame";
 import { cn } from "@/lib/utils";
 import {
-  getGatewayStatus,
+  getDashboardOverview,
+  type DashboardScope,
   type GatewayStatus,
   type Health,
 } from "../server/gateway";
@@ -22,7 +23,8 @@ import {
 } from "../ui";
 
 export const Route = createFileRoute("/")({
-  loader: () => getGatewayStatus(),
+  loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
+  loader: ({ deps }) => getDashboardOverview({ data: { wabaId: deps.wabaId } }),
   component: StatusPage,
 });
 
@@ -87,13 +89,13 @@ function StatusPage() {
     );
   }
 
-  const meta = result.ok ? HEALTH_META[result.status.health] : UNREACHABLE_META;
+  const meta = result.ok ? HEALTH_META[result.data.status.health] : UNREACHABLE_META;
 
   return (
     <Page title="Status" kicker="Gateway" actions={<HealthBadge meta={meta} />}>
       <StatusBanner banner={meta.banner} />
       {result.ok ? (
-        <StatusView status={result.status} />
+        <StatusView status={result.data.status} scope={result.data.scope} />
       ) : (
         <Unreachable error={result.error} />
       )}
@@ -133,13 +135,13 @@ function HealthBadge({ meta }: { meta: HealthMeta }) {
   );
 }
 
-function StatusView({ status }: { status: GatewayStatus }) {
+function StatusView({ status, scope }: { status: GatewayStatus; scope: DashboardScope }) {
   const { connection, counts } = status;
   return (
     <>
       {/* hatch → facts, the landing's chapter opening: the pulse first,
           reference details after. */}
-      <FactsStrip counts={counts} />
+      <FactsStrip counts={counts} selectedWabaId={scope.selectedWabaId} />
 
       {/* `fit`: the connection panel sizes to its four fields. Without it the
           panel grows to fill its frame and opens a hole under the list. */}
@@ -152,10 +154,60 @@ function StatusView({ status }: { status: GatewayStatus }) {
         </dl>
       </StatusPanel>
 
+      <ScopePanel scope={scope} />
+
       <p className="mt-auto pt-8 text-muted-foreground text-xs">
         {status.name} · v{status.version}
       </p>
     </>
+  );
+}
+
+function ScopePanel({ scope }: { scope: DashboardScope }) {
+  if (scope.mode === "legacy") {
+    return (
+      <StatusPanel title="Scope" fit className="mt-6">
+        <dl className="m-0 divide-y divide-(--frame-panel-border-color)">
+          <Field label="Mode" value="Single tenant" />
+          <Field label="Selected WABA" value={scope.selectedWabaId} />
+        </dl>
+      </StatusPanel>
+    );
+  }
+
+  const account = scope.resources.account;
+  return (
+    <StatusPanel title="Scope" fit className="mt-6">
+      <dl className="m-0 divide-y divide-(--frame-panel-border-color)">
+        <Field label="Mode" value="Account scoped" />
+        <Field label="Account" value={account?.name || null} />
+        <Field label="Account ID" value={account?.accountId || scope.accountId} />
+        <Field label="Selected WABA" value={scope.selectedWabaId} />
+      </dl>
+      <div className="border-t border-(--frame-panel-border-color) pt-3">
+        <p className="text-muted-foreground text-xs uppercase tracking-wider">Registered WABAs and phones</p>
+        <ul className="m-0 mt-3 list-none space-y-3 p-0">
+          {scope.resources.wabas.map((waba) => (
+            <li key={waba.wabaId}>
+              <p className="m-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-foreground">
+                <span className="font-mono text-xs">{waba.wabaId}</span>
+                {waba.wabaId === scope.selectedWabaId ? (
+                  <span className="text-muted-foreground text-[11px] uppercase tracking-wider">selected</span>
+                ) : null}
+              </p>
+              <ul className="m-0 mt-1 list-none space-y-1 border-l border-(--line) pl-3 text-muted-foreground text-xs">
+                {waba.phones.map((phone) => (
+                  <li key={phone.phoneNumberId}>
+                    <span className="font-mono">{phone.phoneNumberId}</span>
+                    <span className="ml-2">{phone.displayPhoneNumber || "not labelled"}</span>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </StatusPanel>
   );
 }
 
@@ -164,7 +216,7 @@ function StatusView({ status }: { status: GatewayStatus }) {
  * page's rules and rails, so the numbers sit in the structure instead of
  * floating above it. Every figure is a door into the log that proves it.
  */
-function FactsStrip({ counts }: { counts: GatewayStatus["counts"] }) {
+function FactsStrip({ counts, selectedWabaId }: { counts: GatewayStatus["counts"]; selectedWabaId: string }) {
   const outbound = countTotal(counts.outbound);
   const deliveries = countTotal(counts.deliveries);
   return (
@@ -178,6 +230,7 @@ function FactsStrip({ counts }: { counts: GatewayStatus["counts"] }) {
         total={
           <Link
             to="/inbound"
+            search={{ wabaId: selectedWabaId }}
             aria-label={`${counts.inbound} inbound events received`}
             className={COUNT_LINK}
           >
@@ -191,6 +244,7 @@ function FactsStrip({ counts }: { counts: GatewayStatus["counts"] }) {
         total={
           <Link
             to="/outbound"
+            search={{ wabaId: selectedWabaId }}
             aria-label={`${outbound} outbound messages sent`}
             className={COUNT_LINK}
           >
@@ -198,7 +252,7 @@ function FactsStrip({ counts }: { counts: GatewayStatus["counts"] }) {
           </Link>
         }
       >
-        <StatusCounts label="outbound" counts={counts.outbound} target="outbound" />
+        <StatusCounts label="outbound" counts={counts.outbound} target="outbound" wabaId={selectedWabaId} />
       </FactCell>
       <FactCell
         kicker="Deliveries"
@@ -206,6 +260,7 @@ function FactsStrip({ counts }: { counts: GatewayStatus["counts"] }) {
         total={
           <Link
             to="/deliveries"
+            search={{ wabaId: selectedWabaId }}
             aria-label={`${deliveries} delivery forward attempts`}
             className={COUNT_LINK}
           >
@@ -217,6 +272,7 @@ function FactsStrip({ counts }: { counts: GatewayStatus["counts"] }) {
           label="deliveries"
           counts={counts.deliveries}
           target="deliveries"
+          wabaId={selectedWabaId}
         />
       </FactCell>
     </section>

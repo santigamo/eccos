@@ -3,6 +3,7 @@ import { createExecutionContext, runInDurableObject, reset } from "cloudflare:te
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import type { EccosGateway } from "../../src/gateway";
+import { validateSubscriberUrl } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import { gatewayStub } from "./helpers";
@@ -19,6 +20,89 @@ function makeRpc() {
 }
 
 describe("subscriber config (feature A)", () => {
+  it("rejects insecure and private subscriber URLs", async () => {
+    for (const url of [
+      "http://subscriber.example/hook",
+      "ftp://subscriber.example/hook",
+      "https://127.0.0.1/hook",
+      "https://127.0.0.010/hook",
+      "https://2130706433/hook",
+      "https://[::1]/hook",
+      "https://[::ffff:127.0.0.1]/hook",
+      "https://[fc00::1]/hook",
+      "https://[fe80::1]/hook",
+      "https://192.0.0.1/hook",
+      "https://198.18.0.1/hook",
+      "https://224.0.0.1/hook",
+      "https://user:password@subscriber.example/hook",
+    ]) {
+      expect(() => validateSubscriberUrl(url)).toThrow(/invalid subscriber URL/);
+    }
+    await expect(makeRpc().setSubscriberConfig({ url: "https://subscriber.example/hook", secret: "s" }, TEST_WABA_ID)).resolves.toEqual({ ok: true });
+  });
+
+  it("does not misclassify ordinary DNS names that start like IPv6 prefixes", async () => {
+    await expect(
+      makeRpc().setSubscriberConfig({ url: "https://fc.example/hook" }, TEST_WABA_ID),
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it("validates the legacy environment fallback before forwarding", async () => {
+    const mutableEnv = env as unknown as {
+      SUBSCRIBER_WEBHOOK_URL?: string;
+      SUBSCRIBER_SECRET?: string;
+    };
+    const oldUrl = mutableEnv.SUBSCRIBER_WEBHOOK_URL;
+    const oldSecret = mutableEnv.SUBSCRIBER_SECRET;
+    mutableEnv.SUBSCRIBER_WEBHOOK_URL = "http://127.0.0.1/hook";
+    mutableEnv.SUBSCRIBER_SECRET = "env-secret";
+    try {
+      await gatewayStub().ingest([
+        {
+          type: "reply",
+          from: "34600000000",
+          messageId: "wamid.ENV_INVALID",
+          text: "hello",
+          at: 1_700_000_000_000,
+        },
+      ]);
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unexpected", { status: 200 }));
+      await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+        await i.alarm();
+        expect(i.getDelivery(1)).toMatchObject({
+          status: "pending",
+          last_error: "invalid subscriber URL: must use https",
+        });
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      mutableEnv.SUBSCRIBER_WEBHOOK_URL = oldUrl;
+      mutableEnv.SUBSCRIBER_SECRET = oldSecret;
+    }
+  });
+
+  it("rejects redirects instead of following a subscriber location", async () => {
+    await makeRpc().setSubscriberConfig({ url: "https://subscriber.example/hook" }, TEST_WABA_ID);
+    await gatewayStub().ingest([
+      {
+        type: "reply",
+        from: "34600000000",
+        messageId: "wamid.REDIRECT",
+        text: "hello",
+        at: 1_700_000_000_000,
+      },
+    ]);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("redirect", { status: 302, headers: { location: "http://127.0.0.1/hook" } }),
+    );
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      await i.alarm();
+      const call = fetchMock.mock.calls.find(([url]) => String(url) === "https://subscriber.example/hook");
+      expect(call?.[1]?.redirect).toBe("error");
+      expect(i.getDelivery(1)).toMatchObject({ status: "pending", last_error: "subscriber returned 302" });
+    });
+  });
+
   it("round-trips url + secret but NEVER exposes the secret value", async () => {
     const rpc = makeRpc();
     const secret = "s3cr3t-rotation-value";

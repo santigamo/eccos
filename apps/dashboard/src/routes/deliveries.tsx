@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
@@ -19,7 +19,7 @@ import {
 const PAGE_SIZE = 50;
 const KNOWN_STATUSES = ["pending", "delivered", "failed"] as const;
 
-type DeliveriesSearch = { status?: string; before?: number };
+type DeliveriesSearch = { status?: string; before?: number; wabaId?: string };
 
 export const Route = createFileRoute("/deliveries")({
   validateSearch: (search: Record<string, unknown>): DeliveriesSearch => {
@@ -30,11 +30,15 @@ export const Route = createFileRoute("/deliveries")({
     const beforeNum = Number(search.before);
     const before =
       Number.isFinite(beforeNum) && beforeNum > 0 ? Math.floor(beforeNum) : undefined;
-    return { status, before };
+    const wabaId =
+      typeof search.wabaId === "string" && search.wabaId.trim() !== ""
+        ? search.wabaId.trim()
+        : undefined;
+    return { status, before, wabaId };
   },
-  loaderDeps: ({ search }) => ({ status: search.status, before: search.before }),
+  loaderDeps: ({ search }) => ({ status: search.status, before: search.before, wabaId: search.wabaId }),
   loader: ({ deps }) =>
-    listDeliveries({ data: { status: deps.status, before: deps.before } }),
+    listDeliveries({ data: { status: deps.status, before: deps.before, wabaId: deps.wabaId } }),
   component: DeliveriesPage,
 });
 
@@ -42,7 +46,8 @@ const columnHelper = createColumnHelper<DataGridFeatures, DeliveryRecord>();
 
 function DeliveriesPage() {
   const result = Route.useLoaderData();
-  const { status, before } = Route.useSearch();
+  const { status, before, wabaId } = Route.useSearch();
+  const scope = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
   const router = useRouter();
   const [retrying, setRetrying] = useState<number | null>(null);
@@ -71,7 +76,7 @@ function DeliveriesPage() {
   async function onRetry(id: number) {
     setRetrying(id);
     try {
-      await retryDelivery({ data: id });
+      await retryDelivery({ data: { id, wabaId: wabaId ?? (scope.ok ? scope.data.selectedWabaId : undefined) } });
       await router.invalidate();
     } finally {
       setRetrying(null);
@@ -89,6 +94,12 @@ function DeliveriesPage() {
         headerClassName: "text-right",
         cellClassName: "text-right whitespace-nowrap",
       },
+    }),
+    columnHelper.accessor("phone_number_id", {
+      id: "phone_number_id",
+      header: "Phone ID",
+      cell: (info) => <span className="font-mono text-xs">{info.getValue() ?? "\u2014"}</span>,
+      meta: { cellClassName: "text-foreground/80 break-all" },
     }),
     columnHelper.accessor("status", {
       id: "status",
@@ -191,7 +202,7 @@ function DeliveriesPage() {
           variant="link"
           size="sm"
           className="h-auto p-0 text-sm"
-          onClick={() => navigate({ search: () => ({}) })}
+          onClick={() => navigate({ search: () => ({ wabaId }) })}
         >
           Clear filters
         </Button>

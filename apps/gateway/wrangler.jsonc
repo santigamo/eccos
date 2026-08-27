@@ -13,7 +13,8 @@
 
   "durable_objects": {
     "bindings": [
-      { "name": "ECCOS", "class_name": "EccosGateway" }
+      { "name": "ECCOS", "class_name": "EccosGateway" },
+      { "name": "CONTROL_PLANE", "class_name": "EccosControlPlane" }
     ]
   },
 
@@ -35,6 +36,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["EccosGateway"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["EccosControlPlane"]
     }
   ],
 
@@ -56,6 +61,7 @@
     // points the gateway at a NEW, EMPTY Durable Object — nothing is migrated.
     // Self-hosters with existing data must remove this line before deploying.
     // See docs/deployment.md.
-    "DO_JURISDICTION": "eu"
+    "DO_JURISDICTION": "eu",
+    "ECCOS_MULTI_TENANT": "false"
   }
 }

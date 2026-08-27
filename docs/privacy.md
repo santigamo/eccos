@@ -1,10 +1,11 @@
 # Privacy & data handling
 
-Eccos is **self-hosted, single-tenant** software: the operator who deploys it *is* the data
-controller for whatever data it stores. This document describes, based on the actual code, what
-personal data Eccos stores, where, for how long, who can see it, and how an operator can inspect,
-export, or delete it. It complements `docs/threat-model.md` (attack surfaces / mitigations) and
-`SECURITY.md` (vulnerability reporting).
+Eccos can run as self-hosted single-tenant software or as an account-scoped Workers deployment.
+The operator is the data controller for the data it stores, and a Cloud deployment is responsible
+for isolating each account's WABAs and phones. This document describes, based on the actual code,
+what personal data Eccos stores, where, for how long, who can see it, and how an operator can
+inspect, export, or delete it. It complements `docs/threat-model.md` (attack surfaces / mitigations)
+and `SECURITY.md` (vulnerability reporting).
 
 ## 1. What data Eccos stores
 
@@ -13,10 +14,10 @@ delivery of WhatsApp events, plus a short operator-visible history.
 
 | Data | Contains | Table / store | Where |
 |---|---|---|---|
-| Inbound events | WhatsApp phone number (`from`), Meta message id (`messageId`), **message text** (for `reply` events), timestamps | `inbound_events` | DO SQLite (Workers) / `bun:sqlite` (Bun target) |
-| Outbound (sent) messages | Recipient phone number (`to`), the full outbound request JSON (which includes message content you asked Eccos to send), Meta transport message id, send status/error | `outbound_messages` | DO SQLite / `bun:sqlite` |
-| Delivery/status/echo events | Meta transport message id, delivery/read/failed status, error codes, or (for `echo`) staff-sent reply text from WhatsApp coexistence | `inbound_events` (statuses share the same table as replies) | DO SQLite / `bun:sqlite` |
-| Forwarding queue (`deliveries`) | A JSON copy of the batch of normalized events (`{ events: [...] }`) queued to POST to your subscriber, plus attempt count / last error | `deliveries` | DO SQLite / `bun:sqlite` |
+| Inbound events | Business phone number id, WhatsApp phone number (`from`), Meta message id (`messageId`), **message text** (for `reply` events), timestamps | `inbound_events` | DO SQLite (Workers) / `bun:sqlite` (Bun target) |
+| Outbound (sent) messages | Business phone number id, recipient phone number (`to`), the full outbound request JSON (which includes message content you asked Eccos to send), Meta transport message id, send status/error | `outbound_messages` | DO SQLite / `bun:sqlite` |
+| Delivery/status/echo events | Business phone number id when Meta supplies it, Meta transport message id, delivery/read/failed status, error codes, or (for `echo`) staff-sent reply text from WhatsApp coexistence | `inbound_events` (statuses share the same table as replies) | DO SQLite / `bun:sqlite` |
+| Forwarding queue (`deliveries`) | Business phone number id and a JSON copy of the batch of normalized events (`{ events: [...] }`) queued to POST to your subscriber, plus attempt count / last error | `deliveries` | DO SQLite / `bun:sqlite` |
 | Onboarding/config metadata | `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable `SUBSCRIBER_WEBHOOK_URL` / `SUBSCRIBER_SECRET` override | `config` table | DO SQLite only (`apps/gateway/src/gateway.ts`) |
 
 Source of truth for the exact columns: `apps/gateway/src/gateway.ts` (`CREATE TABLE` statements)
@@ -43,8 +44,8 @@ model so message content ages out before the operational audit trail does:
     and `outbound_messages` rows are **deleted**, and terminal (`delivered`/`failed`)
     `deliveries` rows are **redacted in place** — `payload` (the stored copy of the forwarded
     event batch, i.e. the message content) is emptied while `id`, `status`, `attempts`,
-    `last_error`, `next_attempt_at`, and `created_at` survive. After this window no message
-    content or phone number remains anywhere in storage.
+    `last_error`, `next_attempt_at`, `created_at`, and the business `phone_number_id` survive.
+    After this window no message content or contact phone number remains anywhere in storage.
   - **`DELIVERY_RETENTION_DAYS`** (default **90**): past it, the metadata-only terminal
     `deliveries` rows are deleted entirely.
 
@@ -139,31 +140,29 @@ See also the "Data handling & logging" note in `SECURITY.md`. Concretely:
   being no logging of request/response bodies today. Neither is checked by an automated lint rule
   or test — keep this in mind when adding new logging to either target.
 
-## 6. Delete / export for a single-tenant self-host
+## 6. Delete / export
 
-Since you (the operator) run the only instance and hold the only credentials, "export" and
-"delete" are things *you* do directly against your own infrastructure — there is no multi-tenant
-API to build for this.
+In legacy mode the operator owns the only account. In Workers multi-tenant mode, every export and
+erasure request is checked against the authenticated account's WABA registry before the data-plane
+object is touched.
 
 **Export (Workers target):**
-- The operator RPC surface already exposes paginated reads — `listInbound`, `listOutbound`,
-  `listDeliveries` (`apps/gateway/src/rpc.ts`, backed by `apps/gateway/src/gateway.ts`), each
-  capped at `OPERATOR_MAX_PAGE = 200` rows per call via the `before` cursor (`id <`). Paging
-  through these via the dashboard's server functions (`apps/dashboard/src/server/gateway.ts`) or a
-  small script bound to `GatewayRPC` is today's mechanism to dump all stored data to JSON.
-- There is **no built-in "export all" button or bulk-download endpoint** — this is a gap; if you
-  need a full export, page through the above or attach `wrangler dev`/a Worker script directly to
-  the `EccosGateway` Durable Object's SQL storage.
+- `GET /v1/wabas/<WABA_ID>/export` returns the full retained snapshot of inbound, outbound, delivery,
+  and non-secret config rows. It requires the owning account key in multi-tenant mode and the legacy
+  API key otherwise. The RPC surface also exposes `exportData()` for the private dashboard binding.
+- The paginated `listInbound`, `listOutbound`, and `listDeliveries` methods remain available for
+  cursor-based reads. Export rows include the business `phone_number_id` when the event or send had
+  a known phone.
 
 **Delete (Workers target):**
 - Normal operation already removes message content automatically after ~30 days and the
   remaining delivery metadata after ~90 (§2).
 - <a id="erasure"></a>**Per-number erasure (GDPR Art. 17)** — `EccosGateway.eraseByPhone(phone)`,
   exposed as `GatewayRPC.eraseByPhone()` (operator RPC, service binding only) and as
-  `POST /v1/wabas/<WABA_ID>/privacy/erasure` with body `{"phone": "+34..."}` behind the same Bearer
-  `ECCOS_API_KEY` gate as the rest of `/v1` (the number travels in the body, never the URL, so
-  it can't leak into request logs). It removes every stored trace of one phone number and
-  returns per-table counts as evidence of the erasure. How it matches:
+  `POST /v1/wabas/<WABA_ID>/privacy/erasure` with body `{"phone": "+34..."}` behind the account
+  API-key gate (the number travels in the body, never the URL, so it can't leak into request logs).
+  It removes every stored trace of one phone number and returns per-table counts as evidence of the
+  erasure. How it matches:
   - the input and stored numbers are normalized to digits-only and compared for exact equality —
     pass the full international number (`+34 600 00 00 00`, `34600000000`, … all match the same
     stored contact; a national short form does not);

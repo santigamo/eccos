@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { extractTokenTargetIds } from "../src/meta/connect-api";
+import { extractTokenTargetIds, findWabaPhoneNumbersForToken, listPhoneNumbers } from "../src/meta/connect-api";
 import { connectRoutes, extractApiKey, isAuthorized, oauthStateIsValid } from "../src/routes/connect";
 
 describe("extractTokenTargetIds", () => {
@@ -15,6 +15,64 @@ describe("extractTokenTargetIds", () => {
         },
       }),
     ).toEqual(["waba-1", "waba-2"]);
+  });
+});
+
+describe("listPhoneNumbers", () => {
+  it("follows Meta pagination without putting the business token in the URL", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (requests.length === 1) {
+        return new Response(
+          JSON.stringify({
+            data: [{ id: "PN_1", display_phone_number: "+34 600 000 001" }],
+            paging: {
+              next: "https://graph.facebook.com/v24.0/WABA/phone_numbers?after=cursor&access_token=secret-token",
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ data: [{ id: "PN_2" }] }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(
+      listPhoneNumbers({ META_GRAPH_VERSION: "v24.0" }, "WABA", "secret-token"),
+    ).resolves.toEqual([
+      { id: "PN_1", display_phone_number: "+34 600 000 001" },
+      { id: "PN_2" },
+    ]);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.url).not.toContain("access_token");
+    expect(requests[1]?.url).not.toContain("access_token");
+    expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer secret-token" });
+    expect(requests[1]?.init?.headers).toMatchObject({ authorization: "Bearer secret-token" });
+  });
+
+  it("keeps the app secret out of the debug-token URL", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init });
+      if (requests.length === 1) {
+        return new Response(
+          JSON.stringify({ data: { granular_scopes: [{ scope: "whatsapp_business_management", target_ids: ["WABA"] }] } }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ data: [{ id: "PN" }] }), { status: 200 });
+    }) as typeof fetch;
+
+    await expect(
+      findWabaPhoneNumbersForToken(
+        { META_GRAPH_VERSION: "v24.0", META_APP_ID: "app-id", META_APP_SECRET: "app-secret" },
+        "business-token",
+      ),
+    ).resolves.toEqual([{ wabaId: "WABA", phones: [{ id: "PN" }] }]);
+    expect(requests[0]?.url).not.toContain("app-secret");
+    expect(requests[0]?.url).not.toContain("access_token");
+    expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer app-id|app-secret" });
   });
 });
 

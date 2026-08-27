@@ -9,7 +9,8 @@ import type { InboundRow } from "../server/gateway";
 import { Page, Unreachable, fmtTs } from "../ui";
 
 export const Route = createFileRoute("/inbound")({
-  loader: () => listInbound(),
+  loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
+  loader: ({ deps }) => listInbound({ data: { wabaId: deps.wabaId } }),
   component: InboundPage,
 });
 
@@ -40,6 +41,12 @@ const columns = [
     header: "Type",
     cell: (info) => info.getValue(),
     meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("phone_number_id", {
+    id: "phone_number_id",
+    header: "Phone ID",
+    cell: (info) => <span className="font-mono text-xs">{info.getValue() ?? "\u2014"}</span>,
+    meta: { cellClassName: "text-foreground/80 break-all" },
   }),
   columnHelper.accessor("payload", {
     id: "summary",

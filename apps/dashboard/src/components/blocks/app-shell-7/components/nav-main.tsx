@@ -1,6 +1,6 @@
 "use client"
 
-import { Link, useLocation } from "@tanstack/react-router"
+import { Link, useLocation, useSearch } from "@tanstack/react-router"
 
 import {
   SidebarGroup,
@@ -14,6 +14,7 @@ import { NAV_MAIN } from "./data"
 
 export function NavMain() {
   const { pathname } = useLocation()
+  const { wabaId } = useSearch({ from: "__root__" })
 
   return (
     <SidebarGroup>
@@ -29,7 +30,7 @@ export function NavMain() {
                 <SidebarMenuButton
                   tooltip={item.label}
                   isActive={isActive}
-                  render={<Link to={item.href} />}
+                  render={<Link to={item.href} search={{ wabaId }} />}
                 >
                   {item.icon}
                   <span>{item.label}</span>

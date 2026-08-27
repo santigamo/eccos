@@ -1,12 +1,16 @@
-import { graphBaseUrl, type CoreConfig } from "./config-schema";
+import { graphBaseUrl, type MetaAppConfig } from "./config-schema";
 
 export type TemplatesResult =
   | { ok: true; data: unknown }
   | { ok: false; status: number; error: unknown };
 
 /** List approved/pending message templates for the configured WABA. */
-export async function listTemplates(cfg: CoreConfig, limit = 100): Promise<TemplatesResult> {
-  const url = `${graphBaseUrl(cfg)}/${cfg.META_WABA_ID}/message_templates?limit=${limit}`;
+export async function listTemplates(cfg: MetaAppConfig, limit = 100): Promise<TemplatesResult> {
+  const wabaId = cfg.META_WABA_ID;
+  if (!wabaId) {
+    return { ok: false, status: 0, error: "META_WABA_ID is not configured" };
+  }
+  const url = `${graphBaseUrl(cfg)}/${wabaId}/message_templates?limit=${limit}`;
 
   let res: Response;
   try {

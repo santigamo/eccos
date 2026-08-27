@@ -14,6 +14,7 @@ export interface InboundRow {
   type: string;
   transport_message_id: string | null;
   message_id: string | null;
+  phone_number_id: string | null;
   payload: string;
   received_at: number;
 }
@@ -22,6 +23,7 @@ export interface OutboundRow {
   id: number;
   transport_message_id: string | null;
   recipient: string;
+  phone_number_id: string | null;
   request: string;
   status: string;
   error: string | null;
@@ -30,6 +32,7 @@ export interface OutboundRow {
 
 export interface DeliveryRecord {
   id: number;
+  phone_number_id: string | null;
   status: string;
   attempts: number;
   last_error: string | null;
@@ -91,19 +94,81 @@ export type EraseByPhoneResult =
   | { ok: true; phone: string; counts: ErasureCounts }
   | { ok: false; error: string };
 
+// --- Account resources (multi-tenant operator surface) -----------------------
+
+export interface AccountSummary {
+  accountId: string;
+  name: string;
+  createdAt: number;
+}
+
+export interface AccountKeyResource {
+  keyId: string;
+  label: string | null;
+  createdAt: number;
+  revokedAt: number | null;
+}
+
+export interface AccountPhoneResource {
+  wabaId: string;
+  phoneNumberId: string;
+  displayPhoneNumber: string;
+}
+
+export type ProvisioningStatus = "pending" | "active" | "failed";
+
+export interface AccountWabaResource {
+  accountId: string;
+  wabaId: string;
+  callbackUrl: string | null;
+  createdAt: number;
+  status: ProvisioningStatus;
+  provisioningError: string | null;
+  phones: Omit<AccountPhoneResource, "wabaId">[];
+}
+
+/** Enumeration of an account's durable resources as seen by the operator.
+ * Credentials are never exposed (no API-key hashes, no Meta tokens). */
+export interface AccountResources {
+  account: AccountSummary | null;
+  keys: AccountKeyResource[];
+  wabas: AccountWabaResource[];
+  phones: AccountPhoneResource[];
+}
+
+export interface GatewayExport {
+  inbound: InboundRow[];
+  outbound: OutboundRow[];
+  deliveries: DeliveryRecord[];
+  config: Record<string, string>;
+}
+
 export interface GatewayApi {
-  getStatus(wabaId: string): Promise<GatewayStatus>;
-  getConfig(wabaId: string): Promise<Record<string, string>>;
-  listInbound(opts: ListOpts): Promise<InboundRow[]>;
-  listOutbound(opts: ListOpts): Promise<OutboundRow[]>;
-  listDeliveries(opts: DeliveryListOpts): Promise<DeliveryRecord[]>;
-  getDelivery(id: number, wabaId: string): Promise<DeliveryRecord | null>;
-  retryDelivery(id: number, wabaId: string): Promise<{ ok: boolean; previousStatus: string | null }>;
-  listTemplates(wabaId: string, limit?: number): Promise<TemplatesResult>;
-  getSubscriberConfig(wabaId: string): Promise<SubscriberConfig>;
-  setSubscriberConfig(input: SetSubscriberConfigInput, wabaId: string): Promise<{ ok: true }>;
-  resubscribe(wabaId: string): Promise<ResubscribeResult>;
+  /** `accountId` is optional legacy context: ignored in single-tenant mode, but
+   * required (non-empty) when the gateway runs with `ECCOS_MULTI_TENANT`. */
+  getStatus(wabaId: string, accountId?: string): Promise<GatewayStatus>;
+  getConfig(wabaId: string, accountId?: string): Promise<Record<string, string>>;
+  listInbound(opts: ListOpts, accountId?: string): Promise<InboundRow[]>;
+  listOutbound(opts: ListOpts, accountId?: string): Promise<OutboundRow[]>;
+  listDeliveries(opts: DeliveryListOpts, accountId?: string): Promise<DeliveryRecord[]>;
+  getDelivery(id: number, wabaId: string, accountId?: string): Promise<DeliveryRecord | null>;
+  retryDelivery(
+    id: number,
+    wabaId: string,
+    accountId?: string,
+  ): Promise<{ ok: boolean; previousStatus: string | null }>;
+  listTemplates(wabaId: string, limit?: number, accountId?: string): Promise<TemplatesResult>;
+  getSubscriberConfig(wabaId: string, accountId?: string): Promise<SubscriberConfig>;
+  setSubscriberConfig(
+    input: SetSubscriberConfigInput,
+    wabaId: string,
+    accountId?: string,
+  ): Promise<{ ok: true }>;
+  resubscribe(wabaId: string, accountId?: string): Promise<ResubscribeResult>;
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
    * number across inbound_events, outbound_messages, and deliveries. */
-  eraseByPhone(phone: string, wabaId: string): Promise<EraseByPhoneResult>;
+  eraseByPhone(phone: string, wabaId: string, accountId?: string): Promise<EraseByPhoneResult>;
+  exportData(wabaId: string, accountId?: string): Promise<GatewayExport>;
+  /** Enumerate the durable resources owned by one account. */
+  listAccountResources(accountId: string): Promise<AccountResources>;
 }

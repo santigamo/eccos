@@ -146,13 +146,16 @@ function addBatch(
   events: WhatsAppCallbackEvent[],
 ): void {
   if (events.length === 0) return;
+  const annotated = phoneId
+    ? events.map((event) => ({ ...event, phoneNumberId: phoneId }))
+    : events;
   const key = `${wabaId}\u0000${phoneId ?? ""}`;
   const existing = batches.get(key);
   if (existing) {
-    existing.events.push(...events);
+    existing.events.push(...annotated);
     return;
   }
-  batches.set(key, { wabaId, phoneNumberId: phoneId, events });
+  batches.set(key, { wabaId, phoneNumberId: phoneId, events: annotated });
 }
 
 export function parseMetaWebhookBatches(payload: unknown): MetaWebhookBatch[] {

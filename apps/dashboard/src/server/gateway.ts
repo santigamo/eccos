@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
 import type {
+  AccountResources,
   DeliveryListOpts,
   DeliveryRecord,
   GatewayApi,
@@ -8,6 +9,7 @@ import type {
   InboundRow,
   OutboundRow,
   ResubscribeResult,
+  SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
 
@@ -17,6 +19,7 @@ type DashboardListOpts = Omit<DeliveryListOpts, "wabaId">;
 // dashboard reads the operator surface from a single source of truth
 // (`@eccos/gateway-contract`) — no more hand-mirrored shapes.
 export type {
+  AccountResources,
   DeliveryRecord,
   GatewayStatus,
   Health,
@@ -50,6 +53,95 @@ export type GatewayStatusResult =
   | { ok: true; status: GatewayStatus }
   | { ok: false; error: string };
 
+export type DashboardScope =
+  | {
+      mode: "legacy";
+      accountId: null;
+      selectedWabaId: string;
+      resources: null;
+    }
+  | {
+      mode: "account";
+      accountId: string;
+      selectedWabaId: string;
+      pinned: boolean;
+      resources: AccountResources;
+    };
+
+export interface DashboardOverview {
+  status: GatewayStatus;
+  scope: DashboardScope;
+}
+
+export type DashboardOverviewResult = Result<DashboardOverview>;
+export type DashboardScopeInput = { wabaId?: string };
+
+const WABA_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function inputRecord(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("invalid dashboard request");
+  }
+  return input as Record<string, unknown>;
+}
+
+function optionalWabaId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error("wabaId must be a string");
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (!WABA_ID_PATTERN.test(normalized)) throw new Error("invalid wabaId");
+  return normalized;
+}
+
+function validateScopeInput(input: unknown): DashboardScopeInput | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  return wabaId ? { wabaId } : {};
+}
+
+function validateDeliveryInput(input: unknown): (DashboardListOpts & DashboardScopeInput) | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  const status = record.status === undefined ? undefined : record.status;
+  if (status !== undefined && (typeof status !== "string" || status.length === 0 || status.length > 100)) {
+    throw new Error("status must be a non-empty string");
+  }
+  const limit = record.limit === undefined ? undefined : record.limit;
+  if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0)) {
+    throw new Error("limit must be a positive integer");
+  }
+  const before = record.before === undefined ? undefined : record.before;
+  if (before !== undefined && (typeof before !== "number" || !Number.isSafeInteger(before) || before <= 0)) {
+    throw new Error("before must be a positive integer");
+  }
+  return { ...(wabaId ? { wabaId } : {}), ...(status !== undefined ? { status } : {}), ...(limit !== undefined ? { limit } : {}), ...(before !== undefined ? { before } : {}) };
+}
+
+function validateRetryInput(input: unknown): { id: number } & DashboardScopeInput {
+  const record = inputRecord(input);
+  if (typeof record.id !== "number" || !Number.isSafeInteger(record.id) || record.id <= 0) {
+    throw new Error("id must be a positive integer");
+  }
+  const wabaId = optionalWabaId(record.wabaId);
+  return { id: record.id, ...(wabaId ? { wabaId } : {}) };
+}
+
+function validateSubscriberInput(input: unknown): SetSubscriberConfigInput & DashboardScopeInput {
+  const record = inputRecord(input);
+  if (typeof record.url !== "string" || record.url.trim() === "") throw new Error("url must be a non-empty string");
+  if (record.secret !== undefined && typeof record.secret !== "string") throw new Error("secret must be a string");
+  const wabaId = optionalWabaId(record.wabaId);
+  const secret = typeof record.secret === "string" ? record.secret.trim() : "";
+  return { url: record.url, ...(secret ? { secret } : {}), ...(wabaId ? { wabaId } : {}) };
+}
+
+function requireExplicitWabaId(input: DashboardScopeInput | undefined): void {
+  if (configuredAccountId() && !input?.wabaId) throw new Error("wabaId is required for dashboard actions");
+}
+
 /**
  * Read the `GATEWAY` service binding and invoke the gateway's RPC entrypoint.
  *
@@ -77,57 +169,196 @@ function configuredWabaId(): string {
   return wabaId;
 }
 
+function configuredAccountId(): string | undefined {
+  const accountId = env.GATEWAY_ACCOUNT_ID?.trim();
+  return accountId || undefined;
+}
+
+type ResolvedScope = {
+  wabaId: string;
+  accountId?: string;
+  pinned?: boolean;
+  resources?: AccountResources;
+};
+
+async function resolveScope(gateway: GatewayApi, requestedWabaId?: string): Promise<ResolvedScope> {
+  const accountId = configuredAccountId();
+  const requested = requestedWabaId?.trim() || undefined;
+  if (!accountId) {
+    const wabaId = configuredWabaId();
+    if (requested && requested !== wabaId) {
+      throw new Error(`WABA "${requested}" is not configured for this dashboard`);
+    }
+    return { wabaId };
+  }
+
+  const resources = await gateway.listAccountResources(accountId);
+  if (!resources.account) throw new Error(`Account "${accountId}" is not configured`);
+  const wabas = [...resources.wabas].sort((a, b) => a.wabaId.localeCompare(b.wabaId));
+  const configured = env.GATEWAY_WABA_ID?.trim();
+  if (configured && requested && requested !== configured) {
+    throw new Error(`WABA "${requested}" is not available in this dashboard deployment`);
+  }
+  const wabaId = requested || configured || wabas[0]?.wabaId;
+  if (!wabaId) throw new Error(`Account "${accountId}" has no registered WABAs`);
+  if (!wabas.some((waba) => waba.wabaId === wabaId)) {
+    throw new Error(`WABA "${wabaId}" is not owned by account "${accountId}"`);
+  }
+  return { wabaId, accountId, pinned: Boolean(configured), resources };
+}
+
+function dashboardScope(scope: ResolvedScope): DashboardScope {
+  if (!scope.accountId || !scope.resources) {
+    return { mode: "legacy", accountId: null, selectedWabaId: scope.wabaId, resources: null };
+  }
+  return {
+    mode: "account",
+    accountId: scope.accountId,
+    selectedWabaId: scope.wabaId,
+    pinned: Boolean(scope.pinned),
+    resources: {
+      ...scope.resources,
+      keys: [...scope.resources.keys].sort((a, b) => a.keyId.localeCompare(b.keyId)),
+      wabas: [...scope.resources.wabas]
+        .sort((a, b) => a.wabaId.localeCompare(b.wabaId))
+        .map((waba) => ({
+          ...waba,
+          phones: [...waba.phones].sort((a, b) => a.phoneNumberId.localeCompare(b.phoneNumberId)),
+        })),
+      phones: [...scope.resources.phones].sort(
+        (a, b) => a.wabaId.localeCompare(b.wabaId) || a.phoneNumberId.localeCompare(b.phoneNumberId),
+      ),
+    },
+  };
+}
+
+async function withScopedGateway<T>(
+  fn: (gateway: GatewayApi, scope: ResolvedScope) => Promise<T>,
+  requestedWabaId?: string,
+): Promise<Result<T>> {
+  return withGateway(async (gateway) => {
+    const scope = await resolveScope(gateway, requestedWabaId);
+    return fn(gateway, scope);
+  });
+}
+
 /** Status page loader — kept returning `{ status }` for the existing route. */
-export const getGatewayStatus = createServerFn({ method: "GET" }).handler(
-  async (): Promise<GatewayStatusResult> => {
-    const res = await withGateway((gateway) => gateway.getStatus(configuredWabaId()));
-    return res.ok ? { ok: true, status: res.data } : res;
+export const getGatewayStatus = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(
+    async ({ data }): Promise<GatewayStatusResult> => {
+      const res = await withScopedGateway(
+        (gateway, scope) => gateway.getStatus(scope.wabaId, scope.accountId),
+        data?.wabaId,
+      );
+      return res.ok ? { ok: true, status: res.data } : res;
+    },
+  );
+
+export const getDashboardScope = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(
+    ({ data }): Promise<Result<DashboardScope>> =>
+      withScopedGateway((_, scope) => Promise.resolve(dashboardScope(scope)), data?.wabaId),
+  );
+
+export const getDashboardOverview = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(
+    ({ data }): Promise<DashboardOverviewResult> =>
+      withScopedGateway(
+        async (gateway, scope) => ({
+          status: await gateway.getStatus(scope.wabaId, scope.accountId),
+          scope: dashboardScope(scope),
+        }),
+        data?.wabaId,
+      ),
+  );
+
+export const getAccountResources = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<AccountResources>> => {
+    const accountId = configuredAccountId();
+    if (!accountId) return Promise.resolve({ ok: false, error: "GATEWAY_ACCOUNT_ID is not configured" });
+    return withGateway((gateway) => gateway.listAccountResources(accountId));
   },
 );
 
 export const listDeliveries = createServerFn({ method: "GET" })
-  .validator((opts: DashboardListOpts | undefined) => opts)
+  .validator(validateDeliveryInput)
   .handler(
     ({ data }): Promise<Result<DeliveryRecord[]>> =>
-      withGateway((gateway) => gateway.listDeliveries({ ...data, wabaId: configuredWabaId() })),
+      withScopedGateway((gateway, scope) =>
+        gateway.listDeliveries({ ...data, wabaId: scope.wabaId }, scope.accountId),
+        data?.wabaId,
+      ),
   );
 
-export const listInbound = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<InboundRow[]>> =>
-    withGateway((gateway) => gateway.listInbound({ wabaId: configuredWabaId() })),
-);
+export const listInbound = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(({ data }): Promise<Result<InboundRow[]>> =>
+    withScopedGateway(
+      (gateway, scope) => gateway.listInbound({ wabaId: scope.wabaId }, scope.accountId),
+      data?.wabaId,
+    ),
+  );
 
-export const listOutbound = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<OutboundRow[]>> =>
-    withGateway((gateway) => gateway.listOutbound({ wabaId: configuredWabaId() })),
-);
+export const listOutbound = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(({ data }): Promise<Result<OutboundRow[]>> =>
+    withScopedGateway(
+      (gateway, scope) => gateway.listOutbound({ wabaId: scope.wabaId }, scope.accountId),
+      data?.wabaId,
+    ),
+  );
 
-export const listTemplates = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<TemplatesResult>> =>
-    withGateway(async (gateway) => (await gateway.listTemplates(configuredWabaId())) as TemplatesResult),
-);
+export const listTemplates = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(({ data }): Promise<Result<TemplatesResult>> =>
+    withScopedGateway(
+      async (gateway, scope) =>
+        (await gateway.listTemplates(scope.wabaId, 100, scope.accountId)) as TemplatesResult,
+      data?.wabaId,
+    ),
+  );
 
 export const retryDelivery = createServerFn({ method: "POST" })
-  .validator((id: number) => id)
+  .validator(validateRetryInput)
   .handler(
-    ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> =>
-      withGateway((gateway) => gateway.retryDelivery(data, configuredWabaId())),
+    ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> => {
+      requireExplicitWabaId(data);
+      return withScopedGateway(
+        (gateway, scope) => gateway.retryDelivery(data.id, scope.wabaId, scope.accountId),
+        data.wabaId,
+      );
+    },
   );
 
 // --- Operator actions (settings page) ---
 
 /** Read the current outbound-forwarding target. The secret is never exposed. */
-export const getSubscriberConfig = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<SubscriberConfig>> =>
-    withGateway((gateway) => gateway.getSubscriberConfig(configuredWabaId())),
-);
+export const getSubscriberConfig = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(({ data }): Promise<Result<SubscriberConfig>> =>
+    withScopedGateway(
+      (gateway, scope) => gateway.getSubscriberConfig(scope.wabaId, scope.accountId),
+      data?.wabaId,
+    ),
+  );
 
 /** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
 export const setSubscriberConfig = createServerFn({ method: "POST" })
-  .validator((input: { url: string; secret?: string }) => input)
+  .validator(validateSubscriberInput)
   .handler(
-    ({ data }): Promise<Result<{ ok: true }>> =>
-      withGateway((gateway) => gateway.setSubscriberConfig(data, configuredWabaId())),
+    ({ data }): Promise<Result<{ ok: true }>> => {
+      requireExplicitWabaId(data);
+      return withScopedGateway(
+        (gateway, scope) => {
+          const { wabaId: _wabaId, ...input } = data;
+          return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);
+        },
+        data.wabaId,
+      );
+    },
   );
 
 /**
@@ -135,7 +366,12 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
  * `Result` reports gateway reachability; the inner `ResubscribeResult` reports
  * whether Meta accepted the (re)subscription.
  */
-export const resubscribe = createServerFn({ method: "POST" }).handler(
-  (): Promise<Result<ResubscribeResult>> =>
-    withGateway((gateway) => gateway.resubscribe(configuredWabaId())),
-);
+export const resubscribe = createServerFn({ method: "POST" })
+  .validator(validateScopeInput)
+  .handler(({ data }): Promise<Result<ResubscribeResult>> => {
+    requireExplicitWabaId(data);
+    return withScopedGateway(
+      (gateway, scope) => gateway.resubscribe(scope.wabaId, scope.accountId),
+      data?.wabaId,
+    );
+  });

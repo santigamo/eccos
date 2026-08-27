@@ -154,6 +154,25 @@ describe("EccosGateway.eraseByPhone", () => {
       expect(result).toEqual({ ok: false, error: "invalid phone number: expected at least 5 digits" });
     });
   });
+
+  it("recomputes delivery phone attribution when a mixed batch is rewritten", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      const eventA = { ...replyA, phoneNumberId: "PN_A" };
+      const eventB = { ...replyB, phoneNumberId: "PN_B" };
+      const id = i.sql
+        .exec(
+          `INSERT INTO deliveries (phone_number_id, payload, status, attempts, next_attempt_at, created_at)
+           VALUES (?, ?, 'pending', 0, ?, ?) RETURNING id`,
+          "PN_A",
+          JSON.stringify({ events: [eventA, eventB] }),
+          Date.now() + 3_600_000,
+          Date.now(),
+        )
+        .toArray()[0]!.id as number;
+      i.eraseByPhone(PHONE_A);
+      expect(i.getDelivery(id)).toMatchObject({ phone_number_id: "PN_B", payload: JSON.stringify({ events: [eventB] }) });
+    });
+  });
 });
 
 describe("normalizePhoneNumber", () => {

@@ -17,7 +17,7 @@ function envelope(value: Record<string, unknown>) {
 }
 
 describe("parseMetaWebhook", () => {
-  it("groups events by WABA and phone number without changing the public event shape", () => {
+  it("groups events by WABA and phone number and annotates events with the phone", () => {
     const batches = parseMetaWebhookBatches({
       object: "whatsapp_business_account",
       entry: [
@@ -49,9 +49,9 @@ describe("parseMetaWebhook", () => {
     });
     expect(batches).toHaveLength(2);
     expect(batches[0]).toMatchObject({ wabaId: "WABA_A", phoneNumberId: "PHONE_A" });
-    expect(batches[0]?.events[0]).toMatchObject({ type: "reply", messageId: "wamid.A" });
+    expect(batches[0]?.events[0]).toMatchObject({ type: "reply", messageId: "wamid.A", phoneNumberId: "PHONE_A" });
     expect(batches[1]).toMatchObject({ wabaId: "WABA_B", phoneNumberId: "PHONE_B" });
-    expect(batches[1]?.events[0]).toMatchObject({ type: "delivered", transportMessageId: "wamid.B" });
+    expect(batches[1]?.events[0]).toMatchObject({ type: "delivered", transportMessageId: "wamid.B", phoneNumberId: "PHONE_B" });
   });
 
   it("parses a delivered status", () => {
@@ -228,6 +228,7 @@ describe("parseMetaEchoes", () => {
       messageId: "wamid.HBgN16505551234",
       text: "Here's the info you requested.",
       at: 1_520_383_574_000,
+      phoneNumberId: "PHONE_NUMBER_ID",
     });
   });
 

@@ -23,6 +23,8 @@ describe("EccosGateway", () => {
       const deliveries = instance.sql.exec("SELECT COUNT(*) AS c FROM deliveries").toArray()[0]!.c;
       expect(inbound).toBe(1);
       expect(deliveries).toBe(1);
+      expect(instance.sql.exec("SELECT phone_number_id FROM inbound_events").toArray()[0]?.phone_number_id).toBeNull();
+      expect(instance.sql.exec("SELECT phone_number_id FROM deliveries").toArray()[0]?.phone_number_id).toBeNull();
     });
   });
 
@@ -61,15 +63,16 @@ describe("EccosGateway", () => {
 
   it("logOutbound inserts into outbound_messages", async () => {
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-      instance.logOutbound("wamid.OUT", "34600000000", '{"to":"34600000000"}', "sent", null);
+      instance.logOutbound("wamid.OUT", "34600000000", '{"to":"34600000000"}', "sent", null, "PNID");
       const rows = instance.sql
         .exec(
-          "SELECT transport_message_id, recipient, status FROM outbound_messages ORDER BY id DESC LIMIT 1",
+          "SELECT transport_message_id, recipient, phone_number_id, status FROM outbound_messages ORDER BY id DESC LIMIT 1",
         )
         .toArray();
       expect(rows[0]).toMatchObject({
         transport_message_id: "wamid.OUT",
         recipient: "34600000000",
+        phone_number_id: "PNID",
         status: "sent",
       });
     });

@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 
 /**
  * Server/data-layer coverage for every operator view (finding F11: the
@@ -37,21 +37,24 @@ import { describe, expect, mock, test } from "bun:test";
  */
 
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
+const workerEnv: { GATEWAY_WABA_ID: string; GATEWAY_ACCOUNT_ID: string; readonly GATEWAY?: typeof gatewayBinding } = {
+  GATEWAY_WABA_ID: "waba-1",
+  GATEWAY_ACCOUNT_ID: "",
+  get GATEWAY() {
+    return gatewayBinding;
+  },
+};
 
 mock.module("cloudflare:workers", () => ({
-  env: {
-    GATEWAY_WABA_ID: "waba-1",
-    get GATEWAY() {
-      return gatewayBinding;
-    },
-  },
+  env: workerEnv,
 }));
 
 mock.module("@tanstack/react-start", () => ({
   createServerFn: (_opts?: unknown) => {
     const api = {
       validator: (_v: unknown) => api,
-      handler: (fn: (arg?: unknown) => unknown) => (arg?: unknown) => fn(arg),
+      handler: (fn: (arg?: unknown) => unknown) => (arg?: unknown) =>
+        fn(arg && typeof arg === "object" && "data" in arg ? arg : { data: arg }),
     };
     return api;
   },
@@ -59,6 +62,7 @@ mock.module("@tanstack/react-start", () => ({
 
 const {
   getGatewayStatus,
+  getDashboardOverview,
   listDeliveries,
   listInbound,
   listOutbound,
@@ -68,6 +72,12 @@ const {
   setSubscriberConfig,
   resubscribe,
 } = await import("../src/server/gateway");
+
+afterEach(() => {
+  gatewayBinding = undefined;
+  workerEnv.GATEWAY_WABA_ID = "waba-1";
+  workerEnv.GATEWAY_ACCOUNT_ID = "";
+});
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
 
@@ -112,6 +122,74 @@ describe("getGatewayStatus (Status view)", () => {
     const res = await getGatewayStatus();
     expect(res).toEqual({ ok: false, error: "Durable Object unreachable" });
   });
+
+  test("account mode resolves an owned WABA and forwards the account context", async () => {
+    workerEnv.GATEWAY_ACCOUNT_ID = "account-a";
+    workerEnv.GATEWAY_WABA_ID = "";
+    let statusArgs: unknown[] = [];
+    gatewayBinding = {
+      listAccountResources: async (accountId: string) => ({
+        account: { accountId, name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [
+          { accountId, wabaId: "waba-z", callbackUrl: null, createdAt: 1, phones: [] },
+          { accountId, wabaId: "waba-a", callbackUrl: null, createdAt: 1, phones: [{ phoneNumberId: "phone-a", displayPhoneNumber: "+1" }] },
+        ],
+        phones: [{ wabaId: "waba-a", phoneNumberId: "phone-a", displayPhoneNumber: "+1" }],
+      }),
+      getStatus: async (...args: unknown[]) => {
+        statusArgs = args;
+        return {
+          name: "eccos",
+          version: "1.2.3",
+          health: "healthy",
+          connection: { wabaId: "waba-a", phoneNumberId: "phone-a", displayPhone: "+1", connectedAt: null },
+          counts: { inbound: 0, outbound: {}, deliveries: {} },
+        };
+      },
+    };
+    const overview = await getDashboardOverview();
+    expect(overview.ok).toBe(true);
+    if (overview.ok) {
+      expect(overview.data.scope).toMatchObject({ mode: "account", accountId: "account-a", selectedWabaId: "waba-a" });
+      expect(overview.data.scope.mode === "account" && overview.data.scope.resources.wabas[1]?.wabaId).toBe("waba-z");
+    }
+    expect(statusArgs).toEqual(["waba-a", "account-a"]);
+  });
+
+  test("account mode accepts a requested owned WABA and rejects an unowned one", async () => {
+    workerEnv.GATEWAY_ACCOUNT_ID = "account-a";
+    workerEnv.GATEWAY_WABA_ID = "";
+    let statusArgs: unknown[] = [];
+    gatewayBinding = {
+      listAccountResources: async () => ({
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [
+          { accountId: "account-a", wabaId: "waba-a", callbackUrl: null, createdAt: 1, phones: [] },
+          { accountId: "account-a", wabaId: "waba-b", callbackUrl: null, createdAt: 1, phones: [] },
+        ],
+        phones: [],
+      }),
+      getStatus: async (...args: unknown[]) => {
+        statusArgs = args;
+        return {
+          name: "eccos",
+          version: "1.2.3",
+          health: "healthy",
+          connection: { wabaId: "waba-b", phoneNumberId: null, displayPhone: null, connectedAt: null },
+          counts: { inbound: 0, outbound: {}, deliveries: {} },
+        };
+      },
+    };
+
+    const selected = await getDashboardOverview({ data: { wabaId: "waba-b" } });
+    expect(selected.ok).toBe(true);
+    expect(statusArgs).toEqual(["waba-b", "account-a"]);
+
+    const foreign = await getDashboardOverview({ data: { wabaId: "waba-foreign" } });
+    expect(foreign).toEqual({ ok: false, error: 'WABA "waba-foreign" is not owned by account "account-a"' });
+  });
 });
 
 // --- Deliveries view (routes/deliveries.tsx) ---
@@ -145,13 +223,13 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
     gatewayBinding = {
       retryDelivery: async (id: number) => ({ ok: true, previousStatus: id === 7 ? "failed" : null }),
     };
-    const res = await retryDelivery({ data: 7 });
+    const res = await retryDelivery({ data: { id: 7 } });
     expect(res).toEqual({ ok: true, data: { ok: true, previousStatus: "failed" } });
   });
 
   test("retryDelivery unreachable: missing binding yields the graceful error shape", async () => {
     gatewayBinding = undefined;
-    const res = await retryDelivery({ data: 7 });
+    const res = await retryDelivery({ data: { id: 7 } });
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
   });
 });

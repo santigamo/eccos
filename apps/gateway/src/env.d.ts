@@ -14,4 +14,7 @@ interface Env {
   /** @deprecated Legacy single retention window — read as a fallback for
    * `CONTENT_RETENTION_DAYS` only. Use the split retention vars instead. */
   RETENTION_DAYS?: string;
+  ECCOS_MULTI_TENANT?: string;
+  ECCOS_ADMIN_API_KEY?: string;
+  CONTROL_PLANE: DurableObjectNamespace<import("./control-plane").EccosControlPlane>;
 }

@@ -29,12 +29,14 @@ stability and watch the repository for advisories.
 - **Inbound webhooks** are authenticated by verifying Meta's `X-Hub-Signature-256`
   (HMAC-SHA256 over the raw body with your `META_APP_SECRET`) using a **constant-time**
   comparison. Requests with a missing or invalid signature are rejected with `401`.
-- **API routes** (`/v1/*`) require a Bearer token / `x-api-key` matching `ECCOS_API_KEY`,
-  also compared in constant time.
+- **API routes** (`/v1/*`) require a Bearer token / `x-api-key`. Legacy deployments compare it
+  with `ECCOS_API_KEY`; multi-tenant deployments resolve the hashed account key in the control
+  plane and then verify WABA ownership before touching a data-plane object.
 - **Forwarded events** are signed with `X-Eccos-Signature: sha256=<hex>` using
   `SUBSCRIBER_SECRET` so your subscriber can verify they came from Eccos.
-- **Secrets** live only in `.env` (Bun target, gitignored) or as `wrangler secret` values
-  (Workers target) — never in the repository or in logs.
+- **Secrets** live only in `.env` (Bun target, gitignored), as `wrangler secret` values, or in
+  the encrypted-at-rest control-plane storage for tenant Meta tokens — never in the repository
+  or in logs. Account API keys are stored only as SHA-256 hashes and are returned once at issue.
 
 ## Data handling & logging
 

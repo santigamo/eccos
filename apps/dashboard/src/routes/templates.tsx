@@ -14,7 +14,8 @@ import {
 import { Page, StatusTag, Unreachable } from "../ui";
 
 export const Route = createFileRoute("/templates")({
-  loader: () => listTemplates(),
+  loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
+  loader: ({ deps }) => listTemplates({ data: { wabaId: deps.wabaId } }),
   component: TemplatesPage,
 });
 

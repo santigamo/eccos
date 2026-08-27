@@ -25,6 +25,11 @@ describe("enforceAccess", () => {
     ).toBeNull();
   });
 
+  test("fails closed for an account-scoped deployment when Access is not configured", async () => {
+    const res = await enforceAccess(req(), { GATEWAY_ACCOUNT_ID: "customer-a" });
+    expect(res?.status).toBe(403);
+  });
+
   test("fails closed with 403 when configured but no Access JWT is present", async () => {
     const res = await enforceAccess(req(), {
       ACCESS_TEAM_DOMAIN: "myteam.cloudflareaccess.com",

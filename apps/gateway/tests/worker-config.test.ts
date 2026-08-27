@@ -5,6 +5,7 @@ import {
   normalizeWabaId,
   resolveDoJurisdiction,
 } from "../src/gateway-stub";
+import { isMultiTenantEnabled, isTenantControlPlaneEnabled, tenantMode } from "../src/tenant-config";
 import { parseCoreConfig, type CoreConfig } from "@eccos/core/config-schema";
 
 const BASE: CoreConfig = {
@@ -76,6 +77,16 @@ describe("tenant routing", () => {
     expect(() => normalizeWabaId("waba/123")).toThrow(/Invalid WABA ID/);
   });
 
+});
+
+describe("tenant mode", () => {
+  it("keeps legacy traffic active during shadow migration and enables the control plane", () => {
+    expect(tenantMode({ ECCOS_MULTI_TENANT: "false" })).toBe("legacy");
+    expect(tenantMode({ ECCOS_MULTI_TENANT: "shadow" })).toBe("shadow");
+    expect(tenantMode({ ECCOS_MULTI_TENANT: "true" })).toBe("enforced");
+    expect(isMultiTenantEnabled({ ECCOS_MULTI_TENANT: "shadow" })).toBe(false);
+    expect(isTenantControlPlaneEnabled({ ECCOS_MULTI_TENANT: "shadow" })).toBe(true);
+  });
 });
 
 describe("coreSchema DO_JURISDICTION", () => {

@@ -39,6 +39,20 @@ export const coreSchema = z.object({
 });
 export type CoreConfig = z.infer<typeof coreSchema>;
 
+/**
+ * The Meta Cloud API config fields that the shared helpers (`sendMessage`,
+ * `listTemplates`) read. A structural subset of `CoreConfig` plus a
+ * `META_GRAPH_VERSION` default — so a multi-tenant app config that resolves a
+ * default WABA/phone/API key per request (rather than from env) satisfies it
+ * without carrying the single-tenant `CoreConfig` fields.
+ */
+export type MetaAppConfig = {
+  META_GRAPH_VERSION?: string;
+  META_ACCESS_TOKEN: string;
+  META_PHONE_NUMBER_ID?: string;
+  META_WABA_ID?: string;
+};
+
 export function parseCoreConfig(env: Record<string, string | undefined>): CoreConfig {
   const parsed = coreSchema.safeParse(clean(env));
   if (!parsed.success) {
@@ -50,6 +64,10 @@ export function parseCoreConfig(env: Record<string, string | undefined>): CoreCo
   return parsed.data;
 }
 
-export function graphBaseUrl(cfg: { META_GRAPH_VERSION: string }): string {
-  return `https://graph.facebook.com/${cfg.META_GRAPH_VERSION}`;
+function metaGraphVersion(cfg: { META_GRAPH_VERSION?: string }): string {
+  return cfg.META_GRAPH_VERSION ?? "v24.0";
+}
+
+export function graphBaseUrl(cfg: { META_GRAPH_VERSION?: string }): string {
+  return `https://graph.facebook.com/${metaGraphVersion(cfg)}`;
 }

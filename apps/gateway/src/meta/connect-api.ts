@@ -1,5 +1,9 @@
 import { graphBaseUrl, type CoreConfig } from "@eccos/core/config-schema";
 
+type MetaAppConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_APP_SECRET" | "META_APP_ID">;
+type MetaGraphConfig = Pick<CoreConfig, "META_GRAPH_VERSION">;
+type MetaSubscriptionConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_WEBHOOK_VERIFY_TOKEN">;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -13,7 +17,7 @@ function graphError(prefix: string, res: Response, json: unknown): Error {
 
 /** code -> Business Integration System User access token (60 days). */
 export async function exchangeCodeForToken(
-  cfg: CoreConfig,
+  cfg: MetaAppConfig,
   code: string,
   redirectUri?: string,
 ): Promise<string> {
@@ -36,17 +40,59 @@ export interface PhoneNumber {
   verified_name?: string;
 }
 
+const MAX_PHONE_NUMBER_PAGES = 100;
+
 /** GET /<waba_id>/phone_numbers with the business token. */
 export async function listPhoneNumbers(
-  cfg: CoreConfig,
+  cfg: MetaGraphConfig,
   wabaId: string,
   token: string,
 ): Promise<PhoneNumber[]> {
-  const url = `${graphBaseUrl(cfg)}/${wabaId}/phone_numbers?access_token=${encodeURIComponent(token)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  const json = (await res.json().catch(() => null)) as { data?: PhoneNumber[] } | null;
-  if (!res.ok) throw graphError("phone_numbers", res, json);
-  return json?.data ?? [];
+  const graphOrigin = new URL(graphBaseUrl(cfg)).origin;
+  let nextUrl: string | null = `${graphBaseUrl(cfg)}/${encodeURIComponent(wabaId)}/phone_numbers`;
+  const seenUrls = new Set<string>();
+  const phones: PhoneNumber[] = [];
+
+  for (let page = 0; page < MAX_PHONE_NUMBER_PAGES && nextUrl; page++) {
+    if (seenUrls.has(nextUrl)) throw new Error("phone_numbers pagination repeated a page");
+    seenUrls.add(nextUrl);
+    const res = await fetch(nextUrl, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = (await res.json().catch(() => null)) as {
+      data?: unknown;
+      paging?: { next?: unknown };
+    } | null;
+    if (!res.ok) throw graphError("phone_numbers", res, json);
+    if (Array.isArray(json?.data)) {
+      for (const value of json.data) {
+        const record = asRecord(value);
+        if (typeof record?.id !== "string" || record.id.trim() === "") continue;
+        phones.push({
+          id: record.id,
+          ...(typeof record.display_phone_number === "string"
+            ? { display_phone_number: record.display_phone_number }
+            : {}),
+          ...(typeof record.verified_name === "string" ? { verified_name: record.verified_name } : {}),
+        });
+      }
+    }
+    const rawNext = typeof json?.paging?.next === "string" ? json.paging.next : null;
+    if (!rawNext) {
+      nextUrl = null;
+      break;
+    }
+    const parsedNext: URL = new URL(rawNext, nextUrl);
+    if (parsedNext.origin !== graphOrigin) throw new Error("phone_numbers pagination returned an unexpected host");
+    parsedNext.searchParams.delete("access_token");
+    nextUrl = parsedNext.href;
+  }
+
+  if (nextUrl !== null && seenUrls.size >= MAX_PHONE_NUMBER_PAGES) {
+    throw new Error("phone_numbers pagination exceeded the page limit");
+  }
+  return phones;
 }
 
 export function extractTokenTargetIds(payload: unknown): string[] {
@@ -68,38 +114,51 @@ export function extractTokenTargetIds(payload: unknown): string[] {
   return [...targetIds];
 }
 
-async function listTokenTargetIds(cfg: CoreConfig, token: string): Promise<string[]> {
+async function listTokenTargetIds(cfg: MetaAppConfig, token: string): Promise<string[]> {
   if (!cfg.META_APP_ID) throw new Error("META_APP_ID is required to inspect Embedded Signup token");
   const appAccessToken = `${cfg.META_APP_ID}|${cfg.META_APP_SECRET}`;
   const url =
     `${graphBaseUrl(cfg)}/debug_token` +
-    `?input_token=${encodeURIComponent(token)}` +
-    `&access_token=${encodeURIComponent(appAccessToken)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    `?input_token=${encodeURIComponent(token)}`;
+  const res = await fetch(url, {
+    headers: { authorization: `Bearer ${appAccessToken}` },
+    signal: AbortSignal.timeout(15_000),
+  });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw graphError("debug_token", res, json);
   return extractTokenTargetIds(json);
 }
 
 export async function findWabaPhoneNumbers(
-  cfg: CoreConfig,
+  cfg: MetaAppConfig,
   token: string,
 ): Promise<{ wabaId: string; phones: PhoneNumber[] } | null> {
+  const matches = await findWabaPhoneNumbersForToken(cfg, token);
+  return matches[0] ?? null;
+}
+
+export async function findWabaPhoneNumbersForToken(
+  cfg: MetaAppConfig,
+  token: string,
+): Promise<Array<{ wabaId: string; phones: PhoneNumber[] }>> {
   const targetIds = await listTokenTargetIds(cfg, token);
+  const matches: Array<{ wabaId: string; phones: PhoneNumber[] }> = [];
+  let firstError: unknown;
   for (const targetId of targetIds) {
     try {
       const phones = await listPhoneNumbers(cfg, targetId, token);
-      if (phones.length > 0) return { wabaId: targetId, phones };
-    } catch {
-      // debug_token may include non-WABA target IDs. Try the next candidate.
+      if (phones.length > 0) matches.push({ wabaId: targetId, phones });
+    } catch (error) {
+      firstError ??= error;
     }
   }
-  return null;
+  if (firstError) throw firstError;
+  return matches;
 }
 
 /** POST /<waba_id>/subscribed_apps pointing the callback at this Worker. */
 export async function subscribeApp(
-  cfg: CoreConfig,
+  cfg: MetaSubscriptionConfig,
   wabaId: string,
   token: string,
   callbackUrl: string,

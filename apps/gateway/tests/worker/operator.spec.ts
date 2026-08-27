@@ -20,7 +20,7 @@ function makeRpc() {
 async function seed() {
   await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
     i.saveConfig({
-       META_WABA_ID: TEST_WABA_ID,
+      META_WABA_ID: TEST_WABA_ID,
       META_PHONE_NUMBER_ID: "PNID1",
       DISPLAY_PHONE_NUMBER: "+34600000000",
       CONNECTED_AT: "1700000000000",
@@ -99,6 +99,32 @@ describe("EccosGateway operator reads", () => {
       expect(after.last_error).toBeNull();
       expect(i.retryDelivery(999_999)).toEqual({ ok: false, previousStatus: null });
     });
+  });
+
+  it("exportData includes rows beyond the operator page limit", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.saveConfig({
+        META_ACCESS_TOKEN: "export-token",
+        META_APP_SECRET: "export-app-secret",
+        SUBSCRIBER_SECRET: "export-subscriber-secret",
+        DISPLAY_PHONE_NUMBER: "+34600000000",
+      });
+      for (let n = 0; n < 205; n++) {
+        i.logOutbound(`wamid.EXPORT_${n}`, "34600000000", "{}", "sent", null);
+      }
+      const exported = i.exportData();
+      expect(exported.outbound).toHaveLength(205);
+      expect(exported.outbound[0]?.transport_message_id).toBe("wamid.EXPORT_204");
+      expect(exported.config).toMatchObject({ DISPLAY_PHONE_NUMBER: "+34600000000" });
+      expect(exported.config).not.toHaveProperty("META_ACCESS_TOKEN");
+      expect(exported.config).not.toHaveProperty("META_APP_SECRET");
+      expect(exported.config).not.toHaveProperty("SUBSCRIBER_SECRET");
+    });
+
+    const exported = await makeRpc().exportData(TEST_WABA_ID);
+    expect(exported.config).not.toHaveProperty("META_ACCESS_TOKEN");
+    expect(exported.config).not.toHaveProperty("META_APP_SECRET");
+    expect(exported.config).not.toHaveProperty("SUBSCRIBER_SECRET");
   });
 });
 

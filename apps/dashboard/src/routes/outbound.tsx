@@ -9,7 +9,8 @@ import type { OutboundRow } from "../server/gateway";
 import { Page, StatusTag, Unreachable, fmtTs } from "../ui";
 
 export const Route = createFileRoute("/outbound")({
-  loader: () => listOutbound(),
+  loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
+  loader: ({ deps }) => listOutbound({ data: { wabaId: deps.wabaId } }),
   component: OutboundPage,
 });
 
@@ -29,6 +30,12 @@ const columns = [
     header: "Recipient",
     cell: (info) => info.getValue(),
     meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("phone_number_id", {
+    id: "phone_number_id",
+    header: "Phone ID",
+    cell: (info) => <span className="font-mono text-xs">{info.getValue() ?? "\u2014"}</span>,
+    meta: { cellClassName: "text-foreground/80 break-all" },
   }),
   columnHelper.accessor("status", {
     id: "status",

@@ -92,11 +92,13 @@ export function StatusCounts({
   counts,
   label,
   target,
+  wabaId,
 }: {
   counts: Record<string, number>
   label: string
   /** Log view these counts are evidence for. */
   target: "deliveries" | "outbound"
+  wabaId?: string
 }) {
   const entries = Object.entries(counts)
   if (entries.length === 0) {
@@ -104,6 +106,7 @@ export function StatusCounts({
       <p className="mt-3 text-muted-foreground text-sm">No {label} recorded yet.</p>
     )
   }
+  const search = wabaId ? { wabaId } : undefined
   return (
     <ul
       aria-label={`${label} by status`}
@@ -128,11 +131,11 @@ export function StatusCounts({
               </span>
             ) : null}
             {target === "deliveries" ? (
-              <Link to="/deliveries" search={{ status }} className={className}>
+              <Link to="/deliveries" search={{ status, ...search }} className={className}>
                 {body}
               </Link>
             ) : (
-              <Link to="/outbound" className={className}>
+              <Link to="/outbound" search={search} className={className}>
                 {body}
               </Link>
             )}

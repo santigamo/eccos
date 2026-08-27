@@ -16,11 +16,14 @@ The console has **no public HTTP surface into the gateway**. It talks to the gat
 (wrangler name `eccos`) over a **service binding** to its RPC entrypoint `GatewayRPC`:
 
 ```
-browser ──▶ dashboard Worker ──(RPC service binding: env.GATEWAY.getStatus(wabaId))──▶ gateway Worker
+ browser ──▶ dashboard Worker ──(RPC service binding: env.GATEWAY.getStatus(wabaId, accountId?))──▶ gateway Worker
 ```
 
-Server functions in `src/server/gateway.ts` call `env.GATEWAY.<method>(wabaId)` directly; the
-gateway's operator API is never exposed over the network. The binding is declared in
+Server functions in `src/server/gateway.ts` call `env.GATEWAY.<method>(wabaId, accountId?)` directly;
+when `GATEWAY_ACCOUNT_ID` is configured, the dashboard resolves an owned WABA and passes that
+account context on every call. The account-scoped console shows a WABA picker in the header; its
+selection is kept in the `wabaId` query parameter and is checked against the account registry on
+every server function. The gateway's operator API is never exposed over the network. The binding is declared in
 [`wrangler.jsonc`](./wrangler.jsonc) (`services[].entrypoint = "GatewayRPC"`) and its type is
 tightened in [`src/env.d.ts`](./src/env.d.ts). If the gateway isn't reachable, each page renders a
 graceful "unreachable" state instead of crashing.
@@ -48,20 +51,31 @@ Then open the URL Vite prints. Without the gateway running, the pages still load
 
 ## Deploying (reproducible WABA scope)
 
-`GATEWAY_WABA_ID` picks the WABA every dashboard RPC call targets. It is **per-deployment**, so it
-is not hard-coded in [`wrangler.jsonc`](./wrangler.jsonc) — the var there stays empty and the
-helper below injects it at deploy time instead of relying on a hand-typed `wrangler` flag:
+In legacy mode, `GATEWAY_WABA_ID` picks the WABA every dashboard RPC call targets. In
+multi-tenant mode, set `GATEWAY_ACCOUNT_ID`; the dashboard verifies that `GATEWAY_WABA_ID` belongs
+to that account, or deterministically selects the first owned WABA when the WABA variable is empty.
+When `GATEWAY_WABA_ID` is empty, operators can switch between owned WABAs with the header picker
+(or a `?wabaId=<owned-WABA>` URL).
+Deploy one dashboard Worker and one Cloudflare Access application per account. The configured
+`GATEWAY_ACCOUNT_ID` is the trusted account scope for that deployment; Access authenticates the
+operator but is not used as a shared account-directory lookup.
+These are **per-deployment** values, so they are not hard-coded in [`wrangler.jsonc`](./wrangler.jsonc)
+— the vars there stay empty and the helper below injects them at deploy time:
 
 ```bash
-# from the repo root; the helper validates GATEWAY_WABA_ID and forwards it to wrangler
+# from the repo root; the helper validates one of the scope variables and forwards it to wrangler
 GATEWAY_WABA_ID=123456789012345 ./scripts/deploy-dashboard.sh
 
+# account-scoped deployment; optionally add GATEWAY_WABA_ID to pin one owned WABA
+GATEWAY_ACCOUNT_ID=customer-a ./scripts/deploy-dashboard.sh
+
 # equivalently, put it in .env (same KEY=VALUE format as the other per-Worker vars)
-echo 'GATEWAY_WABA_ID=123456789012345' >> .env && ./scripts/deploy-dashboard.sh
+echo 'GATEWAY_ACCOUNT_ID=customer-a' >> .env && ./scripts/deploy-dashboard.sh
 ```
 
-Set `GATEWAY_WABA_ID` to the same WABA configured in the gateway (`META_WABA_ID`); the dashboard
-never guesses a tenant. `bun run deploy` from `apps/dashboard` invokes the same validated helper.
+Set `GATEWAY_WABA_ID` to the same WABA configured in legacy mode (`META_WABA_ID`). In
+multi-tenant mode set `GATEWAY_ACCOUNT_ID` to the control-plane account and optionally pin an owned
+WABA. `bun run deploy` from `apps/dashboard` invokes the same validated helper.
 
 ## Securing with Cloudflare Access
 

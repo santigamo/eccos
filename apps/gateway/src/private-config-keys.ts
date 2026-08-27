@@ -1,0 +1,7 @@
+export const PRIVATE_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "META_ACCESS_TOKEN",
+  "META_APP_SECRET",
+  "META_WEBHOOK_VERIFY_TOKEN",
+  "ECCOS_API_KEY",
+  "SUBSCRIBER_SECRET",
+]);

@@ -1,10 +1,20 @@
 import { useEffect, type ReactNode } from "react"
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
+import { getDashboardScope } from "../server/gateway"
 
 import appCss from "../app.css?url"
 
+type ScopeSearch = { wabaId?: string }
+
 export const Route = createRootRoute({
+  validateSearch: (search: Record<string, unknown>): ScopeSearch => ({
+    ...(typeof search.wabaId === "string" && search.wabaId.trim() !== ""
+      ? { wabaId: search.wabaId.trim() }
+      : {}),
+  }),
+  loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
+  loader: ({ deps }) => getDashboardScope({ data: { wabaId: deps.wabaId } }),
   head: () => ({
     meta: [
       { charSet: "utf-8" },

@@ -8,6 +8,7 @@ export type WhatsAppCallbackEvent =
       type: "delivered" | "read";
       transportMessageId: string;
       at: number;
+      phoneNumberId?: string;
     }
   | {
       type: "failed";
@@ -15,6 +16,7 @@ export type WhatsAppCallbackEvent =
       at: number;
       errorCode?: string;
       errorMessage?: string;
+      phoneNumberId?: string;
     }
   | {
       type: "reply";
@@ -22,6 +24,7 @@ export type WhatsAppCallbackEvent =
       messageId: string;
       text: string;
       at: number;
+      phoneNumberId?: string;
     }
   | {
       type: "echo";
@@ -29,4 +32,5 @@ export type WhatsAppCallbackEvent =
       messageId: string;
       text: string;
       at: number;
+      phoneNumberId?: string;
     };

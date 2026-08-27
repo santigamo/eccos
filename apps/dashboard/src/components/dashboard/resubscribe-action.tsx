@@ -28,7 +28,7 @@ function NoticeBox({ notice }: { notice: Notice | null }) {
   );
 }
 
-export function ResubscribeAction() {
+export function ResubscribeAction({ wabaId }: { wabaId?: string }) {
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -36,7 +36,7 @@ export function ResubscribeAction() {
     setRunning(true);
     setNotice(null);
     try {
-      const res = await resubscribe();
+      const res = await resubscribe({ data: { wabaId } });
       if (!res.ok) {
         setNotice({ ok: false, text: res.error });
       } else if (res.data.ok) {
