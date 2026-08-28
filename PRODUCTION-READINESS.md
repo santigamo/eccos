@@ -84,9 +84,8 @@ drill. The gateway deploy and live post-deploy smoke are now recorded above.
 | `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
 | `eccos-n0o` | Meta Tech Provider/App Review/Access approval for third-party onboarding |
 | `eccos-8yy` | DPA and processor onboarding package |
-| `eccos-45t` | Cloudflare Access in front of the dashboard |
-| `eccos-ouw` | Recorded production deploy and post-deploy smoke |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
+| `eccos-u9x` | Resolve the production failed-delivery incident |
 
 ## First paid Eccos Cloud customer gate
 
@@ -133,7 +132,7 @@ is available.
   (`eccos-n0o`).
 - GDPR **DPA**/processing agreement covering the cloud operator role (`eccos-8yy`).
 - **Cloudflare Access** in front of the operator dashboard (see W-1 / `eccos-45t`).
-- A recorded **deployment + smoke** (see Gate 9 / `eccos-ouw`).
+- A recorded **deployment + smoke** (the gateway is recorded in Gate 9; the dashboard still needs its production account scope).
 - A validated **permanent System User token** (see `eccos-jf7` / `eccos-s3i`).
 - A healthy production gateway and real subscriber, with the current incident resolved
   (`eccos-u9x` / `eccos-jf7`).
@@ -153,7 +152,8 @@ the technical/legal/ops bar that must be met first.
 
 **Not yet.** The service is a strong **candidate**: all local gates pass and every finding
 from the readiness review has been addressed in code or documentation. Before claiming
-`PRODUCTION-READY`, close at minimum: **W-1** (`eccos-45t`, dashboard auth) and **Gate 9**
-(`eccos-ouw`, a recorded prod deploy + smoke). `PRODUCTION-READY` is a *technical* posture;
+`PRODUCTION-READY`, close at minimum: **W-1** (`eccos-45t`, dashboard auth) and the remaining
+deployment/data-lifecycle verification (dashboard deploy and restore drill). The gateway deploy +
+smoke is already recorded in Gate 9. `PRODUCTION-READY` is a *technical* posture;
 it does **not** by itself permit charging third parties — the first paid customer gate above
 (or a superseding decision) does.
