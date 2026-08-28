@@ -1,7 +1,7 @@
 # Production Readiness
 
-> Baseline snapshot: **2026-08-28**, `main@05ad96a` plus the account-scoped clean-cut follow-up
-> in this changeset. The commercial gate below is a living addendum updated **2026-08-28**.
+> Baseline snapshot: **2026-08-28**, `main@9987f06` plus the post-deploy evidence follow-up.
+> The commercial gate below is a living addendum updated **2026-08-28**.
 > Owner: Santi (@santigamo). This file is the single source of truth for Eccos's
 > production-readiness posture: profile, per-artifact claims, gate status, waivers,
 > evidence, and remaining gaps. Update it whenever a gate's status changes.
@@ -22,7 +22,7 @@
 
 | Artifact | What it is | Production claim |
 |----------|-----------|------------------|
-| `apps/gateway` (`eccos` Worker + `EccosGateway` DO) | The v1 data plane on Cloudflare Workers | **Candidate** — gated; deploy is manual, unverified in prod |
+| `apps/gateway` (`eccos` Worker + `EccosGateway` DO) | The v1 data plane on Cloudflare Workers | **Candidate** — deployed and live-smoke-verified on 2026-08-28; still gated for customer traffic |
 | `apps/dashboard` (`@eccos/dashboard`) | Operator console Worker, RPC-only to the gateway | **Candidate — must not be exposed publicly until Cloudflare Access is enabled** (`eccos-45t`) |
 | `packages/core` (`@eccos/core`) | Pure shared core (parser/send/signature/templates) | Internal workspace package — not published (Gate 4 N/A) |
 | `packages/gateway-contract` (`@eccos/gateway-contract`) | RPC contract (`GatewayApi`) | Internal workspace package — not published (Gate 4 N/A) |
@@ -42,11 +42,11 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 | 6 | Integration resilience | 🟡 | Retry jitter added; DLQ/manual-replay documented (`eccos-8fu`, `docs/operations.md`). Residual: real DLQ (Queues). |
 | 7 | Privacy & security | 🟡 | `docs/threat-model.md` + `docs/privacy.md` + `SECURITY.md` data-handling/logging section (`eccos-501`). Logs exclude bodies/tokens by **convention** (typed `LogMeta`), not enforced by a lint. |
 | 8 | Product UI | 🟡 | Dashboard data-layer + render smoke tests (45 dashboard tests) + `docs/ui-qa-checklist.md` (`eccos-1nx`). Residual: automated visual regression (Playwright). |
-| 9 | Deployment contract | 🟡 | `docs/deployment.md` (secrets matrix, deploy, rollback) + `scripts/smoke.sh <url>`. Residual: **no prod deploy or live smoke has been executed/recorded** (`eccos-ouw`). |
+| 9 | Deployment contract | 🟡 | `docs/deployment.md` (secrets matrix, deploy, rollback) + `scripts/smoke.sh <url>`. Gateway deploy and live smoke were recorded on 2026-08-28; dashboard deployment and a restore drill remain. |
 
 ## Evidence (this snapshot)
 
-All gates below were run locally on the working tree (post-remediation, 2026-08-28):
+All local gates below were run on the working tree (post-remediation, 2026-08-28):
 
 | Check | Command | Result |
 |-------|---------|--------|
@@ -57,14 +57,16 @@ All gates below were run locally on the working tree (post-remediation, 2026-08-
 | Dashboard tests | `apps/dashboard: bun run test` | ✅ 45 pass / 5 files |
 | Dashboard build | `apps/dashboard: bun run build` | ✅ built |
 | Lint | `bun run lint` (Biome) | ✅ 0 findings — **blocking** in CI (`eccos-bwr`) |
+| Gateway deploy | `bun run deploy` | ✅ `eccos.santi-gamo.workers.dev`, version `75476993-51e1-4009-8e0d-a54454931764` |
+| Gateway live smoke | `./scripts/smoke.sh https://eccos.santi-gamo.workers.dev` | ✅ `/health`, `/ready`, webhook challenge/signature/JSON checks |
 
 Environment note (not a product defect): a run of the dashboard suite on 2026-08-27 surfaced
 `TypeError: jsxDEV_… is not a function` in the ReUI data-grid. Root cause was a poisoned
 local Bun runtime-transpiler cache (oven-sh/bun#32151 — cache key omits the JSX dev/prod
 mode). Purging `~/Library/Caches/bun/@t@` restored a full green run; no code change needed.
 
-**Not run:** no `wrangler deploy`, no live post-deploy smoke, no restore drill. Those remain
-unproven and are called out in Gate 9 / Gate 5.
+**Not run:** dashboard deployment (it requires the production `GATEWAY_ACCOUNT_ID`) and a restore
+drill. The gateway deploy and live post-deploy smoke are now recorded above.
 
 ## Waivers
 
@@ -78,7 +80,6 @@ unproven and are called out in Gate 9 / Gate 5.
 | Bead | Gap |
 |------|-----|
 | `eccos-45t` | Enable Cloudflare Access in front of the dashboard (account-level) |
-| `eccos-ouw` | Execute + record a real prod deploy and post-deploy smoke |
 | `eccos-v80` | Production-shaped two-number acceptance, migration/rollback evidence, and the remaining technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
 | `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
 | `eccos-n0o` | Meta Tech Provider/App Review/Access approval for third-party onboarding |
@@ -119,11 +120,12 @@ claim below and from any later business/billing work.
   tenant B's data (and vice-versa), including concurrent access.
 
 The account registry, hashed/revocable account keys, account-bound `/connect`, scoped HTTP/RPC
-surface, two-account Worker isolation tests, and the provisioning saga/reconciliation are
-implemented and locally validated in the clean-cut follow-up. They are not yet release evidence:
-the production-shaped two-number exercise, migration/rollback proof, adversarial review, and the
-external/legal/operations criteria below remain open. The production-shaped two-number exercise is
-blocked until Meta Tech Provider approval (`eccos-n0o`) is available.
+surface, two-account Worker isolation tests, provisioning saga/reconciliation, and the gateway
+deploy/smoke are implemented and validated locally or in the deployed gateway. They are not yet
+complete release evidence: the production-shaped two-number exercise, migration/rollback proof,
+adversarial review, and the external/legal/operations criteria below remain open. The
+production-shaped two-number exercise is blocked until Meta Tech Provider approval (`eccos-n0o`)
+is available.
 
 ### External / legal / ops criteria (required where applicable)
 
