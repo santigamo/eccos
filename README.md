@@ -27,8 +27,7 @@ Bring your own Meta app + WhatsApp Business Account. Eccos holds the credentials
 apps a small, stable HTTP surface: **send messages**, **receive inbound + delivery statuses**,
 and get **normalized events** forwarded to your backend.
 
-> **Status: v0 / thin wrapper.** The default deployment remains single-tenant (one WABA / one
-> phone), while the Cloudflare Workers target also has an opt-in account-scoped mode with a
+> **Status: v0 / first customer wave.** The Workers target is **account-scoped by default**: a
 > durable account → WABA → phone registry, hashed account keys, per-WABA credentials, and
 > account-bound Embedded Signup. Each WABA routes to its own Durable Object for data-plane
 > sharding. **Eccos Cloud remains early access**: we do not charge third parties (nor start paid
@@ -53,8 +52,9 @@ and get **normalized events** forwarded to your backend.
   app, HMAC-signed and retried with exponential backoff.
 - 🪪 **Onboarding + operator console** — the Workers target ships an Embedded Signup `/connect`
   flow, plus a separate operator console Worker (`apps/dashboard/`) for ops visibility — status,
-  inbound/outbound/deliveries, the subscriber target and resubscribe, and per-number GDPR
-  erasure — reachable only over a private RPC binding and gated by Cloudflare Access.
+  inbound/outbound/deliveries, the subscriber target and resubscribe — reachable only over a
+  private RPC binding and gated by Cloudflare Access. Per-number GDPR erasure is available through
+  the scoped HTTP/RPC API.
 
 ## 🆚 How it compares
 
@@ -74,11 +74,11 @@ and get **normalized events** forwarded to your backend.
 your app  ◀──forward (HMAC)────   Eccos  ◀──  Meta webhook    ◀──  WhatsApp
 ```
 
-- **Outbound:** Workers use `POST /v1/wabas/<WABA_ID>/messages` (Bearer `ECCOS_API_KEY`) → Meta `/{phone}/messages`.
+- **Outbound:** Workers use `POST /v1/wabas/<WABA_ID>/messages` with an account API key → Meta `/{phone}/messages`.
 - **Inbound:** Meta calls `POST /webhooks/meta`; Eccos verifies `X-Hub-Signature-256`,
-  normalizes the payload, and forwards `{ events: [...] }` to your `SUBSCRIBER_WEBHOOK_URL`,
-  signed `X-Eccos-Signature: sha256=<hex>` with `SUBSCRIBER_SECRET`. Failed forwards retry
-  with exponential backoff.
+  normalizes the payload, and forwards `{ events: [...] }` to the subscriber URL configured for
+  that WABA, signed `X-Eccos-Signature: sha256=<hex>` when a subscriber secret is configured.
+  Failed forwards retry with exponential backoff.
 - **Templates:** Workers use `GET /v1/wabas/<WABA_ID>/templates` to proxy the WABA's `message_templates`.
 
 Normalized event shape (`WhatsAppCallbackEvent`):
@@ -198,22 +198,22 @@ SQLite data is persisted in the `eccos-data` volume. The bundled `.dockerignore`
 ```bash
 bun install
 bun run cf-types                 # generate worker-configuration.d.ts
-# Required secrets:
-wrangler secret put META_ACCESS_TOKEN
-wrangler secret put META_PHONE_NUMBER_ID
-wrangler secret put META_WABA_ID
+# Required app-level secrets:
 wrangler secret put META_APP_SECRET
 wrangler secret put META_WEBHOOK_VERIFY_TOKEN
-wrangler secret put ECCOS_API_KEY
-# Optional (event forwarding):
-wrangler secret put SUBSCRIBER_SECRET
-wrangler secret put SUBSCRIBER_WEBHOOK_URL
+wrangler secret put ECCOS_ADMIN_API_KEY
 # Optional (Embedded Signup /connect flow):
 wrangler secret put META_APP_ID
 wrangler secret put META_ES_CONFIG_ID
 
 bun run deploy                   # wrangler deploy
 ```
+
+The Workers target is **account-scoped by default** — there are no global `META_ACCESS_TOKEN` /
+`META_WABA_ID` / `META_PHONE_NUMBER_ID` / `ECCOS_API_KEY` / `SUBSCRIBER_*` secrets. Per-WABA Meta
+credentials and subscriber settings live in the control plane / per-WABA Durable Object runtime
+state: create an account, then register WABAs through the Embedded Signup `/connect` flow or the
+admin bootstrap API (see [docs/multi-tenancy.md](docs/multi-tenancy.md)).
 
 ### One-click deploy
 
@@ -226,12 +226,12 @@ guided flow:
 - **Monorepo:** Eccos is a Bun workspace and the gateway imports `@eccos/core` /
   `@eccos/gateway-contract` via `workspace:*`. If Cloudflare's build can't resolve them, point the
   build's install/root at the **repo root** (run `bun install` at the root, deploy `apps/gateway`).
-- **Secrets:** the button provisions bindings but not secret values — set the six required secrets
+- **Secrets:** the button provisions bindings but not secret values — set the app-level secrets
   (listed above) with `wrangler secret put` or in the dashboard after the first deploy.
 
-The default deployment remains single-tenant. For account-scoped Cloud deployments, set
-`ECCOS_MULTI_TENANT=true`, configure `ECCOS_ADMIN_API_KEY`, and follow the
-[multi-tenant deployment runbook](docs/multi-tenancy.md) before onboarding customers.
+Every deployment is account-scoped by default — one-account and multi-account installs follow the
+same flow. Create accounts and register WABAs through the
+[multi-tenant deployment runbook](docs/multi-tenancy.md).
 
 The `bun install → wrangler secret put → bun run deploy` steps above are the reliable path; see
 [`docs/deployment.md`](./docs/deployment.md) for the full env matrix, smoke test, and rollback.
@@ -239,10 +239,9 @@ The `bun install → wrangler secret put → bun run deploy` steps above are the
 Non-secret vars (`META_GRAPH_VERSION`, `FORWARD_MAX_ATTEMPTS`, `CONTENT_RETENTION_DAYS`,
 `DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in
 `wrangler.jsonc`.
-Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta`. All six required
-secrets must be set for the Worker to boot; the `/connect` (Embedded Signup) flow then
-updates the effective `META_WABA_ID` / `META_PHONE_NUMBER_ID` at runtime in the Durable
-Object.
+Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta`. An empty account registry is
+a healthy gateway: `/ready` reports the app-level Meta secrets (never values) plus the control
+plane's liveness, and webhooks/sends become reachable once an account owns a registered WABA.
 
 > **Data residency:** to pin the Durable Object to a Cloudflare jurisdiction (e.g. `"eu"`),
 > set `DO_JURISDICTION` **on the first deploy, before any production data exists**. Changing
@@ -265,12 +264,13 @@ Object.
 | GET    | `/webhooks/meta`  | verify token (query)   | both   | Meta subscription challenge          |
 | POST   | `/webhooks/meta`  | `X-Hub-Signature-256`  | both   | Inbound messages + delivery statuses |
 | POST   | `/v1/messages`    | Bearer `ECCOS_API_KEY` | Bun    | Send a message                       |
-| POST   | `/v1/wabas/<id>/messages` | Bearer `ECCOS_API_KEY` | Workers | Send through the scoped WABA |
+| POST   | `/v1/wabas/<id>/messages` | Bearer account key | Workers | Send through a WABA the account owns |
 | GET    | `/v1/templates`   | Bearer `ECCOS_API_KEY` | Bun    | List message templates              |
-| GET    | `/v1/wabas/<id>/templates` | Bearer `ECCOS_API_KEY` | Workers | List templates for the scoped WABA |
-| POST   | `/v1/wabas/<id>/privacy/erasure` | Bearer `ECCOS_API_KEY` | Workers | Erase within a selected WABA |
-| GET    | `/connect`        | Meta OAuth             | Workers| Embedded Signup (coexistence) flow  |
-| POST   | `/connect/exchange` | Meta OAuth code      | Workers| Exchange OAuth code → store WABA/phone |
+| GET    | `/v1/wabas/<id>/templates` | Bearer account key | Workers | List templates for an owned WABA |
+| POST   | `/v1/wabas/<id>/privacy/erasure` | Bearer account key | Workers | Erase within an owned WABA |
+| GET    | `/v1/wabas/<id>/export` | Bearer account key | Workers | Export an owned WABA's retained data |
+| GET    | `/connect`        | account key / Meta OAuth | Workers| Embedded Signup (coexistence) flow  |
+| POST   | `/connect/exchange` | account key + OAuth state | Workers| Exchange OAuth code → register WABA/phone |
 
 The gateway has no public dashboard route — the operator console is a separate Worker; see
 [Operator console](#-operator-console) above.
@@ -301,12 +301,15 @@ The body is a Meta message object minus `messaging_product` (Eccos injects it). 
 
 ## ⚙️ Configuration
 
-See [`.env.example`](./.env.example). Legacy mode requires `META_ACCESS_TOKEN`,
-`META_PHONE_NUMBER_ID`, `META_WABA_ID`, `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`, and
-`ECCOS_API_KEY`. Forwarding (`SUBSCRIBER_WEBHOOK_URL` / `SUBSCRIBER_SECRET`) is optional — without
-it, inbound events are still stored, just not pushed. In Workers multi-tenant mode, per-WABA Meta
-credentials and account keys live in the control plane instead; configure `META_APP_SECRET`,
-`META_WEBHOOK_VERIFY_TOKEN`, and `ECCOS_ADMIN_API_KEY`, then follow
+See [`.env.example`](./.env.example) — that file documents the **Bun** self-host target, which
+remains single-tenant (`META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID`, `META_WABA_ID`,
+`META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN`, `ECCOS_API_KEY`; forwarding via
+`SUBSCRIBER_WEBHOOK_URL` / `SUBSCRIBER_SECRET` is optional — without it, inbound events are still
+stored, just not pushed).
+
+The **Workers target is account-scoped by default**: on Workers, per-WABA Meta credentials and
+account keys live in the control plane instead; configure only `META_APP_SECRET`,
+`META_WEBHOOK_VERIFY_TOKEN`, and the admin bootstrap `ECCOS_ADMIN_API_KEY`, then follow
 [`docs/multi-tenancy.md`](./docs/multi-tenancy.md). The Embedded Signup flow additionally uses
 `META_APP_ID` and `META_ES_CONFIG_ID`.
 
@@ -327,12 +330,14 @@ motion, and the legal invariants — in [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SY
 
 ## 🗺️ Roadmap
 
-- [x] Embedded Signup `/connect` (single-tenant coexistence) — Workers target
+- [x] Embedded Signup `/connect` (account-bound coexistence) — Workers target
 - [x] Operator console (`apps/dashboard/`) — separate Worker, RPC-only, Cloudflare Access
 - [ ] Bun-target parity for `/connect` (and an operator-console equivalent)
-- [x] Workers account-scoped registry/auth/connect for multiple WABAs and phones — **commercial
-      prerequisite: Eccos Cloud must not charge third parties (or start paid trials) before the
-      complete isolation gate (`eccos-v80`) and its external dependencies are clear**; see
+- [ ] Workers account-scoped onboarding and isolation for multiple WABAs and phones — the
+      registry/auth/connect foundation and local provisioning reconciliation are landed, but
+      production-shaped two-number acceptance and release evidence remain. **Commercial
+      prerequisite:** Eccos Cloud must not charge third parties (or start paid trials) before the
+      complete isolation gate (`eccos-v80`) and its external dependencies are clear; see
       [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md)
 - [x] Shard Workers state: one Durable Object per WABA with jurisdiction in the routing key
       (data-plane sharding; not paid multi-tenancy)

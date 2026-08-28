@@ -16,17 +16,17 @@ The console has **no public HTTP surface into the gateway**. It talks to the gat
 (wrangler name `eccos`) over a **service binding** to its RPC entrypoint `GatewayRPC`:
 
 ```
- browser ──▶ dashboard Worker ──(RPC service binding: env.GATEWAY.getStatus(wabaId, accountId?))──▶ gateway Worker
+ browser ──▶ dashboard Worker ──(RPC service binding: env.GATEWAY.getStatus(wabaId, accountId))──▶ gateway Worker
 ```
 
-Server functions in `src/server/gateway.ts` call `env.GATEWAY.<method>(wabaId, accountId?)` directly;
-when `GATEWAY_ACCOUNT_ID` is configured, the dashboard resolves an owned WABA and passes that
-account context on every call. The account-scoped console shows a WABA picker in the header; its
-selection is kept in the `wabaId` query parameter and is checked against the account registry on
-every server function. The gateway's operator API is never exposed over the network. The binding is declared in
-[`wrangler.jsonc`](./wrangler.jsonc) (`services[].entrypoint = "GatewayRPC"`) and its type is
-tightened in [`src/env.d.ts`](./src/env.d.ts). If the gateway isn't reachable, each page renders a
-graceful "unreachable" state instead of crashing.
+Server functions in `src/server/gateway.ts` call `env.GATEWAY.<method>(wabaId, accountId)`; the
+dashboard is account-scoped via `GATEWAY_ACCOUNT_ID`, resolves an owned WABA from the gateway's
+registry and passes that account context on every call. The account-scoped console shows a WABA
+picker in the header; its selection is kept in the `wabaId` query parameter and is checked against
+the account registry on every server function. The gateway's operator API is never exposed over the
+network. The binding is declared in [`wrangler.jsonc`](./wrangler.jsonc)
+(`services[].entrypoint = "GatewayRPC"`) and its type is tightened in [`src/env.d.ts`](./src/env.d.ts).
+If the gateway isn't reachable, each page renders a graceful "unreachable" state instead of crashing.
 
 ## Local development
 
@@ -38,49 +38,46 @@ The console and the gateway are two separate Workers, so run **both** locally �
 cd apps/gateway && bunx wrangler dev --var DO_JURISDICTION:
 
 # terminal 2 — the dashboard (TanStack Start via Vite, in workerd)
-cd apps/dashboard && printf 'GATEWAY_WABA_ID=WABA_DEMO\n' > .dev.vars && bunx vite dev
+cd apps/dashboard && printf 'GATEWAY_ACCOUNT_ID=demo\n' > .dev.vars && bunx vite dev
 ```
 
 The empty `DO_JURISDICTION` override is needed because local workerd does not implement
-Cloudflare Durable Object jurisdiction restrictions. Replace `WABA_DEMO` with the gateway's
-`META_WABA_ID`; `.dev.vars` is local-only and ignored by Git.
+Cloudflare Durable Object jurisdiction restrictions. `.dev.vars` is local-only and ignored by Git.
+
+The dashboard is **account-scoped**: `GATEWAY_ACCOUNT_ID` (see below) is the deployment's trusted
+account, and every server function resolves an owned WABA through the gateway's control plane.
+Before the dashboard can show data, create that account on the gateway and register a WABA under
+it (see `docs/multi-tenancy.md`).
 
 Then open the URL Vite prints. Without the gateway running, the pages still load and show the
 "unreachable" state. Other scripts: `bunx vite build` (production build), `bun run typecheck`
-(`tsc --noEmit`), `bun run test` (the isolated Access unit check in `tests/`).
+(`tsc --noEmit`), `bun run test` (the isolated Access unit check + data-layer tests in `tests/`).
 
-## Deploying (reproducible WABA scope)
+## Deploying (account-scoped by default)
 
-In legacy mode, `GATEWAY_WABA_ID` picks the WABA every dashboard RPC call targets. In
-multi-tenant mode, set `GATEWAY_ACCOUNT_ID`; the dashboard verifies that `GATEWAY_WABA_ID` belongs
-to that account, or deterministically selects the first owned WABA when the WABA variable is empty.
-When `GATEWAY_WABA_ID` is empty, operators can switch between owned WABAs with the header picker
-(or a `?wabaId=<owned-WABA>` URL).
-Deploy one dashboard Worker and one Cloudflare Access application per account. The configured
-`GATEWAY_ACCOUNT_ID` is the trusted account scope for that deployment; Access authenticates the
-operator but is not used as a shared account-directory lookup.
+Deploy one dashboard Worker and one Cloudflare Access application per account. `GATEWAY_ACCOUNT_ID`
+is the trusted account scope for that deployment; Access authenticates the operator but is not used
+as a shared account-directory lookup. The WABA each RPC call targets is resolved from the account's
+registry on the gateway — operators can switch between the account's owned WABAs with the header
+picker (or a `?wabaId=<owned-WABA>` URL).
+
 These are **per-deployment** values, so they are not hard-coded in [`wrangler.jsonc`](./wrangler.jsonc)
-— the vars there stay empty and the helper below injects them at deploy time:
+— the var there stays empty and the helper below injects it at deploy time:
 
 ```bash
-# from the repo root; the helper validates one of the scope variables and forwards it to wrangler
-GATEWAY_WABA_ID=123456789012345 ./scripts/deploy-dashboard.sh
-
-# account-scoped deployment; optionally add GATEWAY_WABA_ID to pin one owned WABA
+# from the repo root; the helper validates GATEWAY_ACCOUNT_ID and forwards it to wrangler
 GATEWAY_ACCOUNT_ID=customer-a ./scripts/deploy-dashboard.sh
 
 # equivalently, put it in .env (same KEY=VALUE format as the other per-Worker vars)
 echo 'GATEWAY_ACCOUNT_ID=customer-a' >> .env && ./scripts/deploy-dashboard.sh
 ```
 
-Set `GATEWAY_WABA_ID` to the same WABA configured in legacy mode (`META_WABA_ID`). In
-multi-tenant mode set `GATEWAY_ACCOUNT_ID` to the control-plane account and optionally pin an owned
-WABA. `bun run deploy` from `apps/dashboard` invokes the same validated helper.
+`bun run deploy` from `apps/dashboard` invokes the same validated helper.
 
 ## Securing with Cloudflare Access
 
-The dashboard ships with **no edge authentication**. Do **not** leave it publicly reachable
-(avoid the bare `*.workers.dev` URL; put it on a custom domain) until it sits behind
+The dashboard must not be publicly reachable without Cloudflare Access. Do **not** expose the bare
+`*.workers.dev` URL; put it on a custom domain behind
 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/). As
 defense-in-depth, the Worker *also* re-verifies the Access JWT on every request, so it can't be
 bypassed by hitting the raw origin directly.
@@ -104,9 +101,10 @@ into a **custom TanStack Start server entry** ([`src/server.ts`](./src/server.ts
 default fetch handler, so verification runs before **every** request — SSR page loads, server
 routes, and server-function calls.
 
-- **Disabled by default.** The gate only enforces when **both** `ACCESS_TEAM_DOMAIN` and
-  `ACCESS_AUD` are non-empty. Empty (the default) = no gate — so `vite dev` and a fresh deploy
-  that isn't behind Access yet keep working.
+- **Disabled by default for local development.** The gate only enforces when **both**
+  `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are non-empty. An account-scoped deployment with
+  `GATEWAY_ACCOUNT_ID` set instead fails closed until both Access vars are configured, so a
+  production dashboard cannot silently become public.
 - **When enforcing**, it reads the JWT from the `Cf-Access-Jwt-Assertion` header (falling back to
   the `CF_Authorization` cookie), then verifies it with [`jose`](https://github.com/panva/jose)
   against the team's JWKS (`https://<team-domain>/cdn-cgi/access/certs`), checking the RS256
@@ -114,5 +112,5 @@ routes, and server-function calls.
 - **Fails closed:** a missing token or any verification failure returns `403 Forbidden`; only a
   valid Access JWT is allowed through.
 
-> Because the gate is a no-op until both vars are set, a bare deploy is **unauthenticated**. Set
-> up the Access application first, then set the vars.
+> A local deploy without `GATEWAY_ACCOUNT_ID` is intentionally unauthenticated. Set up the Access
+> application and configure both Access vars before deploying an account-scoped dashboard.

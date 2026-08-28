@@ -37,7 +37,7 @@ function WabaPicker() {
   const location = useLocation()
   const router = useRouter()
 
-  if (!scope.ok || scope.data.mode !== "account") return null
+  if (!scope.ok) return null
   const accountScope = scope.data
 
   function onValueChange(value: string | null) {
@@ -59,11 +59,7 @@ function WabaPicker() {
         </SelectTrigger>
         <SelectContent align="start" className="min-w-(--anchor-width)">
           {accountScope.resources.wabas.map((waba) => (
-            <SelectItem
-              key={waba.wabaId}
-              value={waba.wabaId}
-              disabled={accountScope.pinned && waba.wabaId !== accountScope.selectedWabaId}
-            >
+            <SelectItem key={waba.wabaId} value={waba.wabaId}>
               <span className="font-mono">{waba.wabaId}</span>
             </SelectItem>
           ))}

@@ -1,10 +1,14 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
-import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import type { EccosGateway } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
-import { metaEnvelope, gatewayStub } from "./helpers";
+import { getControlPlaneStub } from "../../src/control-plane-stub";
+import { provisionWaba } from "../../src/provisioning";
+import { bootstrapAccount, metaEnvelope, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+
+let API_KEY = "ek-test";
 
 function mockGraphFetch(): MockInstance<typeof fetch> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -21,12 +25,17 @@ function mockGraphFetch(): MockInstance<typeof fetch> {
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
-    if (url === env.SUBSCRIBER_WEBHOOK_URL || String(init?.method ?? "GET").toUpperCase() === "POST") {
+    if (String(init?.method ?? "GET").toUpperCase() === "POST") {
       return new Response("ok", { status: 200 });
     }
     return new Response("not found", { status: 404 });
   });
 }
+
+beforeEach(async () => {
+  const boot = await bootstrapAccount();
+  API_KEY = boot.apiKey;
+});
 
 afterEach(async () => {
   delete (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER;
@@ -94,6 +103,10 @@ describe("routes", () => {
   });
 
   it("routes webhook entries to their WABA objects", async () => {
+    // Register the target WABAs so the account-scoped webhook filter ingests them.
+    await bootstrapAccount(TEST_ACCOUNT_ID, "WABA_A", [{ phoneNumberId: "PHONE_A" }]);
+    await bootstrapAccount(TEST_ACCOUNT_ID, "WABA_B", [{ phoneNumberId: "PHONE_B" }]);
+
     const payload = {
       object: "whatsapp_business_account",
       entry: [
@@ -140,6 +153,82 @@ describe("routes", () => {
     });
   });
 
+  it("ignores webhook entries for inactive WABAs", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (instance) => {
+      instance.registerWaba({
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_PENDING",
+        metaAccessToken: "pending-token",
+        provisioningStatus: "pending",
+        phones: [{ phoneNumberId: "PHONE_PENDING" }],
+      });
+    });
+
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "WABA_PENDING",
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "PHONE_PENDING" },
+            messages: [{ from: "34600000000", id: "wamid.PENDING", timestamp: "1700000000", type: "text", text: { body: "ignored" } }],
+          },
+        }],
+      }],
+    };
+    const body = JSON.stringify(payload);
+    const res = await exports.default.fetch("http://example.com/webhooks/meta", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-hub-signature-256": await signPayload(body, env.META_APP_SECRET) },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, received: 0 });
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA_PENDING"), async (instance: EccosGateway) => {
+      expect(instance.getCounts().inbound).toBe(0);
+    });
+  });
+
+  it("ignores webhook entries for failed WABAs", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (instance) => {
+      instance.registerWaba({
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_FAILED",
+        metaAccessToken: "failed-token",
+        provisioningStatus: "failed",
+        phones: [{ phoneNumberId: "PHONE_FAILED" }],
+      });
+    });
+
+    const payload = {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "WABA_FAILED",
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "PHONE_FAILED" },
+            messages: [{ from: "34600000000", id: "wamid.FAILED", timestamp: "1700000000", type: "text", text: { body: "ignored" } }],
+          },
+        }],
+      }],
+    };
+    const body = JSON.stringify(payload);
+    const res = await exports.default.fetch("http://example.com/webhooks/meta", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-hub-signature-256": await signPayload(body, env.META_APP_SECRET) },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, received: 0 });
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA_FAILED"), async (instance: EccosGateway) => {
+      expect(instance.getCounts().inbound).toBe(0);
+    });
+  });
+
   it("POST /v1/wabas/WABA_TEST/messages requires auth and forwards to Meta", async () => {
     const unauthorized = await exports.default.fetch("http://example.com/v1/wabas/WABA_TEST/messages", {
       method: "POST",
@@ -153,7 +242,7 @@ describe("routes", () => {
     const ok = await exports.default.fetch("http://example.com/v1/wabas/WABA_TEST/messages", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${env.ECCOS_API_KEY}`,
+        authorization: `Bearer ${API_KEY}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
@@ -162,8 +251,8 @@ describe("routes", () => {
     expect(await ok.json()).toEqual({ ok: true, messages: [{ id: "wamid.TEST" }] });
   });
 
-  it("does not expose unscoped legacy stateful routes", async () => {
-    const headers = { authorization: `Bearer ${env.ECCOS_API_KEY}` };
+  it("does not expose unscoped stateful routes", async () => {
+    const headers = { authorization: `Bearer ${API_KEY}` };
     const routes = [
       ["POST", "/v1/messages"],
       ["GET", "/v1/templates"],
@@ -184,7 +273,7 @@ describe("routes", () => {
     const res = await exports.default.fetch("http://example.com/v1/wabas/WABA_TEST/messages", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${env.ECCOS_API_KEY}`,
+        authorization: `Bearer ${API_KEY}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
@@ -192,15 +281,52 @@ describe("routes", () => {
 
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ ok: false, error: "rate limited" });
-    expect(limit).toHaveBeenCalledWith({ key: `${env.ECCOS_API_KEY}:WABA_TEST` });
+    expect(limit).toHaveBeenCalledWith({ key: `${TEST_ACCOUNT_ID}:WABA_TEST` });
     expect(graphFetch).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/wabas/{pending|failed}/messages is fail-closed: 404 and Meta is never called", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (instance) => {
+      instance.registerWaba({
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_SEND_PENDING",
+        metaAccessToken: "pending-token",
+        provisioningStatus: "pending",
+        phones: [{ phoneNumberId: "PNID_SEND_PENDING" }],
+      });
+      instance.registerWaba({
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_SEND_FAILED",
+        metaAccessToken: "failed-token",
+        provisioningStatus: "failed",
+        phones: [{ phoneNumberId: "PNID_SEND_FAILED" }],
+      });
+    });
+    // A mock that would happily answer any Meta Graph call — a fail-closed
+    // gateway must never reach it for non-active WABAs.
+    const graphFetch = mockGraphFetch();
+
+    for (const wabaId of ["WABA_SEND_PENDING", "WABA_SEND_FAILED"]) {
+      const res = await exports.default.fetch(`http://example.com/v1/wabas/${wabaId}/messages`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${API_KEY}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
+      });
+      expect(res.status, wabaId).toBe(404);
+      expect(await res.json(), wabaId).toEqual({ ok: false, error: "WABA is not configured" });
+    }
+
+    expect(graphFetch.mock.calls.some(([input]) => String(input).includes("/messages"))).toBe(false);
   });
 
   it("GET /v1/wabas/WABA_TEST/templates requires auth and returns Meta JSON", async () => {
     mockGraphFetch();
 
     const res = await exports.default.fetch("http://example.com/v1/wabas/WABA_TEST/templates", {
-      headers: { authorization: `Bearer ${env.ECCOS_API_KEY}` },
+      headers: { authorization: `Bearer ${API_KEY}` },
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -221,6 +347,10 @@ describe("routes", () => {
       ],
     });
     const body = JSON.stringify(payload);
+    // The forwarding target is per-WABA DO config now (no env fallback).
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+      instance.saveConfig({ SUBSCRIBER_WEBHOOK_URL: "https://subscriber.test/webhook" });
+    });
     const fetchMock = mockGraphFetch();
 
     const webhookRes = await exports.default.fetch("http://example.com/webhooks/meta", {
@@ -248,5 +378,66 @@ describe("routes", () => {
       messageId: "wamid.SMOKE",
       text: "Smoke test",
     });
+  });
+
+  it("ingests the same phone's webhook event only after the WABA becomes active", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (instance) => {
+      instance.registerWaba({
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_TRANSITION",
+        metaAccessToken: "transition-token",
+        callbackUrl: "https://gateway.example/webhooks/meta",
+        provisioningStatus: "pending",
+        phones: [{ phoneNumberId: "PHONE_TRANSITION" }],
+      });
+    });
+
+    const webhookBody = (messageId: string) => {
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [{
+          id: "WABA_TRANSITION",
+          changes: [{
+            field: "messages",
+            value: {
+              metadata: { phone_number_id: "PHONE_TRANSITION" },
+              messages: [{ from: "34600000000", id: messageId, timestamp: "1700000000", type: "text", text: { body: "hi" } }],
+            },
+          }],
+        }],
+      };
+      return JSON.stringify(payload);
+    };
+    const postWebhook = async (body: string) =>
+      exports.default.fetch("http://example.com/webhooks/meta", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-hub-signature-256": await signPayload(body, env.META_APP_SECRET) },
+        body,
+      });
+
+    // While pending the event is ignored (fail closed)...
+    const whilePending = await postWebhook(webhookBody("wamid.TRANSITION_BEFORE"));
+    expect(whilePending.status).toBe(200);
+    expect(await whilePending.json()).toEqual({ ok: true, received: 0 });
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA_TRANSITION"), async (instance: EccosGateway) => {
+      expect(instance.getCounts().inbound).toBe(0);
+    });
+
+    // ...then the WABA is provisioned (Meta mocked OK)...
+    const fetchMock = mockGraphFetch();
+    const provisioned = await provisionWaba(env, TEST_ACCOUNT_ID, "WABA_TRANSITION");
+    expect(provisioned).toMatchObject({ attempted: true, error: null });
+    await runInDurableObject(getControlPlaneStub(env), (instance) => {
+      expect(instance.getWabaRecord(TEST_ACCOUNT_ID, "WABA_TRANSITION")?.status).toBe("active");
+    });
+
+    // ...and the same phone's event is now ingested.
+    const afterActive = await postWebhook(webhookBody("wamid.TRANSITION_AFTER"));
+    expect(afterActive.status).toBe(200);
+    expect(await afterActive.json()).toEqual({ ok: true, received: 1 });
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA_TRANSITION"), async (instance: EccosGateway) => {
+      expect(instance.getCounts().inbound).toBe(1);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // only the subscribed_apps provisioning call
   });
 });

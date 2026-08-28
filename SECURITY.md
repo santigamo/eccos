@@ -29,9 +29,10 @@ stability and watch the repository for advisories.
 - **Inbound webhooks** are authenticated by verifying Meta's `X-Hub-Signature-256`
   (HMAC-SHA256 over the raw body with your `META_APP_SECRET`) using a **constant-time**
   comparison. Requests with a missing or invalid signature are rejected with `401`.
-- **API routes** (`/v1/*`) require a Bearer token / `x-api-key`. Legacy deployments compare it
-  with `ECCOS_API_KEY`; multi-tenant deployments resolve the hashed account key in the control
-  plane and then verify WABA ownership before touching a data-plane object.
+- **API routes** (`/v1/*`) require an account API key — a Bearer token / `x-api-key` resolved to
+  a hashed account key in the control plane — and verify WABA ownership before touching a
+  data-plane object. The Bun target (`src/`) keeps its single `ECCOS_API_KEY` for its single
+  tenant.
 - **Forwarded events** are signed with `X-Eccos-Signature: sha256=<hex>` using
   `SUBSCRIBER_SECRET` so your subscriber can verify they came from Eccos.
 - **Secrets** live only in `.env` (Bun target, gitignored), as `wrangler secret` values, or in
@@ -49,9 +50,10 @@ stability and watch the repository for advisories.
 
 ## Hardening notes
 
-- Always set a strong, random `ECCOS_API_KEY`, `META_WEBHOOK_VERIFY_TOKEN`, and
-  `SUBSCRIBER_SECRET`.
+- Always set a strong, random `META_WEBHOOK_VERIFY_TOKEN`, `ECCOS_ADMIN_API_KEY` (Workers), and
+  `SUBSCRIBER_SECRET` (`ECCOS_API_KEY` on the Bun target).
 - Serve Eccos over HTTPS (the Workers target gives you a stable HTTPS URL for free).
-- Rotate your `META_ACCESS_TOKEN` if you suspect exposure.
+- On Workers, per-account Meta tokens are stored in the control plane — rotate a WABA's token by
+  re-registering the WABA if one is suspected exposed.
 - If you use the provided `Dockerfile`, the included `.dockerignore` keeps `.env` and local
   data out of the image — keep it that way.

@@ -2,7 +2,7 @@
 
 Eccos is a self-hostable, open-source WhatsApp gateway on the official Meta Cloud API.
 Stack: **Bun + Hono + SQLite (`bun:sqlite`)**, TypeScript, Zod — plus a Cloudflare Workers
-target (`apps/gateway/`: Durable Object storage + Alarms forwarding, `/connect`, `/dashboard`).
+target (`apps/gateway/`: account-scoped Durable Object storage + Alarms forwarding, `/connect`).
 The repo is a **Bun workspace**: shared `@eccos/core` package + per-target apps.
 
 ## Build & Test
@@ -44,9 +44,11 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
 ## Rules
 
 - Code, identifiers, comments, and user-facing strings are in **English**.
-- **Single tenant in v1.** One WABA/phone via env. Do not add multi-tenant tables/flows
-  without an explicit roadmap decision. The Workers' per-WABA data-plane sharding does not
-  clear the paid-customer isolation gate; see `PRODUCTION-READINESS.md`.
+- **Workers account scope in v1.** `apps/gateway` always uses the account → WABA → phone
+  control-plane registry; do not add global tenant credentials or compatibility modes. The Bun
+  target in `src/` remains single-tenant until an explicit roadmap decision. The Workers'
+  per-WABA data-plane sharding does not clear the paid-customer isolation gate; see
+  `PRODUCTION-READINESS.md`.
 - Keep `packages/core/` free of HTTP/DB concerns — pure Cloud API + parsing. Routes own I/O.
 - The `WhatsAppCallbackEvent` shape is the public forwarding contract; changing it is a
   breaking change for any downstream subscriber. Add tests in `packages/core/tests/parser.test.ts`

@@ -94,7 +94,7 @@ export type EraseByPhoneResult =
   | { ok: true; phone: string; counts: ErasureCounts }
   | { ok: false; error: string };
 
-// --- Account resources (multi-tenant operator surface) -----------------------
+// --- Account resources (account-scoped operator surface) --------------------
 
 export interface AccountSummary {
   accountId: string;
@@ -122,6 +122,7 @@ export interface AccountWabaResource {
   wabaId: string;
   callbackUrl: string | null;
   createdAt: number;
+  provisionedAt: number | null;
   status: ProvisioningStatus;
   provisioningError: string | null;
   phones: Omit<AccountPhoneResource, "wabaId">[];
@@ -144,31 +145,31 @@ export interface GatewayExport {
 }
 
 export interface GatewayApi {
-  /** `accountId` is optional legacy context: ignored in single-tenant mode, but
-   * required (non-empty) when the gateway runs with `ECCOS_MULTI_TENANT`. */
-  getStatus(wabaId: string, accountId?: string): Promise<GatewayStatus>;
-  getConfig(wabaId: string, accountId?: string): Promise<Record<string, string>>;
-  listInbound(opts: ListOpts, accountId?: string): Promise<InboundRow[]>;
-  listOutbound(opts: ListOpts, accountId?: string): Promise<OutboundRow[]>;
-  listDeliveries(opts: DeliveryListOpts, accountId?: string): Promise<DeliveryRecord[]>;
-  getDelivery(id: number, wabaId: string, accountId?: string): Promise<DeliveryRecord | null>;
+  /** Every method requires the owning account's id: the gateway is unconditionally
+   * account-scoped and fails closed when the WABA is not owned by the account. */
+  getStatus(wabaId: string, accountId: string): Promise<GatewayStatus>;
+  getConfig(wabaId: string, accountId: string): Promise<Record<string, string>>;
+  listInbound(opts: ListOpts, accountId: string): Promise<InboundRow[]>;
+  listOutbound(opts: ListOpts, accountId: string): Promise<OutboundRow[]>;
+  listDeliveries(opts: DeliveryListOpts, accountId: string): Promise<DeliveryRecord[]>;
+  getDelivery(id: number, wabaId: string, accountId: string): Promise<DeliveryRecord | null>;
   retryDelivery(
     id: number,
     wabaId: string,
-    accountId?: string,
+    accountId: string,
   ): Promise<{ ok: boolean; previousStatus: string | null }>;
-  listTemplates(wabaId: string, limit?: number, accountId?: string): Promise<TemplatesResult>;
-  getSubscriberConfig(wabaId: string, accountId?: string): Promise<SubscriberConfig>;
+  listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult>;
+  getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig>;
   setSubscriberConfig(
     input: SetSubscriberConfigInput,
     wabaId: string,
-    accountId?: string,
+    accountId: string,
   ): Promise<{ ok: true }>;
-  resubscribe(wabaId: string, accountId?: string): Promise<ResubscribeResult>;
+  resubscribe(wabaId: string, accountId: string): Promise<ResubscribeResult>;
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
    * number across inbound_events, outbound_messages, and deliveries. */
-  eraseByPhone(phone: string, wabaId: string, accountId?: string): Promise<EraseByPhoneResult>;
-  exportData(wabaId: string, accountId?: string): Promise<GatewayExport>;
+  eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult>;
+  exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
 }

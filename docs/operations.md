@@ -2,9 +2,9 @@
 
 Day-2 operations for `apps/gateway/` running as a Cloudflare Worker: what "healthy" means,
 what gets logged, how to look at it, and what to do when something breaks. Written for the
-current **single-tenant product surface** (one operator/account and one configured WABA/phone
-per deployment) — these are practical targets to notice and react to problems, not contractual
-multi-tenant SLAs. For deploy/rollback mechanics and the environment-variable matrix, see
+account-scoped Workers product — these are practical targets to notice and react to problems, not
+contractual multi-tenant SLAs. The Bun target remains a separate single-tenant deployment. For
+deploy/rollback mechanics and the environment-variable matrix, see
 [docs/deployment.md](./deployment.md); for retention/backup, see
 [docs/data-lifecycle.md](./data-lifecycle.md).
 
@@ -45,16 +45,12 @@ an unreachable Durable Object.
 ### `GET /ready` — readiness
 
 ```json
-// 200 — ready
+// 200 — ready (app secrets present and the control plane reachable)
 {
   "ok": true,
   "config": {
-    "META_ACCESS_TOKEN": true,
-    "META_PHONE_NUMBER_ID": true,
-    "META_WABA_ID": true,
     "META_APP_SECRET": true,
-    "META_WEBHOOK_VERIFY_TOKEN": true,
-    "ECCOS_API_KEY": true
+    "META_WEBHOOK_VERIFY_TOKEN": true
   },
   "durableObject": { "ok": true, "error": null }
 }
@@ -62,18 +58,20 @@ an unreachable Durable Object.
 // 503 — not ready (example: a secret is missing)
 {
   "ok": false,
-  "config": { "...": "...", "ECCOS_API_KEY": false },
+  "config": { "META_APP_SECRET": false, "META_WEBHOOK_VERIFY_TOKEN": true },
   "durableObject": { "ok": true, "error": null }
 }
 ```
 
 Checks two things, and reports **booleans and key names only — never secret values**:
 
-1. **Config presence** — the six required secrets (see `docs/deployment.md`) are non-empty in
-   the Worker's environment.
-2. **Durable Object reachability** — a cheap existing RPC (`getConfigValue`, a single indexed
-   `SELECT`) is called against the active `EccosGateway` instance, bounded by a 2s timeout, so
-   a stuck/unreachable DO fails the check instead of hanging the probe.
+1. **Config presence** — the two app-level webhook secrets (`META_APP_SECRET` and
+   `META_WEBHOOK_VERIFY_TOKEN`) are non-empty in the Worker's environment. The bootstrap key is
+   not part of this probe because an empty account registry is a valid freshly deployed state;
+   without `ECCOS_ADMIN_API_KEY`, provisioning endpoints remain unusable until it is configured.
+2. **Durable Object reachability** — a cheap control-plane health RPC is called against the active
+   `EccosControlPlane` instance, bounded by a 2s timeout, so a stuck/unreachable DO fails the
+   check instead of hanging the probe.
 
 Returns `200` only when both pass, `503` otherwise. Use this for post-deploy verification, and as
 the "can it actually serve traffic" signal in any external uptime/synthetic check — `/health`
@@ -103,7 +101,7 @@ Every line has the same envelope:
   | `webhook_signature_invalid` | `POST /webhooks/meta` | `X-Hub-Signature-256` failed to verify (401) |
   | `webhook_invalid_json` | `POST /webhooks/meta` | Body didn't parse as JSON (400) |
   | `webhook_ingested` | `POST /webhooks/meta` | Payload parsed and written to the DO (200) |
-  | `v1_unauthorized` | `/v1/*` | Missing/invalid `ECCOS_API_KEY` (401) |
+  | `v1_unauthorized` | `/v1/*` | Missing/invalid account or admin key (401) |
   | `v1_rate_limited` | `POST /v1/wabas/<WABA_ID>/messages` | Cloudflare Rate Limiting rejected the request (429) |
   | `outbound_send` | `POST /v1/wabas/<WABA_ID>/messages` | Result of a Graph API send (200/400/502) |
   | `templates_list` | `GET /v1/wabas/<WABA_ID>/templates` | Result of listing templates (200/502) |
@@ -127,8 +125,8 @@ wrangler tail --format=json | jq 'select(.correlationId=="<id>")'
 ```
 
 Or: Cloudflare dashboard → Workers & Pages → `eccos` → Logs (Real-time Logs / Workers Logs).
-`head_sampling_rate: 1` in `wrangler.jsonc` means 100% of invocations are captured — fine at
-single-tenant volume; revisit if traffic grows enough to make log volume/cost a concern.
+`head_sampling_rate: 1` in `wrangler.jsonc` means 100% of invocations are captured — appropriate
+for the current early volume; revisit if traffic grows enough to make log volume/cost a concern.
 
 ## Incident + rollback runbook
 
@@ -146,12 +144,12 @@ single-tenant volume; revisit if traffic grows enough to make log volume/cost a 
    - Dashboard "Deliveries" page, filtered to `status=failed`, to see `last_error` per row if
      forwarding is the symptom.
 3. **Common causes & fixes.**
-   - Expired/rotated `META_ACCESS_TOKEN` → `outbound_send`/`templates_list` lines at 502.
-     Fix: `wrangler secret put META_ACCESS_TOKEN` from `apps/gateway` — takes effect immediately,
-     no redeploy needed.
-   - Wrong or down `SUBSCRIBER_WEBHOOK_URL` → deliveries piling up in `pending`/`failed`.
+   - Expired/rotated per-WABA Meta access token → `outbound_send`/`templates_list` lines at 502.
+     Fix: re-register the WABA through the admin bootstrap API (or reconnect it through
+     `/connect`) so the control-plane credential is replaced; no Worker redeploy is needed.
+   - Wrong or down per-WABA subscriber URL → deliveries piling up in `pending`/`failed`.
      Fix: rotate it from the dashboard's Settings page (`setSubscriberConfig`), which updates the
-     DO config without a deploy.
+     WABA's DO config without a deploy.
    - Meta silently unsubscribed the webhook (e.g. after too many slow/erroring responses) →
      inbound events stop arriving with no error on the Eccos side. Fix: use the dashboard's
      "Resubscribe" action (`GatewayRPC.resubscribe()`), or re-subscribe manually in Meta's App
@@ -203,9 +201,6 @@ in [docs/deployment.md](./deployment.md) before adding a WABA with existing data
 
 ## Follow-ups
 
-- `scripts/smoke.sh` doesn't yet check `GET /ready` — worth adding once the script itself is
-  revisited, so a deploy pipeline can gate on readiness, not just `/health` + individual route
-  checks.
 - No alerting is wired up (no email/Slack/PagerDuty on sustained `readiness_check` 503s or a
   growing `deliveries.failed` count) — currently that requires an operator to actively watch
   `wrangler tail` or the dashboard.

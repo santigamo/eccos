@@ -37,9 +37,8 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
  */
 
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
-const workerEnv: { GATEWAY_WABA_ID: string; GATEWAY_ACCOUNT_ID: string; readonly GATEWAY?: typeof gatewayBinding } = {
-  GATEWAY_WABA_ID: "waba-1",
-  GATEWAY_ACCOUNT_ID: "",
+const workerEnv: { GATEWAY_ACCOUNT_ID: string; readonly GATEWAY?: typeof gatewayBinding } = {
+  GATEWAY_ACCOUNT_ID: "account-a",
   get GATEWAY() {
     return gatewayBinding;
   },
@@ -75,35 +74,54 @@ const {
 
 afterEach(() => {
   gatewayBinding = undefined;
-  workerEnv.GATEWAY_WABA_ID = "waba-1";
-  workerEnv.GATEWAY_ACCOUNT_ID = "";
+  workerEnv.GATEWAY_ACCOUNT_ID = "account-a";
 });
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
+
+/** Account resources fixture with an owned WABA, for every account-scoped view. */
+function resourcesFor(accountId: string) {
+  return {
+    account: { accountId, name: "Account A", createdAt: 1 },
+    keys: [],
+    wabas: [
+      { accountId, wabaId: "waba-a", callbackUrl: null, createdAt: 1, phones: [{ phoneNumberId: "phone-a", displayPhoneNumber: "+1" }] },
+    ],
+    phones: [{ wabaId: "waba-a", phoneNumberId: "phone-a", displayPhoneNumber: "+1" }],
+  };
+}
+
+function withResources(binding: typeof gatewayBinding, options: { accountId?: string } = {}) {
+  const accountId = options.accountId ?? "account-a";
+  gatewayBinding = {
+    listAccountResources: async () => resourcesFor(accountId),
+    ...binding,
+  };
+}
 
 // --- Status view (routes/index.tsx) ---
 
 describe("getGatewayStatus (Status view)", () => {
   test("reachable: returns the gateway's status payload", async () => {
-    gatewayBinding = {
+    withResources({
       getStatus: async () => ({
         name: "eccos",
         version: "1.2.3",
         health: "healthy",
         connection: {
-          wabaId: "waba-1",
+          wabaId: "waba-a",
           phoneNumberId: "phone-1",
           displayPhone: "+1 555",
           connectedAt: "2026-01-01T00:00:00.000Z",
         },
         counts: { inbound: 3, outbound: { sent: 2 }, deliveries: { delivered: 2 } },
       }),
-    };
+    });
     const res = await getGatewayStatus();
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.status.health).toBe("healthy");
-      expect(res.status.connection.wabaId).toBe("waba-1");
+      expect(res.status.connection.wabaId).toBe("waba-a");
     }
   });
 
@@ -115,6 +133,7 @@ describe("getGatewayStatus (Status view)", () => {
 
   test("unreachable: RPC throw is caught and surfaced as { ok: false }", async () => {
     gatewayBinding = {
+      listAccountResources: async () => resourcesFor("account-a"),
       getStatus: async () => {
         throw new Error("Durable Object unreachable");
       },
@@ -124,10 +143,8 @@ describe("getGatewayStatus (Status view)", () => {
   });
 
   test("account mode resolves an owned WABA and forwards the account context", async () => {
-    workerEnv.GATEWAY_ACCOUNT_ID = "account-a";
-    workerEnv.GATEWAY_WABA_ID = "";
-    let statusArgs: unknown[] = [];
-    gatewayBinding = {
+    const statusArgs: unknown[] = [];
+    withResources({
       listAccountResources: async (accountId: string) => ({
         account: { accountId, name: "Account A", createdAt: 1 },
         keys: [],
@@ -138,7 +155,7 @@ describe("getGatewayStatus (Status view)", () => {
         phones: [{ wabaId: "waba-a", phoneNumberId: "phone-a", displayPhoneNumber: "+1" }],
       }),
       getStatus: async (...args: unknown[]) => {
-        statusArgs = args;
+        statusArgs.push(...args);
         return {
           name: "eccos",
           version: "1.2.3",
@@ -147,21 +164,19 @@ describe("getGatewayStatus (Status view)", () => {
           counts: { inbound: 0, outbound: {}, deliveries: {} },
         };
       },
-    };
+    });
     const overview = await getDashboardOverview();
     expect(overview.ok).toBe(true);
     if (overview.ok) {
-      expect(overview.data.scope).toMatchObject({ mode: "account", accountId: "account-a", selectedWabaId: "waba-a" });
-      expect(overview.data.scope.mode === "account" && overview.data.scope.resources.wabas[1]?.wabaId).toBe("waba-z");
+      expect(overview.data.scope).toMatchObject({ accountId: "account-a", selectedWabaId: "waba-a" });
+      expect(overview.data.scope.resources.wabas[1]?.wabaId).toBe("waba-z");
     }
     expect(statusArgs).toEqual(["waba-a", "account-a"]);
   });
 
   test("account mode accepts a requested owned WABA and rejects an unowned one", async () => {
-    workerEnv.GATEWAY_ACCOUNT_ID = "account-a";
-    workerEnv.GATEWAY_WABA_ID = "";
-    let statusArgs: unknown[] = [];
-    gatewayBinding = {
+    const statusArgs: unknown[] = [];
+    withResources({
       listAccountResources: async () => ({
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [],
@@ -172,7 +187,7 @@ describe("getGatewayStatus (Status view)", () => {
         phones: [],
       }),
       getStatus: async (...args: unknown[]) => {
-        statusArgs = args;
+        statusArgs.push(...args);
         return {
           name: "eccos",
           version: "1.2.3",
@@ -181,7 +196,7 @@ describe("getGatewayStatus (Status view)", () => {
           counts: { inbound: 0, outbound: {}, deliveries: {} },
         };
       },
-    };
+    });
 
     const selected = await getDashboardOverview({ data: { wabaId: "waba-b" } });
     expect(selected.ok).toBe(true);
@@ -190,46 +205,65 @@ describe("getGatewayStatus (Status view)", () => {
     const foreign = await getDashboardOverview({ data: { wabaId: "waba-foreign" } });
     expect(foreign).toEqual({ ok: false, error: 'WABA "waba-foreign" is not owned by account "account-a"' });
   });
+
+  test("fails closed when the account has no registered WABAs", async () => {
+    gatewayBinding = {
+      listAccountResources: async () => ({
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [],
+        phones: [],
+      }),
+    };
+    const res = await getGatewayStatus();
+    expect(res).toEqual({ ok: false, error: 'Account "account-a" has no registered WABAs' });
+  });
 });
 
 // --- Deliveries view (routes/deliveries.tsx) ---
 
 describe("listDeliveries / retryDelivery (Deliveries view)", () => {
   test("reachable: forwards filter options and returns rows", async () => {
-    let receivedOpts: unknown;
-    gatewayBinding = {
+    const receivedOpts: unknown[] = [];
+    withResources({
       listDeliveries: async (opts: unknown) => {
-        receivedOpts = opts;
+        receivedOpts.push(opts);
         return [{ id: 1, status: "failed", attempts: 2, last_error: "timeout", next_attempt_at: 0, created_at: 0, payload: "{}" }];
       },
-    };
+    });
     const res = await listDeliveries({ data: { status: "failed", before: 100 } });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data[0]?.status).toBe("failed");
-    expect(receivedOpts).toEqual({ status: "failed", before: 100, wabaId: "waba-1" });
+    expect(receivedOpts).toEqual([{ status: "failed", before: 100, wabaId: "waba-a" }]);
   });
 
   test("unreachable: throw is surfaced as { ok: false }", async () => {
-    gatewayBinding = {
+    withResources({
       listDeliveries: async () => {
         throw new Error("network error");
       },
-    };
+    });
     const res = await listDeliveries({ data: undefined });
     expect(res).toEqual({ ok: false, error: "network error" });
   });
 
-  test("retryDelivery reachable: returns the previous status", async () => {
-    gatewayBinding = {
-      retryDelivery: async (id: number) => ({ ok: true, previousStatus: id === 7 ? "failed" : null }),
-    };
-    const res = await retryDelivery({ data: { id: 7 } });
+  test("retryDelivery reachable: requires and forwards the selected WABA scope", async () => {
+    const retryArgs: unknown[] = [];
+    withResources({
+      retryDelivery: async (...args: unknown[]) => {
+        retryArgs.push(...args);
+        const id = args[0] as number;
+        return { ok: true, previousStatus: id === 7 ? "failed" : null };
+      },
+    });
+    const res = await retryDelivery({ data: { id: 7, wabaId: "waba-a" } });
     expect(res).toEqual({ ok: true, data: { ok: true, previousStatus: "failed" } });
+    expect(retryArgs).toEqual([7, "waba-a", "account-a"]);
   });
 
   test("retryDelivery unreachable: missing binding yields the graceful error shape", async () => {
     gatewayBinding = undefined;
-    const res = await retryDelivery({ data: { id: 7 } });
+    const res = await retryDelivery({ data: { id: 7, wabaId: "waba-a" } });
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
   });
 });
@@ -238,22 +272,22 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
 
 describe("listInbound (Inbound view)", () => {
   test("reachable: returns inbound rows", async () => {
-    gatewayBinding = {
+    withResources({
       listInbound: async () => [
         { id: 1, type: "message", transport_message_id: "wamid.1", message_id: null, payload: "{}", received_at: 0 },
       ],
-    };
+    });
     const res = await listInbound();
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data).toHaveLength(1);
   });
 
   test("unreachable: throw is surfaced as { ok: false }", async () => {
-    gatewayBinding = {
+    withResources({
       listInbound: async () => {
         throw new Error("boom");
       },
-    };
+    });
     const res = await listInbound();
     expect(res).toEqual({ ok: false, error: "boom" });
   });
@@ -263,11 +297,11 @@ describe("listInbound (Inbound view)", () => {
 
 describe("listOutbound (Outbound view)", () => {
   test("reachable: returns outbound rows", async () => {
-    gatewayBinding = {
+    withResources({
       listOutbound: async () => [
         { id: 1, transport_message_id: "wamid.1", recipient: "+1", request: "{}", status: "sent", error: null, created_at: 0 },
       ],
-    };
+    });
     const res = await listOutbound();
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data[0]?.status).toBe("sent");
@@ -284,9 +318,9 @@ describe("listOutbound (Outbound view)", () => {
 
 describe("listTemplates (Templates view)", () => {
   test("reachable + Meta fetch ok: returns the inner templates payload", async () => {
-    gatewayBinding = {
+    withResources({
       listTemplates: async () => ({ ok: true, data: { data: [{ name: "hello_world", language: "en_US", status: "approved" }] } }),
-    };
+    });
     const res = await listTemplates();
     expect(res.ok).toBe(true);
     if (res.ok && res.data.ok) {
@@ -296,20 +330,20 @@ describe("listTemplates (Templates view)", () => {
   });
 
   test("reachable but Meta rejected: inner { ok: false } is preserved", async () => {
-    gatewayBinding = {
+    withResources({
       listTemplates: async () => ({ ok: false, error: "Meta API error" }),
-    };
+    });
     const res = await listTemplates();
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data).toEqual({ ok: false, error: "Meta API error" });
   });
 
   test("unreachable: throw is surfaced as the outer { ok: false }", async () => {
-    gatewayBinding = {
+    withResources({
       listTemplates: async () => {
         throw new Error("RPC unreachable");
       },
-    };
+    });
     const res = await listTemplates();
     expect(res).toEqual({ ok: false, error: "RPC unreachable" });
   });
@@ -319,9 +353,9 @@ describe("listTemplates (Templates view)", () => {
 
 describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view)", () => {
   test("getSubscriberConfig reachable: returns the config without the secret", async () => {
-    gatewayBinding = {
+    withResources({
       getSubscriberConfig: async () => ({ url: "https://example.com/webhook", hasSecret: true }),
-    };
+    });
     const res = await getSubscriberConfig();
     expect(res).toEqual({ ok: true, data: { url: "https://example.com/webhook", hasSecret: true } });
   });
@@ -333,36 +367,36 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
   });
 
   test("setSubscriberConfig reachable: forwards the rotation payload", async () => {
-    let received: unknown;
-    gatewayBinding = {
+    const received: unknown[] = [];
+    withResources({
       setSubscriberConfig: async (input: unknown) => {
-        received = input;
+        received.push(input);
         return { ok: true };
       },
-    };
+    });
     const res = await setSubscriberConfig({ data: { url: "https://new.example.com", secret: "s3cr3t" } });
     expect(res).toEqual({ ok: true, data: { ok: true } });
-    expect(received).toEqual({ url: "https://new.example.com", secret: "s3cr3t" });
+    expect(received).toEqual([{ url: "https://new.example.com", secret: "s3cr3t" }]);
   });
 
   test("setSubscriberConfig unreachable: throw is surfaced as { ok: false }", async () => {
-    gatewayBinding = {
+    withResources({
       setSubscriberConfig: async () => {
         throw new Error("write failed");
       },
-    };
+    });
     const res = await setSubscriberConfig({ data: { url: "https://new.example.com" } });
     expect(res).toEqual({ ok: false, error: "write failed" });
   });
 
   test("resubscribe reachable + Meta accepted", async () => {
-    gatewayBinding = { resubscribe: async () => ({ ok: true }) };
+    withResources({ resubscribe: async () => ({ ok: true }) });
     const res = await resubscribe();
     expect(res).toEqual({ ok: true, data: { ok: true } });
   });
 
   test("resubscribe reachable but Meta rejected: inner error is preserved", async () => {
-    gatewayBinding = { resubscribe: async () => ({ ok: false, error: "callback URL not verified" }) };
+    withResources({ resubscribe: async () => ({ ok: false, error: "callback URL not verified" }) });
     const res = await resubscribe();
     expect(res).toEqual({ ok: true, data: { ok: false, error: "callback URL not verified" } });
   });

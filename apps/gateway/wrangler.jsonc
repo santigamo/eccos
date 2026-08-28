@@ -11,6 +11,10 @@
 
   "workers_dev": true,
 
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+
   "durable_objects": {
     "bindings": [
       { "name": "ECCOS", "class_name": "EccosGateway" },
@@ -49,19 +53,18 @@
     // Split retention (docs/data-lifecycle.md). Content window: after these days,
     // inbound_events and outbound_messages rows are deleted and terminal deliveries
     // keep only metadata (payload redacted). Optional; default 30, clamped to 7-90.
-    // The legacy RETENTION_DAYS var is still honored as a fallback for this value.
     "CONTENT_RETENTION_DAYS": "30",
     // Delivery-audit window: after these days, terminal (delivered/failed)
     // deliveries rows are deleted entirely. Optional; default 90.
     "DELIVERY_RETENTION_DAYS": "90",
     // EU data residency: the Durable Object is pinned to Cloudflare's EU
-    // jurisdiction. Valid values: "eu", "fedramp", "fedramp-high" (there is no
-    // "us"); empty/absent creates the DO wherever the first request lands.
-    // UPGRADING AN EXISTING DEPLOYMENT? Adding, changing, or removing this value
-    // points the gateway at a NEW, EMPTY Durable Object — nothing is migrated.
-    // Self-hosters with existing data must remove this line before deploying.
-    // See docs/deployment.md.
-    "DO_JURISDICTION": "eu",
-    "ECCOS_MULTI_TENANT": "false"
-  }
+    // jurisdiction (docs/deployment.md).
+    "DO_JURISDICTION": "eu"
+  },
+
+  // Meta platform secrets (META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN and the
+  // optional META_APP_ID / META_ES_CONFIG_ID for Embedded Signup) plus the
+  // ECCOS_ADMIN_API_KEY bootstrap secret are set with `wrangler secret put`.
+  // Per-tenant WABA credentials and subscriber settings live in the control
+  // plane / per-WABA Durable Object state — never in Worker vars.
 }

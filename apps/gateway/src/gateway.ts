@@ -15,9 +15,6 @@ import type {
 import { PRIVATE_CONFIG_KEYS } from "./private-config-keys";
 
 interface Env {
-  SUBSCRIBER_WEBHOOK_URL?: string;
-  SUBSCRIBER_SECRET?: string;
-  ECCOS_MULTI_TENANT?: string;
   FORWARD_MAX_ATTEMPTS: string;
   /** Content retention window (days): past it, `inbound_events` and `outbound_messages`
    * rows are deleted and terminal `deliveries` rows keep only metadata (payload redacted).
@@ -26,10 +23,6 @@ interface Env {
   /** Delivery-audit retention window (days): past it, terminal `deliveries` rows are
    * deleted entirely. Optional wrangler var; default 90. */
   DELIVERY_RETENTION_DAYS?: string;
-  /** @deprecated Legacy single retention window. Honored as a fallback for
-   * `CONTENT_RETENTION_DAYS` when that var is unset, so existing deployments keep
-   * their configured content window. Migrate to the split vars above. */
-  RETENTION_DAYS?: string;
 }
 
 interface DeliveryRow {
@@ -190,22 +183,17 @@ export const REDACTED_PAYLOAD = "";
  * Split retention windows, resolved from env with destructive-operation guards:
  * a non-numeric or non-positive value falls back to the default instead of
  * feeding a DELETE window, and the content window is clamped to [7, 90] days.
- * The deprecated `RETENTION_DAYS` is honored as the content window when
- * `CONTENT_RETENTION_DAYS` is unset (backwards compatibility for existing
- * deployments), still subject to the same clamp.
  */
 export function resolveRetentionDays(env: {
   CONTENT_RETENTION_DAYS?: string;
   DELIVERY_RETENTION_DAYS?: string;
-  RETENTION_DAYS?: string;
 }): { contentDays: number; deliveryDays: number } {
   const positive = (raw: string | undefined): number | undefined => {
     if (raw === undefined || raw.trim() === "") return undefined;
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : undefined;
   };
-  const contentRaw =
-    positive(env.CONTENT_RETENTION_DAYS) ?? positive(env.RETENTION_DAYS) ?? DEFAULT_CONTENT_RETENTION_DAYS;
+  const contentRaw = positive(env.CONTENT_RETENTION_DAYS) ?? DEFAULT_CONTENT_RETENTION_DAYS;
   const contentDays = Math.min(Math.max(contentRaw, MIN_CONTENT_RETENTION_DAYS), MAX_CONTENT_RETENTION_DAYS);
   const deliveryDays = Math.max(
     contentDays,
@@ -361,16 +349,11 @@ export class EccosGateway extends DurableObject<Env> {
     return row ? (row.value as string) : null;
   }
 
-  /** Operator-visible forwarding target: DO config first, env fallback. Never exposes the secret. */
+  /** Operator-visible forwarding target: DO config only (per-WABA runtime state).
+   * Never exposes the secret. */
   getSubscriberConfig(): SubscriberConfig {
-    const allowEnvFallback = this.env.ECCOS_MULTI_TENANT?.trim().toLowerCase() !== "true";
-    const url =
-      this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ??
-      (allowEnvFallback ? this.env.SUBSCRIBER_WEBHOOK_URL : null) ??
-      null;
-    const hasSecret = Boolean(
-      this.getConfigValue("SUBSCRIBER_SECRET") ?? (allowEnvFallback ? this.env.SUBSCRIBER_SECRET : undefined),
-    );
+    const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? null;
+    const hasSecret = Boolean(this.getConfigValue("SUBSCRIBER_SECRET"));
     return { url, hasSecret };
   }
 
@@ -734,9 +717,8 @@ export class EccosGateway extends DurableObject<Env> {
    * operator which one happened.
    */
   private async forwardOne(payload: string): Promise<ForwardOutcome> {
-    const allowEnvFallback = this.env.ECCOS_MULTI_TENANT?.trim().toLowerCase() !== "true";
-    const rawUrl = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? (allowEnvFallback ? this.env.SUBSCRIBER_WEBHOOK_URL : undefined);
-    const secret = this.getConfigValue("SUBSCRIBER_SECRET") ?? (allowEnvFallback ? this.env.SUBSCRIBER_SECRET : undefined);
+    const rawUrl = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL");
+    const secret = this.getConfigValue("SUBSCRIBER_SECRET");
     if (!rawUrl) return { ok: false, reason: "no subscriber URL configured" };
     let url: string;
     try {

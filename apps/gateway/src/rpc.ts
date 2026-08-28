@@ -1,11 +1,10 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { getEffectiveConfig } from "./config";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { getControlPlaneStub } from "./control-plane-stub";
-import { getAppConfig, isMultiTenantEnabled, tenantConfig, type TenantConfig } from "./tenant-config";
-import { subscribeApp } from "./meta/connect-api";
+import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { listTemplates } from "@eccos/core/templates";
 import { PRIVATE_CONFIG_KEYS } from "./private-config-keys";
+import { resubscribeWaba } from "./provisioning";
 import type {
   AccountResources,
   DeliveryListOpts,
@@ -50,58 +49,63 @@ function requireAccountId(accountId: string | undefined, message: string): strin
  * thin readers plus a retry trigger. The public HTTP surface (`/v1/wabas/:wabaId/*`,
  * `/webhooks/meta`) stays in the Hono app.
  *
- * Account scoping: single-tenant deployments (no `ECCOS_MULTI_TENANT`) keep the
- * legacy behavior — the WABA is implicit in the env, `accountId` is ignored.
- * Multi-tenant deployments require a non-empty `accountId` on every method and
- * verify, via the control-plane registry, that the requested WABA is owned by
- * that account before touching its Durable Object; credentials come from the
- * registry, never from global env secrets.
+ * The gateway is unconditionally account-scoped: every method requires a
+ * non-empty `accountId` and verifies, via the control-plane registry, that the
+ * requested WABA is owned by that account before touching its Durable Object;
+ * credentials come from the registry, never from global env secrets.
  */
 export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   private stubFor(wabaId: string) {
     return getGatewayStubForWaba(this.env, wabaId);
   }
 
-  /**
-   * Resolves the WABA's stub with an ownership + configuration context.
-   * In multi-tenant mode the control plane is the authority: a WABA not
-   * registered to the account fails closed. In legacy mode the env config is
-   * the authority and `accountId` is ignored.
-   */
+  /** Resolves the WABA's stub with an ownership + configuration context.
+   * The control plane is the authority: a WABA not registered to the account
+   * fails closed. */
   private async scoped(
     wabaId: string,
     accountId?: string,
-  ): Promise<{ stub: ReturnType<GatewayRPC["stubFor"]>; config: TenantConfig; callbackUrl: string | null }> {
-    if (isMultiTenantEnabled(this.env)) {
-      const account = requireAccountId(accountId, "accountId is required in multi-tenant mode");
-      const waba = await getControlPlaneStub(this.env).getWaba(account, wabaId);
-      if (!waba) throw new Error(`WABA "${wabaId}" is not owned by account "${account}"`);
-      const phoneNumberId = waba.phones[0]?.phoneNumberId ?? "";
-      const config = tenantConfig(getAppConfig(this.env), {
-        wabaId: waba.wabaId,
-        phoneNumberId,
-        metaAccessToken: waba.metaAccessToken,
-      });
-      return { stub: this.stubFor(wabaId), config, callbackUrl: waba.callbackUrl ?? null };
-    }
-    const stub = this.stubFor(wabaId);
-    const config = await getEffectiveConfig(this.env, stub);
-    if (config.META_WABA_ID !== wabaId) throw new Error(`WABA "${wabaId}" is not configured`);
-    return { stub, config, callbackUrl: null };
+  ): Promise<{
+    stub: ReturnType<GatewayRPC["stubFor"]>;
+    wabaId: string;
+    phoneNumberId: string | null;
+    config: TenantConfig;
+    callbackUrl: string | null;
+    displayPhone: string | null;
+    provisionedAt: number | null;
+  }> {
+    const account = requireAccountId(accountId, "accountId is required");
+    const waba = await getControlPlaneStub(this.env).getWaba(account, wabaId);
+    if (!waba) throw new Error(`WABA "${wabaId}" is not owned by account "${account}"`);
+    const phoneNumberId = waba.phones[0]?.phoneNumberId ?? "";
+    const config = tenantConfig(getAppConfig(this.env), {
+      wabaId: waba.wabaId,
+      phoneNumberId,
+      metaAccessToken: waba.metaAccessToken,
+    });
+    return {
+      stub: this.stubFor(wabaId),
+      wabaId: waba.wabaId,
+      phoneNumberId: phoneNumberId || null,
+      config,
+      callbackUrl: waba.callbackUrl ?? null,
+      displayPhone: waba.phones[0]?.displayPhoneNumber || null,
+      provisionedAt: waba.provisionedAt ?? null,
+    };
   }
 
   async getStatus(wabaId: string, accountId?: string): Promise<GatewayStatus> {
-    const { stub, config } = await this.scoped(wabaId, accountId);
-    const [counts, stored] = await Promise.all([stub.getCounts(), stub.getAllConfig()]);
+    const { stub, wabaId: scopedWabaId, phoneNumberId, displayPhone, provisionedAt } = await this.scoped(wabaId, accountId);
+    const counts = await stub.getCounts();
     return {
       name: "eccos",
       version: "0.1.0",
       health: healthFromCounts(counts),
       connection: {
-        wabaId: stored.META_WABA_ID ?? config.META_WABA_ID ?? null,
-        phoneNumberId: stored.META_PHONE_NUMBER_ID ?? config.META_PHONE_NUMBER_ID ?? null,
-        displayPhone: stored.DISPLAY_PHONE_NUMBER ?? null,
-        connectedAt: stored.CONNECTED_AT ?? null,
+        wabaId: scopedWabaId,
+        phoneNumberId,
+        displayPhone,
+        connectedAt: provisionedAt === null ? null : new Date(provisionedAt).toISOString(),
       },
       counts,
     };
@@ -177,24 +181,14 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   }
 
   /**
-   * Re-subscribe this app to the WABA's webhooks on Meta. The external call lives here
-   * (not the DO) so the DO stays the state owner. In multi-tenant mode the registry's
-   * tenant token and WABA callback metadata are used; in legacy mode the persisted
-   * META_ACCESS_TOKEN (transient Embedded Signup token is never stored) and the
-   * configured callback URL (DO config `META_WEBHOOK_CALLBACK_URL`, env fallback).
+   * Re-subscribe this app to the WABA's webhooks on Meta through the control-plane
+   * provisioning reconciler.
    */
   async resubscribe(wabaId: string, accountId?: string): Promise<ResubscribeResult> {
     try {
-      const { stub, config: cfg, callbackUrl: registryCallbackUrl } = await this.scoped(wabaId, accountId);
-      const callbackUrl =
-        registryCallbackUrl ??
-        (await stub.getConfigValue("META_WEBHOOK_CALLBACK_URL")) ??
-        (this.env as { META_WEBHOOK_CALLBACK_URL?: string }).META_WEBHOOK_CALLBACK_URL;
-      if (!callbackUrl) {
-        return { ok: false, error: "resubscribe: META_WEBHOOK_CALLBACK_URL is not configured" };
-      }
-      await subscribeApp(cfg, cfg.META_WABA_ID, cfg.META_ACCESS_TOKEN, callbackUrl);
-      return { ok: true };
+      const account = requireAccountId(accountId, "accountId is required");
+      const result = await resubscribeWaba(this.env, account, wabaId);
+      return result.error ? { ok: false, error: result.error } : { ok: true };
     } catch (err) {
       return { ok: false, error: String(err) };
     }

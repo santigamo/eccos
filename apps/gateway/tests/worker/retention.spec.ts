@@ -1,10 +1,14 @@
 import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { REDACTED_PAYLOAD, resolveRetentionDays, type EccosGateway } from "../../src/gateway";
-import { gatewayStub } from "./helpers";
+import { bootstrapAccount, gatewayStub } from "./helpers";
 
 afterEach(async () => {
   await reset();
+});
+
+beforeEach(async () => {
+  await bootstrapAccount();
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -137,11 +141,9 @@ describe("resolveRetentionDays", () => {
     expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "365" }).contentDays).toBe(90);
   });
 
-  it("falls back to the deprecated RETENTION_DAYS for the content window, clamped too", () => {
-    expect(resolveRetentionDays({ RETENTION_DAYS: "14" }).contentDays).toBe(14);
-    expect(resolveRetentionDays({ RETENTION_DAYS: "3" }).contentDays).toBe(7);
-    expect(resolveRetentionDays({ RETENTION_DAYS: "365" }).contentDays).toBe(90);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "60", RETENTION_DAYS: "10" }).contentDays).toBe(60);
+  it("honors only the split content window (RETENTION_DAYS is removed)", () => {
+    expect(resolveRetentionDays({}).contentDays).toBe(30);
+    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "60" }).contentDays).toBe(60);
   });
 
   it("guards destructive windows against invalid values", () => {

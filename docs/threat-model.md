@@ -1,8 +1,8 @@
 # Threat model
 
-This is a lightweight, code-grounded threat model for Eccos — proportionate to the shipped
-single-tenant mode and the account-scoped Cloudflare Workers mode. Every mitigation cited below is
-backed by a specific file; every gap is called a gap.
+This is a lightweight, code-grounded threat model for Eccos — focused on the account-scoped
+Cloudflare Workers mode and calling out where the separate Bun self-host target differs. Every
+mitigation cited below is backed by a specific file; every gap is called a gap.
 
 Two runtimes ship the same core: the **Cloudflare Workers target** (`apps/gateway/`, the actively
 developed v1 surface — Hono app + `EccosGateway` Durable Object) and the **Bun target** (`src/`,
@@ -15,14 +15,14 @@ What an attacker would want, and where it lives:
 
 | Asset | What it is | Where it lives |
 |---|---|---|
-| `META_ACCESS_TOKEN` | Permanent Meta System User token — can send messages and read templates as your WABA | Legacy: `wrangler secret` (Workers) / `.env` (Bun). Multi-tenant: encrypted-at-rest control-plane storage; never returned to callers. |
+| `META_ACCESS_TOKEN` | Permanent Meta System User token — can send messages and read templates as its WABA | Workers: control-plane WABA storage, never returned to callers. Bun: `.env`. |
 | `META_APP_SECRET` | Verifies inbound webhook signatures; also used server-side to exchange OAuth codes | Secret: `wrangler secret` / `.env` |
 | `META_WEBHOOK_VERIFY_TOKEN` | Shared value Meta echoes back on webhook subscription (`GET /webhooks/meta`) | Secret: `wrangler secret` / `.env` |
-| `ECCOS_API_KEY` | Legacy bearer key gating the WABA-scoped send/template routes | Secret: `wrangler secret` / `.env`; multi-tenant account keys are stored as SHA-256 hashes in the control plane |
-| `ECCOS_ADMIN_API_KEY` | Bootstrap key for account and WABA provisioning in multi-tenant mode | Secret: `wrangler secret` |
-| `SUBSCRIBER_SECRET` | HMAC key Eccos uses to sign forwarded events (`X-Eccos-Signature`) so the subscriber can trust them | Secret, or rotatable via the dashboard's "settings" operator action (`apps/gateway/src/gateway.ts` `setSubscriberConfig`) |
+| `ECCOS_API_KEY` | Bun-target bearer key gating the WABA-scoped send/template routes | Secret: `.env` (Bun target only); account API keys are stored as SHA-256 hashes in the control plane |
+| `ECCOS_ADMIN_API_KEY` | Bootstrap key for account and WABA provisioning | Secret: `wrangler secret` |
+| `SUBSCRIBER_SECRET` | HMAC key Eccos uses to sign forwarded events (`X-Eccos-Signature`) so the subscriber can trust them | Workers: per-WABA DO config, rotatable via the dashboard's settings action. Bun: `.env`. |
 | Message content | Inbound reply/echo text, delivery/read/failed statuses, phone numbers (`from`/`to`), Meta message ids | DO SQLite (`inbound_events`, `outbound_messages`, `deliveries` in `apps/gateway/src/gateway.ts`) / `bun:sqlite` (Bun target, `src/db/client.ts`) |
-| The Embedded-Signup business token | 60-day token returned by `exchangeCodeForToken` during `/connect` | Legacy: in-memory only. Multi-tenant: stored only in the control-plane WABA row so later tenant-scoped sends and resubscriptions can use it; never written to the data-plane config or returned |
+| The Embedded-Signup business token | 60-day token returned by `exchangeCodeForToken` during `/connect` | Stored only in the control-plane WABA row so later account-scoped sends and resubscriptions can use it; never written to the data-plane config or returned |
 | Cloudflare Access session (operator console) | Proves "this is the operator" to the dashboard | Cloudflare-managed; re-verified in-Worker (`apps/dashboard/src/access.ts`) |
 
 ## 2. Trust boundaries
@@ -46,8 +46,8 @@ Four boundaries matter:
 1. **Meta ↔ gateway** — inbound webhook calls are the only unauthenticated-by-default HTTP the
    gateway accepts from the public Internet; trust is established per-request by HMAC signature,
    not network position.
-2. **caller ↔ gateway (`/v1/*`)** — legacy callers are trusted once they present `ECCOS_API_KEY`.
-   Multi-tenant callers resolve an account from a hashed API key and must address an owned WABA.
+2. **caller ↔ gateway (`/v1/*`)** — callers are trusted once they present a hashed, revocable
+   account API key resolved from the control plane, and must address a WABA they own.
 3. **gateway ↔ subscriber** — the gateway pushes data outbound to a URL the operator configured;
    the subscriber is expected to verify `X-Eccos-Signature` before trusting the payload.
 4. **operator ↔ dashboard ↔ gateway** — the operator console is a separate Worker with **no public
@@ -60,11 +60,11 @@ Four boundaries matter:
 ### 3.0 `/health`, `/ready` (unauthenticated, low-sensitivity)
 
 Both are intentionally public (LB/uptime polling). `GET /health` is a pure liveness check with no
-I/O. `GET /ready` (`apps/gateway/src/worker.ts`) additionally reports whether the required Meta/
-API secrets are present and whether the Durable Object responds — but only as **booleans and key
-names** (`REQUIRED_CONFIG_KEYS`), never values. Confirmed by reading `configPresence()`: it returns
-`Boolean(rec[key]?.trim())` per key, not the value itself. Worth knowing this surface exists and is
-unauthenticated, but it does not leak secrets or message data.
+I/O. `GET /ready` (`apps/gateway/src/worker.ts`) additionally reports whether the two required
+app-level webhook secrets are present and whether the control-plane Durable Object responds — but
+only as **booleans and key names** (`REQUIRED_CONFIG_KEYS`), never values. Confirmed by reading
+`configPresence()`: it returns `Boolean(rec[key]?.trim())` per key, not the value itself. Worth
+knowing this surface exists and is unauthenticated, but it does not leak secrets or message data.
 
 ### 3.1 `POST /webhooks/meta` (inbound from Meta)
 
@@ -74,27 +74,27 @@ unauthenticated, but it does not leak secrets or message data.
   `X-Hub-Signature-256` using `constantTimeEqual` — a length check plus an XOR-accumulate loop,
   not `===`, so response timing doesn't leak how many leading bytes matched. Missing/invalid
   signature → `401` before the body is even parsed (`apps/gateway/src/worker.ts`).
-- **`GET /webhooks/meta`** (Meta's subscription challenge) is protected by comparing
-  `hub.verify_token` to `META_WEBHOOK_VERIFY_TOKEN` — but with plain `===` (`worker.ts` line 30),
-  not `constantTimeEqual`. See residual risks below.
+- **`GET /webhooks/meta`** (Meta's subscription challenge) compares `hub.verify_token` to
+  `META_WEBHOOK_VERIFY_TOKEN` with `constantTimeEqual` on the Workers target. The separate Bun
+  target still uses a direct string comparison.
 - Ingest is idempotent: `inbound_events` has unique indexes on `(transport_message_id, type)` and
   on `message_id`, so a replayed (validly-signed) webhook delivery doesn't double-insert.
-- In multi-tenant mode, a signed batch is accepted only for a WABA registered in the control plane.
+- A signed batch is accepted only for a WABA (and phone) registered in the control plane.
   A batch without `metadata.phone_number_id` is intentionally retained at WABA scope because the
   WABA id remains authoritative; it cannot cross account boundaries, but it cannot be attributed to
   one phone inside that WABA either.
 
 ### 3.2 `/v1/*` (outbound send, templates, erasure, export)
 
-- **Surface:** legacy requires a Bearer token or `x-api-key` equal to `ECCOS_API_KEY`, checked
-  with `constantTimeEqual` (`apps/gateway/src/worker.ts`). Multi-tenant mode hashes an account key
-  and checks the WABA ownership record before dispatching to a data-plane object.
+- **Surface:** every request authenticates an account API key — a SHA-256 hash lookup in the
+  control plane (revoked keys fail closed) — and the WABA must be owned by that account before
+  dispatch to a data-plane object (`apps/gateway/src/worker.ts`).
 - **Rate limiting:** `POST /v1/wabas/<WABA_ID>/messages` is additionally throttled by Cloudflare's native Rate
   Limiting binding (`SEND_RATE_LIMITER`, 60/min per key, `wrangler.jsonc`) — the code comment in
   `worker.ts` is explicit that this is "per-location and eventually consistent: good abuse/spike
   protection, not an exact global quota counter."
-- **Legacy scope:** there is one `ECCOS_API_KEY` for the whole deployment. Multi-tenant mode
-  rejects unknown/revoked keys and cross-account WABA, phone, retry, export, and erasure access.
+- **Scope:** every account key is scoped to its account; unknown/revoked keys and cross-account
+  WABA, phone, retry, export, and erasure access are rejected (fail closed).
 
 ### 3.3 `/connect`, `/connect/exchange` (Embedded Signup OAuth)
 
@@ -111,18 +111,16 @@ unauthenticated, but it does not leak secrets or message data.
   (`400`) on a missing or mismatched value, clearing the cookie either way. This blocks an
   attacker from tricking a victim's browser into completing an OAuth exchange the victim didn't
   initiate.
-- **Auth mitigation (`POST /connect/exchange`):** in legacy mode this endpoint — which takes a
-  `code`/`waba_id`/`redirect_uri` body and, on success, overwrites the gateway's `META_WABA_ID` /
-  `META_PHONE_NUMBER_ID` in DO config — requires `ECCOS_API_KEY`. In multi-tenant mode it requires
-  an account API key and registers all WABAs and phones discovered from the exchanged token under
-  that account. Existing WABA ownership conflicts are rejected before registry mutation.
+- **Auth mitigation (`POST /connect/exchange`):** this endpoint — which takes a
+  `code`/`state`/`waba_id`/`redirect_uri` body — requires an account API key and an account-bound
+  OAuth state, and registers all WABAs and phones discovered from the exchanged token under that
+  account. Existing WABA ownership conflicts are rejected before registry mutation.
 - Exchanging a `code` still additionally requires the operator's own `META_APP_SECRET`
   server-side (`exchangeCodeForToken`) — defense in depth beyond the two checks above.
-- The legacy business token from the exchange is used in-request (`listPhoneNumbers`,
-  `subscribeApp`) and discarded. Multi-tenant mode stores the token only in the control-plane WABA
+- The business token from the exchange is stored only in the control-plane WABA
   row so later tenant-scoped sends and resubscriptions can use it; it is never written to data-plane
   config or returned by the operator API.
-- **Residual risk:** the multi-tenant callback consumes its single-use state before the external
+- **Residual risk:** the account-scoped callback consumes its single-use state before the external
   exchange and subscription calls complete, so a failed Meta call requires a new connect attempt.
 
 ### 3.4 Dashboard behind Cloudflare Access + the RPC service binding
@@ -139,7 +137,9 @@ unauthenticated, but it does not leak secrets or message data.
   verification failure → `403`. Wired into a custom server entry (`src/server.ts`) so it runs
   before SSR pages, server routes, and server-function calls alike.
   This gate is a documented **no-op until both `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are set**
-  (`apps/dashboard/README.md`) — a bare deploy is unauthenticated by default.
+  (`apps/dashboard/README.md`) — with one exception: an account-scoped deployment
+  (`GATEWAY_ACCOUNT_ID` set) that is not yet behind Access **fails closed with `403`**, so it can
+  never silently become a public dashboard.
 - **Mitigation, transport:** the dashboard reaches the gateway only via a Cloudflare service
   binding to the `GatewayRPC` `WorkerEntrypoint` (`apps/gateway/src/rpc.ts`) — not HTTP. This
   binding is not addressable from the public Internet at all; there is no URL to leak or CORS
@@ -158,11 +158,11 @@ unauthenticated, but it does not leak secrets or message data.
 | Forged/replayed Meta webhook | `verifyMetaSignature` + constant-time compare + unique indexes on `inbound_events` | None significant; HMAC verification happens before JSON parsing. |
 | Misattributed signed webhook without phone metadata | Registered WABA filtering in `worker.ts`; the WABA id is the authoritative routing key | The event is retained at WABA scope when `phone_number_id` is absent, so phone-level attribution is unavailable. |
 | Timing attack on webhook/API-key comparison | `constantTimeEqual` (XOR-accumulate, length-checked first) | The webhook **subscription** `hub.verify_token` check uses plain `===`, not `constantTimeEqual` — low severity (low-value, one-time setup token; Meta calls it directly), but inconsistent with the rest of the codebase. |
-| Stolen/leaked API key | Account-key hash lookup, revocation, WABA ownership checks, and rate limit on send | A leaked multi-tenant key grants access to every WABA owned by that account until revoked; the admin bootstrap key remains deployment-wide. |
+| Stolen/leaked API key | Account-key hash lookup, revocation, WABA ownership checks, and rate limit on send | A leaked account key grants access to every WABA owned by that account until revoked; the admin bootstrap key remains deployment-wide. |
 | Forged forwarded event reaching the subscriber | `X-Eccos-Signature: sha256=<hex>` via `signPayload`, using `SUBSCRIBER_SECRET` | The subscriber's own verification is out of this repo's control — if a subscriber implementation skips verification, forgery is possible from anyone who can reach its webhook URL. Document this expectation clearly for integrators. |
-| Unauthorized WABA rebind via `/connect/exchange` | Legacy API-key gate; multi-tenant account-key gate plus single-use account-bound OAuth state and ownership-conflict checks; valid Meta OAuth code required (see §3.3) | A failed external exchange after state consumption requires a new connect attempt. |
-| Subscriber URL SSRF | Rotated subscriber URLs require HTTPS, no credentials, and reject private/special IP literals; forwarding validates environment fallbacks too and rejects redirects | DNS rebinding after save-time validation remains possible because Workers does not expose a general DNS-resolution API to application code. |
-| Dashboard reached directly on `*.workers.dev`, bypassing Access at the edge | In-Worker `enforceAccess` re-verification, fail-closed | Only enforced once `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` are configured — a fresh, un-configured deploy is fully open. This is documented but relies on the operator completing setup before exposing the URL. |
+| Unauthorized WABA rebind via `/connect/exchange` | Account-key gate plus single-use account-bound OAuth state and ownership-conflict checks; valid Meta OAuth code required (see §3.3) | A failed external exchange after state consumption requires a new connect attempt. |
+| Subscriber URL SSRF | Rotated subscriber URLs require HTTPS, no credentials, and reject private/special IP literals; forwarding validates the stored value too and rejects redirects | DNS rebinding after save-time validation remains possible because Workers does not expose a general DNS-resolution API to application code. |
+| Dashboard reached directly on `*.workers.dev`, bypassing Access at the edge | In-Worker `enforceAccess` re-verification, fail-closed | An account-scoped dashboard deployment fails closed until `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` are configured. Local development without `GATEWAY_ACCOUNT_ID` remains intentionally open. |
 | Operator console leaking message content to the wrong person | Access JWT gate (edge + in-Worker) restricts *who* reaches the dashboard at all | The dashboard renders raw inbound message text (`apps/dashboard/src/routes/inbound.tsx`, `inboundSummary()` reads `ev.text`) to anyone who passes the Access policy — so the Access policy *is* the access-control boundary for message content, not a separate per-page permission. |
 | DoS via flooding `/webhooks/meta` with invalid signatures | Cloudflare edge DDoS protection (platform-level, outside this repo) | No application-level rate limiting on the two public unauthenticated routes (`GET`/`POST /webhooks/meta`), unlike `/v1/wabas/<WABA_ID>/messages`. Each invalid POST still costs one HMAC computation before rejection. |
 | Per-WABA Durable Object as an availability/scale boundary | N/A (architectural choice, not a security control) | Each WABA's reads/writes serialize through its own versioned DO; tenant state is not a global singleton, but there is no cross-region replica. |
@@ -185,15 +185,15 @@ unauthenticated, but it does not leak secrets or message data.
 
 ## 6. Recommendations
 
-1. Switch the `hub.verify_token` comparison in `GET /webhooks/meta` (both targets) to
-   `constantTimeEqual` for consistency, even though the practical exposure is low. **Not yet
-   implemented** — both targets still use plain `===` for this one comparison.
-2. Legacy `ECCOS_API_KEY` rotation still requires a redeploy; multi-tenant account keys can be
-   issued and revoked through the admin bootstrap API. A customer-facing key manager is not yet
-   implemented.
+1. Switch the `hub.verify_token` comparison in the Bun target's `GET /webhooks/meta` to
+   `constantTimeEqual` for consistency; the Workers target already uses it. The practical
+   exposure is low because the token is used during one-time subscription setup.
+2. Account API keys can be issued and revoked through the admin bootstrap API (hashed at rest);
+   the Bun target's single `ECCOS_API_KEY` rotation still requires a redeploy. A customer-facing
+   key manager is not yet implemented.
 3. ~~Gate `/connect/exchange` more tightly (auth + CSRF state).~~ **Done** — `POST
-   /connect/exchange` now requires `ECCOS_API_KEY`, and `GET /connect`'s callback now validates an
-   OAuth `state` cookie (see §3.3).
+   /connect/exchange` now requires an account API key and an account-bound OAuth `state`, and
+   `GET /connect`'s callback validates the OAuth state cookie (see §3.3).
 4. If/when the Bun target is retaken post-v1, carry the same signature/timing hygiene, and the
    same structured, secret-free logging discipline the Workers target now has (`worker.ts`
    `logEvent`), forward to `src/`.

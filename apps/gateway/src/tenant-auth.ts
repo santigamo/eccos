@@ -1,7 +1,4 @@
-import { constantTimeEqual } from "@eccos/core/signature";
-import { getConfig } from "./config";
 import { getControlPlaneStub } from "./control-plane-stub";
-import { isTenantControlPlaneEnabled } from "./tenant-config";
 
 export interface RequestAccount {
   accountId: string;
@@ -16,6 +13,7 @@ export function extractApiKey(
   return apiKeyHeader;
 }
 
+/** Resolves a hashed, revocable account API key from the control plane. */
 export async function authenticateRequest(
   env: Env,
   authorizationHeader: string | undefined,
@@ -23,19 +21,6 @@ export async function authenticateRequest(
 ): Promise<RequestAccount | null> {
   const key = extractApiKey(authorizationHeader, apiKeyHeader);
   if (!key) return null;
-  if (isTenantControlPlaneEnabled(env)) {
-    return getControlPlaneStub(env).authenticateApiKey(key);
-  }
-  return authenticateLegacyRequest(env, authorizationHeader, apiKeyHeader);
-}
-
-export function authenticateLegacyRequest(
-  env: Env,
-  authorizationHeader: string | undefined,
-  apiKeyHeader: string | undefined,
-): RequestAccount | null {
-  const key = extractApiKey(authorizationHeader, apiKeyHeader);
-  if (!key) return null;
-  const config = getConfig(env);
-  return constantTimeEqual(key, config.ECCOS_API_KEY) ? { accountId: "__legacy__", keyId: null } : null;
+  const account = await getControlPlaneStub(env).authenticateApiKey(key);
+  return account ? { accountId: account.accountId, keyId: account.keyId } : null;
 }

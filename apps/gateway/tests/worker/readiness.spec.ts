@@ -17,7 +17,7 @@ describe("GET /health", () => {
 });
 
 describe("GET /ready", () => {
-  it("returns 200 with all checks passing when config and the Durable Object are healthy", async () => {
+  it("returns 200 with all checks passing when app config and the control plane are healthy", async () => {
     const res = await exports.default.fetch("http://example.com/ready");
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -27,28 +27,33 @@ describe("GET /ready", () => {
     };
     expect(body.ok).toBe(true);
     expect(body.durableObject).toEqual({ ok: true, error: null });
+    // Only the app-level Meta platform secrets are required (no per-WABA globals).
     expect(body.config).toEqual({
-      META_ACCESS_TOKEN: true,
-      META_PHONE_NUMBER_ID: true,
-      META_WABA_ID: true,
       META_APP_SECRET: true,
       META_WEBHOOK_VERIFY_TOKEN: true,
-      ECCOS_API_KEY: true,
     });
   });
 
-  it("returns 503 and names the missing key (never its value) when a required secret is absent", async () => {
-    const saved = env.ECCOS_API_KEY;
-    delete (env as MutableEnv).ECCOS_API_KEY;
+  it("returns 503 and names the missing key (never its value) when a required app secret is absent", async () => {
+    const saved = env.META_APP_SECRET;
+    delete (env as MutableEnv).META_APP_SECRET;
     try {
       const res = await exports.default.fetch("http://example.com/ready");
       expect(res.status).toBe(503);
       const body = (await res.json()) as { ok: boolean; config: Record<string, boolean> };
       expect(body.ok).toBe(false);
-      expect(body.config.ECCOS_API_KEY).toBe(false);
+      expect(body.config.META_APP_SECRET).toBe(false);
       expect(JSON.stringify(body)).not.toContain(saved);
     } finally {
-      (env as MutableEnv).ECCOS_API_KEY = saved;
+      (env as MutableEnv).META_APP_SECRET = saved;
     }
+  });
+
+  it("stays healthy when the account registry is empty — readiness reports config, not tenants", async () => {
+    const res = await exports.default.fetch("http://example.com/ready");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; config: Record<string, boolean> };
+    expect(body.ok).toBe(true);
+    expect(body.config.META_APP_SECRET).toBe(true);
   });
 });

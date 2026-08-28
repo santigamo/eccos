@@ -1,15 +1,21 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject, reset } from "cloudflare:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { gatewayStub } from "./helpers";
-
-const TEST_WABA_ID = "WABA_TEST";
+import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 afterEach(async () => {
   await reset();
+});
+
+// The gateway is account-scoped: every RPC call needs a control-plane account
+// that owns the WABA. In these tests the WABA Durable Object is seeded directly
+// and the account registry is bootstrapped; `GatewayRPC` resolves ownership and
+// tenant credentials from the registry.
+beforeEach(async () => {
+  await bootstrapAccount();
 });
 
 function makeRpc() {
@@ -121,7 +127,10 @@ describe("EccosGateway operator reads", () => {
       expect(exported.config).not.toHaveProperty("SUBSCRIBER_SECRET");
     });
 
-    const exported = await makeRpc().exportData(TEST_WABA_ID);
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.saveConfig({ META_ACCESS_TOKEN: "export-token" });
+    });
+    const exported = await makeRpc().exportData(TEST_WABA_ID, TEST_ACCOUNT_ID);
     expect(exported.config).not.toHaveProperty("META_ACCESS_TOKEN");
     expect(exported.config).not.toHaveProperty("META_APP_SECRET");
     expect(exported.config).not.toHaveProperty("SUBSCRIBER_SECRET");
@@ -131,7 +140,7 @@ describe("EccosGateway operator reads", () => {
 describe("GatewayRPC", () => {
   it("getStatus reports health, connection and counts", async () => {
     await seed();
-    const status = await makeRpc().getStatus(TEST_WABA_ID);
+    const status = await makeRpc().getStatus(TEST_WABA_ID, TEST_ACCOUNT_ID);
     expect(status.name).toBe("eccos");
     expect(status.health).toBe("degraded"); // 1 failed outbound, 0 failed deliveries
     expect(status.connection).toMatchObject({
@@ -145,9 +154,9 @@ describe("GatewayRPC", () => {
   it("listDeliveries + retryDelivery work over RPC", async () => {
     await seed();
     const rpc = makeRpc();
-    const deliveries = await rpc.listDeliveries({ wabaId: TEST_WABA_ID });
+    const deliveries = await rpc.listDeliveries({ wabaId: TEST_WABA_ID }, TEST_ACCOUNT_ID);
     expect(deliveries).toHaveLength(1);
-    expect((await rpc.retryDelivery(deliveries[0]!.id, TEST_WABA_ID)).ok).toBe(true);
+    expect((await rpc.retryDelivery(deliveries[0]!.id, TEST_WABA_ID, TEST_ACCOUNT_ID)).ok).toBe(true);
   });
 
   it("getConfig never returns private config values", async () => {
@@ -155,9 +164,21 @@ describe("GatewayRPC", () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       i.saveConfig({ SUBSCRIBER_SECRET: "subscriber-secret", META_ACCESS_TOKEN: "access-token" });
     });
-    const config = await makeRpc().getConfig(TEST_WABA_ID);
+    const config = await makeRpc().getConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
     expect(config).toMatchObject({ META_WABA_ID: TEST_WABA_ID, META_PHONE_NUMBER_ID: "PNID1" });
     expect(config).not.toHaveProperty("SUBSCRIBER_SECRET");
     expect(config).not.toHaveProperty("META_ACCESS_TOKEN");
+  });
+
+  it("fails closed without an accountId and without a registered WABA", async () => {
+    await seed();
+    const rpc = makeRpc();
+    const missingAccountError = await rpc.getStatus(TEST_WABA_ID).then(() => null, (error) => error);
+    expect(String(missingAccountError?.message ?? missingAccountError)).toMatch(/accountId is required/);
+    // A different account that doesn't own this WABA fails closed.
+    const foreignAccountError = await rpc
+      .listInbound({ wabaId: TEST_WABA_ID }, "other-account")
+      .then(() => null, (error) => error);
+    expect(String(foreignAccountError?.message ?? foreignAccountError)).toMatch(/not owned|does not exist/);
   });
 });

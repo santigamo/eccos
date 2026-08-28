@@ -28,7 +28,6 @@
   "vars": {
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
-    "GATEWAY_WABA_ID": "",
     "GATEWAY_ACCOUNT_ID": ""
   },
 

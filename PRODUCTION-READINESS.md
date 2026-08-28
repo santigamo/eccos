@@ -1,7 +1,7 @@
 # Production Readiness
 
-> Baseline snapshot: **2026-07-01**, `main@b1b20fc` plus the round-2 lint/hardening follow-up
-> (committed). The commercial gate below is a living addendum updated **2026-08-26**.
+> Baseline snapshot: **2026-08-28**, `main@05ad96a` plus the account-scoped clean-cut follow-up
+> in this changeset. The commercial gate below is a living addendum updated **2026-08-28**.
 > Owner: Santi (@santigamo). This file is the single source of truth for Eccos's
 > production-readiness posture: profile, per-artifact claims, gate status, waivers,
 > evidence, and remaining gaps. Update it whenever a gate's status changes.
@@ -35,28 +35,33 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 | # | Gate | Status | Notes |
 |---|------|--------|-------|
 | 1 | Change control / CI | ✅ | Dashboard covered in CI (`eccos-a5r`), least-privilege `permissions`, **Biome lint blocking and green** (`eccos-bwr`). No automated prod-deploy gate (manual by design). |
-| 2 | Setup & auth surfaces | 🟡 | `/connect` is now fail-closed (`eccos-13d`). Dashboard edge auth (Cloudflare Access) is code-ready but **not yet enabled at the account level** — 🕓 waived, tracked `eccos-45t`. |
+| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). Dashboard edge auth (Cloudflare Access) is code-ready but **not yet enabled at the account level** — 🕓 waived, tracked `eccos-45t`. |
 | 3 | Operational readiness | 🟡 | `/ready` deep check + structured JSON logging w/ correlation IDs + `docs/operations.md` (`eccos-ggy`). Residual: alerting/monitoring not wired. |
 | 4 | Packaging contract | ➖ | **N/A.** `@eccos/core` and `@eccos/gateway-contract` are internal `workspace:*` packages with no publish intent for v1 (`eccos-1js`, decided). Re-open if they become public SDKs. |
-| 5 | Data lifecycle | 🟡 | Configurable `RETENTION_DAYS` on both targets, Bun-target pruning parity, `docs/data-lifecycle.md` (`eccos-rv2`). Residual: scripted backup/export + a real restore drill. |
+| 5 | Data lifecycle | 🟡 | Configurable split content/delivery retention on Workers, `RETENTION_DAYS` on the Bun target, Bun-target pruning parity, `docs/data-lifecycle.md` (`eccos-rv2`). Residual: scripted backup/export + a real restore drill. |
 | 6 | Integration resilience | 🟡 | Retry jitter added; DLQ/manual-replay documented (`eccos-8fu`, `docs/operations.md`). Residual: real DLQ (Queues). |
 | 7 | Privacy & security | 🟡 | `docs/threat-model.md` + `docs/privacy.md` + `SECURITY.md` data-handling/logging section (`eccos-501`). Logs exclude bodies/tokens by **convention** (typed `LogMeta`), not enforced by a lint. |
-| 8 | Product UI | 🟡 | Dashboard data-layer + render smoke tests (35 dashboard tests) + `docs/ui-qa-checklist.md` (`eccos-1nx`). Residual: automated visual regression (Playwright). |
+| 8 | Product UI | 🟡 | Dashboard data-layer + render smoke tests (45 dashboard tests) + `docs/ui-qa-checklist.md` (`eccos-1nx`). Residual: automated visual regression (Playwright). |
 | 9 | Deployment contract | 🟡 | `docs/deployment.md` (secrets matrix, deploy, rollback) + `scripts/smoke.sh <url>`. Residual: **no prod deploy or live smoke has been executed/recorded** (`eccos-ouw`). |
 
 ## Evidence (this snapshot)
 
-All gates below were run locally on the working tree (post-remediation):
+All gates below were run locally on the working tree (post-remediation, 2026-08-28):
 
 | Check | Command | Result |
 |-------|---------|--------|
-| Types | `bun run typecheck` | ✅ exit 0 (worker types regenerated w/ `RETENTION_DAYS`) |
-| Unit (Bun) | `bun run test` | ✅ 42 pass / 4 files |
-| Workers | `bun run test:workers` | ✅ 41 pass / 8 files |
+| Types | `bun run typecheck` | ✅ exit 0 (worker types regenerated with the account-scoped bindings) |
+| Unit (Bun) | `bun run test` | ✅ 53 pass / 5 files (incl. the account-bound `/connect/exchange` case) |
+| Workers | `bun run test:workers` | ✅ 120 pass / 16 files, **0 unhandled exceptions**. Provisioning saga proven: `active` is unreachable unless Meta `subscribed_apps` **and** the gateway DO `saveConfig` both succeed (gateway-stage-failure, attempts-exhaustion, lease/re-claim, revision-guard, cron-driven reconciliation, and fail-closed data-plane tests). Direct `registerWabas` no longer silently defaults to `active` — an explicit `provisioningStatus` is required. |
 | Dashboard types | `apps/dashboard: bun run typecheck` | ✅ exit 0 |
-| Dashboard tests | `apps/dashboard: bun run test` | ✅ 35 pass / 3 files |
-| Dashboard build | `apps/dashboard: bunx vite build` | ✅ built |
+| Dashboard tests | `apps/dashboard: bun run test` | ✅ 45 pass / 5 files |
+| Dashboard build | `apps/dashboard: bun run build` | ✅ built |
 | Lint | `bun run lint` (Biome) | ✅ 0 findings — **blocking** in CI (`eccos-bwr`) |
+
+Environment note (not a product defect): a run of the dashboard suite on 2026-08-27 surfaced
+`TypeError: jsxDEV_… is not a function` in the ReUI data-grid. Root cause was a poisoned
+local Bun runtime-transpiler cache (oven-sh/bun#32151 — cache key omits the JSX dev/prod
+mode). Purging `~/Library/Caches/bun/@t@` restored a full green run; no code change needed.
 
 **Not run:** no `wrangler deploy`, no live post-deploy smoke, no restore drill. Those remain
 unproven and are called out in Gate 9 / Gate 5.
@@ -74,8 +79,12 @@ unproven and are called out in Gate 9 / Gate 5.
 |------|-----|
 | `eccos-45t` | Enable Cloudflare Access in front of the dashboard (account-level) |
 | `eccos-ouw` | Execute + record a real prod deploy and post-deploy smoke |
-| `eccos-v80` | Multi-tenant onboarding, tenant auth, and multi-phone control plane — the technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
-| `eccos-3zm` | Persist callback URL at `/connect` for zero-config resubscribe |
+| `eccos-v80` | Production-shaped two-number acceptance, migration/rollback evidence, and the remaining technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
+| `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
+| `eccos-n0o` | Meta Tech Provider/App Review/Access approval for third-party onboarding |
+| `eccos-8yy` | DPA and processor onboarding package |
+| `eccos-45t` | Cloudflare Access in front of the dashboard |
+| `eccos-ouw` | Recorded production deploy and post-deploy smoke |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
 
 ## First paid Eccos Cloud customer gate
@@ -108,6 +117,13 @@ claim below and from any later business/billing work.
 - **Send / read / retry / export / erasure** all scoped to the owning tenant.
 - **Negative isolation tests**: prove tenant A cannot read, send, retry, export, or erase
   tenant B's data (and vice-versa), including concurrent access.
+
+The account registry, hashed/revocable account keys, account-bound `/connect`, scoped HTTP/RPC
+surface, two-account Worker isolation tests, and the provisioning saga/reconciliation are
+implemented and locally validated in the clean-cut follow-up. They are not yet release evidence:
+the production-shaped two-number exercise, migration/rollback proof, adversarial review, and the
+external/legal/operations criteria below remain open. The production-shaped two-number exercise is
+blocked until Meta Tech Provider approval (`eccos-n0o`) is available.
 
 ### External / legal / ops criteria (required where applicable)
 

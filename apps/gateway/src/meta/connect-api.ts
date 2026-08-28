@@ -9,10 +9,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function graphError(prefix: string, res: Response, json: unknown): Error {
+export class MetaGraphError extends Error {
+  readonly status: number;
+
+  constructor(operation: string, status: number, message: string | null) {
+    super(`${operation} failed: ${status}${message ? `: ${message}` : ""}`);
+    this.name = "MetaGraphError";
+    this.status = status;
+  }
+}
+
+function graphError(prefix: string, res: Response, json: unknown): MetaGraphError {
   const error = asRecord(asRecord(json)?.error);
   const message = typeof error?.message === "string" ? error.message : null;
-  return new Error(`${prefix} failed: ${res.status}${message ? `: ${message}` : ""}`);
+  return new MetaGraphError(prefix, res.status, message);
 }
 
 /** code -> Business Integration System User access token (60 days). */

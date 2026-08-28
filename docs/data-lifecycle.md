@@ -130,15 +130,12 @@ metadata-only delivery rows remain another ~60 days as operational/audit evidenc
 delivery row (`payload = ''`) can no longer be replayed — `retryDelivery` refuses it — and the
 dashboard shows it with an empty payload. Rows still `pending` are never touched by age.
 
-Backwards compatibility: the deprecated single `RETENTION_DAYS` var is still honored as the
-value of `CONTENT_RETENTION_DAYS` when the latter is unset (subject to the same 7–90 clamp),
-so existing deployments keep their configured content window; `DELIVERY_RETENTION_DAYS`
-defaults to 90 for them. Migrate to the split vars — `RETENTION_DAYS` will be removed.
-All three values are guarded: non-numeric or non-positive values fall back to the defaults
-instead of feeding a destructive window (`resolveRetentionDays()` in
+The Workers target uses only the split vars; there is no tenant-wide retention setting. Both
+values are guarded: non-numeric or non-positive values fall back to the defaults instead of
+feeding a destructive window (`resolveRetentionDays()` in
 `apps/gateway/src/gateway.ts`).
 
-**Bun target (`src/`, kept aside until post-v1)** — still uses the single legacy window:
+**Bun target (`src/`, kept aside until post-v1)** — still uses a single retention window:
 `pruneOldRows()` in `src/delivery/forward.ts` deletes rows in all three tables past
 `cfg.RETENTION_DAYS` (Zod default 30, `.env` or process env). It has no redaction step yet;
 split retention lands there when the target is retaken.
@@ -147,15 +144,15 @@ Pruning cadence: the Workers target prunes as part of every `alarm()` invocation
 drives delivery retries, so it runs at least as often as there's pending work, and is
 re-armed by `setAlarm()`); the Bun target prunes once per delivery-loop tick
 (`processPending()`, every 5s via `startDeliveryLoop()`). Both are simple `DELETE`/`UPDATE
-... WHERE <timestamp> < cutoff` statements — cheap at single-tenant volumes, safe to run
-frequently.
+... WHERE <timestamp> < cutoff` statements. Workers scans stay inside one WABA's object, and
+the Bun scan stays inside one self-hosted instance.
 
 ## Right to erasure (`eraseByPhone`)
 
 Independent of retention, the Workers target can erase every stored trace of a single phone
 number on demand (GDPR Art. 17): `EccosGateway.eraseByPhone(phone)`, exposed to operators as
 `GatewayRPC.eraseByPhone()` (service binding) and as `POST /v1/wabas/<WABA_ID>/privacy/erasure`
-(`{"phone": "+34..."}`, Bearer `ECCOS_API_KEY`). It deletes matching `inbound_events` and
+(`{"phone": "+34..."}`, Bearer account key). It deletes matching `inbound_events` and
 `outbound_messages` rows, rewrites `deliveries` batches to drop the number's events (redacting
 or deleting batches left empty), and returns per-table counts as erasure evidence. Details and
 limitations in [docs/privacy.md](./privacy.md#erasure).

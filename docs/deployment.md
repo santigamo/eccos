@@ -11,30 +11,26 @@ Everything below is set with `wrangler secret put <NAME>` (secrets) or lives in
 are per-Worker: run `wrangler secret put` from inside the Worker's directory (`apps/gateway` or
 `apps/dashboard`).
 
-### `apps/gateway` — legacy single-tenant secrets
+The Workers target is **account-scoped by default**: there are no global tenant credentials.
+Per-WABA Meta credentials (tokens, phone ids), account API keys, and subscriber settings are
+**runtime/control-plane/WABA state** — the operator creates the account and registers WABAs through
+the bootstrap API or Embedded Signup (`docs/multi-tenancy.md`), and the dashboard rotates
+subscriber targets per WABA.
+
+### `apps/gateway` — required app-level secrets
 
 | Secret | Purpose |
 |---|---|
-| `META_ACCESS_TOKEN` | Permanent System User token (`whatsapp_business_messaging` + `whatsapp_business_management`) |
-| `META_PHONE_NUMBER_ID` | The WABA phone number's `phone_number_id` |
-| `META_WABA_ID` | WhatsApp Business Account id |
-| `META_APP_SECRET` | Meta App Secret — verifies inbound `X-Hub-Signature-256` |
+| `META_APP_SECRET` | Meta App Secret — verifies inbound `X-Hub-Signature-256` and exchanges OAuth codes server-side |
 | `META_WEBHOOK_VERIFY_TOKEN` | Arbitrary string Meta echoes back on the `GET` webhook challenge |
-| `ECCOS_API_KEY` | Bearer key your apps use to call the scoped Workers send/template routes |
+| `ECCOS_ADMIN_API_KEY` | Bootstrap secret for creating accounts, rotating account keys, and registering existing WABAs |
 
-These six secrets remain required when `ECCOS_MULTI_TENANT` is unset or `false`. In multi-tenant
-mode, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID`, `META_WABA_ID`, and `ECCOS_API_KEY` are not
-used; account credentials and WABA ownership come from the control plane instead.
-
-### `apps/gateway` — optional secrets
+### `apps/gateway` — optional app-level secrets
 
 | Secret | Purpose |
 |---|---|
-| `SUBSCRIBER_WEBHOOK_URL` | Where normalized inbound/status events are forwarded. Without it, events are stored but not pushed |
-| `SUBSCRIBER_SECRET` | HMAC secret for the `X-Eccos-Signature` header on forwarded events |
 | `META_APP_ID` | Needed only for the Embedded Signup `/connect` flow |
 | `META_ES_CONFIG_ID` | Needed only for the Embedded Signup `/connect` flow |
-| `ECCOS_ADMIN_API_KEY` | Bootstrap secret for creating accounts, rotating account keys, and registering existing WABAs in multi-tenant mode |
 
 ### `apps/gateway` — non-secret vars (`apps/gateway/wrangler.jsonc` → `vars`)
 
@@ -42,10 +38,9 @@ used; account credentials and WABA ownership come from the control plane instead
 |---|---|---|
 | `META_GRAPH_VERSION` | `v24.0` | Meta Graph API version used for all calls |
 | `FORWARD_MAX_ATTEMPTS` | `6` | Max delivery attempts before a forwarded event is marked failed |
-| `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted and terminal `deliveries` rows are redacted to metadata-only. The deprecated `RETENTION_DAYS` is still honored as a fallback for this value |
+| `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted and terminal `deliveries` rows are redacted to metadata-only |
 | `DELIVERY_RETENTION_DAYS` | `90` | Delivery-audit window: past it, terminal (`delivered`/`failed`) `deliveries` rows are deleted entirely. See [docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows) |
 | `DO_JURISDICTION` | `eu` in this repo; unset = no jurisdiction | Optional Durable Object jurisdiction: `eu`, `fedramp`, or `fedramp-high` (Cloudflare has no `us` jurisdiction). Unset/empty = no jurisdiction, i.e. the DO is created wherever the first request lands. An invalid value makes every DO-touching request fail with a clear error instead of being silently ignored |
-| `ECCOS_MULTI_TENANT` | `false` | Enables account-scoped authentication and the control-plane account → WABA → phone registry |
 
 > **CRITICAL — set `DO_JURISDICTION` before you have production data, and never change it
 > afterwards.** A jurisdiction produces a *different* `DurableObjectId` for the same WABA routing
@@ -56,48 +51,40 @@ used; account credentials and WABA ownership come from the control plane instead
 > gateway, and the number must be re-onboarded. If you need EU data residency, set
 > `DO_JURISDICTION = "eu"` in `wrangler.jsonc` → `vars` as part of the *first* deploy.
 
-> **Self-hosters upgrading from an earlier version:** `wrangler.jsonc` in this repo ships with
-> `DO_JURISDICTION = "eu"`, the value the hosted deployment runs. If your deployment already has
-> data and is *not* pinned to the EU, **delete that line before you deploy** — otherwise the
-> gateway starts talking to a new, empty Durable Object and your connected number, history, and
-> delivery queue are left behind in the old one. A fresh deploy can keep it, change it to another
-> supported jurisdiction, or drop it, whichever matches where your data has to live.
-
 > **WABA routing is mandatory.** The object name is
 > `v1:<jurisdiction-or-auto>:waba:<WABA_ID>`. Changing the WABA, jurisdiction, routing version, or
 > namespace derives a different Durable Object; Cloudflare does not move SQLite data between
 > objects. Export and import existing data before deploying this routing scheme, then verify counts,
 > subscriber configuration, and the smoke test.
 
-All stateful HTTP routes are scoped by WABA. In multi-tenant mode, the WABA must also belong to
-the authenticated account:
+All stateful HTTP routes are scoped by WABA, and the WABA must belong to the authenticated account
+(bearer: a hashed, revocable account API key issued by the control plane):
 
 | Method | Route |
 |---|---|
 | `POST` | `/v1/wabas/<WABA_ID>/messages` |
+| `POST` | `/v1/wabas/<WABA_ID>/phones/<PHONE_NUMBER_ID>/messages` |
 | `GET` | `/v1/wabas/<WABA_ID>/templates` |
 | `POST` | `/v1/wabas/<WABA_ID>/privacy/erasure` |
 | `GET` | `/v1/wabas/<WABA_ID>/export` |
 
-The RPC methods require an explicit WABA ID. The legacy dashboard receives its operator scope
-through `GATEWAY_WABA_ID`; a multi-tenant dashboard additionally sets `GATEWAY_ACCOUNT_ID` and
-passes that account context on every RPC call.
+Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
+`POST /v1/accounts/<id>/keys/<key>/revoke`, `POST /v1/accounts/<id>/wabas`) use the
+`ECCOS_ADMIN_API_KEY`. See [`docs/multi-tenancy.md`](./multi-tenancy.md).
 
 ### `apps/dashboard` — non-secret vars (`apps/dashboard/wrangler.jsonc` → `vars`)
 
 | Var | Default | Purpose |
 |---|---|---|
-| `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty = Access gate disabled |
+| `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty = Access gate disabled for local development; an account-scoped dashboard fails closed until both are set |
 | `ACCESS_AUD` | `""` | Cloudflare Access application Audience (AUD) tag |
-| `GATEWAY_WABA_ID` | required in legacy mode; optional with an account scope | WABA scope passed to dashboard RPC calls; in multi-tenant mode it pins one owned WABA, otherwise the operator picker selects it |
-| `GATEWAY_ACCOUNT_ID` | required in multi-tenant mode | Account scope passed to every dashboard RPC call; when `GATEWAY_WABA_ID` is empty, the dashboard selects the first owned WABA deterministically |
+| `GATEWAY_ACCOUNT_ID` | `""` | **Required.** The account the dashboard operates; every RPC call carries this account context and targets a WABA the account owns (first owned WABA by default, or a `?wabaId=` override) |
 
 The dashboard has no secrets of its own; it reaches the gateway via the `GATEWAY` service
-binding declared in `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP). Configure
-`GATEWAY_WABA_ID` for legacy mode, or `GATEWAY_ACCOUNT_ID` (and optionally a WABA) for
-multi-tenant mode; the dashboard never accesses a resource without an account-owned scope. Use
-one dashboard deployment and one Access application per account; `GATEWAY_ACCOUNT_ID` is the
-deployment's trusted account scope, not a browser-supplied selector.
+binding declared in `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP).
+`GATEWAY_WABA_ID` is no longer used. Use one dashboard deployment and one Access application per
+account; `GATEWAY_ACCOUNT_ID` is the deployment's trusted account scope, not a browser-supplied
+selector.
 
 > Do not put real values from the table above in `.env` for a Workers deploy — `.env` is only
 > read by the Bun target and by `scripts/smoke.sh` for local/CI checks. Use `wrangler secret put`.
@@ -110,12 +97,11 @@ bun run cf-types   # generate apps/gateway/worker-configuration.d.ts
 
 # one-time / whenever a secret rotates, from apps/gateway:
 cd apps/gateway
-wrangler secret put META_ACCESS_TOKEN
-wrangler secret put META_PHONE_NUMBER_ID
-wrangler secret put META_WABA_ID
 wrangler secret put META_APP_SECRET
 wrangler secret put META_WEBHOOK_VERIFY_TOKEN
-wrangler secret put ECCOS_API_KEY
+wrangler secret put ECCOS_ADMIN_API_KEY
+wrangler secret put META_APP_ID     # optional: Embedded Signup /connect
+wrangler secret put META_ES_CONFIG_ID # optional: Embedded Signup /connect
 cd ../..
 
 bun run deploy     # == cd apps/gateway && wrangler deploy
@@ -124,7 +110,7 @@ bun run deploy     # == cd apps/gateway && wrangler deploy
 If you also run the operator console:
 
 ```bash
-cd apps/dashboard && bun run deploy   # == wrangler deploy
+cd apps/dashboard && bun run deploy   # == the validated helper; requires GATEWAY_ACCOUNT_ID
 ```
 
 After a fresh gateway deploy, point Meta's webhook subscription at
@@ -134,15 +120,18 @@ assume it's reachable.
 
 ## Post-deploy smoke test
 
-`scripts/smoke.sh` exercises the deployed Worker end-to-end: `/health`, the webhook `GET`
-challenge (valid + invalid token), a signed `POST /webhooks/meta` (valid signature, invalid
-signature, invalid JSON), and — if `ECCOS_API_KEY` is set — an unauthorized
-`/v1/wabas/<WABA_ID>/messages` call.
-It uses `set -euo pipefail` and `curl -f`, so it exits non-zero on the first failed check —
-safe to gate a deploy pipeline on its exit code.
+`scripts/smoke.sh` exercises the deployed Worker end-to-end: `/health`, `/ready`, the webhook
+`GET` challenge (valid + invalid token), a signed `POST /webhooks/meta` (valid signature, invalid
+signature, invalid JSON), and — if `ECCOS_ACCOUNT_API_KEY` is set — an unauthorized
+`/v1/wabas/<SMOKE_WABA_ID>/messages` call (the account key is not sent, so the request must be
+`401`). The smoke WABA id defaults to a non-sensitive placeholder and does not need to be
+registered. It uses `set -euo pipefail` and `curl -f`, so it exits non-zero on the first failed
+check — safe to gate a deploy pipeline on its exit code.
 
 ```bash
-# needs META_APP_SECRET + META_WEBHOOK_VERIFY_TOKEN (from .env, or exported) to build requests
+# needs META_APP_SECRET + META_WEBHOOK_VERIFY_TOKEN (from .env, or exported)
+# SMOKE_WABA_ID is optional and only labels the signed test webhook; it is ignored unless
+# that WABA is registered in the account control plane.
 ./scripts/smoke.sh https://eccos.<sub>.workers.dev
 
 # equivalently
@@ -166,4 +155,4 @@ wrangler rollback [deployment-id]  # omit the id to roll back to the previous de
 
 After rolling back, re-run `./scripts/smoke.sh <url>` against the Worker to confirm it's
 healthy again. Rollback only affects code — if the incident was caused by a bad secret (e.g. a
-rotated `META_ACCESS_TOKEN`), fix the secret with `wrangler secret put` instead/in addition.
+rotated `META_APP_SECRET`), fix the secret with `wrangler secret put` instead/in addition.

@@ -1,11 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { overlayDoConfig } from "../src/config";
 import {
   gatewayObjectName,
   normalizeWabaId,
   resolveDoJurisdiction,
 } from "../src/gateway-stub";
-import { isMultiTenantEnabled, isTenantControlPlaneEnabled, tenantMode } from "../src/tenant-config";
+import { getAppConfig, tenantConfig } from "../src/tenant-config";
 import { parseCoreConfig, type CoreConfig } from "@eccos/core/config-schema";
 
 const BASE: CoreConfig = {
@@ -18,32 +17,6 @@ const BASE: CoreConfig = {
   ECCOS_API_KEY: "api-key",
   FORWARD_MAX_ATTEMPTS: 6,
 };
-
-describe("overlayDoConfig", () => {
-  it("returns env config when DO has no stored ids", () => {
-    expect(overlayDoConfig(BASE, {})).toEqual(BASE);
-  });
-
-  it("overrides env seeds with DO storage (D5)", () => {
-    expect(
-      overlayDoConfig(BASE, {
-        META_WABA_ID: "do-waba",
-        META_PHONE_NUMBER_ID: "do-phone",
-      }),
-    ).toEqual({
-      ...BASE,
-      META_WABA_ID: "do-waba",
-      META_PHONE_NUMBER_ID: "do-phone",
-    });
-  });
-
-  it("overrides only keys present in DO storage", () => {
-    expect(overlayDoConfig(BASE, { META_PHONE_NUMBER_ID: "do-phone" })).toEqual({
-      ...BASE,
-      META_PHONE_NUMBER_ID: "do-phone",
-    });
-  });
-});
 
 describe("resolveDoJurisdiction", () => {
   it("returns undefined when unset, empty, or blank (current behavior preserved)", () => {
@@ -76,16 +49,43 @@ describe("tenant routing", () => {
     expect(() => normalizeWabaId(" ")).toThrow(/Invalid WABA ID/);
     expect(() => normalizeWabaId("waba/123")).toThrow(/Invalid WABA ID/);
   });
-
 });
 
-describe("tenant mode", () => {
-  it("keeps legacy traffic active during shadow migration and enables the control plane", () => {
-    expect(tenantMode({ ECCOS_MULTI_TENANT: "false" })).toBe("legacy");
-    expect(tenantMode({ ECCOS_MULTI_TENANT: "shadow" })).toBe("shadow");
-    expect(tenantMode({ ECCOS_MULTI_TENANT: "true" })).toBe("enforced");
-    expect(isMultiTenantEnabled({ ECCOS_MULTI_TENANT: "shadow" })).toBe(false);
-    expect(isTenantControlPlaneEnabled({ ECCOS_MULTI_TENANT: "shadow" })).toBe(true);
+describe("app config (account-scoped worker)", () => {
+  const env = (overrides: Record<string, string | undefined> = {}) =>
+    ({
+      META_GRAPH_VERSION: "v24.0",
+      META_APP_SECRET: "app-secret",
+      META_WEBHOOK_VERIFY_TOKEN: "verify-token",
+      META_APP_ID: "app-id",
+      META_ES_CONFIG_ID: "es-config",
+      ...overrides,
+    }) as unknown as Env;
+
+  it("requires only the Meta signature/verify secrets", () => {
+    expect(getAppConfig(env({ META_APP_ID: "", META_ES_CONFIG_ID: "" }))).toMatchObject({
+      META_GRAPH_VERSION: "v24.0",
+      META_APP_SECRET: "app-secret",
+      META_WEBHOOK_VERIFY_TOKEN: "verify-token",
+    });
+    expect(() => getAppConfig(env({ META_APP_SECRET: "" }))).toThrow(/META_APP_SECRET is required/);
+    expect(() => getAppConfig(env({ META_WEBHOOK_VERIFY_TOKEN: "" }))).toThrow(/META_WEBHOOK_VERIFY_TOKEN is required/);
+  });
+
+  it("resolves a per-WABA tenant config from registry credentials", () => {
+    const cfg = tenantConfig(getAppConfig(env({})), {
+      wabaId: "WABA_T",
+      phoneNumberId: "PN_T",
+      metaAccessToken: "tenant-token",
+    });
+    expect(cfg).toMatchObject({
+      META_GRAPH_VERSION: "v24.0",
+      META_WABA_ID: "WABA_T",
+      META_PHONE_NUMBER_ID: "PN_T",
+      META_ACCESS_TOKEN: "tenant-token",
+      META_APP_SECRET: "app-secret",
+      META_WEBHOOK_VERIFY_TOKEN: "verify-token",
+    });
   });
 });
 

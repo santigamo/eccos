@@ -16,6 +16,9 @@ function clean(env: Record<string, string | undefined>): Record<string, string |
 export const DO_JURISDICTIONS = ["eu", "fedramp", "fedramp-high"] as const;
 export type DoJurisdiction = (typeof DO_JURISDICTIONS)[number];
 
+/** Single-tenant env config (Bun self-host target, `src/`). The Workers target
+ * is unconditionally account-scoped and resolves per-WABA credentials from the
+ * control plane instead of global env secrets. */
 export const coreSchema = z.object({
   META_GRAPH_VERSION: z.string().min(1).default("v24.0"),
   META_ACCESS_TOKEN: z.string().min(1),
@@ -30,7 +33,7 @@ export const coreSchema = z.object({
   META_APP_ID: z.string().min(1).optional(),
   META_ES_CONFIG_ID: z.string().min(1).optional(),
   /**
-   * Optional Durable Object jurisdiction (Workers target only). Empty/absent keeps
+   * Optional Durable Object jurisdiction (Workers). Empty/absent keeps
    * the current behavior: the DO is created wherever the first request lands.
    * CRITICAL: changing this after data exists points the gateway at a NEW, EMPTY
    * Durable Object — existing data is NOT migrated. Set it before going live.

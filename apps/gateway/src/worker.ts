@@ -1,5 +1,4 @@
 import { Hono, type Context } from "hono";
-import { getConfig, getEffectiveConfig } from "./config";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
@@ -10,11 +9,12 @@ import {
 } from "@eccos/core/parser";
 import { sendMessage } from "@eccos/core/send";
 import { listTemplates } from "@eccos/core/templates";
-import { authenticateLegacyRequest, authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
-import { getAppConfig, isMultiTenantEnabled, isTenantControlPlaneEnabled, tenantConfig, tenantMode } from "./tenant-config";
+import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
+import { getAppConfig, tenantConfig } from "./tenant-config";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { validateSubscriberUrl } from "./gateway";
+import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 
 export { EccosGateway } from "./gateway";
 export { EccosControlPlane } from "./control-plane";
@@ -37,20 +37,6 @@ function accountIdParam(c: { req: { param(name: string): string } }): string {
   const accountId = c.req.param("accountId") ?? "";
   if (!accountId) throw new Error("account route is required");
   return accountId;
-}
-
-function requestStub(c: { env: Bindings; req: { param(name: string): string } }) {
-  const wabaId = requestedWabaId(c);
-  return { wabaId, stub: getGatewayStubForWaba(c.env, wabaId) };
-}
-
-async function requestConfig(
-  c: { env: Bindings },
-  gateway: ReturnType<typeof getGatewayStubForWaba>,
-  wabaId: string,
-) {
-  const config = await getEffectiveConfig(c.env, gateway);
-  return wabaId && config.META_WABA_ID !== wabaId ? null : config;
 }
 
 async function ownedWaba(
@@ -77,19 +63,8 @@ function isAdminRequest(path: string): boolean {
     path === "/v1/accounts" ||
     /^\/v1\/accounts\/[^/]+\/keys$/.test(path) ||
     /^\/v1\/accounts\/[^/]+\/keys\/[^/]+\/revoke$/.test(path) ||
-    /^\/v1\/accounts\/[^/]+\/wabas$/.test(path)
-  );
-}
-
-function isLegacyWaba(env: Bindings, wabaId: string): boolean {
-  const configured = (env as { META_WABA_ID?: string }).META_WABA_ID?.trim();
-  return Boolean(configured && configured === wabaId);
-}
-
-function isSendRoute(path: string): boolean {
-  return (
-    /^\/v1\/wabas\/[^/]+\/messages$/.test(path) ||
-    /^\/v1\/wabas\/[^/]+\/phones\/[^/]+\/messages$/.test(path)
+    /^\/v1\/accounts\/[^/]+\/wabas$/.test(path) ||
+    /^\/v1\/accounts\/[^/]+\/wabas\/[^/]+\/reconcile$/.test(path)
   );
 }
 
@@ -154,41 +129,22 @@ app.get("/health", (c) => c.json({ ok: true, name: "eccos", version: "0.1.0" }))
 // `/health` above is a pure liveness check: no I/O, always 200 while the
 // Worker process is alive, safe for tight LB/uptime polling. `/ready`
 // additionally confirms the gateway can actually serve traffic:
-//   - the Durable Object responds to a cheap RPC call, and
-//   - the required Meta/API secrets are present (booleans + key names only —
-//     never values).
+//   - the control plane (Durable Object) responds to a cheap RPC call, and
+//   - the app-level Meta signature/verify secrets are present (booleans + key
+//     names only — never values).
+// The deployment is account-scoped by default, so per-WABA credentials are
+// optional runtime state: a gateway with an empty registry is still healthy,
+// and a missing app-level Meta secret is reported without breaking the deploy.
 // Returns 200 when both checks pass, 503 otherwise.
 
-/** Keep in sync with the required (non-optional, no-default) fields of
- * packages/core/src/config-schema.ts#coreSchema. */
-const REQUIRED_CONFIG_KEYS = [
-  "META_ACCESS_TOKEN",
-  "META_PHONE_NUMBER_ID",
-  "META_WABA_ID",
-  "META_APP_SECRET",
-  "META_WEBHOOK_VERIFY_TOKEN",
-  "ECCOS_API_KEY",
-] as const;
-
-/** Multi-tenant mode replaces the per-WABA env secrets with the app-level
- * Meta signature/verify config plus the operator bootstrap secret. */
-const MULTI_TENANT_CONFIG_KEYS = [
-  "META_APP_SECRET",
-  "META_WEBHOOK_VERIFY_TOKEN",
-  "ECCOS_ADMIN_API_KEY",
-] as const;
+/** App-level prerequisites — the only required (non-optional, no-default)
+ * secrets of the account-scoped Workers target. */
+const REQUIRED_CONFIG_KEYS = ["META_APP_SECRET", "META_WEBHOOK_VERIFY_TOKEN"] as const;
 
 function configPresence(env: Bindings): Record<string, boolean> {
   const rec = env as unknown as Record<string, string | undefined>;
-  const mode = tenantMode(env);
-  const keys =
-    mode === "enforced"
-      ? MULTI_TENANT_CONFIG_KEYS
-      : mode === "shadow"
-        ? [...REQUIRED_CONFIG_KEYS, "ECCOS_ADMIN_API_KEY"]
-        : REQUIRED_CONFIG_KEYS;
   const out: Record<string, boolean> = {};
-  for (const key of keys) out[key] = Boolean(rec[key]?.trim());
+  for (const key of REQUIRED_CONFIG_KEYS) out[key] = Boolean(rec[key]?.trim());
   return out;
 }
 
@@ -206,26 +162,13 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 app.get("/ready", async (c) => {
   const cid = correlationId(c);
-  const multiTenant = isMultiTenantEnabled(c.env);
   const config = configPresence(c.env);
   const configOk = Object.values(config).every(Boolean);
 
   let doOk = false;
   let doError: string | null = null;
   try {
-    if (multiTenant) {
-      // Multi-tenant readiness: the control plane responds to a cheap probe;
-      // the per-WABA data-plane objects are provisioned per registration, so
-      // an empty registry is still a healthy gateway.
-      await withTimeout(Promise.resolve(getControlPlane(c.env).getHealth()), 2000);
-    } else {
-      // Cheap existing RPC (single indexed SELECT, no side effects) used purely
-      // to confirm the Durable Object is alive and responding.
-      await withTimeout(
-        Promise.resolve(getGatewayStubForWaba(c.env, c.env.META_WABA_ID).getConfigValue("__readiness_probe__")),
-        2000,
-      );
-    }
+    await withTimeout(Promise.resolve(getControlPlane(c.env).getHealth()), 2000);
     doOk = true;
   } catch (err) {
     doError = err instanceof Error ? err.message : "unknown error";
@@ -234,7 +177,6 @@ app.get("/ready", async (c) => {
   const ready = configOk && doOk;
   const status = ready ? 200 : 503;
   logEvent("readiness_check", cid, status, {
-    multiTenant,
     configOk,
     doOk,
     missingConfig: Object.entries(config).filter(([, present]) => !present).map(([k]) => k).join(",") || null,
@@ -247,10 +189,7 @@ app.get("/webhooks/meta", (c) => {
   const mode = c.req.query("hub.mode");
   const token = c.req.query("hub.verify_token");
   const challenge = c.req.query("hub.challenge");
-  const multiTenant = isMultiTenantEnabled(c.env);
-  const expectedToken = multiTenant
-    ? getAppConfig(c.env).META_WEBHOOK_VERIFY_TOKEN
-    : getConfig(c.env).META_WEBHOOK_VERIFY_TOKEN;
+  const expectedToken = getAppConfig(c.env).META_WEBHOOK_VERIFY_TOKEN;
   if (mode === "subscribe" && token && constantTimeEqual(token, expectedToken) && challenge) {
     logEvent("webhook_verify", cid, 200, { mode });
     return c.text(challenge, 200);
@@ -263,15 +202,10 @@ app.post("/webhooks/meta", async (c) => {
   // Note: logging happens right before each early return so the handler keeps
   // returning quickly — no extra I/O or awaits are added on this path.
   const cid = correlationId(c);
-  const mode = tenantMode(c.env);
-  const multiTenant = mode === "enforced";
   const rawBody = await c.req.text();
   let appSecret: string;
   try {
-    appSecret =
-      multiTenant || mode === "shadow"
-        ? getAppConfig(c.env).META_APP_SECRET
-        : getConfig(c.env).META_APP_SECRET;
+    appSecret = getAppConfig(c.env).META_APP_SECRET;
   } catch (error) {
     logEvent("webhook_misconfigured", cid, 200, {
       bodyBytes: rawBody.length,
@@ -292,41 +226,35 @@ app.post("/webhooks/meta", async (c) => {
     return c.json({ ok: false, error: "invalid json" }, 400);
   }
   let batches = mergeBatches([...parseMetaWebhookBatches(payload), ...parseMetaEchoesBatches(payload)]);
-  if (mode !== "legacy") {
-    // Only ingest WABAs AND phone numbers registered in the control plane;
-    // unregistered batches are ignored while the webhook still answers 200.
-    const cp = getControlPlane(c.env);
-    const known: MetaWebhookBatch[] = [];
-    let ignoredEventCount = 0;
-    for (const batch of batches) {
-      if (!WABA_ID_PATTERN.test(batch.wabaId)) {
+  // Only ingest WABAs AND phone numbers registered in the control plane;
+  // unregistered batches are ignored while the webhook still answers 200.
+  const cp = getControlPlane(c.env);
+  const known: MetaWebhookBatch[] = [];
+  let ignoredEventCount = 0;
+  for (const batch of batches) {
+    if (!WABA_ID_PATTERN.test(batch.wabaId)) {
+      ignoredEventCount += batch.events.length;
+      continue;
+    }
+    try {
+      const waba = await cp.getWabaById(batch.wabaId);
+      if (!waba || waba.status !== "active") {
         ignoredEventCount += batch.events.length;
         continue;
       }
-      if (mode === "shadow" && isLegacyWaba(c.env, batch.wabaId)) {
-        known.push(batch);
+      if (batch.phoneNumberId !== null && !waba.phones.some((p) => p.phoneNumberId === batch.phoneNumberId)) {
+        ignoredEventCount += batch.events.length;
         continue;
       }
-      try {
-        const waba = await cp.getWabaById(batch.wabaId);
-        if (!waba) {
-          ignoredEventCount += batch.events.length;
-          continue;
-        }
-        if (batch.phoneNumberId !== null && !waba.phones.some((p) => p.phoneNumberId === batch.phoneNumberId)) {
-          ignoredEventCount += batch.events.length;
-          continue;
-        }
-        known.push(batch);
-      } catch {
-        ignoredEventCount += batch.events.length;
-      }
+      known.push(batch);
+    } catch {
+      ignoredEventCount += batch.events.length;
     }
-    batches = known;
-    if (batches.length === 0) {
-      logEvent("webhook_ignored", cid, 200, { bodyBytes: rawBody.length, ignoredEventCount });
-      return c.json({ ok: true, received: 0 });
-    }
+  }
+  batches = known;
+  if (batches.length === 0) {
+    logEvent("webhook_ignored", cid, 200, { bodyBytes: rawBody.length, ignoredEventCount });
+    return c.json({ ok: true, received: 0 });
   }
   const results = await Promise.all(
     batches.map((batch) => getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events)),
@@ -342,12 +270,11 @@ app.post("/webhooks/meta", async (c) => {
 app.use("/v1/*", async (c, next) => {
   const cid = correlationId(c);
   const path = new URL(c.req.url).pathname;
-  const multiTenant = isMultiTenantEnabled(c.env);
   const auth = c.req.header("authorization") ?? undefined;
   const apiKeyHeader = c.req.header("x-api-key") ?? undefined;
   const rawKey = extractApiKey(auth, apiKeyHeader);
 
-  if (isTenantControlPlaneEnabled(c.env) && isAdminRequest(path)) {
+  if (isAdminRequest(path)) {
     const adminKey = (c.env as { ECCOS_ADMIN_API_KEY?: string }).ECCOS_ADMIN_API_KEY ?? "";
     if (!rawKey || !constantTimeEqual(adminKey, rawKey)) {
       logEvent("v1_unauthorized", cid, 401, { path, scope: "admin" });
@@ -357,37 +284,32 @@ app.use("/v1/*", async (c, next) => {
     return;
   }
 
-  const account =
-    tenantMode(c.env) === "enforced"
-      ? await authenticateRequest(c.env, auth, apiKeyHeader)
-      : authenticateLegacyRequest(c.env, auth, apiKeyHeader);
+  const account = await authenticateRequest(c.env, auth, apiKeyHeader);
   if (!account) {
-    logEvent("v1_unauthorized", cid, 401, { path, scope: tenantMode(c.env) === "enforced" ? "account" : "legacy" });
+    logEvent("v1_unauthorized", cid, 401, { path, scope: "account" });
     return c.json({ ok: false, error: "unauthorized" }, 401);
   }
   c.set("account", account);
 
-  const isSendRequest = c.req.method === "POST" && isSendRoute(path);
-  if (isSendRequest && c.env.SEND_RATE_LIMITER) {
-    // Cloudflare Rate Limiting is per-location and eventually consistent:
-    // good abuse/spike protection, not an exact global quota counter.
-    const sendWabaId = path.match(/^\/v1\/wabas\/([^/]+)/)?.[1] ?? "unknown";
-    // Multi-tenant rate limits are keyed by account + WABA; legacy keeps the
-    // API-key + WABA key the existing tests assert.
-    const rateKey = multiTenant ? `${account.accountId}:${sendWabaId}` : `${rawKey}:${sendWabaId}`;
-    const { success } = await c.env.SEND_RATE_LIMITER.limit({ key: rateKey });
-    if (!success) {
-      logEvent("v1_rate_limited", cid, 429, { path });
-      return c.json({ ok: false, error: "rate limited" }, 429);
+  if (c.req.method === "POST" && /^\/v1\/wabas\/[^/]+(\/phones\/[^/]+)?\/messages$/.test(path)) {
+    if (c.env.SEND_RATE_LIMITER) {
+      // Cloudflare Rate Limiting is per-location and eventually consistent:
+      // good abuse/spike protection, not an exact global quota counter.
+      const sendWabaId = path.match(/^\/v1\/wabas\/([^/]+)/)?.[1] ?? "unknown";
+      const rateKey = `${account.accountId}:${sendWabaId}`;
+      const { success } = await c.env.SEND_RATE_LIMITER.limit({ key: rateKey });
+      if (!success) {
+        logEvent("v1_rate_limited", cid, 429, { path });
+        return c.json({ ok: false, error: "rate limited" }, 429);
+      }
     }
   }
   await next();
 });
 
-// --- Admin bootstrap endpoints (multi-tenant) --------------------------------
+// --- Admin bootstrap endpoints ------------------------------------------------
 
 async function createAccountRoute(c: AppContext) {
-  if (!isTenantControlPlaneEnabled(c.env)) return c.json({ ok: false, error: "not found" }, 404);
   const cid = correlationId(c);
   let body: { accountId?: string; name?: string };
   try {
@@ -411,7 +333,6 @@ async function createAccountRoute(c: AppContext) {
 }
 
 async function issueKeyRoute(c: AppContext) {
-  if (!isTenantControlPlaneEnabled(c.env)) return c.json({ ok: false, error: "not found" }, 404);
   const cid = correlationId(c);
   const accountId = accountIdParam(c);
   let body: { label?: string };
@@ -435,7 +356,6 @@ async function issueKeyRoute(c: AppContext) {
 }
 
 async function revokeKeyRoute(c: AppContext) {
-  if (!isTenantControlPlaneEnabled(c.env)) return c.json({ ok: false, error: "not found" }, 404);
   const cid = correlationId(c);
   const accountId = accountIdParam(c);
   const keyId = c.req.param("keyId") ?? "";
@@ -456,7 +376,6 @@ async function revokeKeyRoute(c: AppContext) {
 /** Registers an existing WABA + phones with the account's Meta credentials.
  * Admin-only; the token is stored in the control plane and never echoed. */
 async function registerWabaRoute(c: AppContext) {
-  if (!isTenantControlPlaneEnabled(c.env)) return c.json({ ok: false, error: "not found" }, 404);
   const cid = correlationId(c);
   const accountId = accountIdParam(c);
   let body: Record<string, unknown>;
@@ -493,10 +412,14 @@ async function registerWabaRoute(c: AppContext) {
       ...(typeof phone.displayPhoneNumber === "string" ? { displayPhoneNumber: phone.displayPhoneNumber } : {}),
     });
   }
-  const callbackUrl = body.callback_url ?? body.callbackUrl;
-  if (callbackUrl !== undefined && typeof callbackUrl !== "string") {
+  const callbackUrlValue = body.callback_url ?? body.callbackUrl;
+  if (callbackUrlValue !== undefined && typeof callbackUrlValue !== "string") {
     return c.json({ ok: false, error: "callbackUrl must be a string" }, 400);
   }
+  const callbackUrl =
+    typeof callbackUrlValue === "string" && callbackUrlValue.trim() !== ""
+      ? callbackUrlValue
+      : new URL("/webhooks/meta", c.req.url).href;
   const subscriberUrlValue = body.subscriber_webhook_url ?? body.subscriberUrl;
   if (subscriberUrlValue !== undefined && typeof subscriberUrlValue !== "string") {
     return c.json({ ok: false, error: "subscriber_webhook_url must be a string" }, 400);
@@ -518,39 +441,65 @@ async function registerWabaRoute(c: AppContext) {
       ? subscriberSecretValue.trim()
       : undefined;
   try {
-    const result = await getControlPlane(c.env).registerWaba({
+    const result = await getControlPlane(c.env).beginWabaProvisioning({
       accountId,
       wabaId,
       metaAccessToken,
-      ...(typeof callbackUrl === "string" && callbackUrl.trim() !== ""
-        ? { callbackUrl }
-        : {}),
+      callbackUrl,
       phones,
     });
-    logEvent("waba_registered", cid, 201, {
+    logEvent("waba_provisioning_started", cid, 202, {
       accountId,
       phoneCount: result.phones.length,
     });
     const warnings: string[] = [];
-    const primaryPhone = result.phones[0];
-    if (primaryPhone) {
+    if (subscriberUrl || subscriberSecret) {
       const gateway = getGatewayStubForWaba(c.env, result.waba.wabaId);
-      const configEntries: Record<string, string> = {
-        META_WABA_ID: result.waba.wabaId,
-        META_PHONE_NUMBER_ID: primaryPhone.phoneNumberId,
-        DISPLAY_PHONE_NUMBER: primaryPhone.displayPhoneNumber,
-        CONNECTED_AT: String(Date.now()),
-        ...(result.waba.callbackUrl ? { META_WEBHOOK_CALLBACK_URL: result.waba.callbackUrl } : {}),
-        ...(subscriberUrl ? { SUBSCRIBER_WEBHOOK_URL: subscriberUrl } : {}),
-        ...(subscriberSecret ? { SUBSCRIBER_SECRET: subscriberSecret } : {}),
-      };
       try {
-        await gateway.saveConfig(configEntries);
+        await gateway.saveConfig({
+          ...(subscriberUrl ? { SUBSCRIBER_WEBHOOK_URL: subscriberUrl } : {}),
+          ...(subscriberSecret ? { SUBSCRIBER_SECRET: subscriberSecret } : {}),
+        });
       } catch (error) {
-        warnings.push(`gateway configuration sync failed (${errorMessage(error)})`);
+        warnings.push(`subscriber configuration sync failed (${errorMessage(error)})`);
       }
     }
     // Never echo the token (or any credential) back to the caller.
+    noStore(c);
+    const responseStatus = result.waba.status === "active" ? 200 : 202;
+    return c.json({
+      waba: {
+        accountId: result.waba.accountId,
+        wabaId: result.waba.wabaId,
+        callbackUrl: result.waba.callbackUrl,
+        createdAt: result.waba.createdAt,
+        status: result.waba.status,
+        provisioningError: result.waba.provisioningError,
+        phones: result.phones,
+      },
+      ...(warnings.length > 0 ? { warnings } : {}),
+    }, responseStatus);
+  } catch (err) {
+    const error = errorMessage(err);
+    return c.json({ ok: false, error }, /already registered to another account/.test(error) ? 409 : 400);
+  }
+}
+
+async function reconcileWabaRoute(c: AppContext) {
+  const cid = correlationId(c);
+  const accountId = accountIdParam(c);
+  const wabaId = requestedWabaId(c);
+  try {
+    const result = await reconcileWaba(c.env, accountId, wabaId);
+    if (!result.waba) {
+      logEvent("waba_reconcile", cid, 404, { accountId });
+      return c.json({ ok: false, error: "WABA is not configured" }, 404);
+    }
+    const responseStatus = result.waba.status === "active" && !result.error ? 200 : 202;
+    logEvent("waba_reconcile", cid, responseStatus, {
+      accountId,
+      status: result.waba.status,
+    });
     noStore(c);
     return c.json({
       waba: {
@@ -558,13 +507,13 @@ async function registerWabaRoute(c: AppContext) {
         wabaId: result.waba.wabaId,
         callbackUrl: result.waba.callbackUrl,
         createdAt: result.waba.createdAt,
-        phones: result.phones,
+        status: result.waba.status,
+        provisioningError: result.waba.provisioningError ?? result.error,
+        phones: result.waba.phones,
       },
-      ...(warnings.length > 0 ? { warnings } : {}),
-    }, 201);
+    }, responseStatus);
   } catch (err) {
-    const error = errorMessage(err);
-    return c.json({ ok: false, error }, /already registered to another account/.test(error) ? 409 : 400);
+    return c.json({ ok: false, error: errorMessage(err) }, 400);
   }
 }
 
@@ -576,143 +525,91 @@ app.post("/v1/accounts", createAccountRoute);
 app.post("/v1/accounts/:accountId/keys", issueKeyRoute);
 app.post("/v1/accounts/:accountId/keys/:keyId/revoke", revokeKeyRoute);
 app.post("/v1/accounts/:accountId/wabas", registerWabaRoute);
+app.post("/v1/accounts/:accountId/wabas/:wabaId/reconcile", reconcileWabaRoute);
 
-// --- Stateful per-account routes ---------------------------------------------
+// --- Stateful per-account routes ----------------------------------------------
 
-/** Resolves the WABA + phone for a send in multi-tenant mode, enforcing
- * account ownership, registered-phone membership, and the single-phone
- * compatibility rule. Returns the Meta-bound body (selector stripped). */
+/** Resolves the WABA + phone for a send, enforcing account ownership,
+ * registered-phone membership, and the single-phone compatibility rule.
+ * Returns the Meta-bound body (selector stripped). */
 async function tenantSendTarget(
   c: AppContext,
 ): Promise<
   | { ok: true; waba: AccountWaba; phoneNumberId: string; metaAccessToken: string; metaBody: Record<string, unknown> }
   | { ok: false; status: 400 | 404; error: string }
 > {
-  const multiTenant = isMultiTenantEnabled(c.env);
   const account = c.get("account");
   const wabaId = requestedWabaId(c);
-  if (multiTenant && account) {
-    const waba = await ownedWaba(c.env, account, wabaId);
-    if (!waba) return { ok: false, status: 404, error: "WABA is not configured" };
-    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-    if (
-      !body ||
-      typeof body !== "object" ||
-      typeof body.to !== "string" ||
-      body.to.length < 5
-    ) {
-      return { ok: false, status: 400, error: "invalid body" };
-    }
-    let selector: { phoneNumberId: string | null };
-    try {
-      selector = phoneSelector(c, body);
-    } catch {
-      return { ok: false, status: 400, error: "phone selector mismatch" };
-    }
-    let phoneNumberId: string;
-    if (selector.phoneNumberId) {
-      phoneNumberId = selector.phoneNumberId;
-    } else {
-      // Single-phone WABA compatibility: no selector required only when there
-      // is exactly one registered number; otherwise the send is ambiguous.
-      if (waba.phones.length !== 1) {
-        return {
-          ok: false,
-          status: 400,
-          error: "phoneNumberId is required when a WABA has more than one phone",
-        };
-      }
-      phoneNumberId = waba.phones[0]?.phoneNumberId ?? "";
-    }
-    if (!waba.phones.some((p) => p.phoneNumberId === phoneNumberId)) {
-      return { ok: false, status: 404, error: "phone number is not registered to this WABA" };
-    }
-    const metaBody = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "phone_number_id"));
-    return { ok: true, waba, phoneNumberId, metaAccessToken: waba.metaAccessToken, metaBody };
-  }
-  return { ok: false, status: 404, error: "legacy send is not reachable through this shared helper" };
-}
-
-async function sendMessageRoute(c: AppContext) {
-  const cid = correlationId(c);
-  const multiTenant = isMultiTenantEnabled(c.env);
-  const account = c.get("account") ?? null;
-  if (multiTenant) {
-    if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-    const target = await tenantSendTarget(c);
-    if (!target.ok) {
-      logEvent("outbound_send", cid, target.status, { reason: "invalid_target" });
-      return c.json({ ok: false, error: target.error }, target.status);
-    }
-    const cfg = tenantConfig(getAppConfig(c.env), {
-      wabaId: target.waba.wabaId,
-      phoneNumberId: target.phoneNumberId,
-      metaAccessToken: target.metaAccessToken,
-    });
-    const recipient = target.metaBody.to as string;
-    const messageType = typeof target.metaBody.type === "string" ? target.metaBody.type : "unknown";
-    const result = await sendMessage(cfg, target.metaBody);
-    const stub = getGatewayStubForWaba(c.env, target.waba.wabaId);
-    if (!result.ok) {
-      await stub.logOutbound(
-        null,
-        recipient,
-        JSON.stringify(target.metaBody),
-        "failed",
-        JSON.stringify(result.error),
-        target.phoneNumberId,
-      );
-      logEvent("outbound_send", cid, 502, { messageType, ok: false });
-      return c.json({ ok: false, error: result.error }, 502);
-    }
-    await stub.logOutbound(result.id, recipient, JSON.stringify(target.metaBody), "sent", null, target.phoneNumberId);
-    logEvent("outbound_send", cid, 200, { messageType, messageId: result.id, ok: true });
-    return c.json({ ok: true, messages: [{ id: result.id }] });
-  }
-  const wabaId = requestedWabaId(c);
-  const { stub: gateway } = requestStub(c);
-  const cfg = await requestConfig(c, gateway, wabaId);
-  if (!cfg) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-  const json = await c.req.json().catch(() => null);
+  const waba = await ownedWaba(c.env, account, wabaId);
+  if (!waba) return { ok: false, status: 404, error: "WABA is not configured" };
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   if (
-    !json ||
-    typeof json !== "object" ||
-    typeof (json as Record<string, unknown>).to !== "string" ||
-    ((json as Record<string, unknown>).to as string).length < 5
+    !body ||
+    typeof body !== "object" ||
+    typeof body.to !== "string" ||
+    body.to.length < 5
   ) {
-    logEvent("outbound_send", cid, 400, { reason: "invalid_body" });
-    return c.json({ ok: false, error: "invalid body" }, 400);
+    return { ok: false, status: 400, error: "invalid body" };
   }
-  const body = json as Record<string, unknown>;
   let selector: { phoneNumberId: string | null };
   try {
     selector = phoneSelector(c, body);
   } catch {
-    logEvent("outbound_send", cid, 400, { reason: "invalid_phone_selector" });
-    return c.json({ ok: false, error: "phone selector mismatch" }, 400);
+    return { ok: false, status: 400, error: "phone selector mismatch" };
   }
-  if (selector.phoneNumberId && selector.phoneNumberId !== cfg.META_PHONE_NUMBER_ID) {
-    return c.json({ ok: false, error: "phone number is not configured" }, 404);
+  let phoneNumberId: string;
+  if (selector.phoneNumberId) {
+    phoneNumberId = selector.phoneNumberId;
+  } else {
+    // Single-phone WABA compatibility: no selector required only when there
+    // is exactly one registered number; otherwise the send is ambiguous.
+    if (waba.phones.length !== 1) {
+      return {
+        ok: false,
+        status: 400,
+        error: "phoneNumberId is required when a WABA has more than one phone",
+      };
+    }
+    phoneNumberId = waba.phones[0]?.phoneNumberId ?? "";
+  }
+  if (!waba.phones.some((p) => p.phoneNumberId === phoneNumberId)) {
+    return { ok: false, status: 404, error: "phone number is not registered to this WABA" };
   }
   const metaBody = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "phone_number_id"));
-  const recipient = metaBody.to as string;
-  // `messageType` (e.g. "text"/"template") is a safe enum-like field — the
-  // recipient number and message content are never logged.
-  const messageType = typeof metaBody.type === "string" ? metaBody.type : "unknown";
-  const result = await sendMessage(cfg, metaBody);
+  return { ok: true, waba, phoneNumberId, metaAccessToken: waba.metaAccessToken, metaBody };
+}
+
+async function sendMessageRoute(c: AppContext) {
+  const cid = correlationId(c);
+  const account = c.get("account") ?? null;
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const target = await tenantSendTarget(c);
+  if (!target.ok) {
+    logEvent("outbound_send", cid, target.status, { reason: "invalid_target" });
+    return c.json({ ok: false, error: target.error }, target.status);
+  }
+  const cfg = tenantConfig(getAppConfig(c.env), {
+    wabaId: target.waba.wabaId,
+    phoneNumberId: target.phoneNumberId,
+    metaAccessToken: target.metaAccessToken,
+  });
+  const recipient = target.metaBody.to as string;
+  const messageType = typeof target.metaBody.type === "string" ? target.metaBody.type : "unknown";
+  const result = await sendMessage(cfg, target.metaBody);
+  const stub = getGatewayStubForWaba(c.env, target.waba.wabaId);
   if (!result.ok) {
-      await gateway.logOutbound(
-        null,
-        recipient,
-        JSON.stringify(metaBody),
-        "failed",
-        JSON.stringify(result.error),
-        cfg.META_PHONE_NUMBER_ID,
-      );
+    await stub.logOutbound(
+      null,
+      recipient,
+      JSON.stringify(target.metaBody),
+      "failed",
+      JSON.stringify(result.error),
+      target.phoneNumberId,
+    );
     logEvent("outbound_send", cid, 502, { messageType, ok: false });
     return c.json({ ok: false, error: result.error }, 502);
   }
-    await gateway.logOutbound(result.id, recipient, JSON.stringify(metaBody), "sent", null, cfg.META_PHONE_NUMBER_ID);
+  await stub.logOutbound(result.id, recipient, JSON.stringify(target.metaBody), "sent", null, target.phoneNumberId);
   logEvent("outbound_send", cid, 200, { messageType, messageId: result.id, ok: true });
   return c.json({ ok: true, messages: [{ id: result.id }] });
 }
@@ -724,7 +621,6 @@ app.post("/v1/wabas/:wabaId/phones/:phoneNumberId/messages", sendMessageRoute);
 // the URL — so it cannot leak into request logs. Gated by the /v1/* auth above.
 async function erasureRoute(c: AppContext) {
   const cid = correlationId(c);
-  const multiTenant = isMultiTenantEnabled(c.env);
   const account = c.get("account") ?? null;
   const wabaId = requestedWabaId(c);
   const json = await c.req.json().catch(() => null);
@@ -733,23 +629,10 @@ async function erasureRoute(c: AppContext) {
     logEvent("privacy_erasure", cid, 400, { reason: "invalid_body" });
     return c.json({ ok: false, error: "invalid body: expected { phone: string }" }, 400);
   }
-  if (multiTenant) {
-    if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-    const waba = await ownedWaba(c.env, account, wabaId);
-    if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-    const result = await getGatewayStubForWaba(c.env, waba.wabaId).eraseByPhone(phone);
-    if (!result.ok) {
-      logEvent("privacy_erasure", cid, 400, { reason: "invalid_phone" });
-      return c.json(result, 400);
-    }
-    logEvent("privacy_erasure", cid, 200, { ...result.counts });
-    return c.json(result);
-  }
-  const { stub: gateway } = requestStub(c);
-  if (!(await requestConfig(c, gateway, wabaId))) {
-    return c.json({ ok: false, error: "WABA is not configured" }, 404);
-  }
-  const result = await gateway.eraseByPhone(phone);
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const waba = await ownedWaba(c.env, account, wabaId);
+  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  const result = await getGatewayStubForWaba(c.env, waba.wabaId).eraseByPhone(phone);
   if (!result.ok) {
     logEvent("privacy_erasure", cid, 400, { reason: "invalid_phone" });
     return c.json(result, 400);
@@ -763,35 +646,18 @@ app.post("/v1/wabas/:wabaId/privacy/erasure", erasureRoute);
 
 async function templatesRoute(c: AppContext) {
   const cid = correlationId(c);
-  const multiTenant = isMultiTenantEnabled(c.env);
   const account = c.get("account") ?? null;
   const wabaId = requestedWabaId(c);
   const n = Number(c.req.query("limit") ?? 100);
   const limit = Number.isFinite(n) ? Math.min(Math.max(n, 1), 1000) : 100;
-  if (multiTenant) {
-    if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-    const waba = await ownedWaba(c.env, account, wabaId);
-    if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-    const cfg = tenantConfig(getAppConfig(c.env), {
-      wabaId: waba.wabaId,
-      phoneNumberId: waba.phones[0]?.phoneNumberId ?? "",
-      metaAccessToken: waba.metaAccessToken,
-    });
-    const result = await listTemplates(cfg, limit);
-    if (!result.ok) {
-      logEvent("templates_list", cid, 502, { limit });
-      return c.json({ ok: false, error: result.error }, 502);
-    }
-    const count =
-      result.data && typeof result.data === "object" && Array.isArray((result.data as { data?: unknown }).data)
-        ? (result.data as { data: unknown[] }).data.length
-        : null;
-    logEvent("templates_list", cid, 200, { limit, count });
-    return c.json(result.data);
-  }
-  const { stub: gateway } = requestStub(c);
-  const cfg = await requestConfig(c, gateway, wabaId);
-  if (!cfg) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const waba = await ownedWaba(c.env, account, wabaId);
+  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  const cfg = tenantConfig(getAppConfig(c.env), {
+    wabaId: waba.wabaId,
+    phoneNumberId: waba.phones[0]?.phoneNumberId ?? "",
+    metaAccessToken: waba.metaAccessToken,
+  });
   const result = await listTemplates(cfg, limit);
   if (!result.ok) {
     logEvent("templates_list", cid, 502, { limit });
@@ -809,30 +675,26 @@ app.get("/v1/wabas/:wabaId/templates", templatesRoute);
 
 app.get("/v1/wabas/:wabaId/export", async (c) => {
   const cid = correlationId(c);
-  const multiTenant = isMultiTenantEnabled(c.env);
   const account = c.get("account") ?? null;
   const wabaId = requestedWabaId(c);
-  if (multiTenant) {
-    if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-    const waba = await ownedWaba(c.env, account, wabaId);
-    if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-    const stub = getGatewayStubForWaba(c.env, waba.wabaId);
-    const exported = await stub.exportData();
-    logEvent("export", cid, 200, {
-      inbound: exported.inbound.length,
-      outbound: exported.outbound.length,
-      deliveries: exported.deliveries.length,
-    });
-    return c.json({ ok: true, data: exported });
-  }
-  const { stub: gateway } = requestStub(c);
-  if (!(await requestConfig(c, gateway, wabaId))) {
-    return c.json({ ok: false, error: "WABA is not configured" }, 404);
-  }
-  const exported = await gateway.exportData();
-  const { inbound, outbound, deliveries } = exported;
-  logEvent("export", cid, 200, { inbound: inbound.length, outbound: outbound.length, deliveries: deliveries.length });
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const waba = await ownedWaba(c.env, account, wabaId);
+  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  const stub = getGatewayStubForWaba(c.env, waba.wabaId);
+  const exported = await stub.exportData();
+  logEvent("export", cid, 200, {
+    inbound: exported.inbound.length,
+    outbound: exported.outbound.length,
+    deliveries: exported.deliveries.length,
+  });
   return c.json({ ok: true, data: exported });
 });
 
-export default app;
+const worker = {
+  fetch: app.fetch,
+  scheduled: async (_controller: ScheduledController, env: Bindings): Promise<void> => {
+    await reconcilePendingWabas(env);
+  },
+};
+
+export default worker;

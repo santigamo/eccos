@@ -1,8 +1,9 @@
 # Multi-tenancy (Workers target)
 
-The Workers target keeps the current single-tenant behavior by default. Set
-`ECCOS_MULTI_TENANT=true` only after the control-plane migration and isolation tests have
-been completed.
+The Workers target is **account-scoped by default**. `ECCOS_MULTI_TENANT` no longer exists: every
+deployment uses the control-plane account → WABA → phone registry. A single-account install and a
+multi-account install follow the exact same flow — the only difference is how many accounts you
+bootstrap.
 
 ## Architecture
 
@@ -16,15 +17,12 @@ been completed.
 
 ## Bootstrap
 
-Enable the mode with a non-secret variable and configure the bootstrap secret:
+Configure the admin bootstrap secret, then create the account. Per-WABA credentials (Meta tokens)
+and subscriber settings are **runtime/control-plane/WABA state**, not Worker env:
 
 ```bash
 wrangler secret put ECCOS_ADMIN_API_KEY
-```
 
-Set `ECCOS_MULTI_TENANT=true` in the gateway Worker variables, then create an account:
-
-```bash
 curl -X POST https://<gateway>/v1/accounts \
   -H "authorization: Bearer $ECCOS_ADMIN_API_KEY" \
   -H "content-type: application/json" \
@@ -32,7 +30,7 @@ curl -X POST https://<gateway>/v1/accounts \
 ```
 
 The response contains an account API key once. Store it outside the repository. The bootstrap
-key can issue or revoke additional account keys and register an existing WABA during migration.
+key can issue or revoke additional account keys and register an existing WABA.
 
 ## Embedded Signup
 
@@ -52,27 +50,32 @@ with the same account key.
 Every WABA and phone returned by the Meta token is registered under that account. Existing
 ownership conflicts fail without changing the other account's registry.
 
-## Migration and rollback
+## Registering an existing WABA
 
-1. Deploy the control-plane migration with `ECCOS_MULTI_TENANT=false`.
-2. Set `ECCOS_MULTI_TENANT=true` and configure the admin bootstrap key.
-3. Create the account with the admin bootstrap key.
-4. Register each existing WABA, all phone numbers, its Meta token, its callback URL, and its
-   subscriber target. The registration body accepts `subscriber_webhook_url` and
-   `subscriber_secret`; copy the values that were previously supplied by the legacy environment
-   into the WABA registration rather than relying on the multi-tenant environment fallback.
-5. Verify data-plane counts, subscriber configuration, webhook delivery, templates, and a send
-   against the existing WABA Durable Object.
-6. Repeat the smoke checks with the account API key.
+An operator onboarding a WABA that already exists (e.g. brought over from a Bun self-host) uses
+the admin bootstrap API:
 
-If registration or the Meta subscription call fails after the registry write, rerun registration
-for the same account/WABA and use the dashboard or `resubscribe` action. Re-registration is
-idempotent, preserves already-known phone rows, and never changes another account's ownership.
+```bash
+curl -X POST https://<gateway>/v1/accounts/<accountId>/wabas \
+  -H "authorization: Bearer $ECCOS_ADMIN_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "wabaId": "<WABA_ID>",
+    "metaAccessToken": "<permanent system-user token>",
+    "phones": [{ "phoneNumberId": "<phone_number_id>", "displayPhoneNumber": "+34 600 00 00 00" }]
+  }'
+```
 
-The WABA Durable Object name does not change, so this migration does not move its SQLite data.
-The new control plane is additive. To roll back, restore the previous single-tenant variables and
-secrets; newly provisioned accounts remain in the registry and are unavailable until multi-tenant
-mode is enabled again.
+The WABA's Durable Object name is derived from the WABA id, so this does not move data: an object
+that already holds history keeps it once the account takes ownership. Registration is idempotent,
+preserves already-known phone rows, and never changes another account's ownership. As with
+Embedded Signup, the token is stored in the control plane and never returned.
 
-Never change `DO_JURISDICTION` during this process without a separate Durable Object export and
+## Dashboard scope
+
+A dashboard deployment is account-scoped: set `GATEWAY_ACCOUNT_ID` to the control-plane account it
+operates (one dashboard + one Cloudflare Access application per account).
+`GATEWAY_WABA_ID` is no longer used.
+
+Never change `DO_JURISDICTION` after data exists without a separate Durable Object export and
 import plan: a jurisdiction change creates a new, empty object.

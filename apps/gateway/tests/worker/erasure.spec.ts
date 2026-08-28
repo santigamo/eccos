@@ -1,8 +1,8 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REDACTED_PAYLOAD, normalizePhoneNumber, type EccosGateway } from "../../src/gateway";
-import { gatewayStub } from "./helpers";
+import { bootstrapAccount, gatewayStub } from "./helpers";
 
 afterEach(async () => {
   await reset();
@@ -187,17 +187,23 @@ describe("normalizePhoneNumber", () => {
 
 describe("POST /v1/wabas/WABA_TEST/privacy/erasure", () => {
   const url = "http://example.com/v1/wabas/WABA_TEST/privacy/erasure";
+  let API_KEY = "ek-test";
+  beforeEach(async () => {
+    const boot = await bootstrapAccount();
+    API_KEY = boot.apiKey;
+  });
+
   const authed = (body: unknown) =>
     exports.default.fetch(url, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${env.ECCOS_API_KEY}`,
+        authorization: `Bearer ${API_KEY}`,
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
     });
 
-  it("requires the API key (same gate as the rest of /v1)", async () => {
+  it("requires the account API key (same gate as the rest of /v1)", async () => {
     const res = await exports.default.fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },

@@ -1,17 +1,20 @@
-import { env } from "cloudflare:workers";
 import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   backoffMs,
   runBoundedPool,
   type EccosGateway,
 } from "../../src/gateway";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { gatewayStub } from "./helpers";
+import { bootstrapAccount, gatewayStub, SUBSCRIBER_SECRET, SUBSCRIBER_URL } from "./helpers";
 
 afterEach(async () => {
   vi.restoreAllMocks();
   await reset();
+});
+
+beforeEach(async () => {
+  await bootstrapAccount();
 });
 
 async function seedPendingDelivery(event: WhatsAppCallbackEvent) {
@@ -48,11 +51,13 @@ describe("EccosGateway alarm", () => {
       text: "Hola",
       at: 1_700_000_000_000,
     };
+    // The forwarding target is per-WABA DO config now (no env fallback).
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL, SUBSCRIBER_SECRET: SUBSCRIBER_SECRET });
     await seedPendingDelivery(event);
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url === env.SUBSCRIBER_WEBHOOK_URL) {
+      if (url === SUBSCRIBER_URL) {
         const headers = new Headers(init?.headers);
         expect(headers.get("x-eccos-signature")).toMatch(/^sha256=[0-9a-f]{64}$/);
         expect(headers.get("x-webhook-event")).toBe("reply");
@@ -68,7 +73,7 @@ describe("EccosGateway alarm", () => {
 
     expect(fetchMock).toHaveBeenCalled();
     expect(
-      fetchMock.mock.calls.some(([url]) => String(url) === env.SUBSCRIBER_WEBHOOK_URL),
+      fetchMock.mock.calls.some(([url]) => String(url) === SUBSCRIBER_URL),
     ).toBe(true);
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
@@ -85,10 +90,11 @@ describe("EccosGateway alarm", () => {
       text: "Only once",
       at: 1_700_000_000_000,
     };
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     await seedPendingDelivery(event);
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input) === env.SUBSCRIBER_WEBHOOK_URL) {
+      if (String(input) === SUBSCRIBER_URL) {
         return new Response("ok", { status: 200 });
       }
       return new Response("not found", { status: 404 });
@@ -101,7 +107,7 @@ describe("EccosGateway alarm", () => {
       await instance.alarm();
     });
 
-    const subscriberCalls = fetchMock.mock.calls.filter(([url]) => String(url) === env.SUBSCRIBER_WEBHOOK_URL);
+    const subscriberCalls = fetchMock.mock.calls.filter(([url]) => String(url) === SUBSCRIBER_URL);
     expect(subscriberCalls).toHaveLength(1);
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
@@ -173,6 +179,7 @@ describe("EccosGateway alarm", () => {
   // destination that rejects are opposite diagnoses, and an operator reading the
   // queue can only act on them if last_error tells them apart.
   it("records the upstream status code as the failure reason", async () => {
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 502 }));
     await seedPendingDelivery({
       type: "delivered",
@@ -198,12 +205,8 @@ describe("EccosGateway alarm", () => {
       at: 1_700_000_000_000,
     });
 
-    // Empty string in DO config wins over the env fallback, exercising the real
-    // "operator cleared the forwarding target" path rather than mutating env.
-    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-      instance.saveConfig({ SUBSCRIBER_WEBHOOK_URL: "" });
-    });
-
+    // No DO config: the forwarding target is unset (there is no env fallback),
+    // exercising the "operator has not configured a destination" path.
     await runDurableObjectAlarm(gatewayStub());
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
@@ -221,8 +224,15 @@ describe("EccosGateway alarm", () => {
 });
 
 describe("EccosGateway alarm concurrency", () => {
+  async function seedWithSubscriber(eventOrEvents: WhatsAppCallbackEvent[] | WhatsAppCallbackEvent) {
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
+    const list = Array.isArray(eventOrEvents) ? eventOrEvents : [eventOrEvents];
+    await seedPendingDeliveries(list);
+    return list;
+  }
+
   it("uses a 5-second timeout for subscriber requests", async () => {
-    await seedPendingDelivery({
+    await seedWithSubscriber({
       type: "delivered",
       transportMessageId: "wamid.TIMEOUT",
       at: 1_700_000_000_000,
@@ -236,7 +246,7 @@ describe("EccosGateway alarm concurrency", () => {
   });
 
   it("cancels subscriber response bodies", async () => {
-    await seedPendingDelivery({
+    await seedWithSubscriber({
       type: "delivered",
       transportMessageId: "wamid.BODY",
       at: 1_700_000_000_000,
@@ -260,7 +270,7 @@ describe("EccosGateway alarm concurrency", () => {
       text: `row ${i}`,
       at: 1_700_000_000_000,
     }));
-    await seedPendingDeliveries(events);
+    await seedWithSubscriber(events);
 
     let inFlight = 0;
     let peak = 0;
@@ -289,6 +299,7 @@ describe("EccosGateway alarm concurrency", () => {
       text: `row ${i}`,
       at: 1_700_000_000_000,
     }));
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     await seedPendingDeliveries(events);
 
     let calls = 0;
@@ -316,6 +327,7 @@ describe("EccosGateway alarm concurrency", () => {
       transportMessageId: "wamid.BACKOFFANCHOR",
       at: 1_700_000_000_000,
     };
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     await seedPendingDelivery(event);
 
     const T0 = Date.now();

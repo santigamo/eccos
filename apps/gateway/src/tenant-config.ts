@@ -1,10 +1,12 @@
 import type { CoreConfig } from "@eccos/core/config-schema";
 
+/** App-level Meta platform config shared by every tenant on the deployment. */
 export type AppConfig = Pick<
   CoreConfig,
   "META_GRAPH_VERSION" | "META_APP_SECRET" | "META_WEBHOOK_VERIFY_TOKEN" | "META_APP_ID" | "META_ES_CONFIG_ID"
 >;
 
+/** Per-request tenant config resolved from the control-plane WABA record. */
 export type TenantConfig = Pick<
   CoreConfig,
   | "META_GRAPH_VERSION"
@@ -21,27 +23,8 @@ export interface TenantCredentials {
   metaAccessToken: string;
 }
 
-export type TenantMode = "legacy" | "shadow" | "enforced";
-
-export function tenantMode(env: { ECCOS_MULTI_TENANT?: string }): TenantMode {
-  switch (env.ECCOS_MULTI_TENANT?.trim().toLowerCase()) {
-    case "shadow":
-      return "shadow";
-    case "true":
-      return "enforced";
-    default:
-      return "legacy";
-  }
-}
-
-export function isMultiTenantEnabled(env: { ECCOS_MULTI_TENANT?: string }): boolean {
-  return tenantMode(env) === "enforced";
-}
-
-export function isTenantControlPlaneEnabled(env: { ECCOS_MULTI_TENANT?: string }): boolean {
-  return tenantMode(env) !== "legacy";
-}
-
+/** App-level Meta config: signature/verify secrets are the only Worker tenant
+ * prerequisites; everything else is platform config with defaults. */
 export function getAppConfig(env: Env): AppConfig {
   const values = env as unknown as Record<string, string | undefined>;
   const required = (key: "META_APP_SECRET" | "META_WEBHOOK_VERIFY_TOKEN"): string => {

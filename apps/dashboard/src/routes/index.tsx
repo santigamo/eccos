@@ -164,17 +164,6 @@ function StatusView({ status, scope }: { status: GatewayStatus; scope: Dashboard
 }
 
 function ScopePanel({ scope }: { scope: DashboardScope }) {
-  if (scope.mode === "legacy") {
-    return (
-      <StatusPanel title="Scope" fit className="mt-6">
-        <dl className="m-0 divide-y divide-(--frame-panel-border-color)">
-          <Field label="Mode" value="Single tenant" />
-          <Field label="Selected WABA" value={scope.selectedWabaId} />
-        </dl>
-      </StatusPanel>
-    );
-  }
-
   const account = scope.resources.account;
   return (
     <StatusPanel title="Scope" fit className="mt-6">

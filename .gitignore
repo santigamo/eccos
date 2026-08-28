@@ -16,6 +16,7 @@ worker-configuration.d.ts
 
 # Local AI agent / editor config (kept local, not published)
 .agents/
+.commandcode/
 .claude/
 .codex/
 .cursor/

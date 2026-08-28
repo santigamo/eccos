@@ -18,7 +18,7 @@ delivery of WhatsApp events, plus a short operator-visible history.
 | Outbound (sent) messages | Business phone number id, recipient phone number (`to`), the full outbound request JSON (which includes message content you asked Eccos to send), Meta transport message id, send status/error | `outbound_messages` | DO SQLite / `bun:sqlite` |
 | Delivery/status/echo events | Business phone number id when Meta supplies it, Meta transport message id, delivery/read/failed status, error codes, or (for `echo`) staff-sent reply text from WhatsApp coexistence | `inbound_events` (statuses share the same table as replies) | DO SQLite / `bun:sqlite` |
 | Forwarding queue (`deliveries`) | Business phone number id and a JSON copy of the batch of normalized events (`{ events: [...] }`) queued to POST to your subscriber, plus attempt count / last error | `deliveries` | DO SQLite / `bun:sqlite` |
-| Onboarding/config metadata | `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable `SUBSCRIBER_WEBHOOK_URL` / `SUBSCRIBER_SECRET` override | `config` table | DO SQLite only (`apps/gateway/src/gateway.ts`) |
+| Onboarding/config metadata | Account/WABA/phone ownership, WABA callback URL, and Meta access token; plus `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable subscriber URL/secret | Control-plane `accounts`/`wabas`/`phones` tables plus the WABA `config` table | DO SQLite (`apps/gateway/src/control-plane.ts`, `apps/gateway/src/gateway.ts`) |
 
 Source of truth for the exact columns: `apps/gateway/src/gateway.ts` (`CREATE TABLE` statements)
 for the Workers target, `src/db/client.ts` for the Bun target — the two schemas are effectively
@@ -49,9 +49,8 @@ model so message content ages out before the operational audit trail does:
   - **`DELIVERY_RETENTION_DAYS`** (default **90**): past it, the metadata-only terminal
     `deliveries` rows are deleted entirely.
 
-  Both are plain (non-secret) `vars` entries in `apps/gateway/wrangler.jsonc`; the deprecated
-  single `RETENTION_DAYS` is still honored as a fallback for `CONTENT_RETENTION_DAYS` so
-  existing deployments keep their window. All values are guard-railed
+  Both are plain (non-secret) `vars` entries in `apps/gateway/wrangler.jsonc`; the Workers target
+  uses only the split vars and has no tenant-wide retention setting. All values are guard-railed
   (`resolveRetentionDays()`): invalid values fall back to the defaults rather than feeding a
   destructive window. Pruning runs as a side effect of the alarm that also drains the delivery
   queue, so if there is no inbound traffic (no alarm fires), stale rows can persist slightly
@@ -108,9 +107,9 @@ The only way to *see* stored data (outside direct database access) is the operat
   once someone passes the Access policy, they can read message content for as long as it's
   retained — the Access policy *is* the access-control boundary, there is no additional per-field
   redaction.
-- The console **never** displays `SUBSCRIBER_SECRET` or `ECCOS_API_KEY` — `getSubscriberConfig()`
+- The console **never** displays `SUBSCRIBER_SECRET` or an account API key — `getSubscriberConfig()`
   returns `{ url, hasSecret: boolean }` only (`apps/gateway/src/gateway.ts`), never the secret
-  value itself, and no RPC method returns `ECCOS_API_KEY`, `META_ACCESS_TOKEN`, or
+  value itself, and no RPC method returns an API key, `META_ACCESS_TOKEN`, or
   `META_APP_SECRET` at all (confirmed by reading every method on `GatewayApi` in
   `apps/gateway/src/rpc.ts`).
 - If you don't configure Cloudflare Access, do not expose the dashboard's `*.workers.dev` URL —
@@ -142,14 +141,14 @@ See also the "Data handling & logging" note in `SECURITY.md`. Concretely:
 
 ## 6. Delete / export
 
-In legacy mode the operator owns the only account. In Workers multi-tenant mode, every export and
-erasure request is checked against the authenticated account's WABA registry before the data-plane
-object is touched.
+On the Workers target every export and erasure request is checked against the authenticated
+account's WABA registry before the data-plane object is touched (the Bun target has a single
+operator account).
 
 **Export (Workers target):**
 - `GET /v1/wabas/<WABA_ID>/export` returns the full retained snapshot of inbound, outbound, delivery,
-  and non-secret config rows. It requires the owning account key in multi-tenant mode and the legacy
-  API key otherwise. The RPC surface also exposes `exportData()` for the private dashboard binding.
+  and non-secret config rows. It requires the owning account key. The RPC surface also exposes
+  `exportData()` for the private dashboard binding.
 - The paginated `listInbound`, `listOutbound`, and `listDeliveries` methods remain available for
   cursor-based reads. Export rows include the business `phone_number_id` when the event or send had
   a known phone.
@@ -209,7 +208,7 @@ object is touched.
    and since split into `CONTENT_RETENTION_DAYS` (30, clamped 7–90) + `DELIVERY_RETENTION_DAYS`
    (90) on the Workers target, with payload redaction in between; see §2.
 2. ~~Add pruning to the Bun target.~~ **Done** — `pruneOldRows()` now runs on every
-   `processPending()` call in `src/delivery/forward.ts`; see §2. (Still the single legacy
+   `processPending()` call in `src/delivery/forward.ts`; see §2. (Still the single
    window — split retention lands when the Bun target is retaken post-v1.)
 3. ~~Support data-subject erasure requests without direct DO/SQLite access.~~ **Done** —
    `eraseByPhone` (RPC + `POST /v1/wabas/<WABA_ID>/privacy/erasure`) erases one number and returns evidence
