@@ -98,14 +98,24 @@ Every line has the same envelope:
   | Event | Route | Meaning |
   |---|---|---|
   | `webhook_verify` | `GET /webhooks/meta` | Meta's subscription-verify challenge, accepted (200) or rejected (403) |
-  | `webhook_signature_invalid` | `POST /webhooks/meta` | `X-Hub-Signature-256` failed to verify (401) |
-  | `webhook_invalid_json` | `POST /webhooks/meta` | Body didn't parse as JSON (400) |
-  | `webhook_ingested` | `POST /webhooks/meta` | Payload parsed and written to the DO (200) |
-  | `v1_unauthorized` | `/v1/*` | Missing/invalid account or admin key (401) |
-  | `v1_rate_limited` | `POST /v1/wabas/<WABA_ID>/messages` | Cloudflare Rate Limiting rejected the request (429) |
-  | `outbound_send` | `POST /v1/wabas/<WABA_ID>/messages` | Result of a Graph API send (200/400/502) |
-  | `templates_list` | `GET /v1/wabas/<WABA_ID>/templates` | Result of listing templates (200/502) |
-  | `readiness_check` | `GET /ready` | Result of the readiness probe (200/503) |
+   | `webhook_signature_invalid` | `POST /webhooks/meta` | `X-Hub-Signature-256` failed to verify (401) |
+   | `webhook_invalid_json` | `POST /webhooks/meta` | Body didn't parse as JSON (400) |
+   | `webhook_misconfigured` | `POST /webhooks/meta` | Required webhook configuration was unavailable; payload acknowledged without ingestion (200) |
+   | `webhook_ignored` | `POST /webhooks/meta` | Valid payload contained no registered active WABA/phone event (200) |
+   | `webhook_ingested` | `POST /webhooks/meta` | Payload parsed and written to the DO (200) |
+   | `unhandled_error` | Any route | Unexpected route failure; webhook requests are acknowledged (200), other requests fail (500) |
+   | `v1_unauthorized` | `/v1/*` | Missing/invalid account or admin key (401) |
+   | `v1_rate_limited` | `POST /v1/wabas/<WABA_ID>/messages` | Cloudflare Rate Limiting rejected the request (429) |
+   | `outbound_send` | `POST /v1/wabas/<WABA_ID>/messages` | Result of a Graph API send (200/400/502) |
+   | `templates_list` | `GET /v1/wabas/<WABA_ID>/templates` | Result of listing templates (200/502) |
+   | `account_created` | `POST /v1/accounts` | Admin-created account (201) |
+   | `key_issued` | `POST /v1/accounts/<accountId>/keys` | Account API key issued (201); only key metadata is logged |
+   | `key_revoke` | `POST /v1/accounts/<accountId>/keys/<keyId>/revoke` | Account API key revoked (200/404) |
+   | `waba_provisioning_started` | `POST /v1/accounts/<accountId>/wabas` | WABA registration queued for provisioning (202) |
+   | `waba_reconcile` | `POST /v1/accounts/<accountId>/wabas/<WABA_ID>/reconcile` | Provisioning reconciliation result (200/404/502) |
+   | `privacy_erasure` | `POST /v1/wabas/<WABA_ID>/privacy/erasure` | Phone erasure result (200/400) |
+   | `export` | `GET /v1/wabas/<WABA_ID>/export` | Account-scoped data export result (200) |
+   | `readiness_check` | `GET /ready` | Result of the readiness probe (200/503) |
 
 - Everything else in a line is **safe metadata only** — ids (`messageId`), counts
   (`eventCount`, `received`, `count`), booleans (`configOk`, `doOk`), and enum-like strings

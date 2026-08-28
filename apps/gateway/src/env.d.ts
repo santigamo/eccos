@@ -2,6 +2,7 @@
 interface Env {
   META_APP_ID?: string;
   META_ES_CONFIG_ID?: string;
+  GATEWAY_PUBLIC_URL?: string;
   /** Bootstrap key for account and WABA provisioning (admin endpoints). */
   ECCOS_ADMIN_API_KEY?: string;
   SEND_RATE_LIMITER?: RateLimit;

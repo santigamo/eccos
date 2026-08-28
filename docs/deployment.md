@@ -37,6 +37,7 @@ subscriber targets per WABA.
 | Var | Default | Purpose |
 |---|---|---|
 | `META_GRAPH_VERSION` | `v24.0` | Meta Graph API version used for all calls |
+| `GATEWAY_PUBLIC_URL` | `""` | Public HTTPS origin used by the dashboard's Embedded Signup button; direct `/connect/start` calls derive the origin from the request |
 | `FORWARD_MAX_ATTEMPTS` | `6` | Max delivery attempts before a forwarded event is marked failed |
 | `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted and terminal `deliveries` rows are redacted to metadata-only |
 | `DELIVERY_RETENTION_DAYS` | `90` | Delivery-audit window: past it, terminal (`delivered`/`failed`) `deliveries` rows are deleted entirely. See [docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows) |
@@ -76,18 +77,18 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 
 | Var | Default | Purpose |
 |---|---|---|
-| `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty = Access gate disabled for local development; an account-scoped dashboard fails closed until both are set |
+| `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty allow localhost development only; public requests fail closed |
 | `ACCESS_AUD` | `""` | Cloudflare Access application Audience (AUD) tag |
-| `GATEWAY_ACCOUNT_ID` | `""` | **Required.** The account the dashboard operates; every RPC call carries this account context and targets a WABA the account owns (first owned WABA by default, or a `?wabaId=` override) |
 
 The dashboard has no secrets of its own; it reaches the gateway via the `GATEWAY` service
 binding declared in `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP).
-`GATEWAY_WABA_ID` is no longer used. Use one dashboard deployment and one Access application per
-account; `GATEWAY_ACCOUNT_ID` is the deployment's trusted account scope, not a browser-supplied
-selector.
+Use one dashboard deployment and one Access application per account. The Access application
+identity is resolved server-side and mapped by the gateway control plane; it is not a
+browser-supplied selector.
 
-> Do not put real values from the table above in `.env` for a Workers deploy — `.env` is only
-> read by the Bun target and by `scripts/smoke.sh` for local/CI checks. Use `wrangler secret put`.
+> Configure these non-secret Access vars in `apps/dashboard/wrangler.jsonc` or pass them through
+> the dashboard deploy helper. Keep actual secrets out of the repository and set gateway secrets
+> with `wrangler secret put`.
 
 ## Deploy
 
@@ -102,6 +103,7 @@ wrangler secret put META_WEBHOOK_VERIFY_TOKEN
 wrangler secret put ECCOS_ADMIN_API_KEY
 wrangler secret put META_APP_ID     # optional: Embedded Signup /connect
 wrangler secret put META_ES_CONFIG_ID # optional: Embedded Signup /connect
+# Set GATEWAY_PUBLIC_URL in wrangler.jsonc (or pass --var) for dashboard-initiated Embedded Signup.
 cd ../..
 
 bun run deploy     # == cd apps/gateway && wrangler deploy
@@ -110,8 +112,14 @@ bun run deploy     # == cd apps/gateway && wrangler deploy
 If you also run the operator console:
 
 ```bash
-cd apps/dashboard && bun run deploy   # == the validated helper; requires GATEWAY_ACCOUNT_ID
+cd apps/dashboard && bun run deploy   # == the validated helper
 ```
+
+Configure `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `apps/dashboard/wrangler.jsonc` before the
+production deploy, then open `/setup` once behind the Access policy to create the account.
+Set `GATEWAY_PUBLIC_URL` in `apps/gateway/wrangler.jsonc` to the gateway's public HTTPS origin
+before using the dashboard's **Connect WhatsApp** action. The button starts the same account-bound
+Embedded Signup flow as `POST /connect/start` without exposing an account API key to the browser.
 
 After a fresh gateway deploy, point Meta's webhook subscription at
 `https://<worker>.workers.dev/webhooks/meta` (subscribe the `messages` field) and confirm the

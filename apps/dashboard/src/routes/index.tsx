@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useLoaderData } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import {
   Frame,
@@ -7,12 +7,7 @@ import {
   FrameTitle,
 } from "../components/reui/frame";
 import { cn } from "@/lib/utils";
-import {
-  getDashboardOverview,
-  type DashboardScope,
-  type GatewayStatus,
-  type Health,
-} from "../server/gateway";
+import type { DashboardScope, GatewayStatus, Health } from "../server/gateway";
 import {
   COUNT_LINK,
   countTotal,
@@ -23,8 +18,6 @@ import {
 } from "../ui";
 
 export const Route = createFileRoute("/")({
-  loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
-  loader: ({ deps }) => getDashboardOverview({ data: { wabaId: deps.wabaId } }),
   component: StatusPage,
 });
 
@@ -67,38 +60,25 @@ const HEALTH_META: Record<Health, HealthMeta> = {
   },
 };
 
-const UNREACHABLE_META: HealthMeta = {
-  label: "Unreachable",
-  banner: {
-    detail:
-      "The dashboard could not reach the gateway over the GATEWAY service binding.",
-    rail: "border-l-[#e03131]",
-  },
-};
-
 function StatusPage() {
-  const result = Route.useLoaderData();
+  const result = useLoaderData({ from: "__root__" });
 
-  if (result === undefined) {
+  if (!result.ok) {
     return (
       <Page title="Status" kicker="Gateway">
-        <output className="text-muted-foreground text-sm" aria-live="polite">
-          Loading gateway status…
-        </output>
+        <Unreachable error={result.error} />
       </Page>
     );
   }
 
-  const meta = result.ok ? HEALTH_META[result.data.status.health] : UNREACHABLE_META;
+  if (result.data.stage !== "ready") return null;
+
+  const meta = HEALTH_META[result.data.status.health];
 
   return (
     <Page title="Status" kicker="Gateway" actions={<HealthBadge meta={meta} />}>
       <StatusBanner banner={meta.banner} />
-      {result.ok ? (
-        <StatusView status={result.data.status} scope={result.data.scope} />
-      ) : (
-        <Unreachable error={result.error} />
-      )}
+      <StatusView status={result.data.status} scope={result.data.scope} />
     </Page>
   );
 }

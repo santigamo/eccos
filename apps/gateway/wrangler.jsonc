@@ -49,6 +49,7 @@
 
   "vars": {
     "META_GRAPH_VERSION": "v24.0",
+    "GATEWAY_PUBLIC_URL": "",
     "FORWARD_MAX_ATTEMPTS": "6",
     // Split retention (docs/data-lifecycle.md). Content window: after these days,
     // inbound_events and outbound_messages rows are deleted and terminal deliveries

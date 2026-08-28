@@ -19,16 +19,15 @@
     { "pattern": "app.eccos.chat", "custom_domain": true }
   ],
 
-  // Cloudflare Access gate (defense-in-depth). Both empty = gate DISABLED (local
-  // dev / a deploy not yet behind Access). Set BOTH in production so the Worker
-  // re-verifies the Access JWT and can't be bypassed via the raw workers.dev URL:
+  // Cloudflare Access gate (defense-in-depth). Both empty = localhost-only
+  // development; public requests fail closed. Set BOTH in production so the
+  // Worker re-verifies the Access JWT and can't be bypassed via workers.dev:
   //   ACCESS_TEAM_DOMAIN — your Zero Trust team domain, e.g. myteam.cloudflareaccess.com
   //   ACCESS_AUD         — the Access application's Audience (AUD) tag
   // Non-secret, so they live here (not `wrangler secret`). See README.md.
   "vars": {
     "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
-    "GATEWAY_ACCOUNT_ID": ""
+    "ACCESS_AUD": ""
   },
 
   // Service binding to the gateway Worker (wrangler name "eccos"), reaching its

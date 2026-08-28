@@ -1,7 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
+import { dashboardInstallationKey } from "../access";
 import type {
   AccountResources,
+  ConnectStartResult,
+  DashboardInitializationResult,
   DeliveryListOpts,
   DeliveryRecord,
   GatewayApi,
@@ -20,6 +23,8 @@ type DashboardListOpts = Omit<DeliveryListOpts, "wabaId">;
 // (`@eccos/gateway-contract`) — no more hand-mirrored shapes.
 export type {
   AccountResources,
+  ConnectStartResult,
+  DashboardInitializationResult,
   DeliveryRecord,
   GatewayStatus,
   Health,
@@ -65,6 +70,11 @@ export interface DashboardOverview {
 }
 
 export type DashboardOverviewResult = Result<DashboardOverview>;
+export type DashboardState =
+  | { stage: "unassigned" }
+  | { stage: "account-ready"; resources: AccountResources }
+  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope };
+export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
 const WABA_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -130,6 +140,16 @@ function validateSubscriberInput(input: unknown): SetSubscriberConfigInput & Das
   return { url: record.url, ...(secret ? { secret } : {}), ...(wabaId ? { wabaId } : {}) };
 }
 
+function validateSetupInput(input: unknown): { name?: string } | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  if (record.name === undefined) return {};
+  if (typeof record.name !== "string") throw new Error("name must be a string");
+  const name = record.name.trim();
+  if (name.length > 200) throw new Error("name must be at most 200 characters");
+  return name ? { name } : {};
+}
+
 /**
  * Read the `GATEWAY` service binding and invoke the gateway's RPC entrypoint.
  *
@@ -151,30 +171,53 @@ async function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<
   }
 }
 
-function configuredAccountId(): string {
-  const accountId = env.GATEWAY_ACCOUNT_ID?.trim();
-  if (!accountId) throw new Error("GATEWAY_ACCOUNT_ID is not configured");
-  return accountId;
-}
-
 type ResolvedScope = {
   wabaId: string;
   accountId: string;
   resources: AccountResources;
 };
 
-async function resolveScope(gateway: GatewayApi, requestedWabaId?: string): Promise<ResolvedScope> {
-  const accountId = configuredAccountId();
+type ResolvedAccount = {
+  accountId: string;
+  resources: AccountResources;
+};
+
+async function resolveDashboardAccount(gateway: GatewayApi): Promise<ResolvedAccount | null> {
+  const account = await gateway.getDashboardAccount(dashboardInstallationKey(env));
+  if (!account) return null;
+  const resources = await gateway.listAccountResources(account.accountId);
+  if (!resources.account) throw new Error(`Account "${account.accountId}" is not configured`);
+  return { accountId: account.accountId, resources };
+}
+
+function resolveScopeFromAccount(
+  account: ResolvedAccount,
+  requestedWabaId?: string,
+  rejectUnknown = false,
+): ResolvedScope {
   const requested = requestedWabaId?.trim() || undefined;
-  const resources = await gateway.listAccountResources(accountId);
-  if (!resources.account) throw new Error(`Account "${accountId}" is not configured`);
+  const { accountId, resources } = account;
   const wabas = [...resources.wabas].sort((a, b) => a.wabaId.localeCompare(b.wabaId));
-  const wabaId = requested || wabas[0]?.wabaId;
-  if (!wabaId) throw new Error(`Account "${accountId}" has no registered WABAs`);
-  if (!wabas.some((waba) => waba.wabaId === wabaId)) {
-    throw new Error(`WABA "${wabaId}" is not owned by account "${accountId}"`);
+  const requestedIsOwned = requested ? wabas.some((waba) => waba.wabaId === requested) : false;
+  if (requested && !requestedIsOwned && rejectUnknown) {
+    throw new Error(`WABA "${requested}" is not owned by account "${accountId}"`);
   }
+  const selectedWaba = requestedIsOwned ? wabas.find((waba) => waba.wabaId === requested) : wabas[0];
+  const wabaId = selectedWaba?.wabaId;
+  if (!wabaId) throw new Error(`Account "${accountId}" has no registered WABAs`);
+  if (selectedWaba?.status === "pending") throw new Error(`WABA "${wabaId}" is still provisioning`);
+  if (selectedWaba?.status === "failed") throw new Error(`WABA "${wabaId}" provisioning failed`);
   return { wabaId, accountId, resources };
+}
+
+async function resolveScope(
+  gateway: GatewayApi,
+  requestedWabaId?: string,
+  rejectUnknown = false,
+): Promise<ResolvedScope> {
+  const account = await resolveDashboardAccount(gateway);
+  if (!account) throw new Error("Eccos dashboard has not been initialized");
+  return resolveScopeFromAccount(account, requestedWabaId, rejectUnknown);
 }
 
 function dashboardScope(scope: ResolvedScope): DashboardScope {
@@ -200,9 +243,10 @@ function dashboardScope(scope: ResolvedScope): DashboardScope {
 async function withScopedGateway<T>(
   fn: (gateway: GatewayApi, scope: ResolvedScope) => Promise<T>,
   requestedWabaId?: string,
+  rejectUnknown = false,
 ): Promise<Result<T>> {
   return withGateway(async (gateway) => {
-    const scope = await resolveScope(gateway, requestedWabaId);
+    const scope = await resolveScope(gateway, requestedWabaId, rejectUnknown);
     return fn(gateway, scope);
   });
 }
@@ -227,6 +271,26 @@ export const getDashboardScope = createServerFn({ method: "GET" })
       withScopedGateway((_, scope) => Promise.resolve(dashboardScope(scope)), data?.wabaId),
   );
 
+export const getDashboardState = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(
+    ({ data }): Promise<DashboardStateResult> =>
+      withGateway(async (gateway) => {
+        const account = await resolveDashboardAccount(gateway);
+        if (!account) return { stage: "unassigned" };
+        const wabas = [...account.resources.wabas].sort((a, b) => a.wabaId.localeCompare(b.wabaId));
+        if (wabas.length === 0) {
+          return { stage: "account-ready", resources: account.resources };
+        }
+        const scope = resolveScopeFromAccount(account, data?.wabaId);
+        return {
+          stage: "ready",
+          status: await gateway.getStatus(scope.wabaId, scope.accountId),
+          scope: dashboardScope(scope),
+        };
+      }),
+  );
+
 export const getDashboardOverview = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(
@@ -241,14 +305,24 @@ export const getDashboardOverview = createServerFn({ method: "GET" })
   );
 
 export const getAccountResources = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<AccountResources>> => {
-    try {
-      const accountId = configuredAccountId();
-      return withGateway((gateway) => gateway.listAccountResources(accountId));
-    } catch (err) {
-      return Promise.resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  },
+  (): Promise<Result<AccountResources>> =>
+    withGateway(async (gateway) => {
+      const account = await resolveDashboardAccount(gateway);
+      if (!account) throw new Error("Eccos dashboard has not been initialized");
+      return account.resources;
+    }),
+);
+
+export const initializeDashboard = createServerFn({ method: "POST" })
+  .validator(validateSetupInput)
+  .handler(
+    ({ data }): Promise<Result<DashboardInitializationResult>> =>
+      withGateway((gateway) => gateway.initializeDashboard(dashboardInstallationKey(env), data?.name)),
+  );
+
+export const startConnect = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<ConnectStartResult>> =>
+    withGateway((gateway) => gateway.startConnect(dashboardInstallationKey(env))),
 );
 
 export const listDeliveries = createServerFn({ method: "GET" })
@@ -296,6 +370,7 @@ export const retryDelivery = createServerFn({ method: "POST" })
       withScopedGateway(
         (gateway, scope) => gateway.retryDelivery(data.id, scope.wabaId, scope.accountId),
         data.wabaId,
+        true,
       ),
   );
 
@@ -322,6 +397,7 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);
         },
         data.wabaId,
+        true,
       ),
   );
 
@@ -336,5 +412,6 @@ export const resubscribe = createServerFn({ method: "POST" })
     withScopedGateway(
       (gateway, scope) => gateway.resubscribe(scope.wabaId, scope.accountId),
       data?.wabaId,
+      true,
     ),
   );

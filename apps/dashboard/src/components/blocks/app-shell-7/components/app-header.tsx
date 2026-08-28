@@ -37,8 +37,8 @@ function WabaPicker() {
   const location = useLocation()
   const router = useRouter()
 
-  if (!scope.ok) return null
-  const accountScope = scope.data
+  if (!scope.ok || scope.data.stage !== "ready") return null
+  const accountScope = scope.data.scope
 
   function onValueChange(value: string | null) {
     if (!value || value === accountScope.selectedWabaId) return

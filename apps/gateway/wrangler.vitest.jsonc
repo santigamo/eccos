@@ -20,6 +20,7 @@
     "META_WEBHOOK_VERIFY_TOKEN": "test-verify-token",
     "META_APP_ID": "test-app-id",
     "META_ES_CONFIG_ID": "test-config-id",
+    "GATEWAY_PUBLIC_URL": "https://gateway.example",
     "ECCOS_ADMIN_API_KEY": "test-admin-key",
     "FORWARD_MAX_ATTEMPTS": "3"
   }

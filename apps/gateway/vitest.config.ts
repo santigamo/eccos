@@ -6,6 +6,7 @@ const TEST_BINDINGS = {
   META_WEBHOOK_VERIFY_TOKEN: "test-verify-token",
   META_APP_ID: "test-app-id",
   META_ES_CONFIG_ID: "test-config-id",
+  GATEWAY_PUBLIC_URL: "https://gateway.example",
   FORWARD_MAX_ATTEMPTS: "3",
 } as const;
 

@@ -50,6 +50,25 @@ beforeEach(async () => {
 });
 
 describe("scheduled handler", () => {
+  it("purges expired connect states without removing live handoffs", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (instance: EccosControlPlane) => {
+      instance.startConnectState("WABA_CRON_EXPIRED_STATE", TEST_ACCOUNT_ID, Date.now() + 60_000);
+      instance.sql.exec(
+        "UPDATE connect_states SET expires_at = ? WHERE state = ?",
+        Date.now() - 1,
+        "WABA_CRON_EXPIRED_STATE",
+      );
+      instance.startConnectState("WABA_CRON_LIVE_STATE", TEST_ACCOUNT_ID, Date.now() + 60_000);
+    });
+
+    await runScheduled();
+
+    await runInDurableObject(getControlPlaneStub(env), (instance: EccosControlPlane) => {
+      expect(instance.getConnectState("WABA_CRON_EXPIRED_STATE")).toBeNull();
+      expect(instance.getConnectState("WABA_CRON_LIVE_STATE")).toMatchObject({ accountId: TEST_ACCOUNT_ID });
+    });
+  });
+
   it("drives a due, unleased pending row to active and configures its gateway DO", async () => {
     await registerPending("WABA_CRON_ACTIVATE", "PN_CRON_ACTIVATE");
     const fetchMock = metaOkMock();

@@ -8,13 +8,14 @@ import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
 import { getControlPlaneStub } from "../control-plane-stub";
 import { constantTimeEqual } from "@eccos/core/signature";
-import type { ProvisioningStatus } from "@eccos/gateway-contract";
+import type { ConnectStartResult, ProvisioningStatus } from "@eccos/gateway-contract";
 
 type ConnectContext = Context<{ Bindings: Env }>;
 
-/** Short-lived cookie carrying the OAuth `state` for the GET /connect CSRF check (F4a). */
+/** Cookie carrying the OAuth `state` for the GET /connect CSRF check (F4a). */
 const STATE_COOKIE = "eccos_connect_state";
-const STATE_COOKIE_MAX_AGE_SECONDS = 300;
+const STATE_COOKIE_MAX_AGE_SECONDS = 30 * 60;
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * The Meta redirect back to /connect is a top-level GET navigation, so a
@@ -24,7 +25,7 @@ const STATE_COOKIE_MAX_AGE_SECONDS = 300;
 function setOAuthStateCookie(c: ConnectContext, state: string): void {
   setCookie(c, STATE_COOKIE, state, {
     httpOnly: true,
-    secure: true,
+    secure: !LOCAL_HOSTNAMES.has(new URL(c.req.url).hostname.toLowerCase()),
     sameSite: "Lax",
     path: "/connect",
     maxAge: STATE_COOKIE_MAX_AGE_SECONDS,
@@ -120,10 +121,52 @@ function callbackUrlForRedirectUri(redirectUri: string): string {
 }
 
 function connectConfig(c: ConnectContext) {
-  const cfg = getAppConfig(c.env);
+  return configuredConnect(c.env);
+}
+
+function configuredConnect(env: Env) {
+  const cfg = getAppConfig(env);
   if (!cfg.META_APP_ID) throw new Error("META_APP_ID is required for /connect");
   if (!cfg.META_ES_CONFIG_ID) throw new Error("META_ES_CONFIG_ID is required for /connect");
   return cfg;
+}
+
+function isConnectConfigurationError(message: string): boolean {
+  return message.startsWith("Invalid Eccos configuration:") || message.endsWith(" is required for /connect");
+}
+
+function validatePublicOrigin(value: string): string {
+  const raw = value.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("public origin must be a valid URL");
+  }
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname.toLowerCase());
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local)) {
+    throw new Error("public origin must use https");
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) {
+    throw new Error("public origin must contain only a scheme, host, and optional port");
+  }
+  return parsed.origin;
+}
+
+export async function startConnectForAccount(
+  env: Env,
+  accountId: string,
+  publicOrigin: string,
+): Promise<ConnectStartResult> {
+  configuredConnect(env);
+  const origin = validatePublicOrigin(publicOrigin);
+  const redirectUri = new URL("/connect", origin).href;
+  const state = crypto.randomUUID();
+  const expiresAt = Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000;
+  await getControlPlaneStub(env).startConnectState(state, accountId, expiresAt, redirectUri);
+  const url = new URL(redirectUri);
+  url.searchParams.set("state", state);
+  return { url: url.href, state, expiresAt };
 }
 
 function parseExchangeBody(value: unknown): { code: string; state?: string; waba_id?: string; redirect_uri?: string } | null {
@@ -142,9 +185,10 @@ function parseExchangeBody(value: unknown): { code: string; state?: string; waba
 
 /**
  * Exchange: discover every WABA/phone the business token can see, register each
- * in the control plane (credentials + callback live there). Provisioning is
- * completed by the Worker reconciler after the durable pending rows commit.
- * Ownership conflicts fail before any mutation of another account.
+ * available match in the control plane (credentials + callback live there).
+ * Provisioning is completed by the Worker reconciler after the durable pending
+ * rows commit. An explicit ownership conflict fails closed; unrelated foreign
+ * matches are skipped with a warning.
  */
 async function exchangeAndRegisterAll(
   c: ConnectContext,
@@ -165,16 +209,25 @@ async function exchangeAndRegisterAll(
 
     const callbackUrl = callbackUrlForRedirectUri(redirectUri ?? new URL("/connect", c.req.url).href);
     const controlPlane = getControlPlaneStub(c.env);
+    const foreignWabaIds = new Set<string>();
+    const warnings: string[] = [];
 
     for (const match of matches) {
       const owned = await controlPlane.getWabaById(match.wabaId);
       if (owned && owned.accountId !== accountId) {
-        return { ok: false, error: `waba "${match.wabaId}" is already registered to another account` };
+        if (wabaSelector) {
+          return { ok: false, error: `waba "${match.wabaId}" is already registered to another account` };
+        }
+        foreignWabaIds.add(match.wabaId);
+        warnings.push(`waba "${match.wabaId}" is already registered to another account and was skipped`);
       }
     }
 
+    const availableMatches = matches.filter((match) => !foreignWabaIds.has(match.wabaId));
+    if (availableMatches.length === 0) return { ok: false, error: "no available WABA could be registered" };
+
     const registrations = await controlPlane.beginWabaProvisioningBatch(
-      matches.map((match) => ({
+      availableMatches.map((match) => ({
         accountId,
         wabaId: match.wabaId,
         metaAccessToken: businessToken,
@@ -186,7 +239,7 @@ async function exchangeAndRegisterAll(
       })),
     );
 
-    const primary = matches[0];
+    const primary = availableMatches[0];
     if (!primary) return { ok: false, error: "WABA registration failed" };
     const status = registrations.some((registration) => registration.waba.status === "failed")
       ? "failed"
@@ -199,13 +252,14 @@ async function exchangeAndRegisterAll(
       phone_number_id: primary.phones[0]?.id ?? "",
       display_phone_number: primary.phones[0]?.display_phone_number ?? "",
       status,
-      connected: matches.flatMap((m) =>
+      connected: availableMatches.flatMap((m) =>
         m.phones.map((p) => ({
           waba_id: m.wabaId,
           phone_number_id: p.id,
           display_phone_number: p.display_phone_number ?? "",
         })),
       ),
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   } catch (e) {
     const message = errorMessage(e);
@@ -221,6 +275,7 @@ export function connectRoutes() {
   const app = new Hono<{ Bindings: Env }>();
 
   app.post("/connect/start", async (c) => {
+    noStore(c);
     const account = await authenticateRequest(
       c.env,
       c.req.header("authorization") ?? undefined,
@@ -228,22 +283,17 @@ export function connectRoutes() {
     );
     if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
     try {
-      connectConfig(c);
+      const result = await startConnectForAccount(c.env, account.accountId, new URL(c.req.url).origin);
+      return c.json({ ok: true, ...result });
     } catch (error) {
-      return c.json({ ok: false, error: error instanceof Error ? error.message : "connect is not configured" }, 503);
+      const message = error instanceof Error ? error.message : "connect is not configured";
+      return c.json({ ok: false, error: message }, isConnectConfigurationError(message) ? 503 : 400);
     }
-    const state = crypto.randomUUID();
-    const expiresAt = Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000;
-    const redirectUri = new URL("/connect", c.req.url).href;
-    await getControlPlaneStub(c.env).startConnectState(state, account.accountId, expiresAt, redirectUri);
-    const startUrl = new URL("/connect", c.req.url);
-    startUrl.searchParams.set("state", state);
-    noStore(c);
-    return c.json({ ok: true, url: startUrl.href, state, expiresAt });
   });
 
   app.get("/connect", async (c) => {
     const url = new URL(c.req.url);
+    noStore(c);
     let redirectUri = new URL("/connect", c.req.url).href;
     const code = url.searchParams.get("code");
     if (code) {
@@ -276,7 +326,10 @@ export function connectRoutes() {
     const handoffState = url.searchParams.get("state");
     let state = handoffState?.trim() || "";
     if (state) {
-      const stateRecord = await getControlPlaneStub(c.env).getConnectState(state);
+      const stateRecord = await getControlPlaneStub(c.env).refreshConnectState(
+        state,
+        Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000,
+      );
       if (!stateRecord) {
         return c.html(resultPage({ ok: false, error: "invalid or expired OAuth state" }), 400);
       }
@@ -309,6 +362,7 @@ export function connectRoutes() {
   });
 
   app.post("/connect/exchange", async (c) => {
+    noStore(c);
     // Public-network reachable, but mutates the connected WABA/phone config (F4b):
     // gate it before touching the exchange. Requires an account API key and
     // resolves the account from the control plane.
@@ -356,7 +410,6 @@ export function connectRoutes() {
       consumedState.redirectUri ?? expectedRedirectUri,
       waba_id,
     );
-    noStore(c);
     return c.json(result, result.ok ? 202 : 502);
   });
 

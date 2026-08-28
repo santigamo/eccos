@@ -170,7 +170,11 @@ export async function resubscribeWaba(
 }
 
 export async function reconcilePendingWabas(env: Env, limit = 20): Promise<void> {
-  const claims = await getControlPlaneStub(env).claimPendingWabaProvisioning(limit);
+  const controlPlane = getControlPlaneStub(env);
+  try {
+    await controlPlane.purgeExpiredConnectStates(Date.now());
+  } catch {}
+  const claims = await controlPlane.claimPendingWabaProvisioning(limit);
   for (const claim of claims) {
     await runClaim(env, claim);
   }

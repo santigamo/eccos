@@ -25,9 +25,14 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
   dashboard (`cd apps/dashboard && bunx vite dev`) together, per the README.
 - **Unreachable**: run only the dashboard, with the gateway stopped (or `GATEWAY` binding pointed
   at nothing) — every view should render its "Gateway unreachable" card, never a crash/500.
+- **First run**: use a fresh control-plane namespace, open `/setup`, create a workspace, and confirm
+  the generated account ID and API key appear only after the POST succeeds. Refreshing the page
+  must not show the raw API key again, and an account with no WABA must remain visibly distinct from
+  the ready console. With `GATEWAY_PUBLIC_URL` configured, **Connect WhatsApp** must start the
+  account-bound Embedded Signup handoff without asking for an account API key.
 - **Auth gate (Cloudflare Access)**: only testable against a deployment with `ACCESS_TEAM_DOMAIN`
-  / `ACCESS_AUD` set (see README § "Securing with Cloudflare Access"). Local `vite dev` is always
-  a no-op gate.
+  / `ACCESS_AUD` set (see README § "Securing with Cloudflare Access"). Localhost `vite dev` is
+  allowed without the gate; public hosts fail closed.
 
 ## Cross-cutting — nav shell & shared states (`src/routes/__root.tsx`, `src/ui.tsx`)
 
@@ -163,9 +168,8 @@ local `vite dev`.
       dashboard normally, and all 6 views load as usual.
 - [ ] An expired Access session (or a session revoked in Zero Trust) is rejected on the next
       request (`403`), not just at initial login.
-- [ ] With `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` unset (fresh deploy, no Access configured yet), the
-      dashboard is reachable with **no** login prompt — confirm this matches expectations before
-      exposing the URL publicly (README explicitly warns against leaving it open).
+- [ ] With `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` unset (fresh deploy, no Access configured yet), a
+      public dashboard request returns `403 Forbidden`; only localhost development is reachable.
 
 ## Planned follow-up
 

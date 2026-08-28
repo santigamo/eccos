@@ -12,7 +12,7 @@ import type {
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
-import { PRIVATE_CONFIG_KEYS } from "./private-config-keys";
+import { isPublicConfigKey } from "./private-config-keys";
 
 interface Env {
   FORWARD_MAX_ATTEMPTS: string;
@@ -460,8 +460,8 @@ export class EccosGateway extends DurableObject<Env> {
   /**
    * Tenant-scoped data-plane export: every stored inbound event, outbound
    * message, and delivery (existing row shapes, newest first), plus the
-   * non-secret connection metadata/config (secrets and raw credentials are
-   * filtered — see EXPORT_PRIVATE_CONFIG_KEYS). Deterministic and JSON-serializable:
+    * non-secret connection metadata/config (secrets and internal keys are
+    * filtered — see isPublicConfigKey). Deterministic and JSON-serializable:
    * fixed key order, tables ordered inbound → outbound → deliveries → config,
    * rows ordered by id within each table, and no runtime values (timestamps,
    * ids) beyond what is already stored. Single snapshot: no limit/pagination —
@@ -473,7 +473,7 @@ export class EccosGateway extends DurableObject<Env> {
       outbound: this.listAllOutbound(),
       deliveries: this.listAllDeliveries(),
       config: Object.fromEntries(
-        Object.entries(this.getAllConfig()).filter(([key]) => !PRIVATE_CONFIG_KEYS.has(key)),
+        Object.entries(this.getAllConfig()).filter(([key]) => isPublicConfigKey(key)),
       ),
     };
   }

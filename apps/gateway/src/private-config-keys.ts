@@ -11,3 +11,7 @@ export const PRIVATE_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "ECCOS_API_KEY",
   "SUBSCRIBER_SECRET",
 ]);
+
+export function isPublicConfigKey(key: string): boolean {
+  return !PRIVATE_CONFIG_KEYS.has(key) && !key.startsWith("__");
+}

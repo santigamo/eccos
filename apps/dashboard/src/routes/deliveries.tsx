@@ -8,6 +8,7 @@ import { listDeliveries, retryDelivery } from "../server/gateway";
 import type { DeliveryRecord } from "../server/gateway";
 import { Page, StatusTag, Unreachable, fmtTs } from "../ui";
 import { Button } from "@/components/ui/button";
+import { normalizeSearchBefore, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import {
   Select,
   SelectContent,
@@ -23,17 +24,9 @@ type DeliveriesSearch = { status?: string; before?: number; wabaId?: string };
 
 export const Route = createFileRoute("/deliveries")({
   validateSearch: (search: Record<string, unknown>): DeliveriesSearch => {
-    const status =
-      typeof search.status === "string" && search.status.length > 0
-        ? search.status
-        : undefined;
-    const beforeNum = Number(search.before);
-    const before =
-      Number.isFinite(beforeNum) && beforeNum > 0 ? Math.floor(beforeNum) : undefined;
-    const wabaId =
-      typeof search.wabaId === "string" && search.wabaId.trim() !== ""
-        ? search.wabaId.trim()
-        : undefined;
+    const status = normalizeSearchStatus(search.status);
+    const before = normalizeSearchBefore(search.before);
+    const wabaId = normalizeSearchWabaId(search.wabaId);
     return { status, before, wabaId };
   },
   loaderDeps: ({ search }) => ({ status: search.status, before: search.before, wabaId: search.wabaId }),
@@ -51,6 +44,7 @@ function DeliveriesPage() {
   const navigate = Route.useNavigate();
   const router = useRouter();
   const [retrying, setRetrying] = useState<number | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const rows = useMemo(() => (result.ok ? result.data : []), [result]);
 
   if (!result.ok) {
@@ -75,8 +69,13 @@ function DeliveriesPage() {
 
   async function onRetry(id: number) {
     setRetrying(id);
+    setRetryError(null);
     try {
-      await retryDelivery({ data: { id, wabaId: wabaId ?? (scope.ok ? scope.data.selectedWabaId : undefined) } });
+      const retry = await retryDelivery({ data: { id, wabaId: wabaId ?? (scope.ok && scope.data.stage === "ready" ? scope.data.scope.selectedWabaId : undefined) } });
+      if (!retry.ok) {
+        setRetryError(retry.error);
+        return;
+      }
       await router.invalidate();
     } finally {
       setRetrying(null);
@@ -139,7 +138,7 @@ function DeliveriesPage() {
         // already queued and a delivered one is done. Every other row holds
         // the column's rhythm with a muted em-dash instead of a dead button.
         if (record.status !== "failed") {
-          return <span className="text-muted-foreground">\u2014</span>;
+          return <span className="text-muted-foreground">—</span>;
         }
         return (
           <Button
@@ -217,6 +216,7 @@ function DeliveriesPage() {
 
   return (
     <Page title="Deliveries" kicker="Logs" actions={filterControl}>
+      {retryError ? <p className="mb-4 border-l-2 border-destructive px-3 py-2 text-sm text-destructive" role="alert">{retryError}</p> : null}
       <LogGrid
         columns={deliveriesColumns}
         data={rows}

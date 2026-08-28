@@ -21,7 +21,18 @@ const startHandler = createStartHandler(defaultStreamHandler);
 const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   const blocked = await enforceAccess(request, env);
   if (blocked) return blocked;
-  return startHandler(request, opts);
+  const response = await startHandler(request, opts);
+  const pathname = new URL(request.url).pathname;
+  if (request.method === "POST" || !pathname.startsWith("/assets/")) {
+    const headers = new Headers(response.headers);
+    headers.set("Cache-Control", "private, no-store");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+  return response;
 };
 
 export default createServerEntry({ fetch: handleFetch });

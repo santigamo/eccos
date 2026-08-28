@@ -10,12 +10,17 @@ if [[ -f "$ROOT/.env" ]]; then
   set +a
 fi
 
-if [[ -z "${GATEWAY_ACCOUNT_ID:-}" ]]; then
-  echo "Missing env: GATEWAY_ACCOUNT_ID (set it in .env or export before running)" >&2
-  exit 1
+cd "$ROOT/apps/dashboard"
+wrangler_args=()
+if [[ -n "${ACCESS_TEAM_DOMAIN:-}" ]]; then
+  wrangler_args+=(--var "ACCESS_TEAM_DOMAIN:$ACCESS_TEAM_DOMAIN")
+fi
+if [[ -n "${ACCESS_AUD:-}" ]]; then
+  wrangler_args+=(--var "ACCESS_AUD:$ACCESS_AUD")
 fi
 
-cd "$ROOT/apps/dashboard"
-# wrangler v4 `--var` takes KEY:VALUE (a colon); KEY=VALUE silently becomes a
-# var *named* "KEY=VALUE" and leaves the real var empty.
-wrangler deploy --var "GATEWAY_ACCOUNT_ID:$GATEWAY_ACCOUNT_ID" "$@"
+if (( ${#wrangler_args[@]} > 0 )); then
+  wrangler deploy "${wrangler_args[@]}" "$@"
+else
+  wrangler deploy "$@"
+fi

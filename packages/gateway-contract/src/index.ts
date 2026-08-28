@@ -137,6 +137,24 @@ export interface AccountResources {
   phones: AccountPhoneResource[];
 }
 
+export type DashboardInitializationResult =
+  | {
+      status: "created";
+      account: AccountSummary;
+      apiKey: string;
+      keyId: string;
+    }
+  | {
+      status: "existing";
+      account: AccountSummary;
+    };
+
+export interface ConnectStartResult {
+  url: string;
+  state: string;
+  expiresAt: number;
+}
+
 export interface GatewayExport {
   inbound: InboundRow[];
   outbound: OutboundRow[];
@@ -172,4 +190,12 @@ export interface GatewayApi {
   exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
+  /** Resolve the account assigned to one dashboard installation identity. */
+  getDashboardAccount(installationKey: string): Promise<AccountSummary | null>;
+  /** Atomically assign one generated account to a dashboard installation. */
+  initializeDashboard(
+    installationKey: string,
+    name?: string,
+  ): Promise<DashboardInitializationResult>;
+  startConnect(installationKey: string): Promise<ConnectStartResult>;
 }

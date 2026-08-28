@@ -773,4 +773,54 @@ describe("account-scoped control plane", () => {
       expect.stringContaining("/WABA_OAUTH_B/subscribed_apps"),
     ]);
   });
+
+  it("skips foreign WABAs returned alongside an available WABA", async () => {
+    const account = await createAccountHttp("acc-connect-owned");
+    const foreignAccount = await createAccountHttp("acc-connect-foreign");
+    await cp((i) => {
+      i.registerWaba({
+        accountId: foreignAccount.accountId,
+        wabaId: "WABA_OAUTH_FOREIGN",
+        metaAccessToken: "foreign-token",
+        provisioningStatus: "active",
+        phones: [{ phoneNumberId: "PN_OAUTH_FOREIGN", displayPhoneNumber: "+34 600 000 504" }],
+      });
+    });
+    const graph = mockGraph([
+      { wabaId: "WABA_OAUTH_FOREIGN", phones: [{ id: "PN_OAUTH_FOREIGN", display_phone_number: "+34 600 000 504" }] },
+      { wabaId: "WABA_OAUTH_AVAILABLE", phones: [{ id: "PN_OAUTH_AVAILABLE", display_phone_number: "+34 600 000 505" }] },
+    ]);
+
+    const handoff = await accountApi(account.apiKey)("/connect/start", { method: "POST" });
+    const { state } = (await handoff.json()) as { state: string };
+    const exchange = await accountApi(account.apiKey)("/connect/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: "oauth-code", state }),
+    });
+    expect(exchange.status).toBe(202);
+    expect(await exchange.json()).toMatchObject({
+      ok: true,
+      waba_id: "WABA_OAUTH_AVAILABLE",
+      warnings: [expect.stringContaining("WABA_OAUTH_FOREIGN")],
+    });
+    await cp((i) => {
+      expect(i.getWabaRecord(account.accountId, "WABA_OAUTH_AVAILABLE")).toMatchObject({ accountId: account.accountId });
+      expect(i.getWaba(foreignAccount.accountId, "WABA_OAUTH_FOREIGN")).toMatchObject({ accountId: foreignAccount.accountId });
+    });
+
+    const selectedHandoff = await accountApi(account.apiKey)("/connect/start", { method: "POST" });
+    const { state: selectedState } = (await selectedHandoff.json()) as { state: string };
+    const foreignSelection = await accountApi(account.apiKey)("/connect/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: "oauth-code", state: selectedState, waba_id: "WABA_OAUTH_FOREIGN" }),
+    });
+    expect(foreignSelection.status).toBe(502);
+    expect(await foreignSelection.json()).toEqual({
+      ok: false,
+      error: "waba \"WABA_OAUTH_FOREIGN\" is already registered to another account",
+    });
+    expect(graph.mock.calls.some(([input]) => String(input).includes("/oauth/access_token"))).toBe(true);
+  });
 });

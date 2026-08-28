@@ -81,7 +81,7 @@ Practical options, in order of effort:
   (a bad delivery loop, an operator action that deletes data, a bug that corrupts rows).
 - **Application-level export**: since the operator console (`apps/dashboard`) already reads
   the gateway over the `GatewayRPC` binding (`listInbound`, `listOutbound`, `listDeliveries`,
-  `getAllConfig`), the same RPC surface can be scripted (e.g. a small `wrangler` /
+  `getConfig`, which filters private values), the same RPC surface can be scripted (e.g. a small `wrangler` /
   `fetch`-based tool, or a scheduled Worker) to page through those methods and write a JSON/
   JSONL snapshot to external storage (R2, or just downloaded locally). This repo does not
   ship that export script today — treat it as a follow-up if point-in-time backups of the

@@ -36,8 +36,9 @@ stability and watch the repository for advisories.
 - **Forwarded events** are signed with `X-Eccos-Signature: sha256=<hex>` using
   `SUBSCRIBER_SECRET` so your subscriber can verify they came from Eccos.
 - **Secrets** live only in `.env` (Bun target, gitignored), as `wrangler secret` values, or in
-  the encrypted-at-rest control-plane storage for tenant Meta tokens — never in the repository
-  or in logs. Account API keys are stored only as SHA-256 hashes and are returned once at issue.
+  Cloudflare-encrypted control-plane storage for tenant Meta tokens. Tenant Meta tokens are not
+  application-encrypted and are never returned by operator APIs, committed to the repository, or
+  written to logs. Account API keys are stored only as SHA-256 hashes and are returned once at issue.
 
 ## Data handling & logging
 

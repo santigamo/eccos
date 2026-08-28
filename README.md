@@ -45,9 +45,10 @@ and get **normalized events** forwarded to your backend.
 - ⚡ **Two runtimes, one core** — the same pure core ships as a self-hostable **Bun** binary or
   on **Cloudflare Workers**.
 - ☁️ **All-in on Cloudflare** — the Workers target runs the entire gateway on Cloudflare
-  primitives: a **Worker** + one **Durable Object per WABA** (SQLite storage + Alarms for retries).
-  No external database, queue or cron, and a permanent HTTPS webhook URL out of the box. Native
-  Cloudflare Rate Limiting throttles the scoped send API — no external infra.
+  primitives: a **Worker** + one **Durable Object per WABA** (SQLite storage + Alarms for retries)
+  and a native cron trigger for provisioning reconciliation. No external database or queue, and a
+  permanent HTTPS webhook URL out of the box. Native Cloudflare Rate Limiting throttles the scoped
+  send API — no external infra.
 - 🔁 **Reliable forwarding** — inbound messages and statuses are normalized and forwarded to your
   app, HMAC-signed and retried with exponential backoff.
 - 🪪 **Onboarding + operator console** — the Workers target ships an Embedded Signup `/connect`
@@ -311,7 +312,8 @@ The **Workers target is account-scoped by default**: on Workers, per-WABA Meta c
 account keys live in the control plane instead; configure only `META_APP_SECRET`,
 `META_WEBHOOK_VERIFY_TOKEN`, and the admin bootstrap `ECCOS_ADMIN_API_KEY`, then follow
 [`docs/multi-tenancy.md`](./docs/multi-tenancy.md). The Embedded Signup flow additionally uses
-`META_APP_ID` and `META_ES_CONFIG_ID`.
+`META_APP_ID`, `META_ES_CONFIG_ID`, and (for the dashboard button) the gateway's public
+`GATEWAY_PUBLIC_URL`.
 
 ## 🛠️ Development
 

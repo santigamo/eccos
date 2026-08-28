@@ -211,10 +211,10 @@ describe("GET /connect OAuth state (F4a CSRF, route-level)", () => {
     expect(body).toContain("unauthorized");
   });
 
-  it("sets an HttpOnly/Secure/SameSite=Lax state cookie after account auth", async () => {
+  it("sets an HttpOnly/Secure/SameSite=Lax state cookie on a public HTTPS origin", async () => {
     const app = connectRoutes();
     const res = await app.request(
-      "http://localhost/connect",
+      "https://gateway.example/connect",
       { headers: { authorization: "Bearer account-key" } },
       makeEnv([]),
     );
@@ -225,6 +225,18 @@ describe("GET /connect OAuth state (F4a CSRF, route-level)", () => {
     expect(setCookie).toContain("Secure");
     expect(setCookie).toContain("SameSite=Lax");
     expect(setCookie).toContain("Path=/connect");
+    expect(setCookie).toContain("Max-Age=1800");
+  });
+
+  it("omits Secure for a localhost HTTP development origin", async () => {
+    const app = connectRoutes();
+    const res = await app.request(
+      "http://localhost/connect",
+      { headers: { authorization: "Bearer account-key" } },
+      makeEnv([]),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).not.toContain("Secure");
   });
 
   it("rejects the callback when state is missing entirely (no config write)", async () => {

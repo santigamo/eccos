@@ -13,10 +13,11 @@ afterEach(async () => {
 describe("account-scoped operator RPC", () => {
   it("rejects a missing accountId on every method (fail closed)", async () => {
     const rpc = new GatewayRPC(createExecutionContext(), env);
+    const missingAccountId = undefined as unknown as string;
     for (const attempt of [
-      () => rpc.getStatus(TEST_WABA_ID),
-      () => rpc.getConfig(TEST_WABA_ID),
-      () => rpc.listInbound({ wabaId: TEST_WABA_ID }),
+      () => rpc.getStatus(TEST_WABA_ID, missingAccountId),
+      () => rpc.getConfig(TEST_WABA_ID, missingAccountId),
+      () => rpc.listInbound({ wabaId: TEST_WABA_ID }, missingAccountId),
     ]) {
       const error = await attempt().then(() => null, (reason) => reason);
       expect(String(error?.message ?? error)).toMatch(/accountId is required/);

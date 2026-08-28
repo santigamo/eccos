@@ -1,12 +1,16 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { getControlPlaneStub } from "./control-plane-stub";
+import { startConnectForAccount } from "./routes/connect";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { listTemplates } from "@eccos/core/templates";
-import { PRIVATE_CONFIG_KEYS } from "./private-config-keys";
+import { isPublicConfigKey } from "./private-config-keys";
 import { resubscribeWaba } from "./provisioning";
 import type {
   AccountResources,
+  AccountSummary,
+  ConnectStartResult,
+  DashboardInitializationResult,
   DeliveryListOpts,
   DeliveryRecord,
   EraseByPhoneResult,
@@ -31,7 +35,7 @@ function healthFromCounts(counts: OperatorCounts): Health {
 }
 
 function publicConfig(config: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(config).filter(([key]) => !PRIVATE_CONFIG_KEYS.has(key)));
+  return Object.fromEntries(Object.entries(config).filter(([key]) => isPublicConfigKey(key)));
 }
 
 function requireAccountId(accountId: string | undefined, message: string): string {
@@ -94,7 +98,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     };
   }
 
-  async getStatus(wabaId: string, accountId?: string): Promise<GatewayStatus> {
+  async getStatus(wabaId: string, accountId: string): Promise<GatewayStatus> {
     const { stub, wabaId: scopedWabaId, phoneNumberId, displayPhone, provisionedAt } = await this.scoped(wabaId, accountId);
     const counts = await stub.getCounts();
     return {
@@ -111,27 +115,27 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     };
   }
 
-  async getConfig(wabaId: string, accountId?: string): Promise<Record<string, string>> {
+  async getConfig(wabaId: string, accountId: string): Promise<Record<string, string>> {
     const { stub } = await this.scoped(wabaId, accountId);
     return publicConfig(await stub.getAllConfig());
   }
 
-  async listInbound(opts: ListOpts, accountId?: string): Promise<InboundRow[]> {
+  async listInbound(opts: ListOpts, accountId: string): Promise<InboundRow[]> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.listInbound(opts);
   }
 
-  async listOutbound(opts: ListOpts, accountId?: string): Promise<OutboundRow[]> {
+  async listOutbound(opts: ListOpts, accountId: string): Promise<OutboundRow[]> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.listOutbound(opts);
   }
 
-  async listDeliveries(opts: DeliveryListOpts, accountId?: string): Promise<DeliveryRecord[]> {
+  async listDeliveries(opts: DeliveryListOpts, accountId: string): Promise<DeliveryRecord[]> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.listDeliveries(opts);
   }
 
-  async getDelivery(id: number, wabaId: string, accountId?: string): Promise<DeliveryRecord | null> {
+  async getDelivery(id: number, wabaId: string, accountId: string): Promise<DeliveryRecord | null> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.getDelivery(id);
   }
@@ -140,19 +144,19 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async retryDelivery(
     id: number,
     wabaId: string,
-    accountId?: string,
+    accountId: string,
   ): Promise<{ ok: boolean; previousStatus: string | null }> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.retryDelivery(id);
   }
 
-  async listTemplates(wabaId: string, limit = 100, accountId?: string): Promise<TemplatesResult> {
+  async listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult> {
     const { config: cfg } = await this.scoped(wabaId, accountId);
     return listTemplates(cfg, limit);
   }
 
   /** Operator-visible forwarding target (DO config first, env fallback). Never returns the secret. */
-  async getSubscriberConfig(wabaId: string, accountId?: string): Promise<SubscriberConfig> {
+  async getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.getSubscriberConfig();
   }
@@ -161,7 +165,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async setSubscriberConfig(
     input: SetSubscriberConfigInput,
     wabaId: string,
-    accountId?: string,
+    accountId: string,
   ): Promise<{ ok: true }> {
     const { stub } = await this.scoped(wabaId, accountId);
     await stub.setSubscriberConfig(input);
@@ -170,12 +174,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
    * number across the gateway tables. Returns per-table counts as erasure evidence. */
-  async eraseByPhone(phone: string, wabaId: string, accountId?: string): Promise<EraseByPhoneResult> {
+  async eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.eraseByPhone(phone);
   }
 
-  async exportData(wabaId: string, accountId?: string): Promise<GatewayExport> {
+  async exportData(wabaId: string, accountId: string): Promise<GatewayExport> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.exportData();
   }
@@ -184,7 +188,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * Re-subscribe this app to the WABA's webhooks on Meta through the control-plane
    * provisioning reconciler.
    */
-  async resubscribe(wabaId: string, accountId?: string): Promise<ResubscribeResult> {
+  async resubscribe(wabaId: string, accountId: string): Promise<ResubscribeResult> {
     try {
       const account = requireAccountId(accountId, "accountId is required");
       const result = await resubscribeWaba(this.env, account, wabaId);
@@ -198,5 +202,24 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async listAccountResources(accountId: string): Promise<AccountResources> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).listAccountResources(account);
+  }
+
+  async getDashboardAccount(installationKey: string): Promise<AccountSummary | null> {
+    return getControlPlaneStub(this.env).getDashboardAccount(installationKey);
+  }
+
+  async initializeDashboard(
+    installationKey: string,
+    name?: string,
+  ): Promise<DashboardInitializationResult> {
+    return getControlPlaneStub(this.env).initializeDashboard(installationKey, name);
+  }
+
+  async startConnect(installationKey: string): Promise<ConnectStartResult> {
+    const account = await getControlPlaneStub(this.env).getDashboardAccount(installationKey);
+    if (!account) throw new Error("Eccos dashboard has not been initialized");
+    const publicOrigin = this.env.GATEWAY_PUBLIC_URL?.trim();
+    if (!publicOrigin) throw new Error("GATEWAY_PUBLIC_URL is required for dashboard Embedded Signup");
+    return startConnectForAccount(this.env, account.accountId, publicOrigin);
   }
 }

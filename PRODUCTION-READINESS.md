@@ -1,6 +1,6 @@
 # Production Readiness
 
-> Baseline snapshot: **2026-08-28**, `main@9987f06` plus the post-deploy evidence follow-up.
+> Baseline snapshot: **2026-08-28**, including the post-deploy evidence and remediation follow-up.
 > The commercial gate below is a living addendum updated **2026-08-28**.
 > Owner: Santi (@santigamo). This file is the single source of truth for Eccos's
 > production-readiness posture: profile, per-artifact claims, gate status, waivers,
@@ -35,13 +35,13 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 | # | Gate | Status | Notes |
 |---|------|--------|-------|
 | 1 | Change control / CI | ✅ | Dashboard covered in CI (`eccos-a5r`), least-privilege `permissions`, **Biome lint blocking and green** (`eccos-bwr`). No automated prod-deploy gate (manual by design). |
-| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). Dashboard edge auth (Cloudflare Access) is code-ready but **not yet enabled at the account level** — 🕓 waived, tracked `eccos-45t`. |
+| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). The protected dashboard `/setup` now creates an Access-installation-scoped account; Cloudflare Access is code-ready but **not yet enabled at the account level** — 🕓 waived, tracked `eccos-45t`. |
 | 3 | Operational readiness | 🟡 | `/ready` deep check + structured JSON logging w/ correlation IDs + `docs/operations.md` (`eccos-ggy`). Residual: alerting/monitoring not wired. |
 | 4 | Packaging contract | ➖ | **N/A.** `@eccos/core` and `@eccos/gateway-contract` are internal `workspace:*` packages with no publish intent for v1 (`eccos-1js`, decided). Re-open if they become public SDKs. |
 | 5 | Data lifecycle | 🟡 | Configurable split content/delivery retention on Workers, `RETENTION_DAYS` on the Bun target, Bun-target pruning parity, `docs/data-lifecycle.md` (`eccos-rv2`). Residual: scripted backup/export + a real restore drill. |
 | 6 | Integration resilience | 🟡 | Retry jitter added; DLQ/manual-replay documented (`eccos-8fu`, `docs/operations.md`). Residual: real DLQ (Queues). |
 | 7 | Privacy & security | 🟡 | `docs/threat-model.md` + `docs/privacy.md` + `SECURITY.md` data-handling/logging section (`eccos-501`). Logs exclude bodies/tokens by **convention** (typed `LogMeta`), not enforced by a lint. |
-| 8 | Product UI | 🟡 | Dashboard data-layer + render smoke tests (45 dashboard tests) + `docs/ui-qa-checklist.md` (`eccos-1nx`). Residual: automated visual regression (Playwright). |
+| 8 | Product UI | 🟡 | Dashboard data-layer + render smoke tests (55 dashboard tests) + `docs/ui-qa-checklist.md` (`eccos-1nx`). Residual: automated visual regression (Playwright). |
 | 9 | Deployment contract | 🟡 | `docs/deployment.md` (secrets matrix, deploy, rollback) + `scripts/smoke.sh <url>`. Gateway deploy and live smoke were recorded on 2026-08-28; dashboard deployment and a restore drill remain. |
 
 ## Evidence (this snapshot)
@@ -51,10 +51,10 @@ All local gates below were run on the working tree (post-remediation, 2026-08-28
 | Check | Command | Result |
 |-------|---------|--------|
 | Types | `bun run typecheck` | ✅ exit 0 (worker types regenerated with the account-scoped bindings) |
-| Unit (Bun) | `bun run test` | ✅ 53 pass / 5 files (incl. the account-bound `/connect/exchange` case) |
-| Workers | `bun run test:workers` | ✅ 120 pass / 16 files, **0 unhandled exceptions**. Provisioning saga proven: `active` is unreachable unless Meta `subscribed_apps` **and** the gateway DO `saveConfig` both succeed (gateway-stage-failure, attempts-exhaustion, lease/re-claim, revision-guard, cron-driven reconciliation, and fail-closed data-plane tests). Direct `registerWabas` no longer silently defaults to `active` — an explicit `provisioningStatus` is required. |
+| Unit (Bun) | `bun run test` | ✅ 54 pass / 5 files (incl. the account-bound `/connect/exchange` case) |
+| Workers | `bun run test:workers` | ✅ 127 pass / 16 files, **0 unhandled exceptions**. Provisioning saga proven: `active` is unreachable unless Meta `subscribed_apps` **and** the gateway DO `saveConfig` both succeed (gateway-stage-failure, attempts-exhaustion, lease/re-claim, revision-guard, cron-driven reconciliation, and fail-closed data-plane tests). Direct `registerWabas` no longer silently defaults to `active` — an explicit `provisioningStatus` is required. Dashboard installation bootstrap and account-bound Embedded Signup handoff are covered for idempotency, concurrency, cross-application isolation, and one-time state creation. |
 | Dashboard types | `apps/dashboard: bun run typecheck` | ✅ exit 0 |
-| Dashboard tests | `apps/dashboard: bun run test` | ✅ 45 pass / 5 files |
+| Dashboard tests | `apps/dashboard: bun run test` | ✅ 55 pass / 6 files |
 | Dashboard build | `apps/dashboard: bun run build` | ✅ built |
 | Lint | `bun run lint` (Biome) | ✅ 0 findings — **blocking** in CI (`eccos-bwr`) |
 | Gateway deploy | `bun run deploy` | ✅ `eccos.santi-gamo.workers.dev`, version `75476993-51e1-4009-8e0d-a54454931764` |
@@ -65,15 +65,15 @@ Environment note (not a product defect): a run of the dashboard suite on 2026-08
 local Bun runtime-transpiler cache (oven-sh/bun#32151 — cache key omits the JSX dev/prod
 mode). Purging `~/Library/Caches/bun/@t@` restored a full green run; no code change needed.
 
-**Not run:** dashboard deployment (it requires the production `GATEWAY_ACCOUNT_ID`) and a restore
-drill. The gateway deploy and live post-deploy smoke are now recorded above.
+**Not run:** dashboard deployment (it still requires the production Cloudflare Access application
+and vars) and a restore drill. The gateway deploy and live post-deploy smoke are now recorded above.
 
 ## Waivers
 
 - **W-1 — Dashboard edge auth (Gate 2).** Cloudflare Access is not enabled at the account
-  level. Defense-in-depth JWT re-verification exists in code (`apps/dashboard/src/access.ts`)
-  but is a no-op until `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are set. **Condition:** do not
-  expose the dashboard on a public URL until `eccos-45t` is done.
+  level. Defense-in-depth JWT re-verification exists in code (`apps/dashboard/src/access.ts`),
+  while public requests fail closed until `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are set. **Condition:**
+  do not expose the dashboard on a public URL until `eccos-45t` is done.
 
 ## Remaining gaps (open beads)
 
@@ -132,7 +132,8 @@ is available.
   (`eccos-n0o`).
 - GDPR **DPA**/processing agreement covering the cloud operator role (`eccos-8yy`).
 - **Cloudflare Access** in front of the operator dashboard (see W-1 / `eccos-45t`).
-- A recorded **deployment + smoke** (the gateway is recorded in Gate 9; the dashboard still needs its production account scope).
+- A recorded **deployment + smoke** (the gateway is recorded in Gate 9; the dashboard still needs
+  Access configuration and its first-run `/setup` verification).
 - A validated **permanent System User token** (see `eccos-jf7` / `eccos-s3i`).
 - A healthy production gateway and real subscriber, with the current incident resolved
   (`eccos-u9x` / `eccos-jf7`).

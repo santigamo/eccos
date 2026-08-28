@@ -37,8 +37,11 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
  */
 
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
-const workerEnv: { GATEWAY_ACCOUNT_ID: string; readonly GATEWAY?: typeof gatewayBinding } = {
-  GATEWAY_ACCOUNT_ID: "account-a",
+const workerEnv: {
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
+  readonly GATEWAY?: typeof gatewayBinding;
+} = {
   get GATEWAY() {
     return gatewayBinding;
   },
@@ -62,6 +65,9 @@ mock.module("@tanstack/react-start", () => ({
 const {
   getGatewayStatus,
   getDashboardOverview,
+  getDashboardState,
+  initializeDashboard,
+  startConnect,
   listDeliveries,
   listInbound,
   listOutbound,
@@ -74,7 +80,8 @@ const {
 
 afterEach(() => {
   gatewayBinding = undefined;
-  workerEnv.GATEWAY_ACCOUNT_ID = "account-a";
+  workerEnv.ACCESS_TEAM_DOMAIN = undefined;
+  workerEnv.ACCESS_AUD = undefined;
 });
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
@@ -94,6 +101,7 @@ function resourcesFor(accountId: string) {
 function withResources(binding: typeof gatewayBinding, options: { accountId?: string } = {}) {
   const accountId = options.accountId ?? "account-a";
   gatewayBinding = {
+    getDashboardAccount: async () => ({ accountId, name: "Account A", createdAt: 1 }),
     listAccountResources: async () => resourcesFor(accountId),
     ...binding,
   };
@@ -133,6 +141,7 @@ describe("getGatewayStatus (Status view)", () => {
 
   test("unreachable: RPC throw is caught and surfaced as { ok: false }", async () => {
     gatewayBinding = {
+      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
       listAccountResources: async () => resourcesFor("account-a"),
       getStatus: async () => {
         throw new Error("Durable Object unreachable");
@@ -174,7 +183,7 @@ describe("getGatewayStatus (Status view)", () => {
     expect(statusArgs).toEqual(["waba-a", "account-a"]);
   });
 
-  test("account mode accepts a requested owned WABA and rejects an unowned one", async () => {
+  test("account mode accepts an owned WABA and falls back from an unowned one", async () => {
     const statusArgs: unknown[] = [];
     withResources({
       listAccountResources: async () => ({
@@ -203,11 +212,19 @@ describe("getGatewayStatus (Status view)", () => {
     expect(statusArgs).toEqual(["waba-b", "account-a"]);
 
     const foreign = await getDashboardOverview({ data: { wabaId: "waba-foreign" } });
-    expect(foreign).toEqual({ ok: false, error: 'WABA "waba-foreign" is not owned by account "account-a"' });
+    expect(foreign.ok).toBe(true);
+    if (foreign.ok) {
+      expect(foreign.data.scope.selectedWabaId).toBe("waba-a");
+    }
+    expect(statusArgs).toEqual(["waba-b", "account-a", "waba-a", "account-a"]);
+
+    const mutation = await retryDelivery({ data: { id: 1, wabaId: "waba-foreign" } });
+    expect(mutation).toEqual({ ok: false, error: 'WABA "waba-foreign" is not owned by account "account-a"' });
   });
 
   test("fails closed when the account has no registered WABAs", async () => {
     gatewayBinding = {
+      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
       listAccountResources: async () => ({
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [],
@@ -217,6 +234,111 @@ describe("getGatewayStatus (Status view)", () => {
     };
     const res = await getGatewayStatus();
     expect(res).toEqual({ ok: false, error: 'Account "account-a" has no registered WABAs' });
+  });
+});
+
+describe("dashboard installation bootstrap", () => {
+  test("reports an unassigned installation without touching account resources", async () => {
+    gatewayBinding = {
+      getDashboardAccount: async () => null,
+      listAccountResources: async () => {
+        throw new Error("must not enumerate an unassigned account");
+      },
+    };
+    const result = await getDashboardState();
+    expect(result).toEqual({ ok: true, data: { stage: "unassigned" } });
+  });
+
+  test("reports an assigned installation with no WABA as setup-ready", async () => {
+    gatewayBinding = {
+      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
+      listAccountResources: async () => ({
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [],
+        phones: [],
+      }),
+    };
+    const result = await getDashboardState();
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        stage: "account-ready",
+        resources: {
+          account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+          keys: [],
+          wabas: [],
+          phones: [],
+        },
+      },
+    });
+  });
+
+  test("reports pending provisioning instead of a false ownership error", async () => {
+    gatewayBinding = {
+      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
+      listAccountResources: async () => ({
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [
+          {
+            accountId: "account-a",
+            wabaId: "waba-a",
+            callbackUrl: "https://gateway.example/connect",
+            createdAt: 1,
+            provisionedAt: null,
+            status: "pending",
+            provisioningError: null,
+            phones: [],
+          },
+        ],
+        phones: [],
+      }),
+    };
+    const result = await getDashboardState();
+    expect(result).toEqual({ ok: false, error: 'WABA "waba-a" is still provisioning' });
+  });
+
+  test("initializes through the installation identity and never sends an account id", async () => {
+    const calls: unknown[][] = [];
+    gatewayBinding = {
+      initializeDashboard: async (...args: unknown[]) => {
+        calls.push(args);
+        return {
+          status: "created",
+          account: { accountId: "acc-generated", name: "Demo", createdAt: 1 },
+          apiKey: "ek-one-time",
+          keyId: "key-generated",
+        };
+      },
+    };
+    const result = await initializeDashboard({ data: { name: "Demo" } });
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        status: "created",
+        account: { accountId: "acc-generated", name: "Demo", createdAt: 1 },
+        apiKey: "ek-one-time",
+        keyId: "key-generated",
+      },
+    });
+    expect(calls).toEqual([["local:v1", "Demo"]]);
+  });
+
+  test("starts Embedded Signup through the installation identity", async () => {
+    const calls: unknown[][] = [];
+    gatewayBinding = {
+      startConnect: async (...args: unknown[]) => {
+        calls.push(args);
+        return { url: "https://gateway.example/connect?state=one-time", state: "one-time", expiresAt: 2 };
+      },
+    };
+    const result = await startConnect();
+    expect(result).toEqual({
+      ok: true,
+      data: { url: "https://gateway.example/connect?state=one-time", state: "one-time", expiresAt: 2 },
+    });
+    expect(calls).toEqual([["local:v1"]]);
   });
 });
 

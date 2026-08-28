@@ -6,9 +6,9 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
  * When the dashboard is deployed behind a Cloudflare Access application, Access
  * injects a signed `Cf-Access-Jwt-Assertion` JWT on every allowed request. This
  * Worker-side gate re-verifies that JWT so the app cannot be reached by hitting
- * the raw `workers.dev` origin directly (which would bypass the Access edge). It
- * is intentionally a no-op until configured, so local `vite dev` and a fresh
- * deploy without Access still work.
+ * the raw `workers.dev` origin directly (which would bypass the Access edge).
+ * Localhost development is allowed without Access; public deployments fail
+ * closed until the Access variables are configured.
  */
 
 /**
@@ -20,7 +20,6 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 export interface AccessEnv {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
-  GATEWAY_ACCOUNT_ID?: string;
 }
 
 const JWT_HEADER = "Cf-Access-Jwt-Assertion";
@@ -48,7 +47,30 @@ function getJwks(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
  * the same host used for the JWKS URL and the `iss` claim.
  */
 function normalizeTeamDomain(raw: string): string {
-  return raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  const value = raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  if (!value) return "";
+  try {
+    const parsed = new URL(`https://${value}`);
+    if (parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password || parsed.port) {
+      return "";
+    }
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+export function dashboardInstallationKey(env: AccessEnv): string {
+  const teamDomain = normalizeTeamDomain(env.ACCESS_TEAM_DOMAIN ?? "");
+  const audience = env.ACCESS_AUD?.trim() ?? "";
+  if (!teamDomain && !audience) return "local:v1";
+  if (env.ACCESS_TEAM_DOMAIN?.trim() && !teamDomain) {
+    throw new Error("ACCESS_TEAM_DOMAIN must be a hostname");
+  }
+  if (!teamDomain || !audience) {
+    throw new Error("ACCESS_TEAM_DOMAIN and ACCESS_AUD must both be configured");
+  }
+  return `access:v1:${teamDomain}:${audience}`;
 }
 
 /** Read the Access JWT from the header, falling back to the `CF_Authorization` cookie. */
@@ -76,11 +98,11 @@ const forbidden = (): Response => new Response("Forbidden", { status: 403 });
  * Returns a `403` {@link Response} to BLOCK the request, or `null` to ALLOW it
  * through to the app.
  *
- * The gate only enforces when BOTH `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are
- * non-empty. Otherwise it is a pass-through no-op — so local dev and any deploy
- * that hasn't been placed behind Access keep working. When enforcing, a missing
- * token or any verification failure fails closed (403); jose checks the RS256
- * signature (via the team's JWKS) plus the `iss`, `aud`, and `exp`/`nbf` claims.
+ * The gate allows localhost development only when both Access variables are
+ * empty. Any partial or public deployment without Access fails closed. When
+ * enforcing, a missing token or any verification failure fails closed (403);
+ * jose checks the RS256 signature (via the team's JWKS) plus the `iss`, `aud`,
+ * and `exp`/`nbf` claims.
  */
 export async function enforceAccess(
   request: Request,
@@ -89,13 +111,14 @@ export async function enforceAccess(
   const teamDomainRaw = env.ACCESS_TEAM_DOMAIN?.trim();
   const audience = env.ACCESS_AUD?.trim();
 
-  // An account-scoped deployment must never silently become a public dashboard.
-  if (!teamDomainRaw || !audience) {
-    return env.GATEWAY_ACCOUNT_ID?.trim() ? forbidden() : null;
+  if (!teamDomainRaw && !audience) {
+    const hostname = new URL(request.url).hostname.toLowerCase();
+    return ["localhost", "127.0.0.1", "[::1]"].includes(hostname) ? null : forbidden();
   }
+  if (!teamDomainRaw || !audience) return forbidden();
 
   const teamDomain = normalizeTeamDomain(teamDomainRaw);
-  if (!teamDomain) return null;
+  if (!teamDomain) return forbidden();
 
   const token = readToken(request);
   if (!token) return forbidden();

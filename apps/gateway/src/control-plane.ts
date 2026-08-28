@@ -1,5 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
-import type { ProvisioningStatus } from "@eccos/gateway-contract";
+import type {
+  DashboardInitializationResult,
+  ProvisioningStatus,
+} from "@eccos/gateway-contract";
 
 /**
  * Control plane of the account-scoped gateway.
@@ -32,6 +35,7 @@ export const PROVISIONING_LEASE_MS_AT_RUNTIME = PROVISIONING_LEASE_MS;
 const PROVISIONING_BATCH = 20;
 const PROVISIONING_RETRY_BASE_MS = 5_000;
 const PROVISIONING_RETRY_MAX_MS = 3_600_000;
+const INSTALLATION_KEY_MAX_LENGTH = 512;
 
 /** Public shape of an account; never carries credentials. */
 export interface AccountRecord {
@@ -175,6 +179,14 @@ function validateAccountId(accountId: string): string {
   return v;
 }
 
+function validateInstallationKey(installationKey: string): string {
+  const value = installationKey?.trim() ?? "";
+  if (!value || value.length > INSTALLATION_KEY_MAX_LENGTH) {
+    throw new Error(`invalid installationKey: expected 1-${INSTALLATION_KEY_MAX_LENGTH} characters`);
+  }
+  return value;
+}
+
 function validateLabel(
   label: string | null | undefined,
   field: string,
@@ -227,7 +239,8 @@ function validateRedirectUri(redirectUri: string | undefined): string | null {
   } catch {
     throw new Error("invalid redirectUri: must be a valid URL");
   }
-  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && parsed.hostname === "localhost")) {
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname.toLowerCase());
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local)) {
     throw new Error("invalid redirectUri: must use https");
   }
   if (parsed.username || parsed.password) throw new Error("invalid redirectUri: credentials are not allowed");
@@ -374,6 +387,11 @@ export class EccosControlPlane extends DurableObject<Env> {
         account_id TEXT NOT NULL,
         expires_at INTEGER NOT NULL,
         redirect_uri TEXT
+      );`);
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS dashboard_installations (
+        installation_hash TEXT PRIMARY KEY,
+        account_id        TEXT NOT NULL UNIQUE,
+        created_at         INTEGER NOT NULL
       );`);
       const wabaColumns = this.sql.exec("PRAGMA table_info(wabas)").toArray();
       if (!wabaColumns.some((row) => row.name === "status")) {
@@ -987,6 +1005,121 @@ export class EccosControlPlane extends DurableObject<Env> {
         w.phones.map((p) => ({ ...p, wabaId: w.wabaId })),
       ),
     };
+  }
+
+  async getDashboardAccount(installationKey: string): Promise<AccountRecord | null> {
+    const installationHash = await sha256Hex(validateInstallationKey(installationKey));
+    const row = this.sql
+      .exec(
+        `SELECT a.account_id, a.name, a.created_at
+         FROM dashboard_installations d
+         JOIN accounts a ON a.account_id = d.account_id
+         WHERE d.installation_hash = ?`,
+        installationHash,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    return {
+      accountId: row.account_id as string,
+      name: row.name as string,
+      createdAt: row.created_at as number,
+    };
+  }
+
+  async initializeDashboard(
+    installationKey: string,
+    name?: string,
+  ): Promise<DashboardInitializationResult> {
+    const installationHash = await sha256Hex(validateInstallationKey(installationKey));
+    const accountName = validateLabel(name ?? null, "name") ?? "Eccos";
+    const createdAt = Date.now();
+    const apiKey = newApiKey();
+    const keyId = newId("key");
+    const keyHash = await sha256Hex(apiKey);
+    const accountId = newId("acc");
+    let account: AccountRecord | null = null;
+    let created = false;
+
+    this.ctx.storage.transactionSync(() => {
+      const existing = this.sql
+        .exec(
+          `SELECT a.account_id, a.name, a.created_at
+           FROM dashboard_installations d
+           JOIN accounts a ON a.account_id = d.account_id
+           WHERE d.installation_hash = ?`,
+          installationHash,
+        )
+        .toArray()[0];
+      if (existing) {
+        account = {
+          accountId: existing.account_id as string,
+          name: existing.name as string,
+          createdAt: existing.created_at as number,
+        };
+        return;
+      }
+
+      this.sql.exec(
+        "INSERT INTO accounts (account_id, name, created_at) VALUES (?, ?, ?)",
+        accountId,
+        accountName,
+        createdAt,
+      );
+      this.sql.exec(
+        "INSERT INTO api_keys (key_id, account_id, label, hash, created_at, revoked_at) VALUES (?, ?, NULL, ?, ?, NULL)",
+        keyId,
+        accountId,
+        keyHash,
+        createdAt,
+      );
+      this.sql.exec(
+        "INSERT INTO dashboard_installations (installation_hash, account_id, created_at) VALUES (?, ?, ?)",
+        installationHash,
+        accountId,
+        createdAt,
+      );
+      account = { accountId, name: accountName, createdAt };
+      created = true;
+    });
+
+    if (!account) throw new Error("dashboard initialization failed");
+    return created
+      ? { status: "created", account, apiKey, keyId }
+      : { status: "existing", account };
+  }
+
+  purgeExpiredConnectStates(now = Date.now()): void {
+    if (!Number.isFinite(now)) throw new Error("invalid now: expected a finite timestamp");
+    this.sql.exec("DELETE FROM connect_states WHERE expires_at <= ?", now);
+  }
+
+  refreshConnectState(state: string, expiresAt: number): ConnectStateRecord | null {
+    const s = state?.trim() ?? "";
+    if (!s || s.length > STATE_MAX_LENGTH) return null;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      throw new Error("invalid expiresAt: must be a future timestamp");
+    }
+    const now = Date.now();
+    let result: ConnectStateRecord | null = null;
+    this.ctx.storage.transactionSync(() => {
+      const row = this.sql
+        .exec(
+          "SELECT account_id, expires_at, redirect_uri FROM connect_states WHERE state = ?",
+          s,
+        )
+        .toArray()[0];
+      if (!row) return;
+      if ((row.expires_at as number) <= now) {
+        this.sql.exec("DELETE FROM connect_states WHERE state = ?", s);
+        return;
+      }
+      this.sql.exec("UPDATE connect_states SET expires_at = ? WHERE state = ?", expiresAt, s);
+      result = {
+        accountId: row.account_id as string,
+        redirectUri: (row.redirect_uri as string | null) ?? null,
+      };
+    });
+    return result;
   }
 
   /** Register a connect state; INSERT OR REPLACE so a retried start wins. */

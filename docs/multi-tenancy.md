@@ -44,11 +44,14 @@ curl -X POST https://<gateway>/connect/start \
 Open the `url` from the response in a browser. The URL carries a one-time state capability; the
 browser-only `GET /connect` page sets the CSRF cookie before redirecting to Meta. The callback
 consumes that state once, so the resulting WABAs and phones cannot be assigned to another account
-by changing a callback parameter. Backend integrations may call `POST /connect/exchange` directly
+by changing a callback parameter. Treat the URL as account-scoped and do not forward it to an
+operator for a different account. Backend integrations may call `POST /connect/exchange` directly
 with the same account key.
 
-Every WABA and phone returned by the Meta token is registered under that account. Existing
-ownership conflicts fail without changing the other account's registry.
+Every available WABA and phone returned by the Meta token is registered under that account. If
+Meta returns a WABA already owned by another account alongside available matches, it is skipped
+and reported as a warning without changing the other account's registry. An explicitly selected
+foreign WABA still fails closed.
 
 ## Registering an existing WABA
 
@@ -73,9 +76,14 @@ Embedded Signup, the token is stored in the control plane and never returned.
 
 ## Dashboard scope
 
-A dashboard deployment is account-scoped: set `GATEWAY_ACCOUNT_ID` to the control-plane account it
-operates (one dashboard + one Cloudflare Access application per account).
-`GATEWAY_WABA_ID` is no longer used.
+A dashboard deployment is account-scoped: one dashboard and one Cloudflare Access application map to
+one generated control-plane account. The dashboard derives an installation identity from the Access
+team domain and application audience, then creates the account on the protected `/setup` screen.
+No account ID is entered or deployed manually. Local development uses a stable local installation
+identity. Once the account exists, **Connect WhatsApp** starts the account-bound Embedded Signup
+handoff through the private `GatewayRPC`; set the gateway's `GATEWAY_PUBLIC_URL` to the public
+gateway origin so the browser can reach its OAuth callback. The browser never receives an account
+API key to authorize this flow.
 
 Never change `DO_JURISDICTION` after data exists without a separate Durable Object export and
 import plan: a jurisdiction change creates a new, empty object.

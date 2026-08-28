@@ -104,17 +104,18 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
 - **Multi-tenant initiation:** `POST /connect/start` authenticates an account key and returns a
   short-lived state URL. The browser opens that URL without headers; `GET /connect` validates the
   state in the control plane and sets the CSRF cookie before redirecting to Meta.
-- **CSRF/state mitigation (`GET /connect`):** `GET /connect` sets a short-lived (5 min),
-  `httpOnly`, `secure`, `SameSite=Lax` cookie (`eccos_connect_state`) carrying a random OAuth
-  `state` before redirecting to Meta; on the callback it compares the query `state` against the
-  cookie value with `constantTimeEqual` (`oauthStateIsValid` in `connect.ts`) and fails closed
-  (`400`) on a missing or mismatched value, clearing the cookie either way. This blocks an
-  attacker from tricking a victim's browser into completing an OAuth exchange the victim didn't
-  initiate.
+- **CSRF/state mitigation (`GET /connect`):** `GET /connect` sets a short-lived (30 min),
+  `httpOnly`, `SameSite=Lax` cookie (`eccos_connect_state`) carrying a random OAuth `state`
+  before redirecting to Meta; it also sets `secure` on public HTTPS origins and omits it for
+  localhost HTTP development. On the callback it compares the query `state` against the cookie
+  value with `constantTimeEqual` (`oauthStateIsValid` in `connect.ts`) and fails closed (`400`)
+  on a missing or mismatched value, clearing the cookie either way. This blocks an attacker from
+  tricking a victim's browser into completing an OAuth exchange the victim didn't initiate.
 - **Auth mitigation (`POST /connect/exchange`):** this endpoint — which takes a
   `code`/`state`/`waba_id`/`redirect_uri` body — requires an account API key and an account-bound
-  OAuth state, and registers all WABAs and phones discovered from the exchanged token under that
-  account. Existing WABA ownership conflicts are rejected before registry mutation.
+  OAuth state, and registers all available WABAs and phones discovered from the exchanged token
+  under that account. Unselected foreign WABAs are skipped with warnings; an explicit foreign
+  WABA selector is rejected before registry mutation.
 - Exchanging a `code` still additionally requires the operator's own `META_APP_SECRET`
   server-side (`exchangeCodeForToken`) — defense in depth beyond the two checks above.
 - The business token from the exchange is stored only in the control-plane WABA
@@ -122,12 +123,14 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
   config or returned by the operator API.
 - **Residual risk:** the account-scoped callback consumes its single-use state before the external
   exchange and subscription calls complete, so a failed Meta call requires a new connect attempt.
+  The handoff URL is itself a bearer capability until consumed; operators must not forward it to a
+  different account or an untrusted browser.
 
 ### 3.4 Dashboard behind Cloudflare Access + the RPC service binding
 
 - **Surface:** the operator console (`apps/dashboard/`) renders gateway status, inbound/outbound/
-  delivery logs, and exposes operator actions (retry delivery, rotate subscriber config,
-  resubscribe).
+  delivery logs, exposes operator actions (retry delivery, rotate subscriber config, resubscribe),
+  and starts account-bound Embedded Signup through `GatewayRPC.startConnect()`.
 - **Mitigation, edge:** Cloudflare Access sits in front of the dashboard's custom domain
   (account-level Zero Trust config, not code).
 - **Mitigation, in-Worker:** `enforceAccess` (`apps/dashboard/src/access.ts`) independently
@@ -136,14 +139,16 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
   hitting the raw `*.workers.dev` origin directly cannot bypass Access. **Fails closed**: any
   verification failure → `403`. Wired into a custom server entry (`src/server.ts`) so it runs
   before SSR pages, server routes, and server-function calls alike.
-  This gate is a documented **no-op until both `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are set**
-  (`apps/dashboard/README.md`) — with one exception: an account-scoped deployment
-  (`GATEWAY_ACCOUNT_ID` set) that is not yet behind Access **fails closed with `403`**, so it can
-  never silently become a public dashboard.
+  This gate allows localhost development when both `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are empty.
+  Public requests and partial configuration **fail closed with `403`**, so a production dashboard
+  can never silently become public. The Access-derived installation identity is not a secret; the
+  private service binding is the boundary that lets the dashboard resolve account scope.
 - **Mitigation, transport:** the dashboard reaches the gateway only via a Cloudflare service
   binding to the `GatewayRPC` `WorkerEntrypoint` (`apps/gateway/src/rpc.ts`) — not HTTP. This
   binding is not addressable from the public Internet at all; there is no URL to leak or CORS
-  policy to misconfigure, because there is no route.
+  policy to misconfigure, because there is no operator route. The one browser handoff exception is
+  the returned, short-lived gateway `/connect?state=...` URL; the OAuth callback remains on the
+  gateway's public origin and the state is bound to the dashboard installation account.
 - **What the operator API returns:** `GatewayRPC.getSubscriberConfig()` explicitly returns only
   `{ url, hasSecret }` — never the `SUBSCRIBER_SECRET` value itself (`gateway.ts` comment: "Never
   exposes the secret"). `GatewayRPC.getConfig()` and `exportData()` filter private keys before
@@ -162,7 +167,7 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
 | Forged forwarded event reaching the subscriber | `X-Eccos-Signature: sha256=<hex>` via `signPayload`, using `SUBSCRIBER_SECRET` | The subscriber's own verification is out of this repo's control — if a subscriber implementation skips verification, forgery is possible from anyone who can reach its webhook URL. Document this expectation clearly for integrators. |
 | Unauthorized WABA rebind via `/connect/exchange` | Account-key gate plus single-use account-bound OAuth state and ownership-conflict checks; valid Meta OAuth code required (see §3.3) | A failed external exchange after state consumption requires a new connect attempt. |
 | Subscriber URL SSRF | Rotated subscriber URLs require HTTPS, no credentials, and reject private/special IP literals; forwarding validates the stored value too and rejects redirects | DNS rebinding after save-time validation remains possible because Workers does not expose a general DNS-resolution API to application code. |
-| Dashboard reached directly on `*.workers.dev`, bypassing Access at the edge | In-Worker `enforceAccess` re-verification, fail-closed | An account-scoped dashboard deployment fails closed until `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` are configured. Local development without `GATEWAY_ACCOUNT_ID` remains intentionally open. |
+| Dashboard reached directly on `*.workers.dev`, bypassing Access at the edge | In-Worker `enforceAccess` re-verification, fail-closed | A public dashboard deployment fails closed until `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` are configured. Only localhost development without Access remains intentionally open. |
 | Operator console leaking message content to the wrong person | Access JWT gate (edge + in-Worker) restricts *who* reaches the dashboard at all | The dashboard renders raw inbound message text (`apps/dashboard/src/routes/inbound.tsx`, `inboundSummary()` reads `ev.text`) to anyone who passes the Access policy — so the Access policy *is* the access-control boundary for message content, not a separate per-page permission. |
 | DoS via flooding `/webhooks/meta` with invalid signatures | Cloudflare edge DDoS protection (platform-level, outside this repo) | No application-level rate limiting on the two public unauthenticated routes (`GET`/`POST /webhooks/meta`), unlike `/v1/wabas/<WABA_ID>/messages`. Each invalid POST still costs one HMAC computation before rejection. |
 | Per-WABA Durable Object as an availability/scale boundary | N/A (architectural choice, not a security control) | Each WABA's reads/writes serialize through its own versioned DO; tenant state is not a global singleton, but there is no cross-region replica. |
@@ -170,11 +175,11 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
 
 ## 5. Out of scope / explicitly not modeled
 
-- Shared-dashboard user-to-account authorization — the shipped dashboard is configured with one
-  `GATEWAY_ACCOUNT_ID` per deployment. Deploy a separate dashboard and Access application for each
-  customer account; the browser's Access identity is not itself used as an account selector. The
-  first-paid-customer gate in `PRODUCTION-READINESS.md` must clear before third-party Cloud
-  customers are charged.
+- Shared-dashboard user-to-account authorization — the shipped dashboard maps one Access
+  application identity to one generated account. Deploy a separate dashboard and Access
+  application for each customer account; the browser's Access user identity is not itself used as
+  an account selector. The first-paid-customer gate in `PRODUCTION-READINESS.md` must clear before
+  third-party Cloud customers are charged.
 - Multi-tenant support in the Bun target — the Bun deployment remains single-tenant and uses its
   existing environment-based credentials.
 - Physical/host security of a self-hosted Bun deployment (Docker image, VM, disk encryption) — the

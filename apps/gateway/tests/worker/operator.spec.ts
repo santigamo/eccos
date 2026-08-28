@@ -113,6 +113,7 @@ describe("EccosGateway operator reads", () => {
         META_ACCESS_TOKEN: "export-token",
         META_APP_SECRET: "export-app-secret",
         SUBSCRIBER_SECRET: "export-subscriber-secret",
+        __last_sweep_at__: "1700000000000",
         DISPLAY_PHONE_NUMBER: "+34600000000",
       });
       for (let n = 0; n < 205; n++) {
@@ -125,6 +126,7 @@ describe("EccosGateway operator reads", () => {
       expect(exported.config).not.toHaveProperty("META_ACCESS_TOKEN");
       expect(exported.config).not.toHaveProperty("META_APP_SECRET");
       expect(exported.config).not.toHaveProperty("SUBSCRIBER_SECRET");
+      expect(exported.config).not.toHaveProperty("__last_sweep_at__");
     });
 
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
@@ -173,7 +175,9 @@ describe("GatewayRPC", () => {
   it("fails closed without an accountId and without a registered WABA", async () => {
     await seed();
     const rpc = makeRpc();
-    const missingAccountError = await rpc.getStatus(TEST_WABA_ID).then(() => null, (error) => error);
+    const missingAccountError = await rpc
+      .getStatus(TEST_WABA_ID, undefined as unknown as string)
+      .then(() => null, (error) => error);
     expect(String(missingAccountError?.message ?? missingAccountError)).toMatch(/accountId is required/);
     // A different account that doesn't own this WABA fails closed.
     const foreignAccountError = await rpc

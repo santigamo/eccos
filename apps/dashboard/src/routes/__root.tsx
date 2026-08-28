@@ -1,20 +1,29 @@
 import { useEffect, type ReactNode } from "react"
-import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router"
+import { Outlet, createRootRoute, HeadContent, Scripts, redirect } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
-import { getDashboardScope } from "../server/gateway"
+import { getDashboardState } from "../server/gateway"
+import { normalizeSearchWabaId } from "../lib/search"
 
 import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
 
 export const Route = createRootRoute({
-  validateSearch: (search: Record<string, unknown>): ScopeSearch => ({
-    ...(typeof search.wabaId === "string" && search.wabaId.trim() !== ""
-      ? { wabaId: search.wabaId.trim() }
-      : {}),
-  }),
+  validateSearch: (search: Record<string, unknown>): ScopeSearch => {
+    const wabaId = normalizeSearchWabaId(search.wabaId)
+    return wabaId ? { wabaId } : {}
+  },
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
-  loader: ({ deps }) => getDashboardScope({ data: { wabaId: deps.wabaId } }),
+  loader: async ({ deps, location }) => {
+    const state = await getDashboardState({ data: { wabaId: deps.wabaId } })
+    if (state.ok && state.data.stage !== "ready" && location.pathname !== "/setup") {
+      throw redirect({ to: "/setup" })
+    }
+    if (state.ok && state.data.stage === "ready" && location.pathname === "/setup") {
+      throw redirect({ to: "/" })
+    }
+    return state
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -48,9 +57,10 @@ export const Route = createRootRoute({
 })
 
 function RootComponent() {
+  const state = Route.useLoaderData()
   return (
     <RootDocument>
-      <AppShell />
+      {state.ok && state.data.stage !== "ready" ? <Outlet /> : <AppShell />}
     </RootDocument>
   )
 }

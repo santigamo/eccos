@@ -14,7 +14,7 @@ function SettingsPage() {
   const result = Route.useLoaderData();
   const { wabaId } = Route.useSearch();
   const scope = useLoaderData({ from: "__root__" });
-  const selectedWabaId = wabaId ?? (scope.ok ? scope.data.selectedWabaId : undefined);
+  const selectedWabaId = wabaId ?? (scope.ok && scope.data.stage === "ready" ? scope.data.scope.selectedWabaId : undefined);
   if (!result.ok) {
     return (
       <Page title="Settings" kicker="Configuration">
