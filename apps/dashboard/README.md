@@ -19,14 +19,11 @@ The console has **no public HTTP surface into the gateway**. It talks to the gat
  browser ──▶ dashboard Worker ──(RPC service binding: env.GATEWAY.getStatus(wabaId, accountId))──▶ gateway Worker
 ```
 
-Server functions in `src/server/gateway.ts` call `env.GATEWAY.<method>(wabaId, accountId)`; the
-dashboard derives its account from the Access application's team domain and audience, resolves an
-owned WABA from the gateway's registry and passes that account context on every call. The first
-authorized visit shows a setup screen that atomically creates the account; no account ID is entered
-or deployed manually. The account-scoped console shows a WABA picker in the header; its selection
-is kept in the `wabaId` query parameter and is checked against the account registry on every server
-function. The gateway's operator API is never exposed over the network. The binding is declared in
-[`wrangler.jsonc`](./wrangler.jsonc)
+Server functions in `src/server/gateway.ts` resolve the tenant server-side (Better Auth session →
+organization membership → organization→account link → owned WABA) and pass that account context on
+every call. The WABA picker selection is kept in the `wabaId` query parameter and is checked against
+the account registry on every server function. The gateway's operator API is never exposed over the
+network; the binding is declared in [`wrangler.jsonc`](./wrangler.jsonc)
 (`services[].entrypoint = "GatewayRPC"`) and its type is tightened in [`src/env.d.ts`](./src/env.d.ts).
 If the gateway isn't reachable, each page renders a graceful "unreachable" state instead of crashing.
 
@@ -43,33 +40,49 @@ cd apps/gateway && bunx wrangler dev --var DO_JURISDICTION: --var GATEWAY_PUBLIC
 cd apps/dashboard && bunx vite dev
 ```
 
+### Customer auth (Better Auth + D1)
+
+The identity plane (sign-up/sign-in, sessions, organizations) is [Better Auth](https://better-auth.com)
+on a dedicated auth D1 database (binding `DB`) — see
+[`docs/auth-tenancy-contract.md`](../../docs/auth-tenancy-contract.md) for the tenancy contract.
+Local setup:
+
+```bash
+cd apps/dashboard
+bun run db:migrate:local          # apply auth schema to the local D1
+cp .dev.vars.example .dev.vars    # dev-only BETTER_AUTH_SECRET / BETTER_AUTH_URL
+```
+
+The auth handler is mounted at `/api/auth/*` in `src/server.ts`; the auth instance is built
+per request in `src/auth/` (no module-global state). The schema lives in
+`migrations/0001_better_auth_schema.sql`, generated with `bun run db:generate`
+(Better Auth CLI, config in `scripts/auth-schema.config.ts`) and applied explicitly by deploy —
+never at Worker startup.
+
 The empty `DO_JURISDICTION` override is needed because local workerd does not implement
 Cloudflare Durable Object jurisdiction restrictions. `.dev.vars` is local-only and ignored by Git.
 
-The dashboard is **account-scoped**: local development uses a local installation identity, while a
-Cloudflare Access deployment uses the Access application's team domain and audience. On the first
-local visit, the setup screen creates the account; after that, **Connect WhatsApp** starts Embedded
-Signup through the gateway, and the console shows data once a WABA is registered (see
-`docs/multi-tenancy.md`).
+The dashboard is **account-scoped**: the account comes from the signed-in user's organization
+(organization → account link in the control plane). **Connect WhatsApp** starts Embedded Signup
+through the gateway (admin permission required), and the console shows data once a WABA is
+registered (see `docs/multi-tenancy.md`).
 
 Then open the URL Vite prints. Without the gateway running, the pages still load and show the
 "unreachable" state. Other scripts: `bunx vite build` (production build), `bun run typecheck`
-(`tsc --noEmit`), `bun run test` (the isolated Access unit check + data-layer tests in `tests/`).
+(`tsc --noEmit`), `bun run test` (auth, host-allowlist, and data-layer tests in `tests/`).
 
 Set `GATEWAY_PUBLIC_URL` in the gateway Worker to its public HTTPS origin before using the
 dashboard's **Connect WhatsApp** action. The rest of the console uses only the private RPC binding;
 the URL is needed so Meta can return the browser to the gateway's OAuth callback.
 
-## Deploying (account-scoped by default)
+## Deploying
 
-Deploy one dashboard Worker and one Cloudflare Access application per account. The Access
-application identity is the trusted installation scope; its team domain and audience are resolved
-server-side and mapped to one generated account in the gateway control plane. The WABA each RPC
-call targets is resolved from that account's registry — operators can switch between the account's
-owned WABAs with the header picker (or a `?wabaId=<owned-WABA>` URL).
+Deploy one customer dashboard Worker. The WABA each RPC call targets is resolved from the
+organization's account registry — operators can switch between the account's owned WABAs with the
+header picker (or a `?wabaId=<owned-WABA>` URL).
 
-Configure the two Access vars in [`wrangler.jsonc`](./wrangler.jsonc) or with Wrangler for the
-production deployment, then deploy normally:
+Set the production secrets (`BETTER_AUTH_SECRET`, optional `MAIL_FROM`) and apply the remote D1
+schema, then deploy:
 
 ```bash
 # from the repo root
@@ -78,42 +91,28 @@ production deployment, then deploy normally:
 
 `bun run deploy` from `apps/dashboard` invokes the same validated helper.
 
-## Securing with Cloudflare Access
+## Customer auth & host policy (Better Auth)
 
-The dashboard must not be publicly reachable without Cloudflare Access. Do **not** expose the bare
-`*.workers.dev` URL; put it on a custom domain behind
-[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/). As
-defense-in-depth, the Worker *also* re-verifies the Access JWT on every request, so it can't be
-bypassed by hitting the raw origin directly.
+Customer authentication is **Better Auth only** on the dedicated auth D1
+(`DB` binding) — Cloudflare Access is not part of the customer surface. The
+contract lives in [`docs/auth-tenancy-contract.md`](../../docs/auth-tenancy-contract.md).
 
-The account-level setup is done in the **Cloudflare dashboard** (Zero Trust), not in code — only
-the two `vars` below live in the repo:
+- **Canonical host:** only `https://app.eccos.chat` is the customer origin. The
+  server entry (`src/server.ts`) enforces this allowlist **before routing**, so
+  raw `*.workers.dev` and preview origins fail closed with `403` and are not
+  alternate customer paths. `workers_dev` is disabled in `wrangler.jsonc`.
+- **Session enforcement:** every page load, loader, and server function resolves
+  the Better Auth session server-side; data operations additionally require an
+  organization permission (`view`/`operate`/`configure`/`administer`/`erase`).
+- **Account resolution:** the organization→account link lives in the gateway
+  control plane (`organization_accounts`); the browser-supplied ids are never
+  authorization evidence.
 
-1. **Zero Trust → Access → Applications → Add an application → Self-hosted.**
-2. Set the application domain to the dashboard's hostname (your custom domain behind Access).
-3. Add a **policy** (e.g. *Allow* → emails / an email domain / your team) so only you can enter.
-4. On the application's overview, copy its **Application Audience (AUD) tag** (a long hex string).
-5. In [`wrangler.jsonc`](./wrangler.jsonc) `vars`, set:
-   - `ACCESS_AUD` → the AUD tag from step 4.
-   - `ACCESS_TEAM_DOMAIN` → your Zero Trust team domain, e.g. `myteam.cloudflareaccess.com`.
-6. Redeploy: `bun run deploy` (`wrangler deploy`).
+Production secrets (Worker secrets, set with `wrangler secret put`):
 
-### How the gate works (and when it's off)
+- `BETTER_AUTH_SECRET` — auth secret (>= 32 chars)
+- `RESEND_API_KEY` — transactional email (see `docs/auth-email-delivery.md`)
 
-The Worker-side gate lives in [`src/access.ts`](./src/access.ts) (`enforceAccess`) and is wired
-into a **custom TanStack Start server entry** ([`src/server.ts`](./src/server.ts)) that wraps the
-default fetch handler, so verification runs before **every** request — SSR page loads, server
-routes, and server-function calls.
-
-- **Local-only when Access is unset.** Both empty `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` allow only
-  localhost development. Partial configuration, public hostnames, and `workers.dev` requests
-  without Access fail closed with `403`, so a production dashboard cannot silently become public.
-- **When enforcing**, it reads the JWT from the `Cf-Access-Jwt-Assertion` header (falling back to
-  the `CF_Authorization` cookie), then verifies it with [`jose`](https://github.com/panva/jose)
-  against the team's JWKS (`https://<team-domain>/cdn-cgi/access/certs`), checking the RS256
-  signature plus the `iss` (`https://<team-domain>`), `aud` (the AUD tag) and `exp`/`nbf` claims.
-- **Fails closed:** a missing token or any verification failure returns `403 Forbidden`; only a
-  valid Access JWT is allowed through.
-
-> The first-run setup is intentionally unavailable on public hosts without Access. Set up the
-> Access application and configure both Access vars before deploying the production dashboard.
+Apply the auth schema before serving traffic: `bun run db:migrate:local` for
+local development; `wrangler d1 migrations apply eccos-auth --remote` for
+production (eccos-0x0.9 covers the full cutover checklist).

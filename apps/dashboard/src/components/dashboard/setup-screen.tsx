@@ -10,18 +10,14 @@ import {
   FrameTitle,
 } from "../reui/frame";
 import {
-  initializeDashboard,
-  startConnect,
-  type DashboardInitializationResult,
-  type DashboardState,
-} from "../../server/gateway";
+      startConnect,
+      type DashboardState,
+    } from "../../server/gateway";
 import { Page } from "../../ui";
 
 export function SetupScreen({ state }: { state: DashboardState }) {
   const router = useRouter();
-  const [initialized, setInitialized] = useState<DashboardInitializationResult | null>(null);
   const existingAccount = state.stage === "account-ready" ? state.resources.account : null;
-  const result = initialized ?? (existingAccount ? { status: "existing" as const, account: existingAccount } : null);
 
   return (
     <main id="main-content" className="min-h-svh px-4 py-6 md:px-8 md:py-8">
@@ -31,111 +27,27 @@ export function SetupScreen({ state }: { state: DashboardState }) {
           <span className="text-muted-foreground text-xs">First-run setup</span>
         </div>
         <div className="flex flex-1 flex-col justify-center py-12">
-          {result ? (
-            <SetupComplete result={result} />
-          ) : (
-            <SetupForm
-              onSuccess={(next) => {
-                setInitialized(next);
-                void router.invalidate();
-              }}
-            />
-          )}
+          <SetupComplete
+            result={{
+              status: "existing" as const,
+              account: existingAccount ?? { accountId: "", name: "", createdAt: 0 },
+            }}
+            onDone={() => void router.invalidate()}
+          />
         </div>
       </div>
     </main>
   );
 }
 
-function SetupForm({ onSuccess }: { onSuccess: (result: DashboardInitializationResult) => void }) {
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      const result = await initializeDashboard({ data: { name: name.trim() || undefined } });
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      onSuccess(result.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Page title="Set up your workspace" kicker="First run">
-      <div className="grid max-w-4xl gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
-        <Frame variant="default" spacing="lg">
-          <FramePanel fit>
-            <FrameHeader>
-              <FrameTitle>Create your Eccos workspace</FrameTitle>
-              <FrameDescription>
-                Eccos will create the account that owns this dashboard. The identifier is generated
-                securely and never needs to be entered manually.
-              </FrameDescription>
-            </FrameHeader>
-            <form className="flex max-w-md flex-col gap-4" onSubmit={onSubmit}>
-              <label htmlFor="workspace-name" className="flex flex-col gap-1.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-                Workspace name
-                <Input
-                  id="workspace-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  maxLength={200}
-                  placeholder="Eccos workspace"
-                  autoComplete="organization"
-                />
-              </label>
-              {error ? (
-                <p className="border-l-2 border-[#e03131] bg-[rgba(224,49,49,.12)] px-3 py-2 text-sm text-[#ff7777]" role="alert">
-                  {error}
-                </p>
-              ) : null}
-              <div>
-                <Button type="submit" disabled={submitting}>
-                  {submitting ? "Creating workspace…" : "Create workspace"}
-                </Button>
-              </div>
-            </form>
-          </FramePanel>
-        </Frame>
-
-        <Frame variant="ghost" spacing="lg">
-          <FramePanel fit>
-            <FrameHeader>
-              <FrameTitle>What happens next</FrameTitle>
-              <FrameDescription>
-                The workspace is assigned to this protected dashboard installation and can hold
-                multiple WABAs and phone numbers.
-              </FrameDescription>
-            </FrameHeader>
-            <ol className="m-0 list-none space-y-3 p-0 text-sm text-muted-foreground">
-              <li><span className="mr-2 font-mono text-xs text-foreground">01</span>Account scope is created.</li>
-              <li><span className="mr-2 font-mono text-xs text-foreground">02</span>WhatsApp can be connected through Embedded Signup.</li>
-              <li><span className="mr-2 font-mono text-xs text-foreground">03</span>Traffic and delivery history appear here.</li>
-            </ol>
-          </FramePanel>
-        </Frame>
-      </div>
-    </Page>
-  );
-}
-
 function SetupComplete({
   result,
+  onDone,
 }: {
-  result: DashboardInitializationResult;
+  result: { status: "existing"; account: { accountId: string; name: string; createdAt: number } };
+  onDone: () => void;
 }) {
   const account = result.account;
-  const apiKey = result.status === "created" ? result.apiKey : null;
 
   return (
     <Page title="Workspace ready" kicker="First run">
@@ -145,20 +57,19 @@ function SetupComplete({
             <FrameHeader>
               <FrameTitle>{account?.name || "Eccos workspace"}</FrameTitle>
               <FrameDescription>
-                This dashboard is now bound to its own account scope. No deployment variable is
-                required for the account ID.
+                This workspace is bound to its own account scope. No deployment variable is required
+                for the account ID.
               </FrameDescription>
             </FrameHeader>
             <dl className="m-0 divide-y divide-(--frame-panel-border-color)">
-              <SetupField label="Account ID" value={account?.accountId ?? "—"} />
+              <SetupField label="Account ID" value={account?.accountId || "—"} />
               <SetupField label="Status" value="Ready for WhatsApp" />
             </dl>
           </FramePanel>
         </Frame>
 
         <div className="flex flex-col gap-4">
-          {apiKey ? <ApiKeyPanel apiKey={apiKey} /> : null}
-          <ConnectWhatsAppPanel />
+          <ConnectWhatsAppPanel onConnected={onDone} />
         </div>
       </div>
     </Page>
@@ -208,7 +119,7 @@ function ApiKeyPanel({ apiKey }: { apiKey: string }) {
   );
 }
 
-function ConnectWhatsAppPanel() {
+function ConnectWhatsAppPanel({ onConnected }: { onConnected: () => void }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
