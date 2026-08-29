@@ -95,10 +95,25 @@ export async function requirePermission(
   // field lives on the raw session row; typed loosely because Better Auth's
   // session type only carries it when the organization plugin is inferred.
   const rawSession = session.session as { activeOrganizationId?: string | null };
-  const orgId = organizationId ?? rawSession.activeOrganizationId ?? "";
+  let orgId = organizationId ?? rawSession.activeOrganizationId ?? "";
   if (!orgId) throw new ForbiddenError("no organization context");
 
-  const memberships = await resolveMemberships(auth, headers);
+  let memberships = await resolveMemberships(auth, headers);
+  if (!orgId) {
+    // No explicit selector and no stored active org: unambiguously default to
+    // the single membership. Multi-org users must choose explicitly (the
+    // org picker sets the active organization), so ambiguity fails closed.
+    const sole = memberships[0];
+    if (memberships.length === 1 && sole) {
+      orgId = sole.id;
+    } else {
+      throw new ForbiddenError(
+        memberships.length === 0
+          ? "no organization membership — create or join an organization first"
+          : "select an organization",
+      );
+    }
+  }
   if (!memberships.some((m) => m.id === orgId)) {
     throw new ForbiddenError("not a member of the requested organization");
   }

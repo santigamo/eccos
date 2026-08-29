@@ -149,7 +149,7 @@ export function StatusCounts({
 /** Error card for the `{ ok: false }` (gateway unreachable / RPC threw) state. */
 export function Unreachable({ error }: { error: string }) {
   return (
-    <Frame variant="default" spacing="sm">
+    <Frame variant="default" spacing="sm" className="max-w-2xl">
       <FramePanel fit>
         <FrameHeader>
           <FrameTitle>Gateway unreachable</FrameTitle>
@@ -157,9 +157,13 @@ export function Unreachable({ error }: { error: string }) {
             The dashboard could not reach the gateway over the <code className="text-foreground bg-muted px-1 text-xs">GATEWAY</code> service binding.
           </FrameDescription>
         </FrameHeader>
-        <pre className="bg-destructive/10 text-destructive mt-2 overflow-auto border p-3 text-xs whitespace-pre-wrap break-words">
+        <pre className="mt-2 overflow-auto rounded-(--frame-radius) border border-(--frame-panel-border-color) bg-muted/40 p-3 text-xs text-muted-foreground whitespace-pre-wrap break-words">
           {error}
         </pre>
+        <p className="text-muted-foreground text-xs">
+          If this persists, check that the gateway Worker is deployed and the
+          service binding points at it, then reload the page.
+        </p>
       </FramePanel>
     </Frame>
   )
