@@ -1,0 +1,18 @@
+{
+  "name": "@eccos/auth-baseline",
+  "version": "0.1.0",
+  "description": "Product-agnostic Better Auth organization baseline: config conventions, capability helpers, tenant guards, invitation defaults, and D1 migration workflow — extracted from the Eccos customer-auth cut for reuse in side projects.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./permissions": "./src/permissions.ts",
+    "./tenant": "./src/tenant.ts"
+  },
+  "dependencies": {
+    "better-auth": "1.7.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
