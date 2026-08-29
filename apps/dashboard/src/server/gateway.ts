@@ -223,8 +223,19 @@ async function resolveOrganizationAccount(
   gateway: GatewayApi,
 ): Promise<ResolvedAccount> {
   const organizationId = await requireGatewayPermission(requestAuth(), getRequest(), "view");
-  const link = await gateway.getOrganizationAccountLink(organizationId);
-  if (!link || link.status !== "active") {
+  let link = await gateway.getOrganizationAccountLink(organizationId);
+  if (!link) {
+    // Self-healing reconcile (contract §2): the organization exists in the
+    // identity plane but predates its account link (e.g. created during the
+    // cutover). The idempotent saga converges to exactly one account + one
+    // active link and never issues an API key; verified callers only (a
+    // gateway:view permission was already required above).
+    // ensureOrganizationAccount always activates on create; "existing"
+    // cannot occur here because the link was just read as absent.
+    const ensured = await gateway.ensureOrganizationAccount(organizationId);
+    link = { accountId: ensured.accountId, status: "active" };
+  }
+  if (link.status !== "active") {
     throw new Error("This organization is not linked to an Eccos account");
   }
   const resources = await gateway.listAccountResources(link.accountId);
@@ -366,7 +377,11 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
       // Embedded Signup is an admin+ mutation (contract §4): step-up policy is
       // enforced by eccos-0x0.7; the account comes from the organization link.
       const actor = await requireActor("administer");
-      const link = await gateway.getOrganizationAccountLink(actor.organizationId);
+      let link = await gateway.getOrganizationAccountLink(actor.organizationId);
+      if (!link) {
+        const ensured = await gateway.ensureOrganizationAccount(actor.organizationId);
+        link = { accountId: ensured.accountId, status: "active" };
+      }
       if (!link || link.status !== "active") {
         throw new Error("This organization is not linked to an Eccos account");
       }

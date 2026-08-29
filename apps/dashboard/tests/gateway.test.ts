@@ -143,6 +143,12 @@ function withResources(binding: typeof gatewayBinding, options: { accountId?: st
   gatewayBinding = {
     getOrganizationAccountLink: async (organizationId: string) =>
       organizationId === ORG_ID && fakeSessionHeaders ? { accountId, status: "active" } : null,
+    ensureOrganizationAccount: async (organizationId: string) => {
+      if (organizationId !== ORG_ID || !fakeSessionHeaders) {
+        throw new Error("not a member of the requested organization");
+      }
+      return { accountId, status: "active" as const };
+    },
     listAccountResources: async () => resourcesFor(accountId),
     ...binding,
   };
