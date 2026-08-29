@@ -23,7 +23,7 @@
 | Artifact | What it is | Production claim |
 |----------|-----------|------------------|
 | `apps/gateway` (`eccos` Worker + `EccosGateway` DO) | The v1 data plane on Cloudflare Workers | **Candidate** — deployed and live-smoke-verified on 2026-08-28; still gated for customer traffic |
-| `apps/dashboard` (`@eccos/dashboard`) | Operator console Worker, RPC-only to the gateway | **Candidate — must not be exposed publicly until Cloudflare Access is enabled** (`eccos-45t`) |
+| `apps/dashboard` (`@eccos/dashboard`) | Customer console Worker (Better Auth + D1), RPC-only to the gateway | **Candidate — customer auth is Better Auth only** (`eccos-0x0`); canonical-host allowlist enforced in the server entry, `workers.dev` disabled; production secrets (`BETTER_AUTH_SECRET`, `RESEND_API_KEY`) and remote D1 schema pending deploy (`eccos-0x0.9`) |
 | `packages/core` (`@eccos/core`) | Pure shared core (parser/send/signature/templates) | Internal workspace package — not published (Gate 4 N/A) |
 | `packages/gateway-contract` (`@eccos/gateway-contract`) | RPC contract (`GatewayApi`) | Internal workspace package — not published (Gate 4 N/A) |
 | `src/` (Bun self-host target) | Dockerised Bun/Hono self-host, retaken post-v1 | Secondary target; kept at parity for data lifecycle |
@@ -35,7 +35,7 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 | # | Gate | Status | Notes |
 |---|------|--------|-------|
 | 1 | Change control / CI | ✅ | Dashboard covered in CI (`eccos-a5r`), least-privilege `permissions`, **Biome lint blocking and green** (`eccos-bwr`). No automated prod-deploy gate (manual by design). |
-| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). The protected dashboard `/setup` now creates an Access-installation-scoped account; Cloudflare Access is code-ready but **not yet enabled at the account level** — 🕓 waived, tracked `eccos-45t`. |
+| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). Customer auth is **Better Auth + Organizations on a dedicated auth D1** (`eccos-0x0.1–.7`): sessions, verified-email signup, invitations, org→account mapping, RBAC matrix, audit events, distributed rate limiting, TOTP 2FA (docs/auth-tenancy-contract.md). Residual: production deploy + smoke evidence (`eccos-0x0.9`), email provider DNS (`eccos-0x0.11`). |
 | 3 | Operational readiness | 🟡 | `/ready` deep check + structured JSON logging w/ correlation IDs + `docs/operations.md` (`eccos-ggy`). Residual: alerting/monitoring not wired. |
 | 4 | Packaging contract | ➖ | **N/A.** `@eccos/core` and `@eccos/gateway-contract` are internal `workspace:*` packages with no publish intent for v1 (`eccos-1js`, decided). Re-open if they become public SDKs. |
 | 5 | Data lifecycle | 🟡 | Configurable split content/delivery retention on Workers, `RETENTION_DAYS` on the Bun target, Bun-target pruning parity, `docs/data-lifecycle.md` (`eccos-rv2`). Residual: scripted backup/export + a real restore drill. |
@@ -65,21 +65,23 @@ Environment note (not a product defect): a run of the dashboard suite on 2026-08
 local Bun runtime-transpiler cache (oven-sh/bun#32151 — cache key omits the JSX dev/prod
 mode). Purging `~/Library/Caches/bun/@t@` restored a full green run; no code change needed.
 
-**Not run:** dashboard deployment (it still requires the production Cloudflare Access application
-and vars) and a restore drill. The gateway deploy and live post-deploy smoke are now recorded above.
+**Not run:** dashboard production deployment (secrets `BETTER_AUTH_SECRET`/`RESEND_API_KEY`, the
+remote auth-D1 schema application, and the customer-origin smoke — `eccos-0x0.9`) and a restore
+drill. The gateway deploy and live post-deploy smoke are recorded above.
 
 ## Waivers
 
-- **W-1 — Dashboard edge auth (Gate 2).** Cloudflare Access is not enabled at the account
-  level. Defense-in-depth JWT re-verification exists in code (`apps/dashboard/src/access.ts`),
-  while public requests fail closed until `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are set. **Condition:**
-  do not expose the dashboard on a public URL until `eccos-45t` is done.
+- ~~W-1 — Dashboard edge auth~~ **CLOSED by `eccos-0x0.4`** (customer-auth clean cut): the Access
+  gate was deleted, replaced by Better Auth sessions + the canonical-host allowlist
+  (`app.eccos.chat` only; `workers.dev` disabled). Customer-auth hardening landed with
+  `eccos-0x0.7` (rate limiting, TOTP, audit). Remaining condition: production deploy and smoke
+  evidence via `eccos-0x0.9` before customer traffic.
 
 ## Remaining gaps (open beads)
 
 | Bead | Gap |
 |------|-----|
-| `eccos-45t` | Enable Cloudflare Access in front of the dashboard (account-level) |
+| `eccos-0x0.9` | Deploy the Better Auth dashboard (auth D1 + secrets), run the fresh-state cutover, record smoke evidence |
 | `eccos-v80` | Production-shaped two-number acceptance, migration/rollback evidence, and the remaining technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
 | `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
 | `eccos-n0o` | Meta Tech Provider/App Review/Access approval for third-party onboarding |
@@ -131,9 +133,10 @@ is available.
 - Meta **Tech Provider** enablement, **App Review**, and **Access** approval as applicable
   (`eccos-n0o`).
 - GDPR **DPA**/processing agreement covering the cloud operator role (`eccos-8yy`).
-- **Cloudflare Access** in front of the operator dashboard (see W-1 / `eccos-45t`).
-- A recorded **deployment + smoke** (the gateway is recorded in Gate 9; the dashboard still needs
-  Access configuration and its first-run `/setup` verification).
+- **Better Auth production cutover** for the customer dashboard — deploy + fresh auth D1 + smoke
+  (`eccos-0x0.9`).
+- A recorded **deployment + smoke** (the gateway is recorded in Gate 9; the dashboard needs its
+  post-Better-Auth deploy verification).
 - A validated **permanent System User token** (see `eccos-jf7` / `eccos-s3i`).
 - A healthy production gateway and real subscriber, with the current incident resolved
   (`eccos-u9x` / `eccos-jf7`).
@@ -153,8 +156,8 @@ the technical/legal/ops bar that must be met first.
 
 **Not yet.** The service is a strong **candidate**: all local gates pass and every finding
 from the readiness review has been addressed in code or documentation. Before claiming
-`PRODUCTION-READY`, close at minimum: **W-1** (`eccos-45t`, dashboard auth) and the remaining
-deployment/data-lifecycle verification (dashboard deploy and restore drill). The gateway deploy +
-smoke is already recorded in Gate 9. `PRODUCTION-READY` is a *technical* posture;
+`PRODUCTION-READY`, close at minimum: the dashboard production deploy (`eccos-0x0.9`, Better Auth
+cutover with auth D1 + smoke) and the remaining data-lifecycle verification (restore drill). The
+gateway deploy + smoke is already recorded in Gate 9; W-1 (dashboard auth) is closed by `eccos-0x0.4`.
 it does **not** by itself permit charging third parties — the first paid customer gate above
 (or a superseding decision) does.
