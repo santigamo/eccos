@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Dashboard deploy helper (eccos-0x0.4): customer auth is Better Auth + D1.
+#
+# Required in production (Worker secrets — set once with `wrangler secret put`):
+#   BETTER_AUTH_SECRET — auth secret (>= 32 chars)
+#   RESEND_API_KEY     — mail provider key (docs/auth-email-delivery.md)
+# Optional var:
+#   MAIL_FROM          — verified sending identity, e.g. "Eccos <noreply@notify.eccos.chat>"
+#
+# The auth D1 schema must exist before traffic is served:
+#   cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote
+# The canonical-host allowlist (app.eccos.chat) is enforced in src/server.ts;
+# there are no Access variables anymore and workers.dev is disabled.
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [[ -f "$ROOT/.env" ]]; then
@@ -12,11 +25,8 @@ fi
 
 cd "$ROOT/apps/dashboard"
 wrangler_args=()
-if [[ -n "${ACCESS_TEAM_DOMAIN:-}" ]]; then
-  wrangler_args+=(--var "ACCESS_TEAM_DOMAIN:$ACCESS_TEAM_DOMAIN")
-fi
-if [[ -n "${ACCESS_AUD:-}" ]]; then
-  wrangler_args+=(--var "ACCESS_AUD:$ACCESS_AUD")
+if [[ -n "${MAIL_FROM:-}" ]]; then
+  wrangler_args+=(--var "MAIL_FROM:$MAIL_FROM")
 fi
 
 if (( ${#wrangler_args[@]} > 0 )); then

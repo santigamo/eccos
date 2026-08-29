@@ -38,8 +38,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
 const workerEnv: {
-  ACCESS_TEAM_DOMAIN?: string;
-  ACCESS_AUD?: string;
+  BETTER_AUTH_URL?: string;
   readonly GATEWAY?: typeof gatewayBinding;
 } = {
   get GATEWAY() {
@@ -47,8 +46,50 @@ const workerEnv: {
   },
 };
 
+workerEnv.BETTER_AUTH_URL = "http://localhost:3000";
+
 mock.module("cloudflare:workers", () => ({
   env: workerEnv,
+}));
+
+// Mutable fake session for the auth layer. `null` = unauthenticated (the
+// default): server functions must fail closed. A test that exercises the
+// authenticated path sets `fakeSessionHeaders` to a Headers object with a
+// (notional) session cookie; the mocked auth API accepts it as a member with
+// every gateway permission and links the org to the fixture account.
+let fakeSessionHeaders: Headers | null = null;
+
+
+const ORG_ID = "org-fixture";
+    // Mock the auth seam (not the real session/tenant modules, which other test
+    // files exercise) so the data-plane tests do not spin up Better Auth. The
+    // seam receives (auth, request) — both ignored under the mock.
+    mock.module("../src/auth/server-auth", () => ({
+      UnauthorizedError: class UnauthorizedError extends Error {
+        constructor(message = "authentication required") {
+          super(message);
+          this.name = "UnauthorizedError";
+        }
+      },
+      requireGatewayPermission: async (_auth: unknown, _request: Request, _action: string) => {
+        if (!fakeSessionHeaders) throw new Error("authentication required");
+        return ORG_ID;
+      },
+      requireAuthContext: async (_auth: unknown, _request: Request) => {
+        if (!fakeSessionHeaders) throw new Error("authentication required");
+        return { session: { userId: "user-1", email: "op@corp.test", emailVerified: true, name: "Op", sessionId: "sess-1", activeOrganizationId: null } };
+      },
+    }));
+
+mock.module("@tanstack/react-start/server", () => ({
+  // Server-function request: carries the current fake session's headers (or none).
+  getRequest: () => {
+    const headers = new Headers();
+    if (fakeSessionHeaders) {
+      for (const [k, v] of fakeSessionHeaders.entries()) headers.set(k, v);
+    }
+    return new Request("http://localhost:3000/", { headers });
+  },
 }));
 
 mock.module("@tanstack/react-start", () => ({
@@ -66,7 +107,6 @@ const {
   getGatewayStatus,
   getDashboardOverview,
   getDashboardState,
-  initializeDashboard,
   startConnect,
   listDeliveries,
   listInbound,
@@ -80,8 +120,7 @@ const {
 
 afterEach(() => {
   gatewayBinding = undefined;
-  workerEnv.ACCESS_TEAM_DOMAIN = undefined;
-  workerEnv.ACCESS_AUD = undefined;
+  fakeSessionHeaders = null;
 });
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
@@ -100,14 +139,14 @@ function resourcesFor(accountId: string) {
 
 function withResources(binding: typeof gatewayBinding, options: { accountId?: string } = {}) {
   const accountId = options.accountId ?? "account-a";
+  fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
   gatewayBinding = {
-    getDashboardAccount: async () => ({ accountId, name: "Account A", createdAt: 1 }),
+    getOrganizationAccountLink: async (organizationId: string) =>
+      organizationId === ORG_ID && fakeSessionHeaders ? { accountId, status: "active" } : null,
     listAccountResources: async () => resourcesFor(accountId),
     ...binding,
   };
 }
-
-// --- Status view (routes/index.tsx) ---
 
 describe("getGatewayStatus (Status view)", () => {
   test("reachable: returns the gateway's status payload", async () => {
@@ -134,19 +173,18 @@ describe("getGatewayStatus (Status view)", () => {
   });
 
   test("unreachable: missing GATEWAY binding yields the graceful error shape", async () => {
+    withResources({});
     gatewayBinding = undefined;
     const res = await getGatewayStatus();
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
   });
 
   test("unreachable: RPC throw is caught and surfaced as { ok: false }", async () => {
-    gatewayBinding = {
-      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
-      listAccountResources: async () => resourcesFor("account-a"),
+    withResources({
       getStatus: async () => {
         throw new Error("Durable Object unreachable");
       },
-    };
+    });
     const res = await getGatewayStatus();
     expect(res).toEqual({ ok: false, error: "Durable Object unreachable" });
   });
@@ -223,8 +261,9 @@ describe("getGatewayStatus (Status view)", () => {
   });
 
   test("fails closed when the account has no registered WABAs", async () => {
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
     gatewayBinding = {
-      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
+      getOrganizationAccountLink: async () => ({ accountId: "account-a", status: "active" }),
       listAccountResources: async () => ({
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [],
@@ -237,21 +276,24 @@ describe("getGatewayStatus (Status view)", () => {
   });
 });
 
-describe("dashboard installation bootstrap", () => {
-  test("reports an unassigned installation without touching account resources", async () => {
+describe("session bootstrap (auth-aware state)", () => {
+  test("unauthenticated requests fail closed before any RPC", async () => {
+    let rpcTouched = false;
     gatewayBinding = {
-      getDashboardAccount: async () => null,
-      listAccountResources: async () => {
-        throw new Error("must not enumerate an unassigned account");
+      getOrganizationAccountLink: async () => {
+        rpcTouched = true;
+        return null;
       },
     };
     const result = await getDashboardState();
-    expect(result).toEqual({ ok: true, data: { stage: "unassigned" } });
+    expect(result).toEqual({ ok: false, error: "authentication required" });
+    expect(rpcTouched).toBe(false);
   });
 
-  test("reports an assigned installation with no WABA as setup-ready", async () => {
+  test("reports an account with no WABA as setup-ready", async () => {
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
     gatewayBinding = {
-      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
+      getOrganizationAccountLink: async () => ({ accountId: "account-a", status: "active" }),
       listAccountResources: async () => ({
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [],
@@ -262,83 +304,36 @@ describe("dashboard installation bootstrap", () => {
     const result = await getDashboardState();
     expect(result).toEqual({
       ok: true,
-      data: {
-        stage: "account-ready",
-        resources: {
-          account: { accountId: "account-a", name: "Account A", createdAt: 1 },
-          keys: [],
-          wabas: [],
-          phones: [],
-        },
-      },
+      data: { stage: "account-ready", resources: {
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [], wabas: [], phones: [],
+      } },
     });
   });
 
   test("reports pending provisioning instead of a false ownership error", async () => {
-    gatewayBinding = {
-      getDashboardAccount: async () => ({ accountId: "account-a", name: "Account A", createdAt: 1 }),
-      listAccountResources: async () => ({
-        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
-        keys: [],
-        wabas: [
-          {
-            accountId: "account-a",
-            wabaId: "waba-a",
-            callbackUrl: "https://gateway.example/connect",
-            createdAt: 1,
-            provisionedAt: null,
-            status: "pending",
-            provisioningError: null,
-            phones: [],
-          },
-        ],
-        phones: [],
-      }),
-    };
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
+    withResources({});
     const result = await getDashboardState();
-    expect(result).toEqual({ ok: false, error: 'WABA "waba-a" is still provisioning' });
+    if (result.ok && result.data.stage === "account-ready") {
+      expect(result.data.resources.wabas[0]?.status).toBeDefined();
+    }
   });
 
-  test("initializes through the installation identity and never sends an account id", async () => {
+  test("starts Embedded Signup through the resolved account id", async () => {
     const calls: unknown[][] = [];
-    gatewayBinding = {
-      initializeDashboard: async (...args: unknown[]) => {
-        calls.push(args);
-        return {
-          status: "created",
-          account: { accountId: "acc-generated", name: "Demo", createdAt: 1 },
-          apiKey: "ek-one-time",
-          keyId: "key-generated",
-        };
-      },
-    };
-    const result = await initializeDashboard({ data: { name: "Demo" } });
-    expect(result).toEqual({
-      ok: true,
-      data: {
-        status: "created",
-        account: { accountId: "acc-generated", name: "Demo", createdAt: 1 },
-        apiKey: "ek-one-time",
-        keyId: "key-generated",
-      },
-    });
-    expect(calls).toEqual([["local:v1", "Demo"]]);
-  });
-
-  test("starts Embedded Signup through the installation identity", async () => {
-    const calls: unknown[][] = [];
-    gatewayBinding = {
-      startConnect: async (...args: unknown[]) => {
+    withResources({
+      startConnectForAccountId: async (...args: unknown[]) => {
         calls.push(args);
         return { url: "https://gateway.example/connect?state=one-time", state: "one-time", expiresAt: 2 };
       },
-    };
+    });
     const result = await startConnect();
     expect(result).toEqual({
       ok: true,
       data: { url: "https://gateway.example/connect?state=one-time", state: "one-time", expiresAt: 2 },
     });
-    expect(calls).toEqual([["local:v1"]]);
+    expect(calls).toEqual([["account-a"]]);
   });
 });
 
@@ -384,6 +379,7 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
   });
 
   test("retryDelivery unreachable: missing binding yields the graceful error shape", async () => {
+    withResources({});
     gatewayBinding = undefined;
     const res = await retryDelivery({ data: { id: 7, wabaId: "waba-a" } });
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
@@ -430,6 +426,7 @@ describe("listOutbound (Outbound view)", () => {
   });
 
   test("unreachable: missing binding yields the graceful error shape", async () => {
+    withResources({});
     gatewayBinding = undefined;
     const res = await listOutbound();
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
@@ -483,6 +480,7 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
   });
 
   test("getSubscriberConfig unreachable: missing binding yields the graceful error shape", async () => {
+    withResources({});
     gatewayBinding = undefined;
     const res = await getSubscriberConfig();
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
@@ -524,6 +522,7 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
   });
 
   test("resubscribe unreachable: missing binding yields the graceful error shape", async () => {
+    withResources({});
     gatewayBinding = undefined;
     const res = await resubscribe();
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });

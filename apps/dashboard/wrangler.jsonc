@@ -13,22 +13,31 @@
     "head_sampling_rate": 1
   },
 
-  "workers_dev": true,
+  // workers.dev access is disabled: the workers.dev origin must not be an
+  // alternate customer path (contract §6).
+  "workers_dev": false,
 
   "routes": [
     { "pattern": "app.eccos.chat", "custom_domain": true }
   ],
 
-  // Cloudflare Access gate (defense-in-depth). Both empty = localhost-only
-  // development; public requests fail closed. Set BOTH in production so the
-  // Worker re-verifies the Access JWT and can't be bypassed via workers.dev:
-  //   ACCESS_TEAM_DOMAIN — your Zero Trust team domain, e.g. myteam.cloudflareaccess.com
-  //   ACCESS_AUD         — the Access application's Audience (AUD) tag
-  // Non-secret, so they live here (not `wrangler secret`). See README.md.
-  "vars": {
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
-  },
+  // Customer auth is Better Auth only (docs/auth-tenancy-contract.md §6): the
+  // server entry enforces the canonical-host allowlist (app.eccos.chat, plus
+  // localhost in dev) BEFORE routing, so the raw workers.dev/preview origins
+  // fail closed and are not alternate customer paths.
+
+  // Dedicated auth D1 database (identity plane — docs/auth-tenancy-contract.md §3).
+  // Per environment: local dev uses the local D1 (`bun run db:migrate:local`); the
+  // production/staging database ids are set at the deploy step (eccos-0x0.9) with
+  // EU jurisdiction. Never shared with gateway message data or other products.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "eccos-auth",
+      "database_id": "placeholder-local",
+      "migrations_dir": "migrations"
+    }
+  ],
 
   // Service binding to the gateway Worker (wrangler name "eccos"), reaching its
   // RPC entrypoint `GatewayRPC`. The dashboard resolves the account/WABA scope

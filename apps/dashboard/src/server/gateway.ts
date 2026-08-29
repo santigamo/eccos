@@ -1,6 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import { env } from "cloudflare:workers";
-import { dashboardInstallationKey } from "../access";
+import { createAuth, type Auth } from "../auth/auth";
+import { authConfigFromEnv } from "../auth/config";
+import { auditEvent } from "./audit";
+import {
+  requireAuthContext,
+  requireGatewayPermission,
+  UnauthorizedError,
+} from "../auth/server-auth";
 import type {
   AccountResources,
   ConnectStartResult,
@@ -43,6 +51,30 @@ export type {
  * running gateway never crashes.
  */
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/**
+ * Identity-plane access (contract §1/§5): every server function resolves the
+ * session server-side and re-validates the organization permission via the
+ * `auth/server-auth` seam. There is no installation identity, no
+ * browser-supplied accountId, and no cross-request authorization caching.
+ */
+
+/** Build the request-scoped auth instance from the Worker bindings. */
+function requestAuth(): Auth {
+  return createAuth(authConfigFromEnv(env));
+}
+
+/** Authenticated actor context for audit events. */
+interface ActorContext {
+  organizationId: string;
+  session: { userId: string; email: string };
+}
+
+async function requireActor(action: "view" | "operate" | "configure" | "administer" | "erase"): Promise<ActorContext> {
+  const organizationId = await requireGatewayPermission(requestAuth(), getRequest(), action);
+  const { session } = await requireAuthContext(requestAuth(), getRequest());
+  return { organizationId, session };
+}
 
 /**
  * Arbitrary JSON value. TanStack Start validates that server-function return
@@ -182,12 +214,24 @@ type ResolvedAccount = {
   resources: AccountResources;
 };
 
-async function resolveDashboardAccount(gateway: GatewayApi): Promise<ResolvedAccount | null> {
-  const account = await gateway.getDashboardAccount(dashboardInstallationKey(env));
-  if (!account) return null;
-  const resources = await gateway.listAccountResources(account.accountId);
-  if (!resources.account) throw new Error(`Account "${account.accountId}" is not configured`);
-  return { accountId: account.accountId, resources };
+/**
+ * Resolve the Eccos account for the signed-in user's organization (contract §1):
+ * session → membership → organization_accounts link → account. The link is the
+ * server-owned mapping in the control plane; a pending/disabled/unknown link
+ * fails closed. The org id is re-validated against membership inside
+ * requirePermission before any RPC runs.
+ */
+async function resolveOrganizationAccount(
+  gateway: GatewayApi,
+): Promise<ResolvedAccount> {
+  const organizationId = await requireGatewayPermission(requestAuth(), getRequest(), "view");
+  const link = await gateway.getOrganizationAccountLink(organizationId);
+  if (!link || link.status !== "active") {
+    throw new Error("This organization is not linked to an Eccos account");
+  }
+  const resources = await gateway.listAccountResources(link.accountId);
+  if (!resources.account) throw new Error(`Account "${link.accountId}" is not configured`);
+  return { accountId: link.accountId, resources };
 }
 
 function resolveScopeFromAccount(
@@ -215,8 +259,7 @@ async function resolveScope(
   requestedWabaId?: string,
   rejectUnknown = false,
 ): Promise<ResolvedScope> {
-  const account = await resolveDashboardAccount(gateway);
-  if (!account) throw new Error("Eccos dashboard has not been initialized");
+  const account = await resolveOrganizationAccount(gateway);
   return resolveScopeFromAccount(account, requestedWabaId, rejectUnknown);
 }
 
@@ -256,6 +299,7 @@ export const getGatewayStatus = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(
     async ({ data }): Promise<GatewayStatusResult> => {
+      await requireGatewayPermission(requestAuth(), getRequest(), "view");
       const res = await withScopedGateway(
         (gateway, scope) => gateway.getStatus(scope.wabaId, scope.accountId),
         data?.wabaId,
@@ -267,8 +311,10 @@ export const getGatewayStatus = createServerFn({ method: "GET" })
 export const getDashboardScope = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(
-    ({ data }): Promise<Result<DashboardScope>> =>
-      withScopedGateway((_, scope) => Promise.resolve(dashboardScope(scope)), data?.wabaId),
+    async ({ data }): Promise<Result<DashboardScope>> => {
+      await requireGatewayPermission(requestAuth(), getRequest(), "view");
+      return withScopedGateway((_, scope) => Promise.resolve(dashboardScope(scope)), data?.wabaId);
+    },
   );
 
 export const getDashboardState = createServerFn({ method: "GET" })
@@ -276,8 +322,8 @@ export const getDashboardState = createServerFn({ method: "GET" })
   .handler(
     ({ data }): Promise<DashboardStateResult> =>
       withGateway(async (gateway) => {
-        const account = await resolveDashboardAccount(gateway);
-        if (!account) return { stage: "unassigned" };
+        await requireGatewayPermission(requestAuth(), getRequest(), "view");
+        const account = await resolveOrganizationAccount(gateway);
         const wabas = [...account.resources.wabas].sort((a, b) => a.wabaId.localeCompare(b.wabaId));
         if (wabas.length === 0) {
           return { stage: "account-ready", resources: account.resources };
@@ -294,84 +340,104 @@ export const getDashboardState = createServerFn({ method: "GET" })
 export const getDashboardOverview = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(
-    ({ data }): Promise<DashboardOverviewResult> =>
-      withScopedGateway(
+    async ({ data }): Promise<DashboardOverviewResult> => {
+      await requireGatewayPermission(requestAuth(), getRequest(), "view");
+      return withScopedGateway(
         async (gateway, scope) => ({
           status: await gateway.getStatus(scope.wabaId, scope.accountId),
           scope: dashboardScope(scope),
         }),
         data?.wabaId,
-      ),
+      );
+    },
   );
 
 export const getAccountResources = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<AccountResources>> =>
-    withGateway(async (gateway) => {
-      const account = await resolveDashboardAccount(gateway);
-      if (!account) throw new Error("Eccos dashboard has not been initialized");
+  async (): Promise<Result<AccountResources>> => {
+    await requireGatewayPermission(requestAuth(), getRequest(), "view");
+    return withGateway(async (gateway) => {
+      const account = await resolveOrganizationAccount(gateway);
       return account.resources;
-    }),
+    });
+  },
 );
-
-export const initializeDashboard = createServerFn({ method: "POST" })
-  .validator(validateSetupInput)
-  .handler(
-    ({ data }): Promise<Result<DashboardInitializationResult>> =>
-      withGateway((gateway) => gateway.initializeDashboard(dashboardInstallationKey(env), data?.name)),
-  );
 
 export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
-    withGateway((gateway) => gateway.startConnect(dashboardInstallationKey(env))),
+    withGateway(async (gateway) => {
+      // Embedded Signup is an admin+ mutation (contract §4): step-up policy is
+      // enforced by eccos-0x0.7; the account comes from the organization link.
+      const actor = await requireActor("administer");
+      const link = await gateway.getOrganizationAccountLink(actor.organizationId);
+      if (!link || link.status !== "active") {
+        throw new Error("This organization is not linked to an Eccos account");
+      }
+      const result = await gateway.startConnectForAccountId(link.accountId);
+      auditEvent({
+        action: "connect_start",
+        actorUserId: actor.session.userId,
+        organizationId: actor.organizationId,
+        accountId: link.accountId,
+        outcome: "success",
+      });
+      return result;
+    }),
 );
 
 export const listDeliveries = createServerFn({ method: "GET" })
   .validator(validateDeliveryInput)
   .handler(
-    ({ data }): Promise<Result<DeliveryRecord[]>> =>
-      withScopedGateway(
+    async ({ data }): Promise<Result<DeliveryRecord[]>> => {
+      await requireGatewayPermission(requestAuth(), getRequest(), "view");
+      return withScopedGateway(
         (gateway, scope) => gateway.listDeliveries({ ...data, wabaId: scope.wabaId }, scope.accountId),
         data?.wabaId,
-      ),
+      );
+    },
   );
 
 export const listInbound = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(({ data }): Promise<Result<InboundRow[]>> =>
-    withScopedGateway(
+  .handler(async ({ data }): Promise<Result<InboundRow[]>> => {
+    await requireGatewayPermission(requestAuth(), getRequest(), "view");
+    return withScopedGateway(
       (gateway, scope) => gateway.listInbound({ wabaId: scope.wabaId }, scope.accountId),
       data?.wabaId,
-    ),
-  );
+    );
+  });
 
 export const listOutbound = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(({ data }): Promise<Result<OutboundRow[]>> =>
-    withScopedGateway(
+  .handler(async ({ data }): Promise<Result<OutboundRow[]>> => {
+    await requireGatewayPermission(requestAuth(), getRequest(), "view");
+    return withScopedGateway(
       (gateway, scope) => gateway.listOutbound({ wabaId: scope.wabaId }, scope.accountId),
       data?.wabaId,
-    ),
-  );
+    );
+  });
 
 export const listTemplates = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(({ data }): Promise<Result<TemplatesResult>> =>
-    withScopedGateway(
+  .handler(async ({ data }): Promise<Result<TemplatesResult>> => {
+    await requireGatewayPermission(requestAuth(), getRequest(), "view");
+    return withScopedGateway(
       async (gateway, scope) =>
         (await gateway.listTemplates(scope.wabaId, 100, scope.accountId)) as TemplatesResult,
       data?.wabaId,
-    ),
-  );
+    );
+  });
 
 export const retryDelivery = createServerFn({ method: "POST" })
   .validator(validateRetryInput)
   .handler(
-    ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> =>
-      withScopedGateway(
+    async ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> => {
+      await requireGatewayPermission(requestAuth(), getRequest(), "operate");
+      return withScopedGateway(
         (gateway, scope) => gateway.retryDelivery(data.id, scope.wabaId, scope.accountId),
         data.wabaId,
         true,
-      ),
+      );
+    },
   );
 
 // --- Operator actions (settings page) ---
@@ -379,26 +445,29 @@ export const retryDelivery = createServerFn({ method: "POST" })
 /** Read the current outbound-forwarding target. The secret is never exposed. */
 export const getSubscriberConfig = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(({ data }): Promise<Result<SubscriberConfig>> =>
-    withScopedGateway(
+  .handler(async ({ data }): Promise<Result<SubscriberConfig>> => {
+    await requireGatewayPermission(requestAuth(), getRequest(), "operate");
+    return withScopedGateway(
       (gateway, scope) => gateway.getSubscriberConfig(scope.wabaId, scope.accountId),
       data?.wabaId,
-    ),
-  );
+    );
+  });
 
 /** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
 export const setSubscriberConfig = createServerFn({ method: "POST" })
   .validator(validateSubscriberInput)
   .handler(
-    ({ data }): Promise<Result<{ ok: true }>> =>
-      withScopedGateway(
+    async ({ data }): Promise<Result<{ ok: true }>> => {
+      await requireGatewayPermission(requestAuth(), getRequest(), "configure");
+      return withScopedGateway(
         (gateway, scope) => {
           const { wabaId: _wabaId, ...input } = data;
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);
         },
         data.wabaId,
         true,
-      ),
+      );
+    },
   );
 
 /**
@@ -408,10 +477,11 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
  */
 export const resubscribe = createServerFn({ method: "POST" })
   .validator(validateScopeInput)
-  .handler(({ data }): Promise<Result<ResubscribeResult>> =>
-    withScopedGateway(
+  .handler(async ({ data }): Promise<Result<ResubscribeResult>> => {
+    await requireGatewayPermission(requestAuth(), getRequest(), "configure");
+    return withScopedGateway(
       (gateway, scope) => gateway.resubscribe(scope.wabaId, scope.accountId),
       data?.wabaId,
       true,
-    ),
-  );
+    );
+  });
