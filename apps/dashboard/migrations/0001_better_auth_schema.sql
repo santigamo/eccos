@@ -33,3 +33,9 @@ create index "twoFactor_secret_idx" on "twoFactor" ("secret");
 create index "twoFactor_userId_idx" on "twoFactor" ("userId");
 
 create unique index "account_issuer_accountId_uidx" on "account" ("issuer", "accountId");
+
+-- rate-limit storage (rateLimit.storage: "database") — added post-migration for
+-- the eccos-0x0.7 hardening pass; the CLI generation missed it because the
+-- schema-config instance did not enable database-backed rate limiting.
+create table "rateLimit" ("id" text not null primary key, "key" text not null, "count" integer not null, "lastRequest" bigint not null);
+create index "rateLimit_key_idx" on "rateLimit" ("key");
