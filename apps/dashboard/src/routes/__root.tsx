@@ -63,7 +63,15 @@ function RootComponent() {
   const state = Route.useLoaderData()
   return (
     <RootDocument>
-      {state.ok && state.data.stage !== "ready" ? <Outlet /> : <AppShell />}
+      {state.ok ? (
+        // Authenticated tenant context: the app chrome only wraps ready/
+        // account-ready states; onboarding screens render standalone.
+        state.data.stage !== "ready" ? <Outlet /> : <AppShell />
+      ) : (
+        // Unauthenticated (or gateway-unreachable) root load: bare outlet so
+        // the sign-in screen renders WITHOUT the app chrome around it.
+        <Outlet />
+      )}
     </RootDocument>
   )
 }

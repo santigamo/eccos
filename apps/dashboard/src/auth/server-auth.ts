@@ -37,3 +37,12 @@ export async function requireAuthContext(
   if (!session) throw new UnauthorizedError();
   return { session };
 }
+
+/**
+ * Session-or-null for the root loader's page gate. Returns a plain boolean —
+ * the loader never needs the session payload, only its existence, and loaders
+ * run for both auth'd and anonymous visitors.
+ */
+export async function hasSession(auth: Auth, request: Request): Promise<boolean> {
+  return resolveSession(auth, request) !== null;
+}
