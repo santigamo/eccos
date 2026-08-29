@@ -1,0 +1,13 @@
+# Local development values for the dashboard Worker (copy to `.dev.vars`).
+# NEVER commit a real `.dev.vars` or a production secret.
+
+# Better Auth secret. Must be at least 32 characters. Development only —
+# production sets this with `wrangler secret put BETTER_AUTH_SECRET`.
+BETTER_AUTH_SECRET=dev-only-placeholder-replace-me-32chars
+# Local dev origin (vite). Omit in production to use the canonical origin.
+BETTER_AUTH_URL=http://localhost:3000
+
+# Optional: production mail provider (Resend). When set, the Resend adapter
+# replaces the development console sender. See docs/auth-email-delivery.md.
+# RESEND_API_KEY=re_xxx
+# MAIL_FROM=Eccos <noreply@notify.eccos.chat>
