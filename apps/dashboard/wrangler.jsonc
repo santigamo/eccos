@@ -34,7 +34,7 @@
     {
       "binding": "DB",
       "database_name": "eccos-auth",
-      "database_id": "placeholder-local",
+      "database_id": "fcd627f4-9ec7-4f30-afea-e1edaaacde32",
       "migrations_dir": "migrations"
     }
   ],

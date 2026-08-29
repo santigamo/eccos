@@ -12,7 +12,6 @@ import {
 import type {
   AccountResources,
   ConnectStartResult,
-  DashboardInitializationResult,
   DeliveryListOpts,
   DeliveryRecord,
   GatewayApi,
@@ -32,7 +31,6 @@ type DashboardListOpts = Omit<DeliveryListOpts, "wabaId">;
 export type {
   AccountResources,
   ConnectStartResult,
-  DashboardInitializationResult,
   DeliveryRecord,
   GatewayStatus,
   Health,
