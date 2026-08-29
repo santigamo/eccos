@@ -137,18 +137,6 @@ export interface AccountResources {
   phones: AccountPhoneResource[];
 }
 
-export type DashboardInitializationResult =
-  | {
-      status: "created";
-      account: AccountSummary;
-      apiKey: string;
-      keyId: string;
-    }
-  | {
-      status: "existing";
-      account: AccountSummary;
-    };
-
 export interface ConnectStartResult {
   url: string;
   state: string;
@@ -190,12 +178,19 @@ export interface GatewayApi {
   exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
-  /** Resolve the account assigned to one dashboard installation identity. */
-  getDashboardAccount(installationKey: string): Promise<AccountSummary | null>;
-  /** Atomically assign one generated account to a dashboard installation. */
-  initializeDashboard(
-    installationKey: string,
+  startConnectForAccountId(accountId: string): Promise<ConnectStartResult>;
+  /** Start Embedded Signup for one already-resolved account id (the dashboard
+   * resolves it from the organization link; never a browser-supplied id). */
+  startConnectForAccountId(accountId: string): Promise<ConnectStartResult>;
+  /** Idempotent one-to-one organization→account provisioning saga (contract
+   * §2). Creates the Eccos account and the active link atomically; no API key. */
+  ensureOrganizationAccount(
+    organizationId: string,
     name?: string,
-  ): Promise<DashboardInitializationResult>;
-  startConnect(installationKey: string): Promise<ConnectStartResult>;
+  ): Promise<{ accountId: string; status: "active" | "existing" }>;
+  /** Read the one-to-one organization→account link (contract §2). Unknown
+   * organization → null; `pending`/`disabled` links fail closed upstream. */
+  getOrganizationAccountLink(
+    organizationId: string,
+  ): Promise<{ accountId: string; status: "active" | "pending" | "disabled" } | null>;
 }

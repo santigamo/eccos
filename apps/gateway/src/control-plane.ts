@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
-  DashboardInitializationResult,
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
 
@@ -35,7 +34,8 @@ export const PROVISIONING_LEASE_MS_AT_RUNTIME = PROVISIONING_LEASE_MS;
 const PROVISIONING_BATCH = 20;
 const PROVISIONING_RETRY_BASE_MS = 5_000;
 const PROVISIONING_RETRY_MAX_MS = 3_600_000;
-const INSTALLATION_KEY_MAX_LENGTH = 512;
+const ORGANIZATION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const ORGANIZATION_ID_MAX_LENGTH = 128;
 
 /** Public shape of an account; never carries credentials. */
 export interface AccountRecord {
@@ -179,12 +179,14 @@ function validateAccountId(accountId: string): string {
   return v;
 }
 
-function validateInstallationKey(installationKey: string): string {
-  const value = installationKey?.trim() ?? "";
-  if (!value || value.length > INSTALLATION_KEY_MAX_LENGTH) {
-    throw new Error(`invalid installationKey: expected 1-${INSTALLATION_KEY_MAX_LENGTH} characters`);
+function validateOrganizationId(organizationId: string): string {
+  const v = organizationId?.trim() ?? "";
+  if (!v || v.length > ORGANIZATION_ID_MAX_LENGTH || !ORGANIZATION_ID_PATTERN.test(v)) {
+    throw new Error(
+      `invalid organizationId: expected 1-${ORGANIZATION_ID_MAX_LENGTH} letters, digits, "_" or "-"`,
+    );
   }
-  return value;
+  return v;
 }
 
 function validateLabel(
@@ -388,10 +390,15 @@ export class EccosControlPlane extends DurableObject<Env> {
         expires_at INTEGER NOT NULL,
         redirect_uri TEXT
       );`);
-      this.sql.exec(`CREATE TABLE IF NOT EXISTS dashboard_installations (
-        installation_hash TEXT PRIMARY KEY,
-        account_id        TEXT NOT NULL UNIQUE,
-        created_at         INTEGER NOT NULL
+      // Identity-plane link (docs/auth-tenancy-contract.md section 2): one Better
+      // Auth organization <-> one Eccos account. PRIMARY KEY on organization_id +
+      // UNIQUE on account_id enforce the one-to-one mapping at the storage layer;
+      // the link is immutable - it is never re-pointed, only created or read.
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS organization_accounts (
+        organization_id TEXT PRIMARY KEY,
+        account_id      TEXT NOT NULL UNIQUE,
+        status          TEXT NOT NULL DEFAULT 'active',
+        created_at      INTEGER NOT NULL
       );`);
       const wabaColumns = this.sql.exec("PRAGMA table_info(wabas)").toArray();
       if (!wabaColumns.some((row) => row.name === "status")) {
@@ -1007,58 +1014,38 @@ export class EccosControlPlane extends DurableObject<Env> {
     };
   }
 
-  async getDashboardAccount(installationKey: string): Promise<AccountRecord | null> {
-    const installationHash = await sha256Hex(validateInstallationKey(installationKey));
-    const row = this.sql
-      .exec(
-        `SELECT a.account_id, a.name, a.created_at
-         FROM dashboard_installations d
-         JOIN accounts a ON a.account_id = d.account_id
-         WHERE d.installation_hash = ?`,
-        installationHash,
-      )
-      .toArray()[0];
-    if (!row) return null;
-    return {
-      accountId: row.account_id as string,
-      name: row.name as string,
-      createdAt: row.created_at as number,
-    };
-  }
-
-  async initializeDashboard(
-    installationKey: string,
+  /**
+   * Idempotent organization-to-account provisioning saga (contract section 2):
+   * resolves the existing one-to-one link for `organizationId`, or creates the
+   * Eccos account AND the active link atomically inside one DO transaction.
+   * Never issues an API key and never rebinds an existing link; concurrent or
+   * retried calls converge to exactly one account and one link row.
+   */
+  async ensureOrganizationAccount(
+    organizationId: string,
     name?: string,
-  ): Promise<DashboardInitializationResult> {
-    const installationHash = await sha256Hex(validateInstallationKey(installationKey));
-    const accountName = validateLabel(name ?? null, "name") ?? "Eccos";
-    const createdAt = Date.now();
-    const apiKey = newApiKey();
-    const keyId = newId("key");
-    const keyHash = await sha256Hex(apiKey);
-    const accountId = newId("acc");
-    let account: AccountRecord | null = null;
-    let created = false;
-
+  ): Promise<{ accountId: string; status: "active" | "existing" }> {
+    const orgId = validateOrganizationId(organizationId);
+    const accountName = validateLabel(name ?? null, "name") ?? "";
+    let result: { accountId: string; status: "active" | "existing" } | null = null;
     this.ctx.storage.transactionSync(() => {
       const existing = this.sql
         .exec(
-          `SELECT a.account_id, a.name, a.created_at
-           FROM dashboard_installations d
-           JOIN accounts a ON a.account_id = d.account_id
-           WHERE d.installation_hash = ?`,
-          installationHash,
+          "SELECT account_id, status FROM organization_accounts WHERE organization_id = ?",
+          orgId,
         )
         .toArray()[0];
       if (existing) {
-        account = {
-          accountId: existing.account_id as string,
-          name: existing.name as string,
-          createdAt: existing.created_at as number,
-        };
+        const status = existing.status as string;
+        // A link exists: never rebind. Only an active link resolves to an account.
+        if (status !== "active") {
+          throw new Error(`organization "${orgId}" link is ${status}; access fails closed`);
+        }
+        result = { accountId: existing.account_id as string, status: "existing" };
         return;
       }
-
+      const accountId = newId("acc");
+      const createdAt = Date.now();
       this.sql.exec(
         "INSERT INTO accounts (account_id, name, created_at) VALUES (?, ?, ?)",
         accountId,
@@ -1066,26 +1053,34 @@ export class EccosControlPlane extends DurableObject<Env> {
         createdAt,
       );
       this.sql.exec(
-        "INSERT INTO api_keys (key_id, account_id, label, hash, created_at, revoked_at) VALUES (?, ?, NULL, ?, ?, NULL)",
-        keyId,
-        accountId,
-        keyHash,
-        createdAt,
-      );
-      this.sql.exec(
-        "INSERT INTO dashboard_installations (installation_hash, account_id, created_at) VALUES (?, ?, ?)",
-        installationHash,
+        "INSERT INTO organization_accounts (organization_id, account_id, status, created_at) VALUES (?, ?, 'active', ?)",
+        orgId,
         accountId,
         createdAt,
       );
-      account = { accountId, name: accountName, createdAt };
-      created = true;
+      result = { accountId, status: "active" };
     });
+    if (!result) throw new Error("organization account provisioning failed");
+    return result;
+  }
 
-    if (!account) throw new Error("dashboard initialization failed");
-    return created
-      ? { status: "created", account, apiKey, keyId }
-      : { status: "existing", account };
+  /** Read the one-to-one organization link. `pending`/`disabled` links are
+   * returned as-is so callers fail closed; unknown organizations return null. */
+  getOrganizationAccountLink(
+    organizationId: string,
+  ): { accountId: string; status: "active" | "pending" | "disabled" } | null {
+    const orgId = validateOrganizationId(organizationId);
+    const row = this.sql
+      .exec(
+        "SELECT account_id, status FROM organization_accounts WHERE organization_id = ?",
+        orgId,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    return {
+      accountId: row.account_id as string,
+      status: row.status as "active" | "pending" | "disabled",
+    };
   }
 
   purgeExpiredConnectStates(now = Date.now()): void {

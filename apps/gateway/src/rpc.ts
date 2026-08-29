@@ -8,9 +8,7 @@ import { isPublicConfigKey } from "./private-config-keys";
 import { resubscribeWaba } from "./provisioning";
 import type {
   AccountResources,
-  AccountSummary,
   ConnectStartResult,
-  DashboardInitializationResult,
   DeliveryListOpts,
   DeliveryRecord,
   EraseByPhoneResult,
@@ -204,22 +202,32 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).listAccountResources(account);
   }
 
-  async getDashboardAccount(installationKey: string): Promise<AccountSummary | null> {
-    return getControlPlaneStub(this.env).getDashboardAccount(installationKey);
-  }
-
-  async initializeDashboard(
-    installationKey: string,
+  /** Idempotent organization→account provisioning (contract §2). Creates no API
+   * key; concurrent/retried calls converge to one account and one link. */
+  async ensureOrganizationAccount(
+    organizationId: string,
     name?: string,
-  ): Promise<DashboardInitializationResult> {
-    return getControlPlaneStub(this.env).initializeDashboard(installationKey, name);
+  ): Promise<{ accountId: string; status: "active" | "existing" }> {
+    return getControlPlaneStub(this.env).ensureOrganizationAccount(organizationId, name);
   }
 
-  async startConnect(installationKey: string): Promise<ConnectStartResult> {
-    const account = await getControlPlaneStub(this.env).getDashboardAccount(installationKey);
-    if (!account) throw new Error("Eccos dashboard has not been initialized");
+  /** Read the organization→account link. Unknown org → null; pending/disabled
+   * links are returned so callers fail closed (contract §10). */
+  async getOrganizationAccountLink(organizationId: string): Promise<{
+    accountId: string;
+    status: "active" | "pending" | "disabled";
+  } | null> {
+    return getControlPlaneStub(this.env).getOrganizationAccountLink(organizationId);
+  }
+
+  /** Start Embedded Signup for a resolved account (contract §Reconciliation):
+   * the installation key is replaced by the server-resolved account id. */
+  async startConnectForAccountId(accountId: string): Promise<ConnectStartResult> {
+    const id = requireAccountId(accountId, "accountId is required");
+    const resources = await getControlPlaneStub(this.env).listAccountResources(id);
+    if (!resources.account) throw new Error(`Account "${id}" is not configured`);
     const publicOrigin = this.env.GATEWAY_PUBLIC_URL?.trim();
     if (!publicOrigin) throw new Error("GATEWAY_PUBLIC_URL is required for dashboard Embedded Signup");
-    return startConnectForAccount(this.env, account.accountId, publicOrigin);
+    return startConnectForAccount(this.env, id, publicOrigin);
   }
 }
