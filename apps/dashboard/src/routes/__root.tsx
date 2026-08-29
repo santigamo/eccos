@@ -3,7 +3,6 @@ import { Outlet, createRootRoute, HeadContent, Scripts, redirect } from "@tansta
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { getDashboardState } from "../server/gateway"
 import { normalizeSearchWabaId } from "../lib/search"
-
 import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
@@ -15,6 +14,10 @@ export const Route = createRootRoute({
   },
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: async ({ deps, location }) => {
+    // Page-level auth gate lives in the SERVER ENTRY (src/server.ts): it runs
+    // before routing for every request, so anonymous page loads are redirected
+    // to /signin before this loader executes. Server functions fail closed in
+    // src/auth/server-auth.ts. Public routes are also handled there.
     const state = await getDashboardState({ data: { wabaId: deps.wabaId } })
     if (state.ok && state.data.stage !== "ready" && location.pathname !== "/setup") {
       throw redirect({ to: "/setup" })
