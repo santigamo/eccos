@@ -1,5 +1,12 @@
 import { useEffect, type ReactNode } from "react"
-import { Outlet, createRootRoute, HeadContent, Scripts, redirect } from "@tanstack/react-router"
+import {
+  Outlet,
+  createRootRoute,
+  HeadContent,
+  Scripts,
+  redirect,
+  useLocation,
+} from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { getDashboardState } from "../server/gateway"
 import { normalizeSearchWabaId } from "../lib/search"
@@ -61,8 +68,9 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   const state = Route.useLoaderData()
+  const pathname = useLocation({ select: (l) => l.pathname })
   return (
-    <RootDocument>
+    <RootDocument lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}>
       {state.ok ? (
         // Authenticated tenant context: the app chrome only wraps ready/
         // account-ready states; onboarding screens render standalone.
@@ -76,7 +84,10 @@ function RootComponent() {
   )
 }
 
-function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
+function RootDocument({
+  children,
+  lanternExempt,
+}: Readonly<{ children: ReactNode; lanternExempt: boolean }>) {
   return (
     <html lang="en" className="dark">
       <head>
@@ -89,13 +100,22 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
         >
           Skip to main content
         </a>
-        <CursorLight />
+        {lanternExempt ? null : <CursorLight />}
         {children}
         <Scripts />
       </body>
     </html>
   )
 }
+
+/** Pre-auth brand surfaces — the silk owns the spectacle there. */
+const LANTERN_EXEMPT_PATHS = new Set([
+  "/signin",
+  "/signup",
+  "/forgot-password",
+  "/reset-password",
+  "/invitations",
+])
 
 /**
  * The lantern (see #cursor-light in app.css). The trailing lerp is what makes

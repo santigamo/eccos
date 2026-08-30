@@ -109,6 +109,21 @@ backdrop blur, 1px bottom rule) but its wash joined the glass family —
 `rgba(13, 26, 27, 0.55)`, a deliberate console deviation from the site's
 `rgba(7, 12, 15, 0.72)` so the atmosphere reads through the bar too.
 
+### The one-spectacle rule, per surface (pre-auth deviation)
+
+The lantern is the console's one spectacle — but the rule is **per surface**, and
+the pre-auth brand panel (sign-in / sign-up, the reui auth-13 split screen) is a
+different surface: there the landing's iridescent silk owns the spectacle and the
+lantern is absent (gated by `LANTERN_EXEMPT_PATHS` in `__root.tsx`). The silk
+renders under the brand panel's glass through `SilkPanel`
+(`src/components/blocks/auth-13/components/silk-panel.tsx`) — a byte-identical
+port of the site shader (`apps/site/public/js/shader.js`, keep the FRAG/VERT
+in sync; the console pins `u_light = 0`, dark-only) with a CSS gradient fallback
+(no WebGL, reduced motion, context loss). Below the `lg` breakpoint the brand
+panel does not render and the form is the whole page; the WebGL context is not
+even allocated there. The hatch band stays out of the panel: over the silk it
+read as noise, not as the chapter divider it is on flat pages.
+
 ## Interaction contrast (the console's own law)
 
 The landing signals interactivity with green edges; the console keeps that signature
