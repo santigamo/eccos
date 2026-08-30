@@ -1,16 +1,14 @@
 import { createFileRoute, useSearch } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authClient } from "../auth/auth-client";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import {
-  Frame,
   FrameDescription,
   FrameHeader,
-  FramePanel,
   FrameTitle,
 } from "../components/reui/frame";
-import { Page } from "../ui";
+import { AuthCard, authErrorMessage, AUTH_ERROR_BANNER_CLASS } from "../components/auth/auth-page";
 
 type ForgotSearch = { error?: string; sent?: string };
 
@@ -32,6 +30,10 @@ function ForgotPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  useEffect(() => {
+    document.title = sent ? "Check your inbox — Eccos" : "Forgot password — Eccos";
+  }, [sent]);
+
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
@@ -42,7 +44,7 @@ function ForgotPasswordPage() {
     });
     setPending(false);
     if (result.error) {
-      setError(result.error.message ?? "Could not start the reset");
+      setError(authErrorMessage(result.error, "Could not start the reset"));
       return;
     }
     // Generic response either way (anti-enumeration, contract §8).
@@ -50,62 +52,56 @@ function ForgotPasswordPage() {
   }
 
   return (
-    <main id="main-content" className="min-h-svh px-4 py-6 md:px-8 md:py-8">
-      <Page title="Reset your password" kicker="Eccos">
-        <div className="mx-auto flex max-w-md flex-col gap-4">
-          <Frame variant="default" spacing="lg">
-            <FramePanel fit>
-              {sent ? (
-                <>
-                  <FrameHeader>
-                    <FrameTitle>Check your inbox</FrameTitle>
-                    <FrameDescription>
-                      If that address exists in our system, a reset link is on its
-                      way. The link expires after a limited time.
-                    </FrameDescription>
-                  </FrameHeader>
-                  <a href="/signin" className="text-muted-foreground text-sm hover:text-foreground">
-                    Back to sign in
-                  </a>
-                </>
-              ) : (
-                <>
-                  <FrameHeader>
-                    <FrameTitle>Forgot your password?</FrameTitle>
-                    <FrameDescription>
-                      Enter your account email and we will send a reset link.
-                    </FrameDescription>
-                  </FrameHeader>
-                  <form className="flex flex-col gap-4" onSubmit={onSubmit}>
-                    <label
-                      htmlFor="forgot-email"
-                      className="flex flex-col gap-1.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase"
-                    >
-                      Email
-                      <Input
-                        id="forgot-email"
-                        type="email"
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        autoComplete="email"
-                        required
-                      />
-                    </label>
-                    {error ? (
-                      <p className="border-l-2 border-[#e03131] bg-[rgba(224,49,49,.12)] px-3 py-2 text-sm text-[#ff7777]" role="alert">
-                        {error}
-                      </p>
-                    ) : null}
-                    <Button type="submit" disabled={pending}>
-                      {pending ? "Sending…" : "Send reset link"}
-                    </Button>
-                  </form>
-                </>
-              )}
-            </FramePanel>
-          </Frame>
-        </div>
-      </Page>
-    </main>
+    <AuthCard title="Reset your password">
+      {sent ? (
+        <>
+          <FrameHeader>
+            <FrameTitle>Check your inbox</FrameTitle>
+            <FrameDescription>
+              If that address exists in our system, a reset link is on its
+              way. The link expires after a limited time.
+            </FrameDescription>
+          </FrameHeader>
+          <a href="/signin" className="text-muted-foreground text-sm hover:text-foreground">
+            Back to sign in
+          </a>
+        </>
+      ) : (
+        <>
+          <FrameHeader>
+            <FrameTitle>Forgot your password?</FrameTitle>
+            <FrameDescription>
+              Enter your account email and we will send a reset link.
+            </FrameDescription>
+          </FrameHeader>
+          <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+            <label
+              htmlFor="forgot-email"
+              className="flex flex-col gap-1.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase"
+            >
+              Email
+              <Input
+                id="forgot-email"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? "forgot-error" : undefined}
+                required
+              />
+            </label>
+            {error ? (
+              <p id="forgot-error" className={AUTH_ERROR_BANNER_CLASS} role="alert">
+                {error}
+              </p>
+            ) : null}
+            <Button type="submit" disabled={pending}>
+              {pending ? "Sending…" : "Send reset link"}
+            </Button>
+          </form>
+        </>
+      )}
+    </AuthCard>
   );
 }
