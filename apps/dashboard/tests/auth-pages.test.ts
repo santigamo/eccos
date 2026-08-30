@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   authErrorMessage,
   isDuplicateEmailError,
+  redactError,
   safeRedirectTarget,
 } from "../src/components/auth/auth-page";
-import { redactError } from "../src/routes/signup";
 
 describe("safeRedirectTarget", () => {
   test("accepts same-origin absolute paths, preserving query strings", () => {

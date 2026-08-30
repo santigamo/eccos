@@ -28,7 +28,7 @@ function InvitationsPage() {
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    document.title = "Accept invitation — Eccos";
+    document.title = "Accept invitation · Eccos";
   }, []);
 
   async function accept() {

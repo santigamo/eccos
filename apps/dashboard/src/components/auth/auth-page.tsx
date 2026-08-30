@@ -67,6 +67,14 @@ export function isDuplicateEmailError(
   return error?.code === "USER_ALREADY_EXISTS" || error?.status === 422;
 }
 
+/**
+ * ?error= carries only a bounded generic message, never raw server text that
+ * could confirm whether an address exists.
+ */
+export function redactError(value: string): string | undefined {
+  return value && value.length < 200 ? value : undefined;
+}
+
 /** Classes of the shared auth error banner (red = meaningful failure only). */
 export const AUTH_ERROR_BANNER_CLASS =
   "border-l-2 border-[#e03131] bg-[rgba(224,49,49,.12)] px-3 py-2 text-sm text-[#ff7777]";

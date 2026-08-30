@@ -31,7 +31,7 @@ function ForgotPasswordPage() {
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    document.title = sent ? "Check your inbox — Eccos" : "Forgot password — Eccos";
+    document.title = sent ? "Check your inbox · Eccos" : "Forgot password · Eccos";
   }, [sent]);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {

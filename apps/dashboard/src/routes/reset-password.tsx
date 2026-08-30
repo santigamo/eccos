@@ -38,7 +38,7 @@ function ResetPasswordPage() {
   const doneHeadingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    document.title = done ? "Password updated — Eccos" : "Set a new password — Eccos";
+    document.title = done ? "Password updated · Eccos" : "Set a new password · Eccos";
   }, [done]);
 
   // Announce the success swap for assistive tech (eccos-qde).
