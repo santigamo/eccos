@@ -11,6 +11,11 @@
  * Worker bindings live — so this seam stays free of server-only specifiers
  * (no `cloudflare:workers`, no `@tanstack/react-start/server`) and TanStack's
  * import protection keeps the client bundle clean.
+ *
+ * Session resolutions are deduplicated per request (request-memo.ts): the
+ * `requireActor` path (`requireGatewayPermission` then `requireAuthContext`)
+ * performs ONE `auth.api.getSession` per request instead of two, while the
+ * next request always re-resolves (contract §5).
  */
 
 import { requirePermission, type GatewayAction } from "./tenant";

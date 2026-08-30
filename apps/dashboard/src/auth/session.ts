@@ -7,6 +7,7 @@
  */
 
 import type { Auth } from "./auth";
+import { getSessionOnce, type SessionResult } from "./request-memo";
 
 /** Minimal session view the dashboard logic consumes. */
 export interface SessionUser {
@@ -55,7 +56,7 @@ function toSessionUser(session: unknown): SessionUser | null {
  */
 export async function resolveSession(auth: Auth, request: Request): Promise<SessionUser | null> {
   try {
-    const result = await auth.api.getSession({ headers: request.headers });
+    const result: SessionResult = await getSessionOnce(auth, request);
     return toSessionUser(result);
   } catch {
     // Any resolution failure is an unauthenticated request, not a 500.

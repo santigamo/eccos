@@ -69,8 +69,13 @@ interface ActorContext {
 }
 
 async function requireActor(action: "view" | "operate" | "configure" | "administer" | "erase"): Promise<ActorContext> {
-  const organizationId = await requireGatewayPermission(requestAuth(), getRequest(), action);
-  const { session } = await requireAuthContext(requestAuth(), getRequest());
+  // One auth instance and one Request per actor resolution; the request-scoped
+  // session memo (request-memo.ts) additionally dedupes the underlying
+  // `auth.api.getSession` to a single D1 read per request (eccos-ya5).
+  const auth = requestAuth();
+  const request = getRequest();
+  const organizationId = await requireGatewayPermission(auth, request, action);
+  const { session } = await requireAuthContext(auth, request);
   return { organizationId, session };
 }
 

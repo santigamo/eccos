@@ -13,6 +13,7 @@ import type { GatewayAction } from "./permissions";
 
 export type { GatewayAction };
 import { UnauthorizedError } from "./session";
+import { getSessionOnce } from "./request-memo";
 
 /** Typed error for authenticated-but-forbidden requests (used by route guards
  * wired into responses by eccos-0x0.4). */
@@ -87,7 +88,7 @@ export async function requirePermission(
   organizationId: string | undefined,
   action: GatewayAction,
 ): Promise<string> {
-  const session = await auth.api.getSession({ headers });
+  const session = await getSessionOnce(auth, headers);
   if (!session?.session || !session.user) throw new UnauthorizedError();
 
   // UX fallback: the session's stored active organization. It is validated
