@@ -12,7 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
-import { createAuth } from "../src/auth/auth";
+import { createAuth, buildInvitationAcceptLink } from "../src/auth/auth";
 import { CaptureMailSender } from "../src/auth/mail";
 import { authConfigFromEnv } from "../src/auth/config";
 
@@ -93,6 +93,59 @@ describe("auth schema", () => {
       (c) => c.name,
     );
     expect(sessionCols).toContain("activeOrganizationId");
+  });
+});
+
+describe("password policy", () => {
+  test("server-side minLength rejects a short password on sign-up (PASSWORD_TOO_SHORT)", async () => {
+    const { auth } = await createTestAuth();
+    const res = await signUpUser(auth, "short@example.com", "short");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code?: string };
+    expect(body.code).toBe("PASSWORD_TOO_SHORT");
+    // Fail closed: no user row, no session cookie.
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  test("a 10-character password is accepted (boundary)", async () => {
+    const { auth } = await createTestAuth();
+    const res = await signUpUser(auth, "boundary@example.com", "1234567890");
+    // 10 chars is allowed; sign-up succeeds (verification email sent, no session yet).
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("invitation accept link (eccos-omv)", () => {
+  test("buildInvitationAcceptLink uses the query-param route /invitations?id=", () => {
+    expect(buildInvitationAcceptLink("http://localhost:3000", "inv_123")).toBe(
+      "http://localhost:3000/invitations?id=inv_123",
+    );
+    expect(buildInvitationAcceptLink("https://app.eccos.chat", "inv_456")).toBe(
+      "https://app.eccos.chat/invitations?id=inv_456",
+    );
+  });
+
+  test("the invitation email delivered by the organization plugin carries the query-param link", async () => {
+    const mail = new CaptureMailSender();
+    const { auth, db } = await createTestAuth(mail);
+    const cookie = await verifiedSessionCookie(auth, db, "inviter@example.com");
+
+    const org = (await auth.api.createOrganization({
+      body: { name: "Acme", slug: "acme" },
+      headers: new Headers({ cookie }),
+    })) as { id?: string };
+    const invitation = (await auth.api.createInvitation({
+      body: { email: "invitee@example.com", role: "viewer", organizationId: org.id! },
+      headers: new Headers({ cookie }),
+    })) as { id?: string };
+
+    expect(invitation.id).toBeTruthy();
+    const email = mail.sent.find((m) => m.to === "invitee@example.com");
+    expect(email).toBeTruthy();
+    // The only existing route is /invitations with ?id= (createFileRoute("/invitations")).
+    expect(email!.text).toContain(`${BASE_URL}/invitations?id=${invitation.id}`);
+    // A path-segment link would dead-end on a non-existent route.
+    expect(email!.text).not.toContain(`${BASE_URL}/invitations/${invitation.id}`);
   });
 });
 

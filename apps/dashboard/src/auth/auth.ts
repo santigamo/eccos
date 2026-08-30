@@ -16,6 +16,23 @@ import { organization, twoFactor } from "better-auth/plugins";
 import type { MailSender } from "./mail";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 
+/**
+ * Build the accept-invitation link for the dashboard UI.
+ *
+ * The invitations route is `createFileRoute("/invitations")` and reads the
+ * invitation id from the `?id=` query param (src/routes/invitations.tsx) —
+ * there is no `/invitations/:id` route. A path-segment link would dead-end:
+ * anonymous invitees bounce to /signin?redirect=/invitations/<id> and after
+ * sign-in the redirect targets a non-existent route (eccos-omv).
+ *
+ * The link is a pointer, not a capability: acceptance still requires the
+ * signed-in matching verified identity (contract §7), enforced by the auth
+ * API and re-checked by the route.
+ */
+export function buildInvitationAcceptLink(baseURL: string, invitationId: string): string {
+  return `${baseURL.replace(/\/$/, "")}/invitations?id=${encodeURIComponent(invitationId)}`;
+}
+
 /** Minimal user shape of Better Auth's verification/reset email callbacks. */
 interface MailCallbackUser {
   email: string;
@@ -71,6 +88,13 @@ export function createAuth(config: AuthConfig) {
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
+      // Server-side password policy (eccos-ya5): previously only the client
+      // enforced minLength={8}. better-auth 1.7.2 exposes the policy as
+      // `emailAndPassword.minPasswordLength` (no top-level `password` key, no
+      // `requireStrongPassword` in this version) — default 8, max 128.
+      // The D1 adapter rejects shorter passwords at sign-up with
+      // PASSWORD_TOO_SHORT, so the rule holds server-side regardless of UI.
+      minPasswordLength: 10,
       // Reset links point at the canonical origin; delivery goes through the
       // application-owned mail adapter.
       sendResetPassword: async (data: MailCallbackData) => {
@@ -133,7 +157,7 @@ export function createAuth(config: AuthConfig) {
         // link carries the invitation id (accepted by signed-in matching
         // identity via /api/auth/organization/accept-invitation).
         sendInvitationEmail: async ({ invitation, organization, inviter }) => {
-          const acceptLink = `${config.baseURL}/invitations/${invitation.id}`;
+          const acceptLink = buildInvitationAcceptLink(config.baseURL, invitation.id);
           await config.mail.sendMail({
             to: invitation.email,
             subject: `You are invited to join ${organization.name} on Eccos`,
