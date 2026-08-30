@@ -99,7 +99,10 @@
   --accent-foreground: #e6e9ef;
   --destructive: #e03131;
   --border: rgba(255, 255, 255, 0.07);
-  --input: rgba(255, 255, 255, 0.12);
+  /* 0.35 white composites to >= 3:1 contrast over the card panel
+     (rgba(13,26,27,.55) over #070c0f) — WCAG 1.4.11 non-text minimum
+     for input borders. Verified: 3.20:1 over card, 3.37:1 over page. */
+  --input: rgba(255, 255, 255, 0.35);
   --ring: #25d366;
   --chart-1: #25d366;
   --chart-2: #0fb39a;
@@ -137,7 +140,7 @@
 
   /* Landing-aligned token contract (canonical source: apps/site/public/styles.css) */
   --line: rgba(255, 255, 255, 0.07); /* structural hairlines (same as --border) */
-  --line-strong: rgba(255, 255, 255, 0.12); /* interactive edges: inputs, ghost buttons */
+  --line-strong: rgba(255, 255, 255, 0.35); /* interactive edges: inputs, ghost buttons (WCAG 1.4.11 >= 3:1) */
   --ghost-fill: rgba(255, 255, 255, 0.08);
   --ghost-fill-hover: rgba(255, 255, 255, 0.14);
   --ghost-edge-hover: rgba(37, 211, 102, 0.45); /* hover edge turns green — landing signature */
