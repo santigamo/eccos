@@ -25,3 +25,5 @@ worker-configuration.d.ts
 .dolt/
 .beads-credential-key
 .beads/
+# Local Pi runtime state
+.atl/
