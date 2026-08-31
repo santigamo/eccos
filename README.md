@@ -240,7 +240,11 @@ The `bun install → wrangler secret put → bun run deploy` steps above are the
 Non-secret vars (`META_GRAPH_VERSION`, `FORWARD_MAX_ATTEMPTS`, `CONTENT_RETENTION_DAYS`,
 `DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in
 `wrangler.jsonc`.
-Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta`. An empty account registry is
+Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta` — or, once you put the Worker
+on a custom domain under your Meta app's declared application domain, at
+`https://<your-gateway-host>/webhooks/meta`; the ordered cutover between the two is in
+[`docs/deployment.md`](./docs/deployment.md#cutover--moving-the-meta-facing-origin-to-a-custom-domain).
+An empty account registry is
 a healthy gateway: `/ready` reports the app-level Meta secrets (never values) plus the control
 plane's liveness, and webhooks/sends become reachable once an account owns a registered WABA.
 

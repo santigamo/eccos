@@ -9,6 +9,22 @@
     "head_sampling_rate": 1
   },
 
+  // Custom domain for every Meta-facing origin on this Worker: the webhook
+  // callback (`/webhooks/meta`), the Embedded Signup OAuth callback (`/connect`)
+  // and the account-scoped `/v1` API. `custom_domain: true` makes Cloudflare
+  // create and manage the DNS record itself — nothing to add by hand in the DNS
+  // tab. The Meta app declares `eccos.chat` as its application domain, so putting
+  // the gateway on the same apex is what makes the app's declared domain and its
+  // working endpoints agree for App Review. See docs/deployment.md →
+  // "Cutover — moving the Meta-facing origin to a custom domain".
+  "routes": [
+    { "pattern": "api.eccos.chat", "custom_domain": true }
+  ],
+
+  // Deliberately kept on through the cutover: the workers.dev origin stays a
+  // working fallback until Meta's callback URL, the Valid OAuth Redirect URIs and
+  // GATEWAY_PUBLIC_URL all point at the custom domain. Disabling it is the last,
+  // separate step of the runbook — never the same deploy that adds the domain.
   "workers_dev": true,
 
   "triggers": {
@@ -49,6 +65,13 @@
 
   "vars": {
     "META_GRAPH_VERSION": "v24.0",
+    // Origin the dashboard's Embedded Signup button hands to Meta as
+    // `redirect_uri` (`<origin>/connect`). Meta matches it EXACTLY against the
+    // app's Valid OAuth Redirect URIs, so this line only flips to
+    // "https://api.eccos.chat" once that URI is registered in the Meta panel —
+    // step 5 of the cutover runbook in docs/deployment.md. Direct
+    // `POST /connect/start` calls ignore this and derive the origin from the
+    // request, so they follow whichever host the browser used.
     "GATEWAY_PUBLIC_URL": "https://eccos.santi-gamo.workers.dev",
     "FORWARD_MAX_ATTEMPTS": "6",
     // Split retention (docs/data-lifecycle.md). Content window: after these days,
