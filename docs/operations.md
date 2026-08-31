@@ -209,9 +209,43 @@ retry loop in a separate Durable Object. This removes cross-tenant contention, w
 10 GB storage ceiling and bounded six-request retry pool remain. Follow the export and deployment guidance
 in [docs/deployment.md](./deployment.md) before adding a WABA with existing data.
 
+## Coexistence sync failures (eccos-vss)
+
+A number connected through `/connect` is a **coexistence** onboarding: it stays on the customer's
+WhatsApp Business app. Meta requires the Tech Provider to initiate contacts synchronisation and —
+**within 24 hours of the handoff** — message-history synchronisation, and allows **each of them
+exactly once per phone number**. Both rules have the same remedy when broken, and it is not a
+retry: the customer must be offboarded and complete Embedded Signup again.
+
+Eccos runs this as a step of the provisioning saga, so a WABA that has not had it done never reads
+as `active`. Two failures are terminal by design and need a human:
+
+| `provisioningError` on the WABA | What happened | What to do |
+| --- | --- | --- |
+| `coexistence message-history sync window expired (24h); …` | The 24-hour window closed with the sync not initiated. Meta would answer `2593108`, so Eccos does not even send it. | Offboard the customer and re-run Embedded Signup. The reconnect starts a fresh window automatically. |
+| `coexistence sync was issued but not confirmed by Meta …` | A sync request was sent and no success came back. It may well have been processed, so Eccos will **not** send it again — a duplicate is Meta's `2593107` and breaks the onboarding permanently. | Offboard the customer and re-run Embedded Signup. Do **not** look for a retry button; there deliberately isn't one. |
+
+Pressing "re-check" on such a WABA is safe — it re-runs the saga, which refuses to re-issue a spent
+sync and lands back on the same message. Only a genuinely new Embedded Signup handoff clears it.
+
+Where the state lives, on the control plane's `wabas` row: `onboarding_type`,
+`coexistence_sync_status` (`not_applicable` / `pending` / `initiated` / `unconfirmed` / `expired`),
+`coexistence_sync_deadline_at`, `contacts_sync_started_at` + `contacts_sync_request_id`, and
+`history_sync_started_at` + `history_sync_request_id`. The `*_started_at` columns are written
+*before* each request goes out — that is what makes the once-only rule safe — and the request ids
+are Meta's support references, worth quoting in a support ticket (Question Topic "WABiz: Cloud API",
+Request Type "Coexistence Data Synchronization APIs and Webhooks").
+
+Note that a 200 on the history sync means Meta *accepted* the request, not that history will
+arrive: a business that turned history sharing off surfaces later as `2593109` on the `history`
+webhook.
+
 ## Follow-ups
 
 - No alerting is wired up (no email/Slack/PagerDuty on sustained `readiness_check` 503s or a
   growing `deliveries.failed` count) — currently that requires an operator to actively watch
   `wrangler tail` or the dashboard.
 - Bulk delivery replay ("retry all failed") isn't implemented — see the DLQ section above.
+- The coexistence sync state above is not surfaced in the operator console beyond
+  `provisioningError`: the deadline and the per-sync request ids exist on the WABA row but are not
+  in the `@eccos/gateway-contract` RPC surface yet, so there is no "12h left to sync" indicator.
