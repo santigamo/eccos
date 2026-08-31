@@ -85,6 +85,7 @@ drill. The gateway deploy and live post-deploy smoke are recorded above.
 | `eccos-v80` | Production-shaped two-number acceptance, migration/rollback evidence, and the remaining technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
 | `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
 | `eccos-n0o` | Meta Tech Provider/App Review/Access approval for third-party onboarding |
+| `eccos-49b` | Meta-facing gateway origins still resolve to `workers.dev` while the Meta app declares `eccos.chat` — a reviewer sees the declared domain and the working endpoints disagree. The `api.eccos.chat` custom-domain route and the ordered cutover runbook are in the repo ([docs/deployment.md](./docs/deployment.md#cutover--moving-the-meta-facing-origin-to-a-custom-domain)); the deploy, the Meta panel edits and the `GATEWAY_PUBLIC_URL` flip are pending |
 | `eccos-8yy` | DPA and processor onboarding package |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
 | `eccos-u9x` | Resolve the production failed-delivery incident |

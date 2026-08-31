@@ -38,7 +38,7 @@ subscriber targets per WABA.
 | Var | Default | Purpose |
 |---|---|---|
 | `META_GRAPH_VERSION` | `v24.0` | Meta Graph API version used for all calls |
-| `GATEWAY_PUBLIC_URL` | `""` | Public HTTPS origin used by the dashboard's Embedded Signup button; direct `/connect/start` calls derive the origin from the request |
+| `GATEWAY_PUBLIC_URL` | `""` | Public HTTPS origin used by the dashboard's Embedded Signup button. It becomes the OAuth `redirect_uri` as `<origin>/connect`, which Meta matches **exactly** against the app's Valid OAuth Redirect URIs — changing it without registering the new URI first breaks Embedded Signup. Origin only (scheme + host + optional port), HTTPS except on localhost. Direct `POST /connect/start` calls ignore it and derive the origin from the request |
 | `FORWARD_MAX_ATTEMPTS` | `6` | Max delivery attempts before a forwarded event is marked failed |
 | `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted and terminal `deliveries` rows are redacted to metadata-only |
 | `DELIVERY_RETENTION_DAYS` | `90` | Delivery-audit window: past it, terminal (`delivered`/`failed`) `deliveries` rows are deleted entirely. See [docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows) |
@@ -126,9 +126,11 @@ before using the dashboard's **Connect WhatsApp** action. The button starts the 
 Embedded Signup flow as `POST /connect/start` without exposing an account API key to the browser.
 
 After a fresh gateway deploy, point Meta's webhook subscription at
-`https://<worker>.workers.dev/webhooks/meta` (subscribe the `messages` field) and confirm the
-Worker's `workers.dev` URL, since the Embedded Signup `/connect` flow and the smoke test both
-assume it's reachable.
+`<gateway-origin>/webhooks/meta` (subscribe the `messages` field) and confirm that origin is
+reachable, since the Embedded Signup `/connect` flow and the smoke test both assume it is. On a
+brand-new deploy the origin is the `workers.dev` URL; for anything a Meta reviewer will look at,
+put the gateway on a custom domain under the app's declared application domain first — see
+[Cutover](#cutover--moving-the-meta-facing-origin-to-a-custom-domain).
 
 ## Meta access token encryption
 
@@ -189,14 +191,150 @@ check — safe to gate a deploy pipeline on its exit code.
 # needs META_APP_SECRET + META_WEBHOOK_VERIFY_TOKEN (from .env, or exported)
 # SMOKE_WABA_ID is optional and only labels the signed test webhook; it is ignored unless
 # that WABA is registered in the account control plane.
-./scripts/smoke.sh https://eccos.<sub>.workers.dev
+./scripts/smoke.sh https://api.eccos.chat
 
 # equivalently
-BASE_URL=https://eccos.<sub>.workers.dev ./scripts/smoke.sh
+BASE_URL=https://api.eccos.chat ./scripts/smoke.sh
+
+# the workers.dev origin, while it is still enabled
+./scripts/smoke.sh https://eccos.<sub>.workers.dev
 ```
 
-Run it locally against `wrangler dev` (default `http://localhost:8787`, no arg needed) before
-deploying, and again against the real `workers.dev` URL right after `bun run deploy`.
+`BASE_URL` is the only thing that binds the script to a host, so the same script proves any
+origin. Run it locally against `wrangler dev` (default `http://localhost:8787`, no arg needed)
+before deploying, and again against the real public origin right after `bun run deploy`. While
+both origins are live, run it against **each** — that is what proves the custom domain reaches the
+same Worker before Meta is pointed at it.
+
+## Cutover — moving the Meta-facing origin to a custom domain
+
+The gateway Worker is the only Eccos surface Meta talks to, and it talks to it three ways: the
+webhook callback (`POST/GET /webhooks/meta`), the Embedded Signup OAuth callback (`GET /connect`,
+a top-level browser navigation), and the account-scoped `/v1` API customers integrate against. A
+deploy that has never had a custom domain serves all three on `workers.dev`, which contradicts the
+`eccos.chat` application domain the Meta app declares — an App Review reviewer sees a declared
+domain and a set of working endpoints that disagree. This runbook moves them to
+**`api.eccos.chat`** without an outage.
+
+The order below is the point of the runbook: **the new origin is proven before Meta is pointed at
+it, and `GATEWAY_PUBLIC_URL` moves only after the matching redirect URI is registered.** Every
+step is additive — the `workers.dev` origin keeps working until the very last one — so any step
+can be abandoned without breaking a live webhook.
+
+### What is pinned to the origin
+
+| Surface | Where it is configured | Breaks if the origin changes under it |
+|---|---|---|
+| Webhook callback | Meta panel → WhatsApp → Configuration → Callback URL | Yes — Meta stops delivering, and repeated failures can disable the subscription |
+| Embedded Signup callback (browser) | Meta panel → Valid OAuth Redirect URIs | Yes — Meta rejects the `redirect_uri` and the OAuth dialog errors out |
+| Embedded Signup from the dashboard button | `GATEWAY_PUBLIC_URL` (gateway `vars`) | Yes — it sends `<origin>/connect` as `redirect_uri`; it must already be registered |
+| Embedded Signup from `POST /connect/start` | Nothing — derived from the request origin | No — it follows whichever host the browser used, so both origins work while both are live |
+| `/v1` API | The customer's own integration | Yes, eventually — hence the overlap window before `workers.dev` is disabled |
+
+> The `/connect` flow is a **server-side OAuth dialog redirect** to
+> `https://www.facebook.com/<version>/dialog/oauth`; nothing in the repo loads the Facebook
+> JavaScript SDK. The panel's *JavaScript SDK allowed domains* list is therefore not exercised by
+> the code today — but leave it consistent with the other origins, because a reviewer reads it as
+> part of the same declaration.
+
+### Steps
+
+**1 — Confirm the hostname is free (Cloudflare, by hand).** In the `eccos.chat` zone, check that
+no DNS record already exists for `api`. A pre-existing record makes the custom-domain attach fail;
+Cloudflare creates and manages the record itself for a `custom_domain` route.
+
+**2 — Deploy the custom domain (additive).** The route is already declared in
+`apps/gateway/wrangler.jsonc` alongside `"workers_dev": true`, so one deploy adds the new origin
+and changes nothing about the old one:
+
+```bash
+bun run deploy     # == cd apps/gateway && wrangler deploy
+```
+
+Wait for the certificate to be issued (usually a minute or two; the Workers dashboard shows the
+custom domain as *Active*). Nothing is pointed at the new host yet.
+
+**3 — Prove the new origin, before Meta hears about it.** The gateway must answer on
+`api.eccos.chat` exactly as it does on `workers.dev` — same Worker, same secrets, same Durable
+Object routing — *and in particular the webhook challenge and the signature check must pass*,
+because those are the two things Meta itself will exercise:
+
+```bash
+# needs META_APP_SECRET + META_WEBHOOK_VERIFY_TOKEN in .env or exported
+./scripts/smoke.sh https://api.eccos.chat
+```
+
+That run covers `/health`, `/ready`, the `GET` challenge with a valid **and** an invalid verify
+token (`403`), and a signed `POST /webhooks/meta` with a valid signature (`200`), an invalid
+signature (`401`) and invalid JSON (`400`). Re-run it against the `workers.dev` origin too and
+confirm both pass. **Do not continue until this is green** — every later step assumes the new host
+is a working webhook receiver.
+
+**4 — Register the new origin in the Meta panel, without removing the old one (by hand).** App
+`1424473183036863`, all additive:
+
+| Panel location | Add | Keep for now |
+|---|---|---|
+| App settings → Basic → App domains | `api.eccos.chat`, if the panel does not already accept it under the declared `eccos.chat` | `eccos.chat`, `www.eccos.chat` |
+| Facebook Login → Settings → Valid OAuth Redirect URIs | `https://api.eccos.chat/connect` | `https://eccos.santi-gamo.workers.dev/` and `https://eccos.santi-gamo.workers.dev/connect` |
+| Facebook Login → Settings → Allowed domains for the JavaScript SDK | `api.eccos.chat` | the existing `workers.dev` entry |
+
+Meta matches `redirect_uri` exactly, so `https://api.eccos.chat/connect` must be present verbatim —
+no trailing slash, no path variations. With both sets registered, Embedded Signup works from
+either origin, which is what makes the next two steps reversible.
+
+**5 — Flip `GATEWAY_PUBLIC_URL` (one line, one deploy).** Only now, with
+`https://api.eccos.chat/connect` a registered redirect URI:
+
+```jsonc
+// apps/gateway/wrangler.jsonc → vars
+"GATEWAY_PUBLIC_URL": "https://api.eccos.chat",
+```
+
+```bash
+bun run deploy
+```
+
+Then click **Connect WhatsApp** in the dashboard once and confirm the OAuth dialog opens against
+`api.eccos.chat` and returns to `/connect` without a `redirect_uri` error. The dashboard needs no
+change of its own — it never hardcodes a gateway origin; it receives the full URL over the
+`GatewayRPC` service binding.
+
+**6 — Switch the WABA webhook callback URL (by hand).** Meta panel → WhatsApp → Configuration →
+Callback URL:
+
+- from `https://eccos.santi-gamo.workers.dev/webhooks/meta`
+- to `https://api.eccos.chat/webhooks/meta`
+
+Keep the same verify token, click **Verify and save** (Meta re-runs the `GET` challenge against the
+new host — step 3 already proved it answers), and confirm the `messages` field is still subscribed.
+
+**7 — Verify a real inbound message.** Send a WhatsApp message to a connected number and confirm it
+lands: the delivery shows up in the operator console and, if a subscriber is configured, at the
+subscriber endpoint. This is the only check that proves Meta's own delivery path — not just a
+locally signed request — reaches the new origin.
+
+**8 — Overlap, then retire `workers.dev` (separate change, later).** Leave both origins live long
+enough for any customer integration still calling the `workers.dev` `/v1` host to move. When it is
+confirmed unused, drop `"workers_dev": true` from `apps/gateway/wrangler.jsonc`, deploy, and remove
+the `workers.dev` entries from the Valid OAuth Redirect URIs and the JavaScript SDK domains.
+Retiring the old origin is never part of the same deploy that adds the new one.
+
+### Rollback
+
+Each step above is undone by reversing only itself; none of them touches Durable Object state, so
+no message history, delivery queue or WABA config is at risk.
+
+| Symptom | Undo |
+|---|---|
+| New origin fails the smoke test (step 3) | Nothing to undo — Meta is still on `workers.dev`. Fix the domain and re-run |
+| Embedded Signup errors after step 5 | Set `GATEWAY_PUBLIC_URL` back to the `workers.dev` origin and `bun run deploy`. The `workers.dev` redirect URI is still registered, so it works immediately |
+| Webhooks stop arriving after step 6 | In the Meta panel, set the Callback URL back to `https://eccos.santi-gamo.workers.dev/webhooks/meta` and **Verify and save**. The old origin is still live because step 8 has not run |
+| Bad Worker code, unrelated to the domain | `wrangler rollback` (below) — the custom domain and the Meta panel entries are unaffected |
+
+If the whole cutover is abandoned, remove the `routes` entry from `apps/gateway/wrangler.jsonc`,
+deploy, and delete the `api.eccos.chat` entries from the Meta panel. Leaving the custom domain
+attached while Meta points elsewhere is harmless.
 
 ## Rollback
 

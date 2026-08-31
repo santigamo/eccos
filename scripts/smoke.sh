@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Eccos smoke test — run against a local `wrangler dev` or a deployed workers.dev URL.
+# Eccos smoke test — run against a local `wrangler dev`, a deployed workers.dev URL, or a
+# custom domain. The origin is the only host-specific input, so the same script proves any
+# origin; run it against a new custom domain BEFORE pointing Meta's callback URL at it
+# (docs/deployment.md → "Cutover — moving the Meta-facing origin to a custom domain").
 # Exits non-zero on the first failed check (set -e + `curl -f`), so it's safe to gate a
 # deploy on its exit code.
 # Usage:
+#   ./scripts/smoke.sh https://api.eccos.chat
 #   ./scripts/smoke.sh https://eccos.<sub>.workers.dev
-#   BASE_URL=https://eccos.<sub>.workers.dev ./scripts/smoke.sh
+#   BASE_URL=https://api.eccos.chat ./scripts/smoke.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
