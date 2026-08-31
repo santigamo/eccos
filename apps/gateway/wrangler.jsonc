@@ -67,12 +67,15 @@
     "META_GRAPH_VERSION": "v24.0",
     // Origin the dashboard's Embedded Signup button hands to Meta as
     // `redirect_uri` (`<origin>/connect`). Meta matches it EXACTLY against the
-    // app's Valid OAuth Redirect URIs, so this line only flips to
-    // "https://api.eccos.chat" once that URI is registered in the Meta panel —
-    // step 5 of the cutover runbook in docs/deployment.md. Direct
-    // `POST /connect/start` calls ignore this and derive the origin from the
-    // request, so they follow whichever host the browser used.
-    "GATEWAY_PUBLIC_URL": "https://eccos.santi-gamo.workers.dev",
+    // app's Valid OAuth Redirect URIs, where `https://api.eccos.chat/connect`
+    // was registered on 2026-08-31 before this line was flipped — step 4 then
+    // step 5 of the cutover runbook in docs/deployment.md, in that order,
+    // because sending an unregistered redirect_uri breaks Embedded Signup for
+    // everyone. The workers.dev URIs stay registered as a rollback path until
+    // Meta decides the App Review. Direct `POST /connect/start` calls ignore
+    // this and derive the origin from the request, so they follow whichever
+    // host the browser used.
+    "GATEWAY_PUBLIC_URL": "https://api.eccos.chat",
     "FORWARD_MAX_ATTEMPTS": "6",
     // Split retention (docs/data-lifecycle.md). Content window: after these days,
     // inbound_events and outbound_messages rows are deleted and terminal deliveries
