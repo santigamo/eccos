@@ -24,6 +24,7 @@ subscriber targets per WABA.
 | `META_APP_SECRET` | Meta App Secret — verifies inbound `X-Hub-Signature-256` and exchanges OAuth codes server-side |
 | `META_WEBHOOK_VERIFY_TOKEN` | Arbitrary string Meta echoes back on the `GET` webhook challenge |
 | `ECCOS_ADMIN_API_KEY` | Bootstrap secret for creating accounts, rotating account keys, and registering existing WABAs |
+| `ECCOS_TOKEN_ENCRYPTION_KEY` | Key material for the application-layer encryption of the Meta access tokens the control plane stores. At least 32 characters — generate with `openssl rand -base64 32`. See [Meta access token encryption](#meta-access-token-encryption) |
 
 ### `apps/gateway` — optional app-level secrets
 
@@ -101,6 +102,9 @@ cd apps/gateway
 wrangler secret put META_APP_SECRET
 wrangler secret put META_WEBHOOK_VERIFY_TOKEN
 wrangler secret put ECCOS_ADMIN_API_KEY
+# Meta access token encryption — generate once, then paste the value:
+#   openssl rand -base64 32
+wrangler secret put ECCOS_TOKEN_ENCRYPTION_KEY
 wrangler secret put META_APP_ID     # optional: Embedded Signup /connect
 wrangler secret put META_ES_CONFIG_ID # optional: Embedded Signup /connect
 # Set GATEWAY_PUBLIC_URL in wrangler.jsonc (or pass --var) for dashboard-initiated Embedded Signup.
@@ -125,6 +129,51 @@ After a fresh gateway deploy, point Meta's webhook subscription at
 `https://<worker>.workers.dev/webhooks/meta` (subscribe the `messages` field) and confirm the
 Worker's `workers.dev` URL, since the Embedded Signup `/connect` flow and the smoke test both
 assume it's reachable.
+
+## Meta access token encryption
+
+Meta business access tokens are the highest-value secret the platform holds: they can send
+messages and read templates as a customer's WABA. Cloudflare encrypts Durable Object storage at
+rest, but the key belongs to the storage system — so the control plane adds an **application
+layer** on top, keyed by a Worker secret the storage system never sees.
+
+- `wabas.meta_access_token` only ever holds an envelope: `ecs1.<base64url iv>.<base64url
+  ciphertext>` — AES-256-GCM with a fresh random 96-bit IV per record.
+- The AES key is derived with HKDF-SHA-256 from `ECCOS_TOKEN_ENCRYPTION_KEY`; the secret itself is
+  never used as a key directly, so any high-entropy value of 32+ characters works.
+- The GCM additional data binds each envelope to `<accountId>:<wabaId>`. Moving one account's
+  sealed token onto another account's WABA row makes it undecryptable — the account-scoping
+  invariant is enforced by the crypto, not only by the queries.
+- Sealing happens in exactly one place (`prepareWabas`) and opening in exactly one place
+  (`decryptStoredToken`) in `apps/gateway/src/control-plane.ts`; the crypto itself lives in
+  `apps/gateway/src/token-crypto.ts`. Tokens are never logged (`LogMeta` allows only ids, counts,
+  booleans, and enum-like strings) and never returned to an API caller.
+
+**Fail closed.** A missing, blank, or too-short `ECCOS_TOKEN_ENCRYPTION_KEY` makes every token
+read and write throw `Invalid Eccos configuration: ECCOS_TOKEN_ENCRYPTION_KEY is required`. A
+record that cannot be opened — wrong key, tampered bytes, or a mismatched account/WABA binding —
+throws too. There is no plaintext fallback and no "try plaintext" read path.
+
+**Rotation.** The secret is *not* rotatable in place: re-keying would require re-sealing every
+row. Rotating `ECCOS_TOKEN_ENCRYPTION_KEY` today means every registered number must be reconnected
+through Embedded Signup. Treat the value as long-lived and back it up wherever your other Worker
+secrets are kept — losing it is equivalent to losing every stored token.
+
+### Rows written before token encryption (one-time cut-over)
+
+Rows written by an earlier deploy hold a plaintext token, which by design cannot be read back.
+Eccos Cloud is multi-tenant by default and legacy/shadow/dual-path compatibility is forbidden, so
+those rows are **not** migrated in place. Instead, every control-plane Durable Object init
+quarantines them (idempotently): the WABA is set to `status = 'failed'` with
+`provisioning_error = "meta access token is not encrypted; reconnect the number"`, and:
+
+- the dashboard shows the WABA as failed with that message;
+- sends, templates, exports and erasures for it return "WABA is not configured" (404);
+- the cron reconciler never picks it up, and **Retry** cannot re-queue it.
+
+**Operator action:** reconnect the number through Embedded Signup (dashboard → *Connect
+WhatsApp*, or `POST /connect/start`). That upserts the row with a sealed envelope and clears the
+quarantine. There is exactly one such number in the current production deployment.
 
 ## Post-deploy smoke test
 

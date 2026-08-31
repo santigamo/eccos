@@ -22,6 +22,8 @@
     "META_ES_CONFIG_ID": "test-config-id",
     "GATEWAY_PUBLIC_URL": "https://gateway.example",
     "ECCOS_ADMIN_API_KEY": "test-admin-key",
+    // Fake, test-only key material for the control-plane token encryption.
+    "ECCOS_TOKEN_ENCRYPTION_KEY": "test-token-encryption-key-not-a-real-secret",
     "FORWARD_MAX_ATTEMPTS": "3"
   }
 }

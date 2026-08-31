@@ -152,11 +152,11 @@ describe("account-scoped control plane", () => {
     const accA = await createAccount("acc-a");
     const accB = await createAccount("acc-b");
 
-    await cp((i) => {
-      i.registerWaba({ accountId: accA.accountId, wabaId: "WABA_A1", metaAccessToken: "tok-a1", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_A1_1", displayPhoneNumber: "+34 600 000 001" }] });
-      i.registerWaba({ accountId: accA.accountId, wabaId: "WABA_A2", metaAccessToken: "tok-a2", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_A2_1", displayPhoneNumber: "+34 600 000 002" }] });
-      i.registerWaba({ accountId: accB.accountId, wabaId: "WABA_B1", metaAccessToken: "tok-b1", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_B1_1", displayPhoneNumber: "+34 600 000 003" }] });
-      i.registerWaba({ accountId: accB.accountId, wabaId: "WABA_B2", metaAccessToken: "tok-b2", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_B2_1", displayPhoneNumber: "+34 600 000 004" }] });
+    await cp(async (i) => {
+      await i.registerWaba({ accountId: accA.accountId, wabaId: "WABA_A1", metaAccessToken: "tok-a1", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_A1_1", displayPhoneNumber: "+34 600 000 001" }] });
+      await i.registerWaba({ accountId: accA.accountId, wabaId: "WABA_A2", metaAccessToken: "tok-a2", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_A2_1", displayPhoneNumber: "+34 600 000 002" }] });
+      await i.registerWaba({ accountId: accB.accountId, wabaId: "WABA_B1", metaAccessToken: "tok-b1", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_B1_1", displayPhoneNumber: "+34 600 000 003" }] });
+      await i.registerWaba({ accountId: accB.accountId, wabaId: "WABA_B2", metaAccessToken: "tok-b2", provisioningStatus: "active", phones: [{ phoneNumberId: "PN_B2_1", displayPhoneNumber: "+34 600 000 004" }] });
     });
 
     await expect(
@@ -189,8 +189,8 @@ describe("account-scoped control plane", () => {
 
   it("preserves previously registered phones when a WABA is re-registered", async () => {
     const account = await createAccount("acc-upsert");
-    await cp((i) => {
-      i.registerWaba({
+    await cp(async (i) => {
+      await i.registerWaba({
         accountId: account.accountId,
         wabaId: "WABA_UPSERT",
         metaAccessToken: "token-v1",
@@ -201,14 +201,14 @@ describe("account-scoped control plane", () => {
           { phoneNumberId: "PN_UPSERT_2", displayPhoneNumber: "+34 600 000 302" },
         ],
       });
-      i.registerWaba({
+      await i.registerWaba({
         accountId: account.accountId,
         wabaId: "WABA_UPSERT",
         metaAccessToken: "token-v2",
         provisioningStatus: "active",
         phones: [{ phoneNumberId: "PN_UPSERT_1", displayPhoneNumber: "+34 600 000 301" }],
       });
-      expect(i.getWaba(account.accountId, "WABA_UPSERT")).toMatchObject({
+      expect(await i.getWaba(account.accountId, "WABA_UPSERT")).toMatchObject({
         metaAccessToken: "token-v2",
         callbackUrl: "https://gateway.example/webhooks/meta",
         phones: [
@@ -289,15 +289,15 @@ describe("account-scoped control plane", () => {
       url: "https://existing.example/webhook",
       hasSecret: true,
     });
-    await cp((i) => expect(i.getWaba(account.accountId, "WABA_MIGRATE")?.metaAccessToken).toBe("migrated-token"));
+    await cp(async (i) => expect((await i.getWaba(account.accountId, "WABA_MIGRATE"))?.metaAccessToken).toBe("migrated-token"));
     expect((await rpc.getStatus("WABA_MIGRATE", account.accountId)).connection.wabaId).toBe("WABA_MIGRATE");
   });
 
   it("keeps all RPC reads and actions inside the authenticated account scope", async () => {
     const accA = await createAccount("acc-rpc-a");
     const accB = await createAccount("acc-rpc-b");
-    await cp((i) => {
-      i.registerWaba({
+    await cp(async (i) => {
+      await i.registerWaba({
         accountId: accA.accountId,
         wabaId: "WABA_RPC_A",
         metaAccessToken: "token-rpc-a",
@@ -307,7 +307,7 @@ describe("account-scoped control plane", () => {
           { phoneNumberId: "PN_RPC_A2", displayPhoneNumber: "+34 600 000 202" },
         ],
       });
-      i.registerWaba({
+      await i.registerWaba({
         accountId: accB.accountId,
         wabaId: "WABA_RPC_B",
         metaAccessToken: "token-rpc-b",
@@ -670,8 +670,8 @@ describe("account-scoped control plane", () => {
     const reconciled = await admin(`/v1/accounts/${account.accountId}/wabas/WABA_OAUTH/reconcile`, { method: "POST" });
     expect(reconciled.status).toBe(200);
 
-    await cp((i) => {
-      expect(i.getWaba(account.accountId, "WABA_OAUTH")).toMatchObject({
+    await cp(async (i) => {
+      expect(await i.getWaba(account.accountId, "WABA_OAUTH")).toMatchObject({
         accountId: account.accountId,
         metaAccessToken: "business-token",
         phones: [{ phoneNumberId: "PN_OAUTH" }],
@@ -781,8 +781,8 @@ describe("account-scoped control plane", () => {
   it("skips foreign WABAs returned alongside an available WABA", async () => {
     const account = await createAccountHttp("acc-connect-owned");
     const foreignAccount = await createAccountHttp("acc-connect-foreign");
-    await cp((i) => {
-      i.registerWaba({
+    await cp(async (i) => {
+      await i.registerWaba({
         accountId: foreignAccount.accountId,
         wabaId: "WABA_OAUTH_FOREIGN",
         metaAccessToken: "foreign-token",
@@ -808,9 +808,9 @@ describe("account-scoped control plane", () => {
       waba_id: "WABA_OAUTH_AVAILABLE",
       warnings: [expect.stringContaining("WABA_OAUTH_FOREIGN")],
     });
-    await cp((i) => {
-      expect(i.getWabaRecord(account.accountId, "WABA_OAUTH_AVAILABLE")).toMatchObject({ accountId: account.accountId });
-      expect(i.getWaba(foreignAccount.accountId, "WABA_OAUTH_FOREIGN")).toMatchObject({ accountId: foreignAccount.accountId });
+    await cp(async (i) => {
+      expect(await i.getWabaRecord(account.accountId, "WABA_OAUTH_AVAILABLE")).toMatchObject({ accountId: account.accountId });
+      expect(await i.getWaba(foreignAccount.accountId, "WABA_OAUTH_FOREIGN")).toMatchObject({ accountId: foreignAccount.accountId });
     });
 
     const selectedHandoff = await accountApi(account.apiKey)("/connect/start", { method: "POST" });

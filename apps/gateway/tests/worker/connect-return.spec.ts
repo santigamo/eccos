@@ -91,8 +91,8 @@ describe("Embedded Signup returns the operator to the console", () => {
     expect(res.status).toBe(303);
     // Success is silent: the console shows the new number in its own table.
     expect(res.headers.get("location")).toBe(CONSOLE_RETURN);
-    await cp((i) => {
-      expect(i.getWabaRecord(accountId, "WABA_RETURN")).toMatchObject({ accountId });
+    await cp(async (i) => {
+      expect(await i.getWabaRecord(accountId, "WABA_RETURN")).toMatchObject({ accountId });
     });
   });
 
@@ -117,7 +117,7 @@ describe("Embedded Signup returns the operator to the console", () => {
     ]);
     await cp(async (i) => {
       const other = await i.createAccount({ accountId: "acc-return-foreign" });
-      i.registerWaba({
+      await i.registerWaba({
         accountId: other.account.accountId,
         wabaId: "WABA_FOREIGN",
         metaAccessToken: "other-token",

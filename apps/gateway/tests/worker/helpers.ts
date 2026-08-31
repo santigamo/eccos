@@ -39,10 +39,10 @@ export async function bootstrapAccount(
     const account = cp.sql.exec("SELECT account_id FROM accounts WHERE account_id = ?", accountId).toArray()[0];
     if (!account) {
       const created = await cp.createAccount({ accountId });
-      cp.registerWaba({ accountId, wabaId, metaAccessToken: "tenant-token", provisioningStatus: "active", phones: usedPhones });
+      await cp.registerWaba({ accountId, wabaId, metaAccessToken: "tenant-token", provisioningStatus: "active", phones: usedPhones });
       return created.apiKey;
     }
-    cp.registerWaba({ accountId, wabaId, metaAccessToken: "tenant-token", provisioningStatus: "active", phones: usedPhones });
+    await cp.registerWaba({ accountId, wabaId, metaAccessToken: "tenant-token", provisioningStatus: "active", phones: usedPhones });
     return null;
   });
   return { accountId, wabaId, apiKey: result ?? "ek-account-key" };

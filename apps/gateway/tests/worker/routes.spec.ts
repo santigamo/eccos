@@ -154,8 +154,8 @@ describe("routes", () => {
   });
 
   it("ignores webhook entries for inactive WABAs", async () => {
-    await runInDurableObject(getControlPlaneStub(env), (instance) => {
-      instance.registerWaba({
+    await runInDurableObject(getControlPlaneStub(env), async (instance) => {
+      await instance.registerWaba({
         accountId: TEST_ACCOUNT_ID,
         wabaId: "WABA_PENDING",
         metaAccessToken: "pending-token",
@@ -192,8 +192,8 @@ describe("routes", () => {
   });
 
   it("ignores webhook entries for failed WABAs", async () => {
-    await runInDurableObject(getControlPlaneStub(env), (instance) => {
-      instance.registerWaba({
+    await runInDurableObject(getControlPlaneStub(env), async (instance) => {
+      await instance.registerWaba({
         accountId: TEST_ACCOUNT_ID,
         wabaId: "WABA_FAILED",
         metaAccessToken: "failed-token",
@@ -286,15 +286,15 @@ describe("routes", () => {
   });
 
   it("POST /v1/wabas/{pending|failed}/messages is fail-closed: 404 and Meta is never called", async () => {
-    await runInDurableObject(getControlPlaneStub(env), (instance) => {
-      instance.registerWaba({
+    await runInDurableObject(getControlPlaneStub(env), async (instance) => {
+      await instance.registerWaba({
         accountId: TEST_ACCOUNT_ID,
         wabaId: "WABA_SEND_PENDING",
         metaAccessToken: "pending-token",
         provisioningStatus: "pending",
         phones: [{ phoneNumberId: "PNID_SEND_PENDING" }],
       });
-      instance.registerWaba({
+      await instance.registerWaba({
         accountId: TEST_ACCOUNT_ID,
         wabaId: "WABA_SEND_FAILED",
         metaAccessToken: "failed-token",
@@ -381,8 +381,8 @@ describe("routes", () => {
   });
 
   it("ingests the same phone's webhook event only after the WABA becomes active", async () => {
-    await runInDurableObject(getControlPlaneStub(env), (instance) => {
-      instance.registerWaba({
+    await runInDurableObject(getControlPlaneStub(env), async (instance) => {
+      await instance.registerWaba({
         accountId: TEST_ACCOUNT_ID,
         wabaId: "WABA_TRANSITION",
         metaAccessToken: "transition-token",
@@ -427,8 +427,8 @@ describe("routes", () => {
     const fetchMock = mockGraphFetch();
     const provisioned = await provisionWaba(env, TEST_ACCOUNT_ID, "WABA_TRANSITION");
     expect(provisioned).toMatchObject({ attempted: true, error: null });
-    await runInDurableObject(getControlPlaneStub(env), (instance) => {
-      expect(instance.getWabaRecord(TEST_ACCOUNT_ID, "WABA_TRANSITION")?.status).toBe("active");
+    await runInDurableObject(getControlPlaneStub(env), async (instance) => {
+      expect((await instance.getWabaRecord(TEST_ACCOUNT_ID, "WABA_TRANSITION"))?.status).toBe("active");
     });
 
     // ...and the same phone's event is now ingested.

@@ -82,8 +82,8 @@ describe("WABA provisioning saga", () => {
     expect(init?.headers).toMatchObject({ authorization: "Bearer token-v1" });
     expect((init?.body as URLSearchParams).get("override_callback_uri")).toBe(CALLBACK_URL);
 
-    await cp((instance) => {
-      expect(instance.getWabaRecord(accountId, wabaId)).toMatchObject({
+    await cp(async (instance) => {
+      expect(await instance.getWabaRecord(accountId, wabaId)).toMatchObject({
         status: "active",
         provisioningError: null,
       });
@@ -122,7 +122,7 @@ describe("WABA provisioning saga", () => {
 
     await provisionWaba(env, accountId, wabaId);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    await cp((instance) => expect(instance.getWabaRecord(accountId, wabaId)?.status).toBe("active"));
+    await cp(async (instance) => expect((await instance.getWabaRecord(accountId, wabaId))?.status).toBe("active"));
   });
 
   it("moves permanent failures to failed and explicit reconciliation requeues them", async () => {
@@ -164,7 +164,7 @@ describe("WABA provisioning saga", () => {
 
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
     await provisionWaba(env, accountId, wabaId);
-    expect(await cp((instance) => instance.getWabaRecord(accountId, wabaId)?.status)).toBe("active");
+    expect(await cp(async (instance) => (await instance.getWabaRecord(accountId, wabaId))?.status)).toBe("active");
   });
 
   it("does not reset a pending retry when the same desired state is submitted again", async () => {
@@ -210,15 +210,15 @@ describe("WABA provisioning saga", () => {
       { phoneNumberId: "PN_KEEP", displayPhoneNumber: "+34 600 000 010" },
     ]);
 
-    await cp((instance) => {
-      expect(instance.getWabaRecord(accountId, wabaId)?.phones).toEqual([
+    await cp(async (instance) => {
+      expect((await instance.getWabaRecord(accountId, wabaId))?.phones).toEqual([
         { phoneNumberId: "PN_KEEP", displayPhoneNumber: "+34 600 000 010" },
       ]);
-      expect(instance.getWabaRecord(accountId, wabaId)?.status).toBe("pending");
+      expect((await instance.getWabaRecord(accountId, wabaId))?.status).toBe("pending");
     });
     await provisionWaba(env, accountId, wabaId);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    await cp((instance) => expect(instance.getWabaRecord(accountId, wabaId)?.status).toBe("active"));
+    await cp(async (instance) => expect((await instance.getWabaRecord(accountId, wabaId))?.status).toBe("active"));
   });
 
   // --- Gateway-stage failure (the core invariant) ---------------------------
@@ -310,7 +310,7 @@ describe("WABA provisioning saga", () => {
     );
     await cp((instance) => forceDue(instance, wabaId));
     await provisionWaba(env, accountId, wabaId);
-    expect(await cp((instance) => instance.getWabaRecord(accountId, wabaId)?.status)).toBe("active");
+    expect(await cp(async (instance) => (await instance.getWabaRecord(accountId, wabaId))?.status)).toBe("active");
   });
 
   // --- Attempts exhaustion --------------------------------------------------
@@ -414,7 +414,7 @@ describe("WABA provisioning saga", () => {
     const retried = await provisionWaba(env, accountId, wabaId);
     expect(retried.attempted).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(await cp((instance) => instance.getWabaRecord(accountId, wabaId)?.status)).toBe("active");
+    expect(await cp(async (instance) => (await instance.getWabaRecord(accountId, wabaId))?.status)).toBe("active");
   });
 
   // --- Revision guard -------------------------------------------------------
@@ -487,8 +487,8 @@ describe("WABA provisioning saga", () => {
     );
     await begin(accountId, wabaId);
     await provisionWaba(env, accountId, wabaId);
-    await cp((instance) => {
-      expect(instance.getWabaRecord(accountId, wabaId)).toMatchObject({
+    await cp(async (instance) => {
+      expect(await instance.getWabaRecord(accountId, wabaId)).toMatchObject({
         status: "failed",
         provisioningError: "subscribed_apps failed with HTTP 400",
       });

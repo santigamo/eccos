@@ -78,8 +78,8 @@ describe("scheduled handler", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/WABA_CRON_ACTIVATE/subscribed_apps");
 
-    await runInDurableObject(getControlPlaneStub(env), (instance: EccosControlPlane) => {
-      expect(instance.getWabaRecord(TEST_ACCOUNT_ID, "WABA_CRON_ACTIVATE")).toMatchObject({
+    await runInDurableObject(getControlPlaneStub(env), async (instance: EccosControlPlane) => {
+      expect(await instance.getWabaRecord(TEST_ACCOUNT_ID, "WABA_CRON_ACTIVATE")).toMatchObject({
         status: "active",
         provisioningError: null,
       });
@@ -140,9 +140,9 @@ describe("scheduled handler", () => {
       );
       expect(subscribedCalls).toHaveLength(1);
     }
-    await runInDurableObject(getControlPlaneStub(env), (instance: EccosControlPlane) => {
+    await runInDurableObject(getControlPlaneStub(env), async (instance: EccosControlPlane) => {
       for (const wabaId of wabas) {
-        expect(instance.getWabaRecord(TEST_ACCOUNT_ID, wabaId)?.status).toBe("active");
+        expect((await instance.getWabaRecord(TEST_ACCOUNT_ID, wabaId))?.status).toBe("active");
       }
     });
   });

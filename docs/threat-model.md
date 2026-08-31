@@ -15,14 +15,15 @@ What an attacker would want, and where it lives:
 
 | Asset | What it is | Where it lives |
 |---|---|---|
-| `META_ACCESS_TOKEN` | Permanent Meta System User token — can send messages and read templates as its WABA | Workers: control-plane WABA storage, never returned to callers. Bun: `.env`. |
+| `META_ACCESS_TOKEN` | Permanent Meta System User token — can send messages and read templates as its WABA | Workers: control-plane WABA storage, **AES-256-GCM encrypted at the application layer** under `ECCOS_TOKEN_ENCRYPTION_KEY` (`apps/gateway/src/token-crypto.ts`), never returned to callers. Bun: `.env`. |
 | `META_APP_SECRET` | Verifies inbound webhook signatures; also used server-side to exchange OAuth codes | Secret: `wrangler secret` / `.env` |
 | `META_WEBHOOK_VERIFY_TOKEN` | Shared value Meta echoes back on webhook subscription (`GET /webhooks/meta`) | Secret: `wrangler secret` / `.env` |
 | `ECCOS_API_KEY` | Bun-target bearer key gating the WABA-scoped send/template routes | Secret: `.env` (Bun target only); account API keys are stored as SHA-256 hashes in the control plane |
 | `ECCOS_ADMIN_API_KEY` | Bootstrap key for account and WABA provisioning | Secret: `wrangler secret` |
+| `ECCOS_TOKEN_ENCRYPTION_KEY` | Key material for the control plane's Meta-access-token encryption at rest; holding it plus a storage dump yields every stored business token | Secret: `wrangler secret` (never in storage — that is the point of the layer) |
 | `SUBSCRIBER_SECRET` | HMAC key Eccos uses to sign forwarded events (`X-Eccos-Signature`) so the subscriber can trust them | Workers: per-WABA DO config, rotatable via the dashboard's settings action. Bun: `.env`. |
 | Message content | Inbound reply/echo text, delivery/read/failed statuses, phone numbers (`from`/`to`), Meta message ids | DO SQLite (`inbound_events`, `outbound_messages`, `deliveries` in `apps/gateway/src/gateway.ts`) / `bun:sqlite` (Bun target, `src/db/client.ts`) |
-| The Embedded-Signup business token | 60-day token returned by `exchangeCodeForToken` during `/connect` | Stored only in the control-plane WABA row so later account-scoped sends and resubscriptions can use it; never written to the data-plane config or returned |
+| The Embedded-Signup business token | 60-day token returned by `exchangeCodeForToken` during `/connect` | Stored only in the control-plane WABA row, encrypted with the envelope above and bound to `<accountId>:<wabaId>`, so later account-scoped sends and resubscriptions can use it; never written to the data-plane config or returned |
 | Cloudflare Access session (operator console) | Proves "this is the operator" to the dashboard | Cloudflare-managed; re-verified in-Worker (`apps/dashboard/src/access.ts`) |
 
 ## 2. Trust boundaries
@@ -164,8 +165,8 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
   `{ url, hasSecret }` — never the `SUBSCRIBER_SECRET` value itself (`gateway.ts` comment: "Never
   exposes the secret"). `GatewayRPC.getConfig()` and `exportData()` filter private keys before
   returning config. The data-plane config table can contain the subscriber secret for forwarding,
-  but access tokens are stored only in the control plane and no private value is returned by the
-  operator API.
+  but access tokens are stored only in the control plane, encrypted at the application layer, and
+  no private value is returned by the operator API.
 
 ## 4. Threats mapped to mitigations (and residual risk)
 
@@ -174,6 +175,7 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
 | Forged/replayed Meta webhook | `verifyMetaSignature` + constant-time compare + unique indexes on `inbound_events` | None significant; HMAC verification happens before JSON parsing. |
 | Misattributed signed webhook without phone metadata | Registered WABA filtering in `worker.ts`; the WABA id is the authoritative routing key | The event is retained at WABA scope when `phone_number_id` is absent, so phone-level attribution is unavailable. |
 | Timing attack on webhook/API-key comparison | `constantTimeEqual` (XOR-accumulate, length-checked first) | The webhook **subscription** `hub.verify_token` check uses plain `===`, not `constantTimeEqual` — low severity (low-value, one-time setup token; Meta calls it directly), but inconsistent with the rest of the codebase. |
+| Stolen Durable Object storage / database export | Meta access tokens are stored as AES-256-GCM `ecs1.` envelopes keyed by the `ECCOS_TOKEN_ENCRYPTION_KEY` Worker secret and bound to `<accountId>:<wabaId>`, so a storage-level compromise yields no usable business token; account API keys are already SHA-256 hashes | An attacker holding *both* the storage dump and the Worker secret recovers the tokens. The key is not rotatable in place: re-keying means reconnecting every number. |
 | Stolen/leaked API key | Account-key hash lookup, revocation, WABA ownership checks, and rate limit on send | A leaked account key grants access to every WABA owned by that account until revoked; the admin bootstrap key remains deployment-wide. |
 | Forged forwarded event reaching the subscriber | `X-Eccos-Signature: sha256=<hex>` via `signPayload`, using `SUBSCRIBER_SECRET` | The subscriber's own verification is out of this repo's control — if a subscriber implementation skips verification, forgery is possible from anyone who can reach its webhook URL. Document this expectation clearly for integrators. |
 | Unauthorized WABA rebind via `/connect/exchange` | Account-key gate plus single-use account-bound OAuth state and ownership-conflict checks; valid Meta OAuth code required (see §3.3) | A failed external exchange after state consumption requires a new connect attempt. |

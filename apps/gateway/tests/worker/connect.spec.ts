@@ -86,7 +86,7 @@ describe("POST /connect/exchange", () => {
     });
     expect(reconcile.status).toBe(200);
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
-      expect(cp.getWaba(ACCOUNT_ID, "WABA123")?.status).toBe("active");
+      expect((await cp.getWaba(ACCOUNT_ID, "WABA123"))?.status).toBe("active");
     });
 
     await runInDurableObject(getGatewayStubForWaba(env, "WABA123"), async (instance: EccosGateway) => {
@@ -98,8 +98,8 @@ describe("POST /connect/exchange", () => {
 
   it("reconcile auto-requeues a failed WABA: failed -> pending -> active in one call", async () => {
     const wabaId = "WABA_RECONCILE_FAILED";
-    await runInDurableObject(getControlPlaneStub(env), (instance: EccosControlPlane) => {
-      instance.registerWaba({
+    await runInDurableObject(getControlPlaneStub(env), async (instance: EccosControlPlane) => {
+      await instance.registerWaba({
         accountId: ACCOUNT_ID,
         wabaId,
         metaAccessToken: "failed-token",
@@ -123,15 +123,15 @@ describe("POST /connect/exchange", () => {
     expect(
       fetchMock.mock.calls.filter(([url]) => String(url).includes(`/${wabaId}/subscribed_apps`)),
     ).toHaveLength(1);
-    await runInDurableObject(getControlPlaneStub(env), (instance: EccosControlPlane) => {
-      expect(instance.getWaba(ACCOUNT_ID, wabaId)?.status).toBe("active");
+    await runInDurableObject(getControlPlaneStub(env), async (instance: EccosControlPlane) => {
+      expect((await instance.getWaba(ACCOUNT_ID, wabaId))?.status).toBe("active");
     });
   });
 
   it("reconcile on an already-active WABA is a no-op: no second subscribed_apps call", async () => {
     const wabaId = "WABA_RECONCILE_ACTIVE";
-    await runInDurableObject(getControlPlaneStub(env), (instance: EccosControlPlane) => {
-      instance.registerWaba({
+    await runInDurableObject(getControlPlaneStub(env), async (instance: EccosControlPlane) => {
+      await instance.registerWaba({
         accountId: ACCOUNT_ID,
         wabaId,
         metaAccessToken: "active-token",

@@ -2,6 +2,13 @@ import { DurableObject } from "cloudflare:workers";
 import type {
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
+import {
+  SEALED_TOKEN_PREFIX,
+  openToken,
+  requireTokenEncryptionKey,
+  sealToken,
+  wabaTokenAad,
+} from "./token-crypto";
 
 /**
  * Control plane of the account-scoped gateway.
@@ -12,8 +19,12 @@ import type {
  *
  * Secrets policy: only SHA-256 hashes of API keys are stored; a raw key exists
  * exactly once, in the `createAccount`/`issueApiKey` return value. Meta access
- * tokens are stored plaintext in `wabas` because they must be presented to the
- * Meta Graph API from the control plane.
+ * tokens must be presented to the Meta Graph API from the control plane, so
+ * they cannot be hashed — they are encrypted instead (`src/token-crypto.ts`,
+ * AES-256-GCM under a key derived from the `ECCOS_TOKEN_ENCRYPTION_KEY` Worker
+ * secret) and `wabas.meta_access_token` only ever holds the `ecs1.` envelope.
+ * Sealing happens in exactly one place (`prepareWabas`) and opening in exactly
+ * one place (`decryptStoredToken`); no other code path may touch the column.
  */
 export const API_KEY_PREFIX = "ek_";
 export const API_KEY_RAW_BYTES = 32;
@@ -133,7 +144,11 @@ export interface WabaProvisioningClaim {
 interface PreparedWaba {
   accountId: string;
   wabaId: string;
-  metaAccessToken: string;
+  /** `ecs1.` envelope — the plaintext token is never carried past `prepareWabas`. */
+  sealedToken: string;
+  /** SHA-256 of the *plaintext* token: the provisioning fingerprint must stay
+   * stable across re-registrations, and every envelope has a fresh random IV. */
+  tokenHash: string;
   callbackUrl: string | null;
   status: ProvisioningStatus;
   phones: PhoneRecord[];
@@ -364,6 +379,44 @@ function parsePhonesJson(raw: string): PhoneRecord[] {
   }
 }
 
+/** Stored on a WABA whose `meta_access_token` is not an `ecs1.` envelope. */
+export const UNSEALED_TOKEN_ERROR =
+  "meta access token is not encrypted; reconnect the number";
+
+/**
+ * Rows written before application-layer token encryption existed cannot be
+ * opened: the plaintext is not an envelope and there is deliberately no
+ * plaintext-tolerant read path (Eccos Cloud is multi-tenant by default and
+ * legacy/shadow/dual-path compatibility is forbidden — decision 2026-08-27).
+ *
+ * Rather than migrating them in place, the control plane *quarantines* them on
+ * every Durable Object init: the WABA is marked `failed` with an actionable
+ * error, so the dashboard shows "reconnect the number" instead of failing with
+ * an opaque crypto error deep inside a send. Reconnecting through Embedded
+ * Signup upserts the row with a sealed envelope and clears the quarantine.
+ *
+ * Idempotent: a row already quarantined with this exact error is not rewritten,
+ * so the returned count is 0 on every run after the first.
+ */
+export function quarantineUnsealedWabas(sql: SqlStorage): number {
+  return sql
+    .exec(
+      `UPDATE wabas
+          SET status = 'failed',
+              provisioning_error = ?,
+              provisioning_next_attempt_at = 0,
+              provisioning_lease_until = NULL
+        WHERE substr(meta_access_token, 1, ?) <> ?
+          AND (status <> 'failed' OR provisioning_error IS NOT ?)
+       RETURNING waba_id`,
+      UNSEALED_TOKEN_ERROR,
+      SEALED_TOKEN_PREFIX.length,
+      SEALED_TOKEN_PREFIX,
+      UNSEALED_TOKEN_ERROR,
+    )
+    .toArray().length;
+}
+
 export class EccosControlPlane extends DurableObject<Env> {
   sql: SqlStorage;
 
@@ -463,7 +516,28 @@ export class EccosControlPlane extends DurableObject<Env> {
       }
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_wabas_provisioning
         ON wabas (status, provisioning_next_attempt_at);`);
+      // Fail-closed cut-over for rows predating token encryption: quarantine,
+      // never migrate — there is no plaintext read path.
+      quarantineUnsealedWabas(this.sql);
     });
+  }
+
+  /** The one place a stored envelope is opened. Every caller that needs the
+   * plaintext token goes through here, so the crypto never spreads out into
+   * the routes, the RPC entrypoint, or the provisioning loop. */
+  private async decryptStoredToken(
+    accountId: string,
+    wabaId: string,
+    stored: unknown,
+  ): Promise<string> {
+    if (typeof stored !== "string" || stored === "") {
+      throw new Error(`WABA "${wabaId}" has no stored meta access token`);
+    }
+    if (!stored.startsWith(SEALED_TOKEN_PREFIX)) {
+      throw new Error(`WABA "${wabaId}": ${UNSEALED_TOKEN_ERROR}`);
+    }
+    const secret = requireTokenEncryptionKey(this.env);
+    return openToken(secret, wabaTokenAad(accountId, wabaId), stored);
   }
 
   async createAccount(
@@ -554,15 +628,22 @@ export class EccosControlPlane extends DurableObject<Env> {
     return { accountId: row.account_id as string, keyId: row.key_id as string };
   }
 
-  registerWaba(input: RegisterWabaInput): RegisterWabaResult {
-    const result = this.registerWabas([input])[0];
+  async registerWaba(input: RegisterWabaInput): Promise<RegisterWabaResult> {
+    const result = (await this.registerWabas([input]))[0];
     if (!result) throw new Error("WABA registration failed");
     return result;
   }
 
-  private prepareWabas(inputs: RegisterWabaInput[], forcedStatus?: ProvisioningStatus): PreparedWaba[] {
+  /** The one place a Meta access token is sealed. Validation is unchanged; the
+   * plaintext exists only inside this function and is replaced by the `ecs1.`
+   * envelope (plus a fingerprint hash) before anything is written. */
+  private async prepareWabas(
+    inputs: RegisterWabaInput[],
+    forcedStatus?: ProvisioningStatus,
+  ): Promise<PreparedWaba[]> {
     if (inputs.length === 0) return [];
-    const prepared = inputs.map((input) => {
+    const secret = requireTokenEncryptionKey(this.env);
+    const prepared = await Promise.all(inputs.map(async (input) => {
       const accountId = this.requireAccount(input.accountId);
       const wabaId = validateWabaId(input.wabaId, "wabaId");
       const metaAccessToken = input.metaAccessToken.trim();
@@ -582,8 +663,21 @@ export class EccosControlPlane extends DurableObject<Env> {
         seenPhoneIds.add(phoneNumberId);
         checkedPhones.push({ phoneNumberId, displayPhoneNumber: phone.displayPhoneNumber?.trim() || "" });
       }
-      return { accountId, wabaId, metaAccessToken, callbackUrl, status, phones: checkedPhones, createdAt: Date.now() };
-    });
+      const [sealedToken, tokenHash] = await Promise.all([
+        sealToken(secret, wabaTokenAad(accountId, wabaId), metaAccessToken),
+        sha256Hex(metaAccessToken),
+      ]);
+      return {
+        accountId,
+        wabaId,
+        sealedToken,
+        tokenHash,
+        callbackUrl,
+        status,
+        phones: checkedPhones,
+        createdAt: Date.now(),
+      };
+    }));
     const seenWabaIds = new Set<string>();
     const seenPhoneIds = new Set<string>();
     for (const item of prepared) {
@@ -624,8 +718,8 @@ export class EccosControlPlane extends DurableObject<Env> {
     }
   }
 
-  registerWabas(inputs: RegisterWabaInput[]): RegisterWabaResult[] {
-    const prepared = this.prepareWabas(inputs);
+  async registerWabas(inputs: RegisterWabaInput[]): Promise<RegisterWabaResult[]> {
+    const prepared = await this.prepareWabas(inputs);
     if (prepared.length === 0) return [];
     this.ctx.storage.transactionSync(() => {
       this.assertWabaOwnership(prepared);
@@ -653,7 +747,7 @@ export class EccosControlPlane extends DurableObject<Env> {
              END`,
           item.accountId,
           item.wabaId,
-          item.metaAccessToken,
+          item.sealedToken,
           item.callbackUrl,
           item.createdAt,
           item.status,
@@ -668,11 +762,11 @@ export class EccosControlPlane extends DurableObject<Env> {
         }
       }
     });
-    return prepared.map((item) => {
-      const waba = this.getWabaRecord(item.accountId, item.wabaId);
+    return Promise.all(prepared.map(async (item) => {
+      const waba = await this.getWabaRecord(item.accountId, item.wabaId);
       if (!waba) throw new Error(`WABA registration failed for "${item.wabaId}"`);
       return { waba, phones: waba.phones };
-    });
+    }));
   }
 
   async beginWabaProvisioning(input: RegisterWabaInput): Promise<RegisterWabaResult> {
@@ -682,7 +776,7 @@ export class EccosControlPlane extends DurableObject<Env> {
   }
 
   async beginWabaProvisioningBatch(inputs: RegisterWabaInput[]): Promise<RegisterWabaResult[]> {
-    const prepared = this.prepareWabas(inputs, "pending");
+    const prepared = await this.prepareWabas(inputs, "pending");
     if (prepared.length === 0) return [];
     if (prepared.some((item) => item.callbackUrl === null)) {
       throw new Error("callbackUrl is required for WABA provisioning");
@@ -692,7 +786,11 @@ export class EccosControlPlane extends DurableObject<Env> {
         sha256Hex(
           JSON.stringify({
             wabaId: item.wabaId,
-            tokenHash: await sha256Hex(item.metaAccessToken),
+            // Hash of the plaintext, not of the envelope: two registrations of
+            // the same token must produce the same fingerprint (the envelope
+            // carries a fresh IV every time), or provisioning stops being
+            // idempotent and re-subscribes Meta on every retry.
+            tokenHash: item.tokenHash,
             callbackUrl: item.callbackUrl,
             phones: [...item.phones].sort((a, b) => a.phoneNumberId.localeCompare(b.phoneNumberId)),
           }),
@@ -737,7 +835,7 @@ export class EccosControlPlane extends DurableObject<Env> {
              provisioned_at = NULL`,
           item.accountId,
           item.wabaId,
-          item.metaAccessToken,
+          item.sealedToken,
           item.callbackUrl,
           item.createdAt,
           now,
@@ -760,20 +858,29 @@ export class EccosControlPlane extends DurableObject<Env> {
         }
       }
     });
-    return prepared.map((item) => {
-      const waba = this.getWabaRecord(item.accountId, item.wabaId);
+    return Promise.all(prepared.map(async (item) => {
+      const waba = await this.getWabaRecord(item.accountId, item.wabaId);
       if (!waba) throw new Error(`WABA provisioning failed for "${item.wabaId}"`);
       return { waba, phones: waba.phones };
-    });
+    }));
   }
 
-  /** Full registration incl. credentials + phones — only for the owning account. */
-  getWaba(accountId: string, wabaId: string): AccountWaba | null {
-    const waba = this.getWabaRecord(accountId, wabaId);
-    return waba?.status === "active" ? waba : null;
+  /** Full registration incl. credentials + phones — only for the owning account.
+   * Non-active registrations resolve to `null` *before* the token is opened, so
+   * a quarantined row reads as "not configured" instead of throwing here. */
+  async getWaba(accountId: string, wabaId: string): Promise<AccountWaba | null> {
+    const row = this.readWabaRow(accountId, wabaId);
+    if (!row || ((row.status as ProvisioningStatus) ?? "active") !== "active") return null;
+    return this.hydrateWaba(row);
   }
 
-  getWabaRecord(accountId: string, wabaId: string): AccountWaba | null {
+  async getWabaRecord(accountId: string, wabaId: string): Promise<AccountWaba | null> {
+    const row = this.readWabaRow(accountId, wabaId);
+    return row ? this.hydrateWaba(row) : null;
+  }
+
+  /** Raw owned row, credentials still sealed. */
+  private readWabaRow(accountId: string, wabaId: string): Record<string, unknown> | null {
     const id = validateAccountId(accountId);
     const owned = this.sql
       .exec("SELECT account_id FROM accounts WHERE account_id = ?", id)
@@ -787,17 +894,22 @@ export class EccosControlPlane extends DurableObject<Env> {
         id,
       )
       .toArray()[0];
-    if (!row) return null;
+    return row ?? null;
+  }
+
+  private async hydrateWaba(row: Record<string, unknown>): Promise<AccountWaba> {
+    const accountId = row.account_id as string;
+    const wabaId = row.waba_id as string;
     return {
-      accountId: row.account_id as string,
-      wabaId: row.waba_id as string,
-      metaAccessToken: row.meta_access_token as string,
+      accountId,
+      wabaId,
+      metaAccessToken: await this.decryptStoredToken(accountId, wabaId, row.meta_access_token),
       callbackUrl: (row.callback_url as string | null) ?? null,
       createdAt: row.created_at as number,
       provisionedAt: (row.provisioned_at as number | null) ?? null,
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
-      phones: phonesOf(wabaIdN, this.sql),
+      phones: phonesOf(wabaId, this.sql),
     };
   }
 
@@ -823,7 +935,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     };
   }
 
-  retryWabaProvisioning(accountId: string, wabaId: string): AccountWaba | null {
+  async retryWabaProvisioning(accountId: string, wabaId: string): Promise<AccountWaba | null> {
     const account = this.requireAccount(accountId);
     const id = validateWabaId(wabaId, "wabaId");
     const now = Date.now();
@@ -832,20 +944,25 @@ export class EccosControlPlane extends DurableObject<Env> {
        SET status = 'pending', provisioning_error = NULL, provisioning_attempts = 0,
            provisioning_next_attempt_at = ?, provisioning_lease_until = NULL,
            provisioning_revision = provisioning_revision + 1, provisioned_at = NULL
-       WHERE account_id = ? AND waba_id = ? AND status IN ('pending', 'failed')`,
+       WHERE account_id = ? AND waba_id = ? AND status IN ('pending', 'failed')
+         AND substr(meta_access_token, 1, ?) = ?`,
       now,
       account,
       id,
+      SEALED_TOKEN_PREFIX.length,
+      SEALED_TOKEN_PREFIX,
     );
+    // A quarantined WABA stays `failed`: retrying it could never succeed, and
+    // `getWabaRecord` below surfaces the actionable "reconnect the number".
     return this.getWabaRecord(account, id);
   }
 
-  claimWabaProvisioning(accountId: string, wabaId: string): WabaProvisioningClaim | null {
+  async claimWabaProvisioning(accountId: string, wabaId: string): Promise<WabaProvisioningClaim | null> {
     const account = this.requireAccount(accountId);
     return this.claimProvisioning(account, validateWabaId(wabaId, "wabaId"), Date.now());
   }
 
-  claimPendingWabaProvisioning(limit = PROVISIONING_BATCH): WabaProvisioningClaim[] {
+  async claimPendingWabaProvisioning(limit = PROVISIONING_BATCH): Promise<WabaProvisioningClaim[]> {
     if (!Number.isInteger(limit) || limit <= 0 || limit > 100) {
       throw new Error("limit must be an integer between 1 and 100");
     }
@@ -857,27 +974,30 @@ export class EccosControlPlane extends DurableObject<Env> {
          WHERE status = 'pending'
            AND provisioning_next_attempt_at <= ?
            AND (provisioning_lease_until IS NULL OR provisioning_lease_until <= ?)
+           AND substr(meta_access_token, 1, ?) = ?
          ORDER BY provisioning_next_attempt_at, waba_id
          LIMIT ?`,
         now,
         now,
+        SEALED_TOKEN_PREFIX.length,
+        SEALED_TOKEN_PREFIX,
         limit,
       )
       .toArray() as unknown as ProvisioningRow[];
     const claims: WabaProvisioningClaim[] = [];
     for (const row of rows) {
-      const claim = this.claimProvisioning(row.account_id, row.waba_id, now, row.provisioning_revision);
+      const claim = await this.claimProvisioning(row.account_id, row.waba_id, now, row.provisioning_revision);
       if (claim) claims.push(claim);
     }
     return claims;
   }
 
-  private claimProvisioning(
+  private async claimProvisioning(
     accountId: string,
     wabaId: string,
     now: number,
     revision?: number,
-  ): WabaProvisioningClaim | null {
+  ): Promise<WabaProvisioningClaim | null> {
     const leaseUntil = now + PROVISIONING_LEASE_MS;
     const revisionClause = revision === undefined ? "" : " AND provisioning_revision = ?";
     const revisionArgs = revision === undefined ? [] : [revision];
@@ -907,7 +1027,11 @@ export class EccosControlPlane extends DurableObject<Env> {
     return {
       accountId: claimed.account_id as string,
       wabaId: claimed.waba_id as string,
-      metaAccessToken: claimed.meta_access_token as string,
+      metaAccessToken: await this.decryptStoredToken(
+        claimed.account_id as string,
+        claimed.waba_id as string,
+        claimed.meta_access_token,
+      ),
       callbackUrl: (claimed.callback_url as string | null) ?? null,
       phones: phonesOf(wabaId, this.sql),
       revision: claimed.provisioning_revision as number,
@@ -915,14 +1039,14 @@ export class EccosControlPlane extends DurableObject<Env> {
     };
   }
 
-  completeWabaProvisioning(input: {
+  async completeWabaProvisioning(input: {
     accountId: string;
     wabaId: string;
     revision: number;
     attempt: number;
     success: boolean;
     failure?: ProvisioningFailure;
-  }): AccountWaba | null {
+  }): Promise<AccountWaba | null> {
     const account = this.requireAccount(input.accountId);
     const id = validateWabaId(input.wabaId, "wabaId");
     if (!Number.isSafeInteger(input.revision) || !Number.isSafeInteger(input.attempt)) {

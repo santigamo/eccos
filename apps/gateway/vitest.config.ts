@@ -8,6 +8,8 @@ const TEST_BINDINGS = {
   META_ES_CONFIG_ID: "test-config-id",
   GATEWAY_PUBLIC_URL: "https://gateway.example",
   FORWARD_MAX_ATTEMPTS: "3",
+  // Fake, test-only key material for the control-plane token encryption.
+  ECCOS_TOKEN_ENCRYPTION_KEY: "test-token-encryption-key-not-a-real-secret",
 } as const;
 
 export default defineConfig({
