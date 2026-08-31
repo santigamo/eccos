@@ -6,7 +6,8 @@ import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listDeliveries, retryDelivery } from "../server/gateway";
 import type { DeliveryRecord } from "../server/gateway";
-import { Page, StatusTag, Unreachable, fmtTs } from "../ui";
+import { Page, StatusTag, fmtTs } from "../ui";
+import { FailureView } from "../components/dashboard/failure";
 import { Button } from "@/components/ui/button";
 import { normalizeSearchBefore, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import {
@@ -50,7 +51,7 @@ function DeliveriesPage() {
   if (!result.ok) {
     return (
       <Page title="Deliveries" kicker="Logs">
-        <Unreachable error={result.error} />
+        <FailureView failure={result} />
       </Page>
     );
   }

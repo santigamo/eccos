@@ -1,6 +1,7 @@
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import type { AccountResources, DashboardState } from "../server/gateway";
-import { Page, Unreachable } from "../ui";
+import { Page } from "../ui";
+import { FailureView } from "../components/dashboard/failure";
 import { ConnectNumberPanel } from "../components/dashboard/connect-number";
 import { NumbersTable } from "../components/dashboard/numbers-table";
 import {
@@ -38,7 +39,7 @@ function NumbersPage() {
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
-        <Unreachable error={root.error} />
+        <FailureView failure={root} />
       </Page>
     );
   }

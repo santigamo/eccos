@@ -170,7 +170,18 @@ Eccos system — the practices, not the brand):
    normal-size muted sentence saying what will appear, and an action link only when
    a real action exists (clear filters, configure a target). Never a lone tiny
    muted sentence.
-7. **Charts (when they arrive)**: zero baseline for length encodings, direct labels
+7. **A failure names only what it knows.** Server functions return a typed
+   failure class (`unreachable` / `unauthenticated` / `forbidden`, decided from
+   the thrown error's type in `src/server/gateway.ts`), and `FailureView`
+   renders one screen per class — never one card for all of them. Only
+   `unreachable` may say the gateway is unreachable. An authorization refusal
+   is a step the operator has not taken, not an outage: it renders like the
+   pending note on /numbers — a title, one sentence, and the action that
+   resolves it (create a workspace, choose one, sign in) — with no red banner
+   and no raw server message. Adding a new refusal means adding its reason code
+   in `auth/tenant.ts` and its copy in `lib/failure.ts`, never string-matching
+   a message in a component.
+8. **Charts (when they arrive)**: zero baseline for length encodings, direct labels
    over legends, color only to distinguish series, drawn from the `--chart-*`
    tokens. Default to stillness — motion only for state change.
 

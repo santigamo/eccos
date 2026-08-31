@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { UnauthorizedError } from "../src/auth/session";
 
 /**
  * Server/data-layer coverage for every operator view (finding F11: the
@@ -58,7 +59,9 @@ mock.module("cloudflare:workers", () => ({
 // (notional) session cookie; the mocked auth API accepts it as a member with
 // every gateway permission and links the org to the fixture account.
 let fakeSessionHeaders: Headers | null = null;
-let fakeMemberships: { id: string }[] = [{ id: "org-fixture" }];
+let fakeMemberships: { id: string; name?: string; slug?: string }[] = [{ id: "org-fixture" }];
+/** Gateway actions the fake role does NOT hold, to drive the forbidden path. */
+let fakeDeniedActions = new Set<string>();
 
 
 const ORG_ID = "org-fixture";
@@ -76,20 +79,38 @@ mock.module("../src/auth/tenant", () => ({
   resolveMemberships: async () => fakeMemberships,
 }));
 
+// The seam throws the SAME typed errors the real guards do — the boundary in
+// gateway.ts classifies by the error's type, so a mock that threw a bare Error
+// would silently exercise the wrong branch (eccos-k5a). `ForbiddenError` comes
+// from `realTenant` because that is the very class the mocked `../auth/tenant`
+// re-publishes, and therefore the one gateway.ts holds.
+const { ForbiddenError } = realTenant;
 mock.module("../src/auth/server-auth", () => ({
-      UnauthorizedError: class UnauthorizedError extends Error {
-        constructor(message = "authentication required") {
-          super(message);
-          this.name = "UnauthorizedError";
+      UnauthorizedError,
+      // Mirrors the real requirePermission's fail-closed ladder: no session,
+      // no membership, ambiguous membership, then the capability check.
+      requireGatewayPermission: async (_auth: unknown, _request: Request, action: string) => {
+        if (!fakeSessionHeaders) throw new UnauthorizedError();
+        if (fakeMemberships.length === 0) {
+          throw new ForbiddenError(
+            "no organization membership — create or join an organization first",
+            "no-organization",
+          );
         }
-      },
-      requireGatewayPermission: async (_auth: unknown, _request: Request, _action: string) => {
-        if (!fakeSessionHeaders) throw new Error("authentication required");
+        if (fakeMemberships.length > 1) {
+          throw new ForbiddenError("select an organization", "select-organization");
+        }
+        if (fakeDeniedActions.has(action)) {
+          throw new ForbiddenError(
+            `missing "${action}" permission in this organization`,
+            "missing-permission",
+          );
+        }
         return ORG_ID;
       },
       resolveMemberships: async () => fakeMemberships,
       requireAuthContext: async (_auth: unknown, _request: Request) => {
-        if (!fakeSessionHeaders) throw new Error("authentication required");
+        if (!fakeSessionHeaders) throw new UnauthorizedError();
         return { session: { userId: "user-1", email: "op@corp.test", emailVerified: true, name: "Op", sessionId: "sess-1", activeOrganizationId: null } };
       },
     }));
@@ -136,9 +157,19 @@ afterEach(() => {
   gatewayBinding = undefined;
   fakeSessionHeaders = null;
   fakeMemberships = [{ id: "org-fixture" }];
+  fakeDeniedActions = new Set();
 });
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
+
+/**
+ * A transport / RPC failure, as the boundary reports it (eccos-k5a). Only this
+ * class is allowed to blame the gateway, so every "unreachable" expectation
+ * below asserts the class as well as the message.
+ */
+function unreachable(error: string) {
+  return { ok: false, kind: "unreachable", error };
+}
 
 /** Account resources fixture with an owned WABA, for every account-scoped view. */
 function resourcesFor(accountId: string) {
@@ -197,7 +228,7 @@ describe("getGatewayStatus (Status view)", () => {
     withResources({});
     gatewayBinding = undefined;
     const res = await getGatewayStatus();
-    expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
   });
 
   test("unreachable: RPC throw is caught and surfaced as { ok: false }", async () => {
@@ -207,7 +238,7 @@ describe("getGatewayStatus (Status view)", () => {
       },
     });
     const res = await getGatewayStatus();
-    expect(res).toEqual({ ok: false, error: "Durable Object unreachable" });
+    expect(res).toEqual(unreachable("Durable Object unreachable"));
   });
 
   test("account mode resolves an owned WABA and forwards the account context", async () => {
@@ -278,7 +309,7 @@ describe("getGatewayStatus (Status view)", () => {
     expect(statusArgs).toEqual(["waba-b", "account-a", "waba-a", "account-a"]);
 
     const mutation = await retryDelivery({ data: { id: 1, wabaId: "waba-foreign" } });
-    expect(mutation).toEqual({ ok: false, error: 'WABA "waba-foreign" is not owned by account "account-a"' });
+    expect(mutation).toEqual(unreachable('WABA "waba-foreign" is not owned by account "account-a"'));
   });
 
   test("fails closed when the account has no registered WABAs", async () => {
@@ -293,7 +324,7 @@ describe("getGatewayStatus (Status view)", () => {
       }),
     };
     const res = await getGatewayStatus();
-    expect(res).toEqual({ ok: false, error: 'Account "account-a" has no registered WABAs' });
+    expect(res).toEqual(unreachable('Account "account-a" has no registered WABAs'));
   });
 });
 
@@ -307,7 +338,12 @@ describe("session bootstrap (auth-aware state)", () => {
       },
     };
     const result = await getDashboardState();
-    expect(result).toEqual({ ok: false, error: "authentication required" });
+    // Classified as a lost session, NOT as a dead gateway: no RPC was tried.
+    expect(result).toEqual({
+      ok: false,
+      kind: "unauthenticated",
+      error: "authentication required",
+    });
     expect(rpcTouched).toBe(false);
   });
 
@@ -401,7 +437,7 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
       },
     });
     const res = await listDeliveries({ data: undefined });
-    expect(res).toEqual({ ok: false, error: "network error" });
+    expect(res).toEqual(unreachable("network error"));
   });
 
   test("retryDelivery reachable: requires and forwards the selected WABA scope", async () => {
@@ -422,7 +458,7 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
     withResources({});
     gatewayBinding = undefined;
     const res = await retryDelivery({ data: { id: 7, wabaId: "waba-a" } });
-    expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
   });
 });
 
@@ -447,7 +483,7 @@ describe("listInbound (Inbound view)", () => {
       },
     });
     const res = await listInbound();
-    expect(res).toEqual({ ok: false, error: "boom" });
+    expect(res).toEqual(unreachable("boom"));
   });
 });
 
@@ -469,7 +505,7 @@ describe("listOutbound (Outbound view)", () => {
     withResources({});
     gatewayBinding = undefined;
     const res = await listOutbound();
-    expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
   });
 });
 
@@ -504,7 +540,7 @@ describe("listTemplates (Templates view)", () => {
       },
     });
     const res = await listTemplates();
-    expect(res).toEqual({ ok: false, error: "RPC unreachable" });
+    expect(res).toEqual(unreachable("RPC unreachable"));
   });
 });
 
@@ -523,7 +559,7 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
     withResources({});
     gatewayBinding = undefined;
     const res = await getSubscriberConfig();
-    expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
   });
 
   test("setSubscriberConfig reachable: forwards the rotation payload", async () => {
@@ -546,7 +582,7 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
       },
     });
     const res = await setSubscriberConfig({ data: { url: "https://new.example.com" } });
-    expect(res).toEqual({ ok: false, error: "write failed" });
+    expect(res).toEqual(unreachable("write failed"));
   });
 
   test("resubscribe reachable + Meta accepted", async () => {
@@ -565,7 +601,7 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
     withResources({});
     gatewayBinding = undefined;
     const res = await resubscribe();
-    expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
   });
 });
 
@@ -616,23 +652,118 @@ describe("recheckNumber (pending number on /numbers)", () => {
       },
     });
     const res = await recheckNumber({ data: { wabaId: "waba-someone-else" } });
-    expect(res).toEqual({
-      ok: false,
-      error: 'WABA "waba-someone-else" is not owned by account "account-a"',
-    });
+    expect(res).toEqual(
+      unreachable('WABA "waba-someone-else" is not owned by account "account-a"'),
+    );
     expect(called).toBe(false);
   });
 
   test("fails closed without a session", async () => {
     withResources({ reconcileWaba: async () => ({ ok: true, status: "active", error: null }) });
     fakeSessionHeaders = null;
-    expect(recheckNumber({ data: { wabaId: "waba-a" } })).rejects.toThrow(/authentication required/);
+    // The permission check now runs inside the failure boundary, so a lost
+    // session comes back classified instead of escaping as a thrown 500.
+    const res = await recheckNumber({ data: { wabaId: "waba-a" } });
+    expect(res).toEqual({
+      ok: false,
+      kind: "unauthenticated",
+      error: "authentication required",
+    });
   });
 
   test("unreachable: missing binding yields the graceful error shape", async () => {
     withResources({});
     gatewayBinding = undefined;
     const res = await recheckNumber({ data: { wabaId: "waba-a" } });
-    expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
+  });
+});
+
+/**
+ * eccos-k5a: authorization refusals happen in the identity plane, before any
+ * RPC is attempted, so they must NOT come back as "the gateway is unreachable".
+ * The boundary decides that from the thrown error's type, and these are the
+ * three dead ends an operator actually lands on.
+ */
+describe("failure classification (authorization vs. transport)", () => {
+  /** A signed-in session over a binding that records whether anything reached it. */
+  function trackingBinding() {
+    const touched = { rpc: false };
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
+    const touch = <T>(value: T) => async () => {
+      touched.rpc = true;
+      return value;
+    };
+    gatewayBinding = {
+      getOrganizationAccountLink: touch({ accountId: "account-a", status: "active" }),
+      ensureOrganizationAccount: touch({ accountId: "account-a", status: "active" }),
+      listAccountResources: touch(resourcesFor("account-a")),
+      getStatus: touch(null),
+      getSubscriberConfig: touch(null),
+    };
+    return touched;
+  }
+
+  test("zero memberships is reported as an onboarding dead end, not an outage", async () => {
+    const touched = trackingBinding();
+    fakeMemberships = [];
+    const res = await getGatewayStatus();
+    expect(res).toEqual({
+      ok: false,
+      kind: "forbidden",
+      reason: "no-organization",
+      error: "no organization membership — create or join an organization first",
+    });
+    expect(touched.rpc).toBe(false);
+  });
+
+  test("several memberships and none selected carries the choice to make", async () => {
+    const touched = trackingBinding();
+    fakeMemberships = [
+      { id: "org-fixture", name: "Acme", slug: "acme" },
+      { id: "org-other", name: "Globex", slug: "globex" },
+    ];
+    const res = await getSubscriberConfig();
+    expect(res).toEqual({
+      ok: false,
+      kind: "forbidden",
+      reason: "select-organization",
+      error: "select an organization",
+      // The remedy travels with the failure: the picker needs the options.
+      organizations: [
+        { id: "org-fixture", name: "Acme", slug: "acme" },
+        { id: "org-other", name: "Globex", slug: "globex" },
+      ],
+    });
+    expect(touched.rpc).toBe(false);
+  });
+
+  test("a role without the action is reported as a permission, not a binding", async () => {
+    withResources({
+      resubscribe: async () => ({ ok: true, error: null }),
+      listInbound: async () => [],
+    });
+    fakeDeniedActions = new Set(["configure"]);
+    const res = await resubscribe();
+    expect(res).toEqual({
+      ok: false,
+      kind: "forbidden",
+      reason: "missing-permission",
+      error: 'missing "configure" permission in this organization',
+    });
+    // The same session still holds `view`, so the read paths stay open.
+    fakeDeniedActions = new Set(["configure"]);
+    const readable = await listInbound();
+    expect(readable.ok).toBe(true);
+  });
+
+  test("a genuine RPC failure still reads as unreachable", async () => {
+    withResources({
+      getStatus: async () => {
+        throw new Error("Durable Object reset");
+      },
+    });
+    const res = await getGatewayStatus();
+    expect(res).toEqual(unreachable("Durable Object reset"));
   });
 });

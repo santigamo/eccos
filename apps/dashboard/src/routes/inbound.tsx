@@ -6,7 +6,8 @@ import { LogGrid } from "../components/grid/log-grid";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listInbound } from "../server/gateway";
 import type { InboundRow } from "../server/gateway";
-import { Page, Unreachable, fmtTs } from "../ui";
+import { Page, fmtTs } from "../ui";
+import { FailureView } from "../components/dashboard/failure";
 
 export const Route = createFileRoute("/inbound")({
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
@@ -63,7 +64,7 @@ function InboundPage() {
   if (!result.ok) {
     return (
       <Page title="Inbound" kicker="Logs">
-        <Unreachable error={result.error} />
+        <FailureView failure={result} />
       </Page>
     );
   }

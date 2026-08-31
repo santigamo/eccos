@@ -9,7 +9,8 @@ import {
   requireGatewayPermission,
   UnauthorizedError,
 } from "../auth/server-auth";
-import { resolveMemberships } from "../auth/tenant";
+import { ForbiddenError, resolveMemberships } from "../auth/tenant";
+import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
   AccountResources,
   ConnectStartResult,
@@ -47,12 +48,39 @@ export type {
 } from "@eccos/gateway-contract";
 
 /**
- * Discriminated result wrapper. Every server function narrows an unconfigured
- * or unreachable gateway to `{ ok: false }` instead of throwing, so pages render
- * a graceful "unreachable" state and a plain `vite build` / SSR without a
- * running gateway never crashes.
+ * Which class of failure a server function hit (eccos-k5a).
+ *
+ * Decided at the boundary from the THROWN ERROR'S TYPE, never from its message.
+ * `UnauthorizedError` / `ForbiddenError` come out of the identity plane long
+ * before any RPC is attempted, so a page that receives one must not claim the
+ * gateway is unreachable: only `"unreachable"` has established that.
  */
-export type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+export type FailureKind = "unreachable" | "unauthenticated" | "forbidden";
+
+/** The `{ ok: false }` half of {@link Result}, carrying what actually failed. */
+export interface Failure {
+  ok: false;
+  kind: FailureKind;
+  /** The underlying message. Diagnostic detail, never the UI's discriminator. */
+  error: string;
+  /** Which authorization dead end this is. Present for `kind: "forbidden"`. */
+  reason?: ForbiddenReason;
+  /**
+   * The organizations to choose between. Populated only for
+   * `reason: "select-organization"`, where the choice IS the remedy.
+   */
+  organizations?: Membership[];
+}
+
+/**
+ * Discriminated result wrapper. Every server function narrows an unconfigured
+ * or unreachable gateway — and every authorization refusal — to `{ ok: false }`
+ * instead of throwing, so pages render a graceful state and a plain
+ * `vite build` / SSR without a running gateway never crashes.
+ */
+export type Result<T> = { ok: true; data: T } | Failure;
+
+export type { ForbiddenReason, Membership } from "../auth/tenant";
 
 /**
  * Identity-plane access (contract §1/§5): every server function resolves the
@@ -93,9 +121,7 @@ async function requireActor(action: "view" | "operate" | "configure" | "administ
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 export type TemplatesResult = { ok: true; data: Json } | { ok: false; error: Json };
 
-export type GatewayStatusResult =
-  | { ok: true; status: GatewayStatus }
-  | { ok: false; error: string };
+export type GatewayStatusResult = { ok: true; status: GatewayStatus } | Failure;
 
 export interface DashboardScope {
   accountId: string;
@@ -207,16 +233,61 @@ function validateSetupInput(input: unknown): { name?: string } | undefined {
  * Workers together. The runtime `if (!gateway)` guard still covers a genuinely
  * missing binding (e.g. running the dashboard without the gateway).
  */
-async function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<Result<T>> {
+async function withGateway<T>(
+  fn: (gateway: GatewayApi) => Promise<T>,
+  action?: GatewayAction,
+): Promise<Result<T>> {
   const gateway = env.GATEWAY;
   if (!gateway) {
-    return { ok: false, error: "GATEWAY service binding is not configured" };
+    return { ok: false, kind: "unreachable", error: "GATEWAY service binding is not configured" };
   }
   try {
+    // The permission check runs INSIDE the boundary on purpose: an
+    // authorization refusal must come back classified as one, not escape as a
+    // thrown server-function error (or, worse, get reported as a dead gateway).
+    if (action) await requireGatewayPermission(requestAuth(), getRequest(), action);
     return { ok: true, data: await fn(gateway) };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return classifyFailure(err);
   }
+}
+
+/**
+ * Name the failure from the error's type (eccos-k5a).
+ *
+ * `ForbiddenError` and `UnauthorizedError` are raised by the identity plane
+ * before the RPC is attempted, so they say nothing about the gateway; anything
+ * else escaping the call is a transport or RPC failure, which is the only case
+ * allowed to blame the service binding. `instanceof` is the discriminator, with
+ * the class's own `name` brand as the fallback that survives a duplicated
+ * module copy (bundler chunk, test mock) — never the message text.
+ */
+async function classifyFailure(err: unknown): Promise<Failure> {
+  if (err instanceof UnauthorizedError || isNamed(err, "UnauthorizedError")) {
+    return { ok: false, kind: "unauthenticated", error: message(err) };
+  }
+  if (err instanceof ForbiddenError || isNamed(err, "ForbiddenError")) {
+    const reason = (err as ForbiddenError).reason ?? "other";
+    if (reason === "select-organization") {
+      // The remedy is the choice itself, so this one branch pays to fetch it.
+      // A failure to list them degrades to the sentence without a picker,
+      // never to a wrong cause.
+      const organizations = await resolveMemberships(requestAuth(), getRequest().headers).catch(
+        () => [] as Membership[],
+      );
+      return { ok: false, kind: "forbidden", reason, error: message(err), organizations };
+    }
+    return { ok: false, kind: "forbidden", reason, error: message(err) };
+  }
+  return { ok: false, kind: "unreachable", error: message(err) };
+}
+
+function isNamed(err: unknown, name: string): boolean {
+  return err instanceof Error && err.name === name;
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 type ResolvedScope = {
@@ -310,15 +381,24 @@ function dashboardScope(scope: ResolvedScope): DashboardScope {
   };
 }
 
+/** What a scoped server function needs from its caller. */
+interface ScopedOptions {
+  /** Permission the operation requires, checked inside the failure boundary. */
+  action: GatewayAction;
+  /** WABA the operator asked about; the account is never theirs to pick. */
+  wabaId?: string;
+  /** Refuse a WABA the account does not own instead of falling back to its first. */
+  rejectUnknown?: boolean;
+}
+
 async function withScopedGateway<T>(
+  options: ScopedOptions,
   fn: (gateway: GatewayApi, scope: ResolvedScope) => Promise<T>,
-  requestedWabaId?: string,
-  rejectUnknown = false,
 ): Promise<Result<T>> {
   return withGateway(async (gateway) => {
-    const scope = await resolveScope(gateway, requestedWabaId, rejectUnknown);
+    const scope = await resolveScope(gateway, options.wabaId, options.rejectUnknown ?? false);
     return fn(gateway, scope);
-  });
+  }, options.action);
 }
 
 /** Status page loader — kept returning `{ status }` for the existing route. */
@@ -326,10 +406,9 @@ export const getGatewayStatus = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(
     async ({ data }): Promise<GatewayStatusResult> => {
-      await requireGatewayPermission(requestAuth(), getRequest(), "view");
       const res = await withScopedGateway(
+        { action: "view", wabaId: data?.wabaId },
         (gateway, scope) => gateway.getStatus(scope.wabaId, scope.accountId),
-        data?.wabaId,
       );
       return res.ok ? { ok: true, status: res.data } : res;
     },
@@ -338,10 +417,10 @@ export const getGatewayStatus = createServerFn({ method: "GET" })
 export const getDashboardScope = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(
-    async ({ data }): Promise<Result<DashboardScope>> => {
-      await requireGatewayPermission(requestAuth(), getRequest(), "view");
-      return withScopedGateway((_, scope) => Promise.resolve(dashboardScope(scope)), data?.wabaId);
-    },
+    ({ data }): Promise<Result<DashboardScope>> =>
+      withScopedGateway({ action: "view", wabaId: data?.wabaId }, (_, scope) =>
+        Promise.resolve(dashboardScope(scope)),
+      ),
   );
 
 export const getDashboardState = createServerFn({ method: "GET" })
@@ -378,26 +457,19 @@ export const getDashboardState = createServerFn({ method: "GET" })
 export const getDashboardOverview = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(
-    async ({ data }): Promise<DashboardOverviewResult> => {
-      await requireGatewayPermission(requestAuth(), getRequest(), "view");
-      return withScopedGateway(
-        async (gateway, scope) => ({
-          status: await gateway.getStatus(scope.wabaId, scope.accountId),
-          scope: dashboardScope(scope),
-        }),
-        data?.wabaId,
-      );
-    },
+    ({ data }): Promise<DashboardOverviewResult> =>
+      withScopedGateway({ action: "view", wabaId: data?.wabaId }, async (gateway, scope) => ({
+        status: await gateway.getStatus(scope.wabaId, scope.accountId),
+        scope: dashboardScope(scope),
+      })),
   );
 
 export const getAccountResources = createServerFn({ method: "GET" }).handler(
-  async (): Promise<Result<AccountResources>> => {
-    await requireGatewayPermission(requestAuth(), getRequest(), "view");
-    return withGateway(async (gateway) => {
+  (): Promise<Result<AccountResources>> =>
+    withGateway(async (gateway) => {
       const account = await resolveOrganizationAccount(gateway);
       return account.resources;
-    });
-  },
+    }, "view"),
 );
 
 /**
@@ -442,57 +514,46 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
 export const listDeliveries = createServerFn({ method: "GET" })
   .validator(validateDeliveryInput)
   .handler(
-    async ({ data }): Promise<Result<DeliveryRecord[]>> => {
-      await requireGatewayPermission(requestAuth(), getRequest(), "view");
-      return withScopedGateway(
-        (gateway, scope) => gateway.listDeliveries({ ...data, wabaId: scope.wabaId }, scope.accountId),
-        data?.wabaId,
-      );
-    },
+    ({ data }): Promise<Result<DeliveryRecord[]>> =>
+      withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
+        gateway.listDeliveries({ ...data, wabaId: scope.wabaId }, scope.accountId),
+      ),
   );
 
 export const listInbound = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(async ({ data }): Promise<Result<InboundRow[]>> => {
-    await requireGatewayPermission(requestAuth(), getRequest(), "view");
-    return withScopedGateway(
-      (gateway, scope) => gateway.listInbound({ wabaId: scope.wabaId }, scope.accountId),
-      data?.wabaId,
-    );
-  });
+  .handler(({ data }): Promise<Result<InboundRow[]>> =>
+    withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
+      gateway.listInbound({ wabaId: scope.wabaId }, scope.accountId),
+    ),
+  );
 
 export const listOutbound = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(async ({ data }): Promise<Result<OutboundRow[]>> => {
-    await requireGatewayPermission(requestAuth(), getRequest(), "view");
-    return withScopedGateway(
-      (gateway, scope) => gateway.listOutbound({ wabaId: scope.wabaId }, scope.accountId),
-      data?.wabaId,
-    );
-  });
+  .handler(({ data }): Promise<Result<OutboundRow[]>> =>
+    withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
+      gateway.listOutbound({ wabaId: scope.wabaId }, scope.accountId),
+    ),
+  );
 
 export const listTemplates = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(async ({ data }): Promise<Result<TemplatesResult>> => {
-    await requireGatewayPermission(requestAuth(), getRequest(), "view");
-    return withScopedGateway(
+  .handler(({ data }): Promise<Result<TemplatesResult>> =>
+    withScopedGateway(
+      { action: "view", wabaId: data?.wabaId },
       async (gateway, scope) =>
         (await gateway.listTemplates(scope.wabaId, 100, scope.accountId)) as TemplatesResult,
-      data?.wabaId,
-    );
-  });
+    ),
+  );
 
 export const retryDelivery = createServerFn({ method: "POST" })
   .validator(validateRetryInput)
   .handler(
-    async ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> => {
-      await requireGatewayPermission(requestAuth(), getRequest(), "operate");
-      return withScopedGateway(
+    ({ data }): Promise<Result<{ ok: boolean; previousStatus: string | null }>> =>
+      withScopedGateway(
+        { action: "operate", wabaId: data.wabaId, rejectUnknown: true },
         (gateway, scope) => gateway.retryDelivery(data.id, scope.wabaId, scope.accountId),
-        data.wabaId,
-        true,
-      );
-    },
+      ),
   );
 
 // --- Operator actions (settings page) ---
@@ -500,29 +561,24 @@ export const retryDelivery = createServerFn({ method: "POST" })
 /** Read the current outbound-forwarding target. The secret is never exposed. */
 export const getSubscriberConfig = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(async ({ data }): Promise<Result<SubscriberConfig>> => {
-    await requireGatewayPermission(requestAuth(), getRequest(), "operate");
-    return withScopedGateway(
-      (gateway, scope) => gateway.getSubscriberConfig(scope.wabaId, scope.accountId),
-      data?.wabaId,
-    );
-  });
+  .handler(({ data }): Promise<Result<SubscriberConfig>> =>
+    withScopedGateway({ action: "operate", wabaId: data?.wabaId }, (gateway, scope) =>
+      gateway.getSubscriberConfig(scope.wabaId, scope.accountId),
+    ),
+  );
 
 /** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
 export const setSubscriberConfig = createServerFn({ method: "POST" })
   .validator(validateSubscriberInput)
   .handler(
-    async ({ data }): Promise<Result<{ ok: true }>> => {
-      await requireGatewayPermission(requestAuth(), getRequest(), "configure");
-      return withScopedGateway(
+    ({ data }): Promise<Result<{ ok: true }>> =>
+      withScopedGateway(
+        { action: "configure", wabaId: data.wabaId, rejectUnknown: true },
         (gateway, scope) => {
           const { wabaId: _wabaId, ...input } = data;
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);
         },
-        data.wabaId,
-        true,
-      );
-    },
+      ),
   );
 
 /**
@@ -532,14 +588,12 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
  */
 export const resubscribe = createServerFn({ method: "POST" })
   .validator(validateScopeInput)
-  .handler(async ({ data }): Promise<Result<ResubscribeResult>> => {
-    await requireGatewayPermission(requestAuth(), getRequest(), "configure");
-    return withScopedGateway(
+  .handler(({ data }): Promise<Result<ResubscribeResult>> =>
+    withScopedGateway(
+      { action: "configure", wabaId: data?.wabaId, rejectUnknown: true },
       (gateway, scope) => gateway.resubscribe(scope.wabaId, scope.accountId),
-      data?.wabaId,
-      true,
-    );
-  });
+    ),
+  );
 
 
 /**
@@ -555,13 +609,12 @@ export const resubscribe = createServerFn({ method: "POST" })
  */
 export const recheckNumber = createServerFn({ method: "POST" })
   .validator(validateWabaInput)
-  .handler(async ({ data }): Promise<Result<ReconcileWabaResult>> => {
-    await requireGatewayPermission(requestAuth(), getRequest(), "configure");
-    return withGateway(async (gateway) => {
+  .handler(({ data }): Promise<Result<ReconcileWabaResult>> =>
+    withGateway(async (gateway) => {
       const account = await resolveOrganizationAccount(gateway);
       if (!account.resources.wabas.some((waba) => waba.wabaId === data.wabaId)) {
         throw new Error(`WABA "${data.wabaId}" is not owned by account "${account.accountId}"`);
       }
       return gateway.reconcileWaba(data.wabaId, account.accountId);
-    });
-  });
+    }, "configure"),
+  );

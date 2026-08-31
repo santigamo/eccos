@@ -21,11 +21,28 @@ export interface Auth extends AuthLike {
   };
 }
 
+/**
+ * Why an authorization check refused, as a code callers can branch on.
+ *
+ * The message is for humans and may be reworded at any time; this is the part a
+ * UI, a route guard, or a boundary is allowed to switch on, so nobody ever has
+ * to match on error strings to tell "you belong to no organization" apart from
+ * "your role lacks this action" — or from a transport failure.
+ */
+export type ForbiddenReason =
+  | "no-organization"
+  | "select-organization"
+  | "not-a-member"
+  | "missing-permission"
+  | "other";
+
 /** Typed error for authenticated-but-forbidden requests. */
 export class ForbiddenError extends Error {
-  constructor(message = "not allowed for this organization") {
+  readonly reason: ForbiddenReason;
+  constructor(message = "not allowed for this organization", reason: ForbiddenReason = "other") {
     super(message);
     this.name = "ForbiddenError";
+    this.reason = reason;
   }
 }
 
@@ -101,12 +118,28 @@ export async function requirePermission(
   // field lives on the raw session row; typed loosely because Better Auth's
   // session type only carries it when the organization plugin is inferred.
   const rawSession = session.session as { activeOrganizationId?: string | null };
-  const orgId = organizationId ?? rawSession.activeOrganizationId ?? "";
-  if (!orgId) throw new ForbiddenError("no organization context");
+  let orgId = organizationId ?? rawSession.activeOrganizationId ?? "";
 
   const memberships = await resolveMemberships(auth, headers);
+  if (!orgId) {
+    // No explicit selector and no stored active org. A single membership is not
+    // ambiguous, so default to it rather than dead-ending a user who has
+    // exactly one place to be. Zero memberships and multi-org ambiguity both
+    // still fail closed, each with the reason its caller needs to act on.
+    const sole = memberships[0];
+    if (memberships.length === 1 && sole) {
+      orgId = sole.id;
+    } else if (memberships.length === 0) {
+      throw new ForbiddenError(
+        "no organization membership — create or join an organization first",
+        "no-organization",
+      );
+    } else {
+      throw new ForbiddenError("select an organization", "select-organization");
+    }
+  }
   if (!memberships.some((m) => m.id === orgId)) {
-    throw new ForbiddenError("not a member of the requested organization");
+    throw new ForbiddenError("not a member of the requested organization", "not-a-member");
   }
 
   const result = (await auth.api.hasPermission({
@@ -114,7 +147,10 @@ export async function requirePermission(
     headers,
   })) as { success?: boolean } | null;
   if (result?.success !== true) {
-    throw new ForbiddenError(`missing "${action}" permission in this organization`);
+    throw new ForbiddenError(
+      `missing "${action}" permission in this organization`,
+      "missing-permission",
+    );
   }
   return orgId;
 }

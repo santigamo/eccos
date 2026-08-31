@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { recheckNumber } from "../../server/gateway";
 import type { AccountResources } from "../../server/gateway";
+import { failureCopy } from "../../lib/failure";
 import { StatusTag } from "../../ui";
 
 type Notice = { ok: boolean; text: string };
@@ -53,7 +54,7 @@ export function NumbersTable({
     try {
       const result = await recheckNumber({ data: { wabaId } });
       if (!result.ok) {
-        setNotice({ ok: false, text: result.error });
+        setNotice({ ok: false, text: failureCopy(result).detail });
         return;
       }
       if (!result.data.ok) {

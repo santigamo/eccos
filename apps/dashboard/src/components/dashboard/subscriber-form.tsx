@@ -4,6 +4,7 @@ import {
   setSubscriberConfig,
   type SubscriberConfig,
 } from "../../server/gateway";
+import { failureCopy } from "../../lib/failure";
 import {
   Frame,
   FramePanel,
@@ -57,7 +58,7 @@ export function SubscriberForm({ config, wabaId }: { config: SubscriberConfig; w
         setNotice({ ok: true, text: "Saved. Forwarding target updated." });
         await router.invalidate();
       } else {
-        setNotice({ ok: false, text: res.error });
+        setNotice({ ok: false, text: failureCopy(res).detail });
       }
     } finally {
       setSaving(false);
