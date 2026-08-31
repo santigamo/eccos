@@ -36,7 +36,7 @@ export function slugifyWorkspaceName(name: string): string {
 /**
  * First-run workspace creation form (machine-voice labels, one green primary,
  * shared error banner). On success the caller performs the full navigation to
- * /setup.
+ * /numbers.
  */
 export function WorkspaceForm({
   name,

@@ -7,70 +7,9 @@ import {
   FramePanel,
   FrameTitle,
 } from "../reui/frame";
-import { Logo } from "../blocks/app-shell-7/components/logo";
-import { Page } from "../../ui";
-import { startConnect, type DashboardState } from "../../server/gateway";
+import { startConnect } from "../../server/gateway";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
-
-/**
- * First run: attach a WhatsApp Business Account.
- *
- * The route renders outside the AppShell (there is nothing to navigate to
- * yet), so it rebuilds the console's two fixed pieces rather than inventing a
- * third: the masthead is the same band as `app-header.tsx` (logomark, Inter
- * wordmark, pixel label right), and the body is the shared `Page` anatomy
- * (pixel kicker, light Inter heading, hatch band). The only difference from a
- * normal route is the missing sidebar and a reading measure on the column.
- *
- * One screen, not a wizard. Embedded Signup is the only way in, and the done
- * state lives on the other side of a full navigation to Meta (eccos-5z9), so a
- * step rail would advertise steps nobody walks.
- */
-export function SetupScreen({ state }: { state: DashboardState }) {
-  const account = state.stage === "account-ready" ? state.resources.account : null;
-
-  return (
-    <div className="flex min-h-svh flex-col">
-      <SetupHeader workspace={account?.name?.trim() || ""} />
-      <main id="main-content" className="flex flex-1 flex-col p-4 md:p-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
-          <Page title="Connect WhatsApp" kicker="First run">
-            <ConnectPanel />
-          </Page>
-        </div>
-      </main>
-    </div>
-  );
-}
-
-/**
- * The console masthead, minus the WABA picker (there is no WABA yet). The
- * workspace name takes the picker's slot: that position holds the current
- * scope on every other page.
- */
-function SetupHeader({ workspace }: { workspace: string }) {
-  return (
-    <header className="sticky top-0 z-50 flex w-full items-center border-b bg-(--nav-bg) backdrop-blur-[14px]">
-      <div className="flex h-12 w-full items-center gap-2 px-4">
-        <div className="flex items-center gap-2 pl-0.5">
-          <Logo />
-          <span className="font-heading text-foreground text-sm font-semibold tracking-widest uppercase">
-            Eccos
-          </span>
-        </div>
-        {workspace ? (
-          <span className="ml-2 min-w-0 truncate text-sm text-muted-foreground">
-            {workspace}
-          </span>
-        ) : null}
-        <span className="text-muted-foreground font-pixel ml-auto text-xs tracking-[0.04em] uppercase">
-          Operator Console
-        </span>
-      </div>
-    </header>
-  );
-}
 
 /** What Embedded Signup will ask for, in order. Fragments, not sentences. */
 const CONNECT_STEPS = [
@@ -79,7 +18,17 @@ const CONNECT_STEPS = [
   "Eccos subscribes to its webhooks",
 ] as const;
 
-function ConnectPanel() {
+/**
+ * Start Meta Embedded Signup. Rendered as the empty state of /numbers on first
+ * run and, later, from the same page when the operator adds another number:
+ * connecting a number is a recurring operation, not a first-run ritual, so it
+ * has one surface rather than a wizard that only exists once.
+ *
+ * `startConnect` performs a full navigation to the gateway, which owns the
+ * Meta callback. The operator currently returns to the gateway's own result
+ * page rather than here (eccos-5z9), which is why the footer says so.
+ */
+export function ConnectNumberPanel({ heading }: { heading: string }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,14 +50,12 @@ function ConnectPanel() {
   }
 
   return (
-    <Frame variant="default" spacing="lg">
+    <Frame variant="default" spacing="lg" className="max-w-3xl">
       <FramePanel fit>
         {/* The header sits level with the body: FramePanel zeroes the nested
             header's horizontal padding so the two do not stack (see frame.tsx). */}
         <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">
-            Meta Embedded Signup
-          </FrameTitle>
+          <FrameTitle className="text-sm font-semibold">{heading}</FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
             Meta opens in this tab. Your number stays on the WhatsApp Business
             app.
@@ -138,9 +85,6 @@ function ConnectPanel() {
         {/* One footer rail, action pinned right; full-bleed so its rule reads as
             panel chrome rather than as another content block. */}
         <footer className="-mx-(--frame-panel-px) mt-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-(--frame-panel-border-color) px-(--frame-panel-px) pt-4">
-          {/* Kept deliberately: Meta drops the operator on the gateway's own
-              result page, not back here (eccos-5z9). Without this line the
-              flow dead-ends. */}
           <p className="m-0 text-xs text-muted-foreground">
             Come back here once Meta confirms the account.
           </p>

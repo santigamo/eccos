@@ -65,7 +65,7 @@ function StatusPage() {
 
   if (!result.ok) {
     // Standalone main wrapper: the app shell only mounts for a ready gateway,
-    // so this branch renders bare — give it the same page padding as /setup.
+    // so this branch renders bare — give it the same page padding as the shell.
     return (
       <main id="main-content" className="min-h-svh px-4 py-6 md:px-8 md:py-8">
         <Page title="Status" kicker="Gateway">

@@ -48,8 +48,8 @@ export function OnboardingView() {
       return;
     }
     // Full navigation: the root loader re-runs with the fresh stage and lands
-    // on /setup (workspace ready + connect WhatsApp).
-    window.location.assign("/setup");
+    // inside the app chrome on /numbers, whose empty state is the connect flow.
+    window.location.assign("/numbers");
   }
 
   return (

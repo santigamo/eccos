@@ -26,6 +26,7 @@ type StatusTone = "success" | "warning" | "destructive" | "neutral"
 
 const STATUS_TONES: Record<string, StatusTone> = {
   healthy: "success",
+  active: "success",
   delivered: "success",
   sent: "success",
   approved: "success",

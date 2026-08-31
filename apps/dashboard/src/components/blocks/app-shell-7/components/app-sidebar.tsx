@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/sidebar"
 
 import { NavMain } from "./nav-main"
+import { NavUser } from "./nav-user"
 import { SidebarRailToggle } from "./sidebar-rail-toggle"
 
 export function AppSidebar() {
@@ -20,8 +21,9 @@ export function AppSidebar() {
         <NavMain />
       </SidebarContent>
 
-      <SidebarFooter className="px-4 pb-4">
-        <p className="text-muted-foreground font-pixel text-[11px] tracking-wider uppercase">
+      <SidebarFooter className="gap-2 px-2 pb-4">
+        <NavUser />
+        <p className="text-muted-foreground font-pixel px-2 text-[11px] tracking-wider uppercase in-data-[state=collapsed]:hidden">
           v0.1.0
         </p>
       </SidebarFooter>

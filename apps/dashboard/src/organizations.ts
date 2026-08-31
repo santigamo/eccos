@@ -249,3 +249,29 @@ export const listMyInvitations = createServerFn({ method: "GET" }).handler(
     }
   },
 );
+
+/** The signed-in user as the sidebar's account section renders it. */
+export interface SessionUserView {
+  name: string;
+  email: string;
+}
+
+/**
+ * Resolve the signed-in user for the app chrome (the sidebar's NavUser).
+ *
+ * Display data only: the shell shows who is signed in and offers a way out.
+ * Every authorization decision stays server-side and re-derives the session
+ * from the request, so this is never authorization evidence. Anonymous or
+ * expired sessions resolve to `null` rather than throwing, because the root
+ * loader also runs on public routes.
+ */
+export const getSessionUser = createServerFn({ method: "GET" }).handler(
+  async (): Promise<SessionUserView | null> => {
+    try {
+      const { session } = await requireAuthContext(authInstance(), currentRequest());
+      return { name: session.name, email: session.email };
+    } catch {
+      return null;
+    }
+  },
+);

@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { getDashboardState } from "../server/gateway"
+import { getSessionUser } from "../organizations"
 import { normalizeSearchWabaId } from "../lib/search"
 import appCss from "../app.css?url"
 
@@ -32,18 +33,22 @@ export const Route = createRootRoute({
     if (state.ok && state.data.stage === "ready" && location.pathname === "/onboarding") {
       throw redirect({ to: "/" })
     }
+    // An account with no WABA yet stays inside the app chrome and lands on
+    // /numbers, whose empty state is the connect flow. Every other route needs
+    // a WABA to resolve its scope, so they bounce here rather than rendering a
+    // "gateway unreachable" card that would blame the wrong thing.
     if (
       state.ok &&
       state.data.stage !== "ready" &&
       state.data.stage !== "no-organization" &&
-      location.pathname !== "/setup"
+      location.pathname !== "/numbers"
     ) {
-      throw redirect({ to: "/setup" })
+      throw redirect({ to: "/numbers" })
     }
-    if (state.ok && state.data.stage === "ready" && location.pathname === "/setup") {
-      throw redirect({ to: "/" })
-    }
-    return state
+    // Display identity for the sidebar's account section. Deduped with the
+    // loader's own session read by the request-scoped memo.
+    const user = await getSessionUser()
+    return { ...state, user }
   },
   head: () => ({
     meta: [
@@ -82,10 +87,11 @@ function RootComponent() {
   const pathname = useLocation({ select: (l) => l.pathname })
   return (
     <RootDocument lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}>
-      {state.ok ? (
-        // Authenticated tenant context: the app chrome only wraps ready/
-        // account-ready states; onboarding screens render standalone.
-        state.data.stage !== "ready" ? <Outlet /> : <AppShell />
+      {state.ok && state.data.stage !== "no-organization" ? (
+        // Authenticated tenant context. The chrome wraps every state that has
+        // an organization, including the one with no WABA yet: the user is
+        // signed in, so they must be able to see who they are and sign out.
+        <AppShell />
       ) : (
         // Unauthenticated (or gateway-unreachable) root load: bare outlet so
         // the sign-in screen renders WITHOUT the app chrome around it.
