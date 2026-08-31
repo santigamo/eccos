@@ -24,7 +24,17 @@ import { Page } from "../../ui";
  */
 export function safeRedirectTarget(value: string | undefined): string | undefined {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return undefined;
-  if (/\\|[\u0000-\u001f\u007f]/.test(value)) return undefined;
+  if (value.includes("\\")) return undefined;
+  // Same set the old character class matched (the C0 controls U+0000-U+001F
+  // plus DEL U+007F), scanned by code unit instead of by regex: a pattern
+  // whose whole purpose is to *match* control characters is exactly what
+  // Biome's noControlCharactersInRegex forbids, and the scan states the intent
+  // without fighting the rule. Surrogates (U+D800-U+DFFF) fall outside the
+  // range, so comparing UTF-16 code units cannot produce a false reject.
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return undefined;
+  }
   return value;
 }
 

@@ -86,11 +86,13 @@ function ResetPasswordPage() {
               Your password has been changed. Sign in with the new one.
             </FrameDescription>
           </FrameHeader>
-          <div role="status">
+          {/* <output> is the console's live-region element; `block` keeps the
+              div box it replaces (output is inline by default). */}
+          <output aria-live="polite" aria-atomic="true" className="block">
             <a href="/signin" className="text-primary text-sm underline-offset-4 hover:underline">
               Go to sign in
             </a>
-          </div>
+          </output>
         </>
       ) : staleToken || !token ? (
         <>

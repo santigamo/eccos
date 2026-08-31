@@ -116,13 +116,18 @@ export function SignUpView() {
                 >
                   Check your inbox
                 </h1>
-                <p
-                  role="status"
-                  className="text-muted-foreground text-base text-pretty"
+                {/* <output> is the console's live-region element (see
+                    numbers-table / connect-outcome): it maps to role="status"
+                    but is inline by default, so it carries `block` to keep the
+                    paragraph box it replaces. */}
+                <output
+                  aria-live="polite"
+                  aria-atomic="true"
+                  className="text-muted-foreground block text-base text-pretty"
                 >
                   We sent a verification link to {sentEmail}. Verify your
                   address, then sign in. The link expires after a limited time.
-                </p>
+                </output>
               </div>
             </div>
             <div className="flex flex-col gap-4">

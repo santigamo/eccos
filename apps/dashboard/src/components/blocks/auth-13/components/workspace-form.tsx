@@ -25,6 +25,14 @@ export type FormSubmitEvent = Parameters<FormSubmitHandler>[0];
 export function slugifyWorkspaceName(name: string): string {
   return name
     .toLowerCase()
+    // NFKD splits an accented letter into base + combining mark, and the next
+    // step drops the marks so "Clinica" stays one word instead of breaking at
+    // the accent. `noMisleadingCharacterClass` is off in biome.json purely
+    // because of that class: in Biome 1.9.4 the rule reads a range hyphen as a
+    // base character, so any range whose upper bound is a combining mark is
+    // reported (a lone combining mark in a class is not). No spelling of this
+    // range gets past it, and the alternatives (\p{Mn}, \p{Diacritic}) widen
+    // the matched set.
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")

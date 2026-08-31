@@ -101,7 +101,7 @@ export async function requirePermission(
   // memberships fail closed with a create/join hint, multi-org ambiguity
   // fails closed with "select an organization".
 
-  let memberships = await resolveMemberships(auth, headers);
+  const memberships = await resolveMemberships(auth, headers);
   if (!orgId) {
     // No explicit selector and no stored active org: unambiguously default to
     // the single membership. Multi-org users must choose explicitly (the

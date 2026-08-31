@@ -167,11 +167,15 @@ export function SilkPanel({ className }: { className?: string }) {
 
   useEffect(() => {
     if (!active) return;
-    const host = hostRef.current;
+    const mounted = hostRef.current;
     // A CSS-hidden host (breakpoint crossed before hydration) has no box;
     // never allocate a WebGL context for an invisible panel.
-    if (!host || host.clientWidth === 0) return;
+    if (!mounted || mounted.clientWidth === 0) return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    // Narrowed at the declaration: a guard above only narrows for straight-line
+    // code, while a const initialised from the narrowed value carries the
+    // non-null type into the resize/observer closures below.
+    const host = mounted;
 
     const canvas = document.createElement("canvas");
     canvas.setAttribute("aria-hidden", "true");
@@ -192,22 +196,28 @@ export function SilkPanel({ className }: { className?: string }) {
       powerPreference: "low-power",
       failIfMajorPerformanceCaveat: false,
     };
-    let gl: WebGLRenderingContext | null = null;
+    let context: WebGLRenderingContext | null = null;
     try {
-      gl =
+      context =
         (canvas.getContext("webgl", glOpts) as WebGLRenderingContext | null) ||
         (canvas.getContext("experimental-webgl", glOpts) as WebGLRenderingContext | null);
     } catch {
-      gl = null;
+      context = null;
     }
-    if (!gl) return;
+    if (!context) return;
+    // Re-bound as a const: the nested resize/frame closures below capture it,
+    // and TypeScript only carries a narrowing into a closure for an immutable
+    // binding — that is what keeps this file free of `gl!` on every call.
+    const gl = context;
 
     function compile(type: number, src: string): WebGLShader | null {
-      const sh = gl!.createShader(type)!;
-      gl!.shaderSource(sh, src);
-      gl!.compileShader(sh);
-      if (!gl!.getShaderParameter(sh, gl!.COMPILE_STATUS)) {
-        gl!.deleteShader(sh);
+      const sh = gl.createShader(type);
+      // Only null if the context is already lost; the caller falls back to CSS.
+      if (!sh) return null;
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        gl.deleteShader(sh);
         return null;
       }
       return sh;
@@ -217,7 +227,9 @@ export function SilkPanel({ className }: { className?: string }) {
     const fs = compile(gl.FRAGMENT_SHADER, FRAG);
     if (!vs || !fs) return;
 
-    const prog = gl.createProgram()!;
+    const prog = gl.createProgram();
+    // Same as compile(): null only on an already-lost context — keep the CSS fallback.
+    if (!prog) return;
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
@@ -245,7 +257,7 @@ export function SilkPanel({ className }: { className?: string }) {
     let h = 0;
 
     function resize() {
-      const rect = host!.getBoundingClientRect();
+      const rect = host.getBoundingClientRect();
       const cw = Math.max(1, Math.round(rect.width));
       const ch = Math.max(1, Math.round(rect.height));
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * quality;
@@ -260,10 +272,10 @@ export function SilkPanel({ className }: { className?: string }) {
       if (nw === w && nh === h) return;
       w = nw;
       h = nh;
-      canvas!.width = w;
-      canvas!.height = h;
-      gl!.viewport(0, 0, w, h);
-      gl!.uniform2f(uRes, w, h);
+      canvas.width = w;
+      canvas.height = h;
+      gl.viewport(0, 0, w, h);
+      gl.uniform2f(uRes, w, h);
     }
 
     /* ---- run loop ---- */
@@ -286,12 +298,12 @@ export function SilkPanel({ className }: { className?: string }) {
       if (dt > 0.05) dt = 0.05;
       clock += dt;
 
-      gl!.uniform1f(uTime, clock);
-      gl!.drawArrays(gl!.TRIANGLES, 0, 3);
+      gl.uniform1f(uTime, clock);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
 
       if (!painted) {
         painted = true;
-        canvas!.style.opacity = "1";
+        canvas.style.opacity = "1";
       }
 
       /* one adaptive step down if the first couple of seconds are janky */
@@ -336,7 +348,7 @@ export function SilkPanel({ className }: { className?: string }) {
     let visibilityObserver: IntersectionObserver | null = null;
     if ("IntersectionObserver" in window) {
       visibilityObserver = new IntersectionObserver(
-        function (entries: IntersectionObserverEntry[]) {
+        (entries: IntersectionObserverEntry[]) => {
           const first: IntersectionObserverEntry | undefined = entries[0];
           if (!first) return;
           visible = first.isIntersecting;
@@ -344,14 +356,14 @@ export function SilkPanel({ className }: { className?: string }) {
         },
         { threshold: 0 },
       );
-      visibilityObserver.observe(host!);
+      visibilityObserver.observe(host);
     }
 
     function onContextLost(e: Event) {
       e.preventDefault();
       alive = false;
       stop();
-      canvas!.remove();
+      canvas.remove();
     }
     canvas.addEventListener("webglcontextlost", onContextLost);
 

@@ -56,7 +56,7 @@ All local gates below were run on the working tree (post-remediation, 2026-08-28
 | Dashboard types | `apps/dashboard: bun run typecheck` | ✅ exit 0 |
 | Dashboard tests | `apps/dashboard: bun run test` | ✅ 55 pass / 6 files |
 | Dashboard build | `apps/dashboard: bun run build` | ✅ built |
-| Lint | `bun run lint` (Biome) | ✅ 0 findings — **blocking** in CI (`eccos-bwr`) |
+| Lint | `bun run lint` (Biome) | ✅ 0 findings — **blocking** in CI (`eccos-bwr`). Re-verified 2026-08-31 after the auth/landing UI work regressed it to 27 errors (`eccos-3qa`). One recommended rule is off repo-wide: `suspicious/noMisleadingCharacterClass`, a Biome 1.9.4 false positive on the NFKD diacritic-stripping range in `slugifyWorkspaceName` (rationale at the call site). |
 | Gateway deploy | `bun run deploy` | ✅ `eccos.santi-gamo.workers.dev`, version `75476993-51e1-4009-8e0d-a54454931764` |
 | Gateway live smoke | `./scripts/smoke.sh https://eccos.santi-gamo.workers.dev` | ✅ `/health`, `/ready`, webhook challenge/signature/JSON checks |
 
