@@ -7,8 +7,8 @@
  */
 
 import type { AuthConfig } from "./auth";
-import { createMailSender, ConsoleMailSender, type MailEnv, type MailSender } from "./mail";
-import { ResendMailSender } from "./mail-resend";
+import { ConsoleMailSender, type MailEnv, type MailSender } from "./mail";
+import { ReccadoMailSender } from "./mail-reccado";
 
 /** Canonical customer origin — the only production-trusted host (contract §6). */
 export const CANONICAL_ORIGIN = "https://app.eccos.chat";
@@ -30,19 +30,25 @@ export interface AuthEnv {
   DB: unknown;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
-  MAIL_FROM?: string;
-  RESEND_API_KEY?: string;
+  RECCADO_API_KEY?: string;
+  RECCADO_BASE_URL?: string;
+  RECCADO_MAILBOX_ID?: string;
 }
 
 /**
- * Mail adapter selection: the Resend sender is used only when the deployment
- * configures `RESEND_API_KEY` (Worker secret) — otherwise the development
- * console sender is used. Provider wiring details (domain, SPF/DKIM/DMARC,
- * DPA) are documented in `docs/auth-email-delivery.md` (eccos-0x0.11).
+ * Mail adapter selection: the reccado sender is used only when the deployment
+ * configures `RECCADO_API_KEY` (Worker secret) — otherwise the development
+ * console sender is used, so no provider is needed locally. The adapter then
+ * fails closed if the accompanying vars (`RECCADO_BASE_URL`,
+ * `RECCADO_MAILBOX_ID`) are missing: a key without an endpoint is a
+ * half-configured deployment, not a degraded one.
+ *
+ * Provider wiring (mailbox, templates, DNS, DPA) is documented in
+ * `docs/auth-email-delivery.md` (eccos-3ne).
  */
 export function createMailSenderFromEnv(env: MailEnv): MailSender {
-  if (env.RESEND_API_KEY?.trim()) {
-    return new ResendMailSender(env);
+  if (env.RECCADO_API_KEY?.trim()) {
+    return new ReccadoMailSender(env);
   }
   return new ConsoleMailSender();
 }

@@ -10,6 +10,11 @@
 
 import type { ReactNode } from "react";
 import {
+  MAIL_SUPPRESSED_CODE,
+  MAIL_UNDELIVERABLE_CODE,
+  undeliverableMessage,
+} from "@/auth/mail";
+import {
   Frame,
   FramePanel,
 } from "../reui/frame";
@@ -68,6 +73,32 @@ export function authErrorMessage(
         ? error.message
         : fallback;
   }
+}
+
+/**
+ * Map a mail-undeliverable failure to its user-facing message, or null when the
+ * error is something else (eccos-3ne).
+ *
+ * Keyed on the STABLE CODE the adapter attaches, never on error text, and the
+ * wording comes from `undeliverableMessage` so the console and the server agree
+ * on one sentence. Suppression gets its own message: retyping a blocked address
+ * cannot fix it, so the typo advice would send the reader in a circle.
+ *
+ * Only sign-up and invitation are allowed to render this. The password-reset
+ * flow must NOT: it only runs for accounts that exist, so any difference there
+ * is a membership oracle (see applyResetSendPolicy in src/auth/auth.ts).
+ */
+export function mailUndeliverableMessage(
+  error: { code?: string; message?: string } | null | undefined,
+): string | null {
+  if (!error) return null;
+  if (error.code === MAIL_SUPPRESSED_CODE) {
+    return undeliverableMessage("recipient_suppressed");
+  }
+  if (error.code === MAIL_UNDELIVERABLE_CODE) {
+    return undeliverableMessage("permanent_failure");
+  }
+  return null;
 }
 
 /** True when the error means the signup address is already registered. */

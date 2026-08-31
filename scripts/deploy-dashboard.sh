@@ -5,9 +5,13 @@ set -euo pipefail
 #
 # Required in production (Worker secrets — set once with `wrangler secret put`):
 #   BETTER_AUTH_SECRET — auth secret (>= 32 chars)
-#   RESEND_API_KEY     — mail provider key (docs/auth-email-delivery.md)
-# Optional var:
-#   MAIL_FROM          — verified sending identity, e.g. "Eccos <noreply@notify.eccos.chat>"
+#   RECCADO_API_KEY    — mail provider key (docs/auth-email-delivery.md)
+# Vars that accompany the mail key (the adapter fails closed without them):
+#   RECCADO_BASE_URL   — provider origin. Configuration, not a constant: the
+#                        custom domain is behind Cloudflare Access and answers
+#                        only on its workers.dev host today.
+#   RECCADO_MAILBOX_ID — sending mailbox (also the sending identity; there is
+#                        no MAIL_FROM any more)
 #
 # The auth D1 schema must exist before traffic is served:
 #   cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote
@@ -25,8 +29,11 @@ fi
 
 cd "$ROOT/apps/dashboard"
 wrangler_args=()
-if [[ -n "${MAIL_FROM:-}" ]]; then
-  wrangler_args+=(--var "MAIL_FROM:$MAIL_FROM")
+if [[ -n "${RECCADO_BASE_URL:-}" ]]; then
+  wrangler_args+=(--var "RECCADO_BASE_URL:$RECCADO_BASE_URL")
+fi
+if [[ -n "${RECCADO_MAILBOX_ID:-}" ]]; then
+  wrangler_args+=(--var "RECCADO_MAILBOX_ID:$RECCADO_MAILBOX_ID")
 fi
 
 if (( ${#wrangler_args[@]} > 0 )); then

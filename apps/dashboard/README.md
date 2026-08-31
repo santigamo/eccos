@@ -85,8 +85,10 @@ Deploy one customer dashboard Worker. The WABA each RPC call targets is resolved
 organization's account registry — operators can switch between the account's owned WABAs with the
 header picker (or a `?wabaId=<owned-WABA>` URL).
 
-Set the production secrets (`BETTER_AUTH_SECRET`, optional `MAIL_FROM`) and apply the remote D1
-schema, then deploy:
+Set the production secrets (`BETTER_AUTH_SECRET`, `RECCADO_API_KEY`) plus the mail vars that
+accompany the key (`RECCADO_BASE_URL`, `RECCADO_MAILBOX_ID` — see
+[docs/auth-email-delivery.md](../../docs/auth-email-delivery.md)), apply the remote D1 schema,
+then deploy:
 
 ```bash
 # from the repo root
@@ -115,7 +117,14 @@ contract lives in [`docs/auth-tenancy-contract.md`](../../docs/auth-tenancy-cont
 Production secrets (Worker secrets, set with `wrangler secret put`):
 
 - `BETTER_AUTH_SECRET` — auth secret (>= 32 chars)
-- `RESEND_API_KEY` — transactional email (see `docs/auth-email-delivery.md`)
+- `RECCADO_API_KEY` — transactional email (see `docs/auth-email-delivery.md`)
+
+Accompanying non-secret vars (the mail adapter fails closed without them once the key is set):
+
+- `RECCADO_BASE_URL` — provider origin; configuration rather than a constant, because the
+  provider's custom domain is behind Cloudflare Access and answers only on its `workers.dev`
+  host today
+- `RECCADO_MAILBOX_ID` — sending mailbox, which also determines the sending identity
 
 Apply the auth schema before serving traffic: `bun run db:migrate:local` for
 local development; `wrangler d1 migrations apply eccos-auth --remote` for

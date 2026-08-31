@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   AUTH_ERROR_BANNER_CLASS,
+  mailUndeliverableMessage,
   ResendNote,
   type ResendOutcome,
   resendVerificationOutcome,
@@ -75,6 +76,18 @@ export function SignUpView() {
       result.error.code !== "USER_ALREADY_EXISTS" &&
       result.error.status !== 422
     ) {
+      // An address the mail provider says definitively cannot receive mail
+      // (eccos-3ne). Surfacing it here is safe: an existing account
+      // short-circuits above, so this is about a freshly typed address, not
+      // about membership — and the dominant cause is the user's own typo,
+      // which only they can fix. Without this branch the message collapses
+      // into the generic failure and the person is told to try again with the
+      // same unreachable address.
+      const undeliverable = mailUndeliverableMessage(result.error);
+      if (undeliverable) {
+        setError(undeliverable);
+        return;
+      }
       setError(
         result.error.message && result.error.message.length < 200
           ? result.error.message

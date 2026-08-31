@@ -13,7 +13,15 @@
 
 import { betterAuth } from "better-auth";
 import { organization, twoFactor } from "better-auth/plugins";
-import type { MailSender } from "./mail";
+import {
+  deriveIdempotencyKey,
+  extractTokenFromUrl,
+  MailUndeliverableError,
+  recipientDomain,
+  type MailSender,
+  type MailTemplate,
+  type SendOutcome,
+} from "./mail";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 
 /**
@@ -31,6 +39,143 @@ import { ac, owner, admin, operator, viewer } from "./permissions";
  */
 export function buildInvitationAcceptLink(baseURL: string, invitationId: string): string {
   return `${baseURL.replace(/\/$/, "")}/invitations?id=${encodeURIComponent(invitationId)}`;
+}
+
+/**
+ * ─── Per-flow mail policy ────────────────────────────────────────────────────
+ *
+ * The mail adapter reports an outcome; the POLICY of what to do with it lives
+ * here, at the call sites, because the three flows genuinely differ. They are
+ * exported as named functions so each decision can be tested on its own — and
+ * because the reasoning below is the actual deliverable, not the four lines of
+ * code under it.
+ *
+ * A NOTE ON WHERE THESE THROWS SURFACE (better-auth 1.7.2): sign-up, forgot
+ * password, and create-invitation all wrap the send in
+ * `ctx.context.runInBackgroundOrAwait` (dist/context/create-context.mjs:214),
+ * which awaits the promise inside a try/catch and merely LOGS a rejection. So
+ * a throw from this layer does NOT currently reach the sign-up or invitation
+ * response — only `POST /send-verification-email` re-throws it
+ * (dist/api/routes/email-verification.mjs:117). The policy is written to the
+ * contract anyway: it is correct, it is what surfaces the moment better-auth
+ * propagates, and the structured log below is the durable record in the
+ * meantime. See docs/auth-email-delivery.md.
+ */
+
+/** What a policy needs in order to log without ever touching a token. */
+export interface MailPolicyContext {
+  template: MailTemplate;
+  /** Full address — only its DOMAIN is ever logged. */
+  to: string;
+  /** Already a SHA-256 digest, so it is safe to log verbatim. */
+  idempotencyKey: string;
+}
+
+/**
+ * The one structured event that records a send was ever in doubt.
+ *
+ * NEVER logs the URL: it carries an action-capable token, and mail.ts documents
+ * that invariant. The recipient's domain, the template, and the (hashed) key
+ * are what an operator needs to correlate a complaint with a send.
+ */
+function logMailEvent(
+  event: "send-unresolved" | "send-undeliverable",
+  ctx: MailPolicyContext,
+  extra?: Record<string, string>,
+): void {
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      area: "auth-mail",
+      event,
+      template: ctx.template,
+      toDomain: recipientDomain(ctx.to),
+      idempotencyKey: ctx.idempotencyKey,
+      ...extra,
+    }),
+  );
+}
+
+/**
+ * `unresolved` (504) — never throws, at ANY call site.
+ *
+ * The status is terminal and permanently unresolvable: it cannot be retried
+ * (a replay under the same key returns the stored status) and it cannot be
+ * polled (delivery events correlate by a provider message id that is null
+ * exactly when the outcome is unknown). Failing the user's flow over a message
+ * that probably arrived would be worse than the doubt itself, and the
+ * check-your-inbox screen already offers a resend. So: log, and continue.
+ */
+function handleUnresolved(ctx: MailPolicyContext): void {
+  logMailEvent("send-unresolved", ctx);
+}
+
+/**
+ * Sign-up / verification. An undeliverable address is SURFACED.
+ *
+ * Safe because an existing account short-circuits before any send happens, so
+ * this discloses the deliverability of a freshly typed address — not
+ * membership. And the dominant cause is the user's own typo, which only they
+ * can fix; swallowing it would leave them staring at a "check your inbox"
+ * screen for an inbox that does not exist.
+ */
+export function applyVerificationSendPolicy(
+  outcome: SendOutcome,
+  ctx: MailPolicyContext,
+): void {
+  if (outcome.status === "unresolved") {
+    handleUnresolved(ctx);
+    return;
+  }
+  if (outcome.status === "undeliverable") {
+    logMailEvent("send-undeliverable", ctx, { reason: outcome.reason });
+    throw new MailUndeliverableError(outcome.reason);
+  }
+}
+
+/**
+ * Password reset. An undeliverable address is NEVER surfaced.
+ *
+ * `sendResetPassword` only runs for accounts that EXIST — better-auth returns
+ * the same generic response for an unknown address without calling this at all
+ * (dist/api/routes/password.mjs: the `!user` branch simulates the work and
+ * returns early). So any observable difference here is a membership oracle:
+ * "undeliverable" would mean "this address has an account", and silence would
+ * mean it does not. Swallow it, log it, keep the generic response.
+ */
+export function applyResetSendPolicy(
+  outcome: SendOutcome,
+  ctx: MailPolicyContext,
+): void {
+  if (outcome.status === "unresolved") {
+    handleUnresolved(ctx);
+    return;
+  }
+  if (outcome.status === "undeliverable") {
+    logMailEvent("send-undeliverable", ctx, { reason: outcome.reason });
+  }
+}
+
+/**
+ * Invitation. An undeliverable address is SURFACED to the inviter.
+ *
+ * No enumeration concern: the inviter is authenticated, typed the address
+ * themselves, and is the only person who can correct it. A silently dropped
+ * invitation is the worst outcome here — the inviter believes it went out and
+ * waits for an acceptance that can never come.
+ */
+export function applyInvitationSendPolicy(
+  outcome: SendOutcome,
+  ctx: MailPolicyContext,
+): void {
+  if (outcome.status === "unresolved") {
+    handleUnresolved(ctx);
+    return;
+  }
+  if (outcome.status === "undeliverable") {
+    logMailEvent("send-undeliverable", ctx, { reason: outcome.reason });
+    throw new MailUndeliverableError(outcome.reason);
+  }
 }
 
 /** Minimal user shape of Better Auth's verification/reset email callbacks. */
@@ -98,11 +243,27 @@ export function createAuth(config: AuthConfig) {
       // Reset links point at the canonical origin; delivery goes through the
       // application-owned mail adapter.
       sendResetPassword: async (data: MailCallbackData) => {
-            const { user, url } = data;
-        await config.mail.sendMail({
+        const { user, url, token } = data;
+        // Key off the token that is actually IN the message, taken from the
+        // URL better-auth built. `data.token` is the identical value (the URL
+        // is built from it) and stands in only if the URL shape ever changes —
+        // never the URL itself, which contains the token.
+        const resetToken = extractTokenFromUrl(url, "reset-password") ?? token;
+        const idempotencyKey = await deriveIdempotencyKey(
+          "reset-password",
+          user.email,
+          resetToken,
+        );
+        const outcome = await config.mail.sendTemplate({
+          template: "reset-password",
           to: user.email,
-          subject: "Reset your Eccos password",
-          text: `Hello ${user.name},\n\nReset your password with this link (valid for a limited time):\n${url}\n\nIf you did not request a reset, you can ignore this email.`,
+          variables: { name: user.name, url },
+          idempotencyKey,
+        });
+        applyResetSendPolicy(outcome, {
+          template: "reset-password",
+          to: user.email,
+          idempotencyKey,
         });
       },
     },
@@ -153,11 +314,26 @@ export function createAuth(config: AuthConfig) {
       // (contract §7).
       sendOnSignUp: true,
       sendVerificationEmail: async (data: MailCallbackData) => {
-            const { user, url } = data;
-        await config.mail.sendMail({
+        const { user, url, token } = data;
+        // Same rule as the reset flow: the key derives from the real token in
+        // the message, so a framework retry replays and dedupes, while a
+        // user-initiated resend mints a fresh token and genuinely sends.
+        const verificationToken = extractTokenFromUrl(url, "verify-email") ?? token;
+        const idempotencyKey = await deriveIdempotencyKey(
+          "verify-email",
+          user.email,
+          verificationToken,
+        );
+        const outcome = await config.mail.sendTemplate({
+          template: "verify-email",
           to: user.email,
-          subject: "Verify your Eccos email",
-          text: `Hello ${user.name},\n\nVerify your email address with this link:\n${url}\n\nIf you did not sign up, you can ignore this email.`,
+          variables: { name: user.name, url },
+          idempotencyKey,
+        });
+        applyVerificationSendPolicy(outcome, {
+          template: "verify-email",
+          to: user.email,
+          idempotencyKey,
         });
       },
     },
@@ -176,12 +352,44 @@ export function createAuth(config: AuthConfig) {
         // Invitation delivery through the application-owned mail adapter; the
         // link carries the invitation id (accepted by signed-in matching
         // identity via /api/auth/organization/accept-invitation).
+        //
+        // WHEN A "RESEND INVITATION" BUTTON IS BUILT, IT MUST BE
+        // CANCEL-PLUS-RECREATE — never Better Auth's reuse-the-same-invitation
+        // resend.
+        //
+        // The idempotency key is sha256("invite-member:" + email +
+        // ":" + invitation.id). Better Auth's re-invite path keeps the SAME
+        // invitation id and only extends `expiresAt`
+        // (dist/plugins/organization/routes/crud-invites.mjs:150), so the
+        // payload is byte-identical under an identical key and the provider
+        // dedupes it into `duplicate`: the mail SILENTLY NEVER SENDS, and the
+        // console would report success. Cancelling and creating a new
+        // invitation mints a new id, hence a new key, hence a real send.
         sendInvitationEmail: async ({ invitation, organization, inviter }) => {
           const acceptLink = buildInvitationAcceptLink(config.baseURL, invitation.id);
-          await config.mail.sendMail({
+          // The invitation id IS the unique element of this payload (there is
+          // no token: the link is a pointer, and acceptance re-checks the
+          // signed-in identity), so it plays the role the token plays above.
+          const idempotencyKey = await deriveIdempotencyKey(
+            "invite-member",
+            invitation.email,
+            invitation.id,
+          );
+          const outcome = await config.mail.sendTemplate({
+            template: "invite-member",
             to: invitation.email,
-            subject: `You are invited to join ${organization.name} on Eccos`,
-            text: `Hello,\n\n${inviter.user.name} (${inviter.user.email}) invited you to join the "${organization.name}" workspace on Eccos.\n\nAccept your invitation here:\n${acceptLink}\n\nIf you were not expecting this, you can ignore the email.`,
+            variables: {
+              organizationName: organization.name,
+              inviterName: inviter.user.name,
+              inviterEmail: inviter.user.email,
+              url: acceptLink,
+            },
+            idempotencyKey,
+          });
+          applyInvitationSendPolicy(outcome, {
+            template: "invite-member",
+            to: invitation.email,
+            idempotencyKey,
           });
         },
       }),

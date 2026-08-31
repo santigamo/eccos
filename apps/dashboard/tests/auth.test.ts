@@ -142,10 +142,11 @@ describe("invitation accept link (eccos-omv)", () => {
     expect(invitation.id).toBeTruthy();
     const email = mail.sent.find((m) => m.to === "invitee@example.com");
     expect(email).toBeTruthy();
+    expect(email!.template).toBe("invite-member");
     // The only existing route is /invitations with ?id= (createFileRoute("/invitations")).
-    expect(email!.text).toContain(`${BASE_URL}/invitations?id=${invitation.id}`);
+    expect(email!.variables.url).toBe(`${BASE_URL}/invitations?id=${invitation.id}`);
     // A path-segment link would dead-end on a non-existent route.
-    expect(email!.text).not.toContain(`${BASE_URL}/invitations/${invitation.id}`);
+    expect(email!.variables.url).not.toContain(`${BASE_URL}/invitations/${invitation.id}`);
   });
 });
 
@@ -163,7 +164,10 @@ describe("sign-up and email verification", () => {
     // Verification email produced by the application-owned adapter.
     expect(mail.sent.length).toBe(1);
     expect(mail.sent[0]?.to).toBe("alice@example.com");
-    expect(mail.sent[0]?.text).toContain("http");
+    expect(mail.sent[0]?.template).toBe("verify-email");
+    expect(mail.sent[0]?.variables.url).toContain("http");
+    // The Idempotency-Key is a SHA-256 digest, never the raw token.
+    expect(mail.sent[0]?.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
   });
 
   test("unverified sign-in fails closed with EMAIL_NOT_VERIFIED", async () => {

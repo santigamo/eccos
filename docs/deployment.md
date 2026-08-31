@@ -74,15 +74,26 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 `POST /v1/accounts/<id>/keys/<key>/revoke`, `POST /v1/accounts/<id>/wabas`) use the
 `ECCOS_ADMIN_API_KEY`. See [`docs/multi-tenancy.md`](./multi-tenancy.md).
 
+### `apps/dashboard` — required app-level secrets
+
+| Secret | Purpose |
+|---|---|
+| `BETTER_AUTH_SECRET` | Better Auth signing secret (at least 32 characters). A public (https) deployment refuses to boot without it |
+| `RECCADO_API_KEY` | Transactional email provider key (reccado). Absent = the development console sender, which logs instead of sending — never set that way in production. See [docs/auth-email-delivery.md](./auth-email-delivery.md) |
+
 ### `apps/dashboard` — non-secret vars (`apps/dashboard/wrangler.jsonc` → `vars`)
 
 | Var | Default | Purpose |
 |---|---|---|
 | `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty allow localhost development only; public requests fail closed |
 | `ACCESS_AUD` | `""` | Cloudflare Access application Audience (AUD) tag |
+| `BETTER_AUTH_URL` | canonical origin | Optional explicit base URL; defaults to `https://app.eccos.chat` |
+| `RECCADO_BASE_URL` | *(none)* | Provider origin for transactional email. **Configuration, not a constant**: the provider's custom domain is behind Cloudflare Access and answers only on its `workers.dev` host today, and the contract is identical on both. Required whenever `RECCADO_API_KEY` is set — the adapter fails closed without it |
+| `RECCADO_MAILBOX_ID` | *(none)* | Mailbox the transactional messages are sent from; it also determines the sending identity (there is no `MAIL_FROM`). Required whenever `RECCADO_API_KEY` is set |
 
-The dashboard has no secrets of its own; it reaches the gateway via the `GATEWAY` service
-binding declared in `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP).
+The dashboard reaches the gateway via the `GATEWAY` service binding declared in
+`apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP); its own secrets are the two
+above.
 Use one dashboard deployment and one Access application per account. The Access application
 identity is resolved server-side and mapped by the gateway control plane; it is not a
 browser-supplied selector.
@@ -116,6 +127,15 @@ bun run deploy     # == cd apps/gateway && wrangler deploy
 If you also run the operator console:
 
 ```bash
+# one-time / whenever a secret rotates, from apps/dashboard:
+cd apps/dashboard
+wrangler secret put BETTER_AUTH_SECRET
+wrangler secret put RECCADO_API_KEY
+# Set RECCADO_BASE_URL and RECCADO_MAILBOX_ID in wrangler.jsonc → vars (or pass
+# them through the deploy helper). The adapter fails closed if the key is set
+# and either var is missing.
+cd ../..
+
 cd apps/dashboard && bun run deploy   # == the validated helper
 ```
 

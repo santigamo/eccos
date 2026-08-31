@@ -23,7 +23,7 @@
 | Artifact | What it is | Production claim |
 |----------|-----------|------------------|
 | `apps/gateway` (`eccos` Worker + `EccosGateway` DO) | The v1 data plane on Cloudflare Workers | **Candidate** — deployed and live-smoke-verified on 2026-08-28; still gated for customer traffic |
-| `apps/dashboard` (`@eccos/dashboard`) | Customer console Worker (Better Auth + D1), RPC-only to the gateway | **Candidate — customer auth is Better Auth only** (`eccos-0x0`); canonical-host allowlist enforced in the server entry, `workers.dev` disabled; production secrets (`BETTER_AUTH_SECRET`, `RESEND_API_KEY`) and remote D1 schema pending deploy (`eccos-0x0.9`) |
+| `apps/dashboard` (`@eccos/dashboard`) | Customer console Worker (Better Auth + D1), RPC-only to the gateway | **Candidate — customer auth is Better Auth only** (`eccos-0x0`); canonical-host allowlist enforced in the server entry, `workers.dev` disabled; production secrets (`BETTER_AUTH_SECRET`, `RECCADO_API_KEY`) and remote D1 schema pending deploy (`eccos-0x0.9`) |
 | `packages/core` (`@eccos/core`) | Pure shared core (parser/send/signature/templates) | Internal workspace package — not published (Gate 4 N/A) |
 | `packages/gateway-contract` (`@eccos/gateway-contract`) | RPC contract (`GatewayApi`) | Internal workspace package — not published (Gate 4 N/A) |
 | `src/` (Bun self-host target) | Dockerised Bun/Hono self-host, retaken post-v1 | Secondary target; kept at parity for data lifecycle |
@@ -65,7 +65,7 @@ Environment note (not a product defect): a run of the dashboard suite on 2026-08
 local Bun runtime-transpiler cache (oven-sh/bun#32151 — cache key omits the JSX dev/prod
 mode). Purging `~/Library/Caches/bun/@t@` restored a full green run; no code change needed.
 
-**Not run:** dashboard production deployment (secrets `BETTER_AUTH_SECRET`/`RESEND_API_KEY`, the
+**Not run:** dashboard production deployment (secrets `BETTER_AUTH_SECRET`/`RECCADO_API_KEY`, the
 remote auth-D1 schema application, and the customer-origin smoke — `eccos-0x0.9`) and a restore
 drill. The gateway deploy and live post-deploy smoke are recorded above.
 
