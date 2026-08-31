@@ -89,6 +89,86 @@ export function redactError(value: string): string | undefined {
 export const AUTH_ERROR_BANNER_CLASS =
   "border-l-2 border-[#e03131] bg-[rgba(224,49,49,.12)] px-3 py-2 text-sm text-[#ff7777]";
 
+/**
+ * What the check-your-inbox screen says after a "Resend" attempt (eccos-hk5).
+ *
+ * - `sent` — the endpoint answered; assume it did its job.
+ * - `limited` — the resend rate limit tripped. A person who did not get the
+ *   mail will hit this legitimately, so it is a wait, not a failure.
+ * - `unreachable` — the request never got an answer at all.
+ */
+export type ResendOutcomeKind = "sent" | "limited" | "unreachable";
+
+export interface ResendOutcome {
+  kind: ResendOutcomeKind;
+  message: string;
+}
+
+/**
+ * Map a POST /send-verification-email attempt to what the screen says. Takes
+ * the HTTP status the endpoint answered with, or `null` when the request never
+ * reached a verdict (transport failure — no response to read).
+ *
+ * Anti-enumeration (contract §7/§8): every answered status other than 429
+ * takes the SAME "sent" path. Better Auth already returns 200 for an unknown
+ * or already-verified address behind a constant-time floor, so the only way
+ * this endpoint can answer with a 4xx/5xx is a delivery error for an address
+ * that really exists and really is unverified — surfacing that would turn the
+ * screen into an existence oracle. A 429 leaks nothing: the bucket keys on the
+ * caller's IP and the path, so it says something about the caller's own
+ * clicking, never about the address they typed.
+ */
+export function resendVerificationOutcome(status: number | null): ResendOutcome {
+  if (status === null) {
+    return {
+      kind: "unreachable",
+      message: "Could not reach Eccos. Check your connection and try again.",
+    };
+  }
+  if (status === 429) {
+    return {
+      kind: "limited",
+      message:
+        "You have asked for this a few times. Wait a few minutes, then try again — the earlier links still work.",
+    };
+  }
+  return {
+    kind: "sent",
+    message: "Verification email sent again. It can take a minute to arrive.",
+  };
+}
+
+/**
+ * The resend note, rendered as a live region that stays mounted while empty:
+ * an element that appears is not reliably announced, an empty one that fills up
+ * is (same construction as the console's ConnectOutcome).
+ *
+ * Only `unreachable` earns a red rail. `limited` is the console's degraded ink
+ * — the action did not happen and the screen has to say so, but a limit an
+ * ordinary person trips is not an error state dressed in red
+ * (docs/DASHBOARD-DESIGN.md, data rule 1). `sent` stays quiet and muted: a
+ * confirmation is not state.
+ *
+ * Each tone carries its own top margin rather than leaning on a parent `gap`,
+ * so the empty live region takes no vertical space at all: staying mounted must
+ * not cost a stray gap on the screen's resting state.
+ */
+export function ResendNote({ outcome }: { outcome: ResendOutcome | null }) {
+  const tone =
+    outcome === null
+      ? undefined
+      : outcome.kind === "sent"
+        ? "text-muted-foreground mt-4 block text-xs"
+        : outcome.kind === "limited"
+          ? "mt-4 block border-l-2 border-l-[#f0a020] px-3 py-2 text-sm text-foreground"
+          : "mt-4 block border-l-2 border-l-[#e03131] px-3 py-2 text-sm text-foreground";
+  return (
+    <output className={tone} aria-live="polite" aria-atomic="true">
+      {outcome?.message}
+    </output>
+  );
+}
+
 export interface AuthCardProps {
   /** Page title (h1) rendered by the shared Page header. */
   title: string;

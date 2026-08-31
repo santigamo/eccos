@@ -81,6 +81,8 @@ export function createOrgAuthConfig(config: OrgAuthConfig): BetterAuthOptions {
       updateAge: 60 * 60 * 24,
       freshAge: 60 * 15,
     },
+    // Buckets key on `${callerIP}|${path}`, never on the request body: these
+    // rules cap one caller, they are not a per-recipient guarantee.
     rateLimit: {
       enabled: true,
       window: 60,
@@ -90,6 +92,10 @@ export function createOrgAuthConfig(config: OrgAuthConfig): BetterAuthOptions {
         "/sign-in/email": { window: 300, max: 10 },
         "/sign-up/email": { window: 3600, max: 20 },
         "/forgot-password": { window: 3600, max: 10 },
+        // Unauthenticated, caller-supplied address, real mail on every call:
+        // without its own rule this endpoint is an email-bombing primitive
+        // aimed at a third party's inbox (eccos-hk5).
+        "/send-verification-email": { window: 300, max: 5 },
         "/organization/invite": { window: 3600, max: 50 },
       },
     },

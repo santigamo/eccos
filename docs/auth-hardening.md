@@ -18,7 +18,21 @@ per-isolate memory. Configured windows (`src/auth/auth.ts`):
 | `/sign-in/email` | 300 s | 10 |
 | `/sign-up/email` | 3600 s | 20 |
 | `/forgot-password` | 3600 s | 10 |
+| `/send-verification-email` | 300 s | 5 |
 | `/organization/invite` | 3600 s | 50 |
+
+**What a bucket keys on.** Better Auth builds the key as `${callerIP}|${path}`
+(`createRateLimitKey`, `@better-auth/core/utils/ip`) — the caller's address and
+the route, never the request body. No rule above is a per-recipient guarantee:
+they bound one caller. `/send-verification-email` matters most here because it
+is unauthenticated and takes an arbitrary caller-supplied address, so every
+call puts real mail in a third party's inbox off our sending domain; 5 per
+300 s caps one caller at 60 mails/hour against a chosen address (`eccos-hk5`).
+An attacker with many source addresses is still only bounded per address —
+per-recipient send budgets, if we ever need them, belong to the mail layer.
+The IP itself comes from `x-forwarded-for` (Better Auth's default header list);
+if no trustworthy client IP can be resolved, every caller shares one bucket per
+path, which fails safe for abuse but degrades availability.
 
 Auth server-side calls made inside dashboard server functions do NOT pass
 through the HTTP middleware — mutation rate limiting for those lives in the

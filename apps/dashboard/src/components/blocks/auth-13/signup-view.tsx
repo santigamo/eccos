@@ -11,6 +11,9 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   AUTH_ERROR_BANNER_CLASS,
+  ResendNote,
+  type ResendOutcome,
+  resendVerificationOutcome,
 } from "@/components/auth/auth-page";
 import { PasswordField } from "@/components/auth/password-field";
 import {
@@ -34,7 +37,7 @@ export function SignUpView() {
   const [sentEmail, setSentEmail] = useState("");
   const [pending, setPending] = useState(false);
   const [resendPending, setResendPending] = useState(false);
-  const [resendNote, setResendNote] = useState<string | null>(null);
+  const [resendOutcome, setResendOutcome] = useState<ResendOutcome | null>(null);
   const sentHeadingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -84,16 +87,29 @@ export function SignUpView() {
   }
 
   async function onResend() {
-    // Anti-enumeration: always claim success, never confirm whether the
-    // address is registered or already verified.
+    // Anti-enumeration: an answered request always claims success, never
+    // confirming whether the address is registered or already verified. The one
+    // status that changes the wording is 429 — the resend rate limit
+    // (auth.ts customRules), which is about this caller, not this address.
+    // Reporting it is what keeps the button honest: it did not send, so the
+    // screen must not say it did (eccos-hk5).
     setResendPending(true);
-    setResendNote(null);
-    await authClient.$fetch("/send-verification-email", {
-      method: "POST",
-      body: { email: sentEmail, callbackURL: "/" },
-    });
+    setResendOutcome(null);
+    let status: number | null = null;
+    try {
+      const result = await authClient.$fetch("/send-verification-email", {
+        method: "POST",
+        body: { email: sentEmail, callbackURL: "/" },
+      });
+      // better-fetch resolves with { data, error } instead of throwing; an
+      // answered request has a status either way, and only a transport failure
+      // (below) leaves us without one.
+      status = result.error?.status ?? 200;
+    } catch {
+      status = null;
+    }
     setResendPending(false);
-    setResendNote("Verification email sent again.");
+    setResendOutcome(resendVerificationOutcome(status));
   }
 
   return (
@@ -130,7 +146,10 @@ export function SignUpView() {
                 </output>
               </div>
             </div>
-            <div className="flex flex-col gap-4">
+            {/* Explicit margins instead of a flex `gap`: the resend note's live
+                region stays mounted while empty (so it can announce), and a gap
+                would reserve space for it even when it has nothing to say. */}
+            <div className="flex flex-col">
               <Button
                 type="button"
                 variant="outline"
@@ -139,12 +158,10 @@ export function SignUpView() {
               >
                 {resendPending ? "Sending…" : "Resend verification email"}
               </Button>
-              {resendNote ? (
-                <p className="text-muted-foreground text-xs">{resendNote}</p>
-              ) : null}
+              <ResendNote outcome={resendOutcome} />
               <a
                 href="/signin"
-                className="text-muted-foreground text-sm hover:text-foreground"
+                className="text-muted-foreground mt-4 text-sm hover:text-foreground"
               >
                 Back to sign in
               </a>

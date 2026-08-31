@@ -116,6 +116,14 @@ export function createAuth(config: AuthConfig) {
     // Distributed rate limiting (contract §8): counters live in the auth D1
     // (storage: "database"), shared across all isolates — never per-isolate
     // memory. Tighter windows for auth-critical paths.
+    //
+    // WHAT THE COUNTER KEYS ON: Better Auth builds the bucket key as
+    // `${ip}|${path}` (createRateLimitKey in @better-auth/core/utils/ip) — the
+    // CALLER's address and the route, never the request body. There is no way
+    // to key a rule on the target email, so none of these rules is a
+    // per-recipient guarantee: they cap what one caller can do, and a caller
+    // with many addresses is still only bounded per address. Recipient-side
+    // protection (per-address send budgets) belongs to the mail layer.
     rateLimit: {
       enabled: true,
       window: 60,
@@ -125,6 +133,18 @@ export function createAuth(config: AuthConfig) {
         "/sign-in/email": { window: 300, max: 10 },
         "/sign-up/email": { window: 3600, max: 20 },
         "/forgot-password": { window: 3600, max: 10 },
+        // The "Resend" button on the check-your-inbox screen (eccos-hk5). The
+        // address is caller-supplied and unauthenticated, so every call sends
+        // real mail to a third party's inbox off our sending domain — the cost
+        // of a loose limit lands on them and on our domain reputation, not on
+        // us. 5 per 300 s: the 300 s window is the one already used by
+        // /sign-in/email rather than a third arbitrary duration, and 5 leaves a
+        // person who genuinely did not receive the mail room to double-click,
+        // check spam, and ask twice more before waiting. It caps one caller at
+        // 60 mails/hour against a chosen address, against the ~180/hour the
+        // framework's own default for this path allows (60 s / 3) and the
+        // 6000/hour the global 60 s / 100 rule would.
+        "/send-verification-email": { window: 300, max: 5 },
         "/organization/invite": { window: 3600, max: 50 },
       },
     },

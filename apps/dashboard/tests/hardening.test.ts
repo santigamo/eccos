@@ -89,4 +89,40 @@ describe("distributed rate limiting", () => {
     const blocked = await signIn();
     expect(blocked.status).toBe(429);
   });
+
+  test("the resend endpoint carries its own rule (eccos-hk5)", async () => {
+    const { auth } = await createTestAuth();
+    // POST /send-verification-email takes an arbitrary caller-supplied address
+    // and sends real mail to it, so it does not ride the global 60s/100 rule.
+    expect(auth.options.rateLimit?.customRules?.["/send-verification-email"]).toEqual({
+      window: 300,
+      max: 5,
+    });
+  });
+
+  test(
+    "/send-verification-email allows 5 per window, then refuses",
+    async () => {
+      const { auth } = await createTestAuth();
+      const resend = () =>
+        auth.handler(
+          new Request(`${BASE_URL}/api/auth/send-verification-email`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin: BASE_URL },
+            // An address that was never signed up: Better Auth answers 200
+            // behind a constant-time floor either way, so the limiter is the
+            // only thing deciding here.
+            body: JSON.stringify({ email: "victim@corp.test", callbackURL: "/" }),
+          }),
+        );
+      // Better Auth ships its own default for this path (60s/3), which our
+      // custom rule overrides — a fourth and fifth call still going through is
+      // what proves the override took effect rather than the framework default.
+      for (let i = 0; i < 5; i++) {
+        expect((await resend()).status).not.toBe(429);
+      }
+      expect((await resend()).status).toBe(429);
+    },
+    30_000,
+  );
 });
