@@ -11,7 +11,8 @@ import {
   FramePanel,
   FrameTitle,
 } from "../components/reui/frame";
-import { Page, StatusTag, Unreachable } from "../ui";
+import { Page, StatusTag } from "../ui";
+import { FailureView } from "../components/dashboard/failure";
 
 export const Route = createFileRoute("/templates")({
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
@@ -60,7 +61,7 @@ function TemplatesPage() {
   if (!result.ok) {
     return (
       <Page title="Templates" kicker="Cloud API">
-        <Unreachable error={result.error} />
+        <FailureView failure={result} />
       </Page>
     );
   }

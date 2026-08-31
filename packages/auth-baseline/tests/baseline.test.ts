@@ -105,3 +105,98 @@ describe("baseline guards", () => {
     ).rejects.toThrow(UnauthorizedError);
   });
 });
+
+/**
+ * Resolving the organization when the caller names none (eccos-k5a).
+ *
+ * The old baseline threw a bare "no organization context" here, which dead-ends
+ * a user who has exactly one place to be and tells the ones who have several
+ * nothing they can act on. It now mirrors the Eccos console's copy of this
+ * module: default to a sole membership, and fail closed with a reason code
+ * otherwise, so a UI can branch on the reason instead of the message text.
+ */
+describe("implicit organization resolution", () => {
+  /** The session's stored active organization is UX state; drop it to test the
+   * path where the caller supplies nothing at all. */
+  function clearActiveOrganization(db: Database) {
+    db.query('UPDATE session SET "activeOrganizationId" = NULL').run();
+  }
+
+  async function reasonOf(promise: Promise<unknown>): Promise<string> {
+    const err = await promise.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ForbiddenError);
+    return (err as ForbiddenError).reason;
+  }
+
+  test("a sole membership is the unambiguous default", async () => {
+    const { auth, db, migrations } = createBaselineAuth();
+    await (await migrations).runMigrations();
+    const headers = await verifiedUser(auth, db, "sole@t.test");
+    const org = (await auth.api.createOrganization({
+      body: { name: "sole", slug: "sole" },
+      headers,
+    })) as { id?: string };
+    clearActiveOrganization(db);
+
+    // No explicit id, no active organization: one membership is not ambiguous.
+    expect(await requirePermission(auth, headers, undefined, "view")).toBe(org!.id!);
+  });
+
+  test("no membership at all asks the user to create or join one", async () => {
+    const { auth, db, migrations } = createBaselineAuth();
+    await (await migrations).runMigrations();
+    const headers = await verifiedUser(auth, db, "nobody@t.test");
+
+    expect(await reasonOf(requirePermission(auth, headers, undefined, "view"))).toBe(
+      "no-organization",
+    );
+  });
+
+  test("several memberships and none selected asks for a choice", async () => {
+    const { auth, db, migrations } = createBaselineAuth();
+    await (await migrations).runMigrations();
+    const headers = await verifiedUser(auth, db, "both@t.test");
+    await auth.api.createOrganization({ body: { name: "one", slug: "one" }, headers });
+    await auth.api.createOrganization({ body: { name: "two", slug: "two" }, headers });
+    clearActiveOrganization(db);
+
+    // Ambiguity fails closed rather than picking for the user.
+    expect(await reasonOf(requirePermission(auth, headers, undefined, "view"))).toBe(
+      "select-organization",
+    );
+  });
+
+  test("a denied action reports the permission, not a missing organization", async () => {
+    const { auth, db, migrations } = createBaselineAuth();
+    await (await migrations).runMigrations();
+    const ownerHeaders = await verifiedUser(auth, db, "owner-r@t.test");
+    const org = (await auth.api.createOrganization({
+      body: { name: "roles", slug: "roles" },
+      headers: ownerHeaders,
+    })) as { id?: string };
+    const inv = (await auth.api.createInvitation({
+      body: { email: "viewer-r@t.test", role: "viewer", organizationId: org!.id! },
+      headers: ownerHeaders,
+    })) as { id?: string };
+    const viewerHeaders = await verifiedUser(auth, db, "viewer-r@t.test");
+    await auth.api.acceptInvitation({ body: { invitationId: inv!.id! }, headers: viewerHeaders });
+
+    expect(await reasonOf(requirePermission(auth, viewerHeaders, org!.id!, "erase"))).toBe(
+      "missing-permission",
+    );
+  });
+
+  test("a guessed organization id reports non-membership", async () => {
+    const { auth, db, migrations } = createBaselineAuth();
+    await (await migrations).runMigrations();
+    const headers = await verifiedUser(auth, db, "guess@t.test");
+    await auth.api.createOrganization({ body: { name: "mine", slug: "mine" }, headers });
+
+    expect(await reasonOf(requirePermission(auth, headers, "org_guessed", "view"))).toBe(
+      "not-a-member",
+    );
+  });
+});

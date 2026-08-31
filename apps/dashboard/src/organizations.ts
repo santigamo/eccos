@@ -15,7 +15,7 @@ import type { GatewayApi } from "@eccos/gateway-contract";
 import { createAuth } from "./auth/auth";
 import { authConfigFromEnv } from "./auth/config";
 import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
-import { ForbiddenError } from "./auth/tenant";
+import { ForbiddenError, verifyMembership } from "./auth/tenant";
 
 export interface OrganizationView {
   id: string;
@@ -126,6 +126,41 @@ export const createOrganization = createServerFn({ method: "POST" })
       }
     },
   );
+
+const selectOrgInput = z
+  .object({ organizationId: z.string().trim().min(1).max(128) })
+  .strict();
+
+/**
+ * Point this session at one of the user's organizations (eccos-k5a).
+ *
+ * A member of several organizations with none selected cannot resolve a tenant,
+ * and `requirePermission` fails closed on that ambiguity rather than guessing —
+ * so the console needs a way to answer the question. What this writes is UX
+ * state only (`session.activeOrganizationId`): every authorization decision
+ * still re-derives and re-validates the organization per request, and the id
+ * arriving from the browser is verified against membership here before it is
+ * stored, so a forged one changes nothing (contract §1).
+ */
+export const selectOrganization = createServerFn({ method: "POST" })
+  .validator((input: unknown) => selectOrgInput.parse(input))
+  .handler(async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
+    try {
+      const auth = authInstance();
+      const request = currentRequest();
+      await requireAuthContext(auth, request);
+      if (!(await verifyMembership(auth, request.headers, data.organizationId))) {
+        throw new ForbiddenError("not a member of the requested organization", "not-a-member");
+      }
+      await auth.api.setActiveOrganization({
+        body: { organizationId: data.organizationId },
+        headers: request.headers,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 
 const inviteInput = z
   .object({

@@ -201,3 +201,70 @@ describe("tenant helpers", () => {
     expect(resolved).toBe(organizationId);
   });
 });
+
+/**
+ * The reason codes a refusal carries (eccos-k5a). The console branches on these
+ * — never on the message — so that a user who belongs to no workspace, one who
+ * belongs to several, and one whose role is too narrow each get a screen that
+ * says what actually happened. Mirrors `@eccos/auth-baseline`'s own suite.
+ */
+describe("ForbiddenError reasons", () => {
+  function clearActiveOrganization(db: Database) {
+    db.query('UPDATE session SET "activeOrganizationId" = NULL').run();
+  }
+
+  async function reasonOf(promise: Promise<unknown>): Promise<string> {
+    const err = await promise.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ForbiddenError);
+    return (err as ForbiddenError).reason;
+  }
+
+  test("no membership at all is 'no-organization'", async () => {
+    const { auth, db } = await createTestAuth();
+    const headers = await signInHeaders(auth, db, "nobody@corp.test");
+    expect(await reasonOf(requirePermission(auth, headers, undefined, "view"))).toBe(
+      "no-organization",
+    );
+  });
+
+  test("a sole membership is defaulted to, not refused", async () => {
+    const { auth, db } = await createTestAuth();
+    const headers = await signInHeaders(auth, db, "sole@corp.test");
+    const org = (await auth.api.createOrganization({
+      body: { name: "Sole", slug: "sole" },
+      headers,
+    })) as { id?: string };
+    clearActiveOrganization(db);
+    expect(await requirePermission(auth, headers, undefined, "view")).toBe(org!.id!);
+  });
+
+  test("several memberships and none selected is 'select-organization'", async () => {
+    const { auth, db } = await createTestAuth();
+    const headers = await signInHeaders(auth, db, "both@corp.test");
+    await auth.api.createOrganization({ body: { name: "One", slug: "one" }, headers });
+    await auth.api.createOrganization({ body: { name: "Two", slug: "two" }, headers });
+    clearActiveOrganization(db);
+    expect(await reasonOf(requirePermission(auth, headers, undefined, "view"))).toBe(
+      "select-organization",
+    );
+  });
+
+  test("a narrow role is 'missing-permission', not a missing organization", async () => {
+    const { auth, db } = await createTestAuth();
+    const { organizationId, viewerHeaders } = await seedOrganization(auth, db);
+    expect(await reasonOf(requirePermission(auth, viewerHeaders, organizationId, "erase"))).toBe(
+      "missing-permission",
+    );
+  });
+
+  test("a guessed organization id is 'not-a-member'", async () => {
+    const { auth, db } = await createTestAuth();
+    const { outsiderHeaders, organizationId } = await seedOrganization(auth, db);
+    expect(await reasonOf(requirePermission(auth, outsiderHeaders, organizationId, "view"))).toBe(
+      "not-a-member",
+    );
+  });
+});

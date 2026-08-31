@@ -1,6 +1,7 @@
 import { createFileRoute, useLoaderData } from "@tanstack/react-router";
 import { getSubscriberConfig } from "../server/gateway";
-import { Page, Unreachable } from "../ui";
+import { Page } from "../ui";
+import { FailureView } from "../components/dashboard/failure";
 import { SubscriberForm } from "../components/dashboard/subscriber-form";
 import { ResubscribeAction } from "../components/dashboard/resubscribe-action";
 import {
@@ -25,7 +26,7 @@ function SettingsPage() {
   if (!result.ok) {
     return (
       <Page title="Settings" kicker="Configuration">
-        <Unreachable error={result.error} />
+        <FailureView failure={result} />
       </Page>
     );
   }

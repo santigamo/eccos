@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { resubscribe } from "../../server/gateway";
+import { failureCopy } from "../../lib/failure";
 import {
   Frame,
   FramePanel,
@@ -38,7 +39,7 @@ export function ResubscribeAction({ wabaId }: { wabaId?: string }) {
     try {
       const res = await resubscribe({ data: { wabaId } });
       if (!res.ok) {
-        setNotice({ ok: false, text: res.error });
+        setNotice({ ok: false, text: failureCopy(res).detail });
       } else if (res.data.ok) {
         setNotice({ ok: true, text: "Re-subscribed. Meta accepted the webhook subscription." });
       } else {

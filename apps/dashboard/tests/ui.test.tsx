@@ -4,11 +4,13 @@ import { Page, StatusTag, Unreachable, fmtTs } from "../src/ui";
 
 /**
  * Lightweight render smoke tests for the primitives every operator view is
- * built from (`Page`, `Unreachable`, `StatusTag`) — including the shared
+ * built from (`Page`, `Unreachable`, `StatusTag`) — including the
  * "Gateway unreachable" state that all six views (Status/Deliveries/Inbound/
  * Outbound/Templates/Settings) fall back to when the `GATEWAY` RPC binding
  * can't be reached (see `tests/gateway.test.ts` for the data-layer side of
- * that same state).
+ * that same state). Views reach this card through `FailureView`, which routes
+ * the other failure classes elsewhere — `tests/failure-view.test.tsx` covers
+ * that split.
  *
  * These use React's own `react-dom/server` (`renderToStaticMarkup`), which
  * needs no DOM — it produces an HTML string directly, so no jsdom / Testing

@@ -147,7 +147,16 @@ export function StatusCounts({
   )
 }
 
-/** Error card for the `{ ok: false }` (gateway unreachable / RPC threw) state. */
+/**
+ * Error card for a transport or RPC failure — and ONLY for that.
+ *
+ * This copy asserts a specific cause, so it may only render for
+ * `kind: "unreachable"`, the one failure class where the console has
+ * established that the gateway is the problem. Authorization refusals happen
+ * before any RPC is attempted and render as themselves through
+ * `components/dashboard/failure.tsx`; route it through `FailureView` rather
+ * than reaching for this card directly (eccos-k5a).
+ */
 export function Unreachable({ error }: { error: string }) {
   return (
     <Frame variant="default" spacing="sm" className="max-w-2xl">

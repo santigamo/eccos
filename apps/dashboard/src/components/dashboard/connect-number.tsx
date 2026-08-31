@@ -8,6 +8,7 @@ import {
   FrameTitle,
 } from "../reui/frame";
 import { startConnect } from "../../server/gateway";
+import { failureCopy } from "../../lib/failure";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +39,7 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
     try {
       const result = await startConnect();
       if (!result.ok) {
-        setError(result.error);
+        setError(failureCopy(result).detail);
         return;
       }
       window.location.assign(result.data.url);

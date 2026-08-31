@@ -15,12 +15,31 @@ export type { GatewayAction };
 import { UnauthorizedError } from "./session";
 import { getSessionOnce } from "./request-memo";
 
+/**
+ * Why an authorization check refused, as a code callers can branch on.
+ *
+ * The message is for humans and may be reworded at any time; this is the part a
+ * UI, a route guard, or a boundary is allowed to switch on, so nobody ever has
+ * to match on error strings to tell "you belong to no organization" apart from
+ * "your role lacks this action" — or from a transport failure (eccos-k5a).
+ *
+ * Kept identical to `@eccos/auth-baseline`'s copy of this module.
+ */
+export type ForbiddenReason =
+  | "no-organization"
+  | "select-organization"
+  | "not-a-member"
+  | "missing-permission"
+  | "other";
+
 /** Typed error for authenticated-but-forbidden requests (used by route guards
  * wired into responses by eccos-0x0.4). */
 export class ForbiddenError extends Error {
-  constructor(message = "not allowed for this organization") {
+  readonly reason: ForbiddenReason;
+  constructor(message = "not allowed for this organization", reason: ForbiddenReason = "other") {
     super(message);
     this.name = "ForbiddenError";
+    this.reason = reason;
   }
 }
 
@@ -97,28 +116,28 @@ export async function requirePermission(
   // session type only carries it when the organization plugin is inferred.
   const rawSession = session.session as { activeOrganizationId?: string | null };
   let orgId = organizationId ?? rawSession.activeOrganizationId ?? "";
-  // Empty orgId falls through to the sole-membership default below: zero
-  // memberships fail closed with a create/join hint, multi-org ambiguity
-  // fails closed with "select an organization".
 
   const memberships = await resolveMemberships(auth, headers);
   if (!orgId) {
-    // No explicit selector and no stored active org: unambiguously default to
-    // the single membership. Multi-org users must choose explicitly (the
-    // org picker sets the active organization), so ambiguity fails closed.
+    // No explicit selector and no stored active org. A single membership is not
+    // ambiguous, so default to it rather than dead-ending a user who has
+    // exactly one place to be. Zero memberships and multi-org ambiguity both
+    // still fail closed, each with the reason its caller needs to act on: the
+    // console turns the first into onboarding and the second into a picker.
     const sole = memberships[0];
     if (memberships.length === 1 && sole) {
       orgId = sole.id;
-    } else {
+    } else if (memberships.length === 0) {
       throw new ForbiddenError(
-        memberships.length === 0
-          ? "no organization membership — create or join an organization first"
-          : "select an organization",
+        "no organization membership — create or join an organization first",
+        "no-organization",
       );
+    } else {
+      throw new ForbiddenError("select an organization", "select-organization");
     }
   }
   if (!memberships.some((m) => m.id === orgId)) {
-    throw new ForbiddenError("not a member of the requested organization");
+    throw new ForbiddenError("not a member of the requested organization", "not-a-member");
   }
 
   const result = (await auth.api.hasPermission({
@@ -126,7 +145,10 @@ export async function requirePermission(
     headers,
   })) as { success?: boolean } | null;
   if (result?.success !== true) {
-    throw new ForbiddenError(`missing "${action}" permission in this organization`);
+    throw new ForbiddenError(
+      `missing "${action}" permission in this organization`,
+      "missing-permission",
+    );
   }
   return orgId;
 }

@@ -14,8 +14,8 @@ import {
   Page,
   StatusCounts,
   StatusTag,
-  Unreachable,
 } from "../ui";
+import { FailureView } from "../components/dashboard/failure";
 
 export const Route = createFileRoute("/")({
   component: StatusPage,
@@ -69,7 +69,7 @@ function StatusPage() {
     return (
       <main id="main-content" className="min-h-svh px-4 py-6 md:px-8 md:py-8">
         <Page title="Status" kicker="Gateway">
-          <Unreachable error={result.error} />
+          <FailureView failure={result} />
         </Page>
       </main>
     );

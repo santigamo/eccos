@@ -26,7 +26,9 @@ export {
 export {
   resolveMemberships,
   verifyMembership,
+  requirePermission,
   ForbiddenError,
+  type ForbiddenReason,
   type Membership,
 } from "./tenant";
 export { resolveSession, requireSession, UnauthorizedError, type SessionUser } from "./session";
