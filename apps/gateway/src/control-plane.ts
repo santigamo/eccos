@@ -1106,8 +1106,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaIdN = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
-        "SELECT account_id, waba_id, meta_access_token, callback_url, created_at, provisioned_at, status, provisioning_error, " +
-          `${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ? AND account_id = ?`,
+        `SELECT account_id, waba_id, meta_access_token, callback_url, created_at, provisioned_at, status, provisioning_error, ${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ? AND account_id = ?`,
         wabaIdN,
         id,
       )
@@ -1137,8 +1136,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaIdN = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
-        "SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error, " +
-          `${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ?`,
+        `SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error, ${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ?`,
         wabaIdN,
       )
       .toArray()[0];
