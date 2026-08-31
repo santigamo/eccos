@@ -229,6 +229,7 @@ can be abandoned without breaking a live webhook.
 | Embedded Signup callback (browser) | Meta panel → Valid OAuth Redirect URIs | Yes — Meta rejects the `redirect_uri` and the OAuth dialog errors out |
 | Embedded Signup from the dashboard button | `GATEWAY_PUBLIC_URL` (gateway `vars`) | Yes — it sends `<origin>/connect` as `redirect_uri`; it must already be registered |
 | Embedded Signup from `POST /connect/start` | Nothing — derived from the request origin | No — it follows whichever host the browser used, so both origins work while both are live |
+| Per-WABA webhook override | `callback_url` stored per WABA in the control plane, sent as `override_callback_uri` on `subscribed_apps` | **Yes, and silently.** Meta's per-WABA override wins over the app-level Callback URL, so switching the panel setting does not move delivery for a WABA registered under the old origin |
 | `/v1` API | The customer's own integration | Yes, eventually — hence the overlap window before `workers.dev` is disabled |
 
 > The `/connect` flow is a **server-side OAuth dialog redirect** to
@@ -300,6 +301,22 @@ Then click **Connect WhatsApp** in the dashboard once and confirm the OAuth dial
 change of its own — it never hardcodes a gateway origin; it receives the full URL over the
 `GatewayRPC` service binding.
 
+**5b — Re-register every existing WABA under the new origin.** `subscribeApp` sends the control
+plane's stored per-WABA `callback_url` as `override_callback_uri`, and that override takes
+precedence over the app-level Callback URL. Nothing rewrites that column except registration
+through `/connect` — `resubscribeWaba` re-asserts whatever is already stored. A WABA registered
+while the origin was `workers.dev` therefore keeps receiving its webhooks there no matter what the
+panel says, and step 6 alone will not move it.
+
+Reconnect every registered number through Embedded Signup (dashboard → **Connect WhatsApp**), and
+do it **after** step 5, never before: the reconnect writes `https://api.eccos.chat/webhooks/meta`
+as the stored `callback_url` and re-subscribes Meta with the new override. Reconnecting before the
+flip would just re-write the old origin and need a second pass.
+
+> If this deploy also introduced token encryption, the pre-encryption rows are quarantined as
+> `failed` with *"meta access token is not encrypted; reconnect the number"*. The same reconnect
+> clears both — the quarantine and the stale override — in one action.
+
 **6 — Switch the WABA webhook callback URL (by hand).** Meta panel → WhatsApp → Configuration →
 Callback URL:
 
@@ -312,10 +329,22 @@ new host — step 3 already proved it answers), and confirm the `messages` field
 **7 — Verify a real inbound message.** Send a WhatsApp message to a connected number and confirm it
 lands: the delivery shows up in the operator console and, if a subscriber is configured, at the
 subscriber endpoint. This is the only check that proves Meta's own delivery path — not just a
-locally signed request — reaches the new origin.
+locally signed request — reaches a live origin.
+
+> **It only proves the *new* origin if step 5b was done.** A WABA still carrying a `workers.dev`
+> override delivers to the old host, which is the same Worker, so the message lands in the console
+> exactly as it would have — the check passes while proving nothing. Confirm first that no
+> registered WABA still stores a `workers.dev` callback (`callbackUrl` on the account's WABA
+> records).
 
 **8 — Overlap, then retire `workers.dev` (separate change, later).** Leave both origins live long
-enough for any customer integration still calling the `workers.dev` `/v1` host to move. When it is
+enough for any customer integration still calling the `workers.dev` `/v1` host to move.
+
+> **Hard gate before this step: no registered WABA may still store a `workers.dev` callback.**
+> Disabling the old origin while an override still points at it stops webhook delivery for that
+> WABA, and Meta retries a dead endpoint until it disables the subscription — the exact failure the
+> "always answer 200 quickly" rule exists to prevent. Check every account's WABA records, not just
+> the one you reconnected. When it is
 confirmed unused, drop `"workers_dev": true` from `apps/gateway/wrangler.jsonc`, deploy, and remove
 the `workers.dev` entries from the Valid OAuth Redirect URIs and the JavaScript SDK domains.
 Retiring the old origin is never part of the same deploy that adds the new one.
