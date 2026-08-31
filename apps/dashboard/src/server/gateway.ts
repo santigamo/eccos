@@ -389,12 +389,25 @@ export const getAccountResources = createServerFn({ method: "GET" }).handler(
   },
 );
 
+/**
+ * Where Meta's callback hands the operator back (eccos-5z9). Derived from the
+ * request origin, which the server entry has already narrowed to the canonical
+ * customer host (or localhost in dev) before routing — so this is console
+ * configuration, not browser input. The gateway re-validates it anyway.
+ */
+export const CONNECT_RETURN_PATH = "/numbers";
+
+function connectReturnTo(request: Request): string {
+  return new URL(CONNECT_RETURN_PATH, new URL(request.url).origin).href;
+}
+
 export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
       // Embedded Signup is an admin+ mutation (contract §4): step-up policy is
       // enforced by eccos-0x0.7; the account comes from the organization link.
       const actor = await requireActor("administer");
+      const returnTo = connectReturnTo(getRequest());
       let link = await gateway.getOrganizationAccountLink(actor.organizationId);
       if (!link) {
         const ensured = await gateway.ensureOrganizationAccount(actor.organizationId);
@@ -403,7 +416,7 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
       if (!link || link.status !== "active") {
         throw new Error("This organization is not linked to an Eccos account");
       }
-      const result = await gateway.startConnectForAccountId(link.accountId);
+      const result = await gateway.startConnectForAccountId(link.accountId, returnTo);
       auditEvent({
         action: "connect_start",
         actorUserId: actor.session.userId,

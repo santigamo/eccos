@@ -2,8 +2,23 @@ import { createFileRoute, useLoaderData } from "@tanstack/react-router";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page, StatusTag, Unreachable } from "../ui";
 import { ConnectNumberPanel } from "../components/dashboard/connect-number";
+import {
+  ConnectOutcome,
+  normalizeConnectError,
+  normalizeConnectSkipped,
+  type ConnectOutcomeSearch,
+} from "../components/dashboard/connect-outcome";
+import { normalizeSearchWabaId } from "../lib/search";
+
+/** Scope selector plus the Embedded Signup outcome the gateway redirects with. */
+type NumbersSearch = ConnectOutcomeSearch & { wabaId?: string };
 
 export const Route = createFileRoute("/numbers")({
+  validateSearch: (search: Record<string, unknown>): NumbersSearch => ({
+    wabaId: normalizeSearchWabaId(search.wabaId),
+    connectError: normalizeConnectError(search.connectError),
+    connectSkipped: normalizeConnectSkipped(search.connectSkipped),
+  }),
   component: NumbersPage,
 });
 
@@ -17,6 +32,7 @@ export const Route = createFileRoute("/numbers")({
  */
 function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
+  const { connectError, connectSkipped } = Route.useSearch();
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
@@ -26,6 +42,9 @@ function NumbersPage() {
   }
   const resources = resourcesFor(root.data);
   const wabas = resources?.wabas ?? [];
+  const outcome = (
+    <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} />
+  );
 
   if (wabas.length === 0) {
     return (
@@ -35,7 +54,10 @@ function NumbersPage() {
             loose from its own heading. Top-aligned with a deliberate gap keeps
             it in the upper half at any viewport height, and never clips. */}
         <div className="flex justify-center pt-16">
-          <ConnectNumberPanel heading="Meta Embedded Signup" />
+          <div className="w-full max-w-3xl">
+            {outcome}
+            <ConnectNumberPanel heading="Meta Embedded Signup" />
+          </div>
         </div>
       </Page>
     );
@@ -43,6 +65,7 @@ function NumbersPage() {
 
   return (
     <Page title="Numbers" kicker="Connection">
+      {outcome}
       <div className="flex flex-col gap-6">
         <NumbersTable resources={resources!} />
         <ConnectNumberPanel heading="Add another number" />

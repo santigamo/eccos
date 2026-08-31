@@ -415,7 +415,11 @@ describe("account-scoped control plane", () => {
 
     await cp((i) => {
       expect(i.consumeConnectStateForAccount(state, "acc-other")).toBeNull();
-      expect(i.consumeConnectStateForAccount(state, accountId)).toEqual({ accountId, redirectUri: null });
+      expect(i.consumeConnectStateForAccount(state, accountId)).toEqual({
+        accountId,
+        redirectUri: null,
+        returnTo: null,
+      });
       expect(i.consumeConnectStateForAccount(state, accountId)).toBeNull();
     });
 
@@ -820,6 +824,7 @@ describe("account-scoped control plane", () => {
     expect(await foreignSelection.json()).toEqual({
       ok: false,
       error: "waba \"WABA_OAUTH_FOREIGN\" is already registered to another account",
+      code: "owned",
     });
     expect(graph.mock.calls.some(([input]) => String(input).includes("/oauth/access_token"))).toBe(true);
   });

@@ -23,6 +23,8 @@ export const API_KEY_RAW_BYTES = 32;
 export const WABA_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 export const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const STATE_MAX_LENGTH = 512;
+/** Bound on the stored OAuth redirect_uri / console return URL. */
+export const URL_MAX_LENGTH = 1024;
 const PHONE_NUMBER_ID_PATTERN = /^[A-Za-z0-9_:-]+$/;
 const MAX_NAME_LENGTH = 200;
 const PROVISIONING_MAX_ATTEMPTS = 6;
@@ -147,6 +149,10 @@ interface ProvisioningRow {
 export interface ConnectStateRecord {
   accountId: string;
   redirectUri: string | null;
+  /** Console URL the gateway sends the operator back to once Meta's callback is
+   * handled. Only set by the dashboard over the RPC service binding, never by a
+   * public HTTP caller — see `startConnectForAccount`. */
+  returnTo: string | null;
 }
 
 export interface ApiKeySummary {
@@ -232,21 +238,43 @@ function validateCallbackUrl(callbackUrl: string | undefined): string | null {
   return v;
 }
 
-function validateRedirectUri(redirectUri: string | undefined): string | null {
-  if (redirectUri === undefined || redirectUri.trim() === "") return null;
-  const value = redirectUri.trim();
+/** Absolute http(s) URL, https-only off localhost, no embedded credentials.
+ * Shared by the OAuth redirect_uri and the console return URL. */
+function validateAbsoluteUrl(input: string | undefined, field: string): string | null {
+  if (input === undefined || input.trim() === "") return null;
+  const value = input.trim();
+  if (value.length > URL_MAX_LENGTH) {
+    throw new Error(`invalid ${field}: expected at most ${URL_MAX_LENGTH} characters`);
+  }
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error("invalid redirectUri: must be a valid URL");
+    throw new Error(`invalid ${field}: must be a valid URL`);
   }
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname.toLowerCase());
   if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local)) {
-    throw new Error("invalid redirectUri: must use https");
+    throw new Error(`invalid ${field}: must use https`);
   }
-  if (parsed.username || parsed.password) throw new Error("invalid redirectUri: credentials are not allowed");
+  if (parsed.username || parsed.password) throw new Error(`invalid ${field}: credentials are not allowed`);
   return value;
+}
+
+function validateRedirectUri(redirectUri: string | undefined): string | null {
+  return validateAbsoluteUrl(redirectUri, "redirectUri");
+}
+
+function validateReturnTo(returnTo: string | undefined): string | null {
+  return validateAbsoluteUrl(returnTo, "returnTo");
+}
+
+/** Row -> record, so every read path returns the same shape. */
+function connectStateRecord(row: Record<string, unknown>): ConnectStateRecord {
+  return {
+    accountId: row.account_id as string,
+    redirectUri: (row.redirect_uri as string | null) ?? null,
+    returnTo: (row.return_to as string | null) ?? null,
+  };
 }
 
 function validateProvisioningStatus(status: ProvisioningStatus | undefined): ProvisioningStatus {
@@ -388,7 +416,8 @@ export class EccosControlPlane extends DurableObject<Env> {
         state      TEXT PRIMARY KEY,
         account_id TEXT NOT NULL,
         expires_at INTEGER NOT NULL,
-        redirect_uri TEXT
+        redirect_uri TEXT,
+        return_to  TEXT
       );`);
       // Identity-plane link (docs/auth-tenancy-contract.md section 2): one Better
       // Auth organization <-> one Eccos account. PRIMARY KEY on organization_id +
@@ -428,6 +457,9 @@ export class EccosControlPlane extends DurableObject<Env> {
       const stateColumns = this.sql.exec("PRAGMA table_info(connect_states)").toArray();
       if (!stateColumns.some((row) => row.name === "redirect_uri")) {
         this.sql.exec("ALTER TABLE connect_states ADD COLUMN redirect_uri TEXT");
+      }
+      if (!stateColumns.some((row) => row.name === "return_to")) {
+        this.sql.exec("ALTER TABLE connect_states ADD COLUMN return_to TEXT");
       }
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_wabas_provisioning
         ON wabas (status, provisioning_next_attempt_at);`);
@@ -1099,7 +1131,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       const row = this.sql
         .exec(
-          "SELECT account_id, expires_at, redirect_uri FROM connect_states WHERE state = ?",
+          "SELECT account_id, expires_at, redirect_uri, return_to FROM connect_states WHERE state = ?",
           s,
         )
         .toArray()[0];
@@ -1109,28 +1141,33 @@ export class EccosControlPlane extends DurableObject<Env> {
         return;
       }
       this.sql.exec("UPDATE connect_states SET expires_at = ? WHERE state = ?", expiresAt, s);
-      result = {
-        accountId: row.account_id as string,
-        redirectUri: (row.redirect_uri as string | null) ?? null,
-      };
+      result = connectStateRecord(row);
     });
     return result;
   }
 
   /** Register a connect state; INSERT OR REPLACE so a retried start wins. */
-  startConnectState(state: string, accountId: string, expiresAt: number, redirectUri?: string): void {
+  startConnectState(
+    state: string,
+    accountId: string,
+    expiresAt: number,
+    redirectUri?: string,
+    returnTo?: string,
+  ): void {
     const s = validateState(state);
     const id = this.requireAccount(accountId);
     const redirect = validateRedirectUri(redirectUri);
+    const back = validateReturnTo(returnTo);
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       throw new Error("invalid expiresAt: must be a future timestamp");
     }
     this.sql.exec(
-      "INSERT OR REPLACE INTO connect_states (state, account_id, expires_at, redirect_uri) VALUES (?, ?, ?, ?)",
+      "INSERT OR REPLACE INTO connect_states (state, account_id, expires_at, redirect_uri, return_to) VALUES (?, ?, ?, ?, ?)",
       s,
       id,
       expiresAt,
       redirect,
+      back,
     );
   }
 
@@ -1149,7 +1186,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       const row = this.sql
         .exec(
-          "SELECT account_id, expires_at, redirect_uri FROM connect_states WHERE state = ?",
+          "SELECT account_id, expires_at, redirect_uri, return_to FROM connect_states WHERE state = ?",
           s,
         )
         .toArray()[0];
@@ -1159,10 +1196,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         return;
       }
       if (row.account_id !== id) return;
-      result = {
-        accountId: row.account_id as string,
-        redirectUri: (row.redirect_uri as string | null) ?? null,
-      };
+      result = connectStateRecord(row);
       this.sql.exec("DELETE FROM connect_states WHERE state = ?", s);
     });
     return result;
@@ -1172,12 +1206,11 @@ export class EccosControlPlane extends DurableObject<Env> {
     const s = state?.trim() ?? "";
     if (!s || s.length > STATE_MAX_LENGTH) return null;
     const now = Date.now();
-    let accountId: string | null = null;
-    let redirectUri: string | null = null;
+    let result: ConnectStateRecord | null = null;
     this.ctx.storage.transactionSync(() => {
       const row = this.sql
         .exec(
-          "SELECT account_id, expires_at, redirect_uri FROM connect_states WHERE state = ?",
+          "SELECT account_id, expires_at, redirect_uri, return_to FROM connect_states WHERE state = ?",
           s,
         )
         .toArray()[0];
@@ -1186,11 +1219,10 @@ export class EccosControlPlane extends DurableObject<Env> {
         this.sql.exec("DELETE FROM connect_states WHERE state = ?", s);
         return;
       }
-      accountId = row.account_id as string;
-      redirectUri = (row.redirect_uri as string | null) ?? null;
+      result = connectStateRecord(row);
       this.sql.exec("DELETE FROM connect_states WHERE state = ?", s);
     });
-    return accountId ? { accountId, redirectUri } : null;
+    return result;
   }
 
   getConnectStateAccount(state: string): string | null {
@@ -1201,17 +1233,14 @@ export class EccosControlPlane extends DurableObject<Env> {
     const s = state?.trim() ?? "";
     if (!s || s.length > STATE_MAX_LENGTH) return null;
     const row = this.sql
-      .exec("SELECT account_id, expires_at, redirect_uri FROM connect_states WHERE state = ?", s)
+      .exec("SELECT account_id, expires_at, redirect_uri, return_to FROM connect_states WHERE state = ?", s)
       .toArray()[0];
     if (!row) return null;
     if ((row.expires_at as number) <= Date.now()) {
       this.sql.exec("DELETE FROM connect_states WHERE state = ?", s);
       return null;
     }
-    return {
-      accountId: row.account_id as string,
-      redirectUri: (row.redirect_uri as string | null) ?? null,
-    };
+    return connectStateRecord(row);
   }
 
   /** Cheap liveness probe for readiness checks — no credentials involved. */

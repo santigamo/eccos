@@ -143,6 +143,35 @@ export interface ConnectStartResult {
   expiresAt: number;
 }
 
+/**
+ * Why Embedded Signup did not connect a number, as carried back to the console
+ * in the return URL. Only this closed vocabulary travels in the query string —
+ * a raw Graph error message never lands in browser history. The console owns
+ * the operator-facing wording for each code.
+ */
+export type ConnectFailureCode =
+  /** The OAuth state expired or did not match; nothing was exchanged. */
+  | "state"
+  /** Meta ended the flow without a code (operator cancelled, or app denied). */
+  | "denied"
+  /** Every candidate WABA already belongs to a different Eccos account. */
+  | "owned"
+  /** The Meta login exposed no WhatsApp Business Account at all. */
+  | "no_waba"
+  /** Anything else, including Graph failures during the exchange. */
+  | "failed";
+
+/**
+ * Query parameters the gateway sets on the console return URL. Success is
+ * silent: the console shows the connected numbers in its own table, so only a
+ * failure or a partial result carries a parameter.
+ */
+export interface ConnectReturnParams {
+  connectError?: ConnectFailureCode;
+  /** WABAs the token could see that belong to another account and were skipped. */
+  connectSkipped?: number;
+}
+
 export interface GatewayExport {
   inbound: InboundRow[];
   outbound: OutboundRow[];
@@ -178,10 +207,15 @@ export interface GatewayApi {
   exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
-  startConnectForAccountId(accountId: string): Promise<ConnectStartResult>;
   /** Start Embedded Signup for one already-resolved account id (the dashboard
-   * resolves it from the organization link; never a browser-supplied id). */
-  startConnectForAccountId(accountId: string): Promise<ConnectStartResult>;
+   * resolves it from the organization link; never a browser-supplied id).
+   *
+   * `returnTo` is the console URL the gateway hands the operator back to once
+   * Meta's callback is handled. It is only accepted here, never on the public
+   * `POST /connect/start`: this entrypoint is reachable solely over the service
+   * binding, so the value comes from the console's own canonical origin rather
+   * than from a browser. */
+  startConnectForAccountId(accountId: string, returnTo?: string): Promise<ConnectStartResult>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(

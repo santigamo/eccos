@@ -221,13 +221,15 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   }
 
   /** Start Embedded Signup for a resolved account (contract §Reconciliation):
-   * the installation key is replaced by the server-resolved account id. */
-  async startConnectForAccountId(accountId: string): Promise<ConnectStartResult> {
+   * the installation key is replaced by the server-resolved account id.
+   * `returnTo` is where Meta's callback hands the operator back (eccos-5z9);
+   * the control plane re-validates it before storing. */
+  async startConnectForAccountId(accountId: string, returnTo?: string): Promise<ConnectStartResult> {
     const id = requireAccountId(accountId, "accountId is required");
     const resources = await getControlPlaneStub(this.env).listAccountResources(id);
     if (!resources.account) throw new Error(`Account "${id}" is not configured`);
     const publicOrigin = this.env.GATEWAY_PUBLIC_URL?.trim();
     if (!publicOrigin) throw new Error("GATEWAY_PUBLIC_URL is required for dashboard Embedded Signup");
-    return startConnectForAccount(this.env, id, publicOrigin);
+    return startConnectForAccount(this.env, id, publicOrigin, returnTo);
   }
 }

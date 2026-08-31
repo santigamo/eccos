@@ -73,7 +73,8 @@ Then open the URL Vite prints. Without the gateway running, the pages still load
 
 Set `GATEWAY_PUBLIC_URL` in the gateway Worker to its public HTTPS origin before using the
 dashboard's **Connect WhatsApp** action. The rest of the console uses only the private RPC binding;
-the URL is needed so Meta can return the browser to the gateway's OAuth callback.
+the URL is needed so Meta can return the browser to the gateway's OAuth callback, which then hands
+the operator back to `/numbers` in the console.
 
 ## Deploying
 

@@ -368,7 +368,11 @@ describe("session bootstrap (auth-aware state)", () => {
       ok: true,
       data: { url: "https://gateway.example/connect?state=one-time", state: "one-time", expiresAt: 2 },
     });
-    expect(calls).toEqual([["account-a"]]);
+    // eccos-5z9: the gateway owns Meta's callback, so it needs somewhere to send
+    // the operator back to. The target is built from the request origin, which
+    // the server entry has already narrowed to the canonical host — never from
+    // anything the browser supplies.
+    expect(calls).toEqual([["account-a", "http://localhost:3000/numbers"]]);
   });
 });
 

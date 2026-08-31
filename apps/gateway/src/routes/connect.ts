@@ -8,12 +8,24 @@ import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
 import { getControlPlaneStub } from "../control-plane-stub";
 import { constantTimeEqual } from "@eccos/core/signature";
-import type { ConnectStartResult, ProvisioningStatus } from "@eccos/gateway-contract";
+import type {
+  ConnectFailureCode,
+  ConnectStartResult,
+  ProvisioningStatus,
+} from "@eccos/gateway-contract";
 
 type ConnectContext = Context<{ Bindings: Env }>;
 
 /** Cookie carrying the OAuth `state` for the GET /connect CSRF check (F4a). */
 const STATE_COOKIE = "eccos_connect_state";
+/**
+ * Cookie carrying the console URL to return the operator to. It duplicates the
+ * `return_to` on the connect state on purpose: the state row is single-use and
+ * expires, and the one case that most needs a way home is precisely the one
+ * where the state is gone (expired session, replayed callback). Re-validated on
+ * read, so it can never widen the redirect target.
+ */
+const RETURN_COOKIE = "eccos_connect_return";
 const STATE_COOKIE_MAX_AGE_SECONDS = 30 * 60;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -32,8 +44,23 @@ function setOAuthStateCookie(c: ConnectContext, state: string): void {
   });
 }
 
+function setReturnCookie(c: ConnectContext, returnTo: string | null): void {
+  if (!returnTo) {
+    deleteCookie(c, RETURN_COOKIE, { path: "/connect" });
+    return;
+  }
+  setCookie(c, RETURN_COOKIE, returnTo, {
+    httpOnly: true,
+    secure: !LOCAL_HOSTNAMES.has(new URL(c.req.url).hostname.toLowerCase()),
+    sameSite: "Lax",
+    path: "/connect",
+    maxAge: STATE_COOKIE_MAX_AGE_SECONDS,
+  });
+}
+
 function clearOAuthStateCookie(c: ConnectContext): void {
   deleteCookie(c, STATE_COOKIE, { path: "/connect" });
+  deleteCookie(c, RETURN_COOKIE, { path: "/connect" });
 }
 
 function noStore(c: ConnectContext): void {
@@ -62,7 +89,7 @@ type MultiExchangeResult =
       status: ProvisioningStatus;
       warnings?: string[];
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code: ConnectFailureCode };
 
 function escapeHtml(value: string): string {
   return value
@@ -116,6 +143,32 @@ function connectPage(oauthUrlValue: string, redirectUri: string): string {
 </body></html>`;
 }
 
+/**
+ * Build the console URL the operator is sent back to, re-validating the stored
+ * target on every use: only absolute https (or http on localhost) with no
+ * embedded credentials. A target that fails here yields null and the caller
+ * falls back to the gateway's own result page, so a bad value degrades to the
+ * old behaviour instead of redirecting anywhere unexpected.
+ */
+export function connectReturnUrl(
+  returnTo: string | null | undefined,
+  params: Record<string, string>,
+): string | null {
+  const value = returnTo?.trim();
+  if (!value) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const local = LOCAL_HOSTNAMES.has(url.hostname.toLowerCase());
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return null;
+  if (url.username || url.password) return null;
+  for (const [key, param] of Object.entries(params)) url.searchParams.set(key, param);
+  return url.href;
+}
+
 function callbackUrlForRedirectUri(redirectUri: string): string {
   return new URL("/webhooks/meta", redirectUri).href;
 }
@@ -157,13 +210,14 @@ export async function startConnectForAccount(
   env: Env,
   accountId: string,
   publicOrigin: string,
+  returnTo?: string,
 ): Promise<ConnectStartResult> {
   configuredConnect(env);
   const origin = validatePublicOrigin(publicOrigin);
   const redirectUri = new URL("/connect", origin).href;
   const state = crypto.randomUUID();
   const expiresAt = Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000;
-  await getControlPlaneStub(env).startConnectState(state, accountId, expiresAt, redirectUri);
+  await getControlPlaneStub(env).startConnectState(state, accountId, expiresAt, redirectUri, returnTo);
   const url = new URL(redirectUri);
   url.searchParams.set("state", state);
   return { url: url.href, state, expiresAt };
@@ -201,9 +255,15 @@ async function exchangeAndRegisterAll(
     const appConfig = getAppConfig(c.env);
     const businessToken = await exchangeCodeForToken(appConfig, code, redirectUri);
     const discovered = await findWabaPhoneNumbersForToken(appConfig, businessToken);
-    if (discovered.length === 0) return { ok: false, error: "could not infer WABA from token" };
+    if (discovered.length === 0) {
+      return { ok: false, error: "could not infer WABA from token", code: "no_waba" };
+    }
     if (wabaSelector && !discovered.some((m) => m.wabaId === wabaSelector)) {
-      return { ok: false, error: `waba "${wabaSelector}" is not owned by the initiating account` };
+      return {
+        ok: false,
+        error: `waba "${wabaSelector}" is not owned by the initiating account`,
+        code: "owned",
+      };
     }
     const matches = wabaSelector ? discovered.filter((match) => match.wabaId === wabaSelector) : discovered;
 
@@ -216,7 +276,11 @@ async function exchangeAndRegisterAll(
       const owned = await controlPlane.getWabaById(match.wabaId);
       if (owned && owned.accountId !== accountId) {
         if (wabaSelector) {
-          return { ok: false, error: `waba "${match.wabaId}" is already registered to another account` };
+          return {
+            ok: false,
+            error: `waba "${match.wabaId}" is already registered to another account`,
+            code: "owned",
+          };
         }
         foreignWabaIds.add(match.wabaId);
         warnings.push(`waba "${match.wabaId}" is already registered to another account and was skipped`);
@@ -224,7 +288,9 @@ async function exchangeAndRegisterAll(
     }
 
     const availableMatches = matches.filter((match) => !foreignWabaIds.has(match.wabaId));
-    if (availableMatches.length === 0) return { ok: false, error: "no available WABA could be registered" };
+    if (availableMatches.length === 0) {
+      return { ok: false, error: "no available WABA could be registered", code: "owned" };
+    }
 
     const registrations = await controlPlane.beginWabaProvisioningBatch(
       availableMatches.map((match) => ({
@@ -240,7 +306,7 @@ async function exchangeAndRegisterAll(
     );
 
     const primary = availableMatches[0];
-    if (!primary) return { ok: false, error: "WABA registration failed" };
+    if (!primary) return { ok: false, error: "WABA registration failed", code: "failed" };
     const status = registrations.some((registration) => registration.waba.status === "failed")
       ? "failed"
       : registrations.every((registration) => registration.waba.status === "active")
@@ -263,7 +329,7 @@ async function exchangeAndRegisterAll(
     };
   } catch (e) {
     const message = errorMessage(e);
-    return { ok: false, error: message };
+    return { ok: false, error: message, code: "failed" };
   }
 }
 
@@ -295,17 +361,43 @@ export function connectRoutes() {
     const url = new URL(c.req.url);
     noStore(c);
     let redirectUri = new URL("/connect", c.req.url).href;
+    // Captured before clearOAuthStateCookie(): the way home has to survive the
+    // paths where the OAuth state itself is gone.
+    const returnCookie = getCookie(c, RETURN_COOKIE);
+
+    /** Hand the operator back to the console, or fall back to the result page. */
+    const finish = (
+      returnTo: string | null | undefined,
+      params: Record<string, string>,
+      result: MultiExchangeResult,
+      status: 200 | 202 | 400 | 502 | 503,
+    ) => {
+      const target = connectReturnUrl(returnTo, params);
+      noStore(c);
+      return target ? c.redirect(target, 303) : c.html(resultPage(result), status);
+    };
+
     const code = url.searchParams.get("code");
     if (code) {
       const queryState = url.searchParams.get("state");
       const cookieState = getCookie(c, STATE_COOKIE);
       clearOAuthStateCookie(c);
       if (!oauthStateIsValid(queryState, cookieState)) {
-        return c.html(resultPage({ ok: false, error: "invalid or missing OAuth state" }), 400);
+        return finish(
+          returnCookie,
+          { connectError: "state" },
+          { ok: false, error: "invalid or missing OAuth state", code: "state" },
+          400,
+        );
       }
       const stateRecord = await getControlPlaneStub(c.env).consumeConnectStateRecord(queryState ?? "");
       if (!stateRecord) {
-        return c.html(resultPage({ ok: false, error: "invalid or expired OAuth state" }), 400);
+        return finish(
+          returnCookie,
+          { connectError: "state" },
+          { ok: false, error: "invalid or expired OAuth state", code: "state" },
+          400,
+        );
       }
       const result = await exchangeAndRegisterAll(
         c,
@@ -313,27 +405,51 @@ export function connectRoutes() {
         stateRecord.accountId,
         stateRecord.redirectUri ?? redirectUri,
       );
-      noStore(c);
-      return c.html(resultPage(result), result.ok ? (result.status === "active" ? 200 : 202) : 502);
+      const returnTo = stateRecord.returnTo ?? returnCookie;
+      if (!result.ok) {
+        return finish(returnTo, { connectError: result.code }, result, 502);
+      }
+      // Success is quiet: the console shows the new numbers in its own table.
+      // The only thing worth carrying is what was NOT connected.
+      const skipped = result.warnings?.length ?? 0;
+      return finish(
+        returnTo,
+        skipped > 0 ? { connectSkipped: String(skipped) } : {},
+        result,
+        result.status === "active" ? 200 : 202,
+      );
     }
 
     const error = url.searchParams.get("error");
     if (error) {
       const description = url.searchParams.get("error_description") ?? error;
-      return c.html(resultPage({ ok: false, error: description }), 400);
+      clearOAuthStateCookie(c);
+      return finish(
+        returnCookie,
+        { connectError: "denied" },
+        { ok: false, error: description, code: "denied" },
+        400,
+      );
     }
 
     const handoffState = url.searchParams.get("state");
     let state = handoffState?.trim() || "";
+    let returnTo: string | null = null;
     if (state) {
       const stateRecord = await getControlPlaneStub(c.env).refreshConnectState(
         state,
         Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000,
       );
       if (!stateRecord) {
-        return c.html(resultPage({ ok: false, error: "invalid or expired OAuth state" }), 400);
+        return finish(
+          returnCookie,
+          { connectError: "state" },
+          { ok: false, error: "invalid or expired OAuth state", code: "state" },
+          400,
+        );
       }
       redirectUri = stateRecord.redirectUri ?? redirectUri;
+      returnTo = stateRecord.returnTo;
     } else {
       const account = await authenticateRequest(
         c.env,
@@ -341,7 +457,7 @@ export function connectRoutes() {
         c.req.header("x-api-key") ?? undefined,
       );
       if (!account) {
-        return c.html(resultPage({ ok: false, error: "unauthorized" }), 401);
+        return c.html(resultPage({ ok: false, error: "unauthorized", code: "failed" }), 401);
       }
       state = crypto.randomUUID();
       await getControlPlaneStub(c.env).startConnectState(
@@ -352,11 +468,13 @@ export function connectRoutes() {
       );
     }
     setOAuthStateCookie(c, state);
+    setReturnCookie(c, returnTo);
     let cfg: ReturnType<typeof connectConfig>;
     try {
       cfg = connectConfig(c);
     } catch (error) {
-      return c.html(resultPage({ ok: false, error: error instanceof Error ? error.message : "connect is not configured" }), 503);
+      const message = error instanceof Error ? error.message : "connect is not configured";
+      return finish(returnTo, { connectError: "failed" }, { ok: false, error: message, code: "failed" }, 503);
     }
     return c.html(connectPage(oauthUrl(cfg, redirectUri, state), redirectUri));
   });

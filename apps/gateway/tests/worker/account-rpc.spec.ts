@@ -118,10 +118,12 @@ describe("GatewayRPC organization account bootstrap", () => {
       expect(instance.getConnectState(result.state)).toEqual({
         accountId,
         redirectUri: "https://gateway.example/connect",
+        returnTo: null,
       });
       expect(instance.refreshConnectState(result.state, Date.now() + 60_000)).toEqual({
         accountId,
         redirectUri: "https://gateway.example/connect",
+        returnTo: null,
       });
     });
   });

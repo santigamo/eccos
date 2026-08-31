@@ -111,6 +111,17 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
   value with `constantTimeEqual` (`oauthStateIsValid` in `connect.ts`) and fails closed (`400`)
   on a missing or mismatched value, clearing the cookie either way. This blocks an attacker from
   tricking a victim's browser into completing an OAuth exchange the victim didn't initiate.
+- **Console return (`return_to`) mitigation:** the callback hands the operator back to the console
+  instead of ending on the gateway's own result page (eccos-5z9). The return URL is accepted **only**
+  on the RPC entrypoint (`startConnectForAccountId`), never on the public `POST /connect/start`, so
+  it comes from the dashboard's own canonical origin — the console server entry has already rejected
+  any other `Host` before the server function runs — and never from a browser parameter. The control
+  plane validates it on write (absolute `https`, or `http` on localhost, no embedded credentials,
+  length-capped) and `connectReturnUrl` validates it again on every use; anything that fails falls
+  back to the result page rather than redirecting. A mirror cookie (`eccos_connect_return`, same
+  flags and path as the state cookie) carries the target through the paths where the single-use
+  state row is already gone (expiry, replay). Only the closed `ConnectFailureCode` vocabulary
+  travels in the return URL, so a Meta Graph error message never lands in browser history.
 - **Auth mitigation (`POST /connect/exchange`):** this endpoint — which takes a
   `code`/`state`/`waba_id`/`redirect_uri` body — requires an account API key and an account-bound
   OAuth state, and registers all available WABAs and phones discovered from the exchanged token

@@ -25,8 +25,8 @@ const CONNECT_STEPS = [
  * has one surface rather than a wizard that only exists once.
  *
  * `startConnect` performs a full navigation to the gateway, which owns the
- * Meta callback. The operator currently returns to the gateway's own result
- * page rather than here (eccos-5z9), which is why the footer says so.
+ * Meta callback and hands the operator back to /numbers when it is done
+ * (eccos-5z9) — carrying a failure code when there is one.
  */
 export function ConnectNumberPanel({ heading }: { heading: string }) {
   const [starting, setStarting] = useState(false);
@@ -86,7 +86,7 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
             panel chrome rather than as another content block. */}
         <footer className="-mx-(--frame-panel-px) mt-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-(--frame-panel-border-color) px-(--frame-panel-px) pt-4">
           <p className="m-0 text-xs text-muted-foreground">
-            Come back here once Meta confirms the account.
+            Meta brings you back to this page when it is done.
           </p>
           <div className="ml-auto flex items-center gap-2">
             <Button type="button" onClick={start} disabled={starting}>

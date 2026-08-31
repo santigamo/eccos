@@ -53,6 +53,12 @@ Meta returns a WABA already owned by another account alongside available matches
 and reported as a warning without changing the other account's registry. An explicitly selected
 foreign WABA still fails closed.
 
+From the console, **Connect WhatsApp** starts the same flow over the RPC binding and additionally
+passes the URL to return to. Meta's callback then redirects the operator back into the dashboard
+(`/numbers`) instead of leaving them on the gateway's result page. Success carries no parameter —
+the connected number is visible in the console's own table; a failure carries a short outcome code
+(`connectError`), and WABAs skipped because another account owns them carry `connectSkipped`.
+
 ## Registering an existing WABA
 
 An operator onboarding a WABA that already exists (e.g. brought over from a Bun self-host) uses
