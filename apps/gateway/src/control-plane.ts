@@ -3,6 +3,16 @@ import type {
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
 import {
+  coexistenceSyncStatus,
+  historySyncDeadline,
+  isWabaOnboardingType,
+  HISTORY_SYNC_EXPIRED_ERROR,
+  SYNC_UNCONFIRMED_ERROR,
+  type CoexistenceState,
+  type CoexistenceSyncStatus,
+  type WabaOnboardingType,
+} from "./coexistence";
+import {
   SEALED_TOKEN_PREFIX,
   openToken,
   requireTokenEncryptionKey,
@@ -84,6 +94,8 @@ export interface AccountWaba {
   status: ProvisioningStatus;
   provisioningError: string | null;
   phones: PhoneRecord[];
+  /** Coexistence onboarding obligations and their 24-hour deadline (eccos-vss). */
+  coexistence: CoexistenceState;
 }
 
 /** Ownership metadata of a WABA — every credential is excluded. */
@@ -96,6 +108,7 @@ export interface WabaAccess {
   status: ProvisioningStatus;
   provisioningError: string | null;
   phones: PhoneRecord[];
+  coexistence: CoexistenceState;
 }
 
 export interface CreateAccountResult {
@@ -116,6 +129,12 @@ export interface RegisterWabaInput {
   callbackUrl?: string;
   provisioningStatus?: ProvisioningStatus;
   phones: Array<{ phoneNumberId: string; displayPhoneNumber?: string }>;
+  /**
+   * How this WABA was onboarded. Defaults to `standard`, so only a caller that
+   * actually ran the WhatsApp Business app onboarding flow (`/connect`) opts a
+   * WABA into the coexistence obligations — an omission can never invent one.
+   */
+  onboardingType?: WabaOnboardingType;
 }
 
 export interface RegisterWabaResult {
@@ -123,7 +142,17 @@ export interface RegisterWabaResult {
   phones: PhoneRecord[];
 }
 
-export type ProvisioningFailureKind = "meta" | "gateway" | "configuration" | "unknown";
+export type ProvisioningFailureKind =
+  | "meta"
+  | "gateway"
+  | "configuration"
+  | "unknown"
+  /** The coexistence step failed before issuing anything; safe to try again. */
+  | "coexistence"
+  /** A sync was issued and never confirmed. Terminal: Meta allows it only once. */
+  | "coexistence_unconfirmed"
+  /** The 24-hour message-history window closed. Terminal: offboard the customer. */
+  | "coexistence_expired";
 
 export interface ProvisioningFailure {
   kind: ProvisioningFailureKind;
@@ -139,6 +168,19 @@ export interface WabaProvisioningClaim {
   phones: PhoneRecord[];
   revision: number;
   attempt: number;
+  /** Coexistence obligations carried into the claim so the saga step needs no
+   * extra control-plane round trip to know what is owed and by when. */
+  coexistence: CoexistenceState;
+}
+
+/** Which of the two coexistence syncs a call refers to. */
+export type CoexistenceSyncKind = "contacts" | "history";
+
+/** Coexistence acceptances recorded alongside a provisioning attempt's outcome. */
+export interface CoexistenceSyncProgress {
+  contactsRequestId: string | null;
+  historyRequestId: string | null;
+  error: string | null;
 }
 
 interface PreparedWaba {
@@ -153,6 +195,7 @@ interface PreparedWaba {
   status: ProvisioningStatus;
   phones: PhoneRecord[];
   createdAt: number;
+  onboardingType: WabaOnboardingType;
 }
 
 interface ProvisioningRow {
@@ -303,6 +346,19 @@ function validateProvisioningStatus(status: ProvisioningStatus | undefined): Pro
   throw new Error("invalid provisioningStatus");
 }
 
+/**
+ * Unlike the provisioning status, an absent onboarding type defaults instead of
+ * throwing — and it defaults to `standard`. The coexistence obligations (and the
+ * 24-hour clock they start) only ever attach to a caller that says so
+ * explicitly, so no registration path can drift a plain WABA into them by
+ * omission (eccos-vss).
+ */
+function validateOnboardingType(value: WabaOnboardingType | undefined): WabaOnboardingType {
+  if (value === undefined) return "standard";
+  if (!isWabaOnboardingType(value)) throw new Error("invalid onboardingType");
+  return value;
+}
+
 function provisioningErrorMessage(failure: ProvisioningFailure): string {
   if (failure.kind === "meta") {
     return failure.status === undefined
@@ -311,6 +367,11 @@ function provisioningErrorMessage(failure: ProvisioningFailure): string {
   }
   if (failure.kind === "gateway") return "gateway configuration sync failed";
   if (failure.kind === "configuration") return "Meta subscription configuration is invalid";
+  // The one an operator has to be able to act on: no retry can help, and the
+  // remedy Meta prescribes is offboarding the customer.
+  if (failure.kind === "coexistence_expired") return HISTORY_SYNC_EXPIRED_ERROR;
+  if (failure.kind === "coexistence_unconfirmed") return SYNC_UNCONFIRMED_ERROR;
+  if (failure.kind === "coexistence") return "coexistence sync could not be started";
   return "WABA provisioning failed";
 }
 
@@ -321,6 +382,88 @@ function provisioningBackoffMs(attempt: number): number {
 function withProvisioningJitter(ms: number): number {
   const spread = ms * 0.1;
   return Math.round(ms - spread + Math.random() * spread * 2);
+}
+
+/** Columns every WABA read needs to reconstruct the coexistence state. */
+const COEXISTENCE_COLUMNS =
+  "onboarding_type, coexistence_sync_status, coexistence_sync_deadline_at, " +
+  "coexistence_sync_error, contacts_sync_started_at, contacts_sync_request_id, " +
+  "history_sync_started_at, history_sync_request_id";
+
+function nullableNumber(value: unknown): number | null {
+  return typeof value === "number" ? value : null;
+}
+
+/** Status a freshly written row starts at, before anything has been initiated. */
+function initialCoexistenceStatus(onboardingType: WabaOnboardingType): CoexistenceSyncStatus {
+  return onboardingType === "coexistence" ? "pending" : "not_applicable";
+}
+
+/** A non-coexistence WABA owes nothing, so it carries no deadline at all. */
+function initialCoexistenceDeadline(
+  onboardingType: WabaOnboardingType,
+  onboardedAt: number,
+): number | null {
+  return onboardingType === "coexistence" ? historySyncDeadline(onboardedAt) : null;
+}
+
+/**
+ * Where the 24-hour clock starts, and — just as importantly — where it does not.
+ *
+ * It starts at a *registration*, because every registration is the moment an
+ * Embedded Signup handoff completed, and that handoff is exactly what starts
+ * Meta's window. A genuinely new handoff therefore gets a genuinely new window,
+ * which is what lets a customer who was offboarded be onboarded again.
+ *
+ * It does **not** restart on a retry. `retryWabaProvisioning`,
+ * `claimProvisioning` and `completeWabaProvisioning` never write this column, so
+ * no amount of internal re-attempting hands the customer time Meta is not
+ * giving them. `beginWabaProvisioningBatch` also short-circuits on an unchanged
+ * fingerprint, so a replayed connect callback does not restart it either.
+ */
+function registrationDeadline(
+  onboardingType: WabaOnboardingType,
+  registeredAt: number,
+): number | null {
+  return initialCoexistenceDeadline(onboardingType, registeredAt);
+}
+
+/**
+ * Rebuild the coexistence state from a row.
+ *
+ * The stored `coexistence_sync_status` is what the last write decided; the
+ * deadline, though, keeps running while nothing writes. So `pending` is
+ * re-derived against the clock on every read: a WABA whose window closed at
+ * 02:00 reads as `expired` at 03:00 even if no attempt has run since. The
+ * operator sees the truth, not the last thing that happened to be persisted.
+ */
+function coexistenceOf(row: Record<string, unknown>, now = Date.now()): CoexistenceState {
+  const onboardingType: WabaOnboardingType = isWabaOnboardingType(row.onboarding_type)
+    ? row.onboarding_type
+    : "standard";
+  const contactsStartedAt = nullableNumber(row.contacts_sync_started_at);
+  const contactsRequestId = (row.contacts_sync_request_id as string | null) ?? null;
+  const historyStartedAt = nullableNumber(row.history_sync_started_at);
+  const historyRequestId = (row.history_sync_request_id as string | null) ?? null;
+  const deadlineAt = nullableNumber(row.coexistence_sync_deadline_at);
+  return {
+    onboardingType,
+    status: coexistenceSyncStatus({
+      onboardingType,
+      contactsStartedAt,
+      contactsRequestId,
+      historyStartedAt,
+      historyRequestId,
+      deadlineAt,
+      now,
+    }),
+    deadlineAt,
+    contactsStartedAt,
+    contactsRequestId,
+    historyStartedAt,
+    historyRequestId,
+    error: (row.coexistence_sync_error as string | null) ?? null,
+  };
 }
 
 async function sha256Hex(s: string): Promise<string> {
@@ -454,7 +597,18 @@ export class EccosControlPlane extends DurableObject<Env> {
         provisioning_lease_until INTEGER,
         provisioning_revision INTEGER NOT NULL DEFAULT 0,
         provisioning_fingerprint TEXT,
-        provisioned_at INTEGER
+        provisioned_at INTEGER,
+        -- Coexistence onboarding obligations (eccos-vss). Provisioning state
+        -- only: what Meta was asked to synchronise and by when it must be. No
+        -- contact ever lands here.
+        onboarding_type TEXT NOT NULL DEFAULT 'standard',
+        coexistence_sync_status TEXT NOT NULL DEFAULT 'not_applicable',
+        coexistence_sync_deadline_at INTEGER,
+        coexistence_sync_error TEXT,
+        contacts_sync_started_at INTEGER,
+        contacts_sync_request_id TEXT,
+        history_sync_started_at INTEGER,
+        history_sync_request_id TEXT
       );`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_wabas_account
         ON wabas (account_id);`);
@@ -506,6 +660,37 @@ export class EccosControlPlane extends DurableObject<Env> {
       }
       if (!wabaColumns.some((row) => row.name === "provisioned_at")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN provisioned_at INTEGER");
+      }
+      // Coexistence obligations (eccos-vss). Rows written before this existed
+      // default to `standard`/`not_applicable`: a WABA that predates the column
+      // is never retro-fitted with a 24-hour clock that already ran out, which
+      // would fail every one of them at once. Reconnecting through Embedded
+      // Signup is what records a real coexistence onboarding and its deadline.
+      if (!wabaColumns.some((row) => row.name === "onboarding_type")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN onboarding_type TEXT NOT NULL DEFAULT 'standard'");
+      }
+      if (!wabaColumns.some((row) => row.name === "coexistence_sync_status")) {
+        this.sql.exec(
+          "ALTER TABLE wabas ADD COLUMN coexistence_sync_status TEXT NOT NULL DEFAULT 'not_applicable'",
+        );
+      }
+      if (!wabaColumns.some((row) => row.name === "coexistence_sync_deadline_at")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN coexistence_sync_deadline_at INTEGER");
+      }
+      if (!wabaColumns.some((row) => row.name === "coexistence_sync_error")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN coexistence_sync_error TEXT");
+      }
+      if (!wabaColumns.some((row) => row.name === "contacts_sync_started_at")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN contacts_sync_started_at INTEGER");
+      }
+      if (!wabaColumns.some((row) => row.name === "contacts_sync_request_id")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN contacts_sync_request_id TEXT");
+      }
+      if (!wabaColumns.some((row) => row.name === "history_sync_started_at")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN history_sync_started_at INTEGER");
+      }
+      if (!wabaColumns.some((row) => row.name === "history_sync_request_id")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN history_sync_request_id TEXT");
       }
       const stateColumns = this.sql.exec("PRAGMA table_info(connect_states)").toArray();
       if (!stateColumns.some((row) => row.name === "redirect_uri")) {
@@ -676,6 +861,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         status,
         phones: checkedPhones,
         createdAt: Date.now(),
+        onboardingType: validateOnboardingType(input.onboardingType),
       };
     }));
     const seenWabaIds = new Set<string>();
@@ -721,6 +907,7 @@ export class EccosControlPlane extends DurableObject<Env> {
   async registerWabas(inputs: RegisterWabaInput[]): Promise<RegisterWabaResult[]> {
     const prepared = await this.prepareWabas(inputs);
     if (prepared.length === 0) return [];
+    const registeredAt = Date.now();
     this.ctx.storage.transactionSync(() => {
       this.assertWabaOwnership(prepared);
       for (const item of prepared) {
@@ -728,8 +915,11 @@ export class EccosControlPlane extends DurableObject<Env> {
           `INSERT INTO wabas
              (account_id, waba_id, meta_access_token, callback_url, created_at, status,
               provisioning_error, provisioning_attempts, provisioning_next_attempt_at,
-              provisioning_lease_until, provisioning_revision, provisioning_fingerprint, provisioned_at)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, 0, 0, NULL, 1, NULL, NULL)
+              provisioning_lease_until, provisioning_revision, provisioning_fingerprint, provisioned_at,
+              onboarding_type, coexistence_sync_status, coexistence_sync_deadline_at,
+              coexistence_sync_error, contacts_sync_started_at, contacts_sync_request_id,
+              history_sync_started_at, history_sync_request_id)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, 0, 0, NULL, 1, NULL, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
            ON CONFLICT(waba_id) DO UPDATE SET
              account_id = excluded.account_id,
              meta_access_token = excluded.meta_access_token,
@@ -744,13 +934,26 @@ export class EccosControlPlane extends DurableObject<Env> {
              provisioned_at = CASE
                WHEN excluded.status = 'active' THEN COALESCE(wabas.provisioned_at, excluded.provisioned_at)
                ELSE NULL
-             END`,
+             END,
+             onboarding_type = excluded.onboarding_type,
+             coexistence_sync_status = excluded.coexistence_sync_status,
+             coexistence_sync_deadline_at = excluded.coexistence_sync_deadline_at,
+             coexistence_sync_error = NULL,
+             contacts_sync_started_at = NULL,
+             contacts_sync_request_id = NULL,
+             history_sync_started_at = NULL,
+             history_sync_request_id = NULL`,
           item.accountId,
           item.wabaId,
           item.sealedToken,
           item.callbackUrl,
           item.createdAt,
           item.status,
+          item.onboardingType,
+          initialCoexistenceStatus(item.onboardingType),
+          // `item.createdAt` is rewritten to the row's original creation time on
+          // a conflict, so the clock is read here instead of from the item.
+          registrationDeadline(item.onboardingType, registeredAt),
         );
         for (const phone of item.phones) {
           this.sql.exec(
@@ -819,8 +1022,11 @@ export class EccosControlPlane extends DurableObject<Env> {
           `INSERT INTO wabas
              (account_id, waba_id, meta_access_token, callback_url, created_at, status,
               provisioning_error, provisioning_attempts, provisioning_next_attempt_at,
-              provisioning_lease_until, provisioning_revision, provisioning_fingerprint, provisioned_at)
-           VALUES (?, ?, ?, ?, ?, 'pending', NULL, 0, ?, NULL, ?, ?, NULL)
+              provisioning_lease_until, provisioning_revision, provisioning_fingerprint, provisioned_at,
+              onboarding_type, coexistence_sync_status, coexistence_sync_deadline_at,
+              coexistence_sync_error, contacts_sync_started_at, contacts_sync_request_id,
+              history_sync_started_at, history_sync_request_id)
+           VALUES (?, ?, ?, ?, ?, 'pending', NULL, 0, ?, NULL, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
            ON CONFLICT(waba_id) DO UPDATE SET
              account_id = excluded.account_id,
              meta_access_token = excluded.meta_access_token,
@@ -832,7 +1038,15 @@ export class EccosControlPlane extends DurableObject<Env> {
              provisioning_lease_until = NULL,
              provisioning_revision = excluded.provisioning_revision,
              provisioning_fingerprint = excluded.provisioning_fingerprint,
-             provisioned_at = NULL`,
+             provisioned_at = NULL,
+             onboarding_type = excluded.onboarding_type,
+             coexistence_sync_status = excluded.coexistence_sync_status,
+             coexistence_sync_deadline_at = excluded.coexistence_sync_deadline_at,
+             coexistence_sync_error = NULL,
+             contacts_sync_started_at = NULL,
+             contacts_sync_request_id = NULL,
+             history_sync_started_at = NULL,
+             history_sync_request_id = NULL`,
           item.accountId,
           item.wabaId,
           item.sealedToken,
@@ -841,6 +1055,9 @@ export class EccosControlPlane extends DurableObject<Env> {
           now,
           revision,
           fingerprint,
+          item.onboardingType,
+          initialCoexistenceStatus(item.onboardingType),
+          registrationDeadline(item.onboardingType, now),
         );
         const retainedPhones = new Set(item.phones.map((phone) => phone.phoneNumberId));
         for (const row of this.sql.exec("SELECT phone_number_id FROM phones WHERE waba_id = ?", item.wabaId).toArray()) {
@@ -889,7 +1106,8 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaIdN = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
-        "SELECT account_id, waba_id, meta_access_token, callback_url, created_at, provisioned_at, status, provisioning_error FROM wabas WHERE waba_id = ? AND account_id = ?",
+        "SELECT account_id, waba_id, meta_access_token, callback_url, created_at, provisioned_at, status, provisioning_error, " +
+          `${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ? AND account_id = ?`,
         wabaIdN,
         id,
       )
@@ -910,6 +1128,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
       phones: phonesOf(wabaId, this.sql),
+      coexistence: coexistenceOf(row),
     };
   }
 
@@ -918,7 +1137,8 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaIdN = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
-        "SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error FROM wabas WHERE waba_id = ?",
+        "SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error, " +
+          `${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ?`,
         wabaIdN,
       )
       .toArray()[0];
@@ -932,6 +1152,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
       phones: phonesOf(wabaIdN, this.sql),
+      coexistence: coexistenceOf(row),
     };
   }
 
@@ -940,10 +1161,16 @@ export class EccosControlPlane extends DurableObject<Env> {
     const id = validateWabaId(wabaId, "wabaId");
     const now = Date.now();
     this.sql.exec(
+      // `coexistence_sync_deadline_at` and the two `*_sync_started_at` columns
+      // are deliberately untouched: a retry is not a new onboarding, so it must
+      // not buy the customer more of Meta's 24 hours, and it must not re-issue a
+      // sync that already landed. Only the recorded failure is cleared, so a
+      // requeued row reads as "pending, nothing failed yet" (eccos-vss).
       `UPDATE wabas
        SET status = 'pending', provisioning_error = NULL, provisioning_attempts = 0,
            provisioning_next_attempt_at = ?, provisioning_lease_until = NULL,
-           provisioning_revision = provisioning_revision + 1, provisioned_at = NULL
+           provisioning_revision = provisioning_revision + 1, provisioned_at = NULL,
+           coexistence_sync_error = NULL
        WHERE account_id = ? AND waba_id = ? AND status IN ('pending', 'failed')
          AND substr(meta_access_token, 1, ?) = ?`,
       now,
@@ -1012,7 +1239,7 @@ export class EccosControlPlane extends DurableObject<Env> {
              AND (provisioning_lease_until IS NULL OR provisioning_lease_until <= ?)
              ${revisionClause}
             RETURNING account_id, waba_id, meta_access_token, callback_url, provisioning_attempts,
-                      provisioning_revision`,
+                      provisioning_revision, ${COEXISTENCE_COLUMNS}`,
           leaseUntil,
           leaseUntil,
           accountId,
@@ -1036,7 +1263,68 @@ export class EccosControlPlane extends DurableObject<Env> {
       phones: phonesOf(wabaId, this.sql),
       revision: claimed.provisioning_revision as number,
       attempt: claimed.provisioning_attempts as number,
+      // Derived against the claim's own clock, so the saga step sees the window
+      // as it stands at the moment it is about to act.
+      coexistence: coexistenceOf(claimed, now),
     };
+  }
+
+  /**
+   * Record that a coexistence sync is *about to be requested*, before the
+   * request leaves the Worker (eccos-vss).
+   *
+   * Meta allows each sync exactly once per phone number: a second call is error
+   * `2593107` and its documented remedy is offboarding the customer. Writing
+   * after the call would lose the fact whenever the response is lost — a
+   * timeout, an eviction, a dropped connection — and the next attempt would
+   * duplicate it. Writing before means the worst case is a sync recorded but
+   * never sent, whose remedy is the same offboarding and which at least cannot
+   * break a customer whose sync actually succeeded.
+   *
+   * Guarded on the same lease revision and attempt as the rest of the saga, so a
+   * stale claim can never mark a sync spent. Returns false when the guard
+   * rejects, and the caller must not make the call.
+   */
+  async beginCoexistenceSync(input: {
+    accountId: string;
+    wabaId: string;
+    revision: number;
+    attempt: number;
+    syncKind: CoexistenceSyncKind;
+    at: number;
+  }): Promise<boolean> {
+    const account = this.requireAccount(input.accountId);
+    const id = validateWabaId(input.wabaId, "wabaId");
+    if (!Number.isSafeInteger(input.revision) || !Number.isSafeInteger(input.attempt)) {
+      throw new Error("invalid provisioning claim");
+    }
+    if (input.syncKind !== "contacts" && input.syncKind !== "history") {
+      throw new Error("invalid syncKind");
+    }
+    if (!Number.isSafeInteger(input.at)) throw new Error("invalid sync timestamp");
+    const column =
+      input.syncKind === "contacts" ? "contacts_sync_started_at" : "history_sync_started_at";
+    return this.ctx.storage.transactionSync(() => {
+      const updated = this.sql
+        .exec(
+          // `IS NULL` is the once-only guard itself: a sync that has already been
+          // started cannot be started again, whatever the caller believes.
+          `UPDATE wabas
+              SET ${column} = ?
+            WHERE account_id = ? AND waba_id = ? AND status = 'pending'
+              AND provisioning_revision = ? AND provisioning_attempts = ?
+              AND onboarding_type = 'coexistence'
+              AND ${column} IS NULL
+           RETURNING waba_id`,
+          input.at,
+          account,
+          id,
+          input.revision,
+          input.attempt,
+        )
+        .toArray();
+      return updated.length === 1;
+    });
   }
 
   async completeWabaProvisioning(input: {
@@ -1046,6 +1334,14 @@ export class EccosControlPlane extends DurableObject<Env> {
     attempt: number;
     success: boolean;
     failure?: ProvisioningFailure;
+    /**
+     * What the coexistence step managed to initiate during this attempt.
+     * Written in the same guarded transaction as the outcome so a partially
+     * finished sync (contacts through, history not) is never lost by a crash
+     * between two calls — the next attempt would otherwise re-issue a sync Meta
+     * has already accepted (eccos-vss).
+     */
+    coexistence?: CoexistenceSyncProgress;
   }): Promise<AccountWaba | null> {
     const account = this.requireAccount(input.accountId);
     const id = validateWabaId(input.wabaId, "wabaId");
@@ -1056,7 +1352,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       const current = this.sql
         .exec(
-          `SELECT status, provisioning_revision, provisioning_attempts
+          `SELECT status, provisioning_revision, provisioning_attempts, ${COEXISTENCE_COLUMNS}
            FROM wabas WHERE account_id = ? AND waba_id = ?`,
           account,
           id,
@@ -1068,6 +1364,45 @@ export class EccosControlPlane extends DurableObject<Env> {
         current.provisioning_revision !== input.revision ||
         current.provisioning_attempts !== input.attempt
       ) return;
+      if (input.coexistence) {
+        const onboardingType: WabaOnboardingType = isWabaOnboardingType(current.onboarding_type)
+          ? current.onboarding_type
+          : "standard";
+        const deadlineAt = nullableNumber(current.coexistence_sync_deadline_at);
+        // The `*_started_at` columns are owned by `beginCoexistenceSync`, which
+        // wrote them before the request went out; this call only ever adds the
+        // acceptance Meta returned. Request ids move from null to set and never
+        // back, so an attempt that could not reach Meta cannot erase a sync an
+        // earlier attempt already had confirmed.
+        const contactsStartedAt = nullableNumber(current.contacts_sync_started_at);
+        const historyStartedAt = nullableNumber(current.history_sync_started_at);
+        const contactsRequestId =
+          ((current.contacts_sync_request_id as string | null) ?? null) ??
+          input.coexistence.contactsRequestId;
+        const historyRequestId =
+          ((current.history_sync_request_id as string | null) ?? null) ??
+          input.coexistence.historyRequestId;
+        this.sql.exec(
+          `UPDATE wabas
+           SET contacts_sync_request_id = ?, history_sync_request_id = ?,
+               coexistence_sync_status = ?, coexistence_sync_error = ?
+           WHERE account_id = ? AND waba_id = ?`,
+          contactsRequestId,
+          historyRequestId,
+          coexistenceSyncStatus({
+            onboardingType,
+            contactsStartedAt,
+            contactsRequestId,
+            historyStartedAt,
+            historyRequestId,
+            deadlineAt,
+            now: completedAt,
+          }),
+          input.coexistence.error,
+          account,
+          id,
+        );
+      }
       if (input.success) {
         this.sql.exec(
           `UPDATE wabas
@@ -1135,13 +1470,19 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaRows = this.sql
       .exec(
         `SELECT w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
+                w.onboarding_type, w.coexistence_sync_status, w.coexistence_sync_deadline_at,
+                w.coexistence_sync_error, w.contacts_sync_started_at, w.contacts_sync_request_id,
+                w.history_sync_started_at, w.history_sync_request_id,
                 COALESCE(json_group_array(
                   json_object('phoneNumberId', p.phone_number_id,
                               'displayPhoneNumber', p.display_phone_number)), '[]') AS phones
          FROM wabas w
          LEFT JOIN phones p ON p.waba_id = w.waba_id
          WHERE w.account_id = ?
-         GROUP BY w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error
+         GROUP BY w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
+                  w.onboarding_type, w.coexistence_sync_status, w.coexistence_sync_deadline_at,
+                  w.coexistence_sync_error, w.contacts_sync_started_at, w.contacts_sync_request_id,
+                  w.history_sync_started_at, w.history_sync_request_id
          ORDER BY w.waba_id`,
         id,
       )
@@ -1155,6 +1496,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
       phones: parsePhonesJson((row.phones as string | null) ?? "[]"),
+      coexistence: coexistenceOf(row),
     }));
     return {
       account: {

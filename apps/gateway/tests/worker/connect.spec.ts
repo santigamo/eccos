@@ -6,6 +6,7 @@ import type { EccosControlPlane } from "../../src/control-plane";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { bootstrapAccount, TEST_WABA_ID } from "./helpers";
+import { SMB_APP_DATA_EDGE } from "../../src/meta/smb-app-data";
 
 let API_KEY = "ek-test";
 let ACCOUNT_ID = "test-account";
@@ -54,6 +55,12 @@ describe("POST /connect/exchange", () => {
       if (url.includes("/subscribed_apps")) {
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
+      // /connect is the WhatsApp Business app onboarding flow, so provisioning
+      // also initiates the coexistence contacts + message-history syncs Meta
+      // requires (eccos-vss).
+      if (url.includes(SMB_APP_DATA_EDGE)) {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
       return new Response("not found", { status: 404 });
     });
 
@@ -83,8 +90,20 @@ describe("POST /connect/exchange", () => {
     const subscribed = () =>
       graph.mock.calls.filter(([input]) => String(input).includes("/subscribed_apps"));
     expect(subscribed()).toHaveLength(1);
+    // The number stays on the customer's WhatsApp Business app, so Meta requires
+    // contacts and message-history synchronisation to be initiated after the
+    // handoff — one call each for the one registered number (eccos-vss).
+    expect(
+      graph.mock.calls.filter(([input]) => String(input).includes(SMB_APP_DATA_EDGE)),
+    ).toHaveLength(2);
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
-      expect((await cp.getWaba(ACCOUNT_ID, "WABA123"))?.status).toBe("active");
+      const waba = await cp.getWaba(ACCOUNT_ID, "WABA123");
+      expect(waba?.status).toBe("active");
+      // Recorded as a coexistence onboarding, with both syncs initiated inside
+      // the 24-hour window.
+      expect(waba?.coexistence.onboardingType).toBe("coexistence");
+      expect(waba?.coexistence.status).toBe("initiated");
+      expect(waba?.coexistence.deadlineAt).toBeGreaterThan(Date.now());
     });
 
     // The cron's targeted path stays idempotent behind it: nothing left to claim.

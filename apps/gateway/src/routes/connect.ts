@@ -359,6 +359,13 @@ async function exchangeAndRegisterAll(
           phoneNumberId: p.id,
           displayPhoneNumber: p.display_phone_number ?? "",
         })),
+        // This route is the WhatsApp Business app onboarding flow and nothing
+        // else: `oauthUrl` hardcodes `featureType:
+        // "whatsapp_business_app_onboarding"`, so every number that arrives here
+        // is a coexistence onboarding and owes Meta the contacts and
+        // message-history syncs (eccos-vss). Registering the type here is also
+        // what starts the 24-hour clock, at the moment the handoff completed.
+        onboardingType: "coexistence" as const,
       })),
     );
 
