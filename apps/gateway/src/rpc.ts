@@ -5,7 +5,7 @@ import { startConnectForAccount } from "./routes/connect";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { listTemplates } from "@eccos/core/templates";
 import { isPublicConfigKey } from "./private-config-keys";
-import { resubscribeWaba } from "./provisioning";
+import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import type {
   AccountResources,
   ConnectStartResult,
@@ -20,6 +20,7 @@ import type {
   ListOpts,
   OperatorCounts,
   OutboundRow,
+  ReconcileWabaResult,
   ResubscribeResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
@@ -193,6 +194,33 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       return result.error ? { ok: false, error: result.error } : { ok: true };
     } catch (err) {
       return { ok: false, error: String(err) };
+    }
+  }
+
+  /**
+   * Re-run provisioning for one WABA at the operator's request (eccos-lpk).
+   *
+   * Unlike every other method here this one does NOT go through `scoped()`: a
+   * `pending` WABA has no active registration yet, and it is exactly the row an
+   * operator needs to re-check. Ownership is still enforced — `reconcileWaba`
+   * reads the row through the account-scoped registry and reports "not owned"
+   * as a plain failure. The saga's lease and revision guards make it safe next
+   * to the cron; a failure leaves the row pending for the cron to retry.
+   */
+  async reconcileWaba(wabaId: string, accountId: string): Promise<ReconcileWabaResult> {
+    try {
+      const account = requireAccountId(accountId, "accountId is required");
+      const run = await reconcileWaba(this.env, account, wabaId);
+      if (!run.waba) {
+        return { ok: false, error: `WABA "${wabaId}" is not owned by account "${account}"` };
+      }
+      return {
+        ok: true,
+        status: run.waba.status,
+        error: run.waba.provisioningError ?? run.error,
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 

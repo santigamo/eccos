@@ -10,6 +10,7 @@ import type {
   ProvisioningFailure,
   WabaProvisioningClaim,
 } from "./control-plane";
+import type { ProvisioningStatus } from "@eccos/gateway-contract";
 
 type ProvisioningStage = "configuration" | "meta" | "gateway";
 
@@ -178,4 +179,45 @@ export async function reconcilePendingWabas(env: Env, limit = 20): Promise<void>
   for (const claim of claims) {
     await runClaim(env, claim);
   }
+}
+
+/**
+ * Provisioning kicked off for a set of freshly registered WABAs (eccos-lpk).
+ *
+ * `statuses` is filled as each WABA settles, so a caller that gives up waiting
+ * still gets whatever finished inside its budget; `done` resolves when every
+ * kick has settled and never rejects.
+ */
+export interface ProvisioningKick {
+  readonly statuses: Map<string, ProvisioningStatus>;
+  readonly done: Promise<void>;
+}
+
+/**
+ * Kick the targeted reconciler for each WABA the connect callback just
+ * registered, instead of leaving them `pending` until the next five-minute cron
+ * run (eccos-lpk). Nothing here is a shortcut around the saga: it goes through the
+ * same `reconcileWaba` → `claimWabaProvisioning` lease + revision guard the cron
+ * uses, so a concurrent cron run either loses the claim or wins it, and never
+ * provisions twice. A kick that throws is swallowed: the row stays `pending`
+ * with its backoff intact for the cron to retry, and the operator's redirect is
+ * never held hostage to Meta.
+ */
+export function kickWabaProvisioning(
+  env: Env,
+  accountId: string,
+  wabaIds: readonly string[],
+): ProvisioningKick {
+  const statuses = new Map<string, ProvisioningStatus>();
+  const done = (async () => {
+    for (const wabaId of wabaIds) {
+      try {
+        const run = await reconcileWaba(env, accountId, wabaId);
+        if (run.waba) statuses.set(wabaId, run.waba.status);
+      } catch {
+        // Left for the cron: the control plane still holds a pending row.
+      }
+    }
+  })();
+  return { statuses, done };
 }

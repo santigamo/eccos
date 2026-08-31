@@ -7,7 +7,8 @@
  *
  *   view       — read status, logs (inbound/outbound/deliveries), templates
  *   operate    — retry delivery, read subscriber config
- *   configure  — write subscriber config, resubscribe webhook
+ *   configure  — write subscriber config, resubscribe webhook, re-check a
+ *                number's provisioning
  *   administer — API key management, Embedded Signup (/connect), export data
  *   erase      — GDPR erasure (eraseByPhone)
  *

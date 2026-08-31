@@ -129,6 +129,7 @@ const {
   getSubscriberConfig,
   setSubscriberConfig,
   resubscribe,
+  recheckNumber,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -564,6 +565,74 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
     withResources({});
     gatewayBinding = undefined;
     const res = await resubscribe();
+    expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
+  });
+});
+
+/**
+ * eccos-lpk: /numbers can re-check a number whose provisioning has not landed.
+ *
+ * The point of this surface is the `pending` WABA, which every other server
+ * function refuses to scope to — so these pin that it reaches the gateway at
+ * all, that the account still comes from the organization link, and that a WABA
+ * the account does not own never gets there.
+ */
+describe("recheckNumber (pending number on /numbers)", () => {
+  test("forwards the owned WABA with the server-resolved account id", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      reconcileWaba: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true, status: "active", error: null };
+      },
+    });
+    const res = await recheckNumber({ data: { wabaId: "waba-a" } });
+    expect(res).toEqual({ ok: true, data: { ok: true, status: "active", error: null } });
+    // The browser supplies the WABA id only; the account id is the link's.
+    expect(calls).toEqual([["waba-a", "account-a"]]);
+  });
+
+  test("a still-pending answer is reported as-is, not dressed up as success", async () => {
+    withResources({
+      reconcileWaba: async () => ({
+        ok: true,
+        status: "pending",
+        error: "subscribed_apps failed with HTTP 503",
+      }),
+    });
+    const res = await recheckNumber({ data: { wabaId: "waba-a" } });
+    expect(res).toEqual({
+      ok: true,
+      data: { ok: true, status: "pending", error: "subscribed_apps failed with HTTP 503" },
+    });
+  });
+
+  test("a WABA the account does not own never reaches the gateway", async () => {
+    let called = false;
+    withResources({
+      reconcileWaba: async () => {
+        called = true;
+        return { ok: true, status: "active", error: null };
+      },
+    });
+    const res = await recheckNumber({ data: { wabaId: "waba-someone-else" } });
+    expect(res).toEqual({
+      ok: false,
+      error: 'WABA "waba-someone-else" is not owned by account "account-a"',
+    });
+    expect(called).toBe(false);
+  });
+
+  test("fails closed without a session", async () => {
+    withResources({ reconcileWaba: async () => ({ ok: true, status: "active", error: null }) });
+    fakeSessionHeaders = null;
+    expect(recheckNumber({ data: { wabaId: "waba-a" } })).rejects.toThrow(/authentication required/);
+  });
+
+  test("unreachable: missing binding yields the graceful error shape", async () => {
+    withResources({});
+    gatewayBinding = undefined;
+    const res = await recheckNumber({ data: { wabaId: "waba-a" } });
     expect(res).toEqual({ ok: false, error: UNCONFIGURED_ERROR });
   });
 });

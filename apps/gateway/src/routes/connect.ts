@@ -7,6 +7,7 @@ import {
 import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
 import { getControlPlaneStub } from "../control-plane-stub";
+import { kickWabaProvisioning } from "../provisioning";
 import { constantTimeEqual } from "@eccos/core/signature";
 import type {
   ConnectFailureCode,
@@ -28,6 +29,20 @@ const STATE_COOKIE = "eccos_connect_state";
 const RETURN_COOKIE = "eccos_connect_return";
 const STATE_COOKIE_MAX_AGE_SECONDS = 30 * 60;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * How long the callback waits for the WABAs it just registered to finish
+ * provisioning before handing the operator back to the console (eccos-lpk).
+ *
+ * The exchange already costs three Meta round-trips, so one `subscribed_apps`
+ * POST per WABA is a small addition and buys the thing that matters: the
+ * console normally loads with the number already `active` instead of showing a
+ * `pending` row for up to five minutes. The budget is the safety valve — a slow
+ * or wedged Graph call must not hold the redirect, so past it the kick keeps
+ * running under `waitUntil` and the console shows `pending` (with a re-check)
+ * until it lands.
+ */
+const PROVISIONING_KICK_BUDGET_MS = 3_000;
 
 /**
  * The Meta redirect back to /connect is a top-level GET navigation, so a
@@ -238,11 +253,53 @@ function parseExchangeBody(value: unknown): { code: string; state?: string; waba
 }
 
 /**
+ * Hand a still-running kick to the runtime so it survives the response. Hono
+ * throws when there is no ExecutionContext (a non-Workers host); the awaited
+ * budget is then the only thing keeping it alive, which is no worse than the
+ * cron-only behaviour it replaces.
+ */
+function keepAlive(c: ConnectContext, work: Promise<void>): void {
+  try {
+    c.executionCtx.waitUntil(work);
+  } catch {}
+}
+
+/**
+ * Provision the WABAs the callback just registered, bounded by
+ * `PROVISIONING_KICK_BUDGET_MS`. Returns whatever settled inside the budget;
+ * anything slower keeps running in the background and stays `pending` in the
+ * answer, exactly as if only the cron had run. Never throws, so the operator's
+ * way back to the console cannot depend on Meta answering.
+ */
+async function kickProvisioning(
+  c: ConnectContext,
+  accountId: string,
+  wabaIds: string[],
+): Promise<Map<string, ProvisioningStatus>> {
+  if (wabaIds.length === 0) return new Map();
+  const kick = kickWabaProvisioning(c.env, accountId, wabaIds);
+  keepAlive(c, kick.done);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      kick.done,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, PROVISIONING_KICK_BUDGET_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+  return kick.statuses;
+}
+
+/**
  * Exchange: discover every WABA/phone the business token can see, register each
- * available match in the control plane (credentials + callback live there).
- * Provisioning is completed by the Worker reconciler after the durable pending
- * rows commit. An explicit ownership conflict fails closed; unrelated foreign
- * matches are skipped with a warning.
+ * available match in the control plane (credentials + callback live there),
+ * then provision them through the saga before answering (eccos-lpk) so the
+ * operator normally lands on an already-active number; anything still unsettled
+ * stays `pending` for the cron. An explicit ownership conflict fails closed;
+ * unrelated foreign matches are skipped with a warning.
  */
 async function exchangeAndRegisterAll(
   c: ConnectContext,
@@ -307,9 +364,20 @@ async function exchangeAndRegisterAll(
 
     const primary = availableMatches[0];
     if (!primary) return { ok: false, error: "WABA registration failed", code: "failed" };
-    const status = registrations.some((registration) => registration.waba.status === "failed")
+
+    // The pending rows are durable now, so run provisioning here instead of
+    // leaving it to the cron: this is the moment the operator is watching.
+    const kicked = await kickProvisioning(
+      c,
+      accountId,
+      registrations.map((registration) => registration.waba.wabaId),
+    );
+    const statuses = registrations.map(
+      (registration) => kicked.get(registration.waba.wabaId) ?? registration.waba.status,
+    );
+    const status = statuses.includes("failed")
       ? "failed"
-      : registrations.every((registration) => registration.waba.status === "active")
+      : statuses.every((value) => value === "active")
         ? "active"
         : "pending";
     return {
