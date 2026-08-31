@@ -8,6 +8,7 @@
  */
 
 import { useId, useState } from "react";
+import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { Input } from "../ui/input";
 
 export interface PasswordFieldProps {
@@ -64,9 +65,13 @@ export function PasswordField({
           onClick={() => setVisible((v) => !v)}
           aria-label={visible ? "Hide password" : "Show password"}
           aria-pressed={visible}
-          className="absolute right-1.5 rounded-none px-1.5 py-0.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase hover:text-foreground focus-visible:outline focus-visible:outline-1 focus-visible:outline-ring"
+          className="absolute right-1.5 rounded-none px-1.5 py-0.5 text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-1 focus-visible:outline-ring"
         >
-          {visible ? "Hide" : "Show"}
+          {visible ? (
+            <EyeOffIcon aria-hidden="true" className="size-4" />
+          ) : (
+            <EyeIcon aria-hidden="true" className="size-4" />
+          )}
         </button>
       </span>
     </label>

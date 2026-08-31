@@ -58,13 +58,25 @@ mock.module("cloudflare:workers", () => ({
 // (notional) session cookie; the mocked auth API accepts it as a member with
 // every gateway permission and links the org to the fixture account.
 let fakeSessionHeaders: Headers | null = null;
+let fakeMemberships: { id: string }[] = [{ id: "org-fixture" }];
 
 
 const ORG_ID = "org-fixture";
     // Mock the auth seam (not the real session/tenant modules, which other test
     // files exercise) so the data-plane tests do not spin up Better Auth. The
     // seam receives (auth, request) — both ignored under the mock.
-    mock.module("../src/auth/server-auth", () => ({
+    // Capture the REAL tenant module through a query-string specifier (a distinct
+// module id the mock registry below does not intercept) so its exports can be
+// re-published from the sync mock factory. This lets gateway.ts receive the
+// mocked resolveMemberships while permissions.test.ts (same bun process) keeps
+// working against the real requirePermission/verifyMembership/ForbiddenError.
+const realTenant = await import("../src/auth/tenant?real-module");
+mock.module("../src/auth/tenant", () => ({
+  ...realTenant,
+  resolveMemberships: async () => fakeMemberships,
+}));
+
+mock.module("../src/auth/server-auth", () => ({
       UnauthorizedError: class UnauthorizedError extends Error {
         constructor(message = "authentication required") {
           super(message);
@@ -75,6 +87,7 @@ const ORG_ID = "org-fixture";
         if (!fakeSessionHeaders) throw new Error("authentication required");
         return ORG_ID;
       },
+      resolveMemberships: async () => fakeMemberships,
       requireAuthContext: async (_auth: unknown, _request: Request) => {
         if (!fakeSessionHeaders) throw new Error("authentication required");
         return { session: { userId: "user-1", email: "op@corp.test", emailVerified: true, name: "Op", sessionId: "sess-1", activeOrganizationId: null } };
@@ -121,6 +134,7 @@ const {
 afterEach(() => {
   gatewayBinding = undefined;
   fakeSessionHeaders = null;
+  fakeMemberships = [{ id: "org-fixture" }];
 });
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
@@ -293,6 +307,21 @@ describe("session bootstrap (auth-aware state)", () => {
     };
     const result = await getDashboardState();
     expect(result).toEqual({ ok: false, error: "authentication required" });
+    expect(rpcTouched).toBe(false);
+  });
+
+  test("first-run: zero memberships returns no-organization without touching the gateway", async () => {
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
+    fakeMemberships = [];
+    let rpcTouched = false;
+    gatewayBinding = {
+      getOrganizationAccountLink: async () => {
+        rpcTouched = true;
+        return null;
+      },
+    };
+    const result = await getDashboardState();
+    expect(result).toEqual({ ok: true, data: { stage: "no-organization" } });
     expect(rpcTouched).toBe(false);
   });
 

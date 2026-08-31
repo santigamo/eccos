@@ -9,6 +9,7 @@ import {
   requireGatewayPermission,
   UnauthorizedError,
 } from "../auth/server-auth";
+import { resolveMemberships } from "../auth/tenant";
 import type {
   AccountResources,
   ConnectStartResult,
@@ -107,6 +108,7 @@ export interface DashboardOverview {
 export type DashboardOverviewResult = Result<DashboardOverview>;
 export type DashboardState =
   | { stage: "unassigned" }
+  | { stage: "no-organization" }
   | { stage: "account-ready"; resources: AccountResources }
   | { stage: "ready"; status: GatewayStatus; scope: DashboardScope };
 export type DashboardStateResult = Result<DashboardState>;
@@ -336,7 +338,18 @@ export const getDashboardState = createServerFn({ method: "GET" })
   .handler(
     ({ data }): Promise<DashboardStateResult> =>
       withGateway(async (gateway) => {
-        await requireGatewayPermission(requestAuth(), getRequest(), "view");
+        // First-run onboarding (before the permission check): a session with
+        // zero organization memberships cannot resolve a tenant, so the caller
+        // is routed to /onboarding instead of failing closed with a gateway
+        // error that reads as an infrastructure outage.
+        const auth = requestAuth();
+        const request = getRequest();
+        await requireAuthContext(auth, request);
+        const memberships = await resolveMemberships(auth, request.headers);
+        if (memberships.length === 0) {
+          return { stage: "no-organization" };
+        }
+        await requireGatewayPermission(auth, request, "view");
         const account = await resolveOrganizationAccount(gateway);
         const wabas = [...account.resources.wabas].sort((a, b) => a.wabaId.localeCompare(b.wabaId));
         if (wabas.length === 0) {

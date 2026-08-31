@@ -13,6 +13,11 @@ import {
   AUTH_ERROR_BANNER_CLASS,
 } from "@/components/auth/auth-page";
 import { PasswordField } from "@/components/auth/password-field";
+import {
+  validateEmail,
+  validateName,
+  validatePassword,
+} from "./components/validation";
 import type { FormSubmitEvent } from "./components/login-form";
 
 /**
@@ -45,12 +50,21 @@ export function SignUpView() {
     event.preventDefault();
     setPending(true);
     setError(null);
-    const result = await authClient.signUp.email({
-      name,
-      email,
-      password,
-      callbackURL: "/",
-    });
+    let result: Awaited<ReturnType<typeof authClient.signUp.email>>;
+    try {
+      result = await authClient.signUp.email({
+        name,
+        email,
+        password,
+        callbackURL: "/",
+      });
+    } catch {
+      // Thrown client failure (network, non-JSON 5xx): reset pending and show
+      // a generic error instead of a stuck button.
+      setPending(false);
+      setError("Could not sign up right now. Please try again.");
+      return;
+    }
     setPending(false);
     // Anti-enumeration: duplicate email and success take the SAME path.
     if (
@@ -150,7 +164,7 @@ export function SignUpView() {
               </div>
             </div>
 
-            <form className="flex flex-col gap-5" onSubmit={onSubmit}>
+            <form className="flex flex-col gap-5" onSubmit={onSubmit} noValidate>
               <FieldGroup className="gap-4">
                 <Field className="gap-2">
                   <FieldLabel

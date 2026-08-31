@@ -97,7 +97,9 @@ export async function requirePermission(
   // session type only carries it when the organization plugin is inferred.
   const rawSession = session.session as { activeOrganizationId?: string | null };
   let orgId = organizationId ?? rawSession.activeOrganizationId ?? "";
-  if (!orgId) throw new ForbiddenError("no organization context");
+  // Empty orgId falls through to the sole-membership default below: zero
+  // memberships fail closed with a create/join hint, multi-org ambiguity
+  // fails closed with "select an organization".
 
   let memberships = await resolveMemberships(auth, headers);
   if (!orgId) {

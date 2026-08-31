@@ -35,6 +35,8 @@ export function LoginForm({
   password,
   onEmailChange,
   onPasswordChange,
+  fieldErrors = {},
+  onFieldClear,
 }: {
   onSubmit: (event: FormSubmitEvent) => void;
   error: string | null;
@@ -43,7 +45,11 @@ export function LoginForm({
   password: string;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
+  /** Inline field-level validation errors (cleared as the user types). */
+  fieldErrors?: Record<string, string | null>;
+  onFieldClear?: (key: string) => void;
 }) {
+  const clearField = (key: string) => onFieldClear?.(key);
   return (
     <div className="mx-auto flex w-full max-w-[22rem] flex-col gap-8">
       {/* Heading */}
@@ -66,7 +72,7 @@ export function LoginForm({
       </div>
 
       {/* Form */}
-      <form className="flex flex-col gap-5" onSubmit={onSubmit}>
+      <form className="flex flex-col gap-5" onSubmit={onSubmit} noValidate>
         <FieldGroup className="gap-4">
           <Field className="gap-2">
             <FieldLabel
@@ -80,22 +86,40 @@ export function LoginForm({
               type="email"
               autoComplete="email"
               value={email}
-              onChange={(event) => onEmailChange(event.target.value)}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? "signin-error" : undefined}
-              required
+              onChange={(event) => {
+                onEmailChange(event.target.value);
+                clearField("email");
+              }}
+              aria-invalid={fieldErrors.email || error ? true : undefined}
+              aria-describedby={
+                [fieldErrors.email ? "signin-email-error" : null, error ? "signin-error" : null]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
             />
+            {fieldErrors.email ? (
+              <p id="signin-email-error" className="text-destructive text-xs" role="alert">
+                {fieldErrors.email}
+              </p>
+            ) : null}
           </Field>
           <PasswordField
             id="signin-password"
             label="Password"
             value={password}
-            onChange={onPasswordChange}
+            onChange={(value) => {
+              onPasswordChange(value);
+              clearField("password");
+            }}
             autoComplete="current-password"
-            errorId={error ? "signin-error" : undefined}
-            hasError={Boolean(error)}
-            required
+            errorId={fieldErrors.password ? "signin-password-error" : error ? "signin-error" : undefined}
+            hasError={Boolean(fieldErrors.password) || Boolean(error)}
           />
+          {fieldErrors.password ? (
+            <p id="signin-password-error" className="text-destructive text-xs" role="alert">
+              {fieldErrors.password}
+            </p>
+          ) : null}
         </FieldGroup>
 
         {error ? (

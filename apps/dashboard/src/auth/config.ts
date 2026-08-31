@@ -16,6 +16,16 @@ export const CANONICAL_ORIGIN = "https://app.eccos.chat";
 /** Local development origin (vite dev). */
 export const LOCAL_ORIGIN = "http://localhost:3000";
 
+/**
+ * Vite dev server origins (the browser side of local development). Vite serves
+ * the dashboard UI on its default port 5173 while the auth Worker runs under
+ * `wrangler dev` on :3000 (README "Local development"), so browser auth
+ * requests carry the Vite origin and Better Auth must trust it alongside the
+ * Worker's own origin.
+ */
+export const VITE_DEV_ORIGIN = "http://localhost:5173";
+export const VITE_DEV_ORIGIN_LOOPBACK = "http://127.0.0.1:5173";
+
 export interface AuthEnv {
   DB: unknown;
   BETTER_AUTH_SECRET?: string;
@@ -48,7 +58,7 @@ export function authConfigFromEnv(env: AuthEnv): AuthConfig {
   }
 
   const trustedOrigins = isDev
-    ? [LOCAL_ORIGIN, "http://127.0.0.1:3000"]
+    ? [LOCAL_ORIGIN, "http://127.0.0.1:3000", VITE_DEV_ORIGIN, VITE_DEV_ORIGIN_LOOPBACK]
     : [CANONICAL_ORIGIN];
 
   return {

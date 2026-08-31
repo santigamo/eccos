@@ -325,6 +325,12 @@ describe("authConfigFromEnv", () => {
       DB: {} as D1Database,
       BETTER_AUTH_URL: "http://localhost:3000",
     });
-    expect(config.trustedOrigins).toEqual(["http://localhost:3000", "http://127.0.0.1:3000"]);
+    expect(config.trustedOrigins).toEqual([
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      // Vite dev server default port — the browser side of local development.
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+    ]);
   });
 });

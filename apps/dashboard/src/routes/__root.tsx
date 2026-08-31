@@ -26,7 +26,18 @@ export const Route = createRootRoute({
     // to /signin before this loader executes. Server functions fail closed in
     // src/auth/server-auth.ts. Public routes are also handled there.
     const state = await getDashboardState({ data: { wabaId: deps.wabaId } })
-    if (state.ok && state.data.stage !== "ready" && location.pathname !== "/setup") {
+    if (state.ok && state.data.stage === "no-organization" && location.pathname !== "/onboarding") {
+      throw redirect({ to: "/onboarding" })
+    }
+    if (state.ok && state.data.stage === "ready" && location.pathname === "/onboarding") {
+      throw redirect({ to: "/" })
+    }
+    if (
+      state.ok &&
+      state.data.stage !== "ready" &&
+      state.data.stage !== "no-organization" &&
+      location.pathname !== "/setup"
+    ) {
       throw redirect({ to: "/setup" })
     }
     if (state.ok && state.data.stage === "ready" && location.pathname === "/setup") {
