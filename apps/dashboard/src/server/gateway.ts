@@ -19,6 +19,7 @@ import type {
   GatewayStatus,
   InboundRow,
   OutboundRow,
+  ReconcileWabaResult,
   ResubscribeResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
@@ -38,6 +39,8 @@ export type {
   InboundRow,
   OperatorCounts,
   OutboundRow,
+  ProvisioningStatus,
+  ReconcileWabaResult,
   ResubscribeResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
@@ -166,6 +169,14 @@ function validateRetryInput(input: unknown): { id: number; wabaId: string } {
   const wabaId = optionalWabaId(record.wabaId);
   if (!wabaId) throw new Error("wabaId is required");
   return { id: record.id, wabaId };
+}
+
+/** A WABA the operator is asking about by id; the account is never theirs to pick. */
+function validateWabaInput(input: unknown): { wabaId: string } {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  return { wabaId };
 }
 
 function validateSubscriberInput(input: unknown): SetSubscriberConfigInput & DashboardScopeInput {
@@ -528,4 +539,29 @@ export const resubscribe = createServerFn({ method: "POST" })
       data?.wabaId,
       true,
     );
+  });
+
+
+/**
+ * Re-run provisioning for one number the account owns (eccos-lpk).
+ *
+ * The connect callback normally leaves a number `active` before the operator
+ * lands here, so this exists for the tail: a Meta hiccup left the row `pending`
+ * and the operator should not have to sit through the five-minute cron without
+ * a button. `withScopedGateway` is deliberately not used — it refuses a pending
+ * WABA, which is the only kind worth re-checking. The account still comes from
+ * the organization link and the WABA is re-checked against that account's own
+ * registry before the RPC runs; the gateway verifies ownership again.
+ */
+export const recheckNumber = createServerFn({ method: "POST" })
+  .validator(validateWabaInput)
+  .handler(async ({ data }): Promise<Result<ReconcileWabaResult>> => {
+    await requireGatewayPermission(requestAuth(), getRequest(), "configure");
+    return withGateway(async (gateway) => {
+      const account = await resolveOrganizationAccount(gateway);
+      if (!account.resources.wabas.some((waba) => waba.wabaId === data.wabaId)) {
+        throw new Error(`WABA "${data.wabaId}" is not owned by account "${account.accountId}"`);
+      }
+      return gateway.reconcileWaba(data.wabaId, account.accountId);
+    });
   });

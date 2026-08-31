@@ -74,7 +74,10 @@ Then open the URL Vite prints. Without the gateway running, the pages still load
 Set `GATEWAY_PUBLIC_URL` in the gateway Worker to its public HTTPS origin before using the
 dashboard's **Connect WhatsApp** action. The rest of the console uses only the private RPC binding;
 the URL is needed so Meta can return the browser to the gateway's OAuth callback, which then hands
-the operator back to `/numbers` in the console.
+the operator back to `/numbers` in the console. The callback also finishes provisioning (Meta
+`subscribed_apps` + the data-plane config) before it redirects, so the number is normally `active`
+by the time the page loads; one that Meta has not confirmed yet stays `pending`, says so on
+`/numbers`, and can be re-checked from its row while the gateway's cron keeps retrying.
 
 ## Deploying
 

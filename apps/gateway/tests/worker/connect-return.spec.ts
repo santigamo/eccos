@@ -166,7 +166,8 @@ describe("Embedded Signup returns the operator to the console", () => {
 
     const res = await callback(`code=oauth-code&state=${encodeURIComponent(state)}`, cookies);
 
-    expect(res.status).toBe(202);
+    // 200, not 202: the callback provisions before it answers (eccos-lpk).
+    expect(res.status).toBe(200);
     expect(res.headers.get("location")).toBeNull();
     expect(await res.text()).toContain("WABA_RETURN");
   });

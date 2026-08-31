@@ -662,7 +662,8 @@ describe("account-scoped control plane", () => {
       `https://example.com/connect?code=oauth-code&state=${encodeURIComponent(state ?? "")}`,
       { headers: { cookie: `eccos_connect_state=${state}` } },
     );
-    expect(callback.status).toBe(202);
+    // 200: the callback provisioned the WABA before answering (eccos-lpk).
+    expect(callback.status).toBe(200);
     const callbackText = await callback.text();
     expect(callbackText).toContain("WABA_OAUTH");
     expect(callbackText).not.toContain("business-token");
@@ -725,10 +726,14 @@ describe("account-scoped control plane", () => {
     });
     expect(exchange.status).toBe(202);
     expect(await exchange.json()).toMatchObject({ ok: true, waba_id: "WABA_OAUTH" });
-    expect(graph.mock.calls.some(([input]) => String(input).includes("/WABA_OAUTH/subscribed_apps"))).toBe(false);
+    // The exchange itself subscribes now (eccos-lpk); the targeted reconciler
+    // behind it finds nothing to claim and never subscribes twice.
+    const subscribed = () =>
+      graph.mock.calls.filter(([input]) => String(input).includes("/WABA_OAUTH/subscribed_apps"));
+    expect(subscribed()).toHaveLength(1);
     const reconciled = await admin(`/v1/accounts/${accountA.accountId}/wabas/WABA_OAUTH/reconcile`, { method: "POST" });
     expect(reconciled.status).toBe(200);
-    expect(graph.mock.calls.some(([input]) => String(input).includes("/WABA_OAUTH/subscribed_apps"))).toBe(true);
+    expect(subscribed()).toHaveLength(1);
   });
 
   it("registers every WABA and phone returned by Embedded Signup", async () => {
@@ -753,7 +758,7 @@ describe("account-scoped control plane", () => {
       `https://example.com/connect?code=oauth-code&state=${encodeURIComponent(state ?? "")}`,
       { headers: { cookie: `eccos_connect_state=${state}` } },
     );
-    expect(callback.status).toBe(202);
+    expect(callback.status).toBe(200);
     expect(await callback.text()).toContain("PN_OAUTH_A2");
 
     const reconciled = await admin(`/v1/accounts/${account.accountId}/wabas/WABA_OAUTH_A/reconcile`, { method: "POST" });

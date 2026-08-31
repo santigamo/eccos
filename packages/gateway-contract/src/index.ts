@@ -78,6 +78,19 @@ export interface SetSubscriberConfigInput {
 
 export type ResubscribeResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Outcome of an operator-triggered provisioning re-check (eccos-lpk).
+ *
+ * Two layers, because "the attempt ran" and "the WABA is connected" are
+ * different facts: `ok` reports that the account owns the WABA and the
+ * reconciler ran, `status` is where the WABA stands afterwards, and `error` is
+ * the saga's own reason when it is not `active` yet. A `pending` status with a
+ * null error is the normal answer while an attempt is still backing off.
+ */
+export type ReconcileWabaResult =
+  | { ok: true; status: ProvisioningStatus; error: string | null }
+  | { ok: false; error: string };
+
 /** Per-table effect counts of an erasure request — returned so the operator can
  * evidence the deletion towards the data subject / client. */
 export interface ErasureCounts {
@@ -201,6 +214,11 @@ export interface GatewayApi {
     accountId: string,
   ): Promise<{ ok: true }>;
   resubscribe(wabaId: string, accountId: string): Promise<ResubscribeResult>;
+  /** Re-run the provisioning saga for one WABA the account owns, whatever its
+   * status (a `pending` WABA is precisely the one worth re-checking, so this is
+   * the one operator method that does not require an already-active WABA).
+   * Idempotent and lease-guarded: it never provisions alongside the cron. */
+  reconcileWaba(wabaId: string, accountId: string): Promise<ReconcileWabaResult>;
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
    * number across inbound_events, outbound_messages, and deliveries. */
   eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult>;

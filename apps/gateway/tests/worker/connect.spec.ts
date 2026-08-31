@@ -30,7 +30,7 @@ beforeEach(async () => {
 
 describe("POST /connect/exchange", () => {
   it("registers the WABA + phones under the authenticated account after Meta exchange", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const graph = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/oauth/access_token")) {
         return new Response(JSON.stringify({ access_token: "biz-token" }), { status: 200 });
@@ -72,19 +72,28 @@ describe("POST /connect/exchange", () => {
       body: JSON.stringify({ code: "oauth-code", state, waba_id: "WABA123" }),
     });
     expect(res.status).toBe(202);
+    // eccos-lpk: the exchange provisions before answering, so the caller is told
+    // "active", not "pending until some cron runs".
     expect(await res.json()).toMatchObject({
       ok: true,
       waba_id: "WABA123",
       phone_number_id: "PNID",
-      status: "pending",
+      status: "active",
     });
-    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/subscribed_apps"));
+    const subscribed = () =>
+      graph.mock.calls.filter(([input]) => String(input).includes("/subscribed_apps"));
+    expect(subscribed()).toHaveLength(1);
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      expect((await cp.getWaba(ACCOUNT_ID, "WABA123"))?.status).toBe("active");
+    });
 
+    // The cron's targeted path stays idempotent behind it: nothing left to claim.
     const reconcile = await exports.default.fetch(`https://example.com/v1/accounts/${ACCOUNT_ID}/wabas/WABA123/reconcile`, {
       method: "POST",
       headers: { authorization: `Bearer ${env.ECCOS_ADMIN_API_KEY}` },
     });
     expect(reconcile.status).toBe(200);
+    expect(subscribed()).toHaveLength(1);
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
       expect((await cp.getWaba(ACCOUNT_ID, "WABA123"))?.status).toBe("active");
     });
