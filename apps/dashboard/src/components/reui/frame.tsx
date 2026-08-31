@@ -124,6 +124,16 @@ function FramePanel({
         "before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--frame-panel-radius)_-_1px)] before:shadow-black/5",
         "dark:bg-clip-border dark:before:shadow-white/5",
         "px-(--frame-panel-px) py-(--frame-panel-py)",
+        // reui composes header/footer as SIBLINGS of the panel inside the frame,
+        // where --frame-panel-header-px keeps them level with the panel body.
+        // This console nests them INSIDE the panel instead (every call site
+        // does), and there the two paddings stack: the header title ends up
+        // indented a whole step further than the content below it. Zero the
+        // horizontal padding for header/footer that are direct panel children
+        // so the reui intent ("header, content and footer stay left-aligned")
+        // holds in the nested form too. Vertical padding is untouched: it is
+        // what separates the header from the body in a block panel.
+        "[&>[data-slot=frame-panel-header]]:px-0 [&>[data-slot=frame-panel-footer]]:px-0",
         className
       )}
       data-slot="frame-panel"

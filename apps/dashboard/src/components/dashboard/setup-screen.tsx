@@ -1,7 +1,5 @@
 import { useState } from "react";
-import { useRouter } from "@tanstack/react-router";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import {
   Frame,
   FrameDescription,
@@ -9,117 +7,79 @@ import {
   FramePanel,
   FrameTitle,
 } from "../reui/frame";
-import {
-      startConnect,
-      type DashboardState,
-    } from "../../server/gateway";
+import { Logo } from "../blocks/app-shell-7/components/logo";
 import { Page } from "../../ui";
+import { startConnect, type DashboardState } from "../../server/gateway";
+import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
+import { cn } from "@/lib/utils";
 
+/**
+ * First run: attach a WhatsApp Business Account.
+ *
+ * The route renders outside the AppShell (there is nothing to navigate to
+ * yet), so it rebuilds the console's two fixed pieces rather than inventing a
+ * third: the masthead is the same band as `app-header.tsx` (logomark, Inter
+ * wordmark, pixel label right), and the body is the shared `Page` anatomy
+ * (pixel kicker, light Inter heading, hatch band). The only difference from a
+ * normal route is the missing sidebar and a reading measure on the column.
+ *
+ * One screen, not a wizard. Embedded Signup is the only way in, and the done
+ * state lives on the other side of a full navigation to Meta (eccos-5z9), so a
+ * step rail would advertise steps nobody walks.
+ */
 export function SetupScreen({ state }: { state: DashboardState }) {
-  const router = useRouter();
-  const existingAccount = state.stage === "account-ready" ? state.resources.account : null;
+  const account = state.stage === "account-ready" ? state.resources.account : null;
 
   return (
-    <main id="main-content" className="min-h-svh px-4 py-6 md:px-8 md:py-8">
-      <div className="mx-auto flex min-h-[calc(100svh-4rem)] max-w-5xl flex-col">
-        <div className="flex items-center gap-2 border-b border-(--line) pb-4">
-          <span className="font-pixel text-xs tracking-[0.04em] text-foreground uppercase">Eccos</span>
-          <span className="text-muted-foreground text-xs">First-run setup</span>
+    <div className="flex min-h-svh flex-col">
+      <SetupHeader workspace={account?.name?.trim() || ""} />
+      <main id="main-content" className="flex flex-1 flex-col p-4 md:p-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
+          <Page title="Connect WhatsApp" kicker="First run">
+            <ConnectPanel />
+          </Page>
         </div>
-        <div className="flex flex-1 flex-col justify-center py-12">
-          <SetupComplete
-            result={{
-              status: "existing" as const,
-              account: existingAccount ?? { accountId: "", name: "", createdAt: 0 },
-            }}
-            onDone={() => void router.invalidate()}
-          />
+      </main>
+    </div>
+  );
+}
+
+/**
+ * The console masthead, minus the WABA picker (there is no WABA yet). The
+ * workspace name takes the picker's slot: that position holds the current
+ * scope on every other page.
+ */
+function SetupHeader({ workspace }: { workspace: string }) {
+  return (
+    <header className="sticky top-0 z-50 flex w-full items-center border-b bg-(--nav-bg) backdrop-blur-[14px]">
+      <div className="flex h-12 w-full items-center gap-2 px-4">
+        <div className="flex items-center gap-2 pl-0.5">
+          <Logo />
+          <span className="font-heading text-foreground text-sm font-semibold tracking-widest uppercase">
+            Eccos
+          </span>
         </div>
+        {workspace ? (
+          <span className="ml-2 min-w-0 truncate text-sm text-muted-foreground">
+            {workspace}
+          </span>
+        ) : null}
+        <span className="text-muted-foreground font-pixel ml-auto text-xs tracking-[0.04em] uppercase">
+          Operator Console
+        </span>
       </div>
-    </main>
+    </header>
   );
 }
 
-function SetupComplete({
-  result,
-  onDone,
-}: {
-  result: { status: "existing"; account: { accountId: string; name: string; createdAt: number } };
-  onDone: () => void;
-}) {
-  const account = result.account;
+/** What Embedded Signup will ask for, in order. Fragments, not sentences. */
+const CONNECT_STEPS = [
+  "Pick or create a WhatsApp Business Account",
+  "Attach the phone number Eccos will use",
+  "Eccos subscribes to its webhooks",
+] as const;
 
-  return (
-    <Page title="Workspace ready" kicker="First run">
-      <div className="grid max-w-4xl gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
-        <Frame variant="default" spacing="lg">
-          <FramePanel fit>
-            <FrameHeader>
-              <FrameTitle>{account?.name || "Eccos workspace"}</FrameTitle>
-              <FrameDescription>
-                This workspace is bound to its own account scope. No deployment variable is required
-                for the account ID.
-              </FrameDescription>
-            </FrameHeader>
-            <dl className="m-0 divide-y divide-(--frame-panel-border-color)">
-              <SetupField label="Account ID" value={account?.accountId || "—"} />
-              <SetupField label="Status" value="Ready for WhatsApp" />
-            </dl>
-          </FramePanel>
-        </Frame>
-
-        <div className="flex flex-col gap-4">
-          <ConnectWhatsAppPanel onConnected={onDone} />
-        </div>
-      </div>
-    </Page>
-  );
-}
-
-function ApiKeyPanel({ apiKey }: { apiKey: string }) {
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
-
-  async function copyKey() {
-    setCopyError(false);
-    try {
-      if (!navigator.clipboard) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(apiKey);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-      setCopyError(true);
-    }
-  }
-
-  return (
-    <Frame variant="default" spacing="lg">
-      <FramePanel fit>
-        <FrameHeader>
-          <FrameTitle>Save your API key</FrameTitle>
-          <FrameDescription>
-            It is shown once. Store it in a password manager before leaving this page.
-          </FrameDescription>
-        </FrameHeader>
-        <div className="flex flex-col gap-3">
-          <code className="block overflow-x-auto border border-[rgba(240,160,32,.3)] bg-[rgba(240,160,32,.08)] p-3 text-xs text-foreground select-all">
-            {apiKey}
-          </code>
-          <div className="flex items-center gap-3">
-            <Button type="button" variant="outline" onClick={copyKey}>
-              {copied ? "Copied" : "Copy API key"}
-            </Button>
-            <span className="text-muted-foreground text-xs">
-              {copyError ? "Copy failed — select the key manually." : "Raw keys are never stored by Eccos."}
-            </span>
-          </div>
-        </div>
-      </FramePanel>
-    </Frame>
-  );
-}
-
-function ConnectWhatsAppPanel({ onConnected }: { onConnected: () => void }) {
+function ConnectPanel() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,38 +101,56 @@ function ConnectWhatsAppPanel({ onConnected }: { onConnected: () => void }) {
   }
 
   return (
-    <Frame variant="ghost" spacing="lg">
+    <Frame variant="default" spacing="lg">
       <FramePanel fit>
-        <FrameHeader>
-          <FrameTitle>Connect WhatsApp</FrameTitle>
-          <FrameDescription>
-            Connect a WhatsApp Business account through Meta Embedded Signup to start receiving
-            traffic. The handoff is bound to this protected workspace.
+        {/* The header sits level with the body: FramePanel zeroes the nested
+            header's horizontal padding so the two do not stack (see frame.tsx). */}
+        <FrameHeader className="gap-1.5 pt-0">
+          <FrameTitle className="text-sm font-semibold">
+            Meta Embedded Signup
+          </FrameTitle>
+          <FrameDescription className="max-w-prose text-pretty">
+            Meta opens in this tab. Your number stays on the WhatsApp Business
+            app.
           </FrameDescription>
         </FrameHeader>
-        <div className="flex flex-col items-start gap-3">
-          <Button type="button" onClick={start} disabled={starting}>
-            {starting ? "Opening Embedded Signup…" : "Connect WhatsApp"}
-          </Button>
-          <p className="m-0 text-sm text-muted-foreground">
-            Meta will open in this tab. After setup finishes, return to this dashboard and refresh.
+
+        <ol className="m-0 flex list-none flex-col gap-2.5 p-0 pt-5">
+          {CONNECT_STEPS.map((text, i) => (
+            <li key={text} className="flex items-baseline gap-3">
+              <span
+                aria-hidden="true"
+                className="text-[11px] font-medium tabular-nums tracking-wider text-muted-foreground"
+              >
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <span className="text-sm text-foreground">{text}</span>
+            </li>
+          ))}
+        </ol>
+
+        {error ? (
+          <p className={cn("mt-4", AUTH_ERROR_BANNER_CLASS)} role="alert">
+            {error}
           </p>
-          {error ? (
-            <p className="m-0 border-l-2 border-[#e03131] bg-[rgba(224,49,49,.12)] px-3 py-2 text-sm text-[#ff7777]" role="alert">
-              {error}
-            </p>
-          ) : null}
-        </div>
+        ) : null}
+
+        {/* One footer rail, action pinned right; full-bleed so its rule reads as
+            panel chrome rather than as another content block. */}
+        <footer className="-mx-(--frame-panel-px) mt-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-(--frame-panel-border-color) px-(--frame-panel-px) pt-4">
+          {/* Kept deliberately: Meta drops the operator on the gateway's own
+              result page, not back here (eccos-5z9). Without this line the
+              flow dead-ends. */}
+          <p className="m-0 text-xs text-muted-foreground">
+            Come back here once Meta confirms the account.
+          </p>
+          <div className="ml-auto flex items-center gap-2">
+            <Button type="button" onClick={start} disabled={starting}>
+              {starting ? "Opening Embedded Signup…" : "Connect WhatsApp"}
+            </Button>
+          </div>
+        </footer>
       </FramePanel>
     </Frame>
-  );
-}
-
-function SetupField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0">
-      <dt className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">{label}</dt>
-      <dd className="m-0 font-mono text-xs text-foreground">{value}</dd>
-    </div>
   );
 }
