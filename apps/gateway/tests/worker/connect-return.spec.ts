@@ -55,12 +55,21 @@ let accountId = "";
 async function startFromConsole(returnTo?: string) {
   const rpc = new GatewayRPC(createExecutionContext(), env);
   const { url, state } = await rpc.startConnectForAccountId(accountId, returnTo);
-  // Meta's dialog is reached through the gateway's handoff page, which is what
-  // sets the state + return cookies for the callback.
-  const handoff = await exports.default.fetch(url);
-  expect(handoff.status).toBe(200);
+  // The handoff is the redirect to Meta itself (eccos-7jk); the cookies the
+  // callback needs are set on that redirect response.
+  const handoff = await exports.default.fetch(url, { redirect: "manual" });
+  expect(handoff.status).toBe(302);
   const cookies = handoff.headers.getSetCookie().join("; ");
-  return { state, cookies };
+  return { state, cookies, handoff };
+}
+
+/** Parse one `Set-Cookie` off a response, attributes included. */
+function setCookie(res: Response, name: string): string {
+  const found = res.headers.getSetCookie().find((value) => value.startsWith(`${name}=`));
+  if (!found) {
+    throw new Error(`no ${name} cookie in: ${JSON.stringify(res.headers.getSetCookie())}`);
+  }
+  return found;
 }
 
 function callback(query: string, cookies: string) {
@@ -79,6 +88,60 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.restoreAllMocks();
   await reset();
+});
+
+/**
+ * eccos-7jk: the departure. Pressing Connect WhatsApp used to land the operator
+ * on an unstyled gateway page that asked for a second click to reach Meta. The
+ * page is gone, but the cookies it set are load-bearing — everything below the
+ * first test exists to prove the redirect did not take them with it.
+ */
+describe("Embedded Signup hands off to Meta in one navigation", () => {
+  it("redirects to Meta's dialog with both cookies on the redirect response", async () => {
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const { url, state } = await rpc.startConnectForAccountId(accountId, CONSOLE_RETURN);
+
+    const res = await exports.default.fetch(url, { redirect: "manual" });
+
+    // No interstitial: the operator's click reaches Meta, not a page about Meta.
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.origin).toBe("https://www.facebook.com");
+    expect(location.pathname).toMatch(/\/dialog\/oauth$/);
+    expect(location.searchParams.get("state")).toBe(state);
+    expect(location.searchParams.get("redirect_uri")).toBe("https://gateway.example/connect");
+    expect(location.searchParams.get("response_type")).toBe("code");
+
+    // A redirect carries Set-Cookie like any other response. Both cookies the
+    // callback depends on have to be here, or the way home is gone.
+    const stateCookie = setCookie(res, "eccos_connect_state");
+    expect(stateCookie).toContain(`eccos_connect_state=${state}`);
+    const returnCookie = setCookie(res, "eccos_connect_return");
+    expect(returnCookie).toContain(encodeURIComponent(CONSOLE_RETURN));
+    for (const cookie of [stateCookie, returnCookie]) {
+      expect(cookie).toContain("HttpOnly");
+      expect(cookie).toContain("Secure");
+      // Lax, not Strict: Meta's callback is a cross-site top-level GET
+      // navigation, and Strict would withhold the cookie on exactly that hop.
+      expect(cookie).toContain("SameSite=Lax");
+      expect(cookie).toContain("Path=/connect");
+      expect(cookie).toContain("Max-Age=1800");
+    }
+    // A cached redirect would replay a spent state at Meta.
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    // Nothing to read: the response has no body to leak the state into.
+    expect(await res.text()).toBe("");
+  });
+
+  it("still redirects, and clears the mirror cookie, when no console asked for a way back", async () => {
+    // No console asked for a return, so the mirror cookie is actively cleared
+    // rather than left pointing at whatever the last flow used.
+    const { handoff } = await startFromConsole();
+
+    expect(handoff.status).toBe(302);
+    expect(handoff.headers.get("location")).toContain("facebook.com");
+    expect(setCookie(handoff, "eccos_connect_return")).toContain("Max-Age=0");
+  });
 });
 
 describe("Embedded Signup returns the operator to the console", () => {
@@ -158,6 +221,23 @@ describe("Embedded Signup returns the operator to the console", () => {
 
     expect(replay.status).toBe(303);
     expect(new URL(replay.headers.get("location") ?? "").searchParams.get("connectError")).toBe("state");
+  });
+
+  it("finds the way home on the mirror cookie alone when the state cookie expired", async () => {
+    // The expiry case, isolated: the operator sat on Meta's dialog past the
+    // 30-minute state cookie, so only the return cookie survives to the
+    // callback. Nothing else in the request can say where the console is.
+    mockGraph();
+    const { state, handoff } = await startFromConsole(CONSOLE_RETURN);
+    const returnOnly = setCookie(handoff, "eccos_connect_return").split(";")[0] ?? "";
+    expect(returnOnly).not.toContain("eccos_connect_state");
+
+    const res = await callback(`code=oauth-code&state=${encodeURIComponent(state)}`, returnOnly);
+
+    expect(res.status).toBe(303);
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.origin + location.pathname).toBe(CONSOLE_RETURN);
+    expect(location.searchParams.get("connectError")).toBe("state");
   });
 
   it("keeps the gateway's own result page when no console asked for a return", async () => {

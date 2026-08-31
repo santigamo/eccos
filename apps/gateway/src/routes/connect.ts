@@ -115,14 +115,32 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+/**
+ * The two HTML surfaces the gateway still owns are seen by self-hosters, not by
+ * console operators, so they stay deliberately plain — but plain is not the same
+ * as unfinished, and this repo is public.
+ */
+function htmlDocument(title: string, body: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)} — Eccos</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0 auto;padding:3rem 1.5rem;max-width:44rem;line-height:1.6;
+font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:1.5rem;margin:0 0 1rem}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.875rem}
+pre{padding:1rem;overflow-x:auto;border-radius:.5rem;background:rgba(127,127,127,.12)}
+</style></head>
+<body>
+<h1>${escapeHtml(title)}</h1>
+${body}
+</body></html>`;
+}
+
 function resultPage(result: MultiExchangeResult): string {
   const title = result.ok ? "Provisioning started" : "Connect failed";
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${title} — Eccos</title></head>
-<body>
-<h1>${title}</h1>
-<pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
-<p><a href="/connect">Back to /connect</a></p>
-</body></html>`;
+  return htmlDocument(title, `<pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`);
 }
 
 function oauthUrl(
@@ -149,13 +167,29 @@ function oauthUrl(
   return `https://www.facebook.com/${cfg.META_GRAPH_VERSION ?? "v24.0"}/dialog/oauth?${params.toString()}`;
 }
 
-function connectPage(oauthUrlValue: string, redirectUri: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Connect WhatsApp — Eccos</title></head>
-<body>
-<h1>Connect WhatsApp</h1>
-<p>Manual OAuth flow. Redirect URI: <code>${escapeHtml(redirectUri)}</code></p>
-<p><a href="${escapeHtml(oauthUrlValue)}">Connect WhatsApp (coexistence)</a></p>
-</body></html>`;
+/**
+ * What a browser gets when it opens `/connect` with nothing to go on: no state
+ * capability in the URL, and no API key (a top-level navigation cannot carry an
+ * `authorization` header, so this branch is never reachable *with* one).
+ *
+ * It is a signpost, not a step in the flow — it has no state to hand Meta, so it
+ * cannot offer a link to the dialog even if it wanted to. The self-host entry
+ * point it points at is `POST /connect/start`, which is the only way to mint the
+ * one-time URL that a browser can then open.
+ */
+function connectEntryPage(startUrl: string): string {
+  return htmlDocument(
+    "Connect WhatsApp",
+    `<p>This is the Meta Embedded Signup handoff for an Eccos gateway. It cannot be opened
+directly: the link has to be created first, against a specific account.</p>
+<p>In the operator console, use <strong>Connect WhatsApp</strong> — it creates the link and
+follows it for you.</p>
+<p>If you are self-hosting without a console, ask the gateway for a one-time link with your
+account API key and open the <code>url</code> it returns in this browser:</p>
+<pre>curl -X POST ${escapeHtml(startUrl)} \\
+  -H "authorization: Bearer $ECCOS_ACCOUNT_API_KEY"</pre>
+<p>The link is single-use and expires in 30 minutes.</p>`,
+  );
 }
 
 /**
@@ -532,7 +566,7 @@ export function connectRoutes() {
         c.req.header("x-api-key") ?? undefined,
       );
       if (!account) {
-        return c.html(resultPage({ ok: false, error: "unauthorized", code: "failed" }), 401);
+        return c.html(connectEntryPage(new URL("/connect/start", c.req.url).href), 401);
       }
       state = crypto.randomUUID();
       await getControlPlaneStub(c.env).startConnectState(
@@ -551,7 +585,25 @@ export function connectRoutes() {
       const message = error instanceof Error ? error.message : "connect is not configured";
       return finish(returnTo, { connectError: "failed" }, { ok: false, error: message, code: "failed" }, 503);
     }
-    return c.html(connectPage(oauthUrl(cfg, redirectUri, state), redirectUri));
+    // Hand off to Meta in the same navigation. The cookies set just above ride
+    // on this 302: `Set-Cookie` is stored from a redirect response like any
+    // other, and this request is a *top-level* navigation to the gateway's own
+    // origin, so they are first-party cookies, not the third-party kind a
+    // browser would drop (eccos-7jk).
+    //
+    // Their `SameSite=Lax` still holds on Meta's way back: the callback arrives
+    // as a cross-site top-level GET navigation, which is exactly the case Lax
+    // allows through. That leg is unchanged — a click on an interstitial link
+    // was also a cross-site top-level GET — so the mirror cookie keeps working
+    // on the expired and replayed paths it was built for (eccos-5z9).
+    //
+    // What the interstitial did buy, and this does not, is a user interaction on
+    // the gateway's own origin: both hops are now pure redirects, which is what
+    // browser bounce-tracking mitigations look for. Harmless as long as nothing
+    // here needs to outlive the flow — these cookies are 30-minute, single-use,
+    // and the callback deletes them — so do not start storing anything durable
+    // on this origin without rechecking that.
+    return c.redirect(oauthUrl(cfg, redirectUri, state), 302);
   });
 
   app.post("/connect/exchange", async (c) => {

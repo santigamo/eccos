@@ -208,7 +208,13 @@ describe("GET /connect OAuth state (F4a CSRF, route-level)", () => {
     const res = await app.request("http://localhost/connect", {}, makeEnv([]));
     expect(res.status).toBe(401);
     const body = await res.text();
-    expect(body).toContain("unauthorized");
+    // Not a dead end and not developer shorthand: the page names the one entry
+    // point a self-hoster can actually use from here (eccos-7jk).
+    expect(body).toContain("http://localhost/connect/start");
+    expect(body).toContain("ECCOS_ACCOUNT_API_KEY");
+    // Nothing to click through to Meta: this branch has no state to hand it.
+    expect(body).not.toContain("facebook.com");
+    expect(body).not.toContain("Manual OAuth flow");
   });
 
   it("sets an HttpOnly/Secure/SameSite=Lax state cookie on a public HTTPS origin", async () => {
@@ -218,7 +224,9 @@ describe("GET /connect OAuth state (F4a CSRF, route-level)", () => {
       { headers: { authorization: "Bearer account-key" } },
       makeEnv([]),
     );
-    expect(res.status).toBe(200);
+    // The cookie rides out on the redirect to Meta, not on an interstitial.
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("https://www.facebook.com/");
     const setCookie = res.headers.get("set-cookie");
     expect(setCookie).toContain(`${STATE_COOKIE_NAME}=`);
     expect(setCookie).toContain("HttpOnly");
@@ -235,8 +243,27 @@ describe("GET /connect OAuth state (F4a CSRF, route-level)", () => {
       { headers: { authorization: "Bearer account-key" } },
       makeEnv([]),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
     expect(res.headers.get("set-cookie")).not.toContain("Secure");
+  });
+
+  it("keeps the redirect to Meta uncacheable and body-free", async () => {
+    // A cached handoff would replay a spent state at Meta; a body would be a
+    // place for the state to leak into.
+    const app = connectRoutes();
+    const res = await app.request(
+      "https://gateway.example/connect",
+      { headers: { authorization: "Bearer account-key" } },
+      makeEnv([]),
+    );
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.text()).toBe("");
+    const state = extractCookieValue(res.headers.get("set-cookie"), STATE_COOKIE_NAME);
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.searchParams.get("state")).toBe(state);
+    expect(location.searchParams.get("redirect_uri")).toBe("https://gateway.example/connect");
+    expect(location.searchParams.get("client_id")).toBe("app-id");
+    expect(location.searchParams.get("config_id")).toBe("es-config-id");
   });
 
   it("rejects the callback when state is missing entirely (no config write)", async () => {

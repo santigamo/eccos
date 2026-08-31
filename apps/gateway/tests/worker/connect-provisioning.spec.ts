@@ -91,7 +91,10 @@ let accountId = "";
 async function startFromConsole(): Promise<{ state: string; cookies: string }> {
   const rpc = new GatewayRPC(createExecutionContext(), env);
   const { url, state } = await rpc.startConnectForAccountId(accountId, CONSOLE_RETURN);
-  const handoff = await exports.default.fetch(url);
+  // `redirect: "manual"` is required: the handoff is now a 302 to Meta
+  // (eccos-7jk), and following it would swallow the cookies it just set.
+  const handoff = await exports.default.fetch(url, { redirect: "manual" });
+  expect(handoff.status).toBe(302);
   return { state, cookies: handoff.headers.getSetCookie().join("; ") };
 }
 

@@ -651,8 +651,11 @@ describe("account-scoped control plane", () => {
     expect(handoffBody.url).toContain("/connect?state=");
     expect(handoffBody.expiresAt).toBeGreaterThan(Date.now());
 
-    const start = await exports.default.fetch(handoffBody.url);
-    expect(start.status).toBe(200);
+    // The handoff URL redirects straight to Meta's dialog, setting the CSRF
+    // cookie on the way out (eccos-7jk).
+    const start = await exports.default.fetch(handoffBody.url, { redirect: "manual" });
+    expect(start.status).toBe(302);
+    expect(start.headers.get("location")).toContain("/dialog/oauth?");
     const cookie = start.headers.get("set-cookie");
     expect(cookie).toBeTruthy();
     const state = cookie?.match(/eccos_connect_state=([^;]+)/)?.[1];
@@ -751,7 +754,7 @@ describe("account-scoped control plane", () => {
     const handoff = await accountApi(account.apiKey)("/connect/start", { method: "POST" });
     expect(handoff.status).toBe(200);
     const { url } = (await handoff.json()) as { url: string };
-    const start = await exports.default.fetch(url);
+    const start = await exports.default.fetch(url, { redirect: "manual" });
     const state = start.headers.get("set-cookie")?.match(/eccos_connect_state=([^;]+)/)?.[1];
     expect(state).toBeTruthy();
     const callback = await exports.default.fetch(

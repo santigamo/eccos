@@ -41,11 +41,13 @@ curl -X POST https://<gateway>/connect/start \
   -H "authorization: Bearer $ECCOS_ACCOUNT_API_KEY"
 ```
 
-Open the `url` from the response in a browser. The URL carries a one-time state capability; the
-browser-only `GET /connect` page sets the CSRF cookie before redirecting to Meta. The callback
-consumes that state once, so the resulting WABAs and phones cannot be assigned to another account
-by changing a callback parameter. Treat the URL as account-scoped and do not forward it to an
-operator for a different account. Backend integrations may call `POST /connect/exchange` directly
+Open the `url` from the response in a browser. The URL carries a one-time state capability;
+`GET /connect` sets the CSRF cookie and redirects straight to Meta's dialog — there is no page in
+between and nothing to click twice. The callback consumes that state once, so the resulting WABAs
+and phones cannot be assigned to another account by changing a callback parameter. Treat the URL
+as account-scoped and do not forward it to an operator for a different account. Opening
+`GET /connect` with neither a state nor an API key just explains how to mint that link; it is a
+signpost, not a step in the flow. Backend integrations may call `POST /connect/exchange` directly
 with the same account key.
 
 Every available WABA and phone returned by the Meta token is registered under that account. If
