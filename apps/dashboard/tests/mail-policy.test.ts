@@ -262,8 +262,8 @@ describe("no raw token ever leaves in a header", () => {
     const { auth } = await createTestAuth(
       new ReccadoMailSender({
         RECCADO_API_KEY: "rc_test_key_123",
-        RECCADO_BASE_URL: "https://reccado.example.workers.dev",
-        RECCADO_MAILBOX_ID: "mbx_42",
+        RECCADO_ENDPOINT:
+          "https://reccado.example.workers.dev/v1/mailboxes/mbx_42/transactional/messages",
       }),
     );
     const response = await signUp(auth, "ada@example.com");

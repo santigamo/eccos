@@ -85,8 +85,7 @@ Deploy one customer dashboard Worker. The WABA each RPC call targets is resolved
 organization's account registry — operators can switch between the account's owned WABAs with the
 header picker (or a `?wabaId=<owned-WABA>` URL).
 
-Set the production secrets (`BETTER_AUTH_SECRET`, `RECCADO_API_KEY`) plus the mail vars that
-accompany the key (`RECCADO_BASE_URL`, `RECCADO_MAILBOX_ID` — see
+Set the production secrets (`BETTER_AUTH_SECRET`, `RECCADO_API_KEY`, `RECCADO_ENDPOINT` — see
 [docs/auth-email-delivery.md](../../docs/auth-email-delivery.md)), apply the remote D1 schema,
 then deploy:
 
@@ -118,13 +117,12 @@ Production secrets (Worker secrets, set with `wrangler secret put`):
 
 - `BETTER_AUTH_SECRET` — auth secret (>= 32 chars)
 - `RECCADO_API_KEY` — transactional email (see `docs/auth-email-delivery.md`)
-
-Accompanying non-secret vars (the mail adapter fails closed without them once the key is set):
-
-- `RECCADO_BASE_URL` — provider origin; configuration rather than a constant, because the
-  provider's custom domain is behind Cloudflare Access and answers only on its `workers.dev`
-  host today
-- `RECCADO_MAILBOX_ID` — sending mailbox, which also determines the sending identity
+- `RECCADO_ENDPOINT` — the full message endpoint,
+  `https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`. One value rather than a
+  host plus a mailbox id, because the key already binds to exactly one mailbox and a second,
+  disagreeing id surfaces as `403 invalid_api_key` — blaming the key rather than the pairing.
+  A secret rather than a var because it carries the provider host and `wrangler.jsonc` is in a
+  public repo. The adapter validates it and fails closed on boot once the key is set
 
 Apply the auth schema before serving traffic: `bun run db:migrate:local` for
 local development; `wrangler d1 migrations apply eccos-auth --remote` for

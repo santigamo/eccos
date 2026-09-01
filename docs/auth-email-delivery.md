@@ -160,21 +160,47 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 ```bash
 cd apps/dashboard
 wrangler secret put RECCADO_API_KEY     # provider API key
+wrangler secret put RECCADO_ENDPOINT    # full message endpoint (see below)
 wrangler secret put BETTER_AUTH_SECRET
 ```
 
-Non-secret vars (`apps/dashboard/wrangler.jsonc` → `vars`, or the deploy helper):
+`RECCADO_ENDPOINT` is the whole message endpoint, mailbox id included:
 
-- `RECCADO_BASE_URL` — the provider origin. **Configuration, not a constant:**
-  the provider's custom domain currently sits behind Cloudflare Access and
-  answers only on its `workers.dev` host. The contract is identical on both, so
-  which origin this deployment talks to is a deploy-time decision; hardcoding
-  either one would strand the deployment the moment the other becomes live.
-- `RECCADO_MAILBOX_ID` — the mailbox the transactional messages are sent from.
-  It also determines the sending identity, so there is no `MAIL_FROM` any more.
+```
+https://<host>/v1/mailboxes/<mailboxId>/transactional/messages
+```
 
-The adapter fails closed if the key is set but either var is missing: a key
-without an endpoint is a half-configured deployment, not a degraded one.
+**One setting, not a host plus a mailbox id.** An API key addresses exactly one
+mailbox — the binding is fixed when the key is minted, from the owning Durable
+Object's name, and there is no way to mint a multi-mailbox key. A separate
+mailbox id could therefore only ever agree with the key or contradict it: it
+adds no information, only a way to be wrong. And it is wrong *misleadingly*,
+because keys live inside the owning mailbox's own Durable Object: a key minted
+for mailbox A, presented against mailbox B's path, is looked up in B's storage,
+is simply absent, and comes back **`403 invalid_api_key`** — so the operator is
+told their key is bad when what is actually bad is their pairing. Carrying one
+value makes that failure unreachable. Do not split it back apart.
+
+The host stays configuration rather than a constant: the provider's custom
+domain currently sits behind Cloudflare Access and answers only on its
+`workers.dev` host, the contract is identical on both, and hardcoding either
+would strand the deployment the moment the other becomes live.
+
+It is a **secret, not a var**: it carries the provider host, and
+`apps/dashboard/wrangler.jsonc` is in a public repo — the Cloudflare account
+subdomain deliberately stays out of it.
+
+The adapter validates the value at construction and fails closed: it must be an
+absolute URL, `https` (`http` only on `localhost`/`127.0.0.1`/`[::1]`, the same
+carve-out `validatePublicOrigin` makes in `apps/gateway`), and it must carry no
+credentials, query string, or fragment. A malformed endpoint refuses to boot
+rather than failing at the first send. A key without an endpoint is likewise a
+half-configured deployment, not a degraded one.
+
+There is no separate status-lookup setting, and there must never be one: the
+provider's status endpoint is this same string plus `/<requestId>`. The adapter
+has no status lookup today (a `504 unknown` is terminal by design), so if one is
+ever added it derives its URL that way.
 
 ### Inbound events (bounces / complaints)
 

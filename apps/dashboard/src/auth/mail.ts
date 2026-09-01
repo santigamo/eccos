@@ -301,11 +301,14 @@ export interface MailEnv {
   /** Worker SECRET. Absent = development console sender. */
   RECCADO_API_KEY?: string;
   /**
-   * Var, not a constant: the provider's custom domain is behind Cloudflare
-   * Access and answers only on its workers.dev host today. The contract is
-   * identical on both, so the origin has to be configuration.
+   * Worker SECRET: the full message endpoint,
+   * `https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`.
+   *
+   * One value rather than a host plus a mailbox id, because the key already
+   * determines the mailbox — see `validateEndpoint` in `mail-reccado.ts` for
+   * why splitting it apart can only introduce a misreported failure. It is a
+   * secret rather than a var because it carries the provider host and
+   * `apps/dashboard/wrangler.jsonc` is in a public repo.
    */
-  RECCADO_BASE_URL?: string;
-  /** Var: the mailbox the transactional messages are sent from. */
-  RECCADO_MAILBOX_ID?: string;
+  RECCADO_ENDPOINT?: string;
 }

@@ -6,7 +6,7 @@
  *
  * The frozen contract:
  *
- *   POST <base>/v1/mailboxes/{mailboxId}/transactional/messages
+ *   POST <RECCADO_ENDPOINT>                 # …/v1/mailboxes/{id}/transactional/messages
  *   Authorization: Bearer <key>
  *   Idempotency-Key: <caller-chosen, MANDATORY — 400 without it>
  *   Content-Type: application/json          # 415 otherwise; 100 KB body cap
@@ -41,14 +41,17 @@ import {
   type SendOutcome,
 } from "./mail";
 
-/** Env bindings/secrets the adapter reads. */
+/** Env bindings/secrets the adapter reads. Both are Worker secrets. */
 export interface ReccadoMailEnv {
   /** Worker secret. */
   RECCADO_API_KEY?: string;
-  /** Provider origin — configuration, never a constant (see below). */
-  RECCADO_BASE_URL?: string;
-  /** Mailbox the transactional messages are sent from. */
-  RECCADO_MAILBOX_ID?: string;
+  /**
+   * Full message endpoint, e.g.
+   * `https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`.
+   * A Worker secret rather than a var: it carries the provider host, and
+   * `apps/dashboard/wrangler.jsonc` lives in a public repo.
+   */
+  RECCADO_ENDPOINT?: string;
 }
 
 /**
@@ -77,23 +80,20 @@ export class ReccadoMailSender implements MailSender {
       // Fail closed: a configured-but-unkeyed deployment must not boot.
       throw new Error("RECCADO_API_KEY must be configured for the mail adapter");
     }
-    // The base URL is CONFIGURATION, not a constant: the provider's custom
-    // domain currently sits behind Cloudflare Access and answers only on its
-    // workers.dev host. The contract is identical on both, so which origin we
-    // talk to is a deployment decision — hardcoding either one would strand
-    // this deployment the moment the other becomes the live one.
-    const baseUrl = env.RECCADO_BASE_URL?.trim();
-    if (!baseUrl) {
-      throw new Error("RECCADO_BASE_URL must be configured for the mail adapter");
-    }
-    const mailboxId = env.RECCADO_MAILBOX_ID?.trim();
-    if (!mailboxId) {
-      throw new Error("RECCADO_MAILBOX_ID must be configured for the mail adapter");
+    // The endpoint is CONFIGURATION, not a constant: the provider's custom
+    // domain sits behind Cloudflare Access and answers only on its workers.dev
+    // host today. The contract is identical on both, so which host we talk to
+    // is a deployment decision — hardcoding either one would strand this
+    // deployment the moment the other becomes the live one.
+    const endpoint = env.RECCADO_ENDPOINT?.trim();
+    if (!endpoint) {
+      throw new Error("RECCADO_ENDPOINT must be configured for the mail adapter");
     }
     this.apiKey = apiKey;
-    this.endpoint = `${baseUrl.replace(/\/$/, "")}/v1/mailboxes/${encodeURIComponent(
-      mailboxId,
-    )}/transactional/messages`;
+    // Validated at construction, not at the first send: a malformed endpoint is
+    // a broken deployment, and it should refuse to boot rather than wait for a
+    // user-visible email to fail.
+    this.endpoint = validateEndpoint(endpoint);
   }
 
   async sendTemplate(msg: MailTemplateMessage): Promise<SendOutcome> {
@@ -126,6 +126,58 @@ export class ReccadoMailSender implements MailSender {
 
     return mapResponse(response.status, await readBody(response));
   }
+}
+
+/**
+ * Validate the one configured endpoint, and fail closed on anything malformed.
+ *
+ * WHY THIS IS ONE SETTING AND NOT TWO (a host plus a mailbox id): one API key
+ * addresses exactly one mailbox. The binding is fixed when the key is minted,
+ * from the owning Durable Object's name, and there is no way to mint a
+ * multi-mailbox key — so a separate mailbox id could only ever agree with the
+ * key or contradict it. It cannot add information; it can only add a mistake.
+ *
+ * And that mistake is reported misleadingly. Keys are stored inside the owning
+ * mailbox's own Durable Object, so a key minted for mailbox A presented against
+ * mailbox B's path is looked up in B's storage, is simply absent, and comes back
+ * `403 invalid_api_key` — not a binding-mismatch error. The operator is told
+ * their key is wrong when what is actually wrong is their pairing. Carrying one
+ * value makes that failure unreachable, which is the whole point: do NOT
+ * "improve" this back into a base URL plus a mailbox id.
+ *
+ * NOTE: there is no status-lookup setting either, and there must never be one —
+ * the provider's status endpoint is this exact string plus `/<requestId>`. The
+ * adapter has no status lookup today (a `504 unknown` is terminal by design; see
+ * the file header), so if one is ever added it derives its URL that way.
+ */
+function validateEndpoint(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("RECCADO_ENDPOINT must be an absolute URL");
+  }
+  // The same local-development carve-out the gateway applies in
+  // `validatePublicOrigin` (apps/gateway/src/routes/connect.ts): https
+  // everywhere, http only on the loopback hosts. One convention, not two.
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(
+    parsed.hostname.toLowerCase(),
+  );
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local)) {
+    throw new Error("RECCADO_ENDPOINT must use https (http only on localhost)");
+  }
+  if (parsed.username || parsed.password) {
+    // Credentials in the URL would ride along in logs and error messages; the
+    // API key belongs in the Authorization header and nowhere else.
+    throw new Error("RECCADO_ENDPOINT must not carry credentials in the URL");
+  }
+  if (parsed.search || parsed.hash) {
+    // A status URL is this string plus `/<requestId>`; a query or fragment here
+    // would not survive that concatenation.
+    throw new Error("RECCADO_ENDPOINT must not carry a query string or fragment");
+  }
+  // A trailing slash would double up under that same concatenation.
+  return parsed.href.replace(/\/$/, "");
 }
 
 /**

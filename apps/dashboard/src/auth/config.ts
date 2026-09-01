@@ -31,17 +31,16 @@ export interface AuthEnv {
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
   RECCADO_API_KEY?: string;
-  RECCADO_BASE_URL?: string;
-  RECCADO_MAILBOX_ID?: string;
+  RECCADO_ENDPOINT?: string;
 }
 
 /**
  * Mail adapter selection: the reccado sender is used only when the deployment
  * configures `RECCADO_API_KEY` (Worker secret) — otherwise the development
  * console sender is used, so no provider is needed locally. The adapter then
- * fails closed if the accompanying vars (`RECCADO_BASE_URL`,
- * `RECCADO_MAILBOX_ID`) are missing: a key without an endpoint is a
- * half-configured deployment, not a degraded one.
+ * fails closed if the accompanying `RECCADO_ENDPOINT` secret is missing or
+ * malformed: a key without an endpoint is a half-configured deployment, not a
+ * degraded one.
  *
  * Provider wiring (mailbox, templates, DNS, DPA) is documented in
  * `docs/auth-email-delivery.md` (eccos-3ne).

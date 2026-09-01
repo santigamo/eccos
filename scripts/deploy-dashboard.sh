@@ -6,12 +6,15 @@ set -euo pipefail
 # Required in production (Worker secrets — set once with `wrangler secret put`):
 #   BETTER_AUTH_SECRET — auth secret (>= 32 chars)
 #   RECCADO_API_KEY    — mail provider key (docs/auth-email-delivery.md)
-# Vars that accompany the mail key (the adapter fails closed without them):
-#   RECCADO_BASE_URL   — provider origin. Configuration, not a constant: the
-#                        custom domain is behind Cloudflare Access and answers
-#                        only on its workers.dev host today.
-#   RECCADO_MAILBOX_ID — sending mailbox (also the sending identity; there is
-#                        no MAIL_FROM any more)
+#   RECCADO_ENDPOINT   — full message endpoint, mailbox id and all:
+#                        https://<host>/v1/mailboxes/<mailboxId>/transactional/messages
+#                        One value, not a host plus an id: the key already binds
+#                        to exactly one mailbox, so a second id could only ever
+#                        disagree — and a disagreement reads as
+#                        `403 invalid_api_key`, blaming the key, not the pairing.
+#                        A secret, not a --var: it carries the provider host and
+#                        wrangler.jsonc is in a public repo. The adapter
+#                        validates it and fails closed on boot.
 #
 # The auth D1 schema must exist before traffic is served:
 #   cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote
@@ -28,16 +31,7 @@ if [[ -f "$ROOT/.env" ]]; then
 fi
 
 cd "$ROOT/apps/dashboard"
-wrangler_args=()
-if [[ -n "${RECCADO_BASE_URL:-}" ]]; then
-  wrangler_args+=(--var "RECCADO_BASE_URL:$RECCADO_BASE_URL")
-fi
-if [[ -n "${RECCADO_MAILBOX_ID:-}" ]]; then
-  wrangler_args+=(--var "RECCADO_MAILBOX_ID:$RECCADO_MAILBOX_ID")
-fi
-
-if (( ${#wrangler_args[@]} > 0 )); then
-  wrangler deploy "${wrangler_args[@]}" "$@"
-else
-  wrangler deploy "$@"
-fi
+# No --var plumbing: every mail setting is a Worker secret now, set once with
+# `wrangler secret put` (see the header). Nothing about the provider belongs in
+# the public wrangler.jsonc or in a deploy command line.
+wrangler deploy "$@"

@@ -20,10 +20,12 @@ import {
 import { ReccadoMailSender } from "../src/auth/mail-reccado";
 import { createMailSenderFromEnv } from "../src/auth/config";
 
+const ENDPOINT =
+  "https://reccado.example.workers.dev/v1/mailboxes/mbx_42/transactional/messages";
+
 const ENV = {
   RECCADO_API_KEY: "rc_test_key_123",
-  RECCADO_BASE_URL: "https://reccado.example.workers.dev",
-  RECCADO_MAILBOX_ID: "mbx_42",
+  RECCADO_ENDPOINT: ENDPOINT,
 };
 
 interface Captured {
@@ -84,19 +86,68 @@ describe("configuration", () => {
     );
   });
 
-  test("fails closed without a base URL — the origin is configuration, not a constant", () => {
+  test("fails closed without an endpoint — it is configuration, not a constant", () => {
     // The provider's custom domain is behind Cloudflare Access and answers only
-    // on its workers.dev host today; a hardcoded origin would strand the
+    // on its workers.dev host today; a hardcoded host would strand the
     // deployment the moment the other one becomes live.
-    expect(() => new ReccadoMailSender({ ...ENV, RECCADO_BASE_URL: "" })).toThrow(
-      /RECCADO_BASE_URL/,
+    expect(() => new ReccadoMailSender({ ...ENV, RECCADO_ENDPOINT: "" })).toThrow(
+      /RECCADO_ENDPOINT/,
     );
   });
 
-  test("fails closed without a mailbox id", () => {
-    expect(() => new ReccadoMailSender({ ...ENV, RECCADO_MAILBOX_ID: "" })).toThrow(
-      /RECCADO_MAILBOX_ID/,
-    );
+  // The endpoint is ONE setting: the key already determines the mailbox, and a
+  // second, disagreeing id is reported as `403 invalid_api_key` — blaming the
+  // key rather than the pairing. So the value is validated whole, at
+  // construction, and a broken deployment refuses to boot.
+  test("fails closed on a non-absolute endpoint", () => {
+    expect(
+      () =>
+        new ReccadoMailSender({
+          ...ENV,
+          RECCADO_ENDPOINT: "/v1/mailboxes/mbx_42/transactional/messages",
+        }),
+    ).toThrow(/RECCADO_ENDPOINT must be an absolute URL/);
+  });
+
+  test("fails closed on a non-local http endpoint", () => {
+    expect(
+      () =>
+        new ReccadoMailSender({
+          ...ENV,
+          RECCADO_ENDPOINT: ENDPOINT.replace("https:", "http:"),
+        }),
+    ).toThrow(/RECCADO_ENDPOINT must use https/);
+  });
+
+  test("fails closed on an endpoint carrying credentials", () => {
+    expect(
+      () =>
+        new ReccadoMailSender({
+          ...ENV,
+          RECCADO_ENDPOINT: ENDPOINT.replace("https://", "https://user:secret@"),
+        }),
+    ).toThrow(/RECCADO_ENDPOINT must not carry credentials/);
+  });
+
+  test("fails closed on an endpoint carrying a query string", () => {
+    // A status lookup is this string plus `/<requestId>`; a query would not
+    // survive that concatenation, so it can never be a third setting either.
+    expect(
+      () => new ReccadoMailSender({ ...ENV, RECCADO_ENDPOINT: `${ENDPOINT}?mailbox=other` }),
+    ).toThrow(/RECCADO_ENDPOINT must not carry a query string/);
+  });
+
+  test("http is allowed on the loopback hosts, as the gateway allows it", () => {
+    // Same carve-out as `validatePublicOrigin` in apps/gateway — one convention.
+    for (const host of ["localhost:8787", "127.0.0.1:8787", "[::1]:8787"]) {
+      expect(
+        () =>
+          new ReccadoMailSender({
+            ...ENV,
+            RECCADO_ENDPOINT: `http://${host}/v1/mailboxes/mbx_42/transactional/messages`,
+          }),
+      ).not.toThrow();
+    }
   });
 
   test("no key configured selects the development console sender", () => {
@@ -115,9 +166,7 @@ describe("request shape", () => {
     await send({ idempotencyKey: "b".repeat(64) });
 
     const request = captured[0]!;
-    expect(request.url).toBe(
-      "https://reccado.example.workers.dev/v1/mailboxes/mbx_42/transactional/messages",
-    );
+    expect(request.url).toBe(ENDPOINT);
     expect(request.method).toBe("POST");
     expect(request.headers.authorization).toBe(`Bearer ${ENV.RECCADO_API_KEY}`);
     // MANDATORY — the provider answers 400 without it.
@@ -128,18 +177,19 @@ describe("request shape", () => {
     expect(request.body.to).toBe("user@example.com");
   });
 
-  test("a trailing slash on the base URL does not double up", async () => {
+  test("a trailing slash on the endpoint is normalised away", async () => {
+    // It would otherwise double up under the `/<requestId>` status derivation.
     mockProvider(200, { status: "sent" });
     await new ReccadoMailSender({
       ...ENV,
-      RECCADO_BASE_URL: "https://reccado.example.workers.dev/",
+      RECCADO_ENDPOINT: `${ENDPOINT}/`,
     }).sendTemplate({
       template: "verify-email",
       to: "user@example.com",
       variables: { name: "Ada", url: "https://app.eccos.chat/verify-email?token=t" },
       idempotencyKey: "c".repeat(64),
     });
-    expect(captured[0]!.url).not.toContain("//v1/");
+    expect(captured[0]!.url).toBe(ENDPOINT);
   });
 });
 

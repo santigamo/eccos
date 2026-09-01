@@ -16,15 +16,19 @@ declare global {
       /** Optional explicit base URL; defaults to the canonical customer origin. */
       BETTER_AUTH_URL?: string;
       /**
-       * Mail adapter inputs — provider: reccado (eccos-3ne). The API key is a
-       * Worker SECRET; the origin and mailbox are plain vars. The origin is
-       * configuration rather than a constant because the provider's custom
-       * domain sits behind Cloudflare Access and answers only on its
-       * workers.dev host today (the contract is identical on both).
+       * Mail adapter inputs — provider: reccado (eccos-3ne). BOTH are Worker
+       * SECRETS, not vars: the endpoint carries the provider host and
+       * `apps/dashboard/wrangler.jsonc` is in a public repo, so the Cloudflare
+       * account subdomain deliberately stays out of it.
+       *
+       * `RECCADO_ENDPOINT` is the whole message endpoint
+       * (`https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`), not
+       * a host plus a mailbox id: the key already determines the mailbox, so a
+       * separate id could only ever disagree — and disagreement is reported as
+       * `403 invalid_api_key`, blaming the key rather than the pairing.
        */
       RECCADO_API_KEY?: string;
-      RECCADO_BASE_URL?: string;
-      RECCADO_MAILBOX_ID?: string;
+      RECCADO_ENDPOINT?: string;
     }
   }
 }
