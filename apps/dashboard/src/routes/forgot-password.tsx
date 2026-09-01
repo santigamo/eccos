@@ -8,7 +8,13 @@ import {
   FrameHeader,
   FrameTitle,
 } from "../components/reui/frame";
-import { AuthCard, authErrorMessage, AUTH_ERROR_BANNER_CLASS } from "../components/auth/auth-page";
+import {
+  AddressReadback,
+  AuthCard,
+  authErrorMessage,
+  AUTH_ERROR_BANNER_CLASS,
+} from "../components/auth/auth-page";
+import { AUTH_LINK_EXPIRY_LABEL } from "../auth/mail";
 
 type ForgotSearch = { error?: string; sent?: string };
 
@@ -29,10 +35,18 @@ function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  // Submitting used to navigate to ?sent=1, which threw the typed address away
+  // on the reload — so the screen could not read it back. It stays in state
+  // instead. The search param is still honoured for an old bookmarked link;
+  // that path simply has no address to show, and the address NEVER travels in
+  // the URL (it is personal data, and query strings are logged everywhere).
+  const [submitted, setSubmitted] = useState(false);
+  const [sentEmail, setSentEmail] = useState("");
+  const showSent = submitted || Boolean(sent);
 
   useEffect(() => {
-    document.title = sent ? "Check your inbox · Eccos" : "Forgot password · Eccos";
-  }, [sent]);
+    document.title = showSent ? "Check your inbox · Eccos" : "Forgot password · Eccos";
+  }, [showSent]);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -48,21 +62,35 @@ function ForgotPasswordPage() {
       return;
     }
     // Generic response either way (anti-enumeration, contract §8).
-    window.location.assign("/forgot-password?sent=1");
+    setSentEmail(email);
+    setSubmitted(true);
   }
 
   return (
     <AuthCard title="Reset your password">
-      {sent ? (
+      {showSent ? (
         <>
           <FrameHeader>
             <FrameTitle>Check your inbox</FrameTitle>
             <FrameDescription>
-              If that address exists in our system, a reset link is on its
-              way. The link expires after a limited time.
+              If that address exists in our system, a reset link is on its way
+              and is valid for {AUTH_LINK_EXPIRY_LABEL}.
             </FrameDescription>
           </FrameHeader>
-          <a href="/signin" className="text-muted-foreground text-sm hover:text-foreground">
+          {/* "You entered", never "Sent to": this screen must not confirm that
+              an account exists (contract §8), and "sent" would. Reading the
+              address back is still worth it — a typo is the reader's own most
+              likely mistake, and it is the one they can fix. */}
+          {sentEmail ? (
+            <AddressReadback label="You entered" email={sentEmail} />
+          ) : null}
+          {/* FramePanel is plain block flow, not a flex column with a gap:
+              the readback above ends flush, so the link carries its own top
+              margin (and `inline-block` for the margin to apply at all). */}
+          <a
+            href="/signin"
+            className="text-muted-foreground mt-4 inline-block text-sm hover:text-foreground"
+          >
             Back to sign in
           </a>
         </>

@@ -9,7 +9,9 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { AUTH_LINK_EXPIRY_LABEL } from "@/auth/mail";
 import {
+  AddressReadback,
   AUTH_ERROR_BANNER_CLASS,
   mailUndeliverableMessage,
   ResendNote,
@@ -149,15 +151,22 @@ export function SignUpView() {
                     numbers-table / connect-outcome): it maps to role="status"
                     but is inline by default, so it carries `block` to keep the
                     paragraph box it replaces. */}
+                {/* The address is NOT named here: it renders below as a datum
+                    the reader can check character by character (AddressReadback).
+                    Naming it in both places would say it twice — and this
+                    element is the live region, so it would also be announced
+                    twice. */}
                 <output
                   aria-live="polite"
                   aria-atomic="true"
                   className="text-muted-foreground block text-base text-pretty"
                 >
-                  We sent a verification link to {sentEmail}. Verify your
-                  address, then sign in. The link expires after a limited time.
+                  We sent you a verification link. Open it to verify your
+                  address, then sign in — the link is valid for{" "}
+                  {AUTH_LINK_EXPIRY_LABEL}.
                 </output>
               </div>
+              <AddressReadback label="Sent to" email={sentEmail} />
             </div>
             {/* Explicit margins instead of a flex `gap`: the resend note's live
                 region stays mounted while empty (so it can announce), and a gap

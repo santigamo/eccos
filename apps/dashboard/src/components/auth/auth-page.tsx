@@ -200,6 +200,52 @@ export function ResendNote({ outcome }: { outcome: ResendOutcome | null }) {
   );
 }
 
+/**
+ * The address a link was just sent to (or that the reader just typed), lifted
+ * out of the sentence and rendered as a datum.
+ *
+ * WHY IT LEAVES THE PROSE: this is the one string on a check-your-inbox screen
+ * that has to be read character by character. A typo in it is the single most
+ * common reason the mail never arrives and the only failure the reader can fix
+ * themselves — and buried mid-paragraph in the body face it reads as prose and
+ * gets skimmed. Under a functional label it reads as a value to be checked.
+ *
+ * WHY THE PIXEL FACE: docs/DASHBOARD-DESIGN.md reserves Geist Pixel for brand
+ * accents — "low frequency, high meaning" — and the facts-strip stat numbers
+ * are the standing precedent for a *datum* in it. This is that category: one
+ * value, seen once, that must be read exactly, on a screen the operator sees
+ * at most twice in their life. The face's fixed grid is also what separates
+ * `rn` from `m` and `l` from `1`. `text-sm` (14px) clears the 12px pixel floor.
+ * The label stays in the console's functional register (Inter uppercase 11px),
+ * so the accent is spent on the value alone.
+ *
+ * The label is a prop because the two callers make different claims: sign-up
+ * knows the message went to that address, while the password-reset screen must
+ * not say so — its whole posture is that it will not confirm the address
+ * exists (contract §8). It reads back what was typed, and says only that.
+ */
+export function AddressReadback({
+  label,
+  email,
+}: {
+  label: string;
+  email: string;
+}) {
+  return (
+    <div className="border-t border-(--line) pt-3">
+      <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+        {label}
+      </p>
+      {/* An address is one long token with no spaces to break on;
+          `wrap-anywhere` keeps a long one inside the column instead of
+          widening the card past its max-width. */}
+      <p className="font-pixel mt-1.5 text-sm text-foreground wrap-anywhere">
+        {email}
+      </p>
+    </div>
+  );
+}
+
 export interface AuthCardProps {
   /** Page title (h1) rendered by the shared Page header. */
   title: string;

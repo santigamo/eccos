@@ -59,6 +59,22 @@ export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
   "invite-member": INVITE_MEMBER_VARIABLES,
 };
 
+/**
+ * How long a verification or password-reset link stays valid, in seconds.
+ *
+ * PINNED HERE AND IMPORTED BY BOTH SIDES because the number is a promise the
+ * screens make out loud: check-your-inbox and the expired-link notice tell the
+ * reader how long they have. Better Auth's defaults happen to be the same
+ * 3600s today (`createEmailVerificationToken`'s `expiresIn = 3600` and
+ * `resetPasswordTokenExpiresIn || 3600 * 1`) — but a default is not a contract,
+ * and leaving it implicit is exactly how copy and server drift apart in
+ * silence. ./auth.ts passes this to both options; the pages render the label.
+ */
+export const AUTH_LINK_EXPIRY_SECONDS = 60 * 60;
+
+/** The same duration written the way a screen says it. Keep the two in step. */
+export const AUTH_LINK_EXPIRY_LABEL = "one hour";
+
 /** Why a message definitively will not arrive. */
 export type UndeliverableReason = "permanent_failure" | "recipient_suppressed";
 

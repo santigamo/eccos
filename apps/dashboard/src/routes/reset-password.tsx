@@ -8,6 +8,7 @@ import {
   FrameTitle,
 } from "../components/reui/frame";
 import { AuthCard, authErrorMessage, AUTH_ERROR_BANNER_CLASS } from "../components/auth/auth-page";
+import { AUTH_LINK_EXPIRY_LABEL } from "../auth/mail";
 import { PasswordField } from "../components/auth/password-field";
 
 type ResetSearch = { token?: string; error?: string };
@@ -102,7 +103,7 @@ function ResetPasswordPage() {
             </FrameTitle>
             <FrameDescription>
               {staleToken
-                ? "That reset link is invalid or has expired. Request a new one — links expire after a limited time."
+                ? `That reset link is invalid or has expired. Request a new one — a link is valid for ${AUTH_LINK_EXPIRY_LABEL}.`
                 : "This page needs the link from your reset email. Request a new one from the forgot-password page."}
             </FrameDescription>
           </FrameHeader>

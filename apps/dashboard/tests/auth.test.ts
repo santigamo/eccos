@@ -13,7 +13,11 @@ import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { createAuth, buildInvitationAcceptLink } from "../src/auth/auth";
-import { CaptureMailSender } from "../src/auth/mail";
+import {
+  AUTH_LINK_EXPIRY_LABEL,
+  AUTH_LINK_EXPIRY_SECONDS,
+  CaptureMailSender,
+} from "../src/auth/mail";
 import { authConfigFromEnv } from "../src/auth/config";
 
 const SECRET = "test-secret-32-chars-minimum-length!!";
@@ -336,5 +340,27 @@ describe("authConfigFromEnv", () => {
       "http://localhost:5173",
       "http://127.0.0.1:5173",
     ]);
+  });
+});
+
+/**
+ * The check-your-inbox and expired-link screens quote the link lifetime out
+ * loud ("valid for one hour"). That sentence is only true while the server
+ * agrees, and better-auth supplies its own default the moment either option is
+ * left unset — so the promise is pinned to one constant and asserted here.
+ * If someone changes the lifetime, this test makes them change the words too.
+ */
+describe("verification and reset link lifetime", () => {
+  test("both token lifetimes come from the shared constant, not a framework default", async () => {
+    const { auth } = await createTestAuth();
+    expect(auth.options.emailVerification?.expiresIn).toBe(AUTH_LINK_EXPIRY_SECONDS);
+    expect(auth.options.emailAndPassword?.resetPasswordTokenExpiresIn).toBe(
+      AUTH_LINK_EXPIRY_SECONDS,
+    );
+  });
+
+  test("the label the screens render says the same duration", () => {
+    expect(AUTH_LINK_EXPIRY_SECONDS).toBe(60 * 60);
+    expect(AUTH_LINK_EXPIRY_LABEL).toBe("one hour");
   });
 });

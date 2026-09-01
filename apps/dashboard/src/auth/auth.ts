@@ -14,6 +14,7 @@
 import { betterAuth } from "better-auth";
 import { organization, twoFactor } from "better-auth/plugins";
 import {
+  AUTH_LINK_EXPIRY_SECONDS,
   deriveIdempotencyKey,
   extractTokenFromUrl,
   MailUndeliverableError,
@@ -240,6 +241,10 @@ export function createAuth(config: AuthConfig) {
       // The D1 adapter rejects shorter passwords at sign-up with
       // PASSWORD_TOO_SHORT, so the rule holds server-side regardless of UI.
       minPasswordLength: 10,
+      // Explicit, not inherited: the reset screen tells the reader how long the
+      // link lasts, so the lifetime is a shared constant rather than whatever
+      // better-auth defaults to this release (see AUTH_LINK_EXPIRY_SECONDS).
+      resetPasswordTokenExpiresIn: AUTH_LINK_EXPIRY_SECONDS,
       // Reset links point at the canonical origin; delivery goes through the
       // application-owned mail adapter.
       sendResetPassword: async (data: MailCallbackData) => {
@@ -313,6 +318,9 @@ export function createAuth(config: AuthConfig) {
       // A verified email is required before any organization or membership use
       // (contract §7).
       sendOnSignUp: true,
+      // Same reason as resetPasswordTokenExpiresIn above: the check-your-inbox
+      // screen quotes this duration, so it cannot be an implicit default.
+      expiresIn: AUTH_LINK_EXPIRY_SECONDS,
       sendVerificationEmail: async (data: MailCallbackData) => {
         const { user, url, token } = data;
         // Same rule as the reset flow: the key derives from the real token in

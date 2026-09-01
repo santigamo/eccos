@@ -26,7 +26,11 @@ The landing's **two laws** apply verbatim:
    unforgiving on non-retina displays:
    - **Geist Pixel = brand accents only** (low frequency, high meaning): the
      page kickers (`GATEWAY` / `LOGS`…), the facts-strip cell kickers and big
-     stat numbers, the masthead's `OPERATOR CONSOLE`, the version stamp.
+     stat numbers, the masthead's `OPERATOR CONSOLE`, the version stamp, and
+     the address read back on the check-your-inbox screens (`AddressReadback`
+     in `src/components/auth/auth-page.tsx`) — the same *datum* category as the
+     stat numbers: one value, read once, that has to be read exactly, on a
+     screen an operator sees twice in their life. Its label stays Inter.
      12px floor (11px for the version stamp), grayscale antialiasing
      (`.font-pixel` in `app.css`) — never smaller: a pixel face off its grid
      blurs.
