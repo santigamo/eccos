@@ -136,8 +136,15 @@ is available.
 - GDPR **DPA**/processing agreement covering the cloud operator role (`eccos-8yy`).
 - **Better Auth production cutover** for the customer dashboard — deploy + fresh auth D1 + smoke
   (`eccos-0x0.9`).
-- A recorded **deployment + smoke** (the gateway is recorded in Gate 9; the dashboard needs its
-  post-Better-Auth deploy verification).
+- A recorded **deployment + smoke**. The gateway is recorded in Gate 9. The dashboard's
+  post-Better-Auth verification is **done (2026-09-01)** and was run against production, not a
+  local stand-in: sign-up on `app.eccos.chat` → verification mail delivered through the
+  application-owned adapter → link opened → sign-in → organization created, evidenced by the
+  rows in the remote `eccos-auth` D1 (a verified user with a real session owning an
+  organization). Transactional delivery was verified separately from the delivered MIME rather
+  than from a status code (`eccos-szz`). **Not covered by this evidence:** the `/connect`
+  handoff to Meta, which cannot be exercised until the Meta app is published — an unpublished
+  app receives no production webhooks.
 - A validated **permanent System User token** (see `eccos-jf7` / `eccos-s3i`).
 - A healthy production gateway and real subscriber, with the current incident resolved
   (`eccos-u9x` / `eccos-jf7`).
