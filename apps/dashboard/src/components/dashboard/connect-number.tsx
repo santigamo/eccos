@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import {
   Frame,
@@ -7,7 +7,15 @@ import {
   FramePanel,
   FrameTitle,
 } from "../reui/frame";
-import { startConnect } from "../../server/gateway";
+import {
+  CONNECT_RETURN_PATH,
+  exchangeConnectCode,
+  getEmbeddedSignupConfig,
+  recordConnectSessionEvent,
+  startConnect,
+} from "../../server/gateway";
+import { loadFacebookSdk } from "../../lib/facebook-sdk";
+import { isFinishEvent, loginOptions, parseSessionEvent } from "../../lib/embedded-signup";
 import { failureCopy } from "../../lib/failure";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
@@ -25,28 +33,123 @@ const CONNECT_STEPS = [
  * connecting a number is a recurring operation, not a first-run ritual, so it
  * has one surface rather than a wizard that only exists once.
  *
- * `startConnect` performs a full navigation to the gateway, which owns the
- * Meta callback and hands the operator back to /numbers when it is done
- * (eccos-5z9) — carrying a failure code when there is one.
+ * ── TWO PATHS, ONE BUTTON ───────────────────────────────────────────────────
+ * Preferred is Meta's JavaScript SDK: `FB.login()` opens the flow in a popup and
+ * returns an exchangeable code, and a `message` listener captures **session
+ * logging** — the screen a customer abandoned on and the error code they
+ * reported. Meta's coexistence requirements list that listener as a "must", and
+ * it is the only source of that information.
+ *
+ * The fallback is the original server-side redirect: a full navigation to the
+ * gateway's `/connect`, which owns the Meta callback and hands the operator back
+ * here (eccos-5z9). It is used whenever the SDK is not configured or does not
+ * load, and it stays the only path a self-hoster without a console has. Neither
+ * path is a replacement for the other.
+ *
+ * The authorization code never buys anything in the browser: it is posted
+ * straight to a session-authenticated server function, which forwards it over
+ * the private gateway binding. No account API key exists on this page.
  */
 export function ConnectNumberPanel({ heading }: { heading: string }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The OAuth state for the popup currently open. Held in a ref, not state,
+   * because the SDK callbacks fire outside React's render cycle and must see
+   * the value written just before `FB.login` was called.
+   */
+  const pendingState = useRef<string | null>(null);
+
+  /**
+   * Session logging (Meta's `message` listener).
+   *
+   * Mounted for the life of the panel rather than only while a popup is open:
+   * Meta posts the abandonment event as the popup closes, and a listener that
+   * is torn down on close races it. `parseSessionEvent` drops anything that is
+   * not a genuine Embedded Signup message from a facebook.com origin, so a
+   * permanently mounted listener is not a permanently open door.
+   */
+  useEffect(() => {
+    function onMessage(event: MessageEvent) {
+      const parsed = parseSessionEvent(event.origin, event.data);
+      if (!parsed) return;
+      // Telemetry must never break the flow the operator is in the middle of.
+      void recordConnectSessionEvent({ data: parsed }).catch(() => {});
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  /** Hand the code to the server before Meta's 30-second TTL runs out. */
+  const finish = useCallback(async (code: string) => {
+    const state = pendingState.current;
+    pendingState.current = null;
+    if (!state) {
+      setError("This connection attempt expired. Start it again.");
+      return;
+    }
+    const result = await exchangeConnectCode({ data: { code, state } });
+    if (!result.ok) {
+      setError(failureCopy(result).detail);
+      return;
+    }
+    if (!result.data.ok) {
+      setError(result.data.error);
+      return;
+    }
+    // The numbers table is a loader read; a reload is the honest way to show
+    // what provisioning just did without duplicating its state here.
+    window.location.assign(CONNECT_RETURN_PATH);
+  }, []);
 
   async function start() {
     setStarting(true);
     setError(null);
     try {
-      const result = await startConnect();
-      if (!result.ok) {
-        setError(failureCopy(result).detail);
+      const [config, handoff] = await Promise.all([
+        getEmbeddedSignupConfig(),
+        startConnect(),
+      ]);
+      if (!handoff.ok) {
+        setError(failureCopy(handoff).detail);
         return;
       }
-      window.location.assign(result.data.url);
+
+      // No SDK configured: the redirect path, unchanged.
+      if (!config.ok || !config.data) {
+        window.location.assign(handoff.data.url);
+        return;
+      }
+
+      let sdk: Awaited<ReturnType<typeof loadFacebookSdk>>;
+      try {
+        sdk = await loadFacebookSdk(config.data.appId, config.data.graphVersion);
+      } catch {
+        // Blocked, offline, or an extension ate it. The redirect needs no
+        // third-party script and the state we already minted is still good.
+        window.location.assign(handoff.data.url);
+        return;
+      }
+
+      pendingState.current = handoff.data.state;
+      sdk.login((response) => {
+        const code = response.authResponse?.code;
+        if (!code) {
+          // Closing the popup before the final screen is a cancel, not a
+          // failure — the session event already recorded which screen it was.
+          pendingState.current = null;
+          setStarting(false);
+          return;
+        }
+        void finish(code).finally(() => setStarting(false));
+      }, loginOptions(config.data.configId));
+      // The popup owns the flow now; `starting` is cleared by the callback.
+      return;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setStarting(false);
+      // Only the SDK path returns early with the popup still open.
+      if (!pendingState.current) setStarting(false);
     }
   }
 

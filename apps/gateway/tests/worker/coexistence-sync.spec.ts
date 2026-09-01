@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
+import { GatewayRPC } from "../../src/rpc";
 import type { EccosControlPlane } from "../../src/control-plane";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { provisionWaba } from "../../src/provisioning";
@@ -8,6 +9,7 @@ import {
   HISTORY_SYNC_EXPIRED_ERROR,
   HISTORY_SYNC_DEADLINE_MARGIN_MS,
   HISTORY_SYNC_WINDOW_MS,
+  NOT_COEXISTENCE_ERROR,
   SYNC_UNCONFIRMED_ERROR,
 } from "../../src/coexistence";
 import { SMB_APP_DATA_EDGE, SMB_APP_DATA_SYNC_TYPE } from "../../src/meta/smb-app-data";
@@ -65,18 +67,39 @@ function accepted(requestId = "REQ_1"): Response {
   );
 }
 
+/** Meta's answer for a number that really is on the WhatsApp Business app. */
+function verifiedCoexistence(): Response {
+  return new Response(
+    JSON.stringify({ id: "PN", is_on_biz_app: true, platform_type: "CLOUD_API" }),
+    { status: 200 },
+  );
+}
+
 /**
  * Routes the Graph mock by URL and records every sync request. Tests assert on
  * the resulting *state*; only the two shape-level assertions below look at the
  * body, so a correction to Meta's contract stays contained.
+ *
+ * `verifyResponse` answers the onboarding-verification read the saga makes
+ * before it spends anything. It defaults to "yes, coexistence", which is the
+ * precondition every sync test below is actually about; the tests that care
+ * about the verification itself override it.
  */
-function mockGraph(syncResponse: (call: SyncCall) => Response) {
+function mockGraph(
+  syncResponse: (call: SyncCall) => Response,
+  verifyResponse: () => Response = verifiedCoexistence,
+) {
   const syncCalls: SyncCall[] = [];
+  const verifyCalls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/subscribed_apps")) {
         return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      if (url.includes("is_on_biz_app")) {
+        verifyCalls.push(url);
+        return verifyResponse();
       }
       if (url.includes(SMB_APP_DATA_EDGE)) {
         const body = JSON.parse(String(init?.body ?? "{}")) as { sync_type?: string };
@@ -87,13 +110,14 @@ function mockGraph(syncResponse: (call: SyncCall) => Response) {
       throw new Error(`unexpected request to ${url}`);
     },
   );
-  return { syncCalls };
+  return { syncCalls, verifyCalls };
 }
 
 function row(instance: EccosControlPlane, wabaId: string): Record<string, unknown> {
   return instance.sql
     .exec(
       `SELECT status, provisioning_error, provisioning_attempts, onboarding_type,
+              coexistence_verified_type,
               coexistence_sync_status, coexistence_sync_deadline_at, coexistence_sync_error,
               contacts_sync_started_at, contacts_sync_request_id,
               history_sync_started_at, history_sync_request_id
@@ -342,6 +366,7 @@ describe("coexistence synchronisation as a saga step", () => {
             ? new Response(JSON.stringify({ error: { message: "temporary" } }), { status: 503 })
             : new Response(JSON.stringify({ success: true }), { status: 200 });
         }
+        if (url.includes("is_on_biz_app")) return verifiedCoexistence();
         const body = JSON.parse(String(init?.body ?? "{}")) as { sync_type?: string };
         syncCalls.push({ url, syncType: body.sync_type ?? "" });
         return accepted();
@@ -553,5 +578,278 @@ describe("coexistence synchronisation as a saga step", () => {
       ).toBe(false);
       expect(row(instance, wabaId).history_sync_started_at).toBeNull();
     });
+  });
+});
+
+/**
+ * The gate in front of the irreversible part (eccos-vss, item 3).
+ *
+ * `/connect` records `onboardingType: "coexistence"` because it asked Meta for
+ * that flow through `extras.featureType` — which the OAuth dialog was observed
+ * to ignore on 2026-09-01. So the request is not evidence, and the saga reads
+ * back what Meta actually did before spending a call that Meta allows once and
+ * whose remedy for a wrong one is offboarding the customer.
+ */
+describe("the coexistence sync is gated on Meta's own answer, not on what was requested", () => {
+  /** Meta's answer for an ordinary Cloud API number. */
+  function notCoexistence(): Response {
+    return new Response(
+      JSON.stringify({ id: "PN", is_on_biz_app: false, platform_type: "CLOUD_API" }),
+      { status: 200 },
+    );
+  }
+
+  it("issues nothing when Meta says the number is not a business app number", async () => {
+    const accountId = "acc-coex-verify-no";
+    const wabaId = "WABA_COEX_VERIFY_NO";
+    await createAccount(accountId);
+    const { syncCalls, verifyCalls } = mockGraph(() => accepted(), notCoexistence);
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    // The whole point: the once-only calls were never made.
+    expect(syncCalls).toHaveLength(0);
+    expect(verifyCalls).toHaveLength(1);
+
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      // Not a failure. The number works; it is simply not a coexistence number,
+      // so it owes nothing and there is nothing for an operator to fix.
+      expect(waba?.status).toBe("active");
+      expect(waba?.provisioningError).toBeNull();
+      expect(waba?.coexistence.status).toBe("not_coexistence");
+      // What was asked for and what Meta did are both kept, and they disagree.
+      expect(waba?.coexistence.onboardingType).toBe("coexistence");
+      expect(waba?.coexistence.verifiedOnboardingType).toBe("standard");
+      // And it says so in words an operator can act on.
+      expect(waba?.coexistence.error).toBe(NOT_COEXISTENCE_ERROR);
+      expect(waba?.coexistence.contactsStartedAt).toBeNull();
+      expect(waba?.coexistence.historyStartedAt).toBeNull();
+    });
+  });
+
+  it("does not let a WABA that owes nothing age into an expired window", async () => {
+    const accountId = "acc-coex-verify-clock";
+    const wabaId = "WABA_COEX_VERIFY_CLOCK";
+    await createAccount(accountId);
+    mockGraph(() => accepted(), notCoexistence);
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    // Push the clock well past the 24-hour window. `expired` tells an operator
+    // to offboard a customer; there is nothing here to offboard over.
+    await cp(async (instance) => {
+      setDeadline(instance, wabaId, Date.now() - HISTORY_SYNC_WINDOW_MS);
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.coexistence.status).toBe("not_coexistence");
+      expect(waba?.status).toBe("active");
+    });
+  });
+
+  it("treats an unanswerable verification as not-yet-known, and spends nothing", async () => {
+    const accountId = "acc-coex-verify-down";
+    const wabaId = "WABA_COEX_VERIFY_DOWN";
+    await createAccount(accountId);
+    let verifyFails = true;
+    const { syncCalls } = mockGraph(
+      () => accepted(),
+      () =>
+        verifyFails
+          ? new Response(JSON.stringify({ error: { message: "temporary" } }), { status: 503 })
+          : verifiedCoexistence(),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    const deadlineAt = await cp(
+      async (instance) => (await instance.getWabaRecord(accountId, wabaId))?.coexistence.deadlineAt,
+    );
+
+    await provisionWaba(env, accountId, wabaId);
+
+    // A verification that could not be read is not a verdict: nothing is spent,
+    // nothing is concluded, and the attempt stays retryable with the window
+    // still running.
+    expect(syncCalls).toHaveLength(0);
+    await cp((instance) => {
+      const record = row(instance, wabaId);
+      expect(record.status).toBe("pending");
+      expect(record.coexistence_verified_type).toBeNull();
+      expect(record.coexistence_sync_status).toBe("pending");
+      expect(record.coexistence_sync_deadline_at).toBe(deadlineAt);
+      expect(record.contacts_sync_started_at).toBeNull();
+      expect(record.history_sync_started_at).toBeNull();
+      forceDue(instance, wabaId);
+    });
+
+    // Once Meta answers, the same claim proceeds exactly as it always did.
+    verifyFails = false;
+    await provisionWaba(env, accountId, wabaId);
+    expect(syncCalls.map((call) => call.syncType)).toEqual([
+      SMB_APP_DATA_SYNC_TYPE.contacts,
+      SMB_APP_DATA_SYNC_TYPE.history,
+    ]);
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(waba?.coexistence.status).toBe("initiated");
+      expect(waba?.coexistence.verifiedOnboardingType).toBe("coexistence");
+      expect(waba?.coexistence.deadlineAt).toBe(deadlineAt);
+    });
+  });
+
+  it("asks Meta once per WABA and remembers the answer", async () => {
+    const accountId = "acc-coex-verify-sticky";
+    const wabaId = "WABA_COEX_VERIFY_STICKY";
+    await createAccount(accountId);
+    const { verifyCalls } = mockGraph(() => accepted(), notCoexistence);
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+    expect(verifyCalls).toHaveLength(1);
+
+    // Force a genuine second provisioning attempt on the same registration —
+    // the shape a cron re-run or a re-check takes — rather than relying on the
+    // active row simply never being claimed again.
+    await cp((instance) => {
+      instance.sql.exec("UPDATE wabas SET status = 'pending' WHERE waba_id = ?", wabaId);
+      forceDue(instance, wabaId);
+    });
+    await provisionWaba(env, accountId, wabaId);
+
+    // The verdict is durable, so the attempt short-circuits without re-asking a
+    // question Meta has already answered.
+    expect(verifyCalls).toHaveLength(1);
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(waba?.coexistence.status).toBe("not_coexistence");
+    });
+  });
+
+  /**
+   * The once-only state Eccos keeps is per WABA while Meta's rule is per phone
+   * number, so a WABA whose numbers disagree cannot be represented. Of the two
+   * ways to collapse it, this is the recoverable one: decline a sync that was
+   * owed rather than issue one that was not.
+   */
+  it("declines the whole WABA when any of its numbers is not a coexistence number", async () => {
+    const accountId = "acc-coex-verify-mixed";
+    const wabaId = "WABA_COEX_VERIFY_MIXED";
+    await createAccount(accountId);
+    let answered = 0;
+    const { syncCalls } = mockGraph(
+      () => accepted(),
+      () => {
+        answered += 1;
+        return answered === 1 ? verifiedCoexistence() : notCoexistence();
+      },
+    );
+
+    await begin(accountId, wabaId, "coexistence", [
+      { phoneNumberId: "PN_MIXED_A", displayPhoneNumber: "+34 600 000 020" },
+      { phoneNumberId: "PN_MIXED_B", displayPhoneNumber: "+34 600 000 021" },
+    ]);
+    await provisionWaba(env, accountId, wabaId);
+
+    expect(syncCalls).toHaveLength(0);
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(waba?.coexistence.status).toBe("not_coexistence");
+      expect(waba?.coexistence.verifiedOnboardingType).toBe("standard");
+    });
+  });
+
+  it("never asks about a standard onboarding — there is nothing to gate", async () => {
+    const accountId = "acc-coex-verify-standard";
+    const wabaId = "WABA_COEX_VERIFY_STANDARD";
+    await createAccount(accountId);
+    const { syncCalls, verifyCalls } = mockGraph(() => accepted());
+
+    await begin(accountId, wabaId, "standard");
+    await provisionWaba(env, accountId, wabaId);
+
+    expect(syncCalls).toHaveLength(0);
+    expect(verifyCalls).toHaveLength(0);
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(waba?.coexistence.status).toBe("not_applicable");
+      expect(waba?.coexistence.verifiedOnboardingType).toBeNull();
+    });
+  });
+});
+
+/**
+ * The projection the console actually reads.
+ *
+ * Every other test here inspects the WABA through `getWabaRecord`, and the
+ * dashboard tests hand-build their resource objects — so both halves passed
+ * while `listAccountResources` quietly omitted `coexistence_verified_type` from
+ * its own hand-written column list. `coexistenceOf` then recomputed the status
+ * from a `null` that was not really null, and the one surface an operator looks
+ * at showed `expired` — the status whose documented remedy is offboarding the
+ * customer — on a WABA that owed Meta nothing.
+ *
+ * These read through the real path (`GatewayRPC.listAccountResources`), which
+ * is what the dashboard calls, rather than through the storage helper the rest
+ * of this file uses.
+ */
+describe("the coexistence verdict survives the read the console makes", () => {
+  function notCoexistence(): Response {
+    return new Response(
+      JSON.stringify({ id: "PN", is_on_biz_app: false, platform_type: "CLOUD_API" }),
+      { status: 200 },
+    );
+  }
+
+  async function resourceWaba(accountId: string, wabaId: string) {
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const resources = await rpc.listAccountResources(accountId);
+    return resources.wabas.find((waba) => waba.wabaId === wabaId);
+  }
+
+  it("reports not_coexistence, and keeps reporting it long past the deadline", async () => {
+    const accountId = "acc-coex-projection";
+    const wabaId = "WABA_COEX_PROJECTION";
+    await createAccount(accountId);
+    mockGraph(() => accepted(), notCoexistence);
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    const fresh = await resourceWaba(accountId, wabaId);
+    expect(fresh?.status).toBe("active");
+    expect(fresh?.coexistence.verifiedOnboardingType).toBe("standard");
+    expect(fresh?.coexistence.status).toBe("not_coexistence");
+
+    // Past the 24-hour window. Without the verdict in the projection this reads
+    // `expired`, and the console tells an operator to offboard a working
+    // customer over a sync that was correctly never issued.
+    await cp((instance) => setDeadline(instance, wabaId, Date.now() - HISTORY_SYNC_WINDOW_MS));
+    const stale = await resourceWaba(accountId, wabaId);
+    expect(stale?.coexistence.status).toBe("not_coexistence");
+    expect(stale?.coexistence.status).not.toBe("expired");
+  });
+
+  it("carries the same coexistence fields as the per-WABA read", async () => {
+    const accountId = "acc-coex-projection-parity";
+    const wabaId = "WABA_COEX_PROJECTION_PARITY";
+    await createAccount(accountId);
+    mockGraph((call) =>
+      accepted(call.syncType === SMB_APP_DATA_SYNC_TYPE.history ? "REQ_HIST" : "REQ_CONT"),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    // Parity, not a spot check: the two reads must not be able to disagree
+    // about coexistence, whichever column list they were written with.
+    const direct = await cp((instance) => instance.getWabaRecord(accountId, wabaId));
+    const listed = await resourceWaba(accountId, wabaId);
+    expect(listed?.coexistence).toEqual(direct?.coexistence);
+    expect(listed?.coexistence.status).toBe("initiated");
   });
 });

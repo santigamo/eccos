@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { extractTokenTargetIds, findWabaPhoneNumbersForToken, listPhoneNumbers } from "../src/meta/connect-api";
+import {
+  extractTokenTargetIds,
+  findWabaPhoneNumbersForToken,
+  getPhoneNumberOnboarding,
+  listPhoneNumbers,
+} from "../src/meta/connect-api";
 import { connectRoutes, oauthStateIsValid } from "../src/routes/connect";
 
 describe("extractTokenTargetIds", () => {
@@ -29,7 +34,7 @@ describe("listPhoneNumbers", () => {
           JSON.stringify({
             data: [{ id: "PN_1", display_phone_number: "+34 600 000 001" }],
             paging: {
-              next: "https://graph.facebook.com/v24.0/WABA/phone_numbers?after=cursor&access_token=secret-token",
+              next: "https://graph.facebook.com/v25.0/WABA/phone_numbers?after=cursor&access_token=secret-token",
             },
           }),
           { status: 200 },
@@ -39,7 +44,7 @@ describe("listPhoneNumbers", () => {
     }) as typeof fetch;
 
     await expect(
-      listPhoneNumbers({ META_GRAPH_VERSION: "v24.0" }, "WABA", "secret-token"),
+      listPhoneNumbers({ META_GRAPH_VERSION: "v25.0" }, "WABA", "secret-token"),
     ).resolves.toEqual([
       { id: "PN_1", display_phone_number: "+34 600 000 001" },
       { id: "PN_2" },
@@ -66,13 +71,62 @@ describe("listPhoneNumbers", () => {
 
     await expect(
       findWabaPhoneNumbersForToken(
-        { META_GRAPH_VERSION: "v24.0", META_APP_ID: "app-id", META_APP_SECRET: "app-secret" },
+        { META_GRAPH_VERSION: "v25.0", META_APP_ID: "app-id", META_APP_SECRET: "app-secret" },
         "business-token",
       ),
     ).resolves.toEqual([{ wabaId: "WABA", phones: [{ id: "PN" }] }]);
     expect(requests[0]?.url).not.toContain("app-secret");
     expect(requests[0]?.url).not.toContain("access_token");
     expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer app-id|app-secret" });
+  });
+});
+
+/**
+ * The read that turns Eccos's coexistence *assertion* into evidence
+ * (eccos-vss, item 3). Everything downstream of it is once-only and
+ * irreversible, so both the request shape and the parsing of a partial answer
+ * matter.
+ */
+describe("getPhoneNumberOnboarding", () => {
+  it("asks Meta for the two documented fields, on the phone number node", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        JSON.stringify({ id: "PN_1", is_on_biz_app: true, platform_type: "CLOUD_API" }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    await expect(
+      getPhoneNumberOnboarding({ META_GRAPH_VERSION: "v25.0" }, "PN_1", "biz-token"),
+    ).resolves.toEqual({ isOnBizApp: true, platformType: "CLOUD_API" });
+
+    const url = new URL(requests[0]?.url ?? "");
+    // The node is the phone number, not the WABA.
+    expect(url.pathname).toBe("/v25.0/PN_1");
+    expect(url.searchParams.get("fields")).toBe("is_on_biz_app,platform_type");
+    // The business token travels in the header, never in the URL.
+    expect(url.searchParams.get("access_token")).toBeNull();
+    expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer biz-token" });
+  });
+
+  it("reports a field Meta omitted as unknown rather than as false", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ id: "PN_1" }), { status: 200 })) as typeof fetch;
+    await expect(
+      getPhoneNumberOnboarding({ META_GRAPH_VERSION: "v25.0" }, "PN_1", "biz-token"),
+    ).resolves.toEqual({ isOnBizApp: null, platformType: null });
+  });
+
+  it("throws on a Graph error, so the caller retries instead of concluding", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: { message: "temporarily unavailable" } }), {
+        status: 503,
+      })) as typeof fetch;
+    await expect(
+      getPhoneNumberOnboarding({ META_GRAPH_VERSION: "v25.0" }, "PN_1", "biz-token"),
+    ).rejects.toThrow(/phone_number onboarding failed: 503/);
   });
 });
 
@@ -89,7 +143,7 @@ const STATE_COOKIE_NAME = "eccos_connect_state";
  */
 function makeEnv(saveConfigCalls: Record<string, string>[], accountId = "acc-test") {
   return {
-    META_GRAPH_VERSION: "v24.0",
+    META_GRAPH_VERSION: "v25.0",
     META_APP_SECRET: "app-secret",
     META_WEBHOOK_VERIFY_TOKEN: "verify-token",
     META_APP_ID: "app-id",

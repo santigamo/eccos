@@ -45,11 +45,12 @@
  * provisioning saga leases and retries on, and because `/connect` registers
  * exactly the numbers of one onboarding handoff.
  *
- * Caveat worth knowing: this records the onboarding Eccos *requested*, since
- * `/connect` hardcodes `featureType: "whatsapp_business_app_onboarding"`. Meta
- * exposes the onboarding it actually performed on the phone number itself
- * (`GET /<PHONE_NUMBER_ID>?fields=is_on_biz_app,platform_type`), which is the
- * authoritative signal and is not consulted here.
+ * This records the onboarding Eccos *requested*. What Meta actually did is a
+ * separate fact, read back from the phone number itself and kept in
+ * `verifiedOnboardingType` — see `verifiedOnboardingTypeFrom` below. The two are
+ * deliberately not collapsed into one field: the request is what the flow asked
+ * for and the verification is what came of it, and an onboarding where they
+ * disagree is precisely the case an operator needs to be able to see.
  */
 export type WabaOnboardingType = "standard" | "coexistence";
 
@@ -63,11 +64,76 @@ export function isWabaOnboardingType(value: unknown): value is WabaOnboardingTyp
 }
 
 /**
+ * What Meta reports about a business phone number, as read from
+ * `GET /<PHONE_NUMBER_ID>?fields=is_on_biz_app,platform_type`. Both fields are
+ * nullable because a field Meta does not return is a fact we do not have, and
+ * that is not the same as a `false`.
+ */
+export interface PhoneNumberOnboardingEvidence {
+  isOnBizApp: boolean | null;
+  platformType: string | null;
+}
+
+/**
+ * The `platform_type` Meta reports for a number that can use Cloud API.
+ * Verbatim from "Onboard WhatsApp Business app users" → *Check onboarding
+ * status*: *"If `is_on_biz_app` is `true` and `platform_type` is `CLOUD_API`,
+ * the business phone number is able to use Cloud API and the WhatsApp Business
+ * app"*.
+ */
+export const COEXISTENCE_PLATFORM_TYPE = "CLOUD_API";
+
+/**
+ * Turn what Meta reports about a phone number into the onboarding type it
+ * actually has. This is the *evidence* half of the pair described on
+ * `WabaOnboardingType`, and it exists because the request half turned out to be
+ * a lie: `/connect` hands Meta `featureType: "whatsapp_business_app_onboarding"`
+ * inside `extras` on a server-side OAuth dialog URL, and `extras` is documented
+ * only as an `FB.login()` option — observed on 2026-09-01 to be ignored by the
+ * dialog, so every number that came through it completed the ordinary Cloud API
+ * flow while Eccos recorded it as coexistence.
+ *
+ * Both conditions are required, and anything short of both reads as `standard`.
+ * That asymmetry is deliberate and it is the whole safety property: the only
+ * action gated on this answer is the `smb_app_data` sync, which Meta allows
+ * **once** per phone number and whose documented remedy for a wrong call is
+ * offboarding the customer. A missing or unrecognised field therefore must not
+ * be optimistically read as coexistence — absence of evidence has to mean "do
+ * not spend the one allowed call", never "probably fine".
+ *
+ * The cost of that choice, stated plainly: if Meta ever stops returning
+ * `is_on_biz_app` for genuine coexistence numbers, this declines syncs that were
+ * actually owed. That failure is visible (`not_coexistence`, with the observed
+ * values recorded) and recoverable by a new onboarding; the opposite failure is
+ * neither.
+ */
+export function verifiedOnboardingTypeFrom(
+  evidence: PhoneNumberOnboardingEvidence,
+): WabaOnboardingType {
+  return evidence.isOnBizApp === true && evidence.platformType === COEXISTENCE_PLATFORM_TYPE
+    ? "coexistence"
+    : "standard";
+}
+
+/**
+ * Operator-facing wording for a number Eccos onboarded as coexistence and Meta
+ * says is not one. Not a failure of provisioning — the number works, it is an
+ * ordinary Cloud API number — but the syncs it was recorded as owing were never
+ * issued and never will be, and nobody should be waiting for message history
+ * that is not coming.
+ */
+export const NOT_COEXISTENCE_ERROR =
+  "Meta reports this number is not a WhatsApp Business app (coexistence) number, so the contacts and message-history syncs were not requested; the number works as an ordinary Cloud API number";
+
+/**
  * Where a WABA stands on the coexistence synchronisation Meta requires.
  *
  * - `not_applicable` — not a coexistence onboarding; nothing is owed.
  * - `pending` — owed, not yet initiated, and the window is still open.
  * - `initiated` — both contacts and message history have been initiated.
+ * - `not_coexistence` — Eccos recorded a coexistence onboarding and Meta says
+ *   the number is not one, so nothing was issued and nothing is owed. Terminal,
+ *   but *not* a failure: the number is a working Cloud API number.
  * - `expired` — the 24-hour window closed with the history sync not initiated.
  *   Terminal: Meta's remedy is offboarding the customer.
  */
@@ -76,6 +142,7 @@ export type CoexistenceSyncStatus =
   | "pending"
   | "initiated"
   | "unconfirmed"
+  | "not_coexistence"
   | "expired";
 
 /**
@@ -91,6 +158,12 @@ export type CoexistenceSyncStatus =
  */
 export interface CoexistenceState {
   onboardingType: WabaOnboardingType;
+  /**
+   * The onboarding Meta says the number actually has, or null while it has not
+   * been read yet. Sticky once written: it is a fact about a completed
+   * onboarding, not a status that moves.
+   */
+  verifiedOnboardingType: WabaOnboardingType | null;
   status: CoexistenceSyncStatus;
   /** Epoch ms by which message history must have been initiated; null when nothing is owed. */
   deadlineAt: number | null;
@@ -208,11 +281,16 @@ export class HistorySyncWindowExpiredError extends Error {
  *    cannot be undone by the clock moving on;
  *  - anything issued but unconfirmed → `unconfirmed`, terminal, because the
  *    once-only rule forbids trying again;
+ *  - Meta says this is not a coexistence number → `not_coexistence`. This sits
+ *    **before** the deadline check on purpose: a WABA that owes nothing must
+ *    never age into `expired` and send an operator off to offboard a customer
+ *    over a sync that was correctly never issued;
  *  - nothing issued and the window gone → `expired`;
  *  - otherwise still `pending`.
  */
 export function coexistenceSyncStatus(input: {
   onboardingType: WabaOnboardingType;
+  verifiedOnboardingType?: WabaOnboardingType | null;
   contactsStartedAt: number | null;
   contactsRequestId: string | null;
   historyStartedAt: number | null;
@@ -228,6 +306,7 @@ export function coexistenceSyncStatus(input: {
     (input.contactsStartedAt !== null && !contactsDone) ||
     (input.historyStartedAt !== null && !historyDone);
   if (spentUnconfirmed) return "unconfirmed";
+  if (input.verifiedOnboardingType === "standard") return "not_coexistence";
   if (historySyncWindowExpired(input.deadlineAt, input.now)) return "expired";
   return "pending";
 }
@@ -235,20 +314,26 @@ export function coexistenceSyncStatus(input: {
 /**
  * May the saga still issue a sync for this WABA?
  *
- * False for a non-coexistence onboarding (it owes nothing), for one already
- * fully synchronised, and — critically — for one that has already issued a
- * request without confirmation. That last case is what keeps the once-only rule:
- * a spent sync is never re-attempted, so no retry can ever turn into Meta's
- * `2593107`.
+ * False for a non-coexistence onboarding (it owes nothing), for one Meta has
+ * told us is not a coexistence number, for one already fully synchronised, and
+ * — critically — for one that has already issued a request without
+ * confirmation. That last case is what keeps the once-only rule: a spent sync is
+ * never re-attempted, so no retry can ever turn into Meta's `2593107`.
+ *
+ * The verified-type check means the Graph read happens once per WABA and every
+ * later attempt short-circuits here, rather than re-asking Meta a question that
+ * has already been answered.
  */
 export function coexistenceSyncOutstanding(state: {
   onboardingType: WabaOnboardingType;
+  verifiedOnboardingType?: WabaOnboardingType | null;
   contactsStartedAt: number | null;
   contactsRequestId: string | null;
   historyStartedAt: number | null;
   historyRequestId: string | null;
 }): boolean {
   if (state.onboardingType !== "coexistence") return false;
+  if (state.verifiedOnboardingType === "standard") return false;
   const pendingContacts = state.contactsStartedAt === null;
   const pendingHistory = state.historyStartedAt === null;
   return pendingContacts || pendingHistory;

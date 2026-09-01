@@ -138,6 +138,38 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
   The handoff URL is itself a bearer capability until consumed; operators must not forward it to a
   different account or an untrusted browser.
 
+### 3.3b Embedded Signup via the Facebook JavaScript SDK (dashboard)
+
+The console's **Connect WhatsApp** button prefers Meta's JavaScript SDK over the server-side
+redirect, because Meta's coexistence requirements demand *session logging* — a `message` listener on
+the spawning page — which a redirect cannot provide.
+
+**This loads `https://connect.facebook.net/en_US/sdk.js` into `app.eccos.chat`.** It is the first
+and only third-party script in the console, it runs with full access to that origin, and **there is
+no Content-Security-Policy anywhere in this repository** to constrain it. That is a real, accepted
+exposure, not an oversight; a CSP is separate work with its own blast radius.
+
+What bounds it today:
+
+- **Lazy and local.** The script is injected on click, from the Numbers page only. It is not in the
+  base bundle and never loads on a page that renders message content, delivery payloads or keys.
+- **Nothing valuable is on the page.** The dashboard holds no account API key in the browser at all;
+  the authorization code is posted to a session-authenticated server function within its 30-second
+  life and exchanged behind the private `GATEWAY` binding, where the app secret lives.
+- **Optional.** Clearing `META_APP_ID` or `META_ES_CONFIG_ID` on the dashboard turns the SDK path
+  off entirely and reverts to the redirect, with no code change and no deploy of new code.
+- **The listener is not a door.** `parseSessionEvent` requires an `https` origin whose hostname is
+  `facebook.com` or a subdomain — deliberately stricter than Meta's published sample, which uses
+  `origin.endsWith('facebook.com')` and so accepts `notfacebook.com`. Everything else is dropped,
+  and the server function re-validates the payload rather than trusting the client check.
+- **The payload is identifiers only.** The event, the abandoned screen, Meta's error code and
+  session id, and the WABA/phone ids — never the authorization code, never a token, never message
+  content.
+
+Residual risk: a compromise of `connect.facebook.net` would execute in the console's origin for any
+operator who clicks Connect, with access to their session cookie. Mitigating that properly needs a
+CSP with a pinned `script-src`, which is tracked separately.
+
 ### 3.4 Dashboard behind Cloudflare Access + the RPC service binding
 
 - **Surface:** the operator console (`apps/dashboard/`) renders gateway status, inbound/outbound/

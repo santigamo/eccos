@@ -105,6 +105,52 @@ export async function listPhoneNumbers(
   return phones;
 }
 
+/**
+ * What Meta says a business phone number actually is — the authoritative answer
+ * to "was this really a WhatsApp Business app (coexistence) onboarding?".
+ *
+ * Source, verbatim from "Onboard WhatsApp Business app users" → *Check
+ * onboarding status* (read 2026-09-01):
+ *
+ *     curl 'https://graph.facebook.com/v25.0/106540352242922?fields=is_on_biz_app,platform_type' \
+ *     -H 'Authorization: Bearer EAAJB...'
+ *
+ *     {"is_on_biz_app": true, "platform_type": "CLOUD_API", "id": "106540352242922"}
+ *
+ * Meta labels the step "(optional)". It is not optional for Eccos: it is the
+ * only thing standing between an assumption made at `/connect` and the
+ * once-only `smb_app_data` sync that assumption authorises. A field Meta does
+ * not return comes back as `null` rather than `false`, because the caller's
+ * policy distinguishes "Meta says no" from "Meta did not say" — see
+ * `verifiedOnboardingTypeFrom` in `src/coexistence.ts`.
+ *
+ * Throws `MetaGraphError` on a non-2xx. The caller must treat a throw as "not
+ * known yet" and try again later; it must never treat it as a verdict.
+ */
+export interface PhoneNumberOnboarding {
+  isOnBizApp: boolean | null;
+  platformType: string | null;
+}
+
+export async function getPhoneNumberOnboarding(
+  cfg: MetaGraphConfig,
+  phoneNumberId: string,
+  token: string,
+): Promise<PhoneNumberOnboarding> {
+  const url = `${graphBaseUrl(cfg)}/${encodeURIComponent(phoneNumberId)}?fields=is_on_biz_app%2Cplatform_type`;
+  const res = await fetch(url, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const json = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) throw graphError("phone_number onboarding", res, json);
+  const record = asRecord(json);
+  return {
+    isOnBizApp: typeof record?.is_on_biz_app === "boolean" ? record.is_on_biz_app : null,
+    platformType: typeof record?.platform_type === "string" ? record.platform_type : null,
+  };
+}
+
 export function extractTokenTargetIds(payload: unknown): string[] {
   const data = asRecord(asRecord(payload)?.data);
   const granularScopes = Array.isArray(data?.granular_scopes) ? data.granular_scopes : [];

@@ -55,6 +55,15 @@ describe("POST /connect/exchange", () => {
       if (url.includes("/subscribed_apps")) {
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
+      // Before spending the once-only syncs, the saga asks Meta what the
+      // onboarding actually produced. Here it answers "a coexistence number",
+      // which is what unlocks the two sync calls asserted below (eccos-vss).
+      if (url.includes("is_on_biz_app")) {
+        return new Response(
+          JSON.stringify({ id: "PNID", is_on_biz_app: true, platform_type: "CLOUD_API" }),
+          { status: 200 },
+        );
+      }
       // /connect is the WhatsApp Business app onboarding flow, so provisioning
       // also initiates the coexistence contacts + message-history syncs Meta
       // requires (eccos-vss).
@@ -179,5 +188,58 @@ describe("POST /connect/exchange", () => {
     // No work happened: the already-active WABA was not re-claimed, so Meta was
     // never called for it (attempted: false semantics).
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The Facebook Login for Business dialog URL, after the Embedded Signup v4
+ * migration.
+ *
+ * v2 needed an `extras` object to ask for the WhatsApp Business app flow. It
+ * never worked here — `extras` is documented only as an `FB.login()` option and
+ * the dialog was observed on 2026-09-01 to ignore it — and under v4 there is
+ * nothing left for it to carry: the flow's products and version come from the
+ * configuration behind `config_id`. This pins that the URL now says only what
+ * Meta documents it can say.
+ */
+describe("the Embedded Signup dialog URL (v4)", () => {
+  async function dialogUrl(): Promise<URL> {
+    metaOkMock();
+    const start = await exports.default.fetch("https://example.com/connect/start", {
+      method: "POST",
+      headers: { authorization: `Bearer ${API_KEY}` },
+    });
+    const { url } = (await start.json()) as { url: string };
+    const redirect = await exports.default.fetch(url, { redirect: "manual" });
+    expect(redirect.status).toBe(302);
+    return new URL(redirect.headers.get("location") ?? "");
+  }
+
+  it("carries no extras — the v4 flow is defined by the login configuration", async () => {
+    const url = await dialogUrl();
+    expect(url.searchParams.get("extras")).toBeNull();
+    // And in particular none of the three things the v2 payload used to carry.
+    expect(url.search).not.toContain("featureType");
+    expect(url.search).not.toContain("whatsapp_business_app_onboarding");
+    expect(url.search).not.toContain("sessionInfoVersion");
+  });
+
+  it("carries exactly the parameters Meta documents for the manual login flow", async () => {
+    const url = await dialogUrl();
+    expect(url.origin).toBe("https://www.facebook.com");
+    expect(url.pathname).toBe("/v25.0/dialog/oauth");
+    expect([...url.searchParams.keys()].sort()).toEqual([
+      "client_id",
+      "config_id",
+      "override_default_response_type",
+      "redirect_uri",
+      "response_type",
+      "state",
+    ]);
+    // The configuration id is the whole of the flow's identity now, so it must
+    // actually travel.
+    expect(url.searchParams.get("config_id")).toBe("test-config-id");
+    expect(url.searchParams.get("response_type")).toBe("code");
+    expect(url.searchParams.get("override_default_response_type")).toBe("true");
   });
 });

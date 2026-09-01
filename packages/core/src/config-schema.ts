@@ -20,7 +20,15 @@ export type DoJurisdiction = (typeof DO_JURISDICTIONS)[number];
  * is unconditionally account-scoped and resolves per-WABA credentials from the
  * control plane instead of global env secrets. */
 export const coreSchema = z.object({
-  META_GRAPH_VERSION: z.string().min(1).default("v24.0"),
+  /**
+   * Graph version every Meta call is pathed with. It must match the version each
+   * webhook field is subscribed at on the WhatsApp Business Account object: Meta
+   * warns that mixing versions across an object's fields can delay delivery. The
+   * app panel is on v25.0 (supported to 2028; v26.0 carries no WhatsApp Business
+   * Platform change), so bumping this means bumping the panel too — procedure in
+   * docs/deployment.md#meta-graph-api-version.
+   */
+  META_GRAPH_VERSION: z.string().min(1).default("v25.0"),
   META_ACCESS_TOKEN: z.string().min(1),
   META_PHONE_NUMBER_ID: z.string().min(1),
   META_WABA_ID: z.string().min(1),
@@ -68,7 +76,7 @@ export function parseCoreConfig(env: Record<string, string | undefined>): CoreCo
 }
 
 function metaGraphVersion(cfg: { META_GRAPH_VERSION?: string }): string {
-  return cfg.META_GRAPH_VERSION ?? "v24.0";
+  return cfg.META_GRAPH_VERSION ?? "v25.0";
 }
 
 export function graphBaseUrl(cfg: { META_GRAPH_VERSION?: string }): string {

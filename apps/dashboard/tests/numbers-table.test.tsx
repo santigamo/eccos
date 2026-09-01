@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { AccountResources } from "@eccos/gateway-contract";
+import type {
+  AccountResources,
+  CoexistenceResource,
+  CoexistenceSyncStatus,
+} from "@eccos/gateway-contract";
 
 /**
  * Rendering contract for the /numbers table (eccos-lpk).
@@ -38,7 +42,29 @@ const { NumbersTable } = await import("../src/components/dashboard/numbers-table
 
 type Status = "pending" | "active" | "failed";
 
-function resources(...wabas: Array<{ wabaId: string; status: Status; phones: number }>): AccountResources {
+/** Default coexistence state: an ordinary number that owes Meta nothing. */
+function coexistenceOf(status: CoexistenceSyncStatus): CoexistenceResource {
+  return {
+    onboardingType: status === "not_applicable" ? "standard" : "coexistence",
+    verifiedOnboardingType: status === "not_coexistence" ? "standard" : null,
+    status,
+    deadlineAt: null,
+    contactsStartedAt: null,
+    contactsRequestId: null,
+    historyStartedAt: null,
+    historyRequestId: null,
+    error: null,
+  };
+}
+
+function resources(
+  ...wabas: Array<{
+    wabaId: string;
+    status: Status;
+    phones: number;
+    coexistence?: CoexistenceSyncStatus;
+  }>
+): AccountResources {
   return {
     account: { accountId: "account-a", name: "Account A", createdAt: 1 },
     keys: [],
@@ -49,11 +75,12 @@ function resources(...wabas: Array<{ wabaId: string; status: Status; phones: num
       createdAt: 1,
       provisionedAt: waba.status === "active" ? 2 : null,
       status: waba.status,
-      provisioningError: null,
+      provisioningError: waba.status === "failed" ? "subscribed_apps failed with HTTP 400" : null,
       phones: Array.from({ length: waba.phones }, (_, index) => ({
         phoneNumberId: `${waba.wabaId}-phone-${index}`,
         displayPhoneNumber: `+34 600 000 00${index}`,
       })),
+      coexistence: coexistenceOf(waba.coexistence ?? "not_applicable"),
     })),
     phones: [],
   };
@@ -125,5 +152,97 @@ describe("NumbersTable", () => {
     expect(stripped).not.toMatch(/rounded-/);
     expect(html).toContain("tracking-wider");
     expect(text(html)).toContain("Action");
+  });
+
+  /**
+   * The coexistence correction (eccos-vss, item 3). Eccos asked Meta for a
+   * WhatsApp Business app onboarding and Meta reports it did not perform one,
+   * so the once-only contacts and history syncs were deliberately never
+   * requested. The number works — it must not read as broken — but nobody
+   * should be left waiting for chat history that is not coming.
+   */
+  test("a number Meta says is not a coexistence number says so, without alarming", () => {
+    const html = render(
+      resources({
+        wabaId: "waba-a",
+        status: "active",
+        phones: 1,
+        coexistence: "not_coexistence",
+      }),
+    );
+    const body = text(html);
+    expect(body).toContain("No WhatsApp Business app history");
+    expect(body).toContain("were not synchronised and will not be");
+    // Informational, not a failure: the row keeps its active tag and offers no
+    // re-check, because there is nothing a re-check could change.
+    expect(body).not.toContain("failed");
+  });
+
+  test("the note counts numbers and stays away from healthy ones", () => {
+    const clean = text(render(resources({ wabaId: "waba-a", status: "active", phones: 2 })));
+    expect(clean).not.toContain("No WhatsApp Business app history");
+
+    const affected = text(
+      render({
+        ...resources({
+          wabaId: "waba-a",
+          status: "active",
+          phones: 2,
+          coexistence: "not_coexistence",
+        }),
+      }),
+    );
+    expect(affected).toContain("2 numbers were connected");
+  });
+
+  test("a coexistence number that synchronised normally shows no note", () => {
+    const html = text(
+      render(resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "initiated" })),
+    );
+    expect(html).not.toContain("No WhatsApp Business app history");
+  });
+
+  /**
+   * Embedded Signup v4 can complete with no phone number. The table is built
+   * from numbers, so a WABA without one renders no rows — it would be connected
+   * and completely invisible without a note of its own.
+   */
+  test("a connected account with no number is visible instead of silently absent", () => {
+    const html = text(render(resources({ wabaId: "waba-a", status: "pending", phones: 0 })));
+    expect(html).toContain("Waiting on a phone number");
+    expect(html).toContain("nothing needs reconnecting");
+  });
+
+  test("the note stays away from accounts that do have numbers", () => {
+    const html = text(render(resources({ wabaId: "waba-a", status: "active", phones: 1 })));
+    expect(html).not.toContain("Waiting on a phone number");
+  });
+
+  /**
+   * The two zero-phone states say opposite things, and both are invisible in
+   * the table itself because rows come from phone numbers. Waiting resolves on
+   * its own; failed does not.
+   */
+  test("a failed account with no number is not told to sit and wait", () => {
+    const html = text(render(resources({ wabaId: "waba-a", status: "failed", phones: 0 })));
+    expect(html).toContain("Connection failed");
+    expect(html).toContain("subscribed_apps failed with HTTP 400");
+    expect(html).toContain("Connect the number again to retry");
+    // The waiting note would be a lie here: nothing is coming.
+    expect(html).not.toContain("Waiting on a phone number");
+  });
+
+  test("waiting and failed accounts are counted separately", () => {
+    const html = text(
+      render(
+        resources(
+          { wabaId: "waba-waiting", status: "pending", phones: 0 },
+          { wabaId: "waba-broken", status: "failed", phones: 0 },
+        ),
+      ),
+    );
+    expect(html).toContain("One WhatsApp Business account is connected but has no business phone number yet");
+    expect(html).toContain("Connection failed");
+    expect(html).toContain("waba-broken");
   });
 });

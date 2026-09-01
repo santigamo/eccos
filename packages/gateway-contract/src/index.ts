@@ -130,6 +130,54 @@ export interface AccountPhoneResource {
 
 export type ProvisioningStatus = "pending" | "active" | "failed";
 
+/** How a WABA was onboarded: `coexistence` is the WhatsApp Business app flow. */
+export type WabaOnboardingType = "standard" | "coexistence";
+
+/**
+ * Where a WABA stands on the synchronisation Meta requires after a WhatsApp
+ * Business app (coexistence) onboarding.
+ *
+ * - `not_applicable` — not a coexistence onboarding; nothing is owed.
+ * - `pending` — owed, not yet initiated, window still open.
+ * - `initiated` — contacts and message history have both been requested.
+ * - `unconfirmed` — a request was issued and Meta never confirmed it. Terminal:
+ *   each sync is allowed once, so it cannot be safely retried.
+ * - `not_coexistence` — Eccos recorded a coexistence onboarding and Meta reports
+ *   the number is not one, so nothing was issued. Terminal, and not a failure.
+ * - `expired` — the 24-hour window closed with the history sync not initiated.
+ *   Terminal: Meta's remedy is offboarding the customer.
+ */
+export type CoexistenceSyncStatus =
+  | "not_applicable"
+  | "pending"
+  | "initiated"
+  | "unconfirmed"
+  | "not_coexistence"
+  | "expired";
+
+/**
+ * Coexistence obligations of one WABA as the console sees them.
+ *
+ * `onboardingType` is what Eccos *asked* Meta for; `verifiedOnboardingType` is
+ * what Meta reported the number actually is, read back from the phone number
+ * itself, or null while it has not been established. The two disagreeing is the
+ * case the console has to be able to show, because the syncs are then never
+ * issued — deliberately, and once only ever.
+ */
+export interface CoexistenceResource {
+  onboardingType: WabaOnboardingType;
+  verifiedOnboardingType: WabaOnboardingType | null;
+  status: CoexistenceSyncStatus;
+  /** Epoch ms by which message history must have been initiated; null when nothing is owed. */
+  deadlineAt: number | null;
+  contactsStartedAt: number | null;
+  contactsRequestId: string | null;
+  historyStartedAt: number | null;
+  historyRequestId: string | null;
+  /** Why the sync step did not complete, in words meant for an operator. */
+  error: string | null;
+}
+
 export interface AccountWabaResource {
   accountId: string;
   wabaId: string;
@@ -139,6 +187,9 @@ export interface AccountWabaResource {
   status: ProvisioningStatus;
   provisioningError: string | null;
   phones: Omit<AccountPhoneResource, "wabaId">[];
+  /** Coexistence state (eccos-vss). Already travelled over the binding before it
+   * was declared here; declaring it is what lets the console read it. */
+  coexistence: CoexistenceResource;
 }
 
 /** Enumeration of an account's durable resources as seen by the operator.
@@ -184,6 +235,36 @@ export interface ConnectReturnParams {
   /** WABAs the token could see that belong to another account and were skipped. */
   connectSkipped?: number;
 }
+
+/** One phone number a completed Embedded Signup handoff connected. */
+export interface ConnectedPhoneResource {
+  waba_id: string;
+  phone_number_id: string;
+  display_phone_number: string;
+}
+
+/**
+ * Outcome of exchanging an Embedded Signup authorization code and registering
+ * everything it unlocked.
+ *
+ * Shared by both entry points: the gateway's own `POST /connect/exchange` and
+ * the dashboard's JavaScript-SDK page, which posts the code to a server
+ * function that forwards it over this binding — so the browser never holds an
+ * account API key.
+ */
+export type ConnectExchangeResult =
+  | {
+      ok: true;
+      waba_id: string;
+      /** Empty when the flow completed without a business phone number (v4). */
+      phone_number_id: string;
+      display_phone_number: string;
+      connected: ConnectedPhoneResource[];
+      status: ProvisioningStatus;
+      /** WABAs the token could see but that belong to another account. */
+      warnings?: string[];
+    }
+  | { ok: false; error: string; code: ConnectFailureCode };
 
 export interface GatewayExport {
   inbound: InboundRow[];
@@ -234,6 +315,25 @@ export interface GatewayApi {
    * binding, so the value comes from the console's own canonical origin rather
    * than from a browser. */
   startConnectForAccountId(accountId: string, returnTo?: string): Promise<ConnectStartResult>;
+  /**
+   * Exchange an Embedded Signup authorization code for a resolved account and
+   * register everything it unlocks.
+   *
+   * This is the JavaScript-SDK half of Embedded Signup: `FB.login()` hands the
+   * code to the page, the page posts it to the dashboard, and the dashboard
+   * forwards it here. The code's TTL is **30 seconds**, so callers must not
+   * buffer it. `state` is the one minted by `startConnectForAccountId` and is
+   * consumed here; it must belong to the same account.
+   *
+   * There is no `redirect_uri`: a code from `FB.login()` was never bound to
+   * one, and sending one would fail the exchange.
+   */
+  exchangeConnectCodeForAccountId(
+    accountId: string,
+    code: string,
+    state: string,
+    wabaId?: string,
+  ): Promise<ConnectExchangeResult>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(

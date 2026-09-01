@@ -15,7 +15,7 @@
     { "tag": "v2", "new_sqlite_classes": ["EccosControlPlane"] }
   ],
   "vars": {
-    "META_GRAPH_VERSION": "v24.0",
+    "META_GRAPH_VERSION": "v25.0",
     "META_APP_SECRET": "test-app-secret",
     "META_WEBHOOK_VERIFY_TOKEN": "test-verify-token",
     "META_APP_ID": "test-app-id",

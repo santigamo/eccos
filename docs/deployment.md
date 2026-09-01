@@ -37,7 +37,7 @@ subscriber targets per WABA.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `META_GRAPH_VERSION` | `v24.0` | Meta Graph API version used for all calls |
+| `META_GRAPH_VERSION` | `v25.0` | Meta Graph API version every Graph call and the Embedded Signup dialog are pathed with. Must match the version the app's *subscribed* webhook fields carry in the Meta panel — see [Meta Graph API version](#meta-graph-api-version) |
 | `GATEWAY_PUBLIC_URL` | `""` | Public HTTPS origin used by the dashboard's Embedded Signup button. It becomes the OAuth `redirect_uri` as `<origin>/connect`, which Meta matches **exactly** against the app's Valid OAuth Redirect URIs — changing it without registering the new URI first breaks Embedded Signup. Origin only (scheme + host + optional port), HTTPS except on localhost. Direct `POST /connect/start` calls ignore it and derive the origin from the request |
 | `FORWARD_MAX_ATTEMPTS` | `6` | Max delivery attempts before a forwarded event is marked failed |
 | `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted and terminal `deliveries` rows are redacted to metadata-only |
@@ -89,6 +89,9 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 | `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty allow localhost development only; public requests fail closed |
 | `ACCESS_AUD` | `""` | Cloudflare Access application Audience (AUD) tag |
 | `BETTER_AUTH_URL` | canonical origin | Optional explicit base URL; defaults to `https://app.eccos.chat` |
+| `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
+| `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
+| `META_GRAPH_VERSION` | `v25.0` | Passed to `FB.init`. Keep equal to the gateway's — see [Meta Graph API version](#meta-graph-api-version) |
 
 The dashboard reaches the gateway via the `GATEWAY` service binding declared in
 `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP); its own secrets are the three
@@ -151,6 +154,147 @@ reachable, since the Embedded Signup `/connect` flow and the smoke test both ass
 brand-new deploy the origin is the `workers.dev` URL; for anything a Meta reviewer will look at,
 put the gateway on a custom domain under the app's declared application domain first — see
 [Cutover](#cutover--moving-the-meta-facing-origin-to-a-custom-domain).
+
+## Meta Graph API version
+
+**Eccos targets Graph API `v25.0`.** One version, everywhere: the `META_GRAPH_VERSION` var, the
+code defaults behind it, and — this is the part that is not in the repository — the API version
+each webhook field is subscribed at on the WhatsApp Business Account object in the Meta app panel.
+
+Meta's own webhooks panel warns to **use the same API version for every field subscribed on an
+object, or updates may not be delivered on time**. A field subscribed at one version while the
+gateway calls another is not a cosmetic mismatch: it is a delivery-timing risk on the ingest path,
+and it is invisible from the code, because the subscription version lives only in the panel.
+
+Why `v25.0`: as of 2026-09-01 all twelve fields subscribed on the WABA object (`messages`,
+`smb_message_echoes`, `history`, `smb_app_state_sync`, `account_alerts`, `account_review_update`,
+`calls`, `security`, `phone_number_name_update`, `phone_number_quality_update`,
+`message_template_status_update`, `message_template_quality_update`) are on `v25.0`; `v25.0` is
+supported until 2028; and `v26.0`'s changelog carries no WhatsApp Business Platform change, so
+there is nothing to gain from moving past it. (Panel fields showing `v26.0` are unsubscribed ones
+sitting on the panel default — they carry no traffic.)
+
+### How to bump it
+
+Change all six, in this order, and treat it as one change:
+
+1. `apps/gateway/wrangler.jsonc` → `vars.META_GRAPH_VERSION` — **the value that wins in
+   production**; the code defaults below only apply where this var is absent.
+2. `packages/core/src/config-schema.ts` → the `META_GRAPH_VERSION` zod `.default(...)`.
+3. `packages/core/src/config-schema.ts` → the `metaGraphVersion()` fallback that feeds
+   `graphBaseUrl()`.
+4. `apps/gateway/src/tenant-config.ts` → the `getAppConfig()` per-tenant fallback.
+5. `apps/gateway/src/routes/connect.ts` → the Embedded Signup OAuth dialog URL fallback.
+6. **The Meta app panel** — WhatsApp > Configuration > Webhooks: set the new version on *every*
+   subscribed field, not just `messages`. This is the step no test can catch.
+
+`.env.example`, `apps/gateway/wrangler.vitest.jsonc` and the version pinned in the unit tests
+follow along. Before bumping, read the Graph changelog for breaking changes between the current
+version and the target, especially around the Embedded Signup dialog, `subscribed_apps`, and the
+version-pathed `POST /<API_VERSION>/<PHONE_NUMBER_ID>/smb_app_data` sync — that sync can only be
+performed once per number, so a version mistake there costs an offboard/re-onboard, not a retry.
+
+## Embedded Signup version
+
+**Eccos targets Embedded Signup v4.** Embedded Signup is versioned separately from the Graph API,
+and the version is a property of the **Facebook Login for Business configuration** whose id is
+`META_ES_CONFIG_ID` — not of anything in this repository. v2 is deprecated on **15 October 2026**
+and v3 retires the same month, so v4 is the only surviving version.
+
+There used to be an `extras` object on the OAuth dialog URL carrying
+`featureType: "whatsapp_business_app_onboarding"`, `sessionInfoVersion` and an empty `setup`. It is
+gone, for two reasons:
+
+- **It never worked.** `extras` is documented only as an `FB.login()` option; it is not a parameter
+  of `dialog/oauth`. Verified against production on 2026-09-01 — the flow ran the ordinary Cloud API
+  path and the WABA-selection screen was *not* replaced by the "connect your existing WhatsApp
+  Business account" screen, which is Meta's own test for the coexistence feature being enabled.
+- **v4 does not want it.** Meta's v4 `extras` object is "purposely empty": products and version come
+  from the login configuration. `sessionInfoVersion` was a v2-only field; v3 and v4 return session
+  info for every flow.
+
+So the dialog URL now carries only what Meta documents for the manual login flow — `client_id`,
+`redirect_uri`, `state`, `response_type`, `override_default_response_type` — plus `config_id`.
+
+### Creating the v4 configuration (panel, by hand)
+
+The login **variation cannot be changed after creation**, so a v4 configuration has to be a *new*
+one rather than an edit of the existing v2 configuration. In **App Dashboard → Facebook Login for
+Business → Configurations**:
+
+1. **Create configuration** (not "Create from template", which yields the v2 template).
+2. Login variation: **Embedded Signup**. This is the irreversible choice.
+3. Products: select **Cloud API**. Selecting products is what puts the configuration on v4.
+   Selecting more than one is optional — do not select Marketing Messages, CTWA, CTM, CTD or
+   Conversions API unless they are actually wanted, because every extra product adds assets and
+   permissions the customer is asked to grant, and unwanted asset screens are where customers
+   abandon the flow.
+4. Assets: **WhatsApp Business accounts**. Permissions: `whatsapp_business_management` and
+   `whatsapp_business_messaging` — both need **Advanced Access**, which is App Review
+   (`whatsapp_business_messaging`, `whatsapp_business_management`). Standard access still works for
+   people with a role on the app, which is enough for a pilot on our own numbers.
+5. Copy the configuration id and set it as `META_ES_CONFIG_ID` (`wrangler secret put`, gateway).
+   Nothing else in the deploy changes.
+
+Keep the old configuration until the new one is proven: rolling back is `wrangler secret put
+META_ES_CONFIG_ID` with the previous id.
+
+### What a wrong or missing configuration id does
+
+| Situation | How it surfaces |
+|---|---|
+| `META_ES_CONFIG_ID` unset or empty | **Loud.** `/connect` and `POST /connect/start` answer `503` with `META_ES_CONFIG_ID is required for /connect`; the console shows the connect failure |
+| Id is not a real configuration | **Loud.** Meta's dialog refuses and redirects back with `error=…`; the callback maps it to `connectError=denied` |
+| Id is a *valid but wrong* configuration — a stale v2 one, or a v4 one without the products we need | **Silent, by construction.** The dialog opens and the customer completes a flow. Nothing in the URL or the callback says which version ran |
+
+That last row is the failure that cost a day on 2026-09-01, and no code here can close it: Meta
+exposes no way to read a login configuration's version or products back. What *does* close it is
+downstream — the coexistence verification reads
+`GET /<PHONE_NUMBER_ID>?fields=is_on_biz_app,platform_type` per number before spending anything
+irreversible, and a number that came out of the wrong flow is recorded `not_coexistence` and shown
+in the console. **After changing `META_ES_CONFIG_ID`, connect one number and check that**, rather
+than trusting that the dialog opened.
+
+### The two Embedded Signup paths
+
+The **Connect WhatsApp** button takes one of two paths, and both must keep working:
+
+| Path | When | What it needs |
+|---|---|---|
+| **JavaScript SDK** (preferred) | `META_APP_ID` *and* `META_ES_CONFIG_ID` are set on the **dashboard** and `connect.facebook.net` loads | `app.eccos.chat` registered in the panel's *Allowed domains for the JavaScript SDK* **and** *Valid OAuth Redirect URIs* |
+| **Server-side redirect** (fallback, and the only self-host path) | the SDK is unconfigured or fails to load | `GATEWAY_PUBLIC_URL` and its `/connect` registered as a Valid OAuth Redirect URI |
+
+The SDK path exists because Meta's coexistence requirements end with *"You must use Embedded Signup
+with session logging"* — a `message` listener on the page that spawned the flow, which a server-side
+redirect has no way to provide. It captures the screen a customer abandoned on and the error code
+and session id they report, which nothing else does; those land in the dashboard audit log as
+`connect_session_event`. The authorization code from `FB.login()` lives **30 seconds** and is posted
+straight to a session-authenticated server function, which forwards it over the private `GATEWAY`
+binding — no account API key ever exists in the browser.
+
+`POST /connect/start` and `GET /connect` on the gateway are untouched by any of this. A self-hoster
+with no console still connects a number with an API key and a browser, exactly as before.
+
+> **Panel, for the SDK path.** Add `app.eccos.chat` to **Facebook Login for Business → Settings →
+> Allowed domains for the JavaScript SDK** *and* to **Valid OAuth Redirect URIs** — Meta returns the
+> asset ids to the spawning window only when the spawning page's domain is in both. Confirm the
+> Client OAuth toggles are all **Yes**, including **Login with the JavaScript SDK**.
+
+> **Third-party script.** `https://connect.facebook.net/en_US/sdk.js` is the first and only
+> third-party script in the console. It is loaded lazily, on click, on the Numbers page alone — but
+> there is no Content-Security-Policy in this repository to constrain it. See
+> [docs/threat-model.md](./threat-model.md).
+
+### Completion states v4 allows that v2 did not
+
+v2 always handed back a **verified** phone number. v4 lets a customer finish with a verified number,
+an **unverified** number, or **no number at all**, so the gateway no longer assumes one:
+
+| Completion | What Eccos does |
+|---|---|
+| Verified number | Unchanged: subscribe, configure the data plane, verify coexistence, go `active` |
+| **No number** | The WABA is registered and `subscribed_apps` still runs (it needs no number), the data plane is left unconfigured, and the WABA stays `pending` with `connected, but this WhatsApp Business account has no business phone number yet…`. Every retry re-reads `GET /<WABA_ID>/phone_numbers` and adopts a number as soon as one appears — no reconnect needed. **Exempt from the six-attempt cap**: it keeps polling hourly while `pending`, because the customer may add the number the next day and a zero-phone WABA has no row and so no Re-check button. The console shows "Waiting on a phone number" |
+| **Unverified number** | It registers and provisions like any other number, because Meta returns it on the WABA. Sends will fail at Meta until the number is registered with the Cloud API — Eccos does not yet call `POST /<PHONE_NUMBER_ID>/register` (tracked separately), so the failure surfaces as an error on the outbound message rather than at connect time |
 
 ## Meta access token encryption
 

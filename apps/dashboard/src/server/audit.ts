@@ -14,6 +14,15 @@ export type SensitiveAction =
   | "subscriber_config_write"
   | "resubscribe"
   | "connect_start"
+  /** An Embedded Signup code exchanged through the JavaScript-SDK page. */
+  | "connect_exchange"
+  /**
+   * One Embedded Signup session-logging event (Meta's `message` listener).
+   * Carries the screen a customer abandoned on and the error code + session id
+   * they reported — the only record of either, and the reference Meta support
+   * asks for. Never carries the authorization code or any token.
+   */
+  | "connect_session_event"
   | "api_key_issue"
   | "api_key_revoke"
   | "export_data"

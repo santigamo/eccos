@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import { createAuth, type Auth } from "../auth/auth";
 import { authConfigFromEnv } from "../auth/config";
 import { auditEvent } from "./audit";
+import type { SessionEvent } from "../lib/embedded-signup";
 import {
   requireAuthContext,
   requireGatewayPermission,
@@ -13,6 +14,7 @@ import { ForbiddenError, resolveMemberships } from "../auth/tenant";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
   AccountResources,
+  ConnectExchangeResult,
   ConnectStartResult,
   DeliveryListOpts,
   DeliveryRecord,
@@ -33,6 +35,7 @@ type DashboardListOpts = Omit<DeliveryListOpts, "wabaId">;
 // (`@eccos/gateway-contract`) — no more hand-mirrored shapes.
 export type {
   AccountResources,
+  ConnectExchangeResult,
   ConnectStartResult,
   DeliveryRecord,
   GatewayStatus,
@@ -510,6 +513,192 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
       return result;
     }),
 );
+
+/**
+ * The public Meta identifiers the Embedded Signup JavaScript SDK page needs.
+ *
+ * `null` means the SDK path is not configured, and that is a supported state
+ * rather than an error: the Connect button falls back to the server-side OAuth
+ * redirect, which is the flow that has always worked and the only one a
+ * self-hoster without a console has. Neither value is a credential — Meta's own
+ * implementation guide puts both in client-side JavaScript — but the route is
+ * still session-gated, because who may connect a number is an authorization
+ * question regardless of how public the identifiers are.
+ */
+export interface EmbeddedSignupConfig {
+  appId: string;
+  configId: string;
+  graphVersion: string;
+}
+
+export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler(
+  async (): Promise<Result<EmbeddedSignupConfig | null>> => {
+    try {
+      await requireActor("administer");
+      const appId = env.META_APP_ID?.trim();
+      const configId = env.META_ES_CONFIG_ID?.trim();
+      if (!appId || !configId) return { ok: true, data: null };
+      return {
+        ok: true,
+        data: {
+          appId,
+          configId,
+          // Must match the gateway's; the SDK only uses it for the API version
+          // it would call with, which this flow never does.
+          graphVersion: env.META_GRAPH_VERSION?.trim() || "v25.0",
+        },
+      };
+    } catch (err) {
+      return classifyFailure(err);
+    }
+  },
+);
+
+/**
+ * Resolve the caller's Eccos account for an Embedded Signup mutation, creating
+ * the link if this is the organization's first connection. Shared by
+ * `startConnect` and the SDK exchange so the two cannot drift on who is allowed
+ * to connect a number.
+ */
+async function connectActorAccount(
+  gateway: GatewayApi,
+): Promise<{ actor: ActorContext; accountId: string }> {
+  const actor = await requireActor("administer");
+  let link = await gateway.getOrganizationAccountLink(actor.organizationId);
+  if (!link) {
+    const ensured = await gateway.ensureOrganizationAccount(actor.organizationId);
+    link = { accountId: ensured.accountId, status: "active" };
+  }
+  if (!link || link.status !== "active") {
+    throw new Error("This organization is not linked to an Eccos account");
+  }
+  return { actor, accountId: link.accountId };
+}
+
+function validateConnectExchangeInput(input: unknown): {
+  code: string;
+  state: string;
+  wabaId?: string;
+} {
+  const record = inputRecord(input);
+  const code = record.code;
+  if (typeof code !== "string" || code.trim() === "" || code.length > 4096) {
+    throw new Error("code must be a non-empty string");
+  }
+  const state = record.state;
+  if (typeof state !== "string" || state.trim() === "" || state.length > 512) {
+    throw new Error("state must be a non-empty string");
+  }
+  const wabaId = optionalWabaId(record.wabaId);
+  return { code: code.trim(), state: state.trim(), ...(wabaId ? { wabaId } : {}) };
+}
+
+/**
+ * Finish Embedded Signup for a code the JavaScript SDK handed to the browser.
+ *
+ * This exists so the browser never needs an account API key. The page holds the
+ * code for the length of one `fetch`; everything that can actually mint
+ * credentials — the app secret, the token exchange, the registration — happens
+ * behind the private service binding, reached only through this
+ * session-authenticated route.
+ *
+ * Meta's code lives **30 seconds**, so this path stays deliberately short:
+ * validate, resolve the account, forward. Nothing is queued or retried, because
+ * a retry would arrive with an expired code and an already-consumed state.
+ */
+export const exchangeConnectCode = createServerFn({ method: "POST" })
+  .validator(validateConnectExchangeInput)
+  .handler(
+    ({ data }): Promise<Result<ConnectExchangeResult>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await connectActorAccount(gateway);
+        const result = await gateway.exchangeConnectCodeForAccountId(
+          accountId,
+          data.code,
+          data.state,
+          data.wabaId,
+        );
+        auditEvent({
+          action: "connect_exchange",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          resource: result.ok
+            ? { wabaId: result.waba_id, connected: result.connected.length }
+            : { code: result.code },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.error }),
+        });
+        return result;
+      }),
+  );
+
+function validateSessionEventInput(input: unknown): SessionEvent {
+  const record = inputRecord(input);
+  const event = record.event;
+  if (typeof event !== "string" || event.trim() === "" || event.length > 128) {
+    throw new Error("event must be a non-empty string");
+  }
+  const field = (
+    key: "currentStep" | "errorCode" | "sessionId" | "wabaId" | "phoneNumberId",
+  ): string | undefined => {
+    const value = record[key];
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== "string" || value.length > 256) throw new Error(`${key} must be a string`);
+    return value.trim() || undefined;
+  };
+  const currentStep = field("currentStep");
+  const errorCode = field("errorCode");
+  const sessionId = field("sessionId");
+  const wabaId = field("wabaId");
+  const phoneNumberId = field("phoneNumberId");
+  return {
+    event: event.trim(),
+    ...(currentStep ? { currentStep } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(wabaId ? { wabaId } : {}),
+    ...(phoneNumberId ? { phoneNumberId } : {}),
+  };
+}
+
+/**
+ * Record one Embedded Signup session event in the audit log.
+ *
+ * This is the whole of what session logging buys that the server side does not
+ * already know: which screen a customer abandoned on, and the error code and
+ * session id when they report an error from inside the flow. Both are
+ * unobtainable any other way, and the session id is the first thing Meta
+ * support asks for.
+ *
+ * It is telemetry, so it never fails the flow — the caller ignores the result.
+ * The payload is re-validated here rather than trusted: it originates in a
+ * `postMessage` from another window, and although the client parser checks the
+ * origin, a server route must never depend on a client-side check.
+ */
+export const recordConnectSessionEvent = createServerFn({ method: "POST" })
+  .validator(validateSessionEventInput)
+  .handler(
+    ({ data }): Promise<Result<{ recorded: true }>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await connectActorAccount(gateway);
+        auditEvent({
+          action: "connect_session_event",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          resource: {
+            event: data.event,
+            currentStep: data.currentStep ?? null,
+            errorCode: data.errorCode ?? null,
+            sessionId: data.sessionId ?? null,
+            wabaId: data.wabaId ?? null,
+          },
+          outcome: data.errorCode ? "failed" : "success",
+        });
+        return { recorded: true as const };
+      }),
+  );
 
 export const listDeliveries = createServerFn({ method: "GET" })
   .validator(validateDeliveryInput)

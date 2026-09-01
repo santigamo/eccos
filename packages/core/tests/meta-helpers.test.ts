@@ -28,7 +28,7 @@ function stubFetch(): { requests: { url: string; init?: RequestInit }[] } {
 describe("meta helpers narrow config to MetaAppConfig", () => {
   it("sendMessage accepts a full CoreConfig and reads only Meta fields", async () => {
     const cfg: CoreConfig = {
-      META_GRAPH_VERSION: "v24.0",
+      META_GRAPH_VERSION: "v25.0",
       META_ACCESS_TOKEN: "token",
       META_PHONE_NUMBER_ID: "phone",
       META_WABA_ID: "waba",
@@ -40,7 +40,7 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
     const result = await sendMessage(cfg, { to: "12345" });
     expect(result).toEqual({ ok: true, id: "wamid.test" });
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe("https://graph.facebook.com/v24.0/phone/messages");
+    expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/phone/messages");
     expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer token" });
   });
 
@@ -48,7 +48,7 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
     const cfg: MetaAppConfig = { META_ACCESS_TOKEN: "token", META_PHONE_NUMBER_ID: "phone" };
     const { requests } = stubFetch();
     await sendMessage(cfg, { to: "12345" });
-    expect(requests[0]?.url).toBe("https://graph.facebook.com/v24.0/phone/messages");
+    expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/phone/messages");
   });
 
   it("sendMessage resolves a per-request phone number id", async () => {
@@ -69,7 +69,7 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
 
   it("listTemplates accepts a full CoreConfig and reads only Meta fields", async () => {
     const cfg: CoreConfig = {
-      META_GRAPH_VERSION: "v24.0",
+      META_GRAPH_VERSION: "v25.0",
       META_ACCESS_TOKEN: "token",
       META_PHONE_NUMBER_ID: "phone",
       META_WABA_ID: "waba",
@@ -81,7 +81,7 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
     const result = await listTemplates(cfg, 50);
     expect(result).toEqual({ ok: true, data: { messages: [{ id: "wamid.test" }] } });
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe("https://graph.facebook.com/v24.0/waba/message_templates?limit=50");
+    expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/waba/message_templates?limit=50");
     expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer token" });
   });
 
@@ -89,7 +89,7 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
     const cfg: MetaAppConfig = { META_ACCESS_TOKEN: "token", META_WABA_ID: "tenant-waba" };
     const { requests } = stubFetch();
     await listTemplates(cfg);
-    expect(requests[0]?.url).toBe("https://graph.facebook.com/v24.0/tenant-waba/message_templates?limit=100");
+    expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/tenant-waba/message_templates?limit=100");
   });
 
   it("listTemplates fails cleanly without calling fetch when waba id is missing", async () => {

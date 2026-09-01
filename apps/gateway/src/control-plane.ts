@@ -19,6 +19,7 @@ import {
   sealToken,
   wabaTokenAad,
 } from "./token-crypto";
+import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
 
 /**
  * Control plane of the account-scoped gateway.
@@ -147,6 +148,16 @@ export type ProvisioningFailureKind =
   | "gateway"
   | "configuration"
   | "unknown"
+  /**
+   * The WABA is connected but carries no business phone number yet.
+   *
+   * Embedded Signup v4 lets a customer finish the flow with a verified, an
+   * unverified, or **no** phone number, where v2 always produced a verified
+   * one. That is not a misconfiguration and not the customer's mistake — it is
+   * a documented completion state — so it is retryable and its message says
+   * what is actually missing rather than blaming the configuration.
+   */
+  | "awaiting_phone_number"
   /** The coexistence step failed before issuing anything; safe to try again. */
   | "coexistence"
   /** A sync was issued and never confirmed. Terminal: Meta allows it only once. */
@@ -180,6 +191,13 @@ export type CoexistenceSyncKind = "contacts" | "history";
 export interface CoexistenceSyncProgress {
   contactsRequestId: string | null;
   historyRequestId: string | null;
+  /**
+   * What Meta reported the onboarding actually was, or null while the saga has
+   * not managed to read it. Sticky in storage: it only ever moves from null to
+   * a value, so a later attempt that cannot reach Meta never erases an answer
+   * an earlier one already got.
+   */
+  verifiedOnboardingType: WabaOnboardingType | null;
   error: string | null;
 }
 
@@ -367,6 +385,7 @@ function provisioningErrorMessage(failure: ProvisioningFailure): string {
   }
   if (failure.kind === "gateway") return "gateway configuration sync failed";
   if (failure.kind === "configuration") return "Meta subscription configuration is invalid";
+  if (failure.kind === "awaiting_phone_number") return AWAITING_PHONE_NUMBER_ERROR;
   // The one an operator has to be able to act on: no retry can help, and the
   // remedy Meta prescribes is offboarding the customer.
   if (failure.kind === "coexistence_expired") return HISTORY_SYNC_EXPIRED_ERROR;
@@ -384,11 +403,36 @@ function withProvisioningJitter(ms: number): number {
   return Math.round(ms - spread + Math.random() * spread * 2);
 }
 
-/** Columns every WABA read needs to reconstruct the coexistence state. */
-const COEXISTENCE_COLUMNS =
-  "onboarding_type, coexistence_sync_status, coexistence_sync_deadline_at, " +
-  "coexistence_sync_error, contacts_sync_started_at, contacts_sync_request_id, " +
-  "history_sync_started_at, history_sync_request_id";
+/**
+ * Columns every WABA read needs to reconstruct the coexistence state.
+ *
+ * ONE list, and both spellings derived from it. A read that misses a column
+ * does not fail — `coexistenceOf` simply recomputes the status from a `null`
+ * that is not really null, and hands back a confident wrong answer. That is
+ * exactly what happened when `listAccountResources` kept its own hand-written
+ * copy of this list and did not gain `coexistence_verified_type` with the
+ * rest: the console, whose only read path that is, showed `expired` — "offboard
+ * the customer" — on WABAs that owed Meta nothing. So the joined form is
+ * generated rather than written out again.
+ */
+const COEXISTENCE_COLUMN_NAMES = [
+  "onboarding_type",
+  "coexistence_verified_type",
+  "coexistence_sync_status",
+  "coexistence_sync_deadline_at",
+  "coexistence_sync_error",
+  "contacts_sync_started_at",
+  "contacts_sync_request_id",
+  "history_sync_started_at",
+  "history_sync_request_id",
+] as const;
+
+const COEXISTENCE_COLUMNS = COEXISTENCE_COLUMN_NAMES.join(", ");
+
+/** The same columns qualified with a table alias, for the joined reads. */
+function coexistenceColumnsFor(alias: string): string {
+  return COEXISTENCE_COLUMN_NAMES.map((column) => `${alias}.${column}`).join(", ");
+}
 
 function nullableNumber(value: unknown): number | null {
   return typeof value === "number" ? value : null;
@@ -446,10 +490,17 @@ function coexistenceOf(row: Record<string, unknown>, now = Date.now()): Coexiste
   const historyStartedAt = nullableNumber(row.history_sync_started_at);
   const historyRequestId = (row.history_sync_request_id as string | null) ?? null;
   const deadlineAt = nullableNumber(row.coexistence_sync_deadline_at);
+  const verifiedOnboardingType: WabaOnboardingType | null = isWabaOnboardingType(
+    row.coexistence_verified_type,
+  )
+    ? row.coexistence_verified_type
+    : null;
   return {
     onboardingType,
+    verifiedOnboardingType,
     status: coexistenceSyncStatus({
       onboardingType,
+      verifiedOnboardingType,
       contactsStartedAt,
       contactsRequestId,
       historyStartedAt,
@@ -602,6 +653,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         -- only: what Meta was asked to synchronise and by when it must be. No
         -- contact ever lands here.
         onboarding_type TEXT NOT NULL DEFAULT 'standard',
+        coexistence_verified_type TEXT,
         coexistence_sync_status TEXT NOT NULL DEFAULT 'not_applicable',
         coexistence_sync_deadline_at INTEGER,
         coexistence_sync_error TEXT,
@@ -668,6 +720,12 @@ export class EccosControlPlane extends DurableObject<Env> {
       // Signup is what records a real coexistence onboarding and its deadline.
       if (!wabaColumns.some((row) => row.name === "onboarding_type")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN onboarding_type TEXT NOT NULL DEFAULT 'standard'");
+      }
+      // Null on every existing row, which is exactly right: nothing has been
+      // verified yet, and a WABA registered before this column existed is a
+      // WABA whose asserted coexistence was never checked against Meta.
+      if (!wabaColumns.some((row) => row.name === "coexistence_verified_type")) {
+        this.sql.exec("ALTER TABLE wabas ADD COLUMN coexistence_verified_type TEXT");
       }
       if (!wabaColumns.some((row) => row.name === "coexistence_sync_status")) {
         this.sql.exec(
@@ -836,7 +894,15 @@ export class EccosControlPlane extends DurableObject<Env> {
       const callbackUrl = validateCallbackUrl(input.callbackUrl);
       const status = forcedStatus ?? validateProvisioningStatus(input.provisioningStatus);
       const phones = input.phones ?? [];
-      if (phones.length === 0) throw new Error("invalid phones: at least one phone is required");
+      // Embedded Signup v4 lets a customer finish the flow with no business
+      // phone number at all, so a registration that names none is a real
+      // outcome rather than a malformed call — but only on the provisioning
+      // path, which starts `pending` and adopts a number once one appears. A
+      // registration that declares a WABA already `active` must still name the
+      // number it is active with, so "active implies a usable number" holds.
+      if (phones.length === 0 && status !== "pending") {
+        throw new Error("invalid phones: at least one phone is required");
+      }
       const checkedPhones: PhoneRecord[] = [];
       const seenPhoneIds = new Set<string>();
       for (const phone of phones) {
@@ -936,6 +1002,10 @@ export class EccosControlPlane extends DurableObject<Env> {
                ELSE NULL
              END,
              onboarding_type = excluded.onboarding_type,
+             -- Cleared with the rest of the coexistence state: a re-registration
+             -- is a *new* Embedded Signup handoff, so last time's verdict says
+             -- nothing about this number's new onboarding and must be re-read.
+             coexistence_verified_type = NULL,
              coexistence_sync_status = excluded.coexistence_sync_status,
              coexistence_sync_deadline_at = excluded.coexistence_sync_deadline_at,
              coexistence_sync_error = NULL,
@@ -1040,6 +1110,10 @@ export class EccosControlPlane extends DurableObject<Env> {
              provisioning_fingerprint = excluded.provisioning_fingerprint,
              provisioned_at = NULL,
              onboarding_type = excluded.onboarding_type,
+             -- Cleared with the rest of the coexistence state: a re-registration
+             -- is a *new* Embedded Signup handoff, so last time's verdict says
+             -- nothing about this number's new onboarding and must be re-read.
+             coexistence_verified_type = NULL,
              coexistence_sync_status = excluded.coexistence_sync_status,
              coexistence_sync_deadline_at = excluded.coexistence_sync_deadline_at,
              coexistence_sync_error = NULL,
@@ -1059,10 +1133,17 @@ export class EccosControlPlane extends DurableObject<Env> {
           initialCoexistenceStatus(item.onboardingType),
           registrationDeadline(item.onboardingType, now),
         );
-        const retainedPhones = new Set(item.phones.map((phone) => phone.phoneNumberId));
-        for (const row of this.sql.exec("SELECT phone_number_id FROM phones WHERE waba_id = ?", item.wabaId).toArray()) {
-          if (!retainedPhones.has(row.phone_number_id as string)) {
-            this.sql.exec("DELETE FROM phones WHERE waba_id = ? AND phone_number_id = ?", item.wabaId, row.phone_number_id);
+        // An empty phone set means the handoff told us nothing about numbers —
+        // a v4 completion without one — not that the WABA's existing numbers
+        // are gone. Pruning on that would let a reconnect that happened to see
+        // no numbers wipe a working WABA's, so it is only ever done when the
+        // handoff actually named some.
+        if (item.phones.length > 0) {
+          const retainedPhones = new Set(item.phones.map((phone) => phone.phoneNumberId));
+          for (const row of this.sql.exec("SELECT phone_number_id FROM phones WHERE waba_id = ?", item.wabaId).toArray()) {
+            if (!retainedPhones.has(row.phone_number_id as string)) {
+              this.sql.exec("DELETE FROM phones WHERE waba_id = ? AND phone_number_id = ?", item.wabaId, row.phone_number_id);
+            }
           }
         }
         for (const phone of item.phones) {
@@ -1268,6 +1349,64 @@ export class EccosControlPlane extends DurableObject<Env> {
   }
 
   /**
+   * Adopt business phone numbers that appeared on a WABA after it was
+   * registered.
+   *
+   * Embedded Signup v4 lets a customer finish with no phone number, so a
+   * connected WABA can legitimately arrive empty and grow a number later, in
+   * WhatsApp Manager or a second pass of the flow. Without this the saga would
+   * be stuck asserting a fact from the handoff for ever; with it, the ordinary
+   * provisioning retry picks the number up on its own.
+   *
+   * Deliberately *only* fills a gap: it refuses when the WABA already has any
+   * phone, so it can never quietly rewrite the set of numbers an onboarding
+   * established — that remains the registration paths' job, where it is
+   * transactional with the credentials and the coexistence clock. Guarded on
+   * the same lease revision and attempt as the rest of the saga, so a stale
+   * claim cannot write.
+   */
+  async adoptWabaPhones(input: {
+    accountId: string;
+    wabaId: string;
+    revision: number;
+    attempt: number;
+    phones: PhoneRecord[];
+  }): Promise<PhoneRecord[]> {
+    const account = this.requireAccount(input.accountId);
+    const id = validateWabaId(input.wabaId, "wabaId");
+    if (!Number.isSafeInteger(input.revision) || !Number.isSafeInteger(input.attempt)) {
+      throw new Error("invalid provisioning claim");
+    }
+    if (input.phones.length === 0) return [];
+    return this.ctx.storage.transactionSync(() => {
+      const owned = this.sql
+        .exec(
+          `SELECT waba_id FROM wabas
+            WHERE account_id = ? AND waba_id = ? AND status = 'pending'
+              AND provisioning_revision = ? AND provisioning_attempts = ?`,
+          account,
+          id,
+          input.revision,
+          input.attempt,
+        )
+        .toArray();
+      if (owned.length !== 1) return [];
+      // Gap-filling only: a WABA that already has numbers is not this method's
+      // business.
+      if (phonesOf(id, this.sql).length > 0) return [];
+      for (const phone of input.phones) {
+        this.sql.exec(
+          "INSERT OR REPLACE INTO phones (waba_id, phone_number_id, display_phone_number) VALUES (?, ?, ?)",
+          id,
+          phone.phoneNumberId,
+          phone.displayPhoneNumber,
+        );
+      }
+      return phonesOf(id, this.sql);
+    });
+  }
+
+  /**
    * Record that a coexistence sync is *about to be requested*, before the
    * request leaves the Worker (eccos-vss).
    *
@@ -1380,15 +1519,25 @@ export class EccosControlPlane extends DurableObject<Env> {
         const historyRequestId =
           ((current.history_sync_request_id as string | null) ?? null) ??
           input.coexistence.historyRequestId;
+        // Sticky in the same way and for the same reason as the request ids:
+        // what Meta already told us about a finished onboarding cannot be
+        // unlearned by a later attempt that failed to ask.
+        const verifiedOnboardingType: WabaOnboardingType | null =
+          (isWabaOnboardingType(current.coexistence_verified_type)
+            ? current.coexistence_verified_type
+            : null) ?? input.coexistence.verifiedOnboardingType;
         this.sql.exec(
           `UPDATE wabas
            SET contacts_sync_request_id = ?, history_sync_request_id = ?,
+               coexistence_verified_type = ?,
                coexistence_sync_status = ?, coexistence_sync_error = ?
            WHERE account_id = ? AND waba_id = ?`,
           contactsRequestId,
           historyRequestId,
+          verifiedOnboardingType,
           coexistenceSyncStatus({
             onboardingType,
+            verifiedOnboardingType,
             contactsStartedAt,
             contactsRequestId,
             historyStartedAt,
@@ -1418,7 +1567,27 @@ export class EccosControlPlane extends DurableObject<Env> {
       }
       const failure = input.failure;
       if (!failure) throw new Error("provisioning failure details are required");
-      const terminal = !failure.retryable || input.attempt >= PROVISIONING_MAX_ATTEMPTS;
+      // Waiting for a phone number is not a failing attempt, it is waiting, and
+      // the attempt cap exists to stop something broken from retrying for ever
+      // — not to put a deadline on a customer.
+      //
+      // With the cap applied this dead-ended after six attempts, about 65
+      // minutes: a customer who finished Embedded Signup without a number in
+      // the evening and added it the next morning would find adoption already
+      // stopped, with no way back. The cron only claims `pending` rows, and
+      // Re-check is a per-row button while rows are derived from phone numbers,
+      // so a zero-phone WABA has no row and therefore no button either. That is
+      // the *expected* v4 path, not an edge case.
+      //
+      // So this one kind keeps polling. The backoff is already capped at an
+      // hour, which makes it a slow poll rather than a spin: one
+      // `subscribed_apps` (idempotent) and one `phone_numbers` read per hour per
+      // waiting WABA. The cost is that an abandoned onboarding polls until
+      // somebody deletes it; the cron's batch is ordered by due time, so an
+      // hourly row cannot starve a fresh one.
+      const capReached =
+        input.attempt >= PROVISIONING_MAX_ATTEMPTS && failure.kind !== "awaiting_phone_number";
+      const terminal = !failure.retryable || capReached;
       this.sql.exec(
         terminal
           ? `UPDATE wabas
@@ -1468,9 +1637,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaRows = this.sql
       .exec(
         `SELECT w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
-                w.onboarding_type, w.coexistence_sync_status, w.coexistence_sync_deadline_at,
-                w.coexistence_sync_error, w.contacts_sync_started_at, w.contacts_sync_request_id,
-                w.history_sync_started_at, w.history_sync_request_id,
+                ${coexistenceColumnsFor("w")},
                 COALESCE(json_group_array(
                   json_object('phoneNumberId', p.phone_number_id,
                               'displayPhoneNumber', p.display_phone_number)), '[]') AS phones
@@ -1478,9 +1645,7 @@ export class EccosControlPlane extends DurableObject<Env> {
          LEFT JOIN phones p ON p.waba_id = w.waba_id
          WHERE w.account_id = ?
          GROUP BY w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
-                  w.onboarding_type, w.coexistence_sync_status, w.coexistence_sync_deadline_at,
-                  w.coexistence_sync_error, w.contacts_sync_started_at, w.contacts_sync_request_id,
-                  w.history_sync_started_at, w.history_sync_request_id
+                  ${coexistenceColumnsFor("w")}
          ORDER BY w.waba_id`,
         id,
       )

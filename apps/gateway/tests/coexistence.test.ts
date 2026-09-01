@@ -14,6 +14,8 @@ import {
   historySyncTimeRemainingMs,
   historySyncWindowExpired,
   isWabaOnboardingType,
+  COEXISTENCE_PLATFORM_TYPE,
+  verifiedOnboardingTypeFrom,
 } from "../src/coexistence";
 
 const ONBOARDED_AT = 1_800_000_000_000;
@@ -190,6 +192,129 @@ describe("once-only semantics", () => {
     expect(error.message).toContain("once");
     expect(error.message).toContain("offboard");
     expect(error).toBeInstanceOf(Error);
+  });
+});
+
+/**
+ * The evidence half of the onboarding type (eccos-vss, item 3).
+ *
+ * `/connect` asks Meta for a WhatsApp Business app onboarding by putting
+ * `featureType` in `extras` on the OAuth dialog URL — and `extras` is documented
+ * only as an `FB.login()` option. Observed on 2026-09-01: the dialog ignores it
+ * and runs the ordinary Cloud API flow, so the requested type proves nothing.
+ * These are the rules that decide what the once-only sync is allowed to believe.
+ */
+describe("onboarding verification from Meta's own answer", () => {
+  test("both of Meta's conditions together mean coexistence", () => {
+    // Verbatim from "Check onboarding status": if `is_on_biz_app` is true and
+    // `platform_type` is `CLOUD_API`, the number can use both.
+    expect(COEXISTENCE_PLATFORM_TYPE).toBe("CLOUD_API");
+    expect(
+      verifiedOnboardingTypeFrom({ isOnBizApp: true, platformType: "CLOUD_API" }),
+    ).toBe("coexistence");
+  });
+
+  test("a number that is not on the business app is a standard onboarding", () => {
+    expect(
+      verifiedOnboardingTypeFrom({ isOnBizApp: false, platformType: "CLOUD_API" }),
+    ).toBe("standard");
+  });
+
+  test("the platform must be Cloud API, not merely present", () => {
+    expect(verifiedOnboardingTypeFrom({ isOnBizApp: true, platformType: "NOT_APPLICABLE" })).toBe(
+      "standard",
+    );
+    expect(verifiedOnboardingTypeFrom({ isOnBizApp: true, platformType: "ON_PREMISE" })).toBe(
+      "standard",
+    );
+  });
+
+  /**
+   * The asymmetry that protects the customer. The only thing this answer gates
+   * is a call Meta allows once per number and whose remedy for a wrong one is
+   * offboarding, so a field Meta did not send can never be read as consent.
+   */
+  test("a field Meta did not send is not evidence, and never authorises the sync", () => {
+    expect(verifiedOnboardingTypeFrom({ isOnBizApp: null, platformType: "CLOUD_API" })).toBe(
+      "standard",
+    );
+    expect(verifiedOnboardingTypeFrom({ isOnBizApp: true, platformType: null })).toBe("standard");
+    expect(verifiedOnboardingTypeFrom({ isOnBizApp: null, platformType: null })).toBe("standard");
+  });
+});
+
+describe("a verified non-coexistence number owes nothing", () => {
+  const NOTHING = {
+    contactsStartedAt: null,
+    contactsRequestId: null,
+    historyStartedAt: null,
+    historyRequestId: null,
+  };
+  const requested = {
+    onboardingType: "coexistence" as const,
+    verifiedOnboardingType: "standard" as const,
+    ...NOTHING,
+  };
+
+  test("Meta's verdict overrides what /connect asked for", () => {
+    expect(coexistenceSyncStatus({ ...requested, deadlineAt: DEADLINE, now: ONBOARDED_AT })).toBe(
+      "not_coexistence",
+    );
+    // And nothing may be issued for it, on this attempt or any later one.
+    expect(coexistenceSyncOutstanding(requested)).toBe(false);
+  });
+
+  /**
+   * The reason this check sits before the deadline check. A WABA that owes no
+   * sync must never age into `expired` — that message tells an operator to
+   * offboard a customer, and here there is nothing to offboard over.
+   */
+  test("it never ages into an expired window", () => {
+    expect(
+      coexistenceSyncStatus({
+        ...requested,
+        deadlineAt: DEADLINE,
+        now: DEADLINE + 10 * HISTORY_SYNC_WINDOW_MS,
+      }),
+    ).toBe("not_coexistence");
+  });
+
+  test("an unverified coexistence WABA is still pending, not assumed either way", () => {
+    expect(
+      coexistenceSyncStatus({
+        onboardingType: "coexistence",
+        verifiedOnboardingType: null,
+        ...NOTHING,
+        deadlineAt: DEADLINE,
+        now: ONBOARDED_AT,
+      }),
+    ).toBe("pending");
+    expect(
+      coexistenceSyncOutstanding({
+        onboardingType: "coexistence",
+        verifiedOnboardingType: null,
+        ...NOTHING,
+      }),
+    ).toBe(true);
+  });
+
+  /**
+   * A sync that actually went through outranks a later verdict: the calls were
+   * made and confirmed, and no amount of re-reading can un-make them.
+   */
+  test("a completed sync stays initiated even if the verdict says standard", () => {
+    expect(
+      coexistenceSyncStatus({
+        onboardingType: "coexistence",
+        verifiedOnboardingType: "standard",
+        contactsStartedAt: ONBOARDED_AT + 400,
+        contactsRequestId: "req-contacts",
+        historyStartedAt: ONBOARDED_AT + 800,
+        historyRequestId: "req-history",
+        deadlineAt: DEADLINE,
+        now: ONBOARDED_AT + 1_000,
+      }),
+    ).toBe("initiated");
   });
 });
 

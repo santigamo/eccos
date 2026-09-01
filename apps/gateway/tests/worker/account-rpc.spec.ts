@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject, reset } from "cloudflare:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EccosGateway } from "../../src/gateway";
 import type { EccosControlPlane } from "../../src/control-plane";
 import { GatewayRPC } from "../../src/rpc";
@@ -137,3 +137,121 @@ describe("GatewayRPC organization account bootstrap", () => {
   });
 });
 
+/**
+ * The JavaScript-SDK half of Embedded Signup (session logging).
+ *
+ * `FB.login()` hands the code to the browser, which posts it to a
+ * session-authenticated dashboard route; that route forwards it here over the
+ * private binding. The browser therefore never holds an account API key, and
+ * the app secret never leaves the gateway. These tests pin the three properties
+ * that make that safe: the state is single-use, it is bound to one account, and
+ * the exchange carries no `redirect_uri` (an `FB.login()` code was never bound
+ * to one and Meta rejects the exchange if one is sent).
+ */
+describe("GatewayRPC.exchangeConnectCodeForAccountId", () => {
+  function mockGraph() {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/oauth/access_token")) {
+        return new Response(JSON.stringify({ access_token: "biz-token" }), { status: 200 });
+      }
+      if (url.includes("/debug_token")) {
+        return new Response(
+          JSON.stringify({
+            data: { granular_scopes: [{ scope: "whatsapp_business_management", target_ids: ["WABA_SDK"] }] },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/phone_numbers")) {
+        return new Response(
+          JSON.stringify({ data: [{ id: "PN_SDK", display_phone_number: "+34 600 000 111" }] }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("is_on_biz_app")) {
+        return new Response(
+          JSON.stringify({ id: "PN_SDK", is_on_biz_app: false, platform_type: "CLOUD_API" }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    });
+    return urls;
+  }
+
+  async function mintState(accountId: string, state: string): Promise<void> {
+    await cp((instance) =>
+      instance.startConnectState(state, accountId, Date.now() + 60_000, "https://gateway.example/connect"),
+    );
+  }
+
+  it("registers what the code unlocks, without sending a redirect_uri", async () => {
+    await bootstrapAccount();
+    const urls = mockGraph();
+    await mintState(TEST_ACCOUNT_ID, "sdk-state");
+
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const result = await rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "sdk-code", "sdk-state");
+
+    expect(result).toMatchObject({ ok: true, waba_id: "WABA_SDK", phone_number_id: "PN_SDK" });
+
+    const exchange = urls.find((url) => url.includes("/oauth/access_token")) ?? "";
+    // Meta requires the exchange to repeat whatever redirect the dialog was
+    // given — and requires it absent for an FB.login() code, which had none.
+    expect(exchange).not.toContain("redirect_uri");
+    expect(exchange).toContain("code=sdk-code");
+    // The callback URL still has to come from somewhere: GATEWAY_PUBLIC_URL,
+    // since there is no request to derive an origin from.
+    await cp(async (instance) => {
+      const waba = await instance.getWaba(TEST_ACCOUNT_ID, "WABA_SDK");
+      expect(waba?.callbackUrl).toBe("https://gateway.example/webhooks/meta");
+    });
+  });
+
+  it("consumes the state, so a replayed post cannot register twice", async () => {
+    await bootstrapAccount();
+    mockGraph();
+    await mintState(TEST_ACCOUNT_ID, "sdk-once");
+
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const first = await rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "sdk-code", "sdk-once");
+    expect(first.ok).toBe(true);
+
+    const replay = await rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "sdk-code", "sdk-once");
+    expect(replay).toEqual({ ok: false, error: "invalid or expired OAuth state", code: "state" });
+  });
+
+  it("refuses a state minted for another account", async () => {
+    await bootstrapAccount();
+    mockGraph();
+    await cp((instance) => instance.createAccount({ accountId: "other-account" }));
+    await mintState("other-account", "sdk-foreign");
+
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const result = await rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "sdk-code", "sdk-foreign");
+    expect(result).toEqual({ ok: false, error: "invalid or expired OAuth state", code: "state" });
+
+    // And the foreign state survives: a failed cross-tenant attempt must not
+    // consume somebody else's handoff.
+    await cp(async (instance) => {
+      expect(await instance.getConnectStateAccount("sdk-foreign")).toBe("other-account");
+    });
+  });
+
+  it("rejects an empty code or state before touching Meta", async () => {
+    await bootstrapAccount();
+    const urls = mockGraph();
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+
+    await expect(
+      rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "   ", "sdk-state"),
+    ).rejects.toThrow(/code is required/);
+    await expect(
+      rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "sdk-code", "  "),
+    ).rejects.toThrow(/state is required/);
+    expect(urls).toHaveLength(0);
+  });
+});

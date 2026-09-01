@@ -1,11 +1,14 @@
 import { getGatewayStubForWaba } from "./gateway-stub";
 import {
   MetaGraphError,
+  getPhoneNumberOnboarding,
+  listPhoneNumbers,
   subscribeApp,
 } from "./meta/connect-api";
 import { initiateContactsSync, initiateHistorySync } from "./meta/smb-app-data";
 import {
   HISTORY_SYNC_EXPIRED_ERROR,
+  NOT_COEXISTENCE_ERROR,
   SYNC_UNCONFIRMED_ERROR,
   HistorySyncWindowExpiredError,
   SyncUnconfirmedError,
@@ -13,18 +16,39 @@ import {
   coexistenceSyncSpentUnconfirmed,
   historySyncWorthAttempting,
   historySyncWindowExpired,
+  verifiedOnboardingTypeFrom,
 } from "./coexistence";
 import { getAppConfig } from "./tenant-config";
 import { getControlPlaneStub } from "./control-plane-stub";
+import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
+import type { WabaOnboardingType } from "./coexistence";
 import type {
   AccountWaba,
   CoexistenceSyncProgress,
+  PhoneRecord,
   ProvisioningFailure,
   WabaProvisioningClaim,
 } from "./control-plane";
 import type { ProvisioningStatus } from "@eccos/gateway-contract";
 
 type ProvisioningStage = "configuration" | "meta" | "gateway" | "coexistence";
+
+/**
+ * Raised when a WABA is connected and subscribed but has no business phone
+ * number to configure yet (Embedded Signup v4).
+ *
+ * v2 always handed back a verified number, so "no phone" could only mean a
+ * broken record and the saga treated it as one. v4 lets a customer finish the
+ * flow with a verified number, an unverified number, or none at all, so this is
+ * now an ordinary outcome of a successful onboarding — retryable, and described
+ * in terms of what is missing rather than as a configuration fault.
+ */
+class AwaitingPhoneNumberError extends Error {
+  constructor() {
+    super(AWAITING_PHONE_NUMBER_ERROR);
+    this.name = "AwaitingPhoneNumberError";
+  }
+}
 
 /**
  * Stand-in request id for a sync Meta accepted without returning one. Meta's
@@ -90,6 +114,12 @@ function failureFor(
   error: unknown,
   syncIssued: boolean,
 ): ProvisioningFailure {
+  // Not a stage failure at all: the WABA is connected and subscribed, it just
+  // has no number yet. Checked first so it cannot be mistaken for whichever
+  // stage happened to be running.
+  if (error instanceof AwaitingPhoneNumberError) {
+    return { kind: "awaiting_phone_number", retryable: true };
+  }
   if (stage === "meta") return metaFailure(error);
   if (stage === "configuration") return { kind: "configuration", retryable: false };
   if (stage === "coexistence") return coexistenceFailure(error, syncIssued);
@@ -104,10 +134,72 @@ function failureText(failure: ProvisioningFailure): string {
   }
   if (failure.kind === "gateway") return "gateway configuration sync failed";
   if (failure.kind === "configuration") return "Meta subscription configuration is invalid";
+  if (failure.kind === "awaiting_phone_number") return AWAITING_PHONE_NUMBER_ERROR;
   if (failure.kind === "coexistence_expired") return HISTORY_SYNC_EXPIRED_ERROR;
   if (failure.kind === "coexistence_unconfirmed") return SYNC_UNCONFIRMED_ERROR;
   if (failure.kind === "coexistence") return "coexistence sync could not be started";
   return "WABA provisioning failed";
+}
+
+/**
+ * Pick up a business phone number that appeared on the WABA after the handoff.
+ *
+ * The v4 flow can complete with none, so `claim.phones` being empty is a normal
+ * state rather than a broken record, and the number the customer eventually adds
+ * is invisible to Eccos until something asks. Each provisioning attempt asks
+ * once; the ordinary retry schedule does the waiting.
+ *
+ * Anything that goes wrong here is swallowed on purpose. Failing to *find* a
+ * number must produce the same honest "no number yet" outcome as there genuinely
+ * not being one — a Graph hiccup should not be reported to an operator as a Meta
+ * subscription failure on a WABA that subscribed perfectly well.
+ */
+async function adoptPhonesFromMeta(
+  env: Env,
+  cfg: Parameters<typeof listPhoneNumbers>[0],
+  claim: WabaProvisioningClaim,
+): Promise<PhoneRecord[]> {
+  try {
+    const discovered = await listPhoneNumbers(cfg, claim.wabaId, claim.metaAccessToken);
+    if (discovered.length === 0) return [];
+    return await getControlPlaneStub(env).adoptWabaPhones({
+      accountId: claim.accountId,
+      wabaId: claim.wabaId,
+      revision: claim.revision,
+      attempt: claim.attempt,
+      phones: discovered.map((phone) => ({
+        phoneNumberId: phone.id,
+        displayPhoneNumber: phone.display_phone_number ?? "",
+      })),
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read back from Meta what the onboarding actually produced, for every number
+ * the handoff registered (eccos-vss, item 3).
+ *
+ * Every phone must verify as coexistence for the WABA to count as one. The
+ * once-only state Eccos keeps is per WABA while Meta's rule is per phone
+ * number, so a mixed WABA cannot be represented — and of the two ways to
+ * collapse it, "all or nothing" is the one whose mistake is recoverable: it
+ * declines a sync that was owed, rather than issuing one that was not.
+ *
+ * Short-circuits on the first `standard`: the answer cannot change, and there is
+ * no reason to spend more Graph calls confirming it.
+ */
+async function verifyOnboardingType(
+  cfg: Parameters<typeof getPhoneNumberOnboarding>[0],
+  phoneNumberIds: readonly string[],
+  token: string,
+): Promise<WabaOnboardingType> {
+  for (const phoneNumberId of phoneNumberIds) {
+    const evidence = await getPhoneNumberOnboarding(cfg, phoneNumberId, token);
+    if (verifiedOnboardingTypeFrom(evidence) !== "coexistence") return "standard";
+  }
+  return "coexistence";
 }
 
 /**
@@ -130,6 +222,13 @@ function failureText(failure: ProvisioningFailure): string {
  * `progress` carries back only the acceptances Meta confirmed — contacts getting
  * through and history not is recorded, and neither is ever sent twice.
  *
+ * And nothing is issued on trust. `/connect` records the onboarding it *asked*
+ * Meta for; this step first reads back the onboarding Meta actually performed
+ * and issues only if the two agree. That check is not belt-and-braces, it is
+ * load-bearing: the `extras.featureType` the dialog URL carries was observed on
+ * 2026-09-01 to be ignored, so the requested type on its own is not evidence of
+ * anything.
+ *
  * Nothing here stores a contact. The calls ask Meta to start synchronising;
  * what comes back is somebody else's problem, and by design not a table.
  */
@@ -151,6 +250,37 @@ async function runCoexistenceSync(
   if (coexistenceSyncSpentUnconfirmed(coexistence)) throw new SyncUnconfirmedError();
   if (!coexistenceSyncOutstanding(coexistence)) return;
 
+  const appConfig = getAppConfig(env);
+  // Coexistence is a property of the number that stays on the WhatsApp Business
+  // app, so every phone the onboarding registered is synchronised, not just the
+  // primary one the data plane is configured with.
+  const phoneNumberIds = claim.phones.map((phone) => phone.phoneNumberId);
+  if (phoneNumberIds.length === 0) throw new Error("incomplete provisioning record");
+
+  // ── Evidence, before anything irreversible ────────────────────────────────
+  // Ask Meta what it actually did, and believe that rather than what `/connect`
+  // asked for. This runs *before* the deadline check on purpose: a number that
+  // is not coexistent owes no sync, so it must not be able to fail with an
+  // expired-window error and send an operator off to offboard a working
+  // customer over an obligation that never existed.
+  //
+  // A throw here is a failure to *learn* the answer, not an answer. It happens
+  // before `spend.issued` is ever set, so the saga classifies it retryable and
+  // the next attempt asks again — with the 24-hour window still running, which
+  // is the correct pressure: an unanswerable verification eventually expires
+  // rather than silently authorising the call it was meant to gate.
+  const verified =
+    coexistence.verifiedOnboardingType ??
+    (await verifyOnboardingType(appConfig, phoneNumberIds, claim.metaAccessToken));
+  progress.verifiedOnboardingType = verified;
+  if (verified !== "coexistence") {
+    // Terminal, and deliberately not an error: the WABA provisions successfully
+    // because the number genuinely works. What it does not do is quietly keep
+    // claiming an obligation it never had.
+    progress.error = NOT_COEXISTENCE_ERROR;
+    return;
+  }
+
   const deadlineAt = coexistence.deadlineAt;
   const now = Date.now();
   // Check the clock before touching the network. Past the window Meta answers
@@ -163,12 +293,6 @@ async function runCoexistenceSync(
     );
   }
 
-  const appConfig = getAppConfig(env);
-  // Coexistence is a property of the number that stays on the WhatsApp Business
-  // app, so every phone the onboarding registered is synchronised, not just the
-  // primary one the data plane is configured with.
-  const phoneNumberIds = claim.phones.map((phone) => phone.phoneNumberId);
-  if (phoneNumberIds.length === 0) throw new Error("incomplete provisioning record");
   const controlPlane = getControlPlaneStub(env);
 
   // Contacts first, then history: Meta documents them in that order, and history
@@ -230,15 +354,33 @@ export async function runClaim(
   const coexistence: CoexistenceSyncProgress = {
     contactsRequestId: claim.coexistence.contactsRequestId,
     historyRequestId: claim.coexistence.historyRequestId,
+    verifiedOnboardingType: claim.coexistence.verifiedOnboardingType,
     error: null,
   };
   const spend = { issued: false };
   try {
     const appConfig = getAppConfig(env);
-    const primaryPhone = claim.phones[0];
-    if (!claim.callbackUrl || !primaryPhone) throw new Error("incomplete provisioning record");
+    if (!claim.callbackUrl) throw new Error("incomplete provisioning record");
+    // Subscribing is a WABA-level call and needs no phone number, so it happens
+    // before the number is known to exist. That ordering is what makes a
+    // number-less v4 onboarding recoverable rather than inert: the webhooks are
+    // already flowing when the customer finally adds one.
     stage = "meta";
     await subscribeApp(appConfig, claim.wabaId, claim.metaAccessToken, claim.callbackUrl);
+
+    // Embedded Signup v4 can finish with no business phone number at all. When
+    // the handoff produced none, ask Meta again — the customer may have added
+    // one since — and adopt whatever has appeared.
+    const phones =
+      claim.phones.length > 0
+        ? claim.phones
+        : await adoptPhonesFromMeta(env, appConfig, claim);
+    const primaryPhone = phones[0];
+    // Still nothing to send from. Not a fault, and not `active`: there is no
+    // data plane to configure and no sync that could apply to a number that
+    // does not exist.
+    if (!primaryPhone) throw new AwaitingPhoneNumberError();
+
     stage = "gateway";
     await getGatewayStubForWaba(env, claim.wabaId).saveConfig({
       META_WABA_ID: claim.wabaId,
@@ -248,7 +390,7 @@ export async function runClaim(
       CONNECTED_AT: String(Date.now()),
     });
     stage = "coexistence";
-    await runCoexistenceSync(env, claim, coexistence, spend);
+    await runCoexistenceSync(env, { ...claim, phones }, coexistence, spend);
     const waba = await controlPlane.completeWabaProvisioning({
       accountId: claim.accountId,
       wabaId: claim.wabaId,

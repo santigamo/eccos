@@ -1,13 +1,14 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { getControlPlaneStub } from "./control-plane-stub";
-import { startConnectForAccount } from "./routes/connect";
+import { exchangeAndRegisterAll, startConnectForAccount } from "./routes/connect";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { listTemplates } from "@eccos/core/templates";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import type {
   AccountResources,
+  ConnectExchangeResult,
   ConnectStartResult,
   DeliveryListOpts,
   DeliveryRecord,
@@ -259,5 +260,53 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     const publicOrigin = this.env.GATEWAY_PUBLIC_URL?.trim();
     if (!publicOrigin) throw new Error("GATEWAY_PUBLIC_URL is required for dashboard Embedded Signup");
     return startConnectForAccount(this.env, id, publicOrigin, returnTo);
+  }
+
+  /**
+   * Finish Embedded Signup for a code that came from the JavaScript SDK.
+   *
+   * The dashboard's SDK page gets the code from `FB.login()` and posts it to a
+   * server function, which calls this. That indirection is the point: the code
+   * has to be exchanged with the app secret, and the browser must never hold an
+   * account API key, so the only public surface is a session-authenticated
+   * dashboard route and the exchange itself never leaves the private binding.
+   *
+   * `state` is consumed here — single-use, account-bound, and re-checked
+   * against the caller's account, so a code minted for one tenant cannot be
+   * redeemed by another. No `redirect_uri` is sent: the SDK flow never had one.
+   */
+  async exchangeConnectCodeForAccountId(
+    accountId: string,
+    code: string,
+    state: string,
+    wabaId?: string,
+  ): Promise<ConnectExchangeResult> {
+    const id = requireAccountId(accountId, "accountId is required");
+    const authorizationCode = code?.trim();
+    if (!authorizationCode) throw new Error("code is required");
+    const oauthState = state?.trim();
+    if (!oauthState) throw new Error("state is required");
+    const publicOrigin = this.env.GATEWAY_PUBLIC_URL?.trim();
+    if (!publicOrigin) throw new Error("GATEWAY_PUBLIC_URL is required for dashboard Embedded Signup");
+
+    const controlPlane = getControlPlaneStub(this.env);
+    // Single-use and account-bound. Consuming before the exchange means a
+    // replayed post cannot start a second registration even if the first is
+    // still in flight.
+    const consumed = await controlPlane.consumeConnectStateForAccount(oauthState, id);
+    if (!consumed) {
+      return { ok: false, error: "invalid or expired OAuth state", code: "state" };
+    }
+    return exchangeAndRegisterAll(
+      this.env,
+      (work) => this.ctx.waitUntil(work),
+      authorizationCode,
+      id,
+      // No redirect_uri: an `FB.login()` code was never bound to one, and Meta
+      // rejects the exchange if one is sent.
+      undefined,
+      publicOrigin,
+      wabaId?.trim() || undefined,
+    );
   }
 }

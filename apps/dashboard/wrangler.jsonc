@@ -26,6 +26,21 @@
   // localhost in dev) BEFORE routing, so the raw workers.dev/preview origins
   // fail closed and are not alternate customer paths.
 
+  // Public, non-secret Meta identifiers the Embedded Signup JavaScript SDK page
+  // needs in the browser. They are not credentials — Meta's own implementation
+  // guide puts both in client-side JS — but they are per-app values, so they are
+  // vars rather than anything committed with a real value here.
+  //
+  // Leave either EMPTY to disable the SDK path entirely: the Connect button then
+  // uses the server-side OAuth redirect to the gateway, which is the flow that
+  // has always worked and the only one a self-hoster without a console has.
+  // `META_GRAPH_VERSION` must match the gateway's (docs/deployment.md).
+  "vars": {
+    "META_APP_ID": "",
+    "META_ES_CONFIG_ID": "",
+    "META_GRAPH_VERSION": "v25.0"
+  },
+
   // Dedicated auth D1 database (identity plane — docs/auth-tenancy-contract.md §3).
   // Per environment: local dev uses the local D1 (`bun run db:migrate:local`); the
   // production/staging database ids are set at the deploy step (eccos-0x0.9) with

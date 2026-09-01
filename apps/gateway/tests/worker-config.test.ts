@@ -8,7 +8,7 @@ import { getAppConfig, tenantConfig } from "../src/tenant-config";
 import { parseCoreConfig, type CoreConfig } from "@eccos/core/config-schema";
 
 const BASE: CoreConfig = {
-  META_GRAPH_VERSION: "v24.0",
+  META_GRAPH_VERSION: "v25.0",
   META_ACCESS_TOKEN: "token",
   META_PHONE_NUMBER_ID: "env-phone",
   META_WABA_ID: "env-waba",
@@ -54,7 +54,7 @@ describe("tenant routing", () => {
 describe("app config (account-scoped worker)", () => {
   const env = (overrides: Record<string, string | undefined> = {}) =>
     ({
-      META_GRAPH_VERSION: "v24.0",
+      META_GRAPH_VERSION: "v25.0",
       META_APP_SECRET: "app-secret",
       META_WEBHOOK_VERIFY_TOKEN: "verify-token",
       META_APP_ID: "app-id",
@@ -64,7 +64,7 @@ describe("app config (account-scoped worker)", () => {
 
   it("requires only the Meta signature/verify secrets", () => {
     expect(getAppConfig(env({ META_APP_ID: "", META_ES_CONFIG_ID: "" }))).toMatchObject({
-      META_GRAPH_VERSION: "v24.0",
+      META_GRAPH_VERSION: "v25.0",
       META_APP_SECRET: "app-secret",
       META_WEBHOOK_VERIFY_TOKEN: "verify-token",
     });
@@ -79,7 +79,7 @@ describe("app config (account-scoped worker)", () => {
       metaAccessToken: "tenant-token",
     });
     expect(cfg).toMatchObject({
-      META_GRAPH_VERSION: "v24.0",
+      META_GRAPH_VERSION: "v25.0",
       META_WABA_ID: "WABA_T",
       META_PHONE_NUMBER_ID: "PN_T",
       META_ACCESS_TOKEN: "tenant-token",

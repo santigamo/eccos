@@ -209,13 +209,56 @@ retry loop in a separate Durable Object. This removes cross-tenant contention, w
 10 GB storage ceiling and bounded six-request retry pool remain. Follow the export and deployment guidance
 in [docs/deployment.md](./deployment.md) before adding a WABA with existing data.
 
+## A connected account with no phone number
+
+Embedded Signup v4 lets a customer finish the flow with a verified number, an unverified one, or
+**none at all**. A WABA that arrives with none is connected and subscribed but has nothing to send
+from, so it stays `pending` with:
+
+    connected, but this WhatsApp Business account has no business phone number yet; add one in
+    WhatsApp Manager and Eccos will pick it up
+
+This is not a fault and there is nothing for an operator to fix. Each provisioning attempt re-reads
+`GET /<WABA_ID>/phone_numbers` and adopts a number the moment one exists, so the customer adding it
+is enough.
+
+**This one state is exempt from the six-attempt cap.** Every other retryable failure gives up after
+six tries (~65 minutes) and goes `failed`; this one keeps polling at the capped one-hour backoff for
+as long as the WABA is `pending`, because a customer who finishes the flow in the evening and adds
+their number the next morning is the expected path, not an edge case — and there would be no way
+back if it stopped, since the cron only claims `pending` rows and **Re-check** is a per-row button
+while rows are built from phone numbers. A WABA with no numbers has no row and so no button.
+
+The cost, so it is on the record: an onboarding that is abandoned for good keeps costing one
+`subscribed_apps` call (idempotent) and one `phone_numbers` read per hour until the WABA is removed.
+The cron's batch is ordered by due time, so an hourly row cannot starve a fresh one.
+
+The console shows the account under **"Waiting on a phone number"** — it has no rows in the numbers
+table, because the table is built from phone numbers. A zero-phone WABA that failed for some *other*
+reason (Meta refusing the subscription, say) appears under **"Connection failed"** with its error
+instead, and that one does need reconnecting.
+
+An **unverified** number is different: it registers and provisions normally, and only fails when
+something tries to send. Eccos does not call `POST /<PHONE_NUMBER_ID>/register` yet, so a number the
+customer never verified surfaces as an error on the outbound message.
+
 ## Coexistence sync failures (eccos-vss)
 
-A number connected through `/connect` is a **coexistence** onboarding: it stays on the customer's
-WhatsApp Business app. Meta requires the Tech Provider to initiate contacts synchronisation and —
-**within 24 hours of the handoff** — message-history synchronisation, and allows **each of them
-exactly once per phone number**. Both rules have the same remedy when broken, and it is not a
-retry: the customer must be offboarded and complete Embedded Signup again.
+A number connected through `/connect` is *recorded as* a **coexistence** onboarding: it is meant to
+stay on the customer's WhatsApp Business app. Meta requires the Tech Provider to initiate contacts
+synchronisation and — **within 24 hours of the handoff** — message-history synchronisation, and
+allows **each of them exactly once per phone number**. Both rules have the same remedy when broken,
+and it is not a retry: the customer must be offboarded and complete Embedded Signup again.
+
+> **The recorded type is a request, not a fact.** `/connect` asks Meta for the WhatsApp Business app
+> flow by putting `featureType` in `extras` on the OAuth dialog URL, and `extras` is documented only
+> as an `FB.login()` option — verified on 2026-09-01 that the dialog ignores it and runs the
+> ordinary Cloud API flow instead. So before spending either once-only sync, the saga reads back
+> what Meta actually did with `GET /<PHONE_NUMBER_ID>?fields=is_on_biz_app,platform_type` and issues
+> only when both `is_on_biz_app` is `true` and `platform_type` is `CLOUD_API`, for **every** number
+> the handoff registered. Anything else — including a field Meta did not return — declines the sync,
+> because the one thing that must never happen is spending a once-only call on a number that did not
+> need it.
 
 Eccos runs this as a step of the provisioning saga, so a WABA that has not had it done never reads
 as `active`. Two failures are terminal by design and need a human:
@@ -228,10 +271,24 @@ as `active`. Two failures are terminal by design and need a human:
 Pressing "re-check" on such a WABA is safe — it re-runs the saga, which refuses to re-issue a spent
 sync and lands back on the same message. Only a genuinely new Embedded Signup handoff clears it.
 
-Where the state lives, on the control plane's `wabas` row: `onboarding_type`,
-`coexistence_sync_status` (`not_applicable` / `pending` / `initiated` / `unconfirmed` / `expired`),
-`coexistence_sync_deadline_at`, `contacts_sync_started_at` + `contacts_sync_request_id`, and
-`history_sync_started_at` + `history_sync_request_id`. The `*_started_at` columns are written
+### A number that turned out not to be a coexistence number
+
+A third outcome is **not** a failure and needs no remedy. When the verification above says the
+number is an ordinary Cloud API number, no sync is issued, the WABA provisions **`active`**, and its
+coexistence status becomes `not_coexistence`. The console says so under the numbers table ("No
+WhatsApp Business app history"). The number sends and receives normally; what it does not have is
+the customer's existing WhatsApp Business app chats and contacts, and it never will without a fresh
+onboarding that Meta actually runs as coexistence. Nothing here should be retried or offboarded —
+tell the customer, and do not leave anyone waiting for history that is not coming.
+
+A WABA in this state never ages into `expired`: it owes nothing, so the 24-hour clock has nothing
+to run out on.
+
+Where the state lives, on the control plane's `wabas` row: `onboarding_type` (what was requested),
+`coexistence_verified_type` (what Meta reported, null until it has been read),
+`coexistence_sync_status` (`not_applicable` / `pending` / `initiated` / `unconfirmed` /
+`not_coexistence` / `expired`), `coexistence_sync_deadline_at`, `contacts_sync_started_at` +
+`contacts_sync_request_id`, and `history_sync_started_at` + `history_sync_request_id`. The `*_started_at` columns are written
 *before* each request goes out — that is what makes the once-only rule safe — and the request ids
 are Meta's support references, worth quoting in a support ticket (Question Topic "WABiz: Cloud API",
 Request Type "Coexistence Data Synchronization APIs and Webhooks").

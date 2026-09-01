@@ -33,7 +33,7 @@ export function getAppConfig(env: Env): AppConfig {
     return value;
   };
   return {
-    META_GRAPH_VERSION: values.META_GRAPH_VERSION?.trim() || "v24.0",
+    META_GRAPH_VERSION: values.META_GRAPH_VERSION?.trim() || "v25.0",
     META_APP_SECRET: required("META_APP_SECRET"),
     META_WEBHOOK_VERIFY_TOKEN: required("META_WEBHOOK_VERIFY_TOKEN"),
     ...(values.META_APP_ID?.trim() ? { META_APP_ID: values.META_APP_ID.trim() } : {}),

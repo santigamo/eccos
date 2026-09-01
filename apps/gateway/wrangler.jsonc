@@ -64,7 +64,13 @@
   ],
 
   "vars": {
-    "META_GRAPH_VERSION": "v24.0",
+    // Wins over the schema default in production: every Graph call and the
+    // Embedded Signup dialog are pathed with this. Keep it equal to the version
+    // each *subscribed* webhook field carries in the Meta app panel — Meta warns
+    // that mixing API versions across one object's fields can delay delivery.
+    // All twelve fields subscribed on the WABA object are on v25.0 (verified in
+    // the panel on 2026-09-01). Bump procedure: docs/deployment.md#meta-graph-api-version.
+    "META_GRAPH_VERSION": "v25.0",
     // Origin the dashboard's Embedded Signup button hands to Meta as
     // `redirect_uri` (`<origin>/connect`). Meta matches it EXACTLY against the
     // app's Valid OAuth Redirect URIs, where `https://api.eccos.chat/connect`

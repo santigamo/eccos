@@ -13,6 +13,8 @@ type NumberRow = {
   phoneNumberId: string;
   wabaId: string;
   status: string;
+  /** Coexistence sync state of the WABA this number belongs to (eccos-vss). */
+  coexistence: string;
 };
 
 /**
@@ -44,9 +46,18 @@ export function NumbersTable({
       phoneNumberId: phone.phoneNumberId,
       wabaId: waba.wabaId,
       status: waba.status,
+      coexistence: waba.coexistence.status,
     })),
   );
   const pendingRows = rows.filter((row) => row.status === "pending").length;
+  const notCoexistenceRows = rows.filter((row) => row.coexistence === "not_coexistence").length;
+  // A WABA with no numbers produces no rows at all, so without these it would be
+  // connected and completely invisible here (Embedded Signup v4). Split by
+  // status, because the two say opposite things to an operator: one resolves
+  // itself and one does not.
+  const phonelessWabas = resources.wabas.filter((waba) => waba.phones.length === 0);
+  const awaitingPhoneWabas = phonelessWabas.filter((waba) => waba.status !== "failed").length;
+  const failedPhonelessWabas = phonelessWabas.filter((waba) => waba.status === "failed");
 
   async function onRecheck(wabaId: string) {
     setRechecking(wabaId);
@@ -121,6 +132,11 @@ export function NumbersTable({
       </div>
 
       {pendingRows > 0 ? <PendingNote count={pendingRows} /> : null}
+      {awaitingPhoneWabas > 0 ? <AwaitingPhoneNote count={awaitingPhoneWabas} /> : null}
+      {failedPhonelessWabas.length > 0 ? (
+        <FailedPhonelessNote wabas={failedPhonelessWabas} />
+      ) : null}
+      {notCoexistenceRows > 0 ? <NotCoexistenceNote count={notCoexistenceRows} /> : null}
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -188,6 +204,96 @@ function PendingNote({ count }: { count: number }) {
         {count === 1
           ? "This number is registered, but Eccos has not finished subscribing it to its Meta webhooks. It keeps retrying on its own. Re-check runs that now."
           : `${count} numbers are registered, but Eccos has not finished subscribing them to their Meta webhooks. It keeps retrying on its own. Re-check runs that now.`}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * A connected WhatsApp Business account with no number in it yet.
+ *
+ * Embedded Signup v4 lets a customer finish the flow having entered no phone
+ * number, or one they never verified. The account is connected and its webhooks
+ * are subscribed, but the table is built from phone numbers, so without this it
+ * would show nothing at all and the operator would think the connection failed.
+ * There is no action here for them: the number has to be added on the customer's
+ * side, and Eccos picks it up by itself.
+ */
+function AwaitingPhoneNote({ count }: { count: number }) {
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
+      <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+        Waiting on a phone number
+      </p>
+      <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
+        {count === 1
+          ? "One WhatsApp Business account is connected but has no business phone number yet. Add one in WhatsApp Manager and it will appear here on its own — nothing needs reconnecting."
+          : `${count} WhatsApp Business accounts are connected but have no business phone number yet. Add one to each in WhatsApp Manager and they will appear here on their own — nothing needs reconnecting.`}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * A WABA with no numbers whose provisioning actually failed — Meta refused the
+ * subscription, say. It is the same invisible shape as the one above (no
+ * numbers, so no rows) but the opposite situation: nothing is coming, and the
+ * only account-level error message there is lives on the WABA record. Without
+ * this the table would either show nothing at all or, worse, tell the operator
+ * to sit and wait.
+ */
+function FailedPhonelessNote({
+  wabas,
+}: {
+  wabas: AccountResources["wabas"];
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
+      <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+        Connection failed
+      </p>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {wabas.map((waba) => (
+          <li
+            key={waba.wabaId}
+            className="max-w-prose text-sm text-pretty text-muted-foreground"
+          >
+            <span className="font-medium text-foreground">{waba.wabaId}</span>
+            {waba.provisioningError ? ` — ${waba.provisioningError}` : null}
+          </li>
+        ))}
+      </ul>
+      <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
+        Connect the number again to retry.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The one coexistence state an operator has to be told about, because it
+ * silently changes what the number is (eccos-vss).
+ *
+ * Eccos asked Meta for a WhatsApp Business app onboarding and Meta reports it
+ * did not perform one, so the contacts and message-history syncs were never
+ * requested — correctly, since each is allowed exactly once and a wrong one
+ * costs the customer their onboarding. Nothing is broken and there is no action
+ * to offer: the number works as an ordinary Cloud API number. What would be
+ * wrong is leaving somebody waiting for chat history that is never coming.
+ *
+ * Same structure as the pending note, and for the same reason: this is
+ * information, not an alarm.
+ */
+function NotCoexistenceNote({ count }: { count: number }) {
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
+      <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+        No WhatsApp Business app history
+      </p>
+      <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
+        {count === 1
+          ? "This number was connected as a WhatsApp Business app number, but Meta reports it is not one. It works normally for sending and receiving; its existing WhatsApp Business app chats and contacts were not synchronised and will not be."
+          : `${count} numbers were connected as WhatsApp Business app numbers, but Meta reports they are not. They work normally for sending and receiving; their existing WhatsApp Business app chats and contacts were not synchronised and will not be.`}
       </p>
     </div>
   );

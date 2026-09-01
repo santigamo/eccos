@@ -143,6 +143,36 @@ function resultPage(result: MultiExchangeResult): string {
   return htmlDocument(title, `<pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`);
 }
 
+/**
+ * The Facebook Login for Business dialog URL — the server-side half of Embedded
+ * Signup, and every parameter on it is one Meta documents for the manual login
+ * flow (`client_id`, `redirect_uri`, `state`, `response_type`) plus the
+ * `config_id` that Login for Business adds.
+ *
+ * ── WHY THERE IS NO `extras` HERE ANY MORE ───────────────────────────────────
+ * There used to be, carrying `featureType: "whatsapp_business_app_onboarding"`
+ * to ask for the WhatsApp Business app (coexistence) flow. Two things were
+ * wrong with it, and both were confirmed on 2026-09-01:
+ *
+ *  1. `extras` is not a parameter of `dialog/oauth`. Meta documents it only as
+ *     an `FB.login()` option, and the dialog was observed to ignore it: the flow
+ *     ran the ordinary Cloud API path, the WABA-selection screen was NOT
+ *     replaced by the "connect your existing account" screen that is Meta's own
+ *     test for the feature being on, and an existing coexistence number was not
+ *     offered. Everything it asked for was silently dropped.
+ *  2. Under Embedded Signup v4 there is nothing left for it to carry. Meta's v4
+ *     extras object is "purposely empty": the flow's products and version come
+ *     from the Facebook Login for Business configuration behind `config_id`,
+ *     which this URL *can* carry, and `sessionInfoVersion` was a v2-only field
+ *     (v3 and v4 return session info for every flow).
+ *
+ * So the version and the feature set now live entirely in `META_ES_CONFIG_ID`,
+ * which is a v4 configuration created in the app panel. Nothing in this URL can
+ * express them, and nothing here pretends to. The consequence worth knowing:
+ * this code cannot tell a v4 configuration from a stale v2 one — a wrong id is
+ * not detectable here, only downstream, where the coexistence verification in
+ * `src/provisioning.ts` reads back what Meta actually did per number.
+ */
 function oauthUrl(
   cfg: { META_APP_ID?: string; META_ES_CONFIG_ID?: string; META_GRAPH_VERSION?: string },
   redirectUri: string,
@@ -156,15 +186,7 @@ function oauthUrl(
     override_default_response_type: "true",
     state,
   });
-  params.set(
-    "extras",
-    JSON.stringify({
-      setup: {},
-      featureType: "whatsapp_business_app_onboarding",
-      sessionInfoVersion: "3",
-    }),
-  );
-  return `https://www.facebook.com/${cfg.META_GRAPH_VERSION ?? "v24.0"}/dialog/oauth?${params.toString()}`;
+  return `https://www.facebook.com/${cfg.META_GRAPH_VERSION ?? "v25.0"}/dialog/oauth?${params.toString()}`;
 }
 
 /**
@@ -292,10 +314,14 @@ function parseExchangeBody(value: unknown): { code: string; state?: string; waba
  * budget is then the only thing keeping it alive, which is no worse than the
  * cron-only behaviour it replaces.
  */
-function keepAlive(c: ConnectContext, work: Promise<void>): void {
-  try {
-    c.executionCtx.waitUntil(work);
-  } catch {}
+export type KeepAlive = (work: Promise<void>) => void;
+
+function keepAlive(c: ConnectContext): KeepAlive {
+  return (work) => {
+    try {
+      c.executionCtx.waitUntil(work);
+    } catch {}
+  };
 }
 
 /**
@@ -306,13 +332,14 @@ function keepAlive(c: ConnectContext, work: Promise<void>): void {
  * way back to the console cannot depend on Meta answering.
  */
 async function kickProvisioning(
-  c: ConnectContext,
+  env: Env,
+  keepRunning: KeepAlive,
   accountId: string,
   wabaIds: string[],
 ): Promise<Map<string, ProvisioningStatus>> {
   if (wabaIds.length === 0) return new Map();
-  const kick = kickWabaProvisioning(c.env, accountId, wabaIds);
-  keepAlive(c, kick.done);
+  const kick = kickWabaProvisioning(env, accountId, wabaIds);
+  keepRunning(kick.done);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -335,15 +362,26 @@ async function kickProvisioning(
  * stays `pending` for the cron. An explicit ownership conflict fails closed;
  * unrelated foreign matches are skipped with a warning.
  */
-async function exchangeAndRegisterAll(
-  c: ConnectContext,
+export async function exchangeAndRegisterAll(
+  env: Env,
+  keepRunning: KeepAlive,
   code: string,
   accountId: string,
-  redirectUri?: string,
+  /**
+   * The `redirect_uri` the code was minted against, and `undefined` when there
+   * was none. Meta requires the exchange to repeat the value the dialog was
+   * given — and requires it to be *absent* for a code that came from
+   * `FB.login()`, which uses no redirect at all. Passing one there fails the
+   * exchange, so this stays optional rather than defaulting to something
+   * plausible.
+   */
+  redirectUri: string | undefined,
+  /** Origin the per-WABA webhook callback URL is built from. */
+  callbackOrigin: string,
   wabaSelector?: string,
 ): Promise<MultiExchangeResult> {
   try {
-    const appConfig = getAppConfig(c.env);
+    const appConfig = getAppConfig(env);
     const businessToken = await exchangeCodeForToken(appConfig, code, redirectUri);
     const discovered = await findWabaPhoneNumbersForToken(appConfig, businessToken);
     if (discovered.length === 0) {
@@ -358,8 +396,8 @@ async function exchangeAndRegisterAll(
     }
     const matches = wabaSelector ? discovered.filter((match) => match.wabaId === wabaSelector) : discovered;
 
-    const callbackUrl = callbackUrlForRedirectUri(redirectUri ?? new URL("/connect", c.req.url).href);
-    const controlPlane = getControlPlaneStub(c.env);
+    const callbackUrl = callbackUrlForRedirectUri(callbackOrigin);
+    const controlPlane = getControlPlaneStub(env);
     const foreignWabaIds = new Set<string>();
     const warnings: string[] = [];
 
@@ -393,12 +431,22 @@ async function exchangeAndRegisterAll(
           phoneNumberId: p.id,
           displayPhoneNumber: p.display_phone_number ?? "",
         })),
-        // This route is the WhatsApp Business app onboarding flow and nothing
-        // else: `oauthUrl` hardcodes `featureType:
-        // "whatsapp_business_app_onboarding"`, so every number that arrives here
-        // is a coexistence onboarding and owes Meta the contacts and
-        // message-history syncs (eccos-vss). Registering the type here is also
-        // what starts the 24-hour clock, at the moment the handoff completed.
+        // `/connect` is the path that CAN produce a WhatsApp Business app
+        // (coexistence) number — whether it does is decided by the Facebook
+        // Login for Business configuration behind `META_ES_CONFIG_ID`, not by
+        // anything this code can put in the dialog URL (see `oauthUrl`).
+        //
+        // So this is a claim, not a fact, and it is deliberately the
+        // *pessimistic* one: recording `coexistence` is what makes the
+        // provisioning saga go and ask Meta what the number actually is before
+        // it spends either once-only sync (eccos-vss). Recording `standard`
+        // here would skip that question entirely and silently strand a real
+        // coexistence customer with no history sync. Every other registration
+        // path still defaults to `standard`, so an omission can never invent an
+        // obligation.
+        //
+        // Registering it here is also what starts the 24-hour clock, at the
+        // moment the handoff completed.
         onboardingType: "coexistence" as const,
       })),
     );
@@ -409,7 +457,8 @@ async function exchangeAndRegisterAll(
     // The pending rows are durable now, so run provisioning here instead of
     // leaving it to the cron: this is the moment the operator is watching.
     const kicked = await kickProvisioning(
-      c,
+      env,
+      keepRunning,
       accountId,
       registrations.map((registration) => registration.waba.wabaId),
     );
@@ -508,11 +557,14 @@ export function connectRoutes() {
           400,
         );
       }
+      const exchangeRedirectUri = stateRecord.redirectUri ?? redirectUri;
       const result = await exchangeAndRegisterAll(
-        c,
+        c.env,
+        keepAlive(c),
         code,
         stateRecord.accountId,
-        stateRecord.redirectUri ?? redirectUri,
+        exchangeRedirectUri,
+        exchangeRedirectUri,
       );
       const returnTo = stateRecord.returnTo ?? returnCookie;
       if (!result.ok) {
@@ -648,11 +700,14 @@ export function connectRoutes() {
     if (!consumedState) {
       return c.json({ ok: false, error: "invalid or expired OAuth state" }, 400);
     }
+    const exchangeRedirectUri = consumedState.redirectUri ?? expectedRedirectUri;
     const result = await exchangeAndRegisterAll(
-      c,
+      c.env,
+      keepAlive(c),
       code,
       account.accountId,
-      consumedState.redirectUri ?? expectedRedirectUri,
+      exchangeRedirectUri,
+      exchangeRedirectUri,
       waba_id,
     );
     return c.json(result, result.ok ? 202 : 502);
