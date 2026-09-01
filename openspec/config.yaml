@@ -1,0 +1,70 @@
+strict_tdd: true
+context: |
+  @eccos/dashboard is a Node.js/TypeScript ESM, React project.
+  Detected markers: package.json, tsconfig.json, bun package manager, apps/dashboard/package.json, apps/dashboard/tsconfig.json, apps/dashboard/npm package manager, apps/gateway/package.json, apps/gateway/tsconfig.json, apps/gateway/npm package manager, apps/site/package.json, apps/site/tsconfig.json, apps/site/npm package manager, packages/core/package.json, packages/core/tsconfig.json, packages/core/npm package manager, packages/gateway-contract/package.json, packages/gateway-contract/tsconfig.json, packages/gateway-contract/npm package manager, GitHub Actions.
+  Package managers: bun, npm.
+  Additional evidence: Test-like files detected (30); examples: apps/dashboard/tests/access.test.ts, apps/dashboard/tests/gateway.test.ts, apps/dashboard/tests/log-grid.test.tsx, apps/dashboard/tests/search.test.ts, apps/dashboard/tests/status.test.tsx.
+  Primary test command: bun run test.
+  Unit tests: Vitest (bun run test); package script (cd apps/dashboard && npm test); Vitest (cd apps/gateway && npm run vitest).
+  Integration tests: none.
+  E2E tests: none.
+rules:
+  proposal:
+    require_problem_statement: true
+  spec:
+    require_acceptance_criteria: true
+  design:
+    require_tradeoffs: true
+  tasks:
+    protect_review_workload: true
+  apply:
+    test_command: "bun run test"
+  verify:
+    test_command: "bun run test"
+testing:
+  detected: "2026-08-28"
+  runner:
+    command: "bun run test"
+    framework: "Vitest"
+  layers:
+    unit: "Vitest, package script, Vitest"
+    integration: ""
+    e2e: ""
+  commands:
+    unit:
+      - scope: "."
+        command: "bun run test"
+        framework: "Vitest"
+      - scope: "apps/dashboard"
+        command: "cd apps/dashboard && npm test"
+        framework: "package script"
+      - scope: "apps/gateway"
+        command: "cd apps/gateway && npm run vitest"
+        framework: "Vitest"
+    integration:
+      []
+    e2e:
+      []
+  coverage:
+    command: ""
+    commands:
+      []
+quality:
+  lint: "bun run lint"
+  lint_commands:
+    - scope: "."
+      command: "bun run lint"
+      framework: "linter"
+  typecheck: "bun run typecheck"
+  typecheck_commands:
+    - scope: "."
+      command: "bun run typecheck"
+      framework: "type checker"
+    - scope: "apps/dashboard"
+      command: "cd apps/dashboard && npm run typecheck"
+      framework: "type checker"
+  format: "bun run format"
+  format_commands:
+    - scope: "."
+      command: "bun run format"
+      framework: "formatter"

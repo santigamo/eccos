@@ -379,10 +379,10 @@ export function createAuth(config: AuthConfig) {
             template: "invite-member",
             to: invitation.email,
             variables: {
-              organizationName: organization.name,
-              inviterName: inviter.user.name,
-              inviterEmail: inviter.user.email,
-              url: acceptLink,
+              accept_url: acceptLink,
+              inviter_email: inviter.user.email,
+              inviter_name: inviter.user.name,
+              workspace: organization.name,
             },
             idempotencyKey,
           });

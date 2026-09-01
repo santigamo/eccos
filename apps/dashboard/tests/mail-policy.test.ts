@@ -390,11 +390,15 @@ describe("the three call sites send the declared variables", () => {
 
     const sent = mail.sent[0]!;
     expect(sent.template).toBe("invite-member");
+    // The provider's declared set, read back from the mailbox on 2026-09-01 —
+    // snake_case, `workspace` rather than the organization's name, `accept_url`
+    // rather than `url`. Validation is exact in both directions, so this
+    // assertion is the thing that catches a drift before a send does.
     expect(Object.keys(sent.variables).sort()).toEqual([
-      "inviterEmail",
-      "inviterName",
-      "organizationName",
-      "url",
+      "accept_url",
+      "inviter_email",
+      "inviter_name",
+      "workspace",
     ]);
     expect(sent.idempotencyKey).toBe(
       await deriveIdempotencyKey("invite-member", "invitee@example.com", invitation.id!),

@@ -39,11 +39,17 @@ export type MailTemplate = "verify-email" | "reset-password" | "invite-member";
  */
 export const VERIFY_EMAIL_VARIABLES = ["name", "url"] as const;
 export const RESET_PASSWORD_VARIABLES = ["name", "url"] as const;
+// Read back from the provider on 2026-09-01, not assumed: these are the names
+// the mailbox actually parsed out of the stored template. They are snake_case
+// and two of them are not what the call site would naturally call them
+// (`workspace`, not the organization's name; `accept_url`, not `url`).
+// Validation is exact in BOTH directions provider-side, so a rename here
+// without a matching re-registration there hard-rejects every invitation.
 export const INVITE_MEMBER_VARIABLES = [
-  "organizationName",
-  "inviterName",
-  "inviterEmail",
-  "url",
+  "accept_url",
+  "inviter_email",
+  "inviter_name",
+  "workspace",
 ] as const;
 
 /** The declared set for a template, by name. */

@@ -144,9 +144,9 @@ describe("invitation accept link (eccos-omv)", () => {
     expect(email).toBeTruthy();
     expect(email!.template).toBe("invite-member");
     // The only existing route is /invitations with ?id= (createFileRoute("/invitations")).
-    expect(email!.variables.url).toBe(`${BASE_URL}/invitations?id=${invitation.id}`);
+    expect(email!.variables.accept_url).toBe(`${BASE_URL}/invitations?id=${invitation.id}`);
     // A path-segment link would dead-end on a non-existent route.
-    expect(email!.variables.url).not.toContain(`${BASE_URL}/invitations/${invitation.id}`);
+    expect(email!.variables.accept_url).not.toContain(`${BASE_URL}/invitations/${invitation.id}`);
   });
 });
 
