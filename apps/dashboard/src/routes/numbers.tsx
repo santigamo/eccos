@@ -54,12 +54,20 @@ function NumbersPage() {
   if (!resources || wabas.length === 0) {
     return (
       <Page title="Connect WhatsApp" kicker="First run">
-        {/* Centred horizontally, but held high: vertically centring it in the
-            content area dropped it past the middle of the viewport and cut it
-            loose from its own heading. Top-aligned with a deliberate gap keeps
-            it in the upper half at any viewport height, and never clips. */}
-        <div className="flex justify-center pt-16">
-          <div className="w-full max-w-3xl">
+        {/* Centred and LIFTED, the house treatment for a single-purpose frame
+            — the same one `/workspaces/new` uses, and for the same reason: on a
+            tall viewport a top-anchored panel leaves the eye and the cursor far
+            apart. `pb-[10vh]` is what raises it; `items-center` alone would
+            sink it to the true middle, which reads as floating, and the old
+            `pt-16` pinned it to the top of a mostly empty column instead.
+
+            This applies ONLY to first run. Below, "Add another number" stays
+            left-aligned under the table, because there it is one section of a
+            page rather than the whole point of the screen. Same component, two
+            placements, and the difference between them is real: this screen
+            exists to be acted on, that one is a thing you scroll past. */}
+        <div className="flex flex-1 items-center justify-center pb-[10vh]">
+          <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
             <ConnectNumberPanel heading="Meta Embedded Signup" />
           </div>

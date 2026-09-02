@@ -110,17 +110,36 @@ describe("ConnectNumberPanel", () => {
     expect(html).toContain("[&amp;&gt;[data-slot=frame-panel-header]]:px-0");
   });
 
-  test("the choices ARE the actions, and the footer holds none", () => {
-    // The old panel pinned one button in the footer. There is no single action
-    // left to pin: picking a path launches that path, because there is nothing
-    // to configure in between and a confirm step would only add a click before
-    // Meta's own multi-screen flow, which is where backing out is still free.
-    // So the footer must not regrow an action that would have to guess a path.
+  test("the choices ARE the actions, and there is no footer band", () => {
+    // The old panel pinned one button in a full-bleed footer. There is no
+    // single action left to pin: picking a path launches that path, because
+    // there is nothing to configure in between and a confirm step would only
+    // add a click before Meta's own multi-screen flow, which is where backing
+    // out is still free.
+    //
+    // The band went with it. A full-width rule plus its -mx chrome for one
+    // 12px sentence was another rectangle in a panel that already read as a
+    // grid; the sentence stayed, the rule did not.
     const html = render();
     expect(html.match(/<button/g)?.length).toBe(2);
-    const open = html.indexOf("<footer");
-    const close = html.indexOf("</footer>", open);
-    expect(open).toBeGreaterThan(-1);
-    expect(html.slice(open, close)).not.toContain("<button");
+    expect(html).not.toContain("<footer");
+    expect(html).toContain("Meta brings you back to this page");
+  });
+
+  test("the cards wear interactive anatomy, not structural hairlines", () => {
+    // THE REGRESSION THIS SUITE MISSED ONCE. These buttons rested on `--line`
+    // (7%, which app.css calls "structural hairlines") with no fill, so the two
+    // biggest actions in the product were drawn in the ink of the dividers
+    // between them and the affordance existed only on hover. The contract's
+    // rule for a ghost control is a `--ghost-fill` body under a `--line-strong`
+    // edge, and the landing's own .btn-ghost is built the same way.
+    const html = render();
+    expect(html).toContain("border-(--line-strong)");
+    expect(html).toContain("bg-(--ghost-fill)");
+    // The landing signature: the edge turns green under the pointer. The
+    // "before shipping" checklist says a screen that looks cleaner but lost a
+    // green edge has regressed, so this is pinned rather than assumed.
+    expect(html).toContain("hover:border-(--ghost-edge-hover)");
+    expect(html).toContain("group-hover:text-primary");
   });
 });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CloudIcon, LoaderCircleIcon, SmartphoneIcon } from "lucide-react";
 import {
   Frame,
   FrameDescription,
@@ -47,9 +48,14 @@ const CONNECT_PATHS: ReadonlyArray<{
   title: string;
   detail: string;
   caution: string;
+  /** `warning` is reserved for a path that destroys existing setup. */
+  tone: "warning" | "muted";
+  icon: React.ReactNode;
 }> = [
   {
     path: "business-app",
+    icon: <SmartphoneIcon aria-hidden="true" className="size-4" />,
+    tone: "muted",
     title: "Keep the number on the WhatsApp Business app",
     detail:
       "You keep answering from the app. Meta syncs contacts and message history across both.",
@@ -57,6 +63,8 @@ const CONNECT_PATHS: ReadonlyArray<{
   },
   {
     path: "new-number",
+    icon: <CloudIcon aria-hidden="true" className="size-4" />,
+    tone: "warning",
     title: "Bring a number to the Cloud API",
     detail:
       "For a number that is not on WhatsApp today. Meta verifies it by SMS or call.",
@@ -218,12 +226,19 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
     <Frame variant="default" spacing="lg" className="max-w-3xl">
       <FramePanel fit>
         {/* The header sits level with the body: FramePanel zeroes the nested
-            header's horizontal padding so the two do not stack (see frame.tsx). */}
+            header's horizontal padding so the two do not stack (see frame.tsx).
+
+            The title is in the MACHINE VOICE (Inter, 11px, uppercase,
+            tracking-wider), which is what the design contract gives panel
+            titles and empty-state labels. It was `text-sm font-semibold` —
+            stock shadcn card-title, a register this console does not have. */}
         <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">{heading}</FrameTitle>
+          <FrameTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            {heading}
+          </FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            Pick the one that matches where the number lives today. Meta fixes
-            this when the flow opens.
+            Pick the one that matches where the number lives today. The choice
+            locks the moment Meta's window opens.
           </FrameDescription>
         </FrameHeader>
 
@@ -236,43 +251,105 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
         {/* Each choice IS the action: there is nothing to configure between
             picking and launching, and a confirm step here would only add a
             click before Meta's own multi-screen flow, which is where backing
-            out is still free. */}
-        <ul className="m-0 flex list-none flex-col gap-px p-0 pt-5">
-          {CONNECT_PATHS.map(({ path, title, detail, caution }) => (
+            out is still free.
+
+            `gap-2`, not `gap-px`: two bordered rows sharing a 1px seam is the
+            anatomy of TABLE ROWS, and that is most of why this panel read as a
+            grid rather than as two controls at a fork. */}
+        <ul className="m-0 flex list-none flex-col gap-2 p-0 pt-5">
+          {CONNECT_PATHS.map(({ path, title, detail, caution, tone, icon }) => (
             <li key={path}>
               <button
                 type="button"
                 onClick={() => start(path)}
                 disabled={starting !== null}
                 className={cn(
-                  "flex w-full flex-col items-start gap-1.5 rounded-none border border-(--line) p-4 text-left transition-colors",
+                  // INTERACTIVE anatomy, not structural. These rested on
+                  // `--line` (7%, "structural hairlines") with no fill, which
+                  // is the ink of dividers — so the two biggest actions in the
+                  // product were drawn like the rules between them, and the
+                  // affordance existed only on hover. The contract's rule for a
+                  // ghost control is `--ghost-fill` under a `--line-strong`
+                  // (35%) edge, which is also what the landing's `.btn-ghost`
+                  // does. Rest -> hover then reads as fill-raise plus the edge
+                  // going green, instead of a hairline appearing from nothing.
+                  "group flex w-full items-start gap-4 rounded-none border border-(--line-strong) bg-(--ghost-fill) p-4 text-left transition-colors",
                   "hover:border-(--ghost-edge-hover) hover:bg-(--ghost-fill-hover)",
                   "focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none",
-                  "disabled:pointer-events-none disabled:opacity-50",
+                  // Dim only the path NOT being opened. Dimming the one just
+                  // pressed reads as "unavailable" at the exact moment it is
+                  // the thing that is working.
+                  "disabled:pointer-events-none",
+                  starting !== null && starting !== path && "opacity-50",
                 )}
               >
-                <span className="text-sm font-medium text-foreground">
-                  {starting === path ? "Opening Embedded Signup…" : title}
+                {/* The masthead's monogram idiom: a square with a
+                    `--line-strong` edge, never a circle, never rounded.
+                    
+                    THE GLYPH CARRIES BRAND GREEN AT REST, at 70%. That is a
+                    deliberate departure from the strict reading of the
+                    interaction law, which reserves resting green for STATE (the
+                    live sidebar item, a success tag, the primary CTA) on the
+                    grounds that spending it elsewhere dilutes "green marks the
+                    live thing". The departure is bounded so that argument still
+                    holds: only the glyph is tinted, never the slot's fill or
+                    edge, so this stays a mark and never becomes the filled,
+                    railed, full-ink block the sidebar uses for "active" — and
+                    at 70% it is visibly quieter than any real state on screen.
+                    
+                    Hover then takes it to 100%, which is also the rule the
+                    contract states outright: vivid green never dims, it
+                    brightens. So rest -> hover keeps a distinct step, and the
+                    edge going green stays the interactivity signal it was. */}
+                <span
+                  aria-hidden="true"
+                  className="flex size-9 shrink-0 items-center justify-center border border-(--line-strong) text-primary/70 transition-colors group-hover:border-(--ghost-edge-hover) group-hover:text-primary"
+                >
+                  {starting === path ? (
+                    <LoaderCircleIcon className="size-4 animate-spin" />
+                  ) : (
+                    icon
+                  )}
                 </span>
-                <span className="max-w-prose text-pretty text-sm text-muted-foreground">
-                  {detail}
-                </span>
-                {/* The consequence, in the functional register the design
-                    contract reserves for it. It states a cost, never a
-                    judgement about how well the path works. */}
-                <span className="pt-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {caution}
+                <span className="flex min-w-0 flex-col gap-1.5">
+                  {/* The title does NOT become "Opening…". Swapping it jumps
+                      the layout and erases which path is opening at the one
+                      moment that matters; the spinner in the slot says it
+                      without moving anything. */}
+                  <span className="text-sm font-medium text-foreground">{title}</span>
+                  <span className="max-w-prose text-pretty text-sm text-muted-foreground">
+                    {detail}
+                  </span>
+                  {/* The consequence, in the functional register the contract
+                      reserves for it. Amber is spent here and nowhere else on
+                      this screen: it is the one meaningful state, and it is the
+                      mistake the fork exists to prevent. Red would be wrong —
+                      that is the error register, and this path is the CORRECT
+                      choice for a fresh number. No icon and no chip: the words
+                      carry the meaning, a warning triangle would push it to
+                      alarm, and tag anatomy would misdeclare a cost as status. */}
+                  <span
+                    className={cn(
+                      "pt-1 text-[11px] font-medium uppercase tracking-wider",
+                      tone === "warning" ? "text-warning" : "text-muted-foreground",
+                    )}
+                  >
+                    {caution}
+                  </span>
                 </span>
               </button>
             </li>
           ))}
         </ul>
 
-        <footer className="-mx-(--frame-panel-px) mt-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-(--frame-panel-border-color) px-(--frame-panel-px) pt-4">
-          <p className="m-0 text-xs text-muted-foreground">
-            Meta brings you back to this page when it is done.
-          </p>
-        </footer>
+        {/* No footer band. A full-bleed rule and its chrome for one 12px
+            sentence was another rectangle in a panel that already had too
+            many; the sentence earns its place (it sets the return expectation,
+            which matters most on the full-navigation fallback) and the rule
+            did not. */}
+        <p className="m-0 pt-4 text-xs text-muted-foreground">
+          Meta brings you back to this page when it is done.
+        </p>
       </FramePanel>
     </Frame>
   );
