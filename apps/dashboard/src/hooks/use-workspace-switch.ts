@@ -8,8 +8,8 @@ import { selectOrganization } from "../organizations"
  * The one client path that changes which workspace this session is scoped to.
  *
  * There is deliberately no second one: the failure-state picker
- * (`components/dashboard/failure.tsx`) and the shell's workspace control
- * (`blocks/app-shell-7/components/nav-workspace.tsx`) both go through here, so
+ * (`components/dashboard/failure.tsx`) and the masthead's workspace crumb
+ * (`blocks/app-shell-7/components/masthead-breadcrumb.tsx`) both go through here, so
  * the membership check on the server (`selectOrganization` →
  * `verifyMembership`) and the reload afterwards can never drift apart.
  *

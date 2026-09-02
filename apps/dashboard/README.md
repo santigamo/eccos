@@ -21,8 +21,8 @@ The console has **no public HTTP surface into the gateway**. It talks to the gat
 
 Server functions in `src/server/gateway.ts` resolve the tenant server-side (Better Auth session →
 organization membership → organization→account link → owned WABA) and pass that account context on
-every call. The WABA picker selection is kept in the `wabaId` query parameter and is checked against
-the account registry on every server function. The gateway's operator API is never exposed over the
+every call. The masthead breadcrumb's WABA crumb keeps its selection in the `wabaId` query parameter,
+and it is checked against the account registry on every server function. The gateway's operator API is never exposed over the
 network; the binding is declared in [`wrangler.jsonc`](./wrangler.jsonc)
 (`services[].entrypoint = "GatewayRPC"`) and its type is tightened in [`src/env.d.ts`](./src/env.d.ts).
 If the gateway isn't reachable, each page renders a graceful "unreachable" state instead of crashing.

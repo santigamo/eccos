@@ -90,9 +90,10 @@ function FailureAction({ failure }: { failure: Failure }) {
  * organization — UX state; the server re-derives and re-validates the tenant on
  * every request regardless — then reloads so every loader runs in the new scope.
  *
- * This screen is now the FALLBACK, not the only way in: the shell's workspace
- * control (nav-workspace.tsx) offers the same choice at any time and shares the
- * selection path through `useWorkspaceSwitch`. It still renders here because a
+ * This screen is now the FALLBACK, not the only way in: the masthead's
+ * workspace crumb (masthead-breadcrumb.tsx) offers the same choice at any time
+ * and shares the selection path through `useWorkspaceSwitch`. It still renders
+ * here because a
  * user who has never chosen has no shell around them yet — the refused request
  * is what they are looking at.
  */
