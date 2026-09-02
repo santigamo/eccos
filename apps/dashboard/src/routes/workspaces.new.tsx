@@ -82,36 +82,43 @@ function NewWorkspacePage() {
 
   return (
     <Page title="New workspace" kicker="Workspaces">
-      <div className="flex max-w-xl flex-col gap-4">
-        <Frame variant="default" spacing="lg">
-          <FramePanel fit>
-            <FrameHeader className="gap-1.5 pt-0">
-              <FrameTitle className="text-sm font-semibold">
-                Create another workspace
-              </FrameTitle>
-              <FrameDescription className="max-w-prose text-pretty">
-                A workspace is a separate Eccos account with its own numbers,
-                keys, and logs — nothing is shared with the one you are in now.
-                You will be switched into the new workspace once it is created.
-              </FrameDescription>
-            </FrameHeader>
-            <div className="pt-5">
-              <WorkspaceFormFields
-                idPrefix="new-workspace"
-                name={name}
-                onNameChange={setName}
-                slug={effectiveSlug}
-                onSlugChange={(value) => {
-                  setSlugTouched(true);
-                  setSlug(value);
-                }}
-                error={error}
-                pending={pending}
-                onSubmit={onSubmit}
-              />
-            </div>
-          </FramePanel>
-        </Frame>
+      {/* A single-form page, so the frame is centred and lifted ABOVE the
+          optical centre rather than left-aligned at the top of a mostly empty
+          column: on a tall viewport a top-anchored form leaves the eye and the
+          cursor far apart. `pb-[10vh]` is what raises it — `items-center`
+          alone would sink it to the true middle, which reads as floating. */}
+      <div className="flex flex-1 items-center justify-center pb-[10vh]">
+        <div className="flex w-full max-w-xl flex-col gap-4">
+          <Frame variant="default" spacing="lg">
+            <FramePanel fit>
+              <FrameHeader className="gap-1.5 pt-0">
+                <FrameTitle className="text-sm font-semibold">
+                  Create another workspace
+                </FrameTitle>
+                <FrameDescription className="max-w-prose text-pretty">
+                  A workspace is a separate Eccos account with its own numbers,
+                  keys, and logs — nothing is shared with the one you are in now.
+                  You will be switched into the new workspace once it is created.
+                </FrameDescription>
+              </FrameHeader>
+              <div className="pt-5">
+                <WorkspaceFormFields
+                  idPrefix="new-workspace"
+                  name={name}
+                  onNameChange={setName}
+                  slug={effectiveSlug}
+                  onSlugChange={(value) => {
+                    setSlugTouched(true);
+                    setSlug(value);
+                  }}
+                  error={error}
+                  pending={pending}
+                  onSubmit={onSubmit}
+                />
+              </div>
+            </FramePanel>
+          </Frame>
+        </div>
       </div>
     </Page>
   );

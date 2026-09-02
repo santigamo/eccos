@@ -355,7 +355,18 @@ describe("the workspace crumb: which workspace am I in, without opening anything
     const html = renderWorkspaceCrumb([ACME, GLOBEX], "org-a");
     expect(html).toContain("Acme");
     expect(html).toContain('aria-label="Workspace: Acme"');
-    expect(html).toContain(">A</span>");
+  });
+
+  test("the trigger carries NO monogram — the wordmark is already beside it", () => {
+    // Deliberate divergence from the reui block, which puts a coloured avatar on
+    // every crumb. Ours sits two elements right of the ECCOS wordmark, so a
+    // second small square there read as noise rather than as identity. The
+    // monogram survives in the menu rows, where nothing competes with it and it
+    // works as a scanning anchor — asserted in the row tests above.
+    const html = renderWorkspaceCrumb([ACME, GLOBEX], "org-a");
+    const trigger = html.slice(0, html.indexOf("</button>"));
+    expect(trigger).not.toContain("border-(--line-strong)");
+    expect(trigger).not.toContain(">A</span>");
   });
 
   test("a lone workspace is still named — no ambiguity, no clutter", () => {

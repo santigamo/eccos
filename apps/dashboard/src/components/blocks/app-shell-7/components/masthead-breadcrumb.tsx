@@ -152,11 +152,13 @@ const CRUMB_TRIGGER =
 const CRUMB_STATIC =
   "flex h-7 min-w-0 max-w-48 items-center gap-1.5 px-1.5 text-sm text-foreground"
 
-/** The square monogram, masthead size — never a circular avatar (design law 1). */
-const MONOGRAM_SM =
-  "flex size-5 shrink-0 items-center justify-center border border-(--line-strong) text-[10px] font-medium text-muted-foreground"
-
-/** The same monogram at menu-row size, as `nav-user.tsx` renders it. */
+/**
+ * The square monogram — never a circular avatar (design law 1). Menu rows only:
+ * the crumb triggers deliberately carry none, because the ECCOS wordmark sits
+ * immediately to their left and a second small square beside it reads as noise
+ * rather than as identity. In a dropdown row there is no wordmark to compete
+ * with and the monogram earns its place as a scanning anchor.
+ */
 const MONOGRAM =
   "flex size-6 shrink-0 items-center justify-center border border-(--line-strong) text-[11px] font-medium text-muted-foreground"
 
@@ -190,9 +192,6 @@ export function WorkspaceSwitcher({
           title={label}
           aria-label={active ? `Workspace: ${label}` : "Choose a workspace"}
         >
-          <span aria-hidden="true" className={MONOGRAM_SM}>
-            {active ? workspaceInitial(active) : "?"}
-          </span>
           <span className="truncate">{label}</span>
           <ChevronsUpDownIcon
             aria-hidden="true"
