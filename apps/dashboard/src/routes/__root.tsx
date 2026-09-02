@@ -68,6 +68,39 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Eccos — Operator Console" },
       { name: "theme-color", content: "#070c0f" },
+      // Everything below is for LINK UNFURLS — what Slack, iMessage, WhatsApp
+      // and the like render when someone pastes an app.eccos.chat URL. Without
+      // a description and an og:image the unfurl is a bare hostname, which
+      // reads as a broken or untrusted link precisely where an operator is
+      // sharing the console with a colleague.
+      //
+      // Safe to serve on every route because it is STATIC: the same four
+      // strings on /signin and on a deep tenant page. No loader data reaches
+      // this head, so an unfurl can never leak a workspace name, a number, or
+      // anything else scoped to whoever happened to render the page — and an
+      // unfurler is unauthenticated anyway, so it only ever sees the sign-in
+      // shell.
+      {
+        name: "description",
+        content:
+          "Connect WhatsApp numbers, follow deliveries, and manage templates and keys for your Eccos gateway.",
+      },
+      { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "Eccos" },
+      { property: "og:title", content: "Eccos — Operator Console" },
+      {
+        property: "og:description",
+        content:
+          "Connect WhatsApp numbers, follow deliveries, and manage templates and keys for your Eccos gateway.",
+      },
+      { property: "og:url", content: "https://app.eccos.chat/" },
+      // Absolute, and served from THIS origin rather than pointing at the
+      // landing's copy: an unfurler resolves og:image on its own, and a
+      // cross-host reference would make the console's preview break silently
+      // whenever the site reorganises its assets.
+      { property: "og:image", content: "https://app.eccos.chat/assets/banner.jpg" },
+      { property: "og:image:alt", content: "Eccos" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
@@ -88,7 +121,15 @@ export const Route = createRootRoute({
       { rel: "icon", href: "/assets/favicon.svg", type: "image/svg+xml" },
       { rel: "icon", href: "/assets/favicon-32.png", type: "image/png", sizes: "32x32" },
       { rel: "icon", href: "/assets/favicon-16.png", type: "image/png", sizes: "16x16" },
-      { rel: "apple-touch-icon", href: "/assets/avatar.png" },
+      // 180x180 and at the WELL-KNOWN ROOT PATH, together with /favicon.ico.
+      // Both are real files in public/ for one reason: this is a single-page
+      // app whose catch-all answers unmatched paths with the HTML shell, so a
+      // fetcher asking for /apple-touch-icon.png used to get 200 text/html —
+      // an image request satisfied with a document, which is worse than the
+      // 404 it expects. Naive fetchers that probe the root paths without
+      // parsing the head are the ones this is for; browsers were always fine,
+      // because the link tags here are enough for them.
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png", sizes: "180x180" },
     ],
   }),
   component: RootComponent,
