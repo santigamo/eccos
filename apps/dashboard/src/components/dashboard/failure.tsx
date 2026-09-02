@@ -1,8 +1,7 @@
-import { useState } from "react";
-
 import type { Failure, Membership } from "../../server/gateway";
-import { selectOrganization } from "../../organizations";
+import { useWorkspaceSwitch } from "../../hooks/use-workspace-switch";
 import { failureCopy } from "../../lib/failure";
+import { workspaceLabel } from "../../lib/workspaces";
 import { Unreachable } from "../../ui";
 import { Button, buttonVariants } from "../ui/button";
 import {
@@ -90,28 +89,15 @@ function FailureAction({ failure }: { failure: Failure }) {
  * that has to be discovered. Selecting one stores it as the session's active
  * organization — UX state; the server re-derives and re-validates the tenant on
  * every request regardless — then reloads so every loader runs in the new scope.
+ *
+ * This screen is now the FALLBACK, not the only way in: the shell's workspace
+ * control (nav-workspace.tsx) offers the same choice at any time and shares the
+ * selection path through `useWorkspaceSwitch`. It still renders here because a
+ * user who has never chosen has no shell around them yet — the refused request
+ * is what they are looking at.
  */
 function WorkspacePicker({ organizations }: { organizations: Membership[] }) {
-  const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function choose(organizationId: string) {
-    setPending(organizationId);
-    setError(null);
-    try {
-      const result = await selectOrganization({ data: { organizationId } });
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      // Full reload: the root loader re-resolves the tenant server-side.
-      window.location.reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPending(null);
-    }
-  }
+  const { pendingId: pending, error, choose } = useWorkspaceSwitch();
 
   return (
     <div className="pt-5">
@@ -127,11 +113,11 @@ function WorkspacePicker({ organizations }: { organizations: Membership[] }) {
               className="h-auto w-full justify-start rounded-none px-(--frame-panel-px) py-3 text-left"
               disabled={pending !== null}
               aria-busy={pending === org.id}
-              onClick={() => void choose(org.id)}
+              onClick={() => choose(org.id)}
             >
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="truncate text-sm text-foreground">
-                  {org.name || org.slug || org.id}
+                  {workspaceLabel(org)}
                 </span>
                 {org.slug ? (
                   <span className="truncate font-mono text-xs text-muted-foreground">

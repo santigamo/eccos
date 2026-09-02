@@ -15,6 +15,14 @@ import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
 
+/**
+ * Routes that resolve no WABA scope of their own, so the "connect a number
+ * first" bounce must not eat them. /numbers is where that bounce sends people;
+ * /workspaces/new is about the workspace itself, and an operator whose current
+ * workspace has no number yet is exactly the one who may want another.
+ */
+const SCOPE_FREE_PATHS = new Set(["/numbers", "/workspaces/new"])
+
 export const Route = createRootRoute({
   validateSearch: (search: Record<string, unknown>): ScopeSearch => {
     const wabaId = normalizeSearchWabaId(search.wabaId)
@@ -30,6 +38,10 @@ export const Route = createRootRoute({
     if (state.ok && state.data.stage === "no-organization" && location.pathname !== "/onboarding") {
       throw redirect({ to: "/onboarding" })
     }
+    // /onboarding is FIRST RUN only, and stays that way: an account that
+    // already has a workspace must not land back on the step it completed.
+    // Creating an ADDITIONAL workspace is a different situation and has its own
+    // in-shell entry point (/workspaces/new) — see that route for the argument.
     if (state.ok && state.data.stage === "ready" && location.pathname === "/onboarding") {
       throw redirect({ to: "/" })
     }
@@ -41,7 +53,7 @@ export const Route = createRootRoute({
       state.ok &&
       state.data.stage !== "ready" &&
       state.data.stage !== "no-organization" &&
-      location.pathname !== "/numbers"
+      !SCOPE_FREE_PATHS.has(location.pathname)
     ) {
       throw redirect({ to: "/numbers" })
     }

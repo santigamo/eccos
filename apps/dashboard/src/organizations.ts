@@ -15,7 +15,13 @@ import type { GatewayApi } from "@eccos/gateway-contract";
 import { createAuth } from "./auth/auth";
 import { authConfigFromEnv } from "./auth/config";
 import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
-import { ForbiddenError, verifyMembership } from "./auth/tenant";
+import {
+  ForbiddenError,
+  resolveMemberships,
+  verifyMembership,
+  type Membership,
+} from "./auth/tenant";
+import { activeWorkspace } from "./lib/workspaces";
 
 export interface OrganizationView {
   id: string;
@@ -285,26 +291,52 @@ export const listMyInvitations = createServerFn({ method: "GET" }).handler(
   },
 );
 
-/** The signed-in user as the sidebar's account section renders it. */
+/** The signed-in user as the sidebar's footer renders it: identity + scope. */
 export interface SessionUserView {
   name: string;
   email: string;
+  /**
+   * The organizations this user belongs to, for the shell's workspace control.
+   * Display data: the list an operator may CHOOSE from, never proof they hold
+   * anything in any of them.
+   */
+  workspaces: Membership[];
+  /**
+   * Which workspace the shell marks as active, derived exactly as
+   * `requirePermission` derives the tenant (see `lib/workspaces.ts`) so the
+   * console never names a scope the server would refuse. `null` means the
+   * choice has not been made yet.
+   */
+  activeWorkspaceId: string | null;
 }
 
 /**
- * Resolve the signed-in user for the app chrome (the sidebar's NavUser).
+ * Resolve the signed-in user for the app chrome (the sidebar footer).
  *
- * Display data only: the shell shows who is signed in and offers a way out.
- * Every authorization decision stays server-side and re-derives the session
- * from the request, so this is never authorization evidence. Anonymous or
- * expired sessions resolve to `null` rather than throwing, because the root
- * loader also runs on public routes.
+ * Display data only: the shell shows who is signed in, which workspace they are
+ * in, what else they could switch to, and offers a way out. Every authorization
+ * decision stays server-side and re-derives the session from the request, so
+ * this is never authorization evidence — switching is still validated by
+ * `selectOrganization` and every subsequent request by `requirePermission`.
+ * Anonymous or expired sessions resolve to `null` rather than throwing, because
+ * the root loader also runs on public routes.
  */
 export const getSessionUser = createServerFn({ method: "GET" }).handler(
   async (): Promise<SessionUserView | null> => {
     try {
-      const { session } = await requireAuthContext(authInstance(), currentRequest());
-      return { name: session.name, email: session.email };
+      const auth = authInstance();
+      const request = currentRequest();
+      // The session read is deduped per request by the memo (request-memo.ts),
+      // and carries the stored active organization, so the only cost added
+      // here is the membership list the switcher renders.
+      const { session } = await requireAuthContext(auth, request);
+      const workspaces = await resolveMemberships(auth, request.headers);
+      return {
+        name: session.name,
+        email: session.email,
+        workspaces,
+        activeWorkspaceId: activeWorkspace(workspaces, session.activeOrganizationId)?.id ?? null,
+      };
     } catch {
       return null;
     }

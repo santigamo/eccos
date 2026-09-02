@@ -7,6 +7,7 @@ import {
 
 import { NavMain } from "./nav-main"
 import { NavUser } from "./nav-user"
+import { NavWorkspace } from "./nav-workspace"
 import { SidebarRailToggle } from "./sidebar-rail-toggle"
 
 export function AppSidebar() {
@@ -22,6 +23,9 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="gap-2 px-2 pb-4">
+        {/* Scope above identity: which workspace this session is in, then who
+            is in it. Two rows, two questions — see nav-workspace.tsx. */}
+        <NavWorkspace />
         <NavUser />
         <p className="text-muted-foreground font-pixel px-2 text-[11px] tracking-wider uppercase in-data-[state=collapsed]:hidden">
           v0.1.0
