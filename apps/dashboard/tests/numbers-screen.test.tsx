@@ -42,21 +42,28 @@ function render(heading = "Meta Embedded Signup"): string {
 }
 
 describe("ConnectNumberPanel", () => {
-  test("Embedded Signup is the only way in", () => {
-    // Decided 2026-08-31: connecting a number stays one action. The token path
-    // (Cloud API test numbers, eccos-up9) is a separate, later surface.
+  test("Embedded Signup is the only way in, and it offers exactly two paths", () => {
+    // Decided 2026-08-31: connecting a number goes through Embedded Signup. The
+    // token path (Cloud API test numbers, eccos-up9) is a separate, later
+    // surface. What changed on 2026-09-02 is that Embedded Signup itself forks:
+    // `featureType` rides in FB.login's extras, so which onboarding runs is
+    // fixed before the popup opens and has to be the customer's choice.
     const html = render();
     expect(html).toContain("Meta Embedded Signup");
-    expect(html).toContain("Connect WhatsApp");
+    expect(html).toContain("Keep the number on the WhatsApp Business app");
+    expect(html).toContain("Bring a number to the Cloud API");
     expect(html).not.toContain("access token");
     expect(html).not.toContain('type="password"');
   });
 
-  test("states the coexistence fact before the operator commits", () => {
-    // The number stays on the phone; that is the whole reason this flow is
-    // whatsapp_business_app_onboarding and not a plain onboarding.
+  test("each path states its own consequence before the operator commits", () => {
+    // THE POINT OF THE FORK. Taking the Cloud API path with a number that is
+    // live on the WhatsApp Business app removes it from the app, and nothing
+    // Meta shows says so. Both consequences are on the cards, not in a doc, and
+    // neither may quietly disappear in a copy edit.
     const html = render();
-    expect(html).toContain("stays on the WhatsApp Business");
+    expect(html).toContain("Removes the number from the WhatsApp Business app");
+    expect(html).toContain("Syncs run once");
   });
 
   test("the heading is the caller's, so first run and add-another differ", () => {
@@ -64,12 +71,16 @@ describe("ConnectNumberPanel", () => {
   });
 
   test("keeps the panel copy short enough to scan", () => {
-    // Reviewed 2026-08-31: the panel had grown to ~90 words of prose for a
-    // surface with one job. Budget its visible words so sentences do not creep
-    // back in.
+    // Reviewed 2026-08-31 at 55 words, when this panel had ONE job and one
+    // button. It now presents an irreversible fork, and each path owes the
+    // reader a title, a line of detail, and its consequence, which is six
+    // pieces of copy that did not exist before. So the budget moved with the
+    // job rather than being deleted: 100 words is roughly that content and no
+    // prose. If this fails, the fix is almost certainly a sentence that crept
+    // back into the description or a card detail, not a seventh piece of copy.
     const html = render();
     const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    expect(text.split(" ").length).toBeLessThan(55);
+    expect(text.split(" ").length).toBeLessThan(100);
   });
 
   test("panels and buttons stay square", () => {
@@ -99,13 +110,17 @@ describe("ConnectNumberPanel", () => {
     expect(html).toContain("[&amp;&gt;[data-slot=frame-panel-header]]:px-0");
   });
 
-  test("the action lives in the panel footer, pinned right", () => {
+  test("the choices ARE the actions, and the footer holds none", () => {
+    // The old panel pinned one button in the footer. There is no single action
+    // left to pin: picking a path launches that path, because there is nothing
+    // to configure in between and a confirm step would only add a click before
+    // Meta's own multi-screen flow, which is where backing out is still free.
+    // So the footer must not regrow an action that would have to guess a path.
     const html = render();
+    expect(html.match(/<button/g)?.length).toBe(2);
     const open = html.indexOf("<footer");
     const close = html.indexOf("</footer>", open);
     expect(open).toBeGreaterThan(-1);
-    const footer = html.slice(open, close);
-    expect(footer).toContain("ml-auto");
-    expect(footer).toContain("Connect WhatsApp");
+    expect(html.slice(open, close)).not.toContain("<button");
   });
 });

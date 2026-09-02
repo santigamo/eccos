@@ -112,35 +112,88 @@ export function isFinishEvent(event: string): boolean {
 }
 
 /**
+ * Which onboarding a customer picked, before Meta's popup opens.
+ *
+ * This is a CHOICE THE CUSTOMER MAKES, not a mode the code detects, and it has
+ * to be made first: `featureType` travels in `FB.login`'s `extras`, so it is
+ * fixed at the moment the popup is spawned and cannot be decided later.
+ *
+ *  - `business-app` — coexistence. The number stays on the WhatsApp Business
+ *    app and the customer keeps answering there; Eccos syncs contacts and
+ *    history.
+ *  - `new-number`   — the ordinary Cloud API onboarding. Meta asks for a number
+ *    and verifies it, and that number is then served by the API alone.
+ */
+export type ConnectPath = "business-app" | "new-number";
+
+/** Meta's value for the WhatsApp Business app (coexistence) flow. */
+export const COEXISTENCE_FEATURE_TYPE = "whatsapp_business_app_onboarding" as const;
+
+/**
  * The `FB.login` options for Embedded Signup v4.
  *
- * Pinned in one place, and pure, because the shape is the whole contract with
- * Meta and it has changed under us before. Three things are load-bearing:
+ * ── WHY `extras` IS NOT EMPTY, AND HOW WE LEARNED IT ─────────────────────────
+ * This function used to send `extras: { setup: {} }`, on the documented
+ * reading that v4's extras object is "purposely empty" and that `featureType`,
+ * `sessionInfoVersion` and `version` were the v2/v3 mechanism replaced by
+ * `config_id`. That reading is wrong, and it cost us the coexistence flow
+ * entirely: with an empty extras, Meta serves the ordinary Cloud API
+ * onboarding and a customer whose number is on the WhatsApp Business app has
+ * no way to reach it.
  *
- *  - `response_type: "code"` with `override_default_response_type: true` is what
- *    makes the callback return an exchangeable code instead of a client token.
- *    A client token would be useless: the exchange needs the app secret and must
- *    happen server-side.
- *  - `config_id` carries the entire flow definition under v4 — products,
- *    permissions, and the version itself. There is nothing else to send.
- *  - `extras` is `{ setup: {} }`, exactly as Meta's v4 implementation sample has
- *    it. No `featureType`, no `sessionInfoVersion`, no `version`: those were the
- *    v2/v3 mechanism, and v4's extras object is documented as purposely empty
- *    apart from `setup` (which is where pre-filled data would go if we ever
- *    pre-filled any).
+ * The correction did not come from the docs. It came from Meta's OWN generator
+ * — App Dashboard > WhatsApp > Embedded Signup creator > "Cuadro de diálogo de
+ * registro insertado" — which, for THIS app and THIS v4 configuration, builds
+ * its landing URL with, verbatim after decoding:
+ *
+ *   {"featureType":"whatsapp_business_app_onboarding",
+ *    "sessionInfoVersion":"3",
+ *    "version":"v4"}
+ *
+ * All three keys, on v4, in extras. The panel exposes the first as an optional
+ * "Tipo de función" selector with exactly two values — none, and WhatsApp
+ * Business app onboarding — which is the whole feature: coexistence was never
+ * something Meta had to enable for us, it is a per-launch parameter we were
+ * not sending. `setup` is dropped because Meta's generator does not emit it;
+ * it was always `{}` here, and it is where prefilled data would go if we ever
+ * prefilled any.
+ *
+ * ── WHY THIS ONLY WORKS ON THE SDK PATH ─────────────────────────────────────
+ * `extras` is an `FB.login()` option and a parameter of Meta's hosted landing
+ * page. It is NOT a parameter of `dialog/oauth`, and we proved on 2026-09-01
+ * that Meta silently ignores it there (eccos-e3q). That is not a gap to close:
+ * Meta's own requirements list for coexistence ends with "you must use
+ * Embedded Signup with session logging", which exists only in the SDK. So
+ * **coexistence is SDK-only by construction**, and the server-side redirect
+ * fallback must refuse it rather than quietly serve the other flow — see
+ * `connect-number.tsx`.
+ *
+ * Two things below are load-bearing for reasons unrelated to any of the above:
+ * `response_type: "code"` with `override_default_response_type: true` is what
+ * returns an exchangeable code instead of a client token (a client token would
+ * be useless — the exchange needs the app secret and must happen server-side),
+ * and `config_id` still carries the products and permissions.
  */
 export interface EmbeddedSignupLoginOptions {
   config_id: string;
   response_type: "code";
   override_default_response_type: true;
-  extras: { setup: Record<string, never> };
+  extras: {
+    sessionInfoVersion: "3";
+    version: "v4";
+    featureType?: typeof COEXISTENCE_FEATURE_TYPE;
+  };
 }
 
-export function loginOptions(configId: string): EmbeddedSignupLoginOptions {
+export function loginOptions(configId: string, path: ConnectPath): EmbeddedSignupLoginOptions {
   return {
     config_id: configId,
     response_type: "code",
     override_default_response_type: true,
-    extras: { setup: {} },
+    extras: {
+      sessionInfoVersion: "3",
+      version: "v4",
+      ...(path === "business-app" ? { featureType: COEXISTENCE_FEATURE_TYPE } : {}),
+    },
   };
 }

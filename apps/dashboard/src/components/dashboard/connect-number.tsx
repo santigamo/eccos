@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "../ui/button";
 import {
   Frame,
   FrameDescription,
@@ -15,17 +14,68 @@ import {
   startConnect,
 } from "../../server/gateway";
 import { loadFacebookSdk } from "../../lib/facebook-sdk";
-import { isFinishEvent, loginOptions, parseSessionEvent } from "../../lib/embedded-signup";
+import {
+  type ConnectPath,
+  loginOptions,
+  parseSessionEvent,
+} from "../../lib/embedded-signup";
 import { failureCopy } from "../../lib/failure";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
 
-/** What Embedded Signup will ask for, in order. Fragments, not sentences. */
-const CONNECT_STEPS = [
-  "Pick or create a WhatsApp Business Account",
-  "Attach the phone number Eccos will use",
-  "Eccos subscribes to its webhooks",
-] as const;
+/**
+ * The two ways a number reaches WhatsApp, as the customer has to understand
+ * them BEFORE Meta's popup opens.
+ *
+ * WHY THIS IS A FORK AND NOT A BUTTON. `featureType` rides in `FB.login`'s
+ * `extras` (see `lib/embedded-signup.ts`), so it is fixed the instant the popup
+ * is spawned. There is no screen inside Meta's flow that asks this, and no way
+ * to defer it. The choice is therefore structural.
+ *
+ * AND THE FORK EXISTS TO PREVENT ONE MISTAKE, not to offer variety: taking
+ * `new-number` with a number that is currently live on the WhatsApp Business
+ * app TAKES IT OFF THE APP. That is destructive to a working setup and it is
+ * not obvious from anything Meta shows, which is why the consequence is on the
+ * card rather than in a doc.
+ *
+ * `caution` is the register the design contract gives this (Inter, 11px,
+ * uppercase, tracking-wider — docs/DASHBOARD-DESIGN.md), and it says what the
+ * path costs, never how reliable we think it is.
+ */
+const CONNECT_PATHS: ReadonlyArray<{
+  path: ConnectPath;
+  title: string;
+  detail: string;
+  caution: string;
+}> = [
+  {
+    path: "business-app",
+    title: "Keep the number on the WhatsApp Business app",
+    detail:
+      "You keep answering from the app. Meta syncs contacts and message history across both.",
+    caution: "Syncs run once · 20 messages/second cap",
+  },
+  {
+    path: "new-number",
+    title: "Bring a number to the Cloud API",
+    detail:
+      "For a number that is not on WhatsApp today. Meta verifies it by SMS or call.",
+    caution: "Removes the number from the WhatsApp Business app",
+  },
+];
+
+/**
+ * Shown when the customer picks the WhatsApp Business app path and the SDK is
+ * not available. It is deliberately a DEAD END rather than a fallback.
+ *
+ * The server-side redirect cannot serve coexistence — Meta ignores `extras` on
+ * `dialog/oauth` (proved 2026-09-01) and the flow requires session logging,
+ * which only the SDK has. So falling back here would silently run the OTHER
+ * onboarding: the customer asked to keep their number on the app and would get
+ * the flow that takes it off. Failing loudly is the only safe answer.
+ */
+const SDK_REQUIRED_MESSAGE =
+  "Connecting a number that is already on the WhatsApp Business app needs Meta's script, which did not load. Check for a blocker or an extension and try again. Do not use the other option: it would take the number off the app.";
 
 /**
  * Start Meta Embedded Signup. Rendered as the empty state of /numbers on first
@@ -51,7 +101,8 @@ const CONNECT_STEPS = [
  * the private gateway binding. No account API key exists on this page.
  */
 export function ConnectNumberPanel({ heading }: { heading: string }) {
-  const [starting, setStarting] = useState(false);
+  /** The path whose flow is opening, or null. Also disables the other card. */
+  const [starting, setStarting] = useState<ConnectPath | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
    * The OAuth state for the popup currently open. Held in a ref, not state,
@@ -102,8 +153,8 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
     window.location.assign(CONNECT_RETURN_PATH);
   }, []);
 
-  async function start() {
-    setStarting(true);
+  async function start(path: ConnectPath) {
+    setStarting(path);
     setError(null);
     try {
       const [config, handoff] = await Promise.all([
@@ -115,8 +166,14 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
         return;
       }
 
-      // No SDK configured: the redirect path, unchanged.
+      // No SDK configured. The redirect still serves `new-number`; it CANNOT
+      // serve `business-app`, so that one stops here rather than being handed
+      // the flow that would take the number off the app.
       if (!config.ok || !config.data) {
+        if (path === "business-app") {
+          setError(SDK_REQUIRED_MESSAGE);
+          return;
+        }
         window.location.assign(handoff.data.url);
         return;
       }
@@ -125,8 +182,12 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
       try {
         sdk = await loadFacebookSdk(config.data.appId, config.data.graphVersion);
       } catch {
-        // Blocked, offline, or an extension ate it. The redirect needs no
-        // third-party script and the state we already minted is still good.
+        // Blocked, offline, or an extension ate it. Same rule as above: the
+        // redirect is a fallback for one path and a wrong answer for the other.
+        if (path === "business-app") {
+          setError(SDK_REQUIRED_MESSAGE);
+          return;
+        }
         window.location.assign(handoff.data.url);
         return;
       }
@@ -138,18 +199,18 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
           // Closing the popup before the final screen is a cancel, not a
           // failure — the session event already recorded which screen it was.
           pendingState.current = null;
-          setStarting(false);
+          setStarting(null);
           return;
         }
-        void finish(code).finally(() => setStarting(false));
-      }, loginOptions(config.data.configId));
+        void finish(code).finally(() => setStarting(null));
+      }, loginOptions(config.data.configId, path));
       // The popup owns the flow now; `starting` is cleared by the callback.
       return;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       // Only the SDK path returns early with the popup still open.
-      if (!pendingState.current) setStarting(false);
+      if (!pendingState.current) setStarting(null);
     }
   }
 
@@ -161,42 +222,56 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-sm font-semibold">{heading}</FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            Meta opens in this tab. Your number stays on the WhatsApp Business
-            app.
+            Pick the one that matches where the number lives today. Meta fixes
+            this when the flow opens.
           </FrameDescription>
         </FrameHeader>
 
-        <ol className="m-0 flex list-none flex-col gap-2.5 p-0 pt-5">
-          {CONNECT_STEPS.map((text, i) => (
-            <li key={text} className="flex items-baseline gap-3">
-              <span
-                aria-hidden="true"
-                className="text-[11px] font-medium tabular-nums tracking-wider text-muted-foreground"
-              >
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <span className="text-sm text-foreground">{text}</span>
-            </li>
-          ))}
-        </ol>
-
         {error ? (
-          <p className={cn("mt-4", AUTH_ERROR_BANNER_CLASS)} role="alert">
+          <p className={cn("mt-5", AUTH_ERROR_BANNER_CLASS)} role="alert">
             {error}
           </p>
         ) : null}
 
-        {/* One footer rail, action pinned right; full-bleed so its rule reads as
-            panel chrome rather than as another content block. */}
+        {/* Each choice IS the action: there is nothing to configure between
+            picking and launching, and a confirm step here would only add a
+            click before Meta's own multi-screen flow, which is where backing
+            out is still free. */}
+        <ul className="m-0 flex list-none flex-col gap-px p-0 pt-5">
+          {CONNECT_PATHS.map(({ path, title, detail, caution }) => (
+            <li key={path}>
+              <button
+                type="button"
+                onClick={() => start(path)}
+                disabled={starting !== null}
+                className={cn(
+                  "flex w-full flex-col items-start gap-1.5 rounded-none border border-(--line) p-4 text-left transition-colors",
+                  "hover:border-(--ghost-edge-hover) hover:bg-(--ghost-fill-hover)",
+                  "focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none",
+                  "disabled:pointer-events-none disabled:opacity-50",
+                )}
+              >
+                <span className="text-sm font-medium text-foreground">
+                  {starting === path ? "Opening Embedded Signup…" : title}
+                </span>
+                <span className="max-w-prose text-pretty text-sm text-muted-foreground">
+                  {detail}
+                </span>
+                {/* The consequence, in the functional register the design
+                    contract reserves for it. It states a cost, never a
+                    judgement about how well the path works. */}
+                <span className="pt-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {caution}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+
         <footer className="-mx-(--frame-panel-px) mt-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-(--frame-panel-border-color) px-(--frame-panel-px) pt-4">
           <p className="m-0 text-xs text-muted-foreground">
             Meta brings you back to this page when it is done.
           </p>
-          <div className="ml-auto flex items-center gap-2">
-            <Button type="button" onClick={start} disabled={starting}>
-              {starting ? "Opening Embedded Signup…" : "Connect WhatsApp"}
-            </Button>
-          </div>
         </footer>
       </FramePanel>
     </Frame>

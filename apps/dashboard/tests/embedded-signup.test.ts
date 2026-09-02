@@ -124,24 +124,67 @@ describe("parsing an Embedded Signup session event", () => {
 });
 
 /**
- * The `FB.login` options. Under v4 the configuration id carries the entire flow
- * definition, so what must NOT be here matters as much as what is.
+ * The `FB.login` options.
+ *
+ * THESE TESTS USED TO ASSERT THE OPPOSITE. One was called "carries none of the
+ * v2 extras — those are the configuration's job now" and pinned an empty
+ * `extras: { setup: {} }`, on the documented reading that `config_id` carries
+ * everything under v4. That reading was wrong and the test defended it: with an
+ * empty extras Meta serves the ordinary Cloud API onboarding, so coexistence
+ * was unreachable and no test failed.
+ *
+ * What is asserted now is not another reading of the docs. It is what Meta's
+ * OWN generator builds for this app and this v4 configuration (App Dashboard >
+ * WhatsApp > Embedded Signup creator), decoded from the landing URL it emits:
+ *
+ *   {"featureType":"whatsapp_business_app_onboarding","sessionInfoVersion":"3","version":"v4"}
+ *
+ * If a future v4 revision changes that shape, the place to re-read is the same
+ * generator — not the prose.
  */
 describe("the v4 FB.login options", () => {
   test("asks for a code the server can exchange, not a client token", () => {
-    expect(loginOptions("CONFIG_1")).toEqual({
+    expect(loginOptions("CONFIG_1", "new-number")).toMatchObject({
       config_id: "CONFIG_1",
       response_type: "code",
       override_default_response_type: true,
-      extras: { setup: {} },
     });
   });
 
-  test("carries none of the v2 extras — those are the configuration's job now", () => {
-    const options = JSON.stringify(loginOptions("CONFIG_1"));
-    expect(options).not.toContain("featureType");
-    expect(options).not.toContain("whatsapp_business_app_onboarding");
-    expect(options).not.toContain("sessionInfoVersion");
-    expect(options).not.toContain("version");
+  test("the WhatsApp Business app path sends Meta's featureType", () => {
+    expect(loginOptions("CONFIG_1", "business-app")).toEqual({
+      config_id: "CONFIG_1",
+      response_type: "code",
+      override_default_response_type: true,
+      extras: {
+        featureType: "whatsapp_business_app_onboarding",
+        sessionInfoVersion: "3",
+        version: "v4",
+      },
+    });
+  });
+
+  test("the new-number path sends the same extras WITHOUT featureType", () => {
+    expect(loginOptions("CONFIG_1", "new-number")).toEqual({
+      config_id: "CONFIG_1",
+      response_type: "code",
+      override_default_response_type: true,
+      extras: { sessionInfoVersion: "3", version: "v4" },
+    });
+  });
+
+  /**
+   * The regression that shipped once and was invisible: an empty extras is not
+   * a neutral default, it silently selects the other onboarding. A number on
+   * the WhatsApp Business app would be taken off it.
+   */
+  test("featureType is what separates the two paths, and nothing else is", () => {
+    const app = loginOptions("CONFIG_1", "business-app");
+    const fresh = loginOptions("CONFIG_1", "new-number");
+    expect(JSON.stringify(app)).toContain("whatsapp_business_app_onboarding");
+    expect(JSON.stringify(fresh)).not.toContain("whatsapp_business_app_onboarding");
+    expect({ ...app, extras: null }).toEqual({ ...fresh, extras: null });
+    expect(app.extras.sessionInfoVersion).toBe(fresh.extras.sessionInfoVersion);
+    expect(app.extras.version).toBe(fresh.extras.version);
   });
 });
