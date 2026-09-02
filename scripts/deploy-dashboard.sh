@@ -31,6 +31,18 @@ if [[ -f "$ROOT/.env" ]]; then
 fi
 
 cd "$ROOT/apps/dashboard"
+
+# BUILD FIRST, ALWAYS (eccos-e92). `wrangler deploy` ships whatever is sitting
+# in dist/, and this script used to go straight there — so a deploy silently
+# shipped the last build instead of the working tree.
+#
+# It is not a theoretical bug. On 2026-09-02 it shipped a dist/ that was four
+# hours and three commits stale: the deploy reported success, the version id was
+# new, and production served the previous UI. Nothing about that is visible from
+# the deploy output, which is what makes it worth a rebuild every time rather
+# than a note in a runbook. The build is a few hundred milliseconds.
+bun run build
+
 # No --var plumbing: every mail setting is a Worker secret now, set once with
 # `wrangler secret put` (see the header). Nothing about the provider belongs in
 # the public wrangler.jsonc or in a deploy command line.
