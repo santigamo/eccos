@@ -321,6 +321,44 @@ export function createAuth(config: AuthConfig) {
       // Same reason as resetPasswordTokenExpiresIn above: the check-your-inbox
       // screen quotes this duration, so it cannot be an implicit default.
       expiresIn: AUTH_LINK_EXPIRY_SECONDS,
+      // Clicking the verification link signs the account in, instead of landing
+      // it on a password prompt it filled in ninety seconds earlier.
+      //
+      // WHY THIS IS SAFE HERE, AND WHERE THE SAFETY ACTUALLY COMES FROM. The
+      // verification token is a STATELESS JWT (better-auth's
+      // `createEmailVerificationToken` is `signJWT`, not a stored row): nothing
+      // consumes it, nothing revokes it, and it stays cryptographically valid
+      // for the full hour however many times it is replayed. What makes the
+      // link one-shot is not the token but the ORDER of the handler — the
+      // `user.emailVerified` branch returns before the auto-sign-in block ever
+      // runs (better-auth 1.7.2, api/routes/email-verification.mjs, the check
+      // at :287 vs. the session mint at :297). So the link mints exactly one
+      // session, and only while the account is still unverified. If a future
+      // upgrade reorders those two, this option silently becomes a replayable
+      // magic link — that is the thing to re-read on a better-auth bump.
+      //
+      // Two conditions this relies on, both already true: the session cookie is
+      // SameSite=Lax (`advanced.defaultCookieAttributes` below), which is what
+      // lets a top-level click out of a mail client set it at all — Strict
+      // would not survive the redirect; and sign-up passes `callbackURL: "/"`,
+      // where the root loader sends a session with no organization on to
+      // /onboarding.
+      //
+      // The failure mode worth naming is a corporate link scanner that fetches
+      // the URL before the human does. It degrades gracefully rather than
+      // locking anyone out: the scanner burns the verification, its Set-Cookie
+      // lands in an HTTP client that discards it, and the real click hits the
+      // already-verified branch and goes to sign-in with the password the user
+      // just chose.
+      //
+      // NOT to be extended to `emailAndPassword.autoSignIn` (a session BEFORE
+      // verification), which contradicts `requireEmailVerification` above and
+      // contract §7. And a caveat for when TOTP enrollment ships: this path
+      // calls `internalAdapter.createSession` directly, so it does not pass
+      // through the twoFactor plugin's sign-in hook. Harmless today — the
+      // account is seconds old and cannot have a second factor — but a
+      // re-verification flow on an enrolled account would step around it.
+      autoSignInAfterVerification: true,
       sendVerificationEmail: async (data: MailCallbackData) => {
         const { user, url, token } = data;
         // Same rule as the reset flow: the key derives from the real token in

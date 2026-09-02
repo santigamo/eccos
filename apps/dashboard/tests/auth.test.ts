@@ -179,6 +179,58 @@ describe("sign-up and email verification", () => {
     expect(mail.sent[0]?.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  test("clicking the verification link verifies AND signs in, on a Lax cookie", async () => {
+    const mail = new CaptureMailSender();
+    const { auth } = await createTestAuth(mail);
+    await signUpUser(auth, "dana@example.com", "correct-horse-battery");
+
+    const link = mail.sent[0]!.variables.url!;
+    const res = await auth.handler(new Request(link));
+
+    // `autoSignInAfterVerification` mints the session inline, so the click that
+    // proves the address also lands the account in the console.
+    const setCookie = res.headers.get("set-cookie");
+    expect(setCookie).toBeTruthy();
+    // The two attributes the flow depends on: SameSite=Strict would not survive
+    // a top-level navigation out of a mail client, and the cookie must stay
+    // unreadable to script.
+    expect(setCookie).toContain("SameSite=Lax");
+    expect(setCookie).toContain("HttpOnly");
+    // Sign-up passes callbackURL: "/", so the handler redirects rather than
+    // answering JSON.
+    expect(res.status).toBe(302);
+
+    const cookie = setCookie!.split(";")[0]!;
+    const session = (await (
+      await auth.handler(
+        new Request(`${BASE_URL}/api/auth/get-session`, { headers: { cookie } }),
+      )
+    ).json()) as { user?: { email?: string; emailVerified?: boolean } };
+    expect(session.user?.email).toBe("dana@example.com");
+    expect(session.user?.emailVerified).toBe(true);
+  });
+
+  test("replaying the verification link does NOT mint a second session", async () => {
+    const mail = new CaptureMailSender();
+    const { auth } = await createTestAuth(mail);
+    await signUpUser(auth, "erin@example.com", "correct-horse-battery");
+
+    const link = mail.sent[0]!.variables.url!;
+    const first = await auth.handler(new Request(link));
+    expect(first.headers.get("set-cookie")).toBeTruthy();
+
+    // THE GUARD THIS SUITE EXISTS FOR. The verification token is a stateless
+    // JWT — nothing consumes it and nothing revokes it, so this exact request
+    // stays cryptographically valid for the full hour. What stops it being a
+    // replayable magic link is only the ORDER of better-auth's handler: the
+    // already-verified branch returns before the auto-sign-in block runs. That
+    // ordering is a detail of a dependency, not a promise anyone made us, so a
+    // version bump that reorders it would silently turn every verification mail
+    // into a one-hour bearer credential. This test is what makes that loud.
+    const replay = await auth.handler(new Request(link));
+    expect(replay.headers.get("set-cookie")).toBeNull();
+  });
+
   test("unverified sign-in fails closed with EMAIL_NOT_VERIFIED", async () => {
     const { auth } = await createTestAuth();
     await signUpUser(auth, "bob@example.com", "correct-horse-battery");
