@@ -10,10 +10,7 @@ import {
   FramePanel,
   FrameTitle,
 } from "../components/reui/frame";
-import {
-  WorkspaceFormFields,
-  slugifyWorkspaceName,
-} from "../components/blocks/auth-13/components/workspace-form";
+import { WorkspaceFormFields } from "../components/blocks/auth-13/components/workspace-form";
 
 /**
  * Creating an ADDITIONAL workspace, from inside the console.
@@ -44,12 +41,8 @@ export const Route = createFileRoute("/workspaces/new")({
 
 function NewWorkspacePage() {
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugTouched, setSlugTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-
-  const effectiveSlug = slugTouched ? slug : slugifyWorkspaceName(name);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -57,9 +50,7 @@ function NewWorkspacePage() {
     setError(null);
     let result: Awaited<ReturnType<typeof createOrganization>>;
     try {
-      result = await createOrganization({
-        data: { name: name.trim(), slug: effectiveSlug },
-      });
+      result = await createOrganization({ data: { name: name.trim() } });
     } catch {
       // Thrown client failure (network, non-JSON 5xx): reset pending and show
       // a generic error instead of a stuck button.
@@ -106,11 +97,6 @@ function NewWorkspacePage() {
                   idPrefix="new-workspace"
                   name={name}
                   onNameChange={setName}
-                  slug={effectiveSlug}
-                  onSlugChange={(value) => {
-                    setSlugTouched(true);
-                    setSlug(value);
-                  }}
                   error={error}
                   pending={pending}
                   onSubmit={onSubmit}

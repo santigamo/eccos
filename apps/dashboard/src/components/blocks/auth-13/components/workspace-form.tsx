@@ -1,56 +1,34 @@
 import { useState, type ComponentProps } from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Logo } from "@/components/blocks/app-shell-7/components/logo";
 import { AUTH_ERROR_BANNER_CLASS } from "@/components/auth/auth-page";
-import {
-  validateWorkspaceName,
-  validateWorkspaceSlug,
-} from "./validation";
+import { validateWorkspaceName } from "./validation";
 
 type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>;
 export type FormSubmitEvent = Parameters<FormSubmitHandler>[0];
 
 /**
- * Derive the workspace URL slug from its name: lowercase, ascii letters and
- * digits collapsed to single dashes. Pure and exported for tests.
+ * What both callers of the workspace form drive it with.
+ *
+ * A NAME, and nothing else. There used to be a second field — "Workspace URL",
+ * a slug derived from the name — and it is gone for two independent reasons.
+ * It leaked: the slug column is globally unique across every tenant, so two
+ * unrelated customers naming a workspace the same thing collided and the
+ * collision was reported to the browser (see `createOrganization`). And it
+ * lied: the field's own description promised "Your workspace opens at
+ * app.eccos.chat/<slug>", and no such route has ever existed. The value is now
+ * minted server-side as an opaque id nobody sees, so names may repeat freely.
  */
-export function slugifyWorkspaceName(name: string): string {
-  return name
-    .toLowerCase()
-    // NFKD splits an accented letter into base + combining mark, and the next
-    // step drops the marks so "Clinica" stays one word instead of breaking at
-    // the accent. `noMisleadingCharacterClass` is off in biome.json purely
-    // because of that class: in Biome 1.9.4 the rule reads a range hyphen as a
-    // base character, so any range whose upper bound is a combining mark is
-    // reported (a lone combining mark in a class is not). No spelling of this
-    // range gets past it, and the alternatives (\p{Mn}, \p{Diacritic}) widen
-    // the matched set.
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48)
-    .replace(/-+$/g, "");
-}
-
-/** What both callers of the workspace form drive it with. */
 export interface WorkspaceFormProps {
   name: string;
   onNameChange: (value: string) => void;
-  slug: string;
-  onSlugChange: (value: string) => void;
   error: string | null;
   pending: boolean;
   onSubmit: (event: FormSubmitEvent) => void;
-  /** Server-side or caller-level errors, keyed "name" / "slug". */
+  /** Server-side or caller-level errors, keyed "name". */
   fieldErrors?: Record<string, string | null>;
   onFieldClear?: (key: string) => void;
 }
@@ -95,7 +73,7 @@ export function WorkspaceForm(props: WorkspaceFormProps) {
 }
 
 /**
- * The fields themselves: name, URL slug, the shared error banner, one green
+ * The field itself: the workspace name, the shared error banner, one green
  * primary. Validation runs on submit and clears on change.
  *
  * `idPrefix` namespaces the element ids and their `aria-describedby` targets so
@@ -106,8 +84,6 @@ export function WorkspaceFormFields({
   idPrefix,
   name,
   onNameChange,
-  slug,
-  onSlugChange,
   error,
   pending,
   onSubmit,
@@ -127,7 +103,6 @@ export function WorkspaceFormFields({
     onFieldClear?.(key);
   };
   const nameId = `${idPrefix}-name`;
-  const slugId = `${idPrefix}-slug`;
   const errorId = `${idPrefix}-error`;
   return (
     <form
@@ -136,7 +111,6 @@ export function WorkspaceFormFields({
       onSubmit={(event) => {
         const errors: Record<string, string | null> = {
           name: validateWorkspaceName(name),
-          slug: validateWorkspaceSlug(slug),
         };
         if (Object.values(errors).some(Boolean)) {
           setLocalErrors(errors);
@@ -174,38 +148,6 @@ export function WorkspaceFormFields({
           {fieldErrors.name ? (
             <p id={`${nameId}-error`} className="text-destructive text-xs" role="alert">
               {fieldErrors.name}
-            </p>
-          ) : null}
-        </Field>
-        <Field className="gap-2">
-          <FieldLabel
-            htmlFor={slugId}
-            className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase"
-          >
-            Workspace URL
-          </FieldLabel>
-          <Input
-            id={slugId}
-            value={slug}
-            onChange={(event) => {
-              onSlugChange(event.target.value);
-              clearField("slug");
-            }}
-            autoComplete="off"
-            className="font-mono"
-            aria-invalid={fieldErrors.slug || error ? true : undefined}
-            aria-describedby={
-              [fieldErrors.slug ? `${slugId}-error` : null, error ? errorId : null]
-                .filter(Boolean)
-                .join(" ") || undefined
-            }
-          />
-          <FieldDescription>
-            Your workspace opens at app.eccos.chat/{slug || "workspace"}
-          </FieldDescription>
-          {fieldErrors.slug ? (
-            <p id={`${slugId}-error`} className="text-destructive text-xs" role="alert">
-              {fieldErrors.slug}
             </p>
           ) : null}
         </Field>

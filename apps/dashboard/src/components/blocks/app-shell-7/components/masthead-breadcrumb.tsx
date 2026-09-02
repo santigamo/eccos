@@ -8,9 +8,11 @@ import type { Membership } from "@/auth/tenant"
 import { useWorkspaceSwitch } from "@/hooks/use-workspace-switch"
 import {
   activeWorkspace,
+  duplicateWorkspaceLabels,
   hasWorkspaceChoice,
   workspaceInitial,
   workspaceLabel,
+  workspaceShortId,
 } from "@/lib/workspaces"
 import {
   activeWaba,
@@ -194,6 +196,9 @@ export function WorkspaceSwitcher({
   // a real action, so this crumb stays a button either way.
   const switchable = hasWorkspaceChoice(workspaces)
   const label = active ? workspaceLabel(active) : "Not selected"
+  // Names are allowed to repeat now (see `duplicateWorkspaceLabels`); only the
+  // rows that actually collide inside THIS user's list earn a disambiguator.
+  const duplicated = duplicateWorkspaceLabels(workspaces)
 
   return (
     <>
@@ -228,7 +233,11 @@ export function WorkspaceSwitcher({
                         if (!isActive) choose(workspace.id)
                       }}
                     >
-                      <WorkspaceOption workspace={workspace} active={isActive} />
+                      <WorkspaceOption
+                        workspace={workspace}
+                        active={isActive}
+                        ambiguous={duplicated.has(workspaceLabel(workspace))}
+                      />
                     </DropdownMenuItem>
                   )
                 })}
@@ -265,8 +274,23 @@ export function WorkspaceSwitcher({
 
 /**
  * One workspace as the menu lists it: the square monogram (the console's
- * identity idiom, same as the user tile), the name, its slug in the machine
- * font, and a check on the one this session is scoped to.
+ * identity idiom, same as the user tile), the name, and a check on the one this
+ * session is scoped to.
+ *
+ * THERE IS NO PERMANENT SUB-LINE. The row used to carry the organization slug
+ * under the name, in the machine font, matching the WABA row above. That slug
+ * is now a server-minted UUID (see `createOrganization`): showing it would put
+ * a 36-character random string under every workspace an operator owns, which
+ * identifies nothing, invites nobody to read it, and exists only because Better
+ * Auth's schema demands a unique column. A row with nothing worth saying says
+ * nothing — the anatomy does not have to match the WABA row, whose sub-line is
+ * a real account id a person may need to quote to Meta.
+ *
+ * `ambiguous` is the one case where the space is earned: dropping the slug also
+ * dropped the last thing distinguishing two workspaces a user happens to have
+ * given the SAME name, which is now legal. Those rows — and only those — show
+ * the first six characters of the organization id. Deterministic, derived from
+ * data the user already has, and it names nothing outside their own list.
  *
  * Plain elements only — no menu context — so the membership list and the active
  * marking can be asserted by the dashboard's DOM-less tests, which cannot reach
@@ -275,9 +299,12 @@ export function WorkspaceSwitcher({
 export function WorkspaceOption({
   workspace,
   active,
+  ambiguous = false,
 }: {
   workspace: Membership
   active: boolean
+  /** This row's label repeats inside the same user's membership list. */
+  ambiguous?: boolean
 }) {
   return (
     <span
@@ -290,9 +317,9 @@ export function WorkspaceOption({
       </span>
       <span className="flex min-w-0 flex-col text-left">
         <span className="truncate text-sm text-foreground">{workspaceLabel(workspace)}</span>
-        {workspace.slug ? (
+        {ambiguous ? (
           <span className="truncate font-mono text-xs text-muted-foreground">
-            {workspace.slug}
+            {workspaceShortId(workspace)}
           </span>
         ) : null}
       </span>

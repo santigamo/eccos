@@ -5,6 +5,10 @@ import {
 import { createServerEntry, type ServerEntry } from "@tanstack/react-start/server-entry";
 import { env } from "cloudflare:workers";
 import { createAuth } from "./auth/auth";
+import {
+  blockedAuthEndpointResponse,
+  isBlockedAuthEndpoint,
+} from "./auth/blocked-endpoints";
 import { authConfigFromEnv } from "./auth/config";
 import { resolveSession } from "./auth/session";
 
@@ -17,8 +21,10 @@ import { resolveSession } from "./auth/session";
  *    localhost in development) reaches the app. Raw `*.workers.dev`/preview
  *    origins fail closed with 403 — they are not alternate customer paths.
  * 2. Better Auth handler at `/api/auth/*` (identity plane: sessions, sign-up/
- *    sign-in, organization endpoints). The auth instance is built per request
- *    from the request-scoped bindings — no module-global auth state.
+ *    sign-in, organization endpoints), minus the slug-bearing organization
+ *    endpoints, which are refused before dispatch (contract §9; the reasoning
+ *    lives in `auth/blocked-endpoints.ts`). The auth instance is built per
+ *    request from the request-scoped bindings — no module-global auth state.
  * 3. Page-level auth gate (contract §10): anonymous page loads are redirected
  *    to `/signin` (with a bounce-back target) except the public auth pages.
  *    Server functions additionally fail closed per-call in
@@ -69,6 +75,13 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   }
   const { pathname } = url;
   if (pathname.startsWith("/api/auth/")) {
+    // Refused BEFORE the auth instance is even built: these endpoints answer
+    // questions about the globally-unique organization slug, and `create`
+    // additionally bypasses the provisioning saga (auth/blocked-endpoints.ts).
+    // The console's own flows use in-process `auth.api.*` and never reach here.
+    if (isBlockedAuthEndpoint(pathname)) {
+      return blockedAuthEndpointResponse();
+    }
     const auth = createAuth(authConfigFromEnv(env));
     return auth.handler(request);
   }

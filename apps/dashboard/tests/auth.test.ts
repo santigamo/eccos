@@ -14,6 +14,11 @@ import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { createAuth, buildInvitationAcceptLink } from "../src/auth/auth";
 import {
+  BLOCKED_AUTH_ENDPOINTS,
+  blockedAuthEndpointResponse,
+  isBlockedAuthEndpoint,
+} from "../src/auth/blocked-endpoints";
+import {
   AUTH_LINK_EXPIRY_LABEL,
   AUTH_LINK_EXPIRY_SECONDS,
   CaptureMailSender,
@@ -295,20 +300,19 @@ describe("origin / CSRF protection", () => {
 });
 
 describe("organization plugin", () => {
-  test("an organization can be created through the auth handler", async () => {
+  test("an organization is created in process, not over HTTP", async () => {
     const { auth, db } = await createTestAuth();
     const cookie = await verifiedSessionCookie(auth, db, "org-owner@example.com");
 
-    const createRes = await auth.handler(
-      new Request(`${BASE_URL}/api/auth/organization/create`, {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie, origin: BASE_URL },
-        body: JSON.stringify({ name: "Acme Widgets", slug: "acme-widgets" }),
-      }),
-    );
-    expect(createRes.status).toBe(200);
-    const org = (await createRes.json()) as { name?: string; slug?: string };
-    expect(org.slug).toBe("acme-widgets");
+    // The console's own path: a server function calling `auth.api.*` directly.
+    // It never issues a request to /api/auth/*, so the block below cannot
+    // reach it. The slug is minted by the caller (src/organizations.ts uses
+    // crypto.randomUUID) and is never derived from the customer's name.
+    const org = (await auth.api.createOrganization({
+      body: { name: "Acme Widgets", slug: crypto.randomUUID() },
+      headers: new Headers({ cookie }),
+    })) as { id?: string };
+    expect(org?.id).toBeTruthy();
 
     // The active organization lands in the session (UX state only).
     const sessionRes = await auth.handler(
@@ -318,6 +322,110 @@ describe("organization plugin", () => {
       session?: { activeOrganizationId?: string | null };
     };
     expect(session.session?.activeOrganizationId).toBeTruthy();
+  });
+});
+
+/**
+ * The slug-bearing organization endpoints (contract §9).
+ *
+ * These assertions have two halves on purpose. The first proves the endpoints
+ * are REAL — a signed-in session reaches a live handler in better-auth 1.7.2,
+ * not a 404 — so the block is closing something rather than shadow-boxing a
+ * typo, and a future version that renames or removes one of them fails here
+ * instead of silently un-blocking it. The second proves `src/server.ts` refuses
+ * exactly those paths before dispatch.
+ */
+describe("blocked slug-bearing organization endpoints", () => {
+  const blocked = [
+    "/api/auth/organization/create",
+    "/api/auth/organization/check-slug",
+    "/api/auth/organization/update",
+  ];
+
+  test("the block list is exactly the three slug-bearing endpoints", () => {
+    expect([...BLOCKED_AUTH_ENDPOINTS].sort()).toEqual([...blocked].sort());
+  });
+
+  test("each blocked path is a live better-auth endpoint (the block has teeth)", async () => {
+    const { auth, db } = await createTestAuth();
+    const cookie = await verifiedSessionCookie(auth, db, "prober@example.com");
+    for (const path of blocked) {
+      const res = await auth.handler(
+        new Request(`${BASE_URL}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie, origin: BASE_URL },
+          body: JSON.stringify({ name: "x", slug: "x", data: { name: "x" } }),
+        }),
+      );
+      // Anything but 404: the route exists and ran (200, 400, 403 — the value
+      // is not what matters, only that better-auth still serves it).
+      expect(res.status).not.toBe(404);
+    }
+  });
+
+  test("check-slug really is an oracle when it is served", async () => {
+    // The reason this endpoint cannot merely have its copy sanitised: the
+    // ANSWER is the leak, and it needs only a session — no membership in the
+    // organization being probed, and no way to turn it off in 1.7.2.
+    const { auth, db } = await createTestAuth();
+    const ownerCookie = await verifiedSessionCookie(auth, db, "slug-owner@example.com");
+    await auth.api.createOrganization({
+      body: { name: "Citta", slug: "taken-slug" },
+      headers: new Headers({ cookie: ownerCookie }),
+    });
+
+    const strangerCookie = await verifiedSessionCookie(auth, db, "stranger@example.com");
+    const probe = (slug: string) =>
+      auth.handler(
+        new Request(`${BASE_URL}/api/auth/organization/check-slug`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie: strangerCookie, origin: BASE_URL },
+          body: JSON.stringify({ slug }),
+        }),
+      );
+    // A stranger, who is in no organization at all, can tell the two apart.
+    expect((await probe("taken-slug")).status).toBe(400);
+    expect((await probe("never-used-slug")).status).toBe(200);
+    // Which is precisely why src/server.ts never lets the request get here.
+    expect(isBlockedAuthEndpoint("/api/auth/organization/check-slug")).toBe(true);
+  });
+
+  test("the server entry refuses each of them before dispatch", () => {
+    for (const path of blocked) {
+      expect(isBlockedAuthEndpoint(path)).toBe(true);
+      // Trailing slash and case are normalised so neither is a way around it.
+      expect(isBlockedAuthEndpoint(`${path}/`)).toBe(true);
+      expect(isBlockedAuthEndpoint(path.toUpperCase())).toBe(true);
+    }
+  });
+
+  test("the refusal is indistinguishable from a route that never existed", async () => {
+    const res = blockedAuthEndpointResponse();
+    expect(res.status).toBe(404);
+    expect(res.statusText).toBe("Not Found");
+    expect(await res.text()).toBe("");
+
+    // better-call's own miss, for comparison — same status, same empty body.
+    const { auth } = await createTestAuth();
+    const miss = await auth.handler(
+      new Request(`${BASE_URL}/api/auth/organization/no-such-endpoint`, { method: "POST" }),
+    );
+    expect(miss.status).toBe(404);
+    expect(await miss.text()).toBe("");
+  });
+
+  test("the rest of the identity plane is untouched", () => {
+    for (const path of [
+      "/api/auth/get-session",
+      "/api/auth/sign-in/email",
+      "/api/auth/sign-up/email",
+      "/api/auth/organization/list",
+      "/api/auth/organization/set-active",
+      "/api/auth/organization/accept-invitation",
+      "/api/auth/organization/create-invitation",
+    ]) {
+      expect(isBlockedAuthEndpoint(path)).toBe(false);
+    }
   });
 });
 

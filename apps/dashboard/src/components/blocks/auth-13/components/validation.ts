@@ -5,9 +5,7 @@
  */
 
 const EMAIL_RE = /.+@.+\..+/;
-const SLUG_RE = /^[a-z0-9-]+$/;
 export const PASSWORD_MIN_LENGTH = 10;
-export const SLUG_MAX_LENGTH = 48;
 
 export function validateEmail(email: string): string | null {
   const value = email.trim();
@@ -31,15 +29,5 @@ export function validateName(name: string, label = "name"): string | null {
 
 export function validateWorkspaceName(name: string): string | null {
   if (!name.trim()) return "Enter a workspace name";
-  return null;
-}
-
-export function validateWorkspaceSlug(slug: string): string | null {
-  const value = slug.trim();
-  if (!value) return "Choose a workspace URL";
-  if (!SLUG_RE.test(value)) return "Lowercase letters, numbers, and dashes only";
-  if (value.length > SLUG_MAX_LENGTH) {
-    return `Must be ${SLUG_MAX_LENGTH} characters or fewer`;
-  }
   return null;
 }

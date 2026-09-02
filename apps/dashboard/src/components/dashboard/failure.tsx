@@ -1,7 +1,11 @@
 import type { Failure, Membership } from "../../server/gateway";
 import { useWorkspaceSwitch } from "../../hooks/use-workspace-switch";
 import { failureCopy } from "../../lib/failure";
-import { workspaceLabel } from "../../lib/workspaces";
+import {
+  duplicateWorkspaceLabels,
+  workspaceLabel,
+  workspaceShortId,
+} from "../../lib/workspaces";
 import { Unreachable } from "../../ui";
 import { Button, buttonVariants } from "../ui/button";
 import {
@@ -99,6 +103,10 @@ function FailureAction({ failure }: { failure: Failure }) {
  */
 function WorkspacePicker({ organizations }: { organizations: Membership[] }) {
   const { pendingId: pending, error, choose } = useWorkspaceSwitch();
+  // Same rule as the masthead switcher: a workspace is named, and nothing else,
+  // unless two rows in this user's own list share that name (see
+  // `duplicateWorkspaceLabels`) — then both get a short id to tell them apart.
+  const duplicated = duplicateWorkspaceLabels(organizations);
 
   return (
     <div className="pt-5">
@@ -120,9 +128,9 @@ function WorkspacePicker({ organizations }: { organizations: Membership[] }) {
                 <span className="truncate text-sm text-foreground">
                   {workspaceLabel(org)}
                 </span>
-                {org.slug ? (
+                {duplicated.has(workspaceLabel(org)) ? (
                   <span className="truncate font-mono text-xs text-muted-foreground">
-                    {org.slug}
+                    {workspaceShortId(org)}
                   </span>
                 ) : null}
               </span>

@@ -70,8 +70,8 @@ describe("FailureView: authorization is not an outage", () => {
       reason: "select-organization",
       error: "select an organization",
       organizations: [
-        { id: "org-a", name: "Acme", slug: "acme" },
-        { id: "org-b", name: "Globex", slug: "globex" },
+        { id: "org-a", name: "Acme" },
+        { id: "org-b", name: "Globex" },
       ],
     });
     expect(html).toContain("Choose a workspace");
@@ -80,6 +80,41 @@ describe("FailureView: authorization is not an outage", () => {
     expect(html).toContain("Your workspaces");
     expect(html).not.toContain("Gateway unreachable");
     expect(html).not.toContain(GATEWAY_BLAME);
+  });
+
+  test("identically named workspaces are told apart by a short id, nothing else", () => {
+    // Names may repeat now that the slug is opaque and server-minted. The
+    // picker answers the ambiguity with the first six characters of the
+    // organization id — and ONLY on the rows that are actually ambiguous.
+    const html = render({
+      ok: false,
+      kind: "forbidden",
+      reason: "select-organization",
+      error: "select an organization",
+      organizations: [
+        { id: "org-aaaaaa1", name: "Citta" },
+        { id: "org-bbbbbb2", name: "Citta" },
+        { id: "org-c", name: "Globex" },
+      ],
+    });
+    expect(html).toContain(">org-aa<");
+    expect(html).toContain(">org-bb<");
+    // Globex is unambiguous, so it gets a name and nothing under it.
+    expect(html.match(/font-mono/g)?.length).toBe(2);
+  });
+
+  test("a picker of distinctly named workspaces shows no sub-lines at all", () => {
+    const html = render({
+      ok: false,
+      kind: "forbidden",
+      reason: "select-organization",
+      error: "select an organization",
+      organizations: [
+        { id: "org-a", name: "Acme" },
+        { id: "org-b", name: "Globex" },
+      ],
+    });
+    expect(html).not.toContain("font-mono");
   });
 
   test("several workspaces but no list resolved: the sentence stands alone", () => {
@@ -136,7 +171,7 @@ describe("FailureView: console design rules", () => {
       kind: "forbidden",
       reason: "select-organization",
       error: "x",
-      organizations: [{ id: "org-a", name: "Acme", slug: "acme" }],
+      organizations: [{ id: "org-a", name: "Acme" }],
     },
     { ok: false, kind: "unauthenticated", error: "x" },
   ];

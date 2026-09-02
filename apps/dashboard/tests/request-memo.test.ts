@@ -39,7 +39,7 @@ function countingAuth(session: SessionLike | null): { auth: Auth; getSessionCall
         calls += 1;
         return session;
       }),
-      listOrganizations: mock(async () => [{ id: "org-1", name: "Acme", slug: "acme" }]),
+      listOrganizations: mock(async () => [{ id: "org-1", name: "Acme" }]),
       hasPermission: mock(async () => ({ success: true })),
     },
   } as unknown as Auth;

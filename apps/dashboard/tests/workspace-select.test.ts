@@ -104,16 +104,26 @@ function storedActiveOrg(db: Database, userId?: string): string | null {
   return row?.active ?? null;
 }
 
+/**
+ * Organization slugs in these fixtures are minted, never chosen.
+ *
+ * Better Auth's `createOrganization` still REQUIRES a slug (the column is
+ * `not null unique`), but the console no longer lets a customer supply one:
+ * `src/organizations.ts` mints `crypto.randomUUID()`. The fixtures mirror that
+ * so nothing here can quietly start depending on a readable slug again.
+ */
+const mintSlug = () => crypto.randomUUID();
+
 describe("selectOrganization: the switch is validated server-side", () => {
   test("a member switches, and the session is repointed", async () => {
     const { auth, db } = await createTestAuth();
     const headers = await signIn(auth, db, "both@corp.test");
     const one = (await auth.api.createOrganization({
-      body: { name: "One", slug: "one" },
+      body: { name: "One", slug: mintSlug() },
       headers,
     })) as { id?: string };
     const two = (await auth.api.createOrganization({
-      body: { name: "Two", slug: "two" },
+      body: { name: "Two", slug: mintSlug() },
       headers,
     })) as { id?: string };
 
@@ -133,13 +143,13 @@ describe("selectOrganization: the switch is validated server-side", () => {
     const { auth, db } = await createTestAuth();
     const ownerHeaders = await signIn(auth, db, "owner@corp.test");
     const foreign = (await auth.api.createOrganization({
-      body: { name: "Acme", slug: "acme" },
+      body: { name: "Acme", slug: mintSlug() },
       headers: ownerHeaders,
     })) as { id?: string };
 
     const outsiderHeaders = await signIn(auth, db, "outsider@corp.test");
     const outsiderOrg = (await auth.api.createOrganization({
-      body: { name: "Initech", slug: "initech" },
+      body: { name: "Initech", slug: mintSlug() },
       headers: outsiderHeaders,
     })) as { id?: string };
     actAs(outsiderHeaders);
@@ -161,7 +171,7 @@ describe("selectOrganization: the switch is validated server-side", () => {
   test("a fabricated organization id is refused the same way", async () => {
     const { auth, db } = await createTestAuth();
     const headers = await signIn(auth, db, "sole@corp.test");
-    await auth.api.createOrganization({ body: { name: "Sole", slug: "sole" }, headers });
+    await auth.api.createOrganization({ body: { name: "Sole", slug: mintSlug() }, headers });
 
     actAs(headers);
     const refused = await selectOrganization({ data: { organizationId: "org-does-not-exist" } });
@@ -173,7 +183,7 @@ describe("selectOrganization: the switch is validated server-side", () => {
     const { auth, db } = await createTestAuth();
     const headers = await signIn(auth, db, "owner2@corp.test");
     const org = (await auth.api.createOrganization({
-      body: { name: "Globex", slug: "globex" },
+      body: { name: "Globex", slug: mintSlug() },
       headers,
     })) as { id?: string };
 

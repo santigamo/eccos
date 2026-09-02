@@ -27,9 +27,6 @@
       "recommended": true,
       "style": {
         "noUnusedTemplateLiteral": "off"
-      },
-      "suspicious": {
-        "noMisleadingCharacterClass": "off"
       }
     }
   },

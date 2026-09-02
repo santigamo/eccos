@@ -78,13 +78,23 @@ async function inviteAndAccept(
   return headers;
 }
 
+/**
+ * Organization slugs in these fixtures are minted, never chosen.
+ *
+ * Better Auth's `createOrganization` still REQUIRES a slug (the column is
+ * `not null unique`), but the console no longer lets a customer supply one:
+ * `src/organizations.ts` mints `crypto.randomUUID()`. The fixtures mirror that
+ * so nothing here can quietly start depending on a readable slug again.
+ */
+const mintSlug = () => crypto.randomUUID();
+
 /** Seed: one org, one member per role. Returns headers per role + orgId. */
 async function seedOrganization(auth: ReturnType<typeof createAuth>, db: Database) {
   const ownerHeaders = await signInHeaders(auth, db, "owner@corp.test");
   const org = (await auth.api.createOrganization({
-    body: { name: "Acme", slug: "acme" },
+    body: { name: "Acme", slug: mintSlug() },
     headers: ownerHeaders,
-  })) as { id?: string; slug?: string };
+  })) as { id?: string };
   const organizationId = org!.id!;
   await auth.api.setActiveOrganization({ body: { organizationId }, headers: ownerHeaders });
 
@@ -234,7 +244,7 @@ describe("ForbiddenError reasons", () => {
     const { auth, db } = await createTestAuth();
     const headers = await signInHeaders(auth, db, "sole@corp.test");
     const org = (await auth.api.createOrganization({
-      body: { name: "Sole", slug: "sole" },
+      body: { name: "Sole", slug: mintSlug() },
       headers,
     })) as { id?: string };
     clearActiveOrganization(db);
@@ -244,8 +254,8 @@ describe("ForbiddenError reasons", () => {
   test("several memberships and none selected is 'select-organization'", async () => {
     const { auth, db } = await createTestAuth();
     const headers = await signInHeaders(auth, db, "both@corp.test");
-    await auth.api.createOrganization({ body: { name: "One", slug: "one" }, headers });
-    await auth.api.createOrganization({ body: { name: "Two", slug: "two" }, headers });
+    await auth.api.createOrganization({ body: { name: "One", slug: mintSlug() }, headers });
+    await auth.api.createOrganization({ body: { name: "Two", slug: mintSlug() }, headers });
     clearActiveOrganization(db);
     expect(await reasonOf(requirePermission(auth, headers, undefined, "view"))).toBe(
       "select-organization",

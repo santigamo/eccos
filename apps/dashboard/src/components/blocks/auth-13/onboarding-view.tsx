@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 import { createOrganization } from "@/organizations";
 import { AuthSplitShell } from "./components/auth";
-import {
-  WorkspaceForm,
-  slugifyWorkspaceName,
-} from "./components/workspace-form";
+import { WorkspaceForm } from "./components/workspace-form";
 
 /**
  * First-run onboarding on the reui auth-13 split-screen skeleton: the same
@@ -15,8 +12,6 @@ import {
  */
 export function OnboardingView() {
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugTouched, setSlugTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -24,17 +19,13 @@ export function OnboardingView() {
     document.title = "Create your workspace · Eccos";
   }, []);
 
-  const effectiveSlug = slugTouched ? slug : slugifyWorkspaceName(name);
-
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError(null);
     let result: Awaited<ReturnType<typeof createOrganization>>;
     try {
-      result = await createOrganization({
-        data: { name: name.trim(), slug: effectiveSlug },
-      });
+      result = await createOrganization({ data: { name: name.trim() } });
     } catch {
       // Thrown client failure (network, non-JSON 5xx): reset pending and show
       // a generic error instead of a stuck button.
@@ -57,11 +48,6 @@ export function OnboardingView() {
       <WorkspaceForm
         name={name}
         onNameChange={setName}
-        slug={effectiveSlug}
-        onSlugChange={(value) => {
-          setSlugTouched(true);
-          setSlug(value);
-        }}
         error={error}
         pending={pending}
         onSubmit={onSubmit}

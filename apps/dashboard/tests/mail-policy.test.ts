@@ -66,6 +66,16 @@ function parsedWarnings(): Record<string, string>[] {
   return warnings.map((line) => JSON.parse(line) as Record<string, string>);
 }
 
+/**
+ * Organization slugs in these fixtures are minted, never chosen.
+ *
+ * Better Auth's `createOrganization` still REQUIRES a slug (the column is
+ * `not null unique`), but the console no longer lets a customer supply one:
+ * `src/organizations.ts` mints `crypto.randomUUID()`. The fixtures mirror that
+ * so nothing here can quietly start depending on a readable slug again.
+ */
+const mintSlug = () => crypto.randomUUID();
+
 describe("unresolved (504) never throws, at any call site", () => {
   for (const [name, apply] of [
     ["verification", applyVerificationSendPolicy],
@@ -378,7 +388,7 @@ describe("the three call sites send the declared variables", () => {
     );
     const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
     const org = (await auth.api.createOrganization({
-      body: { name: "Acme", slug: "acme" },
+      body: { name: "Acme", slug: mintSlug() },
       headers: new Headers({ cookie }),
     })) as { id?: string };
     mail.sent.length = 0;

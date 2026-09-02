@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import * as validation from "../src/components/blocks/auth-13/components/validation";
 import {
   validateEmail,
   validateName,
   validatePassword,
   validateWorkspaceName,
-  validateWorkspaceSlug,
 } from "../src/components/blocks/auth-13/components/validation";
 
 describe("validateEmail", () => {
@@ -44,23 +44,11 @@ describe("validateName / validateWorkspaceName", () => {
   });
 });
 
-describe("validateWorkspaceSlug", () => {
-  test("rejects empty", () => {
-    expect(validateWorkspaceSlug("")).toBe("Choose a workspace URL");
-  });
-
-  test("rejects characters outside a-z0-9-", () => {
-    expect(validateWorkspaceSlug("Physeo")).toBe("Lowercase letters, numbers, and dashes only");
-    expect(validateWorkspaceSlug("physeo_clinica")).toBe("Lowercase letters, numbers, and dashes only");
-    expect(validateWorkspaceSlug("physeo clinica")).toBe("Lowercase letters, numbers, and dashes only");
-  });
-
-  test("enforces the 48-character cap", () => {
-    expect(validateWorkspaceSlug("x".repeat(48))).toBeNull();
-    expect(validateWorkspaceSlug("x".repeat(49))).toBe("Must be 48 characters or fewer");
-  });
-
-  test("accepts a valid slug", () => {
-    expect(validateWorkspaceSlug("physeo-clinica")).toBeNull();
+describe("there is no workspace-slug validator", () => {
+  test("the module exports nothing slug-shaped", () => {
+    // The slug stopped being a form field: it is minted server-side as an
+    // opaque UUID (src/organizations.ts), so a validator for a value the user
+    // can no longer type is a validator for a field that must not come back.
+    expect(Object.keys(validation).some((key) => /slug/i.test(key))).toBe(false);
   });
 });

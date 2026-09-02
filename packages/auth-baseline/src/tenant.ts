@@ -46,17 +46,23 @@ export class ForbiddenError extends Error {
   }
 }
 
-/** Minimal membership view from the identity plane. */
+/**
+ * Minimal membership view from the identity plane.
+ *
+ * NO SLUG. The organization slug is a server-minted opaque value (a random
+ * UUID, see `createOrganization`) that exists only because Better Auth's schema
+ * declares the column `not null unique`; it identifies nothing a person would
+ * recognise and it must never reach the browser. Keeping it out of this type is
+ * what stops it leaking into a loader payload, a dropdown, or a URL.
+ */
 export interface Membership {
   id: string;
   name: string;
-  slug: string;
 }
 
 interface OrganizationLike {
   id?: unknown;
   name?: unknown;
-  slug?: unknown;
 }
 
 /**
@@ -74,7 +80,6 @@ export async function resolveMemberships(
     .map((org) => ({
       id: String(org.id),
       name: String(org.name ?? ""),
-      slug: String(org.slug ?? ""),
     }));
 }
 

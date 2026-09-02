@@ -59,7 +59,7 @@ mock.module("cloudflare:workers", () => ({
 // (notional) session cookie; the mocked auth API accepts it as a member with
 // every gateway permission and links the org to the fixture account.
 let fakeSessionHeaders: Headers | null = null;
-let fakeMemberships: { id: string; name?: string; slug?: string }[] = [{ id: "org-fixture" }];
+let fakeMemberships: { id: string; name?: string }[] = [{ id: "org-fixture" }];
 /** Gateway actions the fake role does NOT hold, to drive the forbidden path. */
 let fakeDeniedActions = new Set<string>();
 
@@ -720,8 +720,8 @@ describe("failure classification (authorization vs. transport)", () => {
   test("several memberships and none selected carries the choice to make", async () => {
     const touched = trackingBinding();
     fakeMemberships = [
-      { id: "org-fixture", name: "Acme", slug: "acme" },
-      { id: "org-other", name: "Globex", slug: "globex" },
+      { id: "org-fixture", name: "Acme" },
+      { id: "org-other", name: "Globex" },
     ];
     const res = await getSubscriberConfig();
     expect(res).toEqual({
@@ -731,8 +731,8 @@ describe("failure classification (authorization vs. transport)", () => {
       error: "select an organization",
       // The remedy travels with the failure: the picker needs the options.
       organizations: [
-        { id: "org-fixture", name: "Acme", slug: "acme" },
-        { id: "org-other", name: "Globex", slug: "globex" },
+        { id: "org-fixture", name: "Acme" },
+        { id: "org-other", name: "Globex" },
       ],
     });
     expect(touched.rpc).toBe(false);

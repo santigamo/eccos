@@ -180,12 +180,25 @@ Better Auth's Organization plugin exposes HTTP endpoints under `/api/auth/organi
 exist and cannot all be removed, so each carries an explicit policy. The dashboard's own server
 functions remain the primary UI path; direct plugin calls are subject to the same rules.
 
+**Three of them are not served at all.** `src/server.ts` refuses `organization/create`,
+`organization/check-slug` and `organization/update` with better-call's own 404 before the request
+reaches `auth.handler`, so a blocked endpoint is indistinguishable from one that was never
+registered. The reasoning lives in `src/auth/blocked-endpoints.ts`; the short version is that all
+three answer questions about `organization.slug`, which the schema declares globally unique across
+every tenant, and Better Auth checks that uniqueness *before* any `organizationHooks` interception
+point — so no hook can sanitize the answer. `check-slug` in particular is a purpose-built oracle
+that needs a session and no membership, and 1.7.2 has no option to disable it. The slug itself is
+now a server-minted random UUID (`createOrganization` in `src/organizations.ts`), never derived
+from customer input and never returned to the browser, so **workspace names may repeat freely** —
+across tenants and inside one user's own membership list.
+
 | Plugin endpoint (POST unless noted) | Purpose | Policy |
 |---|---|---|
-| `create` | Create organization | Wrapped by app validation: verified email + allowlist; on success triggers idempotent `ensureOrganizationAccount`; never issues an API key |
+| `create` | Create organization | **Not served** — 404 before dispatch. Creation is the `createOrganization` server function only: it mints the slug, and on success triggers the idempotent `ensureOrganizationAccount` saga; never issues an API key. A direct HTTP call skipped that saga entirely and stranded the organization with no account link |
+| `check-slug` | Probe slug availability | **Not served** — 404 before dispatch. A cross-tenant existence oracle with no legitimate caller: nothing in the console is slug-addressed |
 | `list`, `get`, `get-full` (GET) | List/read organizations | Session required; only memberships of the caller |
 | `set-active` | Set active organization | Wrapped by app validation: server re-verifies membership; result is UX state only (§5) |
-| `update` | Update organization (name, slug, metadata) | Admin+; metadata/slug changes **never authorize the account mapping** (§2) |
+| `update` | Update organization (name, metadata) | **Not served** — 404 before dispatch, because the same slug-uniqueness probe is reachable through a rename. There is no rename UI in v1; when one is built it must be a server function that never accepts a slug. Metadata/slug changes **never authorize the account mapping** (§2) |
 | `delete` | Delete organization | **Disabled in v1** — rejected regardless of role |
 | `create-invitation` (POST), `list-invitations` (GET) | Invitations | Owner/admin + verified email + step-up (§4); recipients must be verified identities (§7) |
 | `accept-invitation`, `reject-invitation`, `cancel-invitation`, `get-invitation` (GET) | Invitation lifecycle | Acceptance requires signed-in matching identity (§7); never provisions a tenant |
@@ -195,6 +208,9 @@ functions remain the primary UI path; direct plugin calls are subject to the sam
 Invariants for all of them: no endpoint issues or returns an API key; no endpoint creates or
 modifies `organization_accounts`; no endpoint bypasses the role matrix; a direct call that the app
 wrapper would refuse (e.g. unverified email, disabled org, deleted member) is refused here too.
+No endpoint's error text may vary with the state of another tenant — the console maps organization
+creation failures through a closed allowlist of generic copy and logs the provider's own message
+server-side instead (§7/§8 anti-enumeration, applied to the organization plane).
 
 ## 10. Failure behavior
 

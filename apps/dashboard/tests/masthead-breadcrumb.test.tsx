@@ -60,15 +60,21 @@ mock.module("@tanstack/react-start/server", () => ({
   getRequest: () => new Request("http://localhost:3000/", { headers: new Headers() }),
 }));
 
-const { activeWorkspace, hasWorkspaceChoice, workspaceInitial, workspaceLabel } =
-  await import("../src/lib/workspaces");
+const {
+  activeWorkspace,
+  duplicateWorkspaceLabels,
+  hasWorkspaceChoice,
+  workspaceInitial,
+  workspaceLabel,
+  workspaceShortId,
+} = await import("../src/lib/workspaces");
 const { activeWaba, hasWabaChoice, shortWabaId, wabaInitial, wabaLabel, wabaState } =
   await import("../src/lib/wabas");
 const { CrumbSeparator, WabaOption, WabaSwitcher, WorkspaceOption, WorkspaceSwitcher } =
   await import("../src/components/blocks/app-shell-7/components/masthead-breadcrumb");
 
-const ACME: Membership = { id: "org-a", name: "Acme", slug: "acme" };
-const GLOBEX: Membership = { id: "org-b", name: "Globex", slug: "globex" };
+const ACME: Membership = { id: "org-a", name: "Acme" };
+const GLOBEX: Membership = { id: "org-b", name: "Globex" };
 
 /** A WABA as the gateway contract shapes it, with only the fields under test set. */
 function makeWaba(
@@ -148,15 +154,42 @@ describe("activeWorkspace: the console never names a scope the server would refu
 });
 
 describe("workspace labels", () => {
-  test("falls back name → slug → id", () => {
+  test("falls back name → id", () => {
     expect(workspaceLabel(ACME)).toBe("Acme");
-    expect(workspaceLabel({ id: "org-c", name: "", slug: "initech" })).toBe("initech");
-    expect(workspaceLabel({ id: "org-c", name: "", slug: "" })).toBe("org-c");
+    // The slug used to sit between these two. It is now a server-minted UUID
+    // that never reaches the browser, so a nameless workspace falls straight
+    // through to its id.
+    expect(workspaceLabel({ id: "org-c", name: "" })).toBe("org-c");
   });
 
   test("the monogram is the label's first letter, uppercased", () => {
     expect(workspaceInitial(ACME)).toBe("A");
-    expect(workspaceInitial({ id: "org-c", name: "", slug: "initech" })).toBe("I");
+    expect(workspaceInitial({ id: "initech-1", name: "" })).toBe("I");
+  });
+});
+
+describe("duplicate names: the only ambiguity the dropped slug created", () => {
+  test("no duplicates in an ordinary list", () => {
+    expect(duplicateWorkspaceLabels([ACME, GLOBEX]).size).toBe(0);
+    expect(duplicateWorkspaceLabels([]).size).toBe(0);
+    expect(duplicateWorkspaceLabels([ACME]).size).toBe(0);
+  });
+
+  test("two workspaces with the same name are both flagged", () => {
+    // Names may repeat now — that is the correct multi-tenant semantics, and
+    // it is what the globally-unique slug used to (wrongly) prevent.
+    const duplicated = duplicateWorkspaceLabels([
+      { id: "org-a", name: "Citta" },
+      { id: "org-b", name: "Citta" },
+      GLOBEX,
+    ]);
+    expect([...duplicated]).toEqual(["Citta"]);
+  });
+
+  test("the short id is a stable six-character prefix of the organization id", () => {
+    expect(workspaceShortId({ id: "abcdef0123456789", name: "Citta" })).toBe("abcdef");
+    // Never longer than the id itself.
+    expect(workspaceShortId({ id: "abc", name: "Citta" })).toBe("abc");
   });
 });
 
@@ -253,7 +286,7 @@ describe("activeWaba / hasWabaChoice", () => {
 });
 
 describe("WorkspaceOption: the membership list and its active marking", () => {
-  test("lists every workspace with its name and slug", () => {
+  test("lists every workspace by name, and by name alone", () => {
     const html = renderToStaticMarkup(
       [ACME, GLOBEX].map((workspace) => (
         <WorkspaceOption
@@ -265,11 +298,37 @@ describe("WorkspaceOption: the membership list and its active marking", () => {
     );
     expect(html).toContain("Acme");
     expect(html).toContain("Globex");
-    expect(html).toContain("acme");
-    expect(html).toContain("globex");
+    // No sub-line: the slug that used to sit under the name is now an opaque
+    // UUID, and an unambiguous row has nothing else worth saying. (The id is
+    // still on `data-workspace` — that is the switch target, not display.)
+    expect(html).not.toContain("font-mono");
     // Exactly one row is marked current — never zero, never both.
     expect(html.match(/data-active="true"/g)?.length).toBe(1);
     expect(html.match(/Current workspace/g)?.length).toBe(1);
+  });
+
+  test("only a duplicated name earns the short-id sub-line", () => {
+    const twins = [
+      { id: "org-aaaaaa1", name: "Citta" },
+      { id: "org-bbbbbb2", name: "Citta" },
+      GLOBEX,
+    ];
+    const duplicated = duplicateWorkspaceLabels(twins);
+    const html = renderToStaticMarkup(
+      twins.map((workspace) => (
+        <WorkspaceOption
+          key={workspace.id}
+          workspace={workspace}
+          active={false}
+          ambiguous={duplicated.has(workspaceLabel(workspace))}
+        />
+      )),
+    );
+    // Both twins carry a visible short id...
+    expect(html).toContain(">org-aa</span>");
+    expect(html).toContain(">org-bb</span>");
+    // ...and the unambiguous row is left alone: exactly two sub-lines, not three.
+    expect(html.match(/font-mono/g)?.length).toBe(2);
   });
 
   test("the active row carries the marking, an inactive row carries none", () => {

@@ -52,15 +52,25 @@ async function verifiedUser(auth: ReturnType<typeof betterAuth> extends never ? 
   return new Headers({ cookie: signIn.headers.get("set-cookie")!.split(";")[0]! });
 }
 
+/**
+ * Organization slugs in these fixtures are minted, never chosen.
+ *
+ * Better Auth's `createOrganization` still REQUIRES a slug (the column is
+ * `not null unique`), but the console no longer lets a customer supply one:
+ * `src/organizations.ts` mints `crypto.randomUUID()`. The fixtures mirror that
+ * so nothing here can quietly start depending on a readable slug again.
+ */
+const mintSlug = () => crypto.randomUUID();
+
 describe("baseline guards", () => {
   test("members hold capabilities only in their organization", async () => {
     const { auth, db, migrations } = createBaselineAuth();
     await (await migrations).runMigrations();
 
-    const mkOrg = async (slug: string, ownerEmail: string, viewerEmail: string) => {
+    const mkOrg = async (name: string, ownerEmail: string, viewerEmail: string) => {
       const ownerHeaders = await verifiedUser(auth, db, ownerEmail);
       const org = (await auth.api.createOrganization({
-        body: { name: slug, slug },
+        body: { name, slug: mintSlug() },
         headers: ownerHeaders,
       })) as { id?: string };
       const inv = (await auth.api.createInvitation({
@@ -89,7 +99,7 @@ describe("baseline guards", () => {
 
     const ownerHeaders = await verifiedUser(auth, db, "o2@t.test");
     const org = (await auth.api.createOrganization({
-      body: { name: "solo", slug: "solo" },
+      body: { name: "solo", slug: mintSlug() },
       headers: ownerHeaders,
     })) as { id?: string };
     const organizationId = org!.id!;
@@ -136,7 +146,7 @@ describe("implicit organization resolution", () => {
     await (await migrations).runMigrations();
     const headers = await verifiedUser(auth, db, "sole@t.test");
     const org = (await auth.api.createOrganization({
-      body: { name: "sole", slug: "sole" },
+      body: { name: "sole", slug: mintSlug() },
       headers,
     })) as { id?: string };
     clearActiveOrganization(db);
@@ -159,8 +169,8 @@ describe("implicit organization resolution", () => {
     const { auth, db, migrations } = createBaselineAuth();
     await (await migrations).runMigrations();
     const headers = await verifiedUser(auth, db, "both@t.test");
-    await auth.api.createOrganization({ body: { name: "one", slug: "one" }, headers });
-    await auth.api.createOrganization({ body: { name: "two", slug: "two" }, headers });
+    await auth.api.createOrganization({ body: { name: "one", slug: mintSlug() }, headers });
+    await auth.api.createOrganization({ body: { name: "two", slug: mintSlug() }, headers });
     clearActiveOrganization(db);
 
     // Ambiguity fails closed rather than picking for the user.
@@ -174,7 +184,7 @@ describe("implicit organization resolution", () => {
     await (await migrations).runMigrations();
     const ownerHeaders = await verifiedUser(auth, db, "owner-r@t.test");
     const org = (await auth.api.createOrganization({
-      body: { name: "roles", slug: "roles" },
+      body: { name: "roles", slug: mintSlug() },
       headers: ownerHeaders,
     })) as { id?: string };
     const inv = (await auth.api.createInvitation({
@@ -193,7 +203,7 @@ describe("implicit organization resolution", () => {
     const { auth, db, migrations } = createBaselineAuth();
     await (await migrations).runMigrations();
     const headers = await verifiedUser(auth, db, "guess@t.test");
-    await auth.api.createOrganization({ body: { name: "mine", slug: "mine" }, headers });
+    await auth.api.createOrganization({ body: { name: "mine", slug: mintSlug() }, headers });
 
     expect(await reasonOf(requirePermission(auth, headers, "org_guessed", "view"))).toBe(
       "not-a-member",
