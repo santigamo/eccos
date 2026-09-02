@@ -195,7 +195,7 @@ export function WorkspaceSwitcher({
           <span className="truncate">{label}</span>
           <ChevronsUpDownIcon
             aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground"
+            className="size-4 shrink-0 text-muted-foreground"
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-64">
@@ -347,7 +347,7 @@ export function WabaSwitcher({
         {tag}
         <ChevronsUpDownIcon
           aria-hidden="true"
-          className="size-3.5 shrink-0 text-muted-foreground"
+          className="size-4 shrink-0 text-muted-foreground"
         />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-72">
