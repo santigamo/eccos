@@ -36,8 +36,8 @@
   // has always worked and the only one a self-hoster without a console has.
   // `META_GRAPH_VERSION` must match the gateway's (docs/deployment.md).
   "vars": {
-    "META_APP_ID": "",
-    "META_ES_CONFIG_ID": "",
+    "META_APP_ID": "1424473183036863",
+    "META_ES_CONFIG_ID": "2132668137322605",
     "META_GRAPH_VERSION": "v25.0"
   },
 
