@@ -146,11 +146,22 @@ export function CrumbSeparator() {
  * matches here.
  */
 const CRUMB_TRIGGER =
-  "flex h-7 min-w-0 max-w-48 items-center gap-1.5 rounded-none border border-transparent px-1.5 text-sm text-foreground outline-none transition-colors hover:bg-(--ghost-fill-hover) hover:border-(--ghost-edge-hover) focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 data-popup-open:bg-(--ghost-fill-hover) data-popup-open:border-(--ghost-edge-hover)"
+  "flex h-7 min-w-0 max-w-48 items-center gap-1.5 rounded-none border border-transparent px-1.5 text-sm text-sidebar-foreground outline-none transition-colors hover:bg-(--ghost-fill-hover) hover:border-(--ghost-edge-hover) hover:text-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 data-popup-open:bg-(--ghost-fill-hover) data-popup-open:border-(--ghost-edge-hover) data-popup-open:text-foreground"
 
-/** A crumb that names something without offering a choice: same box, no button. */
+/**
+ * A crumb that names something without offering a choice: same box, no button —
+ * and deliberately the SAME 72% rest ink as the interactive one, not brighter.
+ *
+ * The alternative was to leave this at full ink, which would have made the
+ * inert crumb the brightest thing in the chain and the control the dimmer one:
+ * an inverted affordance, where the eye is drawn to what it cannot press. The
+ * chain therefore rests uniform and quiet, and only the crumbs that DO
+ * something brighten under the pointer. That difference — nothing happens here,
+ * something happens there — is carried by the change on hover rather than by
+ * the resting state, which is how the sidebar already does it.
+ */
 const CRUMB_STATIC =
-  "flex h-7 min-w-0 max-w-48 items-center gap-1.5 px-1.5 text-sm text-foreground"
+  "flex h-7 min-w-0 max-w-48 items-center gap-1.5 px-1.5 text-sm text-sidebar-foreground"
 
 /**
  * The square monogram — never a circular avatar (design law 1). Menu rows only:

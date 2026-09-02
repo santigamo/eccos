@@ -357,6 +357,20 @@ describe("the workspace crumb: which workspace am I in, without opening anything
     expect(html).toContain('aria-label="Workspace: Acme"');
   });
 
+  test("rests quiet and brightens only on hover and while open", () => {
+    // The affordance defect this closes: at rest the pressable crumb was
+    // pixel-identical to the inert one, with a 14px chevron carrying the whole
+    // signal. Resting at the sidebar's 72% ink and going full on hover gives the
+    // control a rest identity, and simultaneously stops it claiming the 100%
+    // ink that in this project's grammar means BRAND — the second half of why
+    // the crumb read as part of the wordmark.
+    const html = renderWorkspaceCrumb([ACME, GLOBEX], "org-a");
+    const trigger = html.slice(0, html.indexOf("</button>"));
+    expect(trigger).toContain("text-sidebar-foreground");
+    expect(trigger).toContain("hover:text-foreground");
+    expect(trigger).toContain("data-popup-open:text-foreground");
+  });
+
   test("the trigger carries NO monogram — the wordmark is already beside it", () => {
     // Deliberate divergence from the reui block, which puts a coloured avatar on
     // every crumb. Ours sits two elements right of the ECCOS wordmark, so a
