@@ -24,6 +24,8 @@ import type {
   OutboundRow,
   ReconcileWabaResult,
   ResubscribeResult,
+  SendTemplateTestInput,
+  SendTemplateTestResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
@@ -46,6 +48,8 @@ export type {
   ProvisioningStatus,
   ReconcileWabaResult,
   ResubscribeResult,
+  SendTemplateTestResult,
+  SendTestFailureCode,
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
@@ -147,6 +151,15 @@ export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
 const WABA_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const PHONE_NUMBER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/** Digits only, E.164's 15-digit ceiling — what the Cloud API accepts as `to`. */
+const RECIPIENT_PATTERN = /^[0-9]{5,15}$/;
+/** Meta's template-name charset. */
+const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
+/** `en` / `es` / `en_US` / `pt_BR`. */
+const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
+const MAX_BODY_PARAMS = 30;
+const MAX_BODY_PARAM_LENGTH = 1024;
 
 function inputRecord(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -215,6 +228,67 @@ function validateSubscriberInput(input: unknown): SetSubscriberConfigInput & Das
   const wabaId = optionalWabaId(record.wabaId);
   const secret = typeof record.secret === "string" ? record.secret.trim() : "";
   return { url: record.url, ...(secret ? { secret } : {}), ...(wabaId ? { wabaId } : {}) };
+}
+
+/**
+ * The console's send validator — the strict one (the gateway re-checks the same
+ * shapes as defense in depth, but this is where an operator's typing is turned
+ * into a Meta-shaped request).
+ *
+ * `wabaId` and `phoneNumberId` are REQUIRED: a test send must never silently
+ * fall back to "the account's first WABA". Which number the message leaves from
+ * is the whole point of the exercise.
+ *
+ * Exported, unlike its siblings, so the refusal matrix can be asserted
+ * directly — one call per rejected shape is cheaper than one route call each.
+ * That is a convenience, not a necessity: the suite's shared
+ * `@tanstack/react-start` fake DOES run `.validator()`
+ * (tests/helpers/server-fn-mocks.ts), so route-level normalization is proven
+ * through the route itself by the tripwire in tests/gateway.test.ts.
+ */
+export function validateSendTestInput(input: unknown): SendTemplateTestInput {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  if (typeof record.phoneNumberId !== "string" || !PHONE_NUMBER_ID_PATTERN.test(record.phoneNumberId.trim())) {
+    throw new Error("phoneNumberId is required");
+  }
+  if (typeof record.to !== "string") throw new Error("recipient is required");
+  // Operators paste numbers the way people write them: "+34 600-00 00 11",
+  // "(600) 000 011". Strip the punctuation and the leading + and keep digits —
+  // which is the only form the Cloud API accepts.
+  const to = record.to.replace(/[\s\-().]/g, "").replace(/^\+/, "");
+  if (!RECIPIENT_PATTERN.test(to)) {
+    throw new Error("recipient must be 5 to 15 digits in international format");
+  }
+  if (typeof record.templateName !== "string" || !TEMPLATE_NAME_PATTERN.test(record.templateName.trim())) {
+    throw new Error("invalid template name");
+  }
+  if (typeof record.languageCode !== "string" || !LANGUAGE_PATTERN.test(record.languageCode.trim())) {
+    throw new Error("invalid template language");
+  }
+  const raw = record.bodyParams;
+  if (raw !== undefined && !Array.isArray(raw)) throw new Error("bodyParams must be an array");
+  const bodyParams = (raw ?? []) as unknown[];
+  if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+  const values = bodyParams.map((value) => {
+    if (typeof value !== "string") throw new Error("template parameters must be strings");
+    const text = value.trim();
+    if (!text) throw new Error("every template parameter needs a value");
+    if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("template parameter is too long");
+    // Meta rejects newlines and tabs inside a text parameter outright, so this
+    // is a refusal the operator can act on rather than a 132000 from Graph.
+    if (/[\n\t]/.test(text)) throw new Error("template parameters cannot contain line breaks");
+    return text;
+  });
+  return {
+    wabaId,
+    phoneNumberId: record.phoneNumberId.trim(),
+    to,
+    templateName: record.templateName.trim(),
+    languageCode: record.languageCode.trim(),
+    ...(values.length > 0 ? { bodyParams: values } : {}),
+  };
 }
 
 function validateSetupInput(input: unknown): { name?: string } | undefined {
@@ -335,10 +409,21 @@ async function resolveOrganizationAccount(
   return { accountId: link.accountId, resources };
 }
 
+/**
+ * Which provisioning statuses a server function is willing to work with.
+ *
+ * `"active"` is the default and the rule for the data plane. `"any"` is for the
+ * WABA-LEVEL reads and writes — templates, subscriber config — that need only
+ * the WABA id and its stored token, and are exactly what an operator prepares
+ * on a connected account that is still waiting for its phone number.
+ */
+type ScopeMode = "active" | "any";
+
 function resolveScopeFromAccount(
   account: ResolvedAccount,
   requestedWabaId?: string,
   rejectUnknown = false,
+  mode: ScopeMode = "active",
 ): ResolvedScope {
   const requested = requestedWabaId?.trim() || undefined;
   const { accountId, resources } = account;
@@ -347,9 +432,20 @@ function resolveScopeFromAccount(
   if (requested && !requestedIsOwned && rejectUnknown) {
     throw new Error(`WABA "${requested}" is not owned by account "${accountId}"`);
   }
-  const selectedWaba = requestedIsOwned ? wabas.find((waba) => waba.wabaId === requested) : wabas[0];
+  // Unrequested selection prefers the first ACTIVE WABA rather than the first
+  // by id. An account with one active and one pending WABA used to break on
+  // every page whenever the pending one happened to sort first — the console
+  // would resolve to a WABA it then refused, and report a working tenant as an
+  // unreachable gateway. Falling back to `wabas[0]` when none is active keeps
+  // the all-pending account's error wording exactly as it was.
+  const defaultWaba = wabas.find((waba) => waba.status === "active") ?? wabas[0];
+  const selectedWaba = requestedIsOwned ? wabas.find((waba) => waba.wabaId === requested) : defaultWaba;
   const wabaId = selectedWaba?.wabaId;
   if (!wabaId) throw new Error(`Account "${accountId}" has no registered WABAs`);
+  if (mode === "any") return { wabaId, accountId, resources };
+  // An EXPLICITLY requested pending/failed WABA still throws. (The resulting
+  // `unreachable` title is a known misclassification of an operator's own
+  // choice; it is out of scope here and never reached by default selection.)
   if (selectedWaba?.status === "pending") throw new Error(`WABA "${wabaId}" is still provisioning`);
   if (selectedWaba?.status === "failed") throw new Error(`WABA "${wabaId}" provisioning failed`);
   return { wabaId, accountId, resources };
@@ -359,9 +455,10 @@ async function resolveScope(
   gateway: GatewayApi,
   requestedWabaId?: string,
   rejectUnknown = false,
+  mode: ScopeMode = "active",
 ): Promise<ResolvedScope> {
   const account = await resolveOrganizationAccount(gateway);
-  return resolveScopeFromAccount(account, requestedWabaId, rejectUnknown);
+  return resolveScopeFromAccount(account, requestedWabaId, rejectUnknown, mode);
 }
 
 function dashboardScope(scope: ResolvedScope): DashboardScope {
@@ -392,6 +489,8 @@ interface ScopedOptions {
   wabaId?: string;
   /** Refuse a WABA the account does not own instead of falling back to its first. */
   rejectUnknown?: boolean;
+  /** Whether a not-yet-active WABA is acceptable. Defaults to `"active"`. */
+  scope?: ScopeMode;
 }
 
 async function withScopedGateway<T>(
@@ -399,7 +498,12 @@ async function withScopedGateway<T>(
   fn: (gateway: GatewayApi, scope: ResolvedScope) => Promise<T>,
 ): Promise<Result<T>> {
   return withGateway(async (gateway) => {
-    const scope = await resolveScope(gateway, options.wabaId, options.rejectUnknown ?? false);
+    const scope = await resolveScope(
+      gateway,
+      options.wabaId,
+      options.rejectUnknown ?? false,
+      options.scope ?? "active",
+    );
     return fn(gateway, scope);
   }, options.action);
 }
@@ -445,7 +549,14 @@ export const getDashboardState = createServerFn({ method: "GET" })
         await requireGatewayPermission(auth, request, "view");
         const account = await resolveOrganizationAccount(gateway);
         const wabas = [...account.resources.wabas].sort((a, b) => a.wabaId.localeCompare(b.wabaId));
-        if (wabas.length === 0) {
+        // "account-ready" means "there is no data plane to show yet", not "there
+        // are no WABAs": a WABA still awaiting its phone number is connected but
+        // has no Durable Object worth reading, and resolving a scope for it
+        // would throw — which the boundary would then report as a dead gateway
+        // on EVERY page, /numbers included, where the note explaining the state
+        // lives. Both consumers of this stage (the __root redirect and
+        // numbers.tsx) already do the right thing with resources present.
+        if (wabas.every((waba) => waba.status !== "active")) {
           return { stage: "account-ready", resources: account.resources };
         }
         const scope = resolveScopeFromAccount(account, data?.wabaId);
@@ -729,7 +840,10 @@ export const listTemplates = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(({ data }): Promise<Result<TemplatesResult>> =>
     withScopedGateway(
-      { action: "view", wabaId: data?.wabaId },
+      // `scope: "any"`: listing templates needs the WABA id and its stored Meta
+      // token, nothing from the data plane — so it works on a connected WABA
+      // that is still waiting for its phone number.
+      { action: "view", wabaId: data?.wabaId, scope: "any" },
       async (gateway, scope) =>
         (await gateway.listTemplates(scope.wabaId, 100, scope.accountId)) as TemplatesResult,
     ),
@@ -745,13 +859,62 @@ export const retryDelivery = createServerFn({ method: "POST" })
       ),
   );
 
+/**
+ * Send one template message from the console ("Send test").
+ *
+ * `operate` (operator+), the same class as `retryDelivery`: it causes outbound
+ * traffic on the tenant's behalf but changes no configuration and mints no
+ * credentials. `viewer` is excluded because a send has external effect and
+ * marginal cost; requiring `configure`/`administer` would be wrong the other
+ * way, since an operator smoke-testing a template before a campaign is exactly
+ * the persona, and forcing admin would push teams to over-grant admin.
+ *
+ * `withGateway` without an `action` plus `requireActor` inside is the
+ * `startConnect`/`exchangeConnectCode` precedent for an audited mutation: one
+ * permission check, with the actor available for the audit record.
+ */
+export const sendTemplateTest = createServerFn({ method: "POST" })
+  .validator(validateSendTestInput)
+  .handler(
+    ({ data }): Promise<Result<SendTemplateTestResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("operate");
+        const scope = await resolveScope(gateway, data.wabaId, true);
+        const result = await gateway.sendTemplateTest(
+          { ...data, wabaId: scope.wabaId },
+          scope.accountId,
+        );
+        // No recipient, no parameter values — ever. See `SensitiveAction`'s
+        // "template_test_send" doc comment for why the number stays out.
+        auditEvent({
+          action: "template_test_send",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: {
+            wabaId: scope.wabaId,
+            phoneNumberId: data.phoneNumberId,
+            template: data.templateName,
+            language: data.languageCode,
+            ...(result.ok ? { messageId: result.messageId } : {}),
+          },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
+        });
+        return result;
+      }),
+  );
+
 // --- Operator actions (settings page) ---
 
 /** Read the current outbound-forwarding target. The secret is never exposed. */
 export const getSubscriberConfig = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(({ data }): Promise<Result<SubscriberConfig>> =>
-    withScopedGateway({ action: "operate", wabaId: data?.wabaId }, (gateway, scope) =>
+    // `scope: "any"`: the forwarding target is what an operator sets up BEFORE
+    // any traffic arrives, so refusing to show it until a number exists gets
+    // the order backwards.
+    withScopedGateway({ action: "operate", wabaId: data?.wabaId, scope: "any" }, (gateway, scope) =>
       gateway.getSubscriberConfig(scope.wabaId, scope.accountId),
     ),
   );
@@ -762,7 +925,10 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<{ ok: true }>> =>
       withScopedGateway(
-        { action: "configure", wabaId: data.wabaId, rejectUnknown: true },
+        // `scope: "any"`, for the same reason as the read: a subscriber URL
+        // written in the awaiting-a-phone state survives provisioning, because
+        // the saga's own `saveConfig` only ever writes META_*/CONNECTED_AT keys.
+        { action: "configure", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
         (gateway, scope) => {
           const { wabaId: _wabaId, ...input } = data;
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);

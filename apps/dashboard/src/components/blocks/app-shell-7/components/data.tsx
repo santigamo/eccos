@@ -18,11 +18,21 @@ export type NavItem = {
   badge?: string | number
   isActive?: boolean
   /**
-   * The item resolves a WABA scope server-side, so it has nothing to show
-   * until the account has a number. `/numbers` is deliberately not flagged:
-   * it is where an operator goes to fix exactly that.
+   * What the item needs from the tenant's scope before it is a destination.
+   *
+   * - `"number"` — it reads the per-WABA data plane, which does not exist until
+   *   a WABA is active.
+   * - `"waba"` — it only needs a WABA to exist: templates list from the WABA id
+   *   and its stored token, and subscriber config is what you set up BEFORE any
+   *   traffic. Both are reachable while a connected WABA still awaits its phone
+   *   number.
+   * - unset — always live. `/numbers` is deliberately unflagged: it is where an
+   *   operator goes to fix exactly this.
+   *
+   * The values must match `lib/scope-requirements.ts`, which the root loader
+   * redirects from; `tests/scope-requirements.test.ts` fails if they drift.
    */
-  requiresNumber?: boolean
+  requires?: "waba" | "number"
 }
 
 export const NAV_MAIN: NavItem[] = [
@@ -31,7 +41,7 @@ export const NAV_MAIN: NavItem[] = [
     label: "Status",
     href: "/",
     icon: <ActivityIcon aria-hidden="true" />,
-    requiresNumber: true,
+    requires: "number",
   },
   {
     id: "numbers",
@@ -44,34 +54,34 @@ export const NAV_MAIN: NavItem[] = [
     label: "Deliveries",
     href: "/deliveries",
     icon: <CheckCheckIcon aria-hidden="true" />,
-    requiresNumber: true,
+    requires: "number",
   },
   {
     id: "inbound",
     label: "Inbound",
     href: "/inbound",
     icon: <InboxIcon aria-hidden="true" />,
-    requiresNumber: true,
+    requires: "number",
   },
   {
     id: "outbound",
     label: "Outbound",
     href: "/outbound",
     icon: <SendIcon aria-hidden="true" />,
-    requiresNumber: true,
+    requires: "number",
   },
   {
     id: "templates",
     label: "Templates",
     href: "/templates",
     icon: <FileTextIcon aria-hidden="true" />,
-    requiresNumber: true,
+    requires: "waba",
   },
   {
     id: "settings",
     label: "Settings",
     href: "/settings",
     icon: <SettingsIcon aria-hidden="true" />,
-    requiresNumber: true,
+    requires: "waba",
   },
 ]

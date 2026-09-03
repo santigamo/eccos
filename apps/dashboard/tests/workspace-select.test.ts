@@ -14,6 +14,7 @@
  */
 
 import { describe, expect, mock, test } from "bun:test";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 
@@ -24,29 +25,7 @@ const BASE_URL = "http://localhost:3000";
 const fakeEnv: { DB?: unknown; BETTER_AUTH_URL?: string } = { BETTER_AUTH_URL: BASE_URL };
 let currentRequest = new Request(`${BASE_URL}/`);
 
-mock.module("cloudflare:workers", () => ({ env: fakeEnv }));
-
-// Server-function shell: run the handler directly (no TanStack runtime here).
-mock.module("@tanstack/react-start", () => ({
-  createServerFn: (_opts?: unknown) => {
-    const api = {
-      validator: (v: (input: unknown) => unknown) => {
-        validate = v;
-        return api;
-      },
-      handler:
-        (fn: (arg: { data: unknown }) => unknown) =>
-        (arg?: { data?: unknown }) =>
-          fn({ data: validate ? validate(arg?.data) : arg?.data }),
-    };
-    let validate: ((input: unknown) => unknown) | null = null;
-    return api;
-  },
-}));
-
-mock.module("@tanstack/react-start/server", () => ({
-  getRequest: () => currentRequest,
-}));
+installServerFnMocks({ env: fakeEnv, getRequest: () => currentRequest });
 
 const { selectOrganization } = await import("../src/organizations");
 const { createAuth } = await import("../src/auth/auth");
@@ -177,6 +156,27 @@ describe("selectOrganization: the switch is validated server-side", () => {
     const refused = await selectOrganization({ data: { organizationId: "org-does-not-exist" } });
     expect(refused.ok).toBe(false);
     expect(refused.ok === false && refused.error).toContain("not a member");
+  });
+
+  /**
+   * TRIPWIRE for the shared server-fn fake. Do not delete; do not weaken.
+   *
+   * The invariant: the suite's `createServerFn` fake RUNS `.validator()`. A
+   * non-string `organizationId` is refused by the strict schema and THROWS
+   * before the handler ever runs. Under a fake that skipped validation the
+   * value would reach the handler and come back as an ordinary `{ok:false}`
+   * refusal, so `.rejects` would fail — which is precisely how a divergent
+   * fake in an earlier-evaluating file would show up here. If this goes red,
+   * fix `./helpers/server-fn-mocks`, not this test.
+   */
+  test("a malformed organizationId is refused by the schema, not the handler", async () => {
+    // Wrapped in an async IIFE deliberately: the fake runs the validator
+    // synchronously, so the refusal arrives as a THROW rather than a rejected
+    // promise. The wrapper accepts either, so the tripwire keeps working if
+    // TanStack ever moves validation behind the promise.
+    await expect(
+      (async () => selectOrganization({ data: { organizationId: 42 } as never }))(),
+    ).rejects.toThrow();
   });
 
   test("an anonymous request cannot select anything", async () => {

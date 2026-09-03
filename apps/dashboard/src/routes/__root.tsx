@@ -11,17 +11,10 @@ import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { getDashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { normalizeSearchWabaId } from "../lib/search"
+import { requirementSatisfied } from "../lib/scope-requirements"
 import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
-
-/**
- * Routes that resolve no WABA scope of their own, so the "connect a number
- * first" bounce must not eat them. /numbers is where that bounce sends people;
- * /workspaces/new is about the workspace itself, and an operator whose current
- * workspace has no number yet is exactly the one who may want another.
- */
-const SCOPE_FREE_PATHS = new Set(["/numbers", "/workspaces/new"])
 
 export const Route = createRootRoute({
   validateSearch: (search: Record<string, unknown>): ScopeSearch => {
@@ -45,15 +38,15 @@ export const Route = createRootRoute({
     if (state.ok && state.data.stage === "ready" && location.pathname === "/onboarding") {
       throw redirect({ to: "/" })
     }
-    // An account with no WABA yet stays inside the app chrome and lands on
-    // /numbers, whose empty state is the connect flow. Every other route needs
-    // a WABA to resolve its scope, so they bounce here rather than rendering a
-    // "gateway unreachable" card that would blame the wrong thing.
+    // An account that cannot yet resolve what a route needs stays inside the app
+    // chrome and lands on /numbers, whose empty state is the connect flow —
+    // rather than rendering a "gateway unreachable" card that would blame the
+    // wrong thing. What each route needs lives in `lib/scope-requirements.ts`,
+    // shared with the sidebar so the lock and the bounce cannot disagree.
     if (
       state.ok &&
-      state.data.stage !== "ready" &&
       state.data.stage !== "no-organization" &&
-      !SCOPE_FREE_PATHS.has(location.pathname)
+      !requirementSatisfied(location.pathname, state.data)
     ) {
       throw redirect({ to: "/numbers" })
     }

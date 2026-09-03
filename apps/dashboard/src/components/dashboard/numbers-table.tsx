@@ -56,7 +56,7 @@ export function NumbersTable({
   // status, because the two say opposite things to an operator: one resolves
   // itself and one does not.
   const phonelessWabas = resources.wabas.filter((waba) => waba.phones.length === 0);
-  const awaitingPhoneWabas = phonelessWabas.filter((waba) => waba.status !== "failed").length;
+  const awaitingPhoneWabas = phonelessWabas.filter((waba) => waba.status !== "failed");
   const failedPhonelessWabas = phonelessWabas.filter((waba) => waba.status === "failed");
 
   async function onRecheck(wabaId: string) {
@@ -132,7 +132,14 @@ export function NumbersTable({
       </div>
 
       {pendingRows > 0 ? <PendingNote count={pendingRows} /> : null}
-      {awaitingPhoneWabas > 0 ? <AwaitingPhoneNote count={awaitingPhoneWabas} /> : null}
+      {awaitingPhoneWabas.length > 0 ? (
+        <AwaitingPhoneNote
+          wabas={awaitingPhoneWabas}
+          rechecking={rechecking}
+          disabled={rechecking !== null}
+          onRecheck={onRecheck}
+        />
+      ) : null}
       {failedPhonelessWabas.length > 0 ? (
         <FailedPhonelessNote wabas={failedPhonelessWabas} />
       ) : null}
@@ -219,7 +226,18 @@ function PendingNote({ count }: { count: number }) {
  * There is no action here for them: the number has to be added on the customer's
  * side, and Eccos picks it up by itself.
  */
-function AwaitingPhoneNote({ count }: { count: number }) {
+function AwaitingPhoneNote({
+  wabas,
+  rechecking,
+  disabled,
+  onRecheck,
+}: {
+  wabas: AccountResources["wabas"];
+  rechecking: string | null;
+  disabled: boolean;
+  onRecheck: (wabaId: string) => void;
+}) {
+  const count = wabas.length;
   return (
     <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
       <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -228,8 +246,34 @@ function AwaitingPhoneNote({ count }: { count: number }) {
       <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
         {count === 1
           ? "One WhatsApp Business account is connected but has no business phone number yet. Add one in WhatsApp Manager and it will appear here on its own — nothing needs reconnecting."
-          : `${count} WhatsApp Business accounts are connected but have no business phone number yet. Add one to each in WhatsApp Manager and they will appear here on their own — nothing needs reconnecting.`}
+          : `${count} WhatsApp Business accounts are connected but have no business phone number yet. Add one to each in WhatsApp Manager and they will appear here on their own — nothing needs reconnecting.`}{" "}
+        Check now if you have just added one.
       </p>
+      {/* "On its own" means the five-minute cron. An operator who has this
+          second added the number in WhatsApp Manager should not have to sit
+          through it: the same reconciler the row-level Re-check runs also
+          adopts newly-appeared phones. Admin+, like every other reconcile. */}
+      <ul className="m-0 flex list-none flex-wrap items-center gap-2 p-0 pt-1">
+        {wabas.map((waba) => (
+          <li key={waba.wabaId} className="flex items-center gap-2">
+            {count > 1 ? (
+              <span className="font-mono text-xs text-muted-foreground">{waba.wabaId}</span>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-none"
+              aria-label={`Check ${waba.wabaId} for a phone number now`}
+              aria-busy={rechecking === waba.wabaId}
+              disabled={disabled}
+              onClick={() => onRecheck(waba.wabaId)}
+            >
+              {rechecking === waba.wabaId ? "…" : "Check now"}
+            </Button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

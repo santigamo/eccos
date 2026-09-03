@@ -23,6 +23,18 @@ export type SensitiveAction =
    * asks for. Never carries the authorization code or any token.
    */
   | "connect_session_event"
+  /**
+   * One template message sent from the console's "Send test" sheet.
+   *
+   * NEVER carries the recipient or any parameter value. Parameters are message
+   * content; the recipient is deliberately omitted, not even as a suffix,
+   * because the full number already lives in the data-plane `outbound_messages`
+   * row — which retention and `eraseByPhone` govern — while audit logs are not
+   * per-phone erasable. A phone number here would silently break GDPR erasure
+   * completeness. The record carries wabaId, phoneNumberId, template name,
+   * language, the returned messageId, and the failure code as `detail`.
+   */
+  | "template_test_send"
   | "api_key_issue"
   | "api_key_revoke"
   | "export_data"

@@ -4,6 +4,7 @@ import { getControlPlaneStub } from "./control-plane-stub";
 import { exchangeAndRegisterAll, startConnectForAccount } from "./routes/connect";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { listTemplates } from "@eccos/core/templates";
+import { sendMessage } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import type {
@@ -23,6 +24,9 @@ import type {
   OutboundRow,
   ReconcileWabaResult,
   ResubscribeResult,
+  SendTemplateTestInput,
+  SendTemplateTestResult,
+  SendTestFailureCode,
   SetSubscriberConfigInput,
   SubscriberConfig,
   TemplatesResult,
@@ -42,6 +46,42 @@ function requireAccountId(accountId: string | undefined, message: string): strin
   const id = accountId?.trim();
   if (!id) throw new Error(message);
   return id;
+}
+
+/** Digits only, E.164's 15-digit ceiling. The console normalizes; this re-checks. */
+const TO_PATTERN = /^[0-9]{5,15}$/;
+/** Meta's own template-name charset. */
+const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
+/** `en` / `es` / `en_US` / `pt_BR`. */
+const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
+const MAX_BODY_PARAMS = 30;
+const MAX_BODY_PARAM_LENGTH = 1024;
+
+/**
+ * Graph error codes worth naming, from Meta's Cloud API error reference.
+ *
+ * The map is small on purpose: anything not listed degrades to `graph` with
+ * Meta's own message as the detail, which is legible and can never be wrong.
+ * Adding a code here is a promise that the console has better words for it than
+ * Meta does.
+ */
+const GRAPH_ERROR_CODES: Record<number, SendTestFailureCode> = {
+  131030: "recipient_not_allowlisted",
+  132000: "parameter_mismatch",
+  132001: "template_not_found",
+};
+
+/** Pull Meta's `{ error: { code, message } }` out of a parsed Graph body. */
+function graphError(error: unknown): { code: number | null; message: string | null } {
+  const body = error as { error?: { code?: unknown; message?: unknown } } | null;
+  const inner = body && typeof body === "object" ? body.error : undefined;
+  const message = typeof inner?.message === "string" ? inner.message.trim() : "";
+  return {
+    code: typeof inner?.code === "number" ? inner.code : null,
+    // A blank message is as good as no message: the caller falls back to the
+    // HTTP status rather than rendering an empty detail line.
+    message: message || null,
+  };
 }
 
 /**
@@ -65,10 +105,20 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
   /** Resolves the WABA's stub with an ownership + configuration context.
    * The control plane is the authority: a WABA not registered to the account
-   * fails closed. */
+   * fails closed.
+   *
+   * `anyStatus` widens that to a WABA the account owns whatever its
+   * provisioning status. Deliberately asymmetric: reads and writes of
+   * WABA-LEVEL resources — the template list, the subscriber config — need only
+   * the WABA id and its stored Meta token, and are exactly what an operator
+   * prepares on an account still waiting for its phone number. The DATA PLANE
+   * is not safe that way and stays active-only: sends, logs, status, erasure and
+   * export all keep `getWaba`. Ownership is enforced either way —
+   * `getWabaRecord` is account-scoped too. */
   private async scoped(
     wabaId: string,
     accountId?: string,
+    opts?: { anyStatus?: boolean },
   ): Promise<{
     stub: ReturnType<GatewayRPC["stubFor"]>;
     wabaId: string;
@@ -79,7 +129,10 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     provisionedAt: number | null;
   }> {
     const account = requireAccountId(accountId, "accountId is required");
-    const waba = await getControlPlaneStub(this.env).getWaba(account, wabaId);
+    const controlPlane = getControlPlaneStub(this.env);
+    const waba = opts?.anyStatus
+      ? await controlPlane.getWabaRecord(account, wabaId)
+      : await controlPlane.getWaba(account, wabaId);
     if (!waba) throw new Error(`WABA "${wabaId}" is not owned by account "${account}"`);
     const phoneNumberId = waba.phones[0]?.phoneNumberId ?? "";
     const config = tenantConfig(getAppConfig(this.env), {
@@ -150,24 +203,30 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return stub.retryDelivery(id);
   }
 
+  /** WABA-level read: the Graph call needs only the WABA id and its token, so a
+   * connected-but-unprovisioned WABA can list its templates. */
   async listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult> {
-    const { config: cfg } = await this.scoped(wabaId, accountId);
+    const { config: cfg } = await this.scoped(wabaId, accountId, { anyStatus: true });
     return listTemplates(cfg, limit);
   }
 
-  /** Operator-visible forwarding target (DO config first, env fallback). Never returns the secret. */
+  /** Operator-visible forwarding target (DO config first, env fallback). Never returns the secret.
+   * WABA-level: the forwarding target is what you set up BEFORE traffic exists. */
   async getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig> {
-    const { stub } = await this.scoped(wabaId, accountId);
+    const { stub } = await this.scoped(wabaId, accountId, { anyStatus: true });
     return stub.getSubscriberConfig();
   }
 
-  /** Rotate the forwarding target. Persists to DO config; the secret is only stored when provided. */
+  /** Rotate the forwarding target. Persists to DO config; the secret is only stored when provided.
+   * WABA-level, and safe in the awaiting-a-phone state: the provisioning saga's
+   * own `saveConfig` writes only the META_ and CONNECTED_AT keys, so a
+   * SUBSCRIBER_ value written here survives the WABA turning active. */
   async setSubscriberConfig(
     input: SetSubscriberConfigInput,
     wabaId: string,
     accountId: string,
   ): Promise<{ ok: true }> {
-    const { stub } = await this.scoped(wabaId, accountId);
+    const { stub } = await this.scoped(wabaId, accountId, { anyStatus: true });
     await stub.setSubscriberConfig(input);
     return { ok: true };
   }
@@ -223,6 +282,121 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /**
+   * Send one template message on the operator's behalf ("Send test").
+   *
+   * Deliberately does NOT go through `scoped()`: that helper configures for
+   * `phones[0]`, and a test send names its own phone. The internals are mirrored
+   * from the HTTP send path in `worker.ts` instead — same `getWaba` (not
+   * `getWabaRecord`, so a non-active WABA fails closed exactly as
+   * `POST /v1/wabas/:wabaId/messages` does), same rate-limiter key, same
+   * outbound log row — so the console can never become a softer send surface
+   * than the public API.
+   */
+  async sendTemplateTest(
+    input: SendTemplateTestInput,
+    accountId: string,
+  ): Promise<SendTemplateTestResult> {
+    const account = requireAccountId(accountId, "accountId is required");
+    const waba = await getControlPlaneStub(this.env).getWaba(account, input.wabaId);
+    if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
+
+    // A result, not a throw: the account's phones genuinely change between the
+    // page load that offered this phone and the click that used it.
+    if (!waba.phones.some((phone) => phone.phoneNumberId === input.phoneNumberId)) {
+      return {
+        ok: false,
+        code: "no_phone",
+        detail: `phone "${input.phoneNumberId}" is not registered on this WhatsApp Business account`,
+      };
+    }
+
+    // Defense in depth. The dashboard validator is the strict one and the only
+    // caller; reaching any of these means that validator regressed, which is a
+    // programmer error and belongs in the logs as a throw, not in the UI as a
+    // failure code.
+    const bodyParams = input.bodyParams ?? [];
+    if (!TO_PATTERN.test(input.to)) throw new Error("to must be 5-15 digits");
+    if (!TEMPLATE_NAME_PATTERN.test(input.templateName)) throw new Error("invalid templateName");
+    if (!LANGUAGE_PATTERN.test(input.languageCode)) throw new Error("invalid languageCode");
+    if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many body parameters");
+    for (const value of bodyParams) {
+      if (typeof value !== "string" || value.length === 0 || value.length > MAX_BODY_PARAM_LENGTH) {
+        throw new Error("body parameters must be 1-1024 characters");
+      }
+      if (/[\n\t]/.test(value)) throw new Error("body parameters must not contain newlines or tabs");
+    }
+
+    if (this.env.SEND_RATE_LIMITER) {
+      // The SAME key as the HTTP middleware (`worker.ts`): console sends and
+      // API-key sends draw from one per-tenant budget. The budget protects the
+      // tenant's standing with Meta and caps blast radius — it does not
+      // authenticate the transport, so a session must not buy a bigger one.
+      const { success } = await this.env.SEND_RATE_LIMITER.limit({
+        key: `${account}:${waba.wabaId}`,
+      });
+      if (!success) return { ok: false, code: "rate_limited", detail: null };
+    }
+
+    const metaBody: Record<string, unknown> = {
+      to: input.to,
+      type: "template",
+      template: {
+        name: input.templateName,
+        language: { code: input.languageCode },
+        ...(bodyParams.length > 0
+          ? {
+              components: [
+                {
+                  type: "body",
+                  parameters: bodyParams.map((text) => ({ type: "text", text })),
+                },
+              ],
+            }
+          : {}),
+      },
+    };
+
+    const cfg = tenantConfig(getAppConfig(this.env), {
+      wabaId: waba.wabaId,
+      phoneNumberId: input.phoneNumberId,
+      metaAccessToken: waba.metaAccessToken,
+    });
+    const result = await sendMessage(cfg, metaBody);
+    const stub = this.stubFor(waba.wabaId);
+
+    if (!result.ok) {
+      // The data-plane log carries the full body, parameters included — it is
+      // retention- and erasure-governed exactly like an API send. The AUDIT log
+      // is the one that must stay content-free.
+      await stub.logOutbound(
+        null,
+        input.to,
+        JSON.stringify(metaBody),
+        "failed",
+        JSON.stringify(result.error),
+        input.phoneNumberId,
+      );
+      const { code, message } = graphError(result.error);
+      const mapped = code === null ? undefined : GRAPH_ERROR_CODES[code];
+      return {
+        ok: false,
+        code: mapped ?? "graph",
+        detail: mapped ? message : (message ?? `HTTP ${result.status}`),
+      };
+    }
+
+    await stub.logOutbound(
+      result.id,
+      input.to,
+      JSON.stringify(metaBody),
+      "sent",
+      null,
+      input.phoneNumberId,
+    );
+    return { ok: true, messageId: result.id };
   }
 
   /** Enumerate the durable resources owned by one account (registry). */

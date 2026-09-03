@@ -20,10 +20,26 @@ import { describe, expect, mock, test } from "bun:test";
 import type { Auth } from "../src/auth/auth";
 import { resolveSession, requireSession } from "../src/auth/session";
 import { requirePermission } from "../src/auth/tenant";
-import {
-  requireAuthContext,
-  requireGatewayPermission,
-} from "../src/auth/server-auth";
+
+/**
+ * `?real-module` ON PURPOSE, and it is load-bearing.
+ *
+ * `tests/gateway.test.ts` registers a process-global `mock.module` for
+ * `../src/auth/server-auth` that replaces both of these with fakes keyed to
+ * its own file-local session state. Bun never resets the module registry
+ * between test files, so a plain static import here would get THAT mock
+ * whenever gateway.test.ts happens to evaluate first — and which file runs
+ * first is bun's directory-walk order, which differs between macOS and CI's
+ * Linux and reshuffles whenever a file is added or renamed.
+ *
+ * This file asserts the REAL request-scoped memo (that a session is read from
+ * D1 once per request), so the fakes would make it throw `UnauthorizedError`
+ * rather than quietly measure the wrong thing. It is green today only because
+ * of the order; the query specifier makes it green by construction.
+ */
+const { requireAuthContext, requireGatewayPermission } = await import(
+  "../src/auth/server-auth?real-module"
+);
 
 interface SessionLike {
   user?: { id?: string; email?: string; emailVerified?: boolean; name?: string };

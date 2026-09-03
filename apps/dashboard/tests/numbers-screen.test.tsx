@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 
 /**
@@ -16,22 +17,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  * panel's header/body/footer alignment, and a copy budget.
  */
 
-mock.module("cloudflare:workers", () => ({
-  env: { BETTER_AUTH_URL: "http://localhost:3000" },
-}));
-
-mock.module("@tanstack/react-start", () => {
-  const api = {
-    validator: (_v: unknown) => api,
-    handler: (fn: (arg?: unknown) => unknown) => (arg?: unknown) =>
-      fn(arg && typeof arg === "object" && "data" in arg ? arg : { data: arg }),
-  };
-  return { createServerFn: (_opts?: unknown) => api };
-});
-
-mock.module("@tanstack/react-start/server", () => ({
-  getRequest: () => new Request("http://localhost:3000/", { headers: new Headers() }),
-}));
+installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { ConnectNumberPanel } = await import(
   "../src/components/dashboard/connect-number"

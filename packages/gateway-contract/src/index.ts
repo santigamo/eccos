@@ -266,6 +266,49 @@ export type ConnectExchangeResult =
     }
   | { ok: false; error: string; code: ConnectFailureCode };
 
+/**
+ * One console-originated template send (the "Send test" sheet).
+ *
+ * Deliberately NOT a generic "send any Meta body over the binding": the gateway
+ * builds the Meta message itself from these validated fields, so a compromised
+ * console session can only ever produce a template send, never a freeform spam
+ * pipe. Widening this shape is a security decision, not a convenience one.
+ */
+export interface SendTemplateTestInput {
+  wabaId: string;
+  phoneNumberId: string;
+  /** Digits only; the console normalizes before it ever reaches the binding. */
+  to: string;
+  templateName: string;
+  languageCode: string;
+  /** Positional {{1}}..{{n}} body values, in order. */
+  bodyParams?: string[];
+}
+
+/**
+ * Closed failure vocabulary for a test send — the console owns the wording per
+ * code (same design as {@link ConnectFailureCode}; raw Graph errors never drive
+ * UI). An unmapped Graph code degrades to `graph`, which is legible rather than
+ * wrong.
+ */
+export type SendTestFailureCode =
+  /** Eccos' own limiter refused; Meta was never called. */
+  | "rate_limited"
+  /** The requested phone is not registered on the WABA. */
+  | "no_phone"
+  /** Graph 131030 — the Cloud API test number's recipient allowlist. */
+  | "recipient_not_allowlisted"
+  /** Graph 132001 — no approved translation for this name + language. */
+  | "template_not_found"
+  /** Graph 132000 — the template expects different parameters. */
+  | "parameter_mismatch"
+  /** Anything else; `detail` carries Meta's own message text. */
+  | "graph";
+
+export type SendTemplateTestResult =
+  | { ok: true; messageId: string }
+  | { ok: false; code: SendTestFailureCode; detail: string | null };
+
 export interface GatewayExport {
   inbound: InboundRow[];
   outbound: OutboundRow[];
@@ -295,6 +338,17 @@ export interface GatewayApi {
     accountId: string,
   ): Promise<{ ok: true }>;
   resubscribe(wabaId: string, accountId: string): Promise<ResubscribeResult>;
+  /**
+   * Send one template message from the console ("Send test").
+   *
+   * Narrow on purpose (see {@link SendTemplateTestInput}): the caller names a
+   * template, a language and positional body values, and the gateway builds the
+   * Meta body. Fail-closed on a non-active WABA, exactly like the HTTP send
+   * path, and rate-limited through the SAME limiter and the SAME
+   * `accountId:wabaId` key as `POST /v1/wabas/:wabaId/messages` — a console
+   * session must never hold a bigger send budget than a stolen API key.
+   */
+  sendTemplateTest(input: SendTemplateTestInput, accountId: string): Promise<SendTemplateTestResult>;
   /** Re-run the provisioning saga for one WABA the account owns, whatever its
    * status (a `pending` WABA is precisely the one worth re-checking, so this is
    * the one operator method that does not require an already-active WABA).

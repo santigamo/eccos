@@ -1,4 +1,4 @@
-import type { Failure } from "../server/gateway";
+import type { Failure, SendTestFailureCode } from "../server/gateway";
 
 /**
  * What the console says about a `{ ok: false }` (eccos-k5a).
@@ -66,5 +66,58 @@ function forbiddenCopy(failure: Failure): FailureCopy {
       // A refusal with no reason code of its own: report it as the refusal it
       // is, using the server's own words rather than inventing a cause.
       return { title: "Not allowed", detail: failure.error };
+  }
+}
+
+/**
+ * What the console says about a refused template test send.
+ *
+ * Same discipline as {@link failureCopy}: keyed on the closed
+ * `SendTestFailureCode` the gateway decided, never on Meta's message text. The
+ * `detail` is Graph's own sentence and is only ever shown as a secondary line —
+ * it explains, it never discriminates.
+ */
+export function sendTestFailureCopy(
+  code: SendTestFailureCode,
+  detail: string | null,
+): FailureCopy {
+  switch (code) {
+    case "rate_limited":
+      return {
+        title: "Send limit reached",
+        detail:
+          "This workspace has hit its send rate limit. The limit is shared with the API, so wait a moment and try again.",
+      };
+    case "no_phone":
+      return {
+        title: "Number no longer available",
+        detail:
+          "That number is not registered on this WhatsApp Business account any more. Reload the page and pick another.",
+      };
+    case "recipient_not_allowlisted":
+      // The single most likely failure during App Review filming, and the one
+      // Meta's own error text explains worst.
+      return {
+        title: "Recipient not allowed",
+        detail:
+          "This recipient is not on the test number's allowed list. Add it under WhatsApp > API Setup in the Meta App Dashboard and try again.",
+      };
+    case "template_not_found":
+      return {
+        title: "Template not available",
+        detail:
+          "Meta has no approved translation of this template for the language selected. Check its status in WhatsApp Manager.",
+      };
+    case "parameter_mismatch":
+      return {
+        title: "Parameters do not match",
+        detail:
+          "Meta expected different parameters for this template. Its approved content may have changed since this page loaded.",
+      };
+    default:
+      return {
+        title: "Meta refused the send",
+        detail: detail ?? "Meta refused the message without saying why.",
+      };
   }
 }

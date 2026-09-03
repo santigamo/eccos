@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 import type {
   AccountResources,
@@ -21,22 +22,7 @@ import type {
  * own `react-dom/server` needs no DOM.
  */
 
-mock.module("cloudflare:workers", () => ({
-  env: { BETTER_AUTH_URL: "http://localhost:3000" },
-}));
-
-mock.module("@tanstack/react-start", () => {
-  const api = {
-    validator: (_v: unknown) => api,
-    handler: (fn: (arg?: unknown) => unknown) => (arg?: unknown) =>
-      fn(arg && typeof arg === "object" && "data" in arg ? arg : { data: arg }),
-  };
-  return { createServerFn: (_opts?: unknown) => api };
-});
-
-mock.module("@tanstack/react-start/server", () => ({
-  getRequest: () => new Request("http://localhost:3000/", { headers: new Headers() }),
-}));
+installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { NumbersTable } = await import("../src/components/dashboard/numbers-table");
 
@@ -211,6 +197,17 @@ describe("NumbersTable", () => {
     const html = text(render(resources({ wabaId: "waba-a", status: "pending", phones: 0 })));
     expect(html).toContain("Waiting on a phone number");
     expect(html).toContain("nothing needs reconnecting");
+  });
+
+  test("the waiting note carries the action that ends the wait", () => {
+    // "On its own" means the five-minute cron. An operator who has just added
+    // the number in WhatsApp Manager should not have to sit through it — the
+    // same reconciler the row-level Re-check runs also adopts newly-appeared
+    // phones, and the note is the only place it can be offered, because a
+    // phoneless WABA produces no row to hang a button on.
+    const html = render(resources({ wabaId: "waba-a", status: "pending", phones: 0 }));
+    expect(text(html)).toContain("Check now");
+    expect(html).toContain('aria-label="Check waba-a for a phone number now"');
   });
 
   test("the note stays away from accounts that do have numbers", () => {

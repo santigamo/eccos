@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { UnauthorizedError } from "../src/auth/session";
 
 /**
@@ -29,12 +30,14 @@ import { UnauthorizedError } from "../src/auth/session";
  * `withGateway` reachable / unreachable / thrown-error logic that every view
  * depends on for its graceful "Gateway unreachable" state.
  *
- * The `@tanstack/react-start` fake models exactly the two call shapes
- * `gateway.ts` uses: `createServerFn(opts).handler(fn)` and
- * `createServerFn(opts).validator(v).handler(fn)`. It skips real validation
- * (the routes' `.validator()` callbacks are trivial identity/pass-through
- * functions in this codebase) and just forwards the call argument to the
- * handler, which is enough to drive the real reachable/unreachable code path.
+ * The runtime shims come from `./helpers/server-fn-mocks`, which every test in
+ * this suite shares. That fake DOES run `.validator()`, so the assertions here
+ * exercise the same input path production does. It is shared rather than
+ * declared inline because bun bakes a src module's top-level
+ * `createServerFn(...)` chains from whichever fake is live the first time that
+ * module evaluates — which file that is depends on bun's directory-walk order —
+ * so eight copies that disagreed made this suite pass alone and fail in a full
+ * run. The helper's header carries the full mechanism.
  */
 
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
@@ -48,10 +51,6 @@ const workerEnv: {
 };
 
 workerEnv.BETTER_AUTH_URL = "http://localhost:3000";
-
-mock.module("cloudflare:workers", () => ({
-  env: workerEnv,
-}));
 
 // Mutable fake session for the auth layer. `null` = unauthenticated (the
 // default): server functions must fail closed. A test that exercises the
@@ -85,6 +84,11 @@ mock.module("../src/auth/tenant", () => ({
 // from `realTenant` because that is the very class the mocked `../auth/tenant`
 // re-publishes, and therefore the one gateway.ts holds.
 const { ForbiddenError } = realTenant;
+// THIS REGISTRATION OUTLIVES THIS FILE. Bun's module registry is process-global
+// and never resets between test files, so any later-running test that imports
+// `../src/auth/server-auth` gets THIS mock, not the real module. A test that
+// needs the real one must import it through the `?real-module` query specifier
+// — `tests/request-memo.test.ts` does exactly that, and says why.
 mock.module("../src/auth/server-auth", () => ({
       UnauthorizedError,
       // Mirrors the real requirePermission's fail-closed ladder: no session,
@@ -115,8 +119,10 @@ mock.module("../src/auth/server-auth", () => ({
       },
     }));
 
-mock.module("@tanstack/react-start/server", () => ({
-  // Server-function request: carries the current fake session's headers (or none).
+installServerFnMocks({
+  env: workerEnv,
+  // The server-function request carries the current fake session's headers
+  // (or none). Read at call time, so this stays correct per test.
   getRequest: () => {
     const headers = new Headers();
     if (fakeSessionHeaders) {
@@ -124,18 +130,7 @@ mock.module("@tanstack/react-start/server", () => ({
     }
     return new Request("http://localhost:3000/", { headers });
   },
-}));
-
-mock.module("@tanstack/react-start", () => ({
-  createServerFn: (_opts?: unknown) => {
-    const api = {
-      validator: (_v: unknown) => api,
-      handler: (fn: (arg?: unknown) => unknown) => (arg?: unknown) =>
-        fn(arg && typeof arg === "object" && "data" in arg ? arg : { data: arg }),
-    };
-    return api;
-  },
-}));
+});
 
 const {
   getGatewayStatus,
@@ -151,6 +146,8 @@ const {
   setSubscriberConfig,
   resubscribe,
   recheckNumber,
+  sendTemplateTest,
+  validateSendTestInput,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -171,13 +168,51 @@ function unreachable(error: string) {
   return { ok: false, kind: "unreachable", error };
 }
 
+/**
+ * One WABA as the contract declares it — `status` included.
+ *
+ * The fixtures used to omit `status` entirely, which quietly made every
+ * status-aware assertion in this file vacuous: a WABA that is neither active
+ * nor pending exists nowhere but here.
+ */
+function wabaFixture(
+  accountId: string,
+  wabaId: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    accountId,
+    wabaId,
+    callbackUrl: null,
+    createdAt: 1,
+    provisionedAt: 1,
+    status: "active",
+    provisioningError: null,
+    phones: [],
+    coexistence: {
+      onboardingType: "standard",
+      verifiedOnboardingType: "standard",
+      status: "not_applicable",
+      deadlineAt: null,
+      contactsStartedAt: null,
+      contactsRequestId: null,
+      historyStartedAt: null,
+      historyRequestId: null,
+      error: null,
+    },
+    ...overrides,
+  };
+}
+
 /** Account resources fixture with an owned WABA, for every account-scoped view. */
 function resourcesFor(accountId: string) {
   return {
     account: { accountId, name: "Account A", createdAt: 1 },
     keys: [],
     wabas: [
-      { accountId, wabaId: "waba-a", callbackUrl: null, createdAt: 1, phones: [{ phoneNumberId: "phone-a", displayPhoneNumber: "+1" }] },
+      wabaFixture(accountId, "waba-a", {
+        phones: [{ phoneNumberId: "phone-a", displayPhoneNumber: "+1" }],
+      }),
     ],
     phones: [{ wabaId: "waba-a", phoneNumberId: "phone-a", displayPhoneNumber: "+1" }],
   };
@@ -248,8 +283,10 @@ describe("getGatewayStatus (Status view)", () => {
         account: { accountId, name: "Account A", createdAt: 1 },
         keys: [],
         wabas: [
-          { accountId, wabaId: "waba-z", callbackUrl: null, createdAt: 1, phones: [] },
-          { accountId, wabaId: "waba-a", callbackUrl: null, createdAt: 1, phones: [{ phoneNumberId: "phone-a", displayPhoneNumber: "+1" }] },
+          wabaFixture(accountId, "waba-z"),
+          wabaFixture(accountId, "waba-a", {
+            phones: [{ phoneNumberId: "phone-a", displayPhoneNumber: "+1" }],
+          }),
         ],
         phones: [{ wabaId: "waba-a", phoneNumberId: "phone-a", displayPhoneNumber: "+1" }],
       }),
@@ -280,8 +317,8 @@ describe("getGatewayStatus (Status view)", () => {
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [],
         wabas: [
-          { accountId: "account-a", wabaId: "waba-a", callbackUrl: null, createdAt: 1, phones: [] },
-          { accountId: "account-a", wabaId: "waba-b", callbackUrl: null, createdAt: 1, phones: [] },
+          wabaFixture("account-a", "waba-a"),
+          wabaFixture("account-a", "waba-b"),
         ],
         phones: [],
       }),
@@ -383,13 +420,72 @@ describe("session bootstrap (auth-aware state)", () => {
     });
   });
 
-  test("reports pending provisioning instead of a false ownership error", async () => {
+  test("an account whose only WABA is awaiting a phone number stays inside the app", async () => {
+    // THE BUG THIS GUARDS. A WABA in the awaiting-a-phone limbo stays `pending`,
+    // and resolving a scope for it throws — which the boundary classifies as
+    // `unreachable`. The customer then met "Gateway unreachable" on every page
+    // INCLUDING /numbers, the one page whose note explains exactly this state.
+    // The console must never blame its own transport for a customer's missing
+    // phone number.
     fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
-    withResources({});
+    withResources({
+      listAccountResources: async () => ({
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [
+          wabaFixture("account-a", "waba-a", {
+            status: "pending",
+            provisionedAt: null,
+            provisioningError:
+              "connected, but this WhatsApp Business account has no business phone number yet; add one in WhatsApp Manager and Eccos will pick it up",
+          }),
+        ],
+        phones: [],
+      }),
+    });
     const result = await getDashboardState();
-    if (result.ok && result.data.stage === "account-ready") {
-      expect(result.data.resources.wabas[0]?.status).toBeDefined();
-    }
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.stage).toBe("account-ready");
+    if (result.data.stage !== "account-ready") return;
+    // The resources travel with the stage, because /numbers renders the note
+    // from them.
+    expect(result.data.resources.wabas[0]?.status).toBe("pending");
+  });
+
+  test("one active and one pending WABA resolves to the active one", async () => {
+    // Default selection used to be `wabas[0]` by id sort, so a pending WABA
+    // sorting first broke a tenant that was working perfectly well.
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
+    const statusArgs: unknown[] = [];
+    withResources({
+      listAccountResources: async () => ({
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [
+          wabaFixture("account-a", "waba-z", {
+            phones: [{ phoneNumberId: "phone-z", displayPhoneNumber: "+1" }],
+          }),
+          wabaFixture("account-a", "waba-a", { status: "pending", provisionedAt: null }),
+        ],
+        phones: [{ wabaId: "waba-z", phoneNumberId: "phone-z", displayPhoneNumber: "+1" }],
+      }),
+      getStatus: async (...args: unknown[]) => {
+        statusArgs.push(...args);
+        return {
+          name: "eccos",
+          version: "1.2.3",
+          health: "healthy",
+          connection: { wabaId: "waba-z", phoneNumberId: "phone-z", displayPhone: "+1", connectedAt: null },
+          counts: { inbound: 0, outbound: {}, deliveries: {} },
+        };
+      },
+    });
+    const result = await getDashboardState();
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.data.stage !== "ready") throw new Error("expected a ready stage");
+    expect(result.data.scope.selectedWabaId).toBe("waba-z");
+    expect(statusArgs).toEqual(["waba-z", "account-a"]);
   });
 
   test("starts Embedded Signup through the resolved account id", async () => {
@@ -541,6 +637,199 @@ describe("listTemplates (Templates view)", () => {
     });
     const res = await listTemplates();
     expect(res).toEqual(unreachable("RPC unreachable"));
+  });
+
+  test("a WABA still awaiting its phone number can still list its templates", async () => {
+    // The deliberate asymmetry: a template list needs the WABA id and its
+    // stored Meta token, nothing from the per-WABA data plane. The data plane
+    // stays closed in the same state — asserted below — because there is
+    // genuinely nothing there to read.
+    const limbo = {
+      listAccountResources: async () => ({
+        account: { accountId: "account-a", name: "Account A", createdAt: 1 },
+        keys: [],
+        wabas: [wabaFixture("account-a", "waba-a", { status: "pending", provisionedAt: null })],
+        phones: [],
+      }),
+    };
+    let statusCalled = false;
+    withResources({
+      ...limbo,
+      listTemplates: async () => ({ ok: true, data: { data: [] } }),
+      getStatus: async () => {
+        statusCalled = true;
+        throw new Error("should never be reached");
+      },
+    });
+    expect(await listTemplates()).toEqual({ ok: true, data: { ok: true, data: { data: [] } } });
+
+    const status = await getGatewayStatus();
+    expect(status).toEqual(unreachable('WABA "waba-a" is still provisioning'));
+    expect(statusCalled).toBe(false);
+  });
+});
+
+// --- Send test (routes/templates.tsx + components/templates/send-test-sheet.tsx) ---
+
+describe("sendTemplateTest (Send test sheet)", () => {
+  const SEND = {
+    wabaId: "waba-a",
+    phoneNumberId: "phone-a",
+    to: "34600000011",
+    templateName: "hello_world",
+    languageCode: "en_US",
+  };
+
+  test("forwards the validated input and the resolved accountId to the binding", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      sendTemplateTest: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true, messageId: "wamid.SENT" };
+      },
+    });
+    const res = await sendTemplateTest({ data: { ...SEND, bodyParams: ["Ada"] } });
+    expect(res).toEqual({ ok: true, data: { ok: true, messageId: "wamid.SENT" } });
+    expect(calls).toEqual([[{ ...SEND, bodyParams: ["Ada"] }, "account-a"]]);
+  });
+
+  /**
+   * TRIPWIRE for the shared server-fn fake. Do not delete; do not weaken.
+   *
+   * The invariant: the suite's `createServerFn` fake RUNS `.validator()`, so
+   * this asserts normalization THROUGH the route rather than by calling the
+   * validator directly. It fails if any earlier-evaluating test file ever bakes
+   * `src/server/gateway.ts` with a fake that skips validation — which is
+   * exactly the regression that once made this file pass alone and fail in a
+   * full run. If it goes red, fix `./helpers/server-fn-mocks`, not this test.
+   */
+  test("the route itself normalizes the recipient (shared fake runs validators)", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      sendTemplateTest: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true, messageId: "wamid.SENT" };
+      },
+    });
+    await sendTemplateTest({ data: { ...SEND, to: "+34 600-00-00-11" } });
+    expect((calls[0]?.[0] as { to: string }).to).toBe("34600000011");
+  });
+
+  test("normalizes a human-typed recipient to digits before it leaves the console", () => {
+    // Operators paste "+34 600-00-00-11". The Cloud API takes digits only, and
+    // the normalization belongs on the server boundary rather than in the
+    // sheet, because the boundary is the one that cannot be bypassed.
+    expect(validateSendTestInput({ ...SEND, to: "+34 600-00-00-11" })).toEqual(SEND);
+    expect(validateSendTestInput({ ...SEND, to: "(600) 000-011" }).to).toBe("600000011");
+  });
+
+  test("refuses everything the gateway must never be asked to send", () => {
+    // The gateway re-checks these shapes and THROWS on them, so a regression
+    // here would surface as a server error rather than a message an operator
+    // can act on. Each case is a sentence the sheet can show instead.
+    expect(() => validateSendTestInput({ ...SEND, to: "call-me" })).toThrow(/recipient/);
+    expect(() => validateSendTestInput({ ...SEND, bodyParams: ["line one\nline two"] })).toThrow(
+      /line breaks/,
+    );
+    expect(() => validateSendTestInput({ ...SEND, bodyParams: ["  "] })).toThrow(/needs a value/);
+    expect(() => validateSendTestInput({ ...SEND, templateName: "Hello World" })).toThrow(
+      /template name/,
+    );
+    expect(() => validateSendTestInput({ ...SEND, languageCode: "english" })).toThrow(/language/);
+    // A test send must never silently fall back to the account's first WABA or
+    // its first number: which number the message leaves from IS the exercise.
+    expect(() => validateSendTestInput({ ...SEND, wabaId: undefined })).toThrow(/wabaId/);
+    expect(() => validateSendTestInput({ ...SEND, phoneNumberId: "" })).toThrow(/phoneNumberId/);
+  });
+
+  test("requires operate: a role without it is refused and the binding is never touched", async () => {
+    let called = false;
+    withResources({
+      sendTemplateTest: async () => {
+        called = true;
+        return { ok: true, messageId: "wamid.SENT" };
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    const res = await sendTemplateTest({ data: SEND });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("fails closed without a session", async () => {
+    let called = false;
+    withResources({
+      sendTemplateTest: async () => {
+        called = true;
+        return { ok: true, messageId: "wamid.SENT" };
+      },
+    });
+    fakeSessionHeaders = null;
+    const res = await sendTemplateTest({ data: SEND });
+    expect(res).toMatchObject({ ok: false, kind: "unauthenticated" });
+    expect(called).toBe(false);
+  });
+
+  test("a WABA the account does not own is refused before the send", async () => {
+    // rejectUnknown: a test send must never silently fall back to the account's
+    // first WABA — which number the message leaves from IS the exercise.
+    let called = false;
+    withResources({
+      sendTemplateTest: async () => {
+        called = true;
+        return { ok: true, messageId: "wamid.SENT" };
+      },
+    });
+    const res = await sendTemplateTest({ data: { ...SEND, wabaId: "waba-foreign" } });
+    expect(res).toMatchObject({ ok: false, kind: "unreachable" });
+    expect(called).toBe(false);
+  });
+
+  test("a refused send comes back as the typed inner failure, not a thrown error", async () => {
+    withResources({
+      sendTemplateTest: async () => ({
+        ok: false,
+        code: "recipient_not_allowlisted",
+        detail: "Recipient phone number not in allowed list",
+      }),
+    });
+    const res = await sendTemplateTest({ data: SEND });
+    expect(res).toEqual({
+      ok: true,
+      data: {
+        ok: false,
+        code: "recipient_not_allowlisted",
+        detail: "Recipient phone number not in allowed list",
+      },
+    });
+  });
+
+  test("the audit record carries NO recipient and NO parameter value", async () => {
+    // THIS TEST EXISTS TO FAIL the moment someone "helpfully" adds the
+    // recipient to the audit line. Audit logs are not per-phone erasable, so a
+    // number here would silently break GDPR erasure completeness — while the
+    // full recipient already lives in the data-plane outbound_messages row,
+    // which retention and eraseByPhone do govern.
+    withResources({ sendTemplateTest: async () => ({ ok: true, messageId: "wamid.SENT" }) });
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await sendTemplateTest({
+        data: { ...SEND, to: "+34 600-00-00-11", bodyParams: ["Ada Lovelace"] },
+      });
+    } finally {
+      console.info = original;
+    }
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    expect(audit).toBeDefined();
+    expect(audit).toContain('"action":"template_test_send"');
+    expect(audit).toContain('"messageId":"wamid.SENT"');
+    expect(audit).not.toContain("34600000011");
+    expect(audit).not.toContain("600");
+    expect(audit).not.toContain("Ada Lovelace");
   });
 });
 

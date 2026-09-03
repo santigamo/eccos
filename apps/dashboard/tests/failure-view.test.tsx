@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { failureCopy } from "../src/lib/failure";
@@ -18,22 +19,7 @@ import type { Failure } from "../src/server/gateway";
  * exactly as in `tests/gateway.test.ts` before the real component is imported.
  * React's own `react-dom/server` needs no DOM.
  */
-mock.module("cloudflare:workers", () => ({
-  env: { BETTER_AUTH_URL: "http://localhost:3000" },
-}));
-
-mock.module("@tanstack/react-start", () => {
-  const api = {
-    validator: (_v: unknown) => api,
-    handler: (fn: (arg?: unknown) => unknown) => (arg?: unknown) =>
-      fn(arg && typeof arg === "object" && "data" in arg ? arg : { data: arg }),
-  };
-  return { createServerFn: (_opts?: unknown) => api };
-});
-
-mock.module("@tanstack/react-start/server", () => ({
-  getRequest: () => new Request("http://localhost:3000/", { headers: new Headers() }),
-}));
+installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { FailureView } = await import("../src/components/dashboard/failure");
 

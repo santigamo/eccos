@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 
@@ -47,25 +48,10 @@ function resetFakeEnv(): void {
  */
 let fakeRequestHeaders = new Headers();
 
-mock.module("cloudflare:workers", () => ({
+installServerFnMocks({
   env: fakeEnv,
-}));
-
-// Server-function shell: run the handler directly (no TanStack runtime here).
-mock.module("@tanstack/react-start", () => ({
-  createServerFn: (_opts?: unknown) => {
-    const api = {
-      validator: (_v: unknown) => api,
-      handler: (fn: (arg?: unknown) => unknown) => (arg?: unknown) =>
-        fn(arg && typeof arg === "object" && "data" in arg ? arg : { data: arg }),
-    };
-    return api;
-  },
-}));
-
-mock.module("@tanstack/react-start/server", () => ({
   getRequest: () => new Request("http://localhost:3000/", { headers: fakeRequestHeaders }),
-}));
+});
 
 const { createOrganization, createWorkspaceErrorCopy, inviteMember, acceptInvitation } =
   await import("../src/organizations");
