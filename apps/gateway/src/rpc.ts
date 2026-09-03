@@ -1,7 +1,12 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { getControlPlaneStub } from "./control-plane-stub";
-import { exchangeAndRegisterAll, startConnectForAccount } from "./routes/connect";
+import {
+  exchangeAndRegisterAll,
+  registerWabasForToken,
+  startConnectForAccount,
+} from "./routes/connect";
+import { inspectToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
 import { sendMessage } from "@eccos/core/send";
@@ -25,6 +30,7 @@ import type {
   Health,
   InboundRow,
   ListOpts,
+  ManualConnectResult,
   OperatorCounts,
   OutboundRow,
   ReconcileWabaResult,
@@ -65,6 +71,13 @@ const MAX_BODY_PARAM_LENGTH = 1024;
 const MAX_TEMPLATE_BODY_LENGTH = 1024;
 /** Graph template ids (`hsm_id`) are numeric. */
 const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
+/**
+ * A pasted Meta access token: printable ASCII, no whitespace. Meta's tokens are
+ * long opaque base64url-ish strings; the shape check exists to refuse a paste
+ * that obviously is not one (a whole curl command, a wrapped multi-line copy)
+ * before it reaches Graph, not to model Meta's alphabet.
+ */
+const META_TOKEN_PATTERN = /^[\x21-\x7e]{20,1024}$/;
 /** The only two categories the console authors; AUTHENTICATION is a different
  * creation shape (preset content + OTP buttons) and is not offered. */
 const TEMPLATE_CATEGORIES = new Set(["MARKETING", "UTILITY"]);
@@ -607,4 +620,126 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId?.trim() || undefined,
     );
   }
+
+  /**
+   * Connect a WABA from a token the operator pasted into the console
+   * (eccos-up9).
+   *
+   * WHY THIS EXISTS. Embedded Signup onboards *businesses*, so it never
+   * surfaces Meta's own Cloud API test WABA — and that test number is what App
+   * Review screencasts are filmed on. Pasting its token is the only way to
+   * attach it. The alternative was an admin API key plus a curl; removing the
+   * need for that shortcut is the point of this method.
+   *
+   * WHY IT CANNOT BE A GENERAL "ATTACH ANY TOKEN" DOOR. `debug_token` only
+   * introspects tokens issued by the app doing the asking, so this deployment
+   * can classify its OWN app's tokens and nothing else. That limitation is the
+   * gate: a managed customer's own-app token comes back `foreign_app` and is
+   * sent to Embedded Signup, which is the flow built for them. Workability is a
+   * property of the token, not of the deployment, so there is no config flag —
+   * a flag would either hide the form from the one operator it exists for, or
+   * show a working form to every customer it cannot serve.
+   *
+   * THE TOKEN'S PATH ENDS AT REST. It is inspected, used as a Bearer for
+   * discovery, and handed to `registerWabasForToken`, which seals it into the
+   * control plane's AES-256-GCM envelope. It is never logged, never thrown in a
+   * message, and never part of the returned shape.
+   *
+   * `onboardingType: "standard"` is deliberate and is the one thing that must
+   * not be copied from the Embedded Signup call site: a pasted token had no ES
+   * handoff, so claiming `coexistence` would invent a once-only sync obligation
+   * out of an omission — the rule `connect.ts` states.
+   */
+  async connectWabaWithToken(
+    accountId: string,
+    token: string,
+    wabaId?: string,
+  ): Promise<ManualConnectResult> {
+    const account = requireAccountId(accountId, "accountId is required");
+
+    // Defense in depth, throw-not-code, the `sendTemplateTest` pattern: the
+    // dashboard validator is the strict one and the only caller, so reaching
+    // these means it regressed. The messages name the SHAPE, never the value —
+    // an error string carrying a live credential would be the one leak this
+    // whole path is built to avoid.
+    const businessToken = typeof token === "string" ? token.trim() : "";
+    if (!businessToken) throw new Error("token is required");
+    if (!META_TOKEN_PATTERN.test(businessToken)) throw new Error("token is malformed");
+    const selector = wabaId?.trim() || undefined;
+
+    const publicOrigin = this.env.GATEWAY_PUBLIC_URL?.trim();
+    // Same rule as `startConnectForAccountId`: there is no request to derive an
+    // origin from, and a webhook callback URL guessed wrong is a number that
+    // registers and then never delivers.
+    if (!publicOrigin) throw new Error("GATEWAY_PUBLIC_URL is required to connect a pasted token");
+
+    const appConfig = getAppConfig(this.env);
+    let discovered: Awaited<ReturnType<typeof wabaMatchesForTargetIds>>;
+    try {
+      const inspection = await inspectToken(appConfig, businessToken);
+      if (inspection.kind !== "ok") {
+        // The console owns the wording for both verdicts, and for `foreign_app`
+        // it says something Meta's sentence does not: use Embedded Signup. So
+        // no detail travels — Meta's text here would only compete with it.
+        return { ok: false, code: inspection.kind, detail: null };
+      }
+      if (inspection.targetIds.length === 0) {
+        // Real and reported in the wild: `granular_scopes[].target_ids` is
+        // nullable, and some tokens name no WABA at all. Nothing to register,
+        // and the console's remedy copy says how to mint one that does.
+        return { ok: false, code: "no_waba", detail: null };
+      }
+      discovered = await wabaMatchesForTargetIds(appConfig, inspection.targetIds, businessToken);
+    } catch (err) {
+      return { ok: false, code: "failed", detail: errorDetail(err) };
+    }
+
+    if (discovered.length === 0) {
+      return { ok: false, code: "no_waba", detail: null };
+    }
+    // Ambiguity NEVER auto-attaches. A system-user token can see every WABA a
+    // business manages, so registering them all on one paste would mass-attach
+    // an agency's clients — the Embedded Signup semantics are safe there only
+    // because the customer picked the account inside Meta's own dialog. One
+    // extra round-trip on the resubmit is the price of asking.
+    if (!selector && discovered.length > 1) {
+      return {
+        ok: false,
+        code: "multiple",
+        detail: null,
+        candidates: discovered.map((match) => ({
+          wabaId: match.wabaId,
+          phones: match.phones.map((phone) => ({
+            phoneNumberId: phone.id,
+            displayPhoneNumber: phone.display_phone_number ?? "",
+          })),
+        })),
+      };
+    }
+
+    const result = await registerWabasForToken(this.env, (work) => this.ctx.waitUntil(work), {
+      accountId: account,
+      businessToken,
+      callbackOrigin: publicOrigin,
+      onboardingType: "standard",
+      ...(selector ? { wabaSelector: selector } : {}),
+      discovered,
+    });
+    if (result.ok) {
+      const { ok: _ok, ...rest } = result;
+      return { ok: true, ...rest };
+    }
+    // The shared path answers in the Embedded Signup vocabulary; only three of
+    // its codes are reachable from here, and anything else is `failed` rather
+    // than a code this surface has no words for.
+    const code =
+      result.code === "no_waba" || result.code === "owned" ? result.code : "failed";
+    return { ok: false, code, detail: result.error };
+  }
+}
+
+/** An error's message, for a `detail` line. Never a token: the only values that
+ * reach here are Graph's own sentences and this module's shape complaints. */
+function errorDetail(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

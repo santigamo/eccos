@@ -59,7 +59,11 @@ describe("SCOPE_REQUIREMENTS", () => {
       "/numbers": "none",
       "/workspaces/new": "none",
       "/templates": "waba",
-      "/settings": "waba",
+      // `"none"`, not `"waba"`: Settings carries the pasted-token panel, which
+      // is how Meta's Cloud API test number gets attached — and an account with
+      // no number is exactly who needs it (eccos-up9). Gating the page on a
+      // WABA locked the one form that creates one.
+      "/settings": "none",
       "/": "number",
       "/deliveries": "number",
       "/inbound": "number",
@@ -101,12 +105,16 @@ describe("scope predicates", () => {
     expect(requirementSatisfied("/outbound", limbo)).toBe(false);
   });
 
-  test("an account with no WABA at all only reaches the way out", () => {
+  test("an account with no WABA at all only reaches the ways out", () => {
     const empty = accountReady(0);
     expect(requirementSatisfied("/numbers", empty)).toBe(true);
     expect(requirementSatisfied("/workspaces/new", empty)).toBe(true);
     expect(requirementSatisfied("/templates", empty)).toBe(false);
-    expect(requirementSatisfied("/settings", empty)).toBe(false);
+    // Settings is the SECOND way out, and has to stay reachable: its token
+    // panel attaches the Cloud API test number, which by definition is needed
+    // by an account that has no number. The page's WABA-level sections degrade
+    // to a note in this state rather than failing (routes/settings.tsx).
+    expect(requirementSatisfied("/settings", empty)).toBe(true);
   });
 });
 

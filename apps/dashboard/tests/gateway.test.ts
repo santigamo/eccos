@@ -152,6 +152,8 @@ const {
   deleteTemplate,
   validateCreateTemplateInput,
   validateDeleteTemplateInput,
+  connectWithToken,
+  validateTokenConnectInput,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -1203,6 +1205,184 @@ describe("recheckNumber (pending number on /numbers)", () => {
     withResources({});
     gatewayBinding = undefined;
     const res = await recheckNumber({ data: { wabaId: "waba-a" } });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
+  });
+});
+
+/**
+ * The pasted-token connect form (eccos-up9), from the server boundary's side.
+ *
+ * These live here for the same reason the template ones do: the auth seam and
+ * the tenant module are mocked once at this file's top level, and those
+ * registrations are process-global.
+ *
+ * The token in these tests is a stand-in for a LIVE credential a human typed
+ * into a browser, so half of what is asserted is where it must NOT go.
+ */
+describe("connectWithToken (pasted-token panel on Settings)", () => {
+  const TOKEN = "EAAtestpastedtoken000000000000";
+
+  test("forwards the token verbatim, once, with the account id from the org link", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      connectWabaWithToken: async (...args: unknown[]) => {
+        calls.push(args);
+        return {
+          ok: true,
+          waba_id: "waba-new",
+          phone_number_id: "phone-new",
+          display_phone_number: "+34600000000",
+          connected: [
+            { waba_id: "waba-new", phone_number_id: "phone-new", display_phone_number: "+34600000000" },
+          ],
+          status: "active",
+        };
+      },
+    });
+    const res = await connectWithToken({ data: { token: TOKEN } });
+    expect(res.ok).toBe(true);
+    // The browser supplies the token; the account is never its to pick, and one
+    // submit is exactly one crossing of the binding.
+    expect(calls).toEqual([["account-a", TOKEN, undefined]]);
+  });
+
+  test("requires administer: a role without it is refused and the token never crosses the binding", async () => {
+    // INVARIANT: permission is checked BEFORE the credential moves. This action
+    // deposits a long-lived Meta token into tenant state, which is why it sits
+    // with connect/exchange at `administer` rather than with `configure`.
+    let called = false;
+    withResources({
+      connectWabaWithToken: async () => {
+        called = true;
+        return { ok: false, code: "failed", detail: null };
+      },
+    });
+    fakeDeniedActions = new Set(["administer"]);
+    const res = await connectWithToken({ data: { token: TOKEN } });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("fails closed without a session", async () => {
+    let called = false;
+    withResources({
+      connectWabaWithToken: async () => {
+        called = true;
+        return { ok: false, code: "failed", detail: null };
+      },
+    });
+    fakeSessionHeaders = null;
+    const res = await connectWithToken({ data: { token: TOKEN } });
+    expect(res).toMatchObject({ ok: false, kind: "unauthenticated" });
+    expect(called).toBe(false);
+  });
+
+  test("refuses the pastes that are not a token", () => {
+    // INVARIANT: the console validator is the strict one, which is what keeps
+    // the gateway's mirrored throw unreachable. Each case is a sentence the
+    // panel can show instead of a server error.
+    expect(() => validateTokenConnectInput({ token: "" })).toThrow(/token is required/);
+    expect(() => validateTokenConnectInput({ token: "   " })).toThrow(/token is required/);
+    expect(() => validateTokenConnectInput({ token: "EAAshort" })).toThrow(/Meta access token/);
+    expect(() => validateTokenConnectInput({ token: "x".repeat(1025) })).toThrow(/Meta access token/);
+    // The two pastes that actually happen: a whole curl command, and a token
+    // that wrapped across lines in a terminal.
+    expect(() =>
+      validateTokenConnectInput({ token: `curl -H "Authorization: Bearer ${TOKEN}"` }),
+    ).toThrow(/no spaces/);
+    expect(() => validateTokenConnectInput({ token: `EAAtestpasted\ntoken0000000000` })).toThrow(
+      /no spaces/,
+    );
+    // Surrounding whitespace is a paste artefact, not an error.
+    expect(validateTokenConnectInput({ token: `  ${TOKEN}\n` })).toEqual({ token: TOKEN });
+    expect(validateTokenConnectInput({ token: TOKEN, wabaId: "waba-b" })).toEqual({
+      token: TOKEN,
+      wabaId: "waba-b",
+    });
+  });
+
+  test("passes the gateway's closed codes through unaltered", async () => {
+    // INVARIANT: the server fn never rewrites a closed code or invents copy for
+    // it — `lib/failure.ts` owns the wording, keyed on the code alone.
+    withResources({
+      connectWabaWithToken: async () => ({ ok: false, code: "foreign_app", detail: null }),
+    });
+    const res = await connectWithToken({ data: { token: TOKEN } });
+    expect(res).toEqual({ ok: true, data: { ok: false, code: "foreign_app", detail: null } });
+  });
+
+  test("the audit record carries NO token, and no fragment of one", async () => {
+    // THIS TEST EXISTS TO FAIL the moment someone adds a prefix, a suffix, or a
+    // length to the audit line. The token is a live credential; an audit log is
+    // neither retention-expired nor erasable, so anything derived from it here
+    // would be unremovable — and would narrow the search space for whoever
+    // reads the log.
+    withResources({
+      connectWabaWithToken: async () => ({
+        ok: true,
+        waba_id: "waba-new",
+        phone_number_id: "phone-new",
+        display_phone_number: "+34600000000",
+        connected: [
+          { waba_id: "waba-new", phone_number_id: "phone-new", display_phone_number: "+34600000000" },
+        ],
+        status: "active",
+      }),
+    });
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await connectWithToken({ data: { token: TOKEN } });
+    } finally {
+      console.info = original;
+    }
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    expect(audit).toBeDefined();
+    expect(audit).toContain('"action":"connect_token"');
+    expect(audit).toContain('"wabaId":"waba-new"');
+    expect(audit).not.toContain(TOKEN);
+    // Not even the first characters of it, which is the shape a "safe prefix"
+    // would take.
+    expect(audit).not.toContain("EAA");
+    expect(audit).not.toContain(String(TOKEN.length));
+  });
+
+  test("a refused attempt is audited as a failure, by code, with no token", async () => {
+    withResources({
+      connectWabaWithToken: async () => ({
+        ok: false,
+        code: "multiple",
+        detail: null,
+        candidates: [
+          { wabaId: "waba-1", phones: [] },
+          { wabaId: "waba-2", phones: [] },
+        ],
+      }),
+    });
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await connectWithToken({ data: { token: TOKEN } });
+    } finally {
+      console.info = original;
+    }
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    expect(audit).toContain('"outcome":"failed"');
+    expect(audit).toContain('"code":"multiple"');
+    expect(audit).toContain('"candidates":2');
+    expect(audit).not.toContain(TOKEN);
+  });
+
+  test("unreachable: missing binding yields the graceful error shape", async () => {
+    withResources({});
+    gatewayBinding = undefined;
+    const res = await connectWithToken({ data: { token: TOKEN } });
     expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
   });
 });

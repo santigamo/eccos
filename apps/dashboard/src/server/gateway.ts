@@ -29,6 +29,7 @@ import type {
   GatewayApi,
   GatewayStatus,
   InboundRow,
+  ManualConnectResult,
   OutboundRow,
   ReconcileWabaResult,
   ResubscribeResult,
@@ -54,6 +55,8 @@ export type {
   GatewayStatus,
   Health,
   InboundRow,
+  ManualConnectFailureCode,
+  ManualConnectResult,
   OperatorCounts,
   OutboundRow,
   ProvisioningStatus,
@@ -63,6 +66,7 @@ export type {
   SendTestFailureCode,
   SetSubscriberConfigInput,
   SubscriberConfig,
+  TokenWabaCandidate,
 } from "@eccos/gateway-contract";
 
 /**
@@ -173,6 +177,10 @@ const MAX_BODY_PARAMS = 30;
 const MAX_BODY_PARAM_LENGTH = 1024;
 /** Graph template ids (`hsm_id`) are numeric. */
 const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
+/** A pasted Meta access token: printable ASCII, no whitespace. */
+const META_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
+const MIN_META_TOKEN_LENGTH = 20;
+const MAX_META_TOKEN_LENGTH = 1024;
 
 function inputRecord(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -836,6 +844,76 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
             : { code: result.code },
           outcome: result.ok ? "success" : "failed",
           ...(result.ok ? {} : { detail: result.error }),
+        });
+        return result;
+      }),
+  );
+
+/**
+ * A Meta access token an operator pasted, and optionally the WABA they chose.
+ *
+ * The console's validator is the strict one — the gateway re-checks the same
+ * shape and THROWS, which stays unreachable only while this holds. Printable
+ * ASCII with no whitespace refuses the two pastes that actually happen: a whole
+ * `curl` command, and a token that wrapped across lines in a terminal.
+ *
+ * It is a shape check and nothing more. Whether the token WORKS is a question
+ * only Meta can answer, and the gateway asks it — no amount of validating here
+ * can tell an own-app token from a customer's.
+ *
+ * Exported for the same reason as {@link validateSendTestInput}: one call per
+ * rejected shape is cheaper than one route call each.
+ */
+export function validateTokenConnectInput(input: unknown): { token: string; wabaId?: string } {
+  const record = inputRecord(input);
+  if (typeof record.token !== "string") throw new Error("token is required");
+  const token = record.token.trim();
+  if (!token) throw new Error("token is required");
+  if (token.length < MIN_META_TOKEN_LENGTH || token.length > MAX_META_TOKEN_LENGTH) {
+    throw new Error("that does not look like a Meta access token");
+  }
+  if (!META_TOKEN_PATTERN.test(token)) {
+    throw new Error("paste only the token — no spaces, quotes, or line breaks");
+  }
+  const wabaId = optionalWabaId(record.wabaId);
+  return { token, ...(wabaId ? { wabaId } : {}) };
+}
+
+/**
+ * Attach a WABA from a token the operator pasted (eccos-up9).
+ *
+ * `administer`, the same class as `startConnect` / `exchangeConnectCode` and
+ * for a stronger reason than either: this action DEPOSITS a long-lived Meta
+ * credential into tenant state. `configure` would let a template admin paste
+ * tokens, which is the wrong side of the credentials line this codebase draws.
+ *
+ * ── WHERE THE TOKEN GOES ────────────────────────────────────────────────────
+ * In through this POST body, once, over a session-authenticated route; across
+ * the private `GATEWAY` binding, never public HTTP; sealed at rest by the
+ * control plane. It touches no log line and no audit field — see the
+ * `connect_token` doc comment in `./audit.ts`, and the audit record below,
+ * which carries identifiers and a failure code only.
+ */
+export const connectWithToken = createServerFn({ method: "POST" })
+  .validator(validateTokenConnectInput)
+  .handler(
+    ({ data }): Promise<Result<ManualConnectResult>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await connectActorAccount(gateway);
+        const result = await gateway.connectWabaWithToken(accountId, data.token, data.wabaId);
+        // NO token, and nothing derived from one. `candidates` is counted, not
+        // listed, because the count is what makes the line legible and the ids
+        // are already in the wabaId of whichever resubmit follows.
+        auditEvent({
+          action: "connect_token",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          resource: result.ok
+            ? { wabaId: result.waba_id, connected: result.connected.length }
+            : { code: result.code, candidates: result.candidates?.length ?? 0 },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
         });
         return result;
       }),

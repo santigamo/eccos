@@ -3,6 +3,7 @@ import {
   extractTokenTargetIds,
   findWabaPhoneNumbersForToken,
   getPhoneNumberOnboarding,
+  inspectToken,
   listPhoneNumbers,
 } from "../src/meta/connect-api";
 import { connectRoutes, oauthStateIsValid } from "../src/routes/connect";
@@ -20,6 +21,100 @@ describe("extractTokenTargetIds", () => {
         },
       }),
     ).toEqual(["waba-1", "waba-2"]);
+  });
+});
+
+/**
+ * The classifier behind the console's pasted-token form (eccos-up9).
+ *
+ * Its whole job is to turn one Graph answer into a verdict an operator can act
+ * on: a token this deployment's Meta app did not issue is a dead end that
+ * points at Embedded Signup, while an expired own-app token is a one-minute
+ * fix. Reading the difference off Meta's message text is what these tests exist
+ * to prevent.
+ */
+describe("inspectToken", () => {
+  const CFG = { META_GRAPH_VERSION: "v25.0", META_APP_ID: "app-id", META_APP_SECRET: "app-secret" };
+
+  function answer(body: unknown, status = 200): void {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(body), { status })) as typeof fetch;
+  }
+
+  it("reads Graph code 100 as a foreign-app token", async () => {
+    // INVARIANT: the managed-cloud dead end is a closed code, never a raw Graph
+    // sentence. Meta answers a token issued by another app with exactly this,
+    // and it is the case every Eccos Cloud customer's own token would hit.
+    answer(
+      {
+        error: {
+          message: "The App_id in the input_token did not match the Viewing App",
+          type: "OAuthException",
+          code: 100,
+        },
+      },
+      400,
+    );
+    await expect(inspectToken(CFG, "someone-elses-token")).resolves.toMatchObject({
+      kind: "foreign_app",
+    });
+  });
+
+  it("reads a 200 naming another app_id as the same dead end", async () => {
+    // INVARIANT: the deployment's app is the only accepted issuer even when
+    // Meta answers 200 — the status code is not what decides this.
+    answer({ data: { app_id: "another-app", is_valid: true, granular_scopes: [] } });
+    await expect(inspectToken(CFG, "token")).resolves.toMatchObject({ kind: "foreign_app" });
+  });
+
+  it("does not read an ABSENT app_id as a mismatch", async () => {
+    // INVARIANT: a field Meta did not send is not a verdict (the rule
+    // `getPhoneNumberOnboarding` states). Meta omits `app_id` on some answers,
+    // and reading the omission as "another app" would break the one flow that
+    // works — including every Embedded Signup exchange.
+    answer({
+      data: { granular_scopes: [{ scope: "whatsapp_business_management", target_ids: ["WABA1"] }] },
+    });
+    await expect(inspectToken(CFG, "token")).resolves.toEqual({
+      kind: "ok",
+      targetIds: ["WABA1"],
+    });
+  });
+
+  it("reads Graph code 190 and is_valid:false as expiry, not as the dead end", async () => {
+    // INVARIANT: an expired OWN-app token reads as expiry. The App Dashboard's
+    // test token dies in about a day, so this is the failure the filming
+    // operator meets most often, and its remedy (paste a fresh one) is nothing
+    // like the foreign-app remedy.
+    answer({ error: { message: "Session has expired", type: "OAuthException", code: 190 } }, 400);
+    await expect(inspectToken(CFG, "expired")).resolves.toMatchObject({ kind: "invalid_token" });
+
+    answer({ data: { app_id: "app-id", is_valid: false } });
+    await expect(inspectToken(CFG, "expired")).resolves.toMatchObject({ kind: "invalid_token" });
+  });
+
+  it("throws on a Graph failure it cannot classify", async () => {
+    // INVARIANT: two verdicts, never invented for a third case. An unclassified
+    // failure has to reach the caller as one, so it lands on `failed` with
+    // Meta's own words rather than accusing the operator's token.
+    answer({ error: { message: "Please reduce the amount of data", code: 1 } }, 500);
+    await expect(inspectToken(CFG, "token")).rejects.toThrow(/debug_token failed: 500/);
+  });
+
+  it("keeps the token out of the URL query it does not belong in", async () => {
+    // The app access token is a deployment secret and rides the Authorization
+    // header; only `input_token` — the shape Meta documents — is in the URL.
+    const requests: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(String(input));
+      expect((init?.headers as Record<string, string>).authorization).toBe(
+        "Bearer app-id|app-secret",
+      );
+      return new Response(JSON.stringify({ data: { granular_scopes: [] } }), { status: 200 });
+    }) as typeof fetch;
+    await inspectToken(CFG, "pasted-token");
+    expect(requests[0]).not.toContain("app-secret");
+    expect(requests[0]).not.toContain("access_token=");
   });
 });
 

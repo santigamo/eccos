@@ -13,8 +13,13 @@ import type { DashboardState } from "../server/gateway";
  *   only the WABA id and its stored Meta token, and the subscriber config is
  *   exactly what an operator prepares BEFORE any traffic arrives. Both work on
  *   a WABA that is connected but still awaiting its phone number.
- * - `"none"` — /numbers is the way out of every locked state, and
- *   /workspaces/new is about the workspace rather than its numbers.
+ * - `"none"` — /numbers is the way out of every locked state,
+ *   /workspaces/new is about the workspace rather than its numbers, and
+ *   /settings is a second way out: its pasted-token panel (eccos-up9) is how
+ *   Meta's Cloud API test number gets attached, and that number's whole point
+ *   is that the account has none yet. Gating the page on a WABA locked the one
+ *   form that creates one. The WABA-level sections of that page degrade to a
+ *   note instead — see `routes/settings.tsx`.
  *
  * One module, so the sidebar and the root redirect cannot drift on which pages
  * exist before a number. Type-only import, so it stays exercisable under plain
@@ -31,7 +36,7 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/numbers": "none",
   "/workspaces/new": "none",
   "/templates": "waba",
-  "/settings": "waba",
+  "/settings": "none",
   "/": "number",
   "/deliveries": "number",
   "/inbound": "number",

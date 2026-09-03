@@ -98,6 +98,10 @@
   // Meta platform secrets (META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN and the
   // optional META_APP_ID / META_ES_CONFIG_ID for Embedded Signup) plus the
   // ECCOS_ADMIN_API_KEY bootstrap secret are set with `wrangler secret put`.
+  // ECCOS_ADMIN_API_KEY is for SELF-HOST BOOTSTRAP only (creating the first
+  // account and its keys). Normal operation never needs it — connecting a
+  // number is done from the console, by Embedded Signup or by pasting a token
+  // on Settings — and leaving it unset disables the admin routes outright.
   // Per-tenant WABA credentials and subscriber settings live in the control
   // plane / per-WABA Durable Object state — never in Worker vars.
 }

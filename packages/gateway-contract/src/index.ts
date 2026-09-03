@@ -267,6 +267,79 @@ export type ConnectExchangeResult =
   | { ok: false; error: string; code: ConnectFailureCode };
 
 /**
+ * One WhatsApp Business Account a pasted token can reach, offered to the
+ * operator as a choice.
+ *
+ * Returned ONLY with {@link ManualConnectFailureCode} `multiple`, and nothing
+ * is registered when it is: a system-user token can see every WABA a business
+ * manages, and registering all of them on one paste would mass-attach an
+ * agency's clients. Ambiguity is answered with a question, not a guess.
+ */
+export interface TokenWabaCandidate {
+  wabaId: string;
+  phones: Omit<AccountPhoneResource, "wabaId">[];
+}
+
+/**
+ * Why a pasted Meta token did not connect a number, in the console's closed
+ * vocabulary (same design as {@link ConnectFailureCode}; raw Graph errors never
+ * drive UI).
+ *
+ * Deliberately a SEPARATE vocabulary rather than a widened
+ * `ConnectFailureCode`: that one also travels in the Embedded Signup return
+ * URL's query string, and a code that can never appear there does not belong
+ * in it.
+ */
+export type ManualConnectFailureCode =
+  /**
+   * Meta says this token was issued by another app, so this deployment cannot
+   * introspect it — and therefore cannot trust it. The remedy is Embedded
+   * Signup, which is how a business connects a WABA it owns.
+   */
+  | "foreign_app"
+  /** An own-app token that Meta reports expired or revoked. Paste a fresh one. */
+  | "invalid_token"
+  /** The token names no WhatsApp Business Account, or none with a phone number. */
+  | "no_waba"
+  /** The token reaches several WABAs and none was chosen; nothing was registered. */
+  | "multiple"
+  /** The chosen WABA already belongs to a different Eccos account. */
+  | "owned"
+  /** Anything else, including Graph failures during discovery or registration. */
+  | "failed";
+
+/**
+ * Outcome of connecting a WABA from a token the operator pasted (eccos-up9).
+ *
+ * The success branch mirrors {@link ConnectExchangeResult}'s: the same
+ * registration path produced it, so the console renders both the same way. The
+ * failure branch carries the closed code plus, for `multiple`, the choice that
+ * resolves it.
+ *
+ * The pasted token is NEVER part of this shape — not echoed, not fingerprinted,
+ * not summarised. It goes in and only identifiers come back.
+ */
+export type ManualConnectResult =
+  | {
+      ok: true;
+      waba_id: string;
+      phone_number_id: string;
+      display_phone_number: string;
+      connected: ConnectedPhoneResource[];
+      status: ProvisioningStatus;
+      /** WABAs the token could see but that belong to another account. */
+      warnings?: string[];
+    }
+  | {
+      ok: false;
+      code: ManualConnectFailureCode;
+      /** Meta's own sentence where it explains; never a discriminator. */
+      detail: string | null;
+      /** The WABAs to choose between. Present only for `multiple`. */
+      candidates?: TokenWabaCandidate[];
+    };
+
+/**
  * One console-originated template send (the "Send test" sheet).
  *
  * Deliberately NOT a generic "send any Meta body over the binding": the gateway
@@ -478,6 +551,29 @@ export interface GatewayApi {
     state: string,
     wabaId?: string,
   ): Promise<ConnectExchangeResult>;
+  /**
+   * Connect a WABA from a Meta access token an operator pasted into the console
+   * (eccos-up9).
+   *
+   * This exists because Embedded Signup onboards BUSINESSES and therefore never
+   * surfaces Meta's own Cloud API test WABA — the number App Review filming
+   * runs on. Pasting its token is the only way to attach it.
+   *
+   * The token is classified before anything is written: `debug_token` can only
+   * introspect tokens issued by this deployment's own Meta app, so a customer's
+   * own-app token comes back `foreign_app` and is pointed at Embedded Signup
+   * rather than half-registered. When the token reaches several WABAs and
+   * `wabaId` names none of them, NOTHING is registered and the candidates come
+   * back for the operator to choose from.
+   *
+   * `wabaId` is a selector, not a hint: naming a WABA the token cannot reach,
+   * or one another account owns, fails closed.
+   */
+  connectWabaWithToken(
+    accountId: string,
+    token: string,
+    wabaId?: string,
+  ): Promise<ManualConnectResult>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(

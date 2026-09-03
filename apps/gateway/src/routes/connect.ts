@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
   exchangeCodeForToken,
   findWabaPhoneNumbersForToken,
+  type PhoneNumber,
 } from "../meta/connect-api";
 import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
@@ -13,6 +14,7 @@ import type {
   ConnectFailureCode,
   ConnectStartResult,
   ProvisioningStatus,
+  WabaOnboardingType,
 } from "@eccos/gateway-contract";
 
 type ConnectContext = Context<{ Bindings: Env }>;
@@ -94,7 +96,7 @@ type ConnectedPhone = {
   display_phone_number: string;
 };
 
-type MultiExchangeResult =
+export type MultiExchangeResult =
   | {
       ok: true;
       waba_id: string;
@@ -355,12 +357,14 @@ async function kickProvisioning(
 }
 
 /**
- * Exchange: discover every WABA/phone the business token can see, register each
- * available match in the control plane (credentials + callback live there),
- * then provision them through the saga before answering (eccos-lpk) so the
- * operator normally lands on an already-active number; anything still unsettled
- * stays `pending` for the cron. An explicit ownership conflict fails closed;
- * unrelated foreign matches are skipped with a warning.
+ * Exchange an Embedded Signup code for a business token, then register
+ * everything that token unlocks through {@link registerWabasForToken} — which
+ * owns the discovery, the ownership policy, and the provisioning kick, and is
+ * shared with the console's pasted-token path.
+ *
+ * The exchange is the only step that belongs to this function, and its own
+ * failure is folded to `failed` here rather than inside the shared half: a code
+ * that will not exchange never had a token to register.
  */
 export async function exchangeAndRegisterAll(
   env: Env,
@@ -380,10 +384,78 @@ export async function exchangeAndRegisterAll(
   callbackOrigin: string,
   wabaSelector?: string,
 ): Promise<MultiExchangeResult> {
+  let businessToken: string;
+  try {
+    businessToken = await exchangeCodeForToken(getAppConfig(env), code, redirectUri);
+  } catch (e) {
+    return { ok: false, error: errorMessage(e), code: "failed" };
+  }
+  return registerWabasForToken(env, keepRunning, {
+    accountId,
+    businessToken,
+    callbackOrigin,
+    ...(wabaSelector ? { wabaSelector } : {}),
+    // `/connect` is the path that CAN produce a WhatsApp Business app
+    // (coexistence) number — whether it does is decided by the Facebook Login
+    // for Business configuration behind `META_ES_CONFIG_ID`, not by anything
+    // this code can put in the dialog URL (see `oauthUrl`).
+    //
+    // So this is a claim, not a fact, and it is deliberately the *pessimistic*
+    // one: recording `coexistence` is what makes the provisioning saga go and
+    // ask Meta what the number actually is before it spends either once-only
+    // sync (eccos-vss). Recording `standard` here would skip that question
+    // entirely and silently strand a real coexistence customer with no history
+    // sync. Every other registration path still defaults to `standard`, so an
+    // omission can never invent an obligation.
+    //
+    // Registering it here is also what starts the 24-hour clock, at the moment
+    // the handoff completed.
+    onboardingType: "coexistence",
+  });
+}
+
+/**
+ * Register everything one Meta business token unlocks, under one account.
+ *
+ * The half of the connect flow that has nothing to do with OAuth: discover the
+ * WABAs and phones the token can see, apply the ownership policy, write the
+ * registrations, and provision them before answering. It is shared by both
+ * entry points that hold such a token — the Embedded Signup exchange above and
+ * the console's pasted-token form (eccos-up9) — so the ownership-conflict
+ * policy exists in exactly ONE place: an explicit selector conflict fails
+ * closed, an unrelated foreign match is skipped with a warning, and neither
+ * entry point can drift into being the softer one.
+ *
+ * `onboardingType` is a required parameter rather than a default precisely
+ * because the two callers must answer it differently and neither answer is
+ * safe to inherit: see the comment at the `/connect` call site above, and the
+ * rule it states — an omission must never invent a once-only sync obligation.
+ *
+ * `discovered` lets a caller that has already talked to Meta (the token path
+ * inspects the token first, because it needs the verdict) pass what it found
+ * instead of paying for the discovery round-trips twice.
+ */
+export async function registerWabasForToken(
+  env: Env,
+  keepRunning: KeepAlive,
+  input: {
+    accountId: string;
+    /** The Meta token the registrations are sealed with. Never logged, never returned. */
+    businessToken: string;
+    /** Origin the per-WABA webhook callback URL is built from. */
+    callbackOrigin: string;
+    onboardingType: WabaOnboardingType;
+    /** Register only this WABA, and fail closed if the token cannot reach it. */
+    wabaSelector?: string;
+    /** Discovery result, when the caller already has one. */
+    discovered?: Array<{ wabaId: string; phones: PhoneNumber[] }>;
+  },
+): Promise<MultiExchangeResult> {
+  const { accountId, businessToken, callbackOrigin, onboardingType, wabaSelector } = input;
   try {
     const appConfig = getAppConfig(env);
-    const businessToken = await exchangeCodeForToken(appConfig, code, redirectUri);
-    const discovered = await findWabaPhoneNumbersForToken(appConfig, businessToken);
+    const discovered =
+      input.discovered ?? (await findWabaPhoneNumbersForToken(appConfig, businessToken));
     if (discovered.length === 0) {
       return { ok: false, error: "could not infer WABA from token", code: "no_waba" };
     }
@@ -431,23 +503,7 @@ export async function exchangeAndRegisterAll(
           phoneNumberId: p.id,
           displayPhoneNumber: p.display_phone_number ?? "",
         })),
-        // `/connect` is the path that CAN produce a WhatsApp Business app
-        // (coexistence) number — whether it does is decided by the Facebook
-        // Login for Business configuration behind `META_ES_CONFIG_ID`, not by
-        // anything this code can put in the dialog URL (see `oauthUrl`).
-        //
-        // So this is a claim, not a fact, and it is deliberately the
-        // *pessimistic* one: recording `coexistence` is what makes the
-        // provisioning saga go and ask Meta what the number actually is before
-        // it spends either once-only sync (eccos-vss). Recording `standard`
-        // here would skip that question entirely and silently strand a real
-        // coexistence customer with no history sync. Every other registration
-        // path still defaults to `standard`, so an omission can never invent an
-        // obligation.
-        //
-        // Registering it here is also what starts the 24-hour clock, at the
-        // moment the handoff completed.
-        onboardingType: "coexistence" as const,
+        onboardingType,
       })),
     );
 

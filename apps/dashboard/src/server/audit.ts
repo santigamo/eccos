@@ -17,6 +17,19 @@ export type SensitiveAction =
   /** An Embedded Signup code exchanged through the JavaScript-SDK page. */
   | "connect_exchange"
   /**
+   * One WABA attached from a Meta access token pasted into the console
+   * (eccos-up9).
+   *
+   * NEVER carries the token — not the value, not a prefix of it, not its
+   * length. It is a live credential a human typed into a browser, and an audit
+   * log is neither retention-expired nor erasable, so anything derived from it
+   * written here would be unremovable and would narrow the search space for
+   * anyone who read the log. The record carries the wabaId, how many phones
+   * were connected, and the closed failure code — which is the whole of what an
+   * operator or an incident review needs from this action.
+   */
+  | "connect_token"
+  /**
    * One Embedded Signup session-logging event (Meta's `message` listener).
    * Carries the screen a customer abandoned on and the error code + session id
    * they reported — the only record of either, and the reference Meta support

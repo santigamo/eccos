@@ -27,7 +27,9 @@ export type NavItem = {
    *   traffic. Both are reachable while a connected WABA still awaits its phone
    *   number.
    * - unset — always live. `/numbers` is deliberately unflagged: it is where an
-   *   operator goes to fix exactly this.
+   *   operator goes to fix exactly this, and `/settings` joined it for the same
+   *   reason — its pasted-token panel attaches Meta's Cloud API test number,
+   *   which an account with no number is precisely who needs (eccos-up9).
    *
    * The values must match `lib/scope-requirements.ts`, which the root loader
    * redirects from; `tests/scope-requirements.test.ts` fails if they drift.
@@ -82,6 +84,5 @@ export const NAV_MAIN: NavItem[] = [
     label: "Settings",
     href: "/settings",
     icon: <SettingsIcon aria-hidden="true" />,
-    requires: "waba",
   },
 ]

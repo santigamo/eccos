@@ -1,4 +1,4 @@
-import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useLoaderData, useRouter } from "@tanstack/react-router";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
 import { FailureView } from "../components/dashboard/failure";
@@ -70,6 +70,20 @@ function NumbersPage() {
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
             <ConnectNumberPanel heading="Meta Embedded Signup" />
+            {/* The one pointer to the pasted-token path (eccos-up9). It lives
+                here, muted and below the fork, because it serves exactly one
+                case — Meta's Cloud API TEST number, which Embedded Signup
+                cannot offer since that flow onboards businesses — and putting
+                it any higher would advertise a form most operators must not
+                use. A sentence, not a third card: this is not a third way to
+                connect a customer's number. */}
+            <p className="m-0 text-center text-xs text-muted-foreground">
+              Attaching Meta&apos;s Cloud API test number?{" "}
+              <Link to="/settings" className="underline underline-offset-4 hover:text-foreground">
+                Paste its token in Settings
+              </Link>
+              .
+            </p>
           </div>
         </div>
       </Page>

@@ -275,6 +275,16 @@ app.use("/v1/*", async (c, next) => {
   const rawKey = extractApiKey(auth, apiKeyHeader);
 
   if (isAdminRequest(path)) {
+    // `ECCOS_ADMIN_API_KEY` is a SELF-HOST BOOTSTRAP secret, and normal
+    // operation never needs it — including attaching a WhatsApp number, which
+    // the console now does end to end (Embedded Signup, or the pasted-token
+    // panel on Settings, eccos-up9). Setting it on a managed deployment to run
+    // a one-off `POST /v1/accounts/:accountId/wabas` by curl would be turning a
+    // missing feature into a standing credential; the feature is not missing.
+    //
+    // Unset is the safe default and needs no other guard: `constantTimeEqual`
+    // against "" can never pass, so an unset secret is a disabled route rather
+    // than an open one.
     const adminKey = (c.env as { ECCOS_ADMIN_API_KEY?: string }).ECCOS_ADMIN_API_KEY ?? "";
     if (!rawKey || !constantTimeEqual(adminKey, rawKey)) {
       logEvent("v1_unauthorized", cid, 401, { path, scope: "admin" });

@@ -1,4 +1,9 @@
-import type { CreateTemplateFailureCode, Failure, SendTestFailureCode } from "../server/gateway";
+import type {
+  CreateTemplateFailureCode,
+  Failure,
+  ManualConnectFailureCode,
+  SendTestFailureCode,
+} from "../server/gateway";
 
 /**
  * What the console says about a `{ ok: false }` (eccos-k5a).
@@ -160,6 +165,65 @@ export function createTemplateFailureCopy(
       return {
         title: "Meta refused the template",
         detail: detail ?? "Meta refused the template without saying why.",
+      };
+  }
+}
+
+/**
+ * What the console says about a refused pasted-token connection (eccos-up9).
+ *
+ * Same discipline as {@link sendTestFailureCopy}: keyed on the closed
+ * `ManualConnectFailureCode` the gateway decided, never on Meta's message text.
+ *
+ * The `foreign_app` sentence is the one that carries the whole design of this
+ * surface. The form is honest rather than hidden — no deployment flag can tell
+ * a workable token from an unworkable one, because workability is a property of
+ * the TOKEN — so the operator who cannot use it learns that here, in the
+ * console's own words, together with the flow that does work for them.
+ */
+export function tokenConnectFailureCopy(
+  code: ManualConnectFailureCode,
+  detail: string | null,
+): FailureCopy {
+  switch (code) {
+    case "foreign_app":
+      return {
+        title: "Another app issued this token",
+        detail:
+          "Meta only lets an app inspect the tokens it issued itself, and this one came from a different app. To connect a number your business owns, use Connect with Meta on the Numbers page.",
+      };
+    case "invalid_token":
+      return {
+        // Not "invalid": the token was fine when it was copied, and saying
+        // otherwise sends the operator looking for the wrong mistake.
+        title: "Meta no longer accepts this token",
+        detail:
+          "It has expired or been revoked. The App Dashboard's test token lasts about a day — copy a fresh one and paste it here.",
+      };
+    case "no_waba":
+      return {
+        title: "No WhatsApp account on this token",
+        detail:
+          "This token names no WhatsApp Business Account with a phone number. Generate it with the WhatsApp account selected, or use a system-user token that has the account assigned as an asset.",
+      };
+    case "multiple":
+      // The panel renders the candidates itself, so this exists for the case
+      // where it somehow has none to show.
+      return {
+        title: "More than one account",
+        detail:
+          "This token reaches several WhatsApp Business Accounts. Pick the one to connect — nothing was attached.",
+      };
+    case "owned":
+      return {
+        title: "Already connected elsewhere",
+        detail:
+          "This WhatsApp Business Account belongs to another Eccos workspace. It has to be disconnected there before it can be attached here.",
+      };
+    default:
+      return {
+        title: "Meta refused the connection",
+        detail: detail ?? "Meta refused the connection without saying why.",
       };
   }
 }
