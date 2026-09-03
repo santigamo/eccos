@@ -8,7 +8,7 @@ import {
   useLocation,
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
-import { getDashboardState } from "../server/gateway"
+import { getDashboardState, hasForwardingTarget } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { normalizeSearchWabaId } from "../lib/search"
 import { requirementSatisfied } from "../lib/scope-requirements"
@@ -50,10 +50,23 @@ export const Route = createRootRoute({
     ) {
       throw redirect({ to: "/numbers" })
     }
-    // Display identity for the sidebar's account section. Deduped with the
-    // loader's own session read by the request-scoped memo.
-    const user = await getSessionUser()
-    return { ...state, user }
+    // Display identity for the sidebar's account section, and the one setup
+    // fact the state above does not carry (whether a forwarding target is
+    // configured — `lib/setup-checklist.ts`). Both are deduped with the
+    // loader's own session read by the request-scoped memo, and they run
+    // together because they do not depend on each other: two sequential awaits
+    // here would add a round trip to every navigation.
+    //
+    // The checklist read is deliberately NOT folded into `getDashboardState`:
+    // that shape drives the root redirect and the stage machine, and display
+    // data has no business deciding where an operator lands.
+    const [user, forwardingTarget] = await Promise.all([
+      getSessionUser(),
+      state.ok && state.data.stage !== "no-organization"
+        ? hasForwardingTarget({ data: { wabaId: deps.wabaId } })
+        : Promise.resolve(false),
+    ])
+    return { ...state, user, hasForwardingTarget: forwardingTarget }
   },
   head: () => ({
     meta: [

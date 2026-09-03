@@ -144,6 +144,7 @@ const {
   retryDelivery,
   getSubscriberConfig,
   setSubscriberConfig,
+  hasForwardingTarget,
   resubscribe,
   recheckNumber,
   sendTemplateTest,
@@ -1074,15 +1075,24 @@ describe("deleteTemplate (row action)", () => {
   });
 });
 
-// --- Settings view (routes/settings.tsx) ---
+// --- Webhooks view (routes/webhooks.tsx) ---
 
-describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view)", () => {
+describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Webhooks view)", () => {
   test("getSubscriberConfig reachable: returns the config without the secret", async () => {
     withResources({
-      getSubscriberConfig: async () => ({ url: "https://example.com/webhook", hasSecret: true }),
+      // `lastForward` is part of `SubscriberConfig`: the Webhooks page reads it
+      // for the "last forward" cell, so a mock without it is off-contract.
+      getSubscriberConfig: async () => ({
+        url: "https://example.com/webhook",
+        hasSecret: true,
+        lastForward: null,
+      }),
     });
     const res = await getSubscriberConfig();
-    expect(res).toEqual({ ok: true, data: { url: "https://example.com/webhook", hasSecret: true } });
+    expect(res).toEqual({
+      ok: true,
+      data: { url: "https://example.com/webhook", hasSecret: true, lastForward: null },
+    });
   });
 
   test("getSubscriberConfig unreachable: missing binding yields the graceful error shape", async () => {
@@ -1103,6 +1113,96 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Settings view
     const res = await setSubscriberConfig({ data: { url: "https://new.example.com", secret: "s3cr3t" } });
     expect(res).toEqual({ ok: true, data: { ok: true } });
     expect(received).toEqual([{ url: "https://new.example.com", secret: "s3cr3t" }]);
+  });
+
+  test("setSubscriberConfig can REMOVE the target, which it could not say before", async () => {
+    // `url` used to be required, so the console had no way to stop forwarding:
+    // the only exit was a URL nobody listens on, which keeps failing deliveries
+    // against a destination that is gone. `null` is that exit, and the gateway
+    // holds the queue afterwards rather than burning attempts.
+    const received: unknown[] = [];
+    withResources({
+      setSubscriberConfig: async (input: unknown) => {
+        received.push(input);
+        return { ok: true };
+      },
+    });
+    const res = await setSubscriberConfig({ data: { url: null } });
+    expect(res).toEqual({ ok: true, data: { ok: true } });
+    // No `secret` key at all: removing a target keeps the stored secret, so
+    // re-pointing at a receiver does not quietly change what it must verify.
+    expect(received).toEqual([{ url: null }]);
+  });
+
+  test("removing the secret is its own operation, spelled null", async () => {
+    const received: unknown[] = [];
+    withResources({
+      setSubscriberConfig: async (input: unknown) => {
+        received.push(input);
+        return { ok: true };
+      },
+    });
+    await setSubscriberConfig({ data: { url: "https://new.example.com", secret: null } });
+    expect(received).toEqual([{ url: "https://new.example.com", secret: null }]);
+  });
+
+  test("an omitted secret means KEEP, and travels as an absence", async () => {
+    const received: unknown[] = [];
+    withResources({
+      setSubscriberConfig: async (input: unknown) => {
+        received.push(input);
+        return { ok: true };
+      },
+    });
+    await setSubscriberConfig({ data: { url: "https://new.example.com" } });
+    expect(received).toEqual([{ url: "https://new.example.com" }]);
+  });
+
+  test("an empty-string secret is REFUSED, not read as 'keep'", () => {
+    // THE AMBIGUITY THIS CLOSES. An empty box used to mean "keep", so "I did
+    // not touch it" and "I want it gone" were the same request. Clearing has
+    // its own spelling now (`null`), and the console refuses the form state
+    // that used to mean two things — as the gateway does.
+    withResources({ setSubscriberConfig: async () => ({ ok: true }) });
+    expect(() =>
+      setSubscriberConfig({ data: { url: "https://new.example.com", secret: "   " } }),
+    ).toThrow(/pass null to remove it/);
+  });
+
+  test("an empty url is still refused: removal is null, never a blank field", () => {
+    withResources({ setSubscriberConfig: async () => ({ ok: true }) });
+    expect(() => setSubscriberConfig({ data: { url: "" } })).toThrow(
+      /url must be a non-empty string/,
+    );
+  });
+
+  test("hasForwardingTarget answers the checklist with a boolean, never a config", async () => {
+    // It rides every page load for the sidebar checklist, so it returns the one
+    // bit that is asked of it — the URL itself is nobody's business outside the
+    // Webhooks page.
+    withResources({
+      getSubscriberConfig: async () => ({
+        url: "https://example.com/webhook",
+        hasSecret: true,
+        lastForward: null,
+      }),
+    });
+    expect(await hasForwardingTarget()).toBe(true);
+
+    withResources({
+      getSubscriberConfig: async () => ({ url: null, hasSecret: false, lastForward: null }),
+    });
+    expect(await hasForwardingTarget()).toBe(false);
+  });
+
+  test("hasForwardingTarget says false rather than failing when there is no scope", async () => {
+    // An account with no WABA has no subscriber config to read, and "no
+    // forwarding target" is simply true there. A checklist row cannot render a
+    // failure card, and nothing else consumes this, so nothing loses a
+    // diagnosis by answering the question instead of throwing.
+    withResources({});
+    gatewayBinding = undefined;
+    expect(await hasForwardingTarget()).toBe(false);
   });
 
   test("setSubscriberConfig unreachable: throw is surfaced as { ok: false }", async () => {

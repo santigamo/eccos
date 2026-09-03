@@ -42,7 +42,13 @@ describe("GatewayRPC with a registered account", () => {
     ]);
     expect(status.connection.wabaId).toBe(TEST_WABA_ID);
     expect(inbound[0]).toMatchObject({ phone_number_id: "PNID1" });
-    expect(cfg).toEqual({ url: null, hasSecret: false });
+    // One ingest happened above, so the newest delivery rides the same read —
+    // held (`pending`, nothing attempted) because no forwarding target is set.
+    expect(cfg).toEqual({
+      url: null,
+      hasSecret: false,
+      lastForward: { status: "pending", attempts: 0, createdAt: expect.any(Number), finishedAt: null, lastError: null },
+    });
 
     // Another account cannot address this WABA (fail closed).
     await expect(rpc.listInbound({ wabaId: TEST_WABA_ID }, "other-account")).rejects.toThrow(/not owned|does not exist/);

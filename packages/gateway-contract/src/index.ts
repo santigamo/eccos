@@ -38,6 +38,15 @@ export interface DeliveryRecord {
   last_error: string | null;
   next_attempt_at: number;
   created_at: number;
+  /**
+   * Epoch ms of the terminal transition (`delivered` or `failed`), or null when
+   * the row has not finished — queued, held because no forwarding target is
+   * configured, or waiting between retries. Rows written before the column
+   * existed are also null. NEVER substitute `created_at` for it: that is the
+   * moment the batch ARRIVED, and reporting it as the moment it landed is the
+   * exact confusion this column was added to end.
+   */
+  finished_at: number | null;
   /** The forwarded `{ events: [...] }` JSON. An empty string means the payload was
    * REDACTED (content retention expiry or erasure): only metadata remains and the
    * row can no longer be replayed. */
@@ -64,16 +73,81 @@ export type ListOpts = { wabaId: string; limit?: number; before?: number };
 
 export type DeliveryListOpts = ListOpts & { status?: string };
 
+/**
+ * The newest forwarding attempt on a WABA — the answer to the only question the
+ * Webhooks page really asks: "is my receiver getting events?".
+ *
+ * Deliberately the LAST delivery row and not an aggregate: aggregates say how
+ * the queue has behaved over its whole retained history, and an operator who
+ * just changed something wants to know what happened afterwards. The totals
+ * remain available in {@link OperatorCounts}.
+ */
+export interface LastForward {
+  /** The delivery row's own status: `pending`, `delivered` or `failed`. A row
+   * held because no target is configured is `pending` with `attempts: 0` — it
+   * has not been tried, not failed. */
+  status: string;
+  /** Forward attempts spent so far; `0` on a row nothing has been tried on. */
+  attempts: number;
+  /** Epoch ms the batch was enqueued: when the event ARRIVED, never when it landed. */
+  createdAt: number;
+  /**
+   * Epoch ms of the terminal transition, or null when the row has not finished
+   * (queued, held for want of a target, or between retries). Null is a fact, not
+   * a gap to fill: a reader that falls back to {@link LastForward.createdAt}
+   * turns "queued 15 days ago" into "delivered 15 days ago" and states something
+   * it does not know.
+   */
+  finishedAt: number | null;
+  /** Why the last attempt failed, verbatim from `deliveries.last_error`. Null on
+   * success, and on a row no attempt has been made against. */
+  lastError: string | null;
+}
+
 /** Outbound-forwarding target as seen by the operator. The secret is NEVER exposed. */
 export interface SubscriberConfig {
   url: string | null;
   hasSecret: boolean;
+  /**
+   * The newest delivery row, or null when nothing has ever been enqueued. It
+   * rides this read instead of owning an RPC method of its own: inside the
+   * Durable Object it is one primary-key-ordered `LIMIT 1`, which costs far less
+   * than a second round-trip over the service binding.
+   */
+  lastForward: LastForward | null;
 }
 
-/** Rotate the forwarding target. `url` is always set; `secret` is only set when provided. */
+/**
+ * Write the forwarding target.
+ *
+ * Every field states one intention and only one, because the console renders one
+ * control per intention and an operator cannot undo a state that meant something
+ * else than they read into it.
+ *
+ * `url`
+ *  - a string — store it (https, no credentials, no private host);
+ *  - `null` — REMOVE the target. Nothing is forwarded afterwards; new events are
+ *    held in the queue rather than failed against a destination that is gone.
+ *
+ * `secret` — the HMAC key behind `x-eccos-signature`
+ *  - omitted — keep whatever is stored. That is what an untouched password field
+ *    means, and it is now the only thing it can mean;
+ *  - a non-empty string — replace it. An empty string is REFUSED, not silently
+ *    read as "keep": clearing has its own spelling, so the ambiguity is gone;
+ *  - `null` — REMOVE it. Deliveries then forward unsigned.
+ *
+ * The two are independent on purpose. Removing a target keeps the secret, so
+ * re-pointing at a receiver does not quietly change what that receiver must
+ * verify; a caller that wants removal to forget everything says both out loud
+ * (`{ url: null, secret: null }`).
+ *
+ * The secret VALUE never comes back out — see {@link SubscriberConfig}, where
+ * `hasSecret` is its only trace. That is a stated property of the operator API
+ * (`docs/threat-model.md`), not an omission.
+ */
 export interface SetSubscriberConfigInput {
-  url: string;
-  secret?: string;
+  url: string | null;
+  secret?: string | null;
 }
 
 export type ResubscribeResult = { ok: true } | { ok: false; error: string };

@@ -1,12 +1,21 @@
-import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { createExecutionContext, runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   backoffMs,
   runBoundedPool,
   type EccosGateway,
 } from "../../src/gateway";
+import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { bootstrapAccount, gatewayStub, SUBSCRIBER_SECRET, SUBSCRIBER_URL } from "./helpers";
+import {
+  bootstrapAccount,
+  gatewayStub,
+  SUBSCRIBER_SECRET,
+  SUBSCRIBER_URL,
+  TEST_ACCOUNT_ID,
+  TEST_WABA_ID,
+} from "./helpers";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -127,6 +136,8 @@ describe("EccosGateway alarm", () => {
       at: 1_700_000_000_000,
     };
 
+    // A CONFIGURED target that refuses: the drain runs, so this is a real fault.
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     await seedPendingDelivery(event);
 
     const before = Date.now();
@@ -151,6 +162,9 @@ describe("EccosGateway alarm", () => {
       at: 1_700_000_000_000,
     };
 
+    // Configured target, so nothing is held: a destination that keeps refusing
+    // must still exhaust its attempts and end `failed`.
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     await seedPendingDelivery(event);
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
@@ -197,7 +211,11 @@ describe("EccosGateway alarm", () => {
     });
   });
 
-  it("distinguishes a missing subscriber URL from a rejecting subscriber", async () => {
+  // The queue is HELD, not failed, while no forwarding target is configured.
+  // Spending six attempts on a destination that does not exist turned a WABA
+  // whose operator had simply not finished setup into a permanently `unhealthy`
+  // gateway. See the drain comment in gateway.ts for the full argument.
+  it("holds the drain when no forwarding target is configured: no attempt, no error, no fetch", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     await seedPendingDelivery({
       type: "delivered",
@@ -208,15 +226,164 @@ describe("EccosGateway alarm", () => {
     // No DO config: the forwarding target is unset (there is no env fallback),
     // exercising the "operator has not configured a destination" path.
     await runDurableObjectAlarm(gatewayStub());
+    // ...and again, to prove the hold does not erode the row over time.
+    await runGatewayAlarm();
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
-        .exec("SELECT last_error FROM deliveries ORDER BY id DESC LIMIT 1")
-        .toArray()[0] as { last_error: string };
-      expect(row.last_error).toBe("no subscriber URL configured");
+        .exec("SELECT status, attempts, last_error, finished_at FROM deliveries ORDER BY id DESC LIMIT 1")
+        .toArray()[0] as { status: string; attempts: number; last_error: string | null; finished_at: number | null };
+      expect(row.status).toBe("pending");
+      expect(row.attempts).toBe(0);
+      expect(row.last_error).toBeNull();
+      expect(row.finished_at).toBeNull();
     });
     // Nothing was sent: with no target there is no request to make.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a held backlog `pending`, so health reads degraded rather than unhealthy", async () => {
+    vi.spyOn(globalThis, "fetch");
+    await seedPendingDeliveries(
+      Array.from({ length: 12 }, (_, i) => ({
+        type: "reply" as const,
+        from: "34600000000",
+        messageId: `wamid.HELD${i}`,
+        text: `row ${i}`,
+        at: 1_700_000_000_000,
+      })),
+    );
+
+    await runGatewayAlarm();
+
+    const counts = await gatewayStub().getCounts();
+    expect(counts.deliveries).toEqual({ pending: 12 });
+    // 12 > the 10-row threshold in rpc.ts, and nothing failed: the gateway reads
+    // "waiting for a target", not "broken".
+    const status = await new GatewayRPC(createExecutionContext(), env).getStatus(TEST_WABA_ID, TEST_ACCOUNT_ID);
+    expect(status.health).toBe("degraded");
+  });
+
+  it("re-arms a slow retention tick while rows are held", async () => {
+    // Without this the retention sweep on a target-less WABA runs only on the
+    // next ingest — so a customer who went quiet before naming a receiver would
+    // keep held payloads past the content window indefinitely. The tick is
+    // SLOW (one sweep interval) and exists for the sweep, not for delivery.
+    await seedPendingDeliveries([
+      { type: "reply", from: "34600000000", messageId: "wamid.TICK", text: "held", at: 1_700_000_000_000 },
+    ]);
+
+    const armedAt = await runInDurableObject(
+      gatewayStub(),
+      async (instance: EccosGateway, state: DurableObjectState) => {
+        // Start from no alarm so what we read back can only be this alarm().
+        await state.storage.deleteAlarm();
+        await instance.alarm();
+        return state.storage.getAlarm();
+      },
+    );
+
+    expect(armedAt).not.toBeNull();
+    // An hour out, not "now": a held row is due, so re-arming at its
+    // `next_attempt_at` would spin the alarm against itself.
+    const inAnHour = Date.now() + 60 * 60 * 1000;
+    expect(armedAt!).toBeGreaterThan(Date.now() + 50 * 60 * 1000);
+    expect(armedAt!).toBeLessThanOrEqual(inAnHour);
+  });
+
+  it("does not re-arm when the held queue is empty", async () => {
+    // A quiet, target-less, empty Durable Object must go back to sleep for
+    // good. Ticking forever on nothing is the failure mode the `LIMIT 1` guard
+    // in `hasPendingDeliveries()` exists to prevent.
+    const armedAt = await runInDurableObject(
+      gatewayStub(),
+      async (instance: EccosGateway, state: DurableObjectState) => {
+        await state.storage.deleteAlarm();
+        await instance.alarm();
+        return state.storage.getAlarm();
+      },
+    );
+
+    expect(armedAt).toBeNull();
+  });
+
+  it("releases the held backlog as soon as a target is configured", async () => {
+    await seedPendingDelivery({
+      type: "delivered",
+      transportMessageId: "wamid.RELEASE",
+      at: 1_700_000_000_000,
+    });
+    await runGatewayAlarm();
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+      const row = instance.sql.exec("SELECT status FROM deliveries ORDER BY id DESC LIMIT 1").toArray()[0];
+      expect(row?.status).toBe("pending");
+    });
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
+    await new GatewayRPC(createExecutionContext(), env).setSubscriberConfig(
+      { url: SUBSCRIBER_URL },
+      TEST_WABA_ID,
+      TEST_ACCOUNT_ID,
+    );
+
+    // No further ingest and no hand-run alarm: `setSubscriberConfig` arms the
+    // alarm itself, and the runtime fires it. `waitFor` because that firing is
+    // asynchronous, not because the outcome is in doubt.
+    await vi.waitFor(async () => {
+      const row = await runInDurableObject(gatewayStub(), (instance: EccosGateway) =>
+        instance.sql
+          .exec("SELECT status, attempts, finished_at FROM deliveries ORDER BY id DESC LIMIT 1")
+          .toArray()[0] as unknown as { status: string; attempts: number; finished_at: number | null },
+      );
+      expect(row.status).toBe("delivered");
+      expect(row.attempts).toBe(1);
+      expect(row.finished_at).toBeGreaterThan(0);
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === SUBSCRIBER_URL)).toBe(true);
+  });
+
+  // `finished_at` (1.2): stamped on both terminal transitions and on neither retry.
+  it("stamps finished_at on delivered and failed, never on a retry", async () => {
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("fail", { status: 500 }));
+    await seedPendingDelivery({
+      type: "delivered",
+      transportMessageId: "wamid.FINISHEDAT",
+      at: 1_700_000_000_000,
+    });
+
+    await runDurableObjectAlarm(gatewayStub());
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+      const row = instance.sql
+        .exec("SELECT status, finished_at FROM deliveries ORDER BY id DESC LIMIT 1")
+        .toArray()[0] as { status: string; finished_at: number | null };
+      // Still retrying: a row that will be tried again has not finished.
+      expect(row.status).toBe("pending");
+      expect(row.finished_at).toBeNull();
+    });
+
+    const before = Date.now();
+    for (let i = 0; i < 2; i++) {
+      await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+        instance.sql.exec("UPDATE deliveries SET next_attempt_at = ? WHERE status = 'pending'", Date.now());
+      });
+      await runDurableObjectAlarm(gatewayStub());
+    }
+
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+      const row = instance.sql
+        .exec("SELECT status, finished_at FROM deliveries ORDER BY id DESC LIMIT 1")
+        .toArray()[0] as { status: string; finished_at: number | null };
+      expect(row.status).toBe("failed");
+      expect(row.finished_at).toBeGreaterThanOrEqual(before);
+
+      // A replay puts the row back in flight, so its completion moment goes too.
+      instance.retryDelivery(instance.sql.exec("SELECT id FROM deliveries ORDER BY id DESC LIMIT 1").toArray()[0]!.id as number);
+      const replayed = instance.sql
+        .exec("SELECT status, attempts, finished_at FROM deliveries ORDER BY id DESC LIMIT 1")
+        .toArray()[0] as { status: string; attempts: number; finished_at: number | null };
+      expect(replayed).toMatchObject({ status: "pending", attempts: 0, finished_at: null });
+    });
   });
 
   // Retention (split content/delivery windows + redaction) is covered in

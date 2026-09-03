@@ -17,7 +17,9 @@ import { isPublicConfigKey } from "./private-config-keys";
 interface Env {
   FORWARD_MAX_ATTEMPTS: string;
   /** Content retention window (days): past it, `inbound_events` and `outbound_messages`
-   * rows are deleted and terminal `deliveries` rows keep only metadata (payload redacted).
+   * rows are deleted, terminal `deliveries` rows keep only metadata (payload redacted),
+   * and `pending` `deliveries` rows — including events held for want of a forwarding
+   * target — are deleted outright.
    * Optional wrangler var; default 30, clamped to [7, 90]. */
   CONTENT_RETENTION_DAYS?: string;
   /** Delivery-audit retention window (days): past it, terminal `deliveries` rows are
@@ -246,7 +248,8 @@ export class EccosGateway extends DurableObject<Env> {
         attempts        INTEGER NOT NULL DEFAULT 0,
         last_error      TEXT,
         next_attempt_at INTEGER NOT NULL,
-        created_at      INTEGER NOT NULL
+        created_at      INTEGER NOT NULL,
+        finished_at     INTEGER
       );`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_pending
         ON deliveries (status, next_attempt_at);`);
@@ -259,15 +262,29 @@ export class EccosGateway extends DurableObject<Env> {
         ON inbound_events (received_at);`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_outbound_created
         ON outbound_messages (created_at);`);
-      const ensureColumn = (table: string, column: string): void => {
+      // Additive migration for objects created before a column existed. `type`
+      // matters: SQLite applies column affinity on write, so an epoch-ms
+      // timestamp landing in a TEXT column would come back out as a string and
+      // every reader would have to guess. Timestamps declare INTEGER.
+      const ensureColumn = (table: string, column: string, type = "TEXT"): void => {
         const columns = this.sql.exec(`PRAGMA table_info(${table})`).toArray();
         if (!columns.some((row) => row.name === column)) {
-          this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+          this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
         }
       };
       ensureColumn("inbound_events", "phone_number_id");
       ensureColumn("outbound_messages", "phone_number_id");
       ensureColumn("deliveries", "phone_number_id");
+      // When a delivery reached its terminal state (`delivered` or `failed`).
+      // `created_at` alone can only say when the batch was ENQUEUED, so "last
+      // delivery 15 days ago" was, until now, a sentence the gateway could not
+      // honestly say — least of all about a row that spent five retries getting
+      // there. Rows that predate this column stay NULL and MUST be read as "not
+      // finished", never backfilled from `created_at`: that would invent a
+      // completion moment out of an arrival moment, which is the exact lie the
+      // column exists to stop. NULL is also the live meaning — queued, held for
+      // want of a forwarding target, or waiting between retries.
+      ensureColumn("deliveries", "finished_at", "INTEGER");
     });
   }
 
@@ -350,22 +367,68 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /** Operator-visible forwarding target: DO config only (per-WABA runtime state).
-   * Never exposes the secret. */
+   * Never exposes the secret — `hasSecret` is the only trace it leaves. */
   getSubscriberConfig(): SubscriberConfig {
     const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? null;
     const hasSecret = Boolean(this.getConfigValue("SUBSCRIBER_SECRET"));
-    return { url, hasSecret };
+    return { url, hasSecret, lastForward: this.lastForward() };
   }
 
-  /** Rotate the forwarding target. Only overwrites the secret when a non-empty one is provided. */
-  setSubscriberConfig(input: SetSubscriberConfigInput): void {
-    const entries: Record<string, string> = {
-      SUBSCRIBER_WEBHOOK_URL: validateSubscriberUrl(input.url),
+  /**
+   * The newest delivery row, which is the whole answer to "is my receiver
+   * getting events?". It rides `getSubscriberConfig` instead of owning an RPC
+   * method: `id` is the INTEGER PRIMARY KEY, so `ORDER BY id DESC LIMIT 1` is a
+   * one-row seek down the rowid index, and paying a second round-trip over the
+   * service binding for it would cost far more than the query does.
+   */
+  private lastForward(): SubscriberConfig["lastForward"] {
+    const row = this.sql
+      .exec(
+        `SELECT status, attempts, last_error, created_at, finished_at
+         FROM deliveries ORDER BY id DESC LIMIT 1`,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    return {
+      status: row.status as string,
+      attempts: Number(row.attempts ?? 0),
+      createdAt: Number(row.created_at),
+      // NULL stays null: see the `finished_at` migration comment — an unfinished
+      // row must never borrow `created_at` as its completion moment.
+      finishedAt: row.finished_at == null ? null : Number(row.finished_at),
+      lastError: (row.last_error as string | null) ?? null,
     };
-    if (typeof input.secret === "string" && input.secret.length > 0) {
-      entries.SUBSCRIBER_SECRET = input.secret;
+  }
+
+  /**
+   * Write the forwarding target. Each field says one thing and only one thing
+   * (see `SetSubscriberConfigInput`): a `null` `url` REMOVES the target, a
+   * `null` `secret` REMOVES the secret, an absent `secret` keeps the stored one.
+   * An empty-string secret is refused rather than quietly read as "keep" —
+   * clearing has its own spelling now, so the ambiguity has no reason to exist.
+   */
+  setSubscriberConfig(input: SetSubscriberConfigInput): void {
+    const url = input.url === null ? null : validateSubscriberUrl(input.url);
+    const secret = input.secret;
+    if (typeof secret === "string" && secret.trim() === "") {
+      throw new Error("invalid subscriber secret: pass null to clear it, never an empty string");
     }
-    this.saveConfig(entries);
+    this.ctx.storage.transactionSync(() => {
+      const put = (key: string, value: string): void => {
+        this.sql.exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, key, value);
+      };
+      const drop = (key: string): void => {
+        this.sql.exec(`DELETE FROM config WHERE key = ?`, key);
+      };
+      if (url === null) drop("SUBSCRIBER_WEBHOOK_URL");
+      else put("SUBSCRIBER_WEBHOOK_URL", url);
+      if (secret === null) drop("SUBSCRIBER_SECRET");
+      else if (secret !== undefined) put("SUBSCRIBER_SECRET", secret);
+    });
+    // A target now exists, so release whatever the drain was holding for want of
+    // one (see `alarm()`). Without this the backlog would sit until the next
+    // ingest happened to set an alarm, i.e. until the next inbound message.
+    if (url !== null) this.ctx.storage.setAlarm(Date.now());
   }
 
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---
@@ -395,7 +458,7 @@ export class EccosGateway extends DurableObject<Env> {
   listDeliveries(opts: { status?: string; limit?: number; before?: number } = {}): DeliveryRecord[] {
     const before = opts.before ?? Number.MAX_SAFE_INTEGER;
     const limit = clampPage(opts.limit);
-    const cols = "id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, payload";
+    const cols = "id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, finished_at, payload";
     if (opts.status) {
       return this.sql
         .exec(
@@ -432,7 +495,7 @@ export class EccosGateway extends DurableObject<Env> {
   private listAllDeliveries(): DeliveryRecord[] {
     return this.sql
       .exec(
-        `SELECT id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, payload
+        `SELECT id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, finished_at, payload
          FROM deliveries ORDER BY id DESC`,
       )
       .toArray() as unknown as DeliveryRecord[];
@@ -441,7 +504,7 @@ export class EccosGateway extends DurableObject<Env> {
   getDelivery(id: number): DeliveryRecord | null {
     const rows = this.sql
       .exec(
-        `SELECT id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, payload
+        `SELECT id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, finished_at, payload
          FROM deliveries WHERE id = ?`,
         id,
       )
@@ -504,8 +567,11 @@ export class EccosGateway extends DurableObject<Env> {
       return { ok: false, previousStatus: row.status as string };
     }
     const now = Date.now();
+    // `finished_at` goes back to NULL with the rest of the terminal state: the
+    // row is queued again, and a pending row that claims a completion moment
+    // would be lying to every reader of that column.
     this.sql.exec(
-      "UPDATE deliveries SET status='pending', attempts=0, last_error=NULL, next_attempt_at=? WHERE id=?",
+      "UPDATE deliveries SET status='pending', attempts=0, last_error=NULL, finished_at=NULL, next_attempt_at=? WHERE id=?",
       now,
       id,
     );
@@ -648,18 +714,57 @@ export class EccosGateway extends DurableObject<Env> {
     // destructive DELETE/UPDATE windows, unlike maxAttempts above.
     const { contentDays, deliveryDays } = resolveRetentionDays(this.env);
 
+    /**
+     * The drain is HELD while no forwarding target is configured.
+     *
+     * `pending` covers two situations and only one of them is a fault: "the
+     * subscriber has not answered yet" and "there is no subscriber". Draining
+     * the second spends the row's six attempts against a destination that does
+     * not exist, writes "no subscriber URL configured" into `last_error` each
+     * time, and parks it in `failed` — which `healthFromCounts` (rpc.ts) reads
+     * as `unhealthy`. A customer who received one event before configuring a
+     * target therefore saw a permanently red gateway for having done nothing
+     * wrong, and the console could not honestly call that setup step skippable.
+     *
+     * Held means held: no attempt, no `attempts++`, no `last_error`, and no
+     * delivery reschedule below — the rows are already due, so rescheduling
+     * against `next_attempt_at` would spin the alarm against itself. What the
+     * held branch DOES re-arm is the slow retention tick; see it below.
+     * `setSubscriberConfig` sets the alarm that releases the backlog the moment
+     * a target exists.
+     *
+     * Held is not forever. A held row is still content, so it ages out with
+     * `CONTENT_RETENTION_DAYS` like everything else (`pruneExpired` deletes it,
+     * and says there why deletion rather than redaction). The hold buys an
+     * operator the retention window to name a receiver — not an unbounded
+     * archive that would quietly outlive the privacy promise in docs/privacy.md.
+     *
+     * The wait stays visible. Past ten held rows `healthFromCounts` reads
+     * `degraded`, which is the honest word for it: events are queued for a
+     * destination the operator has not named yet — the gateway is neither
+     * broken nor fine, and nothing is being spent. That is not special-cased.
+     *
+     * Nothing else is held. A configured target that refuses keeps failing,
+     * keeps incrementing, and keeps turning the gateway `unhealthy`, because
+     * that is a real fault and blunting it would be worse than the bug this
+     * fixes.
+     */
+    const hasTarget = Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL"));
+
     // alarm() may fire more than once; the drain is idempotent because it only
     // processes status='pending' rows, transitions them by id, and forwardOne()
     // sends x-idempotency-key for subscriber-side dedupe.
-    const rows = this.sql
-      .exec(
-        `SELECT id, payload, attempts, next_attempt_at FROM deliveries
+    const rows = hasTarget
+      ? (this.sql
+          .exec(
+            `SELECT id, payload, attempts, next_attempt_at FROM deliveries
        WHERE status = 'pending' AND next_attempt_at <= ?
        ORDER BY id LIMIT ?`,
-        now,
-        ALARM_BATCH,
-      )
-      .toArray() as unknown as DeliveryRow[];
+            now,
+            ALARM_BATCH,
+          )
+          .toArray() as unknown as DeliveryRow[])
+      : [];
 
     let workerError: unknown;
     let hasWorkerError = false;
@@ -674,27 +779,60 @@ export class EccosGateway extends DurableObject<Env> {
 
     // Split retention (docs/data-lifecycle.md):
     //  - content window: message content is removed everywhere — inbound/outbound
-    //    rows are deleted and terminal deliveries keep only operational metadata
-    //    (payload redacted in place; id/status/attempts/last_error/timestamps survive).
+    //    rows are deleted, terminal deliveries keep only operational metadata
+    //    (payload redacted in place; id/status/attempts/last_error/timestamps survive),
+    //    and rows still `pending` are deleted outright (see pruneExpired).
     //  - delivery window: the redacted audit rows themselves are deleted.
-    // Rows still `pending` are never touched by age.
-    const lastSweep = Number(this.getConfigValue(LAST_SWEEP_KEY) ?? 0);
-    if (now - lastSweep >= SWEEP_INTERVAL_MS) {
+    let nextSweepAt = Number(this.getConfigValue(LAST_SWEEP_KEY) ?? 0) + SWEEP_INTERVAL_MS;
+    if (now >= nextSweepAt) {
       this.pruneExpired(now, contentDays, deliveryDays);
       this.saveConfig({ [LAST_SWEEP_KEY]: String(now) });
+      nextSweepAt = now + SWEEP_INTERVAL_MS;
     }
 
-    const nextRows = this.sql
-      .exec(`SELECT MIN(next_attempt_at) AS next FROM deliveries WHERE status='pending'`)
-      .toArray();
-    const nextRow = nextRows[0];
-    const next = nextRow ? (nextRow.next as number | null) : null;
-    if (next != null) this.ctx.storage.setAlarm(next);
+    // Only reschedule against `next_attempt_at` when there is somewhere to send.
+    // Held rows are due now, so an unconditional reschedule would set an alarm
+    // in the past and re-enter this method forever without ever forwarding.
+    if (hasTarget) {
+      const nextRows = this.sql
+        .exec(`SELECT MIN(next_attempt_at) AS next FROM deliveries WHERE status='pending'`)
+        .toArray();
+      const nextRow = nextRows[0];
+      const next = nextRow ? (nextRow.next as number | null) : null;
+      if (next != null) this.ctx.storage.setAlarm(next);
+    } else if (this.hasPendingDeliveries()) {
+      /**
+       * Held, but not forgotten: a slow tick so RETENTION still runs.
+       *
+       * The sweep above only happens when an alarm fires, and on a target-less
+       * WABA the only thing that fires an alarm is a fresh ingest. A customer
+       * who received a burst of events and then went quiet before naming a
+       * receiver would keep those held payloads — message bodies and contact
+       * phone numbers — past the content window for as long as nobody messaged
+       * them again. That is the same leak `pruneExpired` closes, arriving by a
+       * different door, and it is why this branch exists at all.
+       *
+       * One alarm per sweep interval, and ONLY while something is actually
+       * held. Re-arming with an empty queue would keep an idle Durable Object
+       * waking up forever for nothing; re-arming at `next_attempt_at` would set
+       * an alarm in the past and spin. `nextSweepAt` is always in the future
+       * here — either the sweep just ran (now + interval) or it was skipped
+       * because its due time has not arrived.
+       */
+      this.ctx.storage.setAlarm(nextSweepAt);
+    }
     if (hasWorkerError) throw workerError;
   }
 
-  /** Applies both retention windows. Called at most once an hour from alarm();
-   * exposed so tests can drive it directly instead of racing the throttle. */
+  /** Cheap existence check — `LIMIT 1`, not a COUNT: the hold only needs to know
+   * whether anything is waiting, and a target-less WABA can hold a lot of rows. */
+  private hasPendingDeliveries(): boolean {
+    return this.sql.exec(`SELECT 1 FROM deliveries WHERE status='pending' LIMIT 1`).toArray().length > 0;
+  }
+
+  /** Applies both retention windows — content (delete/redact by kind of row) and
+   * delivery-audit. Called at most once an hour from alarm(); exposed so tests
+   * can drive it directly instead of racing the throttle. */
   pruneExpired(now: number, contentDays: number, deliveryDays: number): void {
     const contentCutoff = now - contentDays * DAY_MS;
     const deliveryCutoff = now - deliveryDays * DAY_MS;
@@ -704,6 +842,27 @@ export class EccosGateway extends DurableObject<Env> {
       contentCutoff,
       REDACTED_PAYLOAD,
     );
+    // A `pending` row past the content window is DELETED, not redacted.
+    //
+    // Redaction is right for a terminal row: the forward already happened, so
+    // what survives is audit evidence about a delivery that took place. A
+    // pending row has not been forwarded yet, and the drain does not consult
+    // retention — so a redacted pending row would still go out the moment a
+    // target is configured, and would arrive at the subscriber as a batch with
+    // an empty body. The receiver cannot tell that from a real event, so it
+    // would be worse than never sending it: the content is gone either way, and
+    // one of the two options also injects a lie into the customer's system.
+    //
+    // This rule is new because `pending` is new as a long-lived state. Before
+    // alarm() started HOLDING the drain while no forwarding target exists,
+    // every row reached `delivered` or `failed` within about an hour, so
+    // "pending rows are never touched by age" cost nothing. With the hold, a
+    // target-less WABA would otherwise keep full event payloads — message
+    // bodies and contact phone numbers — indefinitely, breaking the retention
+    // promise in docs/privacy.md for exactly the customer the hold was built
+    // for. The window is the CONTENT window, deliberately: this is a content
+    // deletion, not an audit-trail expiry.
+    this.sql.exec(`DELETE FROM deliveries WHERE status = 'pending' AND created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, deliveryCutoff);
@@ -715,6 +874,11 @@ export class EccosGateway extends DurableObject<Env> {
    * opposite diagnoses (missing config vs a destination that rejects), and
    * collapsing them into one string means the delivery queue cannot tell an
    * operator which one happened.
+   *
+   * The missing-URL branch is now a narrow race guard rather than the ordinary
+   * unconfigured path: `alarm()` holds the drain when no target is set, so this
+   * can only be reached if the target is removed between that check and this
+   * fetch. It stays because the row must still say why it did not go out.
    */
   private async forwardOne(payload: string): Promise<ForwardOutcome> {
     const rawUrl = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL");
@@ -761,14 +925,24 @@ export class EccosGateway extends DurableObject<Env> {
       error = e instanceof Error ? e.message : String(e);
     }
     const attempts = row.attempts + 1;
+    // `finished_at` is written on BOTH terminal transitions and on neither retry:
+    // a row that is going to be tried again has not finished, and stamping it
+    // would make "last delivery" mean "last attempt".
     if (ok) {
       this.sql.exec(
-        `UPDATE deliveries SET status='delivered', attempts=?, last_error=NULL WHERE id=?`,
+        `UPDATE deliveries SET status='delivered', attempts=?, last_error=NULL, finished_at=? WHERE id=?`,
         attempts,
+        Date.now(),
         row.id,
       );
     } else if (attempts >= maxAttempts) {
-      this.sql.exec(`UPDATE deliveries SET status='failed', attempts=?, last_error=? WHERE id=?`, attempts, error, row.id);
+      this.sql.exec(
+        `UPDATE deliveries SET status='failed', attempts=?, last_error=?, finished_at=? WHERE id=?`,
+        attempts,
+        error,
+        Date.now(),
+        row.id,
+      );
     } else {
       this.sql.exec(
         `UPDATE deliveries SET attempts=?, last_error=?, next_attempt_at=? WHERE id=?`,

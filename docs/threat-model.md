@@ -193,9 +193,10 @@ CSP with a pinned `script-src`, which is tracked separately.
   policy to misconfigure, because there is no operator route. The one browser handoff exception is
   the returned, short-lived gateway `/connect?state=...` URL; the OAuth callback remains on the
   gateway's public origin and the state is bound to the dashboard installation account.
-- **What the operator API returns:** `GatewayRPC.getSubscriberConfig()` explicitly returns only
-  `{ url, hasSecret }` — never the `SUBSCRIBER_SECRET` value itself (`gateway.ts` comment: "Never
-  exposes the secret"). `GatewayRPC.getConfig()` and `exportData()` filter private keys before
+- **What the operator API returns:** `GatewayRPC.getSubscriberConfig()` returns only
+  `{ url, hasSecret, lastForward }` — never the `SUBSCRIBER_SECRET` value itself (`gateway.ts`
+  comment: "Never exposes the secret"). `lastForward` is delivery-queue metadata (status,
+  attempts, timestamps, `last_error`) about the newest row, and carries no credential. `GatewayRPC.getConfig()` and `exportData()` filter private keys before
   returning config. The data-plane config table can contain the subscriber secret for forwarding,
   but access tokens are stored only in the control plane, encrypted at the application layer, and
   no private value is returned by the operator API.

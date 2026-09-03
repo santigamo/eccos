@@ -285,10 +285,12 @@ describe("account-scoped control plane", () => {
 
     const rpc = new GatewayRPC(createExecutionContext(), env);
     expect(await rpc.listInbound({ wabaId: "WABA_MIGRATE" }, account.accountId)).toHaveLength(2);
-    expect(await rpc.getSubscriberConfig("WABA_MIGRATE", account.accountId)).toEqual({
-      url: "https://existing.example/webhook",
-      hasSecret: true,
-    });
+    // `toMatchObject`, not `toEqual`: this WABA has ingested an event, so the read
+    // also carries `lastForward`, whose status depends on whether the drain alarm
+    // has run yet. The target itself is what this assertion is about.
+    const migratedCfg = await rpc.getSubscriberConfig("WABA_MIGRATE", account.accountId);
+    expect(migratedCfg).toMatchObject({ url: "https://existing.example/webhook", hasSecret: true });
+    expect(JSON.stringify(migratedCfg)).not.toContain("existing-secret");
     await cp(async (i) => expect((await i.getWaba(account.accountId, "WABA_MIGRATE"))?.metaAccessToken).toBe("migrated-token"));
     expect((await rpc.getStatus("WABA_MIGRATE", account.accountId)).connection.wabaId).toBe("WABA_MIGRATE");
   });
@@ -451,6 +453,7 @@ describe("account-scoped control plane", () => {
       expect(gateway.getSubscriberConfig()).toEqual({
         url: "https://tenant-a.example/webhook",
         hasSecret: true,
+        lastForward: null,
       });
     });
 

@@ -122,13 +122,22 @@ what error) should outlive the content itself:
 
 | Var (`apps/gateway/wrangler.jsonc` → `vars`) | Default | Effect when a row ages past it |
 |---|---|---|
-| `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, and `created_at` survive |
+| `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, `created_at`, and `finished_at` survive; **`pending` `deliveries` rows are deleted** (by `created_at`) |
 | `DELIVERY_RETENTION_DAYS` | **90** | terminal `deliveries` rows are **deleted** entirely, by `created_at` |
 
 So after ~30 days no message content (bodies, phone numbers) exists anywhere, but the
 metadata-only delivery rows remain another ~60 days as operational/audit evidence. A redacted
 delivery row (`payload = ''`) can no longer be replayed — `retryDelivery` refuses it — and the
-dashboard shows it with an empty payload. Rows still `pending` are never touched by age.
+dashboard shows it with an empty payload.
+
+**Why `pending` rows are deleted rather than redacted.** A `pending` row has not been
+forwarded yet, and the drain does not consult retention: a redacted pending row would still go
+out the moment a forwarding target exists, arriving at the subscriber as a batch with an empty
+body it cannot tell from a real event. Deleting it is the only option that neither keeps the
+content nor invents a delivery. This matters because `pending` is now a state a row can sit in
+for a long time: `alarm()` **holds** the drain while no forwarding target is configured (see
+[operations.md](./operations.md#incident-runbook)), so held events wait for a receiver — but
+only for the content window, like everything else. There is no unbounded held archive.
 
 The Workers target uses only the split vars; there is no tenant-wide retention setting. Both
 values are guarded: non-numeric or non-positive values fall back to the defaults instead of
@@ -140,9 +149,14 @@ feeding a destructive window (`resolveRetentionDays()` in
 `cfg.RETENTION_DAYS` (Zod default 30, `.env` or process env). It has no redaction step yet;
 split retention lands there when the target is retaken.
 
-Pruning cadence: the Workers target prunes as part of every `alarm()` invocation (which also
-drives delivery retries, so it runs at least as often as there's pending work, and is
-re-armed by `setAlarm()`); the Bun target prunes once per delivery-loop tick
+Pruning cadence: the Workers target sweeps from `alarm()`, throttled to **at most once an
+hour** (`SWEEP_INTERVAL_MS`; the alarm itself fires once per ingest, so sweeping on every
+invocation meant thousands of full scans a day deleting the same zero rows). The alarm is
+re-armed by `setAlarm()` while there is delivery work, so the sweep runs at least as often as
+there's pending work — and when the drain is **held** for want of a forwarding target, `alarm()`
+re-arms itself on that same hourly cadence for as long as any row is held, so a target-less
+WABA that stopped receiving traffic still ages its held content out on time. Nothing is
+re-armed once the queue is empty. The Bun target prunes once per delivery-loop tick
 (`processPending()`, every 5s via `startDeliveryLoop()`). Both are simple `DELETE`/`UPDATE
 ... WHERE <timestamp> < cutoff` statements. Workers scans stay inside one WABA's object, and
 the Bun scan stays inside one self-hosted instance.

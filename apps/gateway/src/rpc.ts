@@ -43,6 +43,18 @@ import type {
   TemplatesResult,
 } from "@eccos/gateway-contract";
 
+/**
+ * Delivery counts read as one word.
+ *
+ * `pending` is not a fault and never turns the gateway red: a backlog can simply
+ * be waiting for a forwarding target the operator has not configured yet, which
+ * the Durable Object's alarm holds rather than burns attempts against
+ * (`gateway.ts`). Past ten such rows `degraded` is the honest report — events
+ * are queued for a destination that does not exist yet, nothing is lost, and
+ * the gateway is neither broken nor fine. A `failed` row, by contrast, means a
+ * configured destination refused six times: that is `unhealthy`, and no held
+ * state is allowed to reach this branch.
+ */
 function healthFromCounts(counts: OperatorCounts): Health {
   if ((counts.deliveries.failed ?? 0) > 0) return "unhealthy";
   if ((counts.deliveries.pending ?? 0) > 10 || (counts.outbound.failed ?? 0) > 0) return "degraded";
@@ -353,17 +365,21 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return { ok: true };
   }
 
-  /** Operator-visible forwarding target (DO config first, env fallback). Never returns the secret.
-   * WABA-level: the forwarding target is what you set up BEFORE traffic exists. */
+  /** Operator-visible forwarding target (DO config only). Never returns the secret.
+   * WABA-level: the forwarding target is what you set up BEFORE traffic exists.
+   * Carries `lastForward` — the newest delivery row — so the console can answer
+   * "is my receiver getting events?" without a second round-trip. */
   async getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig> {
     const { stub } = await this.scoped(wabaId, accountId, { anyStatus: true });
     return stub.getSubscriberConfig();
   }
 
-  /** Rotate the forwarding target. Persists to DO config; the secret is only stored when provided.
-   * WABA-level, and safe in the awaiting-a-phone state: the provisioning saga's
-   * own `saveConfig` writes only the META_ and CONNECTED_AT keys, so a
-   * SUBSCRIBER_ value written here survives the WABA turning active. */
+  /** Write the forwarding target. Persists to DO config; see
+   * {@link SetSubscriberConfigInput} for what each field means — a null `url`
+   * removes the target and a null `secret` removes the secret, as separate
+   * intentions. WABA-level, and safe in the awaiting-a-phone state: the
+   * provisioning saga's own `saveConfig` writes only the META_ and CONNECTED_AT
+   * keys, so a SUBSCRIBER_ value written here survives the WABA turning active. */
   async setSubscriberConfig(
     input: SetSubscriberConfigInput,
     wabaId: string,

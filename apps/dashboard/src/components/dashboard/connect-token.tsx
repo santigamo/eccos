@@ -29,11 +29,21 @@ import { cn } from "@/lib/utils";
  * deployment: `debug_token` introspects only tokens issued by this
  * deployment's own Meta app, and the same install that can inspect the
  * operator's test token cannot inspect its customers'. So there is nothing to
- * hide the form behind — a deployment flag would either hide it from the one
+ * GATE the form behind — a deployment flag would either hide it from the one
  * operator it exists for, or show it to every customer anyway. Instead the
- * precondition is stated up front, the surface is subordinate (Settings, below
- * the forwarding target, a ghost submit — the page's one primary belongs to
- * Save), and the refusal names the flow that does work for a business.
+ * precondition is stated up front and the refusal names the flow that does
+ * work for a business.
+ *
+ * What changed on 2026-09-03 is where it is REACHED FROM, not whether it
+ * exists: the panel used to sit on /settings, under the forwarding target, and
+ * it now owns an unlisted route of its own (`routes/numbers_.attach-token.tsx`,
+ * which carries that decision). Both of the old comment's premises are gone —
+ * the forwarding target left Settings for /webhooks, and so did this. Nothing
+ * about the argument above changes: an unlisted route exists for everyone who
+ * knows the URL, and this panel still states its own precondition to whoever
+ * arrives. Its submit stays a ghost, because the primary on that page belongs
+ * to nothing else and a lone credential form does not need a brand glow to be
+ * found.
  *
  * ── THE TOKEN ───────────────────────────────────────────────────────────────
  * It lives in React state and nowhere else: no storage, no URL, no query
@@ -211,9 +221,11 @@ export function TokenConnectPanel() {
           {askWabaId ? (
             <WabaIdQuestion value={wabaId} onChange={setWabaId} explain={error === null} />
           ) : null}
-          {/* Ghost, never primary: Settings already spends its one primary on
-              the forwarding target's Save. `w-fit self-start` because a submit
-              stretched to the column reads as a banner, not a control. */}
+          {/* Ghost, never primary. This page has no primary at all: the brand
+              glow marks the action a page exists for, and an unlisted operator
+              tool does not need to be shouted at across a screen it is the only
+              thing on. `w-fit self-start` because a submit stretched to the
+              column reads as a banner, not a control. */}
           <Button type="submit" variant="outline" className="w-fit self-start" disabled={busy}>
             {busy ? "Attaching…" : "Attach number"}
           </Button>

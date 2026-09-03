@@ -39,22 +39,30 @@ Both targets prune old rows on an ongoing basis; the Workers target uses a **spl
 model so message content ages out before the operational audit trail does:
 
 - **Workers target (`apps/gateway/`, the active v1 target):** `EccosGateway.alarm()`
-  (`apps/gateway/src/gateway.ts`) prunes on every alarm tick with two windows:
+  (`apps/gateway/src/gateway.ts`) sweeps with two windows:
   - **`CONTENT_RETENTION_DAYS`** (default **30**, clamped to **7–90**): past it, `inbound_events`
     and `outbound_messages` rows are **deleted**, and terminal (`delivered`/`failed`)
     `deliveries` rows are **redacted in place** — `payload` (the stored copy of the forwarded
     event batch, i.e. the message content) is emptied while `id`, `status`, `attempts`,
-    `last_error`, `next_attempt_at`, `created_at`, and the business `phone_number_id` survive.
-    After this window no message content or contact phone number remains anywhere in storage.
+    `last_error`, `next_attempt_at`, `created_at`, `finished_at`, and the business
+    `phone_number_id` survive. A `deliveries` row still **`pending`** past this window is
+    **deleted outright**, not redacted: it was never forwarded, so redacting it would leave a
+    row that still drains later and reaches the subscriber as an empty body. This covers events
+    the gateway is *holding* because no forwarding target has been configured yet — the hold
+    lasts a retention window, not forever.
+    After this window no message content or contact phone number remains anywhere in storage,
+    whether or not it was ever forwarded.
   - **`DELIVERY_RETENTION_DAYS`** (default **90**): past it, the metadata-only terminal
     `deliveries` rows are deleted entirely.
 
   Both are plain (non-secret) `vars` entries in `apps/gateway/wrangler.jsonc`; the Workers target
   uses only the split vars and has no tenant-wide retention setting. All values are guard-railed
   (`resolveRetentionDays()`): invalid values fall back to the defaults rather than feeding a
-  destructive window. Pruning runs as a side effect of the alarm that also drains the delivery
-  queue, so if there is no inbound traffic (no alarm fires), stale rows can persist slightly
-  past the configured window until the next alarm.
+  destructive window. The sweep runs from the alarm that also drains the delivery queue,
+  throttled to at most once an hour; while the drain is held for want of a forwarding target the
+  alarm re-arms itself on that same hourly cadence so held content still ages out on a WABA with
+  no traffic. A Durable Object with nothing pending arms nothing, so stale rows there can persist
+  slightly past the configured window until the next alarm.
 - **Bun target (`src/`):** `pruneOldRows()` (`src/delivery/forward.ts`) runs the equivalent three
   `DELETE`s using `cfg.RETENTION_DAYS` (validated by the Zod config schema in `src/config.ts`,
   `z.coerce.number().int().positive().default(30)` — set via the `RETENTION_DAYS` env var / `.env`
@@ -108,8 +116,8 @@ The only way to *see* stored data (outside direct database access) is the operat
   retained — the Access policy *is* the access-control boundary, there is no additional per-field
   redaction.
 - The console **never** displays `SUBSCRIBER_SECRET` or an account API key — `getSubscriberConfig()`
-  returns `{ url, hasSecret: boolean }` only (`apps/gateway/src/gateway.ts`), never the secret
-  value itself, and no RPC method returns an API key, `META_ACCESS_TOKEN`, or
+  returns `{ url, hasSecret: boolean, lastForward }` only (`apps/gateway/src/gateway.ts`), never the
+  secret value itself, and no RPC method returns an API key, `META_ACCESS_TOKEN`, or
   `META_APP_SECRET` at all (confirmed by reading every method on `GatewayApi` in
   `apps/gateway/src/rpc.ts`).
 - If you don't configure Cloudflare Access, do not expose the dashboard's `*.workers.dev` URL —
@@ -184,10 +192,11 @@ operator account).
   delete/reset the Durable Object (e.g. via a new `wrangler.jsonc` migration that deletes the
   `EccosGateway` class) — which also removes the `config` table (WABA id, phone number id,
   subscriber config) and requires re-onboarding.
-- Since this doc was written, the operator console gained the subscriber-target settings
-  page (`apps/dashboard/src/routes/settings.tsx`), which reads `getSubscriberConfig()` and calls
+- Since this doc was written, the operator console gained the Webhooks page
+  (`apps/dashboard/src/routes/webhooks.tsx`), which reads `getSubscriberConfig()` and calls
   `setSubscriberConfig()` / `resubscribe()`. `getSubscriberConfig()` still never returns the
-  secret value.
+  secret value — `hasSecret` is its only trace, and the console can reveal only a secret it has
+  not yet saved.
 - **Cloud → self-host:** the operator surface's paginated reads are also the migration
   mechanism. What transfers, what does not, and the full cutover steps are documented on
   [eccos.chat/migrate](https://eccos.chat/migrate) (guide source:

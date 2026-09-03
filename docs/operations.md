@@ -158,8 +158,16 @@ for the current early volume; revisit if traffic grows enough to make log volume
      Fix: re-register the WABA through the admin bootstrap API (or reconnect it through
      `/connect`) so the control-plane credential is replaced; no Worker redeploy is needed.
    - Wrong or down per-WABA subscriber URL → deliveries piling up in `pending`/`failed`.
-     Fix: rotate it from the dashboard's Settings page (`setSubscriberConfig`), which updates the
+     Fix: rotate it from the dashboard's Webhooks page (`setSubscriberConfig`), which updates the
      WABA's DO config without a deploy.
+   - **No** subscriber URL configured at all → deliveries piling up in `pending` only, and health
+     reading `degraded` past ten rows. This is not a fault: the alarm HOLDS the drain while no
+     forwarding target exists rather than spending each row's attempts on a destination that does
+     not exist, so nothing turns `failed`. The hold is bounded by the content window, though —
+     a held row past `CONTENT_RETENTION_DAYS` (default 30) is deleted like any other expired
+     content ([docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows)),
+     so this is a backlog waiting for a receiver, not an archive. Fix: configure the target on the
+     dashboard's Webhooks page; saving it re-arms the alarm and the held backlog drains immediately.
    - Meta silently unsubscribed the webhook (e.g. after too many slow/erroring responses) →
      inbound events stop arriving with no error on the Eccos side. Fix: use the dashboard's
      "Resubscribe" action (`GatewayRPC.resubscribe()`), or re-subscribe manually in Meta's App
@@ -193,7 +201,7 @@ stored `payload` per row.
 **Replay today:** click "Retry" on a row (works for `failed` *or* already-`delivered` rows, i.e.
 it doubles as a manual re-send). That calls `GatewayRPC.retryDelivery(id)` →
 `EccosGateway.retryDelivery(id)`, which resets `status='pending'`, `attempts=0`, clears
-`last_error`, and re-arms the alarm — the next alarm tick attempts the forward again. This is a
+`last_error` and `finished_at`, and re-arms the alarm — the next alarm tick attempts the forward again. This is a
 one-row-at-a-time operator action; there is no "retry all failed" bulk action.
 
 **Caveat:** replay only works while the row still holds its payload. Once the content window

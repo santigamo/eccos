@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 /**
  * Rendering contract for the pasted-token panel (eccos-up9),
- * `components/dashboard/connect-token.tsx`.
+ * `components/dashboard/connect-token.tsx`. The page it now lives on — an
+ * unlisted route — has its own suite (`tests/attach-token-screen.test.tsx`).
  *
  * Importing the component pulls in `src/server/gateway.ts`, which imports
  * `cloudflare:workers` and `@tanstack/react-start` — mocked here BEFORE the
@@ -64,14 +65,16 @@ describe("TokenConnectPanel", () => {
     expect(html).toContain("text-[11px] font-medium tracking-wider text-muted-foreground uppercase");
   });
 
-  test("submits with the ghost control, not a second primary", () => {
-    // INVARIANT: one primary per view, and Settings already spends it on the
-    // forwarding target's Save. The ghost anatomy is the `--ghost-fill` + a
-    // `--line-strong` edge that greens on hover.
+  test("submits with the ghost control, not a primary", () => {
+    // INVARIANT: the ghost anatomy is `--ghost-fill` under a `--line-strong`
+    // edge that greens on hover. The panel used to be subordinate to Settings'
+    // Save; it now owns an unlisted page of its own
+    // (`routes/numbers_.attach-token.tsx`) and that page has NO primary at all
+    // — the brand glow marks the action a page exists for, and an operator who
+    // typed that URL is already committed to the only form on it.
     expect(html).toContain("Attach number");
     expect(html).toContain("border-(--line-strong)");
     expect(html).toContain("bg-(--ghost-fill)");
-    // The primary's brand glow belongs to Save; it must not appear here.
     expect(html).not.toContain("--caustic");
   });
 

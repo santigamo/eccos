@@ -64,6 +64,10 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
 
 - [ ] Visual: health badge (colored dot + label) matches the gateway's reported `health`
       (healthy/degraded/unhealthy) with the right color for each.
+- [ ] Visual/copy: with **no forwarding target** and a held backlog, the amber banner names the
+      wait ("N events are waiting for a forwarding target") and offers the "Set a forwarding
+      target" link to `/webhooks` — never the generic "reduced capacity" sentence, which belongs
+      to a gateway that has somewhere to send.
 - [ ] Visual: Connection fields (WABA ID, phone number ID, display phone, connected-at) render, and
       missing values show `—` rather than blank/`null`/`undefined`.
 - [ ] Visual: Inbound/Outbound/Deliveries count cards lay out in the responsive grid
@@ -71,9 +75,10 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
       narrows.
 - [ ] Unreachable: badge falls back to "unreachable" label in the unhealthy (red) color; the
       Connection/count cards are replaced by the unreachable card (not shown empty).
-- [ ] Keyboard/focus: page has no interactive controls beyond the nav — confirm nothing is an
-      unreachable/unfocusable false-interactive element (e.g. count cards aren't announced as
-      buttons/links to a screen reader).
+- [ ] Keyboard/focus: the page's only interactive controls are the facts-strip count links and,
+      when it renders, the banner's forwarding-target link — each reachable by Tab with the green
+      focus ring. Confirm nothing else is a false-interactive element (a fact cell that is not a
+      link must not be announced as one).
 
 ## Deliveries (`/deliveries`, `src/routes/deliveries.tsx`)
 
@@ -128,33 +133,70 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
 - [ ] Unreachable (outer): shows the shared unreachable card when the `GATEWAY` binding itself is
       unreachable (gateway stopped).
 
-## Settings (`/settings`, `src/routes/settings.tsx`)
+## Webhooks (`/webhooks`, `src/routes/webhooks.tsx`)
 
-- [ ] Visual: "Subscriber forwarding target" card shows the current URL (or `—`) and whether a
-      secret is configured (`yes`/`no`), never the secret value itself.
-- [ ] Visual: "Re-subscribe" card and its explanatory copy render below the subscriber form.
+Both legs of the plumbing live here: the forwarding target (Eccos → your receiver) and the
+Meta callback (Meta → Eccos). The forwarding target and Re-subscribe moved here from
+`/settings`.
+
+- [ ] Visual: the header tag reads `NO TARGET` (amber) with no target configured and
+      `FORWARDING` (green) with one. It is a fact, not a switch — there is nothing to click.
+- [ ] Visual: the facts strip renders three rail-separated cells (`LAST FORWARD` · `ATTEMPTS` ·
+      `SIGNING`) with no boxes; `failed` counts take the destructive ink and each count links
+      into the filtered `/deliveries` view.
+- [ ] Data: a delivery row that has NOT finished (`finished_at` null) reports `queued <time>`,
+      never `finished <time>` — the arrival moment must never be shown as a completion.
+- [ ] Empty state: with no target configured the panel shows `NO FORWARDING TARGET` plus one
+      sentence, and the form itself is the action (no separate button).
 - [ ] Form labels: the URL and Secret inputs have visible, correctly-associated `<label>`s
-      (`htmlFor`/`id` pairs — confirm with devtools or a screen reader that clicking/announcing the
-      label focuses/names the right input).
-- [ ] Interaction: submitting the subscriber form with an empty "Signing secret" field keeps the
-      existing secret (does not clear it); after a successful save the secret field itself resets
-      to empty and a green success notice appears; the URL field's placeholder text is visible
-      when empty.
-- [ ] Interaction: the secret `<input>` is `type="password"` (masked) with `autoComplete="new-password"`
-      — confirm it's not rendered/logged in plaintext anywhere (network tab payload for the request
-      itself is expected to carry it in flight over the trusted RPC binding, but the UI should
-      never redisplay it).
-- [ ] Interaction: "Save" and "Re-subscribe" buttons disable themselves and show a busy label
+      (`htmlFor`/`id` pairs — confirm with devtools or a screen reader that clicking/announcing
+      the label focuses/names the right input).
+- [ ] Interaction: `Generate` fills the secret field with 64 hex characters (32 random bytes),
+      minted in the browser.
+- [ ] Interaction: `Show` / `Hide` appears ONLY while an unsaved value is in the field, and is
+      gone again after a successful save — the console reveals only what it has not persisted.
+- [ ] Interaction: submitting with an empty "Signing secret" field keeps the existing secret
+      (the field is omitted from the request, never sent as `""`); after a successful save the
+      field resets to empty and a green notice appears.
+- [ ] Interaction: the secret `<input>` is `type="password"` (masked) with
+      `autoComplete="new-password"` — confirm the stored value is never redisplayed; only
+      `hasSecret` comes back from the gateway.
+- [ ] Interaction: `Remove target` asks for confirmation, says the queue is HELD rather than
+      failed afterwards, and keeps the signing secret. Confirming clears the URL and the header
+      tag flips to `NO TARGET`.
+- [ ] Interaction: "Save" and "Re-subscribe" disable themselves and show a busy label
       (`Saving…` / `Re-subscribing…`) while in flight, then re-enable.
 - [ ] Interaction: "Re-subscribe" surfaces three distinct outcomes correctly — success (green,
-      "Re-subscribed…"), gateway unreachable (red, RPC error text), and gateway-reachable-but-Meta-
-      rejected (red, Meta's rejection reason) — these are different code paths, verify each.
-- [ ] Keyboard: `Tab` order moves URL input → Secret input → Save button → Re-subscribe button in a
-      sensible order; both forms/buttons are fully operable without a mouse.
+      "Re-subscribed…"), gateway unreachable (red, RPC error text), and gateway-reachable-but-
+      Meta-rejected (red, Meta's rejection reason) — these are different code paths, verify each.
+- [ ] Visual: the "From Meta" panel renders only for an ACTIVE WABA, and shows the callback URL
+      and connected-at (or `—`).
+- [ ] Visual: the "Receiver reference" panel always renders, is control-free, and matches the
+      forwarder in `apps/gateway/src/gateway.ts` (6 attempts, 5s→1h backoff, 5s timeout,
+      redirects refused, `x-eccos-signature` only while a secret is set).
+- [ ] One primary: Save is the only button carrying the brand glow; everything else is a ghost.
 - [ ] Accessibility: notice boxes (success/error) are visually distinguishable by more than color
       alone (icon/wording) — check they wouldn't be missed by a colorblind operator.
-- [ ] Unreachable: the whole page (both cards) is replaced by the shared unreachable card when the
-      initial `getSubscriberConfig` load fails (gateway stopped).
+- [ ] Unreachable: a failed `getSubscriberConfig` load renders the shared unreachable card.
+
+## Settings (`/settings`, `src/routes/settings.tsx`)
+
+- [ ] Visual: the Workspace panel shows the account id, in mono, and nothing else. The
+      forwarding target, Re-subscribe and the pasted-token panel have all left this page.
+- [ ] Reachable with no WABA at all (`requires: "none"`): the account id exists before a number
+      does, and the page renders no failure card in that state.
+
+## Attach by token (`/numbers/attach-token`, `src/routes/numbers_.attach-token.tsx`)
+
+UNLISTED, on purpose: reachable by URL, absent from the sidebar, and linked from nowhere in the
+interface (see the route's own comment).
+
+- [ ] The route is NOT in the sidebar, and no page links to it — /numbers in particular must not
+      offer a pointer to it.
+- [ ] Visiting the URL directly renders a normal header band (kicker + heading) and the
+      "Attach by token" panel, including its precondition sentence naming Embedded Signup.
+- [ ] Reachable with zero WABAs (it is the way OUT of that state), and pasting a token issued by
+      another Meta app is refused as `foreign_app` with the Embedded Signup remedy named.
 
 ## Auth gate (Cloudflare Access, `src/access.ts`)
 

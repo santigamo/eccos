@@ -1,7 +1,7 @@
 import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { REDACTED_PAYLOAD, resolveRetentionDays, type EccosGateway } from "../../src/gateway";
-import { bootstrapAccount, gatewayStub } from "./helpers";
+import { bootstrapAccount, gatewayStub, SUBSCRIBER_URL } from "./helpers";
 
 afterEach(async () => {
   await reset();
@@ -41,19 +41,54 @@ describe("split retention", () => {
     let redactedId = 0;
     let failedId = 0;
     let freshId = 0;
-    let pendingId = 0;
+    let freshPendingId = 0;
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       redactedId = insertDelivery(i, { ageDays: 31, status: "delivered" });
       failedId = insertDelivery(i, { ageDays: 31, status: "failed", lastError: "boom" });
       freshId = insertDelivery(i, { ageDays: 5, status: "delivered" });
-      pendingId = insertDelivery(i, { ageDays: 40, status: "pending" });
+      freshPendingId = insertDelivery(i, { ageDays: 5, status: "pending" });
       await i.alarm();
 
       expect(i.getDelivery(redactedId)?.payload).toBe(REDACTED_PAYLOAD);
       expect(i.getDelivery(failedId)?.payload).toBe(REDACTED_PAYLOAD);
-      // Fresh terminal rows and pending rows (any age) keep their payload.
+      // Anything inside the content window keeps its payload, terminal or not.
       expect(i.getDelivery(freshId)?.payload).toBe(SAMPLE_PAYLOAD);
-      expect(i.getDelivery(pendingId)?.payload).toBe(SAMPLE_PAYLOAD);
+      expect(i.getDelivery(freshPendingId)?.payload).toBe(SAMPLE_PAYLOAD);
+    });
+  });
+
+  it("deletes a held pending row past the content window instead of redacting it", async () => {
+    // The privacy rule the hold made necessary. A `pending` row that outlives
+    // the content window is content nobody has forwarded, and redacting it in
+    // place would leave a row that STILL drains once a target is configured —
+    // arriving at the subscriber as an empty batch it cannot tell from a real
+    // one. So it goes, wholesale. See `pruneExpired` for the full argument.
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      const expired = insertDelivery(i, { ageDays: 31, status: "pending" });
+      const held = insertDelivery(i, { ageDays: 29, status: "pending" });
+      // No forwarding target: this is the held-drain case the rule exists for.
+      await i.alarm();
+
+      expect(i.getDelivery(expired)).toBeNull();
+      // Inside the window the held row survives INTACT — the wait is supposed
+      // to be survivable for a whole retention window, not merely tolerated.
+      const kept = i.getDelivery(held);
+      expect(kept?.status).toBe("pending");
+      expect(kept?.payload).toBe(SAMPLE_PAYLOAD);
+      expect(kept?.attempts).toBe(3);
+    });
+  });
+
+  it("deletes an expired pending row even once a target is configured", async () => {
+    // The window is about age, not about whether the gateway is holding: a row
+    // that sat out the content window is expired content either way, and the
+    // one thing that must never happen is forwarding its ghost.
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
+      // Far-future `next_attempt_at` (see insertDelivery) keeps the drain off it.
+      const expired = insertDelivery(i, { ageDays: 45, status: "pending" });
+      await i.alarm();
+      expect(i.getDelivery(expired)).toBeNull();
     });
   });
 

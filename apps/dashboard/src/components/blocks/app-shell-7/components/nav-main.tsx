@@ -10,7 +10,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { NAV_MAIN } from "./data"
+import { NAV_MAIN, type NavGroup } from "./data"
 import { hasNumberScope, hasWabaScope } from "@/lib/scope-requirements"
 
 export function NavMain() {
@@ -27,13 +27,49 @@ export function NavMain() {
   const hasWaba = scope !== null && hasWabaScope(scope)
 
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase in-data-[state=collapsed]:hidden">
-        Navigation
-      </SidebarGroupLabel>
+    <>
+      {NAV_MAIN.map((group) => (
+        <NavGroupSection
+          key={group.id}
+          group={group}
+          pathname={pathname}
+          wabaId={wabaId}
+          hasNumber={hasNumber}
+          hasWaba={hasWaba}
+        />
+      ))}
+    </>
+  )
+}
+
+/**
+ * One group. The heading is the machine voice (Inter 11px uppercase, wide
+ * tracking) and goes with the rail: in the collapsed sidebar the labels would
+ * be text over a 48px column, so they hide and the icon rows stand alone.
+ */
+function NavGroupSection({
+  group,
+  pathname,
+  wabaId,
+  hasNumber,
+  hasWaba,
+}: {
+  group: NavGroup
+  pathname: string
+  wabaId?: string
+  hasNumber: boolean
+  hasWaba: boolean
+}) {
+  return (
+    <SidebarGroup className="py-0">
+      {group.label ? (
+        <SidebarGroupLabel className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase in-data-[state=collapsed]:hidden">
+          {group.label}
+        </SidebarGroupLabel>
+      ) : null}
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.25">
-          {NAV_MAIN.map((item) => {
+          {group.items.map((item) => {
             const isActive = pathname === item.href
             const locked =
               item.requires === "number"

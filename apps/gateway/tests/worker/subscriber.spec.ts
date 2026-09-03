@@ -7,7 +7,7 @@ import { validateSubscriberUrl } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
-import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { bootstrapAccount, gatewayStub, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -83,7 +83,7 @@ describe("subscriber config (feature A)", () => {
     });
 
     const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
-    expect(cfg).toEqual({ url: "https://new.example/hook", hasSecret: true });
+    expect(cfg).toEqual({ url: "https://new.example/hook", hasSecret: true, lastForward: null });
     // The secret must not leak through the read model in any shape.
     expect(JSON.stringify(cfg)).not.toContain(secret);
     expect(Object.values(cfg)).not.toContain(secret);
@@ -100,7 +100,7 @@ describe("subscriber config (feature A)", () => {
     await rpc.setSubscriberConfig({ url: "https://second.example/hook" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
 
     const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
-    expect(cfg).toEqual({ url: "https://second.example/hook", hasSecret: true });
+    expect(cfg).toEqual({ url: "https://second.example/hook", hasSecret: true, lastForward: null });
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       expect(i.getConfigValue("SUBSCRIBER_SECRET")).toBe("keep-me");
     });
@@ -108,7 +108,98 @@ describe("subscriber config (feature A)", () => {
 
   it("reports an unset forwarding target when no DO config exists (no env fallback)", async () => {
     const cfg = await makeRpc().getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
-    expect(cfg).toEqual({ url: null, hasSecret: false });
+    expect(cfg).toEqual({ url: null, hasSecret: false, lastForward: null });
+  });
+
+  // Removing the target and removing the secret are SEPARATE intentions, spelled
+  // out in the input rather than inferred from an empty field: an empty password
+  // box means "keep", and it is now the only thing it can mean.
+  it("clears the URL on `url: null` without touching the secret", async () => {
+    const rpc = makeRpc();
+    await rpc.setSubscriberConfig({ url: "https://gone.example/hook", secret: "still-mine" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+
+    expect(await rpc.setSubscriberConfig({ url: null }, TEST_WABA_ID, TEST_ACCOUNT_ID)).toEqual({ ok: true });
+
+    expect(await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID)).toMatchObject({
+      url: null,
+      hasSecret: true,
+    });
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      expect(i.getConfigValue("SUBSCRIBER_WEBHOOK_URL")).toBeNull();
+      // Kept on purpose: re-pointing at a receiver must not silently change what
+      // that receiver has to verify.
+      expect(i.getConfigValue("SUBSCRIBER_SECRET")).toBe("still-mine");
+    });
+  });
+
+  it("clears the secret on `secret: null` without touching the URL", async () => {
+    const rpc = makeRpc();
+    await rpc.setSubscriberConfig({ url: "https://kept.example/hook", secret: "drop-me" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+
+    await rpc.setSubscriberConfig({ url: "https://kept.example/hook", secret: null }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+
+    expect(await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID)).toMatchObject({
+      url: "https://kept.example/hook",
+      hasSecret: false,
+    });
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      expect(i.getConfigValue("SUBSCRIBER_SECRET")).toBeNull();
+    });
+  });
+
+  it("forgets both when the caller says so", async () => {
+    const rpc = makeRpc();
+    await rpc.setSubscriberConfig({ url: "https://both.example/hook", secret: "both" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+    await rpc.setSubscriberConfig({ url: null, secret: null }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+    expect(await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID)).toMatchObject({ url: null, hasSecret: false });
+  });
+
+  it("refuses an empty-string secret instead of reading it as `keep`", async () => {
+    const rpc = makeRpc();
+    await rpc.setSubscriberConfig({ url: "https://strict.example/hook", secret: "keep-me" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+    await expect(
+      rpc.setSubscriberConfig({ url: "https://strict.example/hook", secret: "   " }, TEST_WABA_ID, TEST_ACCOUNT_ID),
+    ).rejects.toThrow(/invalid subscriber secret/);
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      expect(i.getConfigValue("SUBSCRIBER_SECRET")).toBe("keep-me");
+    });
+  });
+
+  // 1.3a: the Webhooks page's whole question, answered on the read it already makes.
+  it("carries the newest delivery on the same read, and still no secret", async () => {
+    const rpc = makeRpc();
+    await rpc.setSubscriberConfig({ url: SUBSCRIBER_URL, secret: "sign-me" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+    await gatewayStub().ingest([
+      { type: "delivered", transportMessageId: "wamid.LASTFORWARD", at: 1_700_000_000_000 },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      await i.alarm();
+    });
+
+    const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
+    expect(cfg.lastForward).toMatchObject({ status: "delivered", attempts: 1, lastError: null });
+    expect(cfg.lastForward?.finishedAt).toBeGreaterThanOrEqual(cfg.lastForward?.createdAt ?? 0);
+    expect(JSON.stringify(cfg)).not.toContain("sign-me");
+  });
+
+  it("reports a held row as pending with nothing attempted", async () => {
+    const rpc = makeRpc();
+    await gatewayStub().ingest([
+      { type: "delivered", transportMessageId: "wamid.HELDREAD", at: 1_700_000_000_000 },
+    ]);
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      await i.alarm();
+    });
+
+    const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
+    expect(cfg).toMatchObject({ url: null, hasSecret: false });
+    expect(cfg.lastForward).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      finishedAt: null,
+      lastError: null,
+    });
   });
 
   it("forwardOne uses the DO config override URL + secret", async () => {

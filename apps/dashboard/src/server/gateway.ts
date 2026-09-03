@@ -267,13 +267,41 @@ function validateWabaInput(input: unknown): { wabaId: string } {
   return { wabaId };
 }
 
+/**
+ * The forwarding-target write, in the vocabulary the contract now speaks
+ * ({@link SetSubscriberConfigInput}): every field states ONE intention.
+ *
+ * `url` is a string to set the target and `null` to REMOVE it. It used to be
+ * `required`, so the console had no way to say "stop forwarding" at all — the
+ * only exit was a URL nobody listens on, which keeps failing deliveries against
+ * a destination that is gone.
+ *
+ * `secret` is absent to keep the stored one, a string to replace it, and `null`
+ * to remove it. The EMPTY STRING IS REFUSED here exactly as the gateway refuses
+ * it: it used to mean "keep", which made an untouched password box and a
+ * cleared one the same request. Clearing has its own spelling now, so the
+ * ambiguity has nowhere left to live — and a caller that sends `""` is stating
+ * something it cannot mean, which is worth an error rather than a guess.
+ */
 function validateSubscriberInput(input: unknown): SetSubscriberConfigInput & DashboardScopeInput {
   const record = inputRecord(input);
-  if (typeof record.url !== "string" || record.url.trim() === "") throw new Error("url must be a non-empty string");
-  if (record.secret !== undefined && typeof record.secret !== "string") throw new Error("secret must be a string");
+  if (record.url !== null && (typeof record.url !== "string" || record.url.trim() === "")) {
+    throw new Error("url must be a non-empty string, or null to remove the target");
+  }
+  if (record.secret !== undefined && record.secret !== null && typeof record.secret !== "string") {
+    throw new Error("secret must be a string, or null to remove it");
+  }
+  if (typeof record.secret === "string" && record.secret.trim() === "") {
+    throw new Error("secret cannot be empty: pass null to remove it, or omit it to keep the stored one");
+  }
   const wabaId = optionalWabaId(record.wabaId);
-  const secret = typeof record.secret === "string" ? record.secret.trim() : "";
-  return { url: record.url, ...(secret ? { secret } : {}), ...(wabaId ? { wabaId } : {}) };
+  const url = record.url === null ? null : (record.url as string).trim();
+  const secret = typeof record.secret === "string" ? record.secret.trim() : record.secret;
+  return {
+    url,
+    ...(secret === undefined ? {} : { secret }),
+    ...(wabaId ? { wabaId } : {}),
+  };
 }
 
 /**
@@ -1203,7 +1231,7 @@ export const deleteTemplate = createServerFn({ method: "POST" })
       }),
   );
 
-// --- Operator actions (settings page) ---
+// --- Operator actions (webhooks page) ---
 
 /** Read the current outbound-forwarding target. The secret is never exposed. */
 export const getSubscriberConfig = createServerFn({ method: "GET" })
@@ -1216,6 +1244,32 @@ export const getSubscriberConfig = createServerFn({ method: "GET" })
       gateway.getSubscriberConfig(scope.wabaId, scope.accountId),
     ),
   );
+
+/**
+ * Whether a forwarding target exists — the one setup fact the root loader
+ * cannot already see (`lib/setup-checklist.ts`).
+ *
+ * A BOOLEAN and not the config, on purpose: this rides every page load for the
+ * sidebar checklist, and the URL itself is nobody's business outside the
+ * Webhooks page. `action: "view"`, because seeing that a step is done is not
+ * configuring anything.
+ *
+ * It answers `false` rather than a failure for an account that has no WABA yet:
+ * there, "no forwarding target" is simply true, and a checklist row cannot show
+ * a failure card. Nothing else consumes this, so nothing else loses a diagnosis.
+ */
+export const hasForwardingTarget = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(async ({ data }): Promise<boolean> => {
+    const res = await withScopedGateway(
+      { action: "view", wabaId: data?.wabaId, scope: "any" },
+      async (gateway, scope) => {
+        const config = await gateway.getSubscriberConfig(scope.wabaId, scope.accountId);
+        return config.url !== null;
+      },
+    );
+    return res.ok ? res.data : false;
+  });
 
 /** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
 export const setSubscriberConfig = createServerFn({ method: "POST" })

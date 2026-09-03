@@ -7,10 +7,13 @@ import {
   FrameTitle,
 } from "../components/reui/frame";
 import { cn } from "@/lib/utils";
-import type { DashboardScope, GatewayStatus, Health } from "../server/gateway";
+import { healthReading, type HealthBanner, type HealthReading } from "../lib/health";
+import type { DashboardScope, GatewayStatus } from "../server/gateway";
 import {
   COUNT_LINK,
   countTotal,
+  FactCell,
+  FactsStrip,
   Page,
   StatusCounts,
   StatusTag,
@@ -21,44 +24,8 @@ export const Route = createFileRoute("/")({
   component: StatusPage,
 });
 
-/**
- * The banner a state raises. `null` means the state speaks for itself: healthy
- * needs no sentence, the tag beside the heading already says it.
- */
-interface HealthBanner {
-  detail: string;
-  /**
-   * Left rail of the banner. The semantic colour lives on the rail — a
-   * neutral hairline there reads as decoration and says nothing.
-   */
-  rail: string;
-}
-
-interface HealthMeta {
-  label: string;
-  banner: HealthBanner | null;
-}
-
-const HEALTH_META: Record<Health, HealthMeta> = {
-  healthy: {
-    label: "Healthy",
-    banner: null,
-  },
-  degraded: {
-    label: "Degraded",
-    banner: {
-      detail: "The gateway is running with reduced capacity.",
-      rail: "border-l-[#f0a020]",
-    },
-  },
-  unhealthy: {
-    label: "Unhealthy",
-    banner: {
-      detail: "The gateway is experiencing an outage.",
-      rail: "border-l-[#e03131]",
-    },
-  },
-};
+/* What each health state says — including the case where the word alone gets it
+   wrong (held events, no forwarding target) — lives in `lib/health.ts`, pure. */
 
 function StatusPage() {
   const result = useLoaderData({ from: "__root__" });
@@ -77,11 +44,11 @@ function StatusPage() {
 
   if (result.data.stage !== "ready") return null;
 
-  const meta = HEALTH_META[result.data.status.health];
+  const reading = healthReading(result.data.status, result.hasForwardingTarget);
 
   return (
-    <Page title="Status" kicker="Gateway" actions={<HealthBadge meta={meta} />}>
-      <StatusBanner banner={meta.banner} />
+    <Page title="Status" kicker="Gateway" actions={<HealthBadge reading={reading} />}>
+      <StatusBanner banner={reading.banner} wabaId={result.data.scope.selectedWabaId} />
       <StatusView status={result.data.status} scope={result.data.scope} />
     </Page>
   );
@@ -92,7 +59,7 @@ function StatusPage() {
  * element that appears and disappears is not reliably announced, an empty one
  * that fills up is. Healthy therefore costs no pixels — no banner, no margin.
  */
-function StatusBanner({ banner }: { banner: HealthBanner | null }) {
+function StatusBanner({ banner, wabaId }: { banner: HealthBanner | null; wabaId: string }) {
   return (
     <output
       className={
@@ -106,15 +73,33 @@ function StatusBanner({ banner }: { banner: HealthBanner | null }) {
       aria-live="polite"
     >
       {banner?.detail}
+      {/* Data rule 2, applied to a state instead of a number: a banner naming a
+          state the operator can resolve carries the door to it. The scope rides
+          along, like every other link on this page — a target is per WABA. */}
+      {banner?.action ? (
+        <>
+          {" "}
+          <Link
+            to={banner.action.to}
+            search={{ wabaId }}
+            // The house link idiom (the `link` button variant): green ink, the
+            // console's interactivity signature, underlined on hover, green
+            // ring on focus.
+            className="text-primary underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+          >
+            {banner.action.label}
+          </Link>
+        </>
+      ) : null}
     </output>
   );
 }
 
-function HealthBadge({ meta }: { meta: HealthMeta }) {
+function HealthBadge({ reading }: { reading: HealthReading }) {
   return (
     <div className="flex items-center">
       <span className="sr-only">Gateway status: </span>
-      <StatusTag status={meta.label} />
+      <StatusTag status={reading.label} />
     </div>
   );
 }
@@ -123,9 +108,7 @@ function StatusView({ status, scope }: { status: GatewayStatus; scope: Dashboard
   const { connection, counts } = status;
   return (
     <>
-      {/* hatch → facts, the landing's chapter opening: the pulse first,
-          reference details after. */}
-      <FactsStrip counts={counts} selectedWabaId={scope.selectedWabaId} />
+      <FactsStripSection counts={counts} selectedWabaId={scope.selectedWabaId} />
 
       {/* `fit`: the connection panel sizes to its four fields. Without it the
           panel grows to fill its frame and opens a hole under the list. */}
@@ -185,22 +168,20 @@ function ScopePanel({ scope }: { scope: DashboardScope }) {
 }
 
 /**
- * The landing's facts strip: no boxes, no shadows — three cells that share the
- * page's rules and rails, so the numbers sit in the structure instead of
- * floating above it. Every figure is a door into the log that proves it.
+ * The strip that opens the page: hatch then facts, the landing's chapter
+ * opening — the pulse first, reference details after. The cells themselves are
+ * the shared house idiom (`FactCell` in `src/ui.tsx`); every figure is a door
+ * into the log that proves it.
  */
-function FactsStrip({ counts, selectedWabaId }: { counts: GatewayStatus["counts"]; selectedWabaId: string }) {
+function FactsStripSection({ counts, selectedWabaId }: { counts: GatewayStatus["counts"]; selectedWabaId: string }) {
   const outbound = countTotal(counts.outbound);
   const deliveries = countTotal(counts.deliveries);
   return (
-    <section
-      aria-label="Traffic at a glance"
-      className="grid grid-cols-1 divide-y divide-(--line) border-y border-(--line) sm:grid-cols-3 sm:divide-x sm:divide-y-0"
-    >
+    <FactsStrip label="Traffic at a glance">
       <FactCell
         kicker="Inbound"
         caption="events received"
-        total={
+        value={
           <Link
             to="/inbound"
             search={{ wabaId: selectedWabaId }}
@@ -214,7 +195,7 @@ function FactsStrip({ counts, selectedWabaId }: { counts: GatewayStatus["counts"
       <FactCell
         kicker="Outbound"
         caption="messages sent"
-        total={
+        value={
           <Link
             to="/outbound"
             search={{ wabaId: selectedWabaId }}
@@ -230,7 +211,7 @@ function FactsStrip({ counts, selectedWabaId }: { counts: GatewayStatus["counts"
       <FactCell
         kicker="Deliveries"
         caption="forward attempts"
-        total={
+        value={
           <Link
             to="/deliveries"
             search={{ wabaId: selectedWabaId }}
@@ -248,38 +229,7 @@ function FactsStrip({ counts, selectedWabaId }: { counts: GatewayStatus["counts"
           wabaId={selectedWabaId}
         />
       </FactCell>
-    </section>
-  );
-}
-
-/**
- * `caption` is hidden from assistive tech on purpose: the stat link already
- * carries it in its accessible name, so screen readers hear it once.
- */
-function FactCell({
-  kicker,
-  total,
-  caption,
-  children,
-}: {
-  kicker: string;
-  total: ReactNode;
-  caption: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="p-5">
-      <p className="font-pixel text-xs tracking-[0.04em] uppercase text-muted-foreground">
-        {kicker}
-      </p>
-      <p className="mt-2 font-pixel text-4xl tabular-nums text-foreground">
-        {total}
-      </p>
-      <p className="mt-1 text-muted-foreground text-sm" aria-hidden="true">
-        {caption}
-      </p>
-      {children}
-    </div>
+    </FactsStrip>
   );
 }
 

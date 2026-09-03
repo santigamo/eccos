@@ -84,8 +84,10 @@
     "GATEWAY_PUBLIC_URL": "https://api.eccos.chat",
     "FORWARD_MAX_ATTEMPTS": "6",
     // Split retention (docs/data-lifecycle.md). Content window: after these days,
-    // inbound_events and outbound_messages rows are deleted and terminal deliveries
-    // keep only metadata (payload redacted). Optional; default 30, clamped to 7-90.
+    // inbound_events and outbound_messages rows are deleted, terminal deliveries
+    // keep only metadata (payload redacted), and pending deliveries — including
+    // events held for want of a forwarding target — are deleted outright.
+    // Optional; default 30, clamped to 7-90.
     "CONTENT_RETENTION_DAYS": "30",
     // Delivery-audit window: after these days, terminal (delivered/failed)
     // deliveries rows are deleted entirely. Optional; default 90.
