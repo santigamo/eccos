@@ -1295,10 +1295,90 @@ describe("connectWithToken (pasted-token panel on Settings)", () => {
     );
     // Surrounding whitespace is a paste artefact, not an error.
     expect(validateTokenConnectInput({ token: `  ${TOKEN}\n` })).toEqual({ token: TOKEN });
-    expect(validateTokenConnectInput({ token: TOKEN, wabaId: "waba-b" })).toEqual({
+    expect(validateTokenConnectInput({ token: TOKEN, wabaId: "100000000000001" })).toEqual({
       token: TOKEN,
-      wabaId: "waba-b",
+      wabaId: "100000000000001",
     });
+  });
+
+  test("refuses a WABA id that is not one, and names the shape", () => {
+    // INVARIANT: this is the ONE wabaId an operator types by hand — every other
+    // one the console sends came out of its own registry — so it gets Meta's
+    // real shape and a sentence the panel can show as a sentence. And, like
+    // every message on this path, it names the SHAPE and never the value.
+    const refusals = [
+      () => validateTokenConnectInput({ token: TOKEN, wabaId: "waba b" }),
+      // The paste that actually happens: the whole Business-settings URL.
+      () =>
+        validateTokenConnectInput({
+          token: TOKEN,
+          wabaId:
+            "https://business.facebook.com/settings/whatsapp-business-accounts/100000000000001",
+        }),
+      () => validateTokenConnectInput({ token: TOKEN, wabaId: "1".repeat(33) }),
+    ];
+    for (const refuse of refusals) {
+      expect(refuse).toThrow(/Business Account id/);
+      expect(refuse).toThrow(/digits only/);
+      try {
+        refuse();
+      } catch (error) {
+        expect(String((error as Error).message)).not.toContain(TOKEN);
+      }
+    }
+    expect(() => validateTokenConnectInput({ token: TOKEN, wabaId: 123 })).toThrow(
+      /must be a string/,
+    );
+    // Paste artefacts are not errors, and an empty field is not an answer.
+    expect(validateTokenConnectInput({ token: TOKEN, wabaId: "  100000000000001\n" })).toEqual({
+      token: TOKEN,
+      wabaId: "100000000000001",
+    });
+    expect(validateTokenConnectInput({ token: TOKEN, wabaId: "" })).toEqual({ token: TOKEN });
+  });
+
+  test("forwards the named WABA id as the seed", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      connectWabaWithToken: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: false, code: "no_phone", detail: null };
+      },
+    });
+    await connectWithToken({ data: { token: TOKEN, wabaId: "100000000000001" } });
+    // The id the operator typed reaches the gateway verbatim: it is what the
+    // token is proven against, not a filter applied after discovery.
+    expect(calls).toEqual([["account-a", TOKEN, "100000000000001"]]);
+  });
+
+  test("a refused named id is audited by code and id, with no token", async () => {
+    withResources({
+      connectWabaWithToken: async () => ({
+        ok: false,
+        code: "no_access",
+        detail:
+          "Unsupported get request. Object with ID '100000000000001' does not exist, cannot be loaded due to missing permissions, or does not support this operation.",
+      }),
+    });
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await connectWithToken({ data: { token: TOKEN, wabaId: "100000000000001" } });
+    } finally {
+      console.info = original;
+    }
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    // A refusal is ABOUT that id, so the id is what makes the line reviewable —
+    // and an id is an identifier, not a credential. The token still never
+    // appears, in any fragment.
+    expect(audit).toContain('"outcome":"failed"');
+    expect(audit).toContain('"code":"no_access"');
+    expect(audit).toContain('"wabaId":"100000000000001"');
+    expect(audit).not.toContain(TOKEN);
+    expect(audit).not.toContain("EAA");
   });
 
   test("passes the gateway's closed codes through unaltered", async () => {

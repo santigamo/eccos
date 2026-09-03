@@ -181,6 +181,12 @@ const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 const META_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
 const MIN_META_TOKEN_LENGTH = 20;
 const MAX_META_TOKEN_LENGTH = 1024;
+/**
+ * A WhatsApp Business Account id the operator TYPED. Every other `wabaId` the
+ * console sends came out of its own registry; this one is hand-copied from
+ * Business settings, so the shape is Meta's (numeric) and the ceiling is real.
+ */
+const TYPED_WABA_ID_PATTERN = /^[0-9]{1,32}$/;
 
 function inputRecord(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -195,6 +201,25 @@ function optionalWabaId(value: unknown): string | undefined {
   const normalized = value.trim();
   if (!normalized) return undefined;
   if (!WABA_ID_PATTERN.test(normalized)) throw new Error("invalid wabaId");
+  return normalized;
+}
+
+/**
+ * The typed twin of {@link optionalWabaId}, for the one input an operator
+ * writes by hand. Same trim / empty→undefined contract; a stricter shape
+ * (Meta's ids are digits) and a sentence the panel can show, naming the
+ * shape and never the value.
+ */
+function typedWabaId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error("wabaId must be a string");
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (!TYPED_WABA_ID_PATTERN.test(normalized)) {
+    throw new Error(
+      "that does not look like a WhatsApp Business Account id — digits only, without spaces or a URL",
+    );
+  }
   return normalized;
 }
 
@@ -863,6 +888,10 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
  *
  * Exported for the same reason as {@link validateSendTestInput}: one call per
  * rejected shape is cheaper than one route call each.
+ *
+ * `wabaId`, when present, is either a candidate the gateway offered or an id
+ * the operator typed to answer `no_waba`; both are Meta ids, so both must be
+ * digits.
  */
 export function validateTokenConnectInput(input: unknown): { token: string; wabaId?: string } {
   const record = inputRecord(input);
@@ -875,7 +904,7 @@ export function validateTokenConnectInput(input: unknown): { token: string; waba
   if (!META_TOKEN_PATTERN.test(token)) {
     throw new Error("paste only the token — no spaces, quotes, or line breaks");
   }
-  const wabaId = optionalWabaId(record.wabaId);
+  const wabaId = typedWabaId(record.wabaId);
   return { token, ...(wabaId ? { wabaId } : {}) };
 }
 
@@ -902,8 +931,9 @@ export const connectWithToken = createServerFn({ method: "POST" })
         const { actor, accountId } = await connectActorAccount(gateway);
         const result = await gateway.connectWabaWithToken(accountId, data.token, data.wabaId);
         // NO token, and nothing derived from one. `candidates` is counted, not
-        // listed, because the count is what makes the line legible and the ids
-        // are already in the wabaId of whichever resubmit follows.
+        // listed, because the count is what makes the line legible; the WABA
+        // id the operator named (if any) is recorded because a refusal is
+        // about that id, and an id is an identifier, not a credential.
         auditEvent({
           action: "connect_token",
           actorUserId: actor.session.userId,
@@ -911,7 +941,11 @@ export const connectWithToken = createServerFn({ method: "POST" })
           accountId,
           resource: result.ok
             ? { wabaId: result.waba_id, connected: result.connected.length }
-            : { code: result.code, candidates: result.candidates?.length ?? 0 },
+            : {
+                code: result.code,
+                candidates: result.candidates?.length ?? 0,
+                ...(data.wabaId ? { wabaId: data.wabaId } : {}),
+              },
           outcome: result.ok ? "success" : "failed",
           ...(result.ok ? {} : { detail: result.code }),
         });

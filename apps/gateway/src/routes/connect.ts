@@ -445,7 +445,12 @@ export async function registerWabasForToken(
     /** Origin the per-WABA webhook callback URL is built from. */
     callbackOrigin: string;
     onboardingType: WabaOnboardingType;
-    /** Register only this WABA, and fail closed if the token cannot reach it. */
+    /**
+     * Register only this WABA, and fail closed if the token cannot reach it.
+     * The pasted-token path proves the selector against Meta itself and passes
+     * it as the whole of `discovered`, so the "selector not discovered" guard
+     * below only ever fires for the Embedded Signup path.
+     */
     wabaSelector?: string;
     /** Discovery result, when the caller already has one. */
     discovered?: Array<{ wabaId: string; phones: PhoneNumber[] }>;

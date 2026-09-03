@@ -299,8 +299,32 @@ export type ManualConnectFailureCode =
   | "foreign_app"
   /** An own-app token that Meta reports expired or revoked. Paste a fresh one. */
   | "invalid_token"
-  /** The token names no WhatsApp Business Account, or none with a phone number. */
+  /**
+   * Nothing was named and discovery found nothing: the token's `debug_token`
+   * answer listed no WhatsApp Business Account (Meta returns
+   * `granular_scopes[].target_ids` nullable, and a System User token routinely
+   * comes back without it), or every listed one had no phone number. Nothing
+   * was registered. This is a QUESTION, not a verdict: the console answers it
+   * by asking for the WABA id, which then seeds discovery directly. Returned
+   * only when no `wabaId` was supplied — a named WABA always resolves to
+   * `no_access`, `no_phone`, `owned`, success, or `failed`.
+   */
   | "no_waba"
+  /**
+   * Meta refused to let this token read the WABA the operator named
+   * (`GET /<waba_id>/phone_numbers` answered 4xx). Covers a mistyped id and a
+   * WABA not assigned to the token's system user alike: Graph answers both
+   * with the same "does not exist or cannot be loaded" refusal, so the console
+   * names both remedies. `detail` carries Meta's sentence. Nothing registered.
+   */
+  | "no_access"
+  /**
+   * Meta let this token read the named WABA and it has no phone number.
+   * Nothing to register — the same rule discovery applies to an unnamed one —
+   * but distinguished from `no_waba` so the console does not ask for the id
+   * it was just given.
+   */
+  | "no_phone"
   /** The token reaches several WABAs and none was chosen; nothing was registered. */
   | "multiple"
   /** The chosen WABA already belongs to a different Eccos account. */
@@ -333,7 +357,8 @@ export type ManualConnectResult =
   | {
       ok: false;
       code: ManualConnectFailureCode;
-      /** Meta's own sentence where it explains; never a discriminator. */
+      /** Meta's own sentence where it explains (for `no_access`, the refusal it
+       * answered the read with); never a discriminator. */
       detail: string | null;
       /** The WABAs to choose between. Present only for `multiple`. */
       candidates?: TokenWabaCandidate[];
@@ -566,8 +591,16 @@ export interface GatewayApi {
    * `wabaId` names none of them, NOTHING is registered and the candidates come
    * back for the operator to choose from.
    *
-   * `wabaId` is a selector, not a hint: naming a WABA the token cannot reach,
-   * or one another account owns, fails closed.
+   * `wabaId` is a SEED, not a filter. When it is named, discovery over
+   * `debug_token`'s `target_ids` is skipped and the token is proven against
+   * that WABA directly — `GET /<waba_id>/phone_numbers` is Meta's live answer
+   * to "may this token read this account", which is stronger than the
+   * issuance-time `target_ids` that Meta may simply omit (measured on a
+   * System User token with the WABA assigned as an asset). Meta refusing the
+   * read fails closed as `no_access`; a WABA another account already holds
+   * still fails closed as `owned`. When nothing is named and discovery finds
+   * nothing, `no_waba` is the question the console answers by asking for the
+   * id.
    */
   connectWabaWithToken(
     accountId: string,

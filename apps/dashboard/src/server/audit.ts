@@ -24,9 +24,10 @@ export type SensitiveAction =
    * length. It is a live credential a human typed into a browser, and an audit
    * log is neither retention-expired nor erasable, so anything derived from it
    * written here would be unremovable and would narrow the search space for
-   * anyone who read the log. The record carries the wabaId, how many phones
-   * were connected, and the closed failure code — which is the whole of what an
-   * operator or an incident review needs from this action.
+   * anyone who read the log. The record carries the wabaId (the one attached,
+   * or the one the operator named when the attempt was refused), how many
+   * phones were connected, and the closed failure code — which is the whole of
+   * what an operator or an incident review needs from this action.
    */
   | "connect_token"
   /**

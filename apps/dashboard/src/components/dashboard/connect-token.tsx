@@ -40,6 +40,17 @@ import { cn } from "@/lib/utils";
  * string. It is held after a submit only because the multi-account resubmit
  * needs it, and it is cleared the moment a registration succeeds. Everything
  * that can act on it happens behind the private gateway binding.
+ *
+ * ── WHY IT ASKS FOR AN ID ───────────────────────────────────────────────────
+ * `debug_token` may name no WABA at all: `target_ids` is nullable, and a
+ * System User token with the account assigned as an asset was measured to
+ * come back without it. So `no_waba` is a QUESTION, exactly as `multiple` is:
+ * the gateway registered nothing and needs the operator to say which account.
+ * The id field appears only then (progressive disclosure), never for a token
+ * Meta already refused (`foreign_app`, `invalid_token` — no id can make those
+ * usable), and once it has been answered a further refusal is reported by its
+ * own code (`no_access`, `no_phone`) with the field kept, not by asking the
+ * same question again.
  */
 export function TokenConnectPanel() {
   const [token, setToken] = useState("");
@@ -47,25 +58,66 @@ export function TokenConnectPanel() {
   const [error, setError] = useState<string | null>(null);
   /** Set only by a `multiple` outcome; the choice that resolves it. */
   const [candidates, setCandidates] = useState<TokenWabaCandidate[] | null>(null);
+  /** The id typed to answer `no_waba`. Sent only while `askWabaId` is true. */
+  const [wabaId, setWabaId] = useState("");
+  /** Set by a `no_waba` outcome; the question the id field answers. */
+  const [askWabaId, setAskWabaId] = useState(false);
 
-  async function submit(wabaId?: string) {
+  function leaveAskMode() {
+    setAskWabaId(false);
+    setWabaId("");
+  }
+
+  async function submit(picked?: string) {
+    // A candidate pick wins; otherwise the typed id, and only while the field
+    // is showing — an id typed for one token must not ride silently on the
+    // next.
+    const selector = picked ?? (askWabaId ? wabaId.trim() || undefined : undefined);
     setBusy(true);
     setError(null);
     try {
-      const res = await connectWithToken({ data: { token, ...(wabaId ? { wabaId } : {}) } });
+      const res = await connectWithToken({
+        data: { token, ...(selector ? { wabaId: selector } : {}) },
+      });
       if (!res.ok) {
         setError(failureCopy(res).detail);
         return;
       }
       const outcome = res.data;
       if (!outcome.ok) {
-        // `multiple` is a question, not a failure: the gateway registered
-        // nothing and handed back the accounts to choose between.
-        if (outcome.code === "multiple" && outcome.candidates?.length) {
-          setCandidates(outcome.candidates);
-          return;
-        }
         setCandidates(null);
+        switch (outcome.code) {
+          case "multiple":
+            if (outcome.candidates?.length) {
+              // `multiple` is a question, not a failure: the gateway registered
+              // nothing and handed back the accounts to choose between.
+              leaveAskMode();
+              setCandidates(outcome.candidates);
+              return;
+            }
+            break;
+          case "no_waba":
+            // Also a question: discovery found nothing, so ask for the id.
+            // The gateway only answers this when no id was named, so showing
+            // the field here can never be a loop.
+            setAskWabaId(true);
+            return;
+          case "no_access":
+          case "no_phone":
+            // The answer was refused by its own code: keep the field, with
+            // the id the refusal is about, and let the banner explain.
+            setAskWabaId(true);
+            if (selector && !wabaId.trim()) setWabaId(selector);
+            break;
+          case "foreign_app":
+          case "invalid_token":
+            // No id can make these usable; the field would be a lie.
+            leaveAskMode();
+            break;
+          default:
+            // `owned` / `failed`: the field stays as it was.
+            break;
+        }
         setError(tokenConnectFailureCopy(outcome.code, outcome.detail).detail);
         return;
       }
@@ -73,6 +125,7 @@ export function TokenConnectPanel() {
       // the numbers table is a loader read — a navigation is the honest way to
       // show what provisioning just did rather than mirroring its state here.
       setToken("");
+      leaveAskMode();
       setCandidates(null);
       window.location.assign(CONNECT_RETURN_PATH);
     } catch (err) {
@@ -133,7 +186,14 @@ export function TokenConnectPanel() {
               autoComplete="off"
               spellCheck={false}
               value={token}
-              onChange={(event) => setToken(event.target.value)}
+              // Editing the token retires the question asked about the OLD
+              // one: `askWabaId` and `wabaId` would otherwise survive the
+              // change and an id typed for one token would ride silently on
+              // the next. A new token deserves a fresh question.
+              onChange={(event) => {
+                setToken(event.target.value);
+                leaveAskMode();
+              }}
               className="font-mono"
               placeholder="EAAG…"
             />
@@ -148,6 +208,9 @@ export function TokenConnectPanel() {
               paste a fresh one here to renew it — the number stays attached.
             </p>
           </div>
+          {askWabaId ? (
+            <WabaIdQuestion value={wabaId} onChange={setWabaId} explain={error === null} />
+          ) : null}
           {/* Ghost, never primary: Settings already spends its one primary on
               the forwarding target's Save. `w-fit self-start` because a submit
               stretched to the column reads as a banner, not a control. */}
@@ -219,6 +282,61 @@ export function TokenCandidateList({
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * The question a `no_waba` outcome asks: which WhatsApp Business Account?
+ *
+ * `explain` carries the question sentence; the panel drops it once a banner
+ * is explaining a refusal of the answer, so the field stays but the same
+ * question is not asked twice. Exported for the same reason as
+ * `TokenCandidateList`: it only ever appears after a submit.
+ */
+export function WabaIdQuestion({
+  value,
+  onChange,
+  explain,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  explain: boolean;
+}) {
+  return (
+    <div>
+      {explain ? (
+        <p className="m-0 mb-3 text-sm text-muted-foreground">
+          Meta accepted this token but did not say which WhatsApp Business
+          Account it reaches — a system-user token usually does not. Nothing
+          was attached. Enter the account&apos;s id if you know it, and Meta
+          will be asked whether this token can read it.
+        </p>
+      ) : null}
+      <label
+        htmlFor="connect-waba-id"
+        className="mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase"
+      >
+        WhatsApp Business Account id
+      </label>
+      {/* Mono for the same reason as the token: what is checked here is
+          character shape. Not masked: an id is an identifier, not a secret. */}
+      <Input
+        id="connect-waba-id"
+        type="text"
+        inputMode="numeric"
+        required
+        autoComplete="off"
+        spellCheck={false}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="font-mono"
+        placeholder="1234567890123456"
+      />
+      {/* The functional register, `·`-separated: where the id is, and its shape. */}
+      <p className="mt-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+        Shown under WhatsApp accounts in Business settings · Digits only
+      </p>
     </div>
   );
 }

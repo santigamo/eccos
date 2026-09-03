@@ -6,7 +6,7 @@ import {
   registerWabasForToken,
   startConnectForAccount,
 } from "./routes/connect";
-import { inspectToken, wabaMatchesForTargetIds } from "./meta/connect-api";
+import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
 import { sendMessage } from "@eccos/core/send";
@@ -78,6 +78,12 @@ const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
  * before it reaches Graph, not to model Meta's alphabet.
  */
 const META_TOKEN_PATTERN = /^[\x21-\x7e]{20,1024}$/;
+/**
+ * A WABA id named on the pasted-token path: the control plane's charset plus
+ * a ceiling. The console validator is the strict one (digits only); this is
+ * the mirrored throw, loose enough for the registry's own ids.
+ */
+const WABA_SELECTOR_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** The only two categories the console authors; AUTHENTICATION is a different
  * creation shape (preset content + OTP buttons) and is not offered. */
 const TEMPLATE_CATEGORIES = new Set(["MARKETING", "UTILITY"]);
@@ -645,6 +651,17 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * control plane's AES-256-GCM envelope. It is never logged, never thrown in a
    * message, and never part of the returned shape.
    *
+   * WHY THE SELECTOR SEEDS DISCOVERY. `debug_token`'s `target_ids` is
+   * nullable and, measured on a System User token with the WABA assigned as
+   * an asset, simply absent — so a token that reads the WABA perfectly well
+   * would answer `no_waba` and there was no way to attach an id known for
+   * days. When the operator names a WABA, discovery is skipped and the token
+   * is proven against that id directly with `probeWabaWithToken`: Meta's live
+   * answer to the read is a stronger authorization check than issuance-time
+   * metadata it may omit. Meta refusing fails closed (`no_access`); another
+   * account owning it still fails closed (`owned`, decided by the shared
+   * registration path, which this never bypasses).
+   *
    * `onboardingType: "standard"` is deliberate and is the one thing that must
    * not be copied from the Embedded Signup call site: a pasted token had no ES
    * handoff, so claiming `coexistence` would invent a once-only sync obligation
@@ -666,6 +683,9 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     if (!businessToken) throw new Error("token is required");
     if (!META_TOKEN_PATTERN.test(businessToken)) throw new Error("token is malformed");
     const selector = wabaId?.trim() || undefined;
+    if (selector !== undefined && !WABA_SELECTOR_PATTERN.test(selector)) {
+      throw new Error("wabaId is malformed");
+    }
 
     const publicOrigin = this.env.GATEWAY_PUBLIC_URL?.trim();
     // Same rule as `startConnectForAccountId`: there is no request to derive an
@@ -676,6 +696,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     const appConfig = getAppConfig(this.env);
     let discovered: Awaited<ReturnType<typeof wabaMatchesForTargetIds>>;
     try {
+      // Always first, selector or not: the two token verdicts gate every read,
+      // and no id an operator types can make a foreign or dead token usable.
       const inspection = await inspectToken(appConfig, businessToken);
       if (inspection.kind !== "ok") {
         // The console owns the wording for both verdicts, and for `foreign_app`
@@ -683,38 +705,50 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         // no detail travels — Meta's text here would only compete with it.
         return { ok: false, code: inspection.kind, detail: null };
       }
-      if (inspection.targetIds.length === 0) {
-        // Real and reported in the wild: `granular_scopes[].target_ids` is
-        // nullable, and some tokens name no WABA at all. Nothing to register,
-        // and the console's remedy copy says how to mint one that does.
-        return { ok: false, code: "no_waba", detail: null };
+      if (selector) {
+        // Seed, not filter — see the method comment. `target_ids` is not
+        // consulted at all here; Meta's answer to the read is the check.
+        const probe = await probeWabaWithToken(appConfig, selector, businessToken);
+        if (probe.kind === "no_access") {
+          return { ok: false, code: "no_access", detail: probe.error.graphMessage };
+        }
+        if (probe.phones.length === 0) {
+          return { ok: false, code: "no_phone", detail: null };
+        }
+        discovered = [{ wabaId: selector, phones: probe.phones }];
+      } else {
+        if (inspection.targetIds.length === 0) {
+          // Real and measured: `granular_scopes[].target_ids` is nullable. A
+          // question, not a verdict — the console asks for the id.
+          return { ok: false, code: "no_waba", detail: null };
+        }
+        discovered = await wabaMatchesForTargetIds(appConfig, inspection.targetIds, businessToken);
+        if (discovered.length === 0) {
+          return { ok: false, code: "no_waba", detail: null };
+        }
+        // Ambiguity NEVER auto-attaches. A system-user token can see every WABA
+        // a business manages, so registering them all on one paste would
+        // mass-attach an agency's clients — the Embedded Signup semantics are
+        // safe there only because the customer picked the account inside Meta's
+        // own dialog. One extra round-trip on the resubmit is the price of
+        // asking.
+        if (discovered.length > 1) {
+          return {
+            ok: false,
+            code: "multiple",
+            detail: null,
+            candidates: discovered.map((match) => ({
+              wabaId: match.wabaId,
+              phones: match.phones.map((phone) => ({
+                phoneNumberId: phone.id,
+                displayPhoneNumber: phone.display_phone_number ?? "",
+              })),
+            })),
+          };
+        }
       }
-      discovered = await wabaMatchesForTargetIds(appConfig, inspection.targetIds, businessToken);
     } catch (err) {
       return { ok: false, code: "failed", detail: errorDetail(err) };
-    }
-
-    if (discovered.length === 0) {
-      return { ok: false, code: "no_waba", detail: null };
-    }
-    // Ambiguity NEVER auto-attaches. A system-user token can see every WABA a
-    // business manages, so registering them all on one paste would mass-attach
-    // an agency's clients — the Embedded Signup semantics are safe there only
-    // because the customer picked the account inside Meta's own dialog. One
-    // extra round-trip on the resubmit is the price of asking.
-    if (!selector && discovered.length > 1) {
-      return {
-        ok: false,
-        code: "multiple",
-        detail: null,
-        candidates: discovered.map((match) => ({
-          wabaId: match.wabaId,
-          phones: match.phones.map((phone) => ({
-            phoneNumberId: phone.id,
-            displayPhoneNumber: phone.display_phone_number ?? "",
-          })),
-        })),
-      };
     }
 
     const result = await registerWabasForToken(this.env, (work) => this.ctx.waitUntil(work), {
@@ -731,7 +765,9 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     }
     // The shared path answers in the Embedded Signup vocabulary; only three of
     // its codes are reachable from here, and anything else is `failed` rather
-    // than a code this surface has no words for.
+    // than a code this surface has no words for. Its `no_waba` is now
+    // unreachable by construction — `discovered` is never empty when we get
+    // here — and stays mapped as defence, not as a live branch.
     const code =
       result.code === "no_waba" || result.code === "owned" ? result.code : "failed";
     return { ok: false, code, detail: result.error };

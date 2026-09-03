@@ -11,11 +11,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 export class MetaGraphError extends Error {
   readonly status: number;
+  /** Meta's `error.message` verbatim, or null when the body carried none.
+   * `message` keeps the operation prefix for logs; this is the sentence a
+   * console may show an operator on its own. */
+  readonly graphMessage: string | null;
 
   constructor(operation: string, status: number, message: string | null) {
     super(`${operation} failed: ${status}${message ? `: ${message}` : ""}`);
     this.name = "MetaGraphError";
     this.status = status;
+    this.graphMessage = message;
   }
 }
 
@@ -296,6 +301,44 @@ export async function wabaMatchesForTargetIds(
   }
   if (firstError) throw firstError;
   return matches;
+}
+
+/**
+ * Prove a token against ONE WhatsApp Business Account the operator named
+ * (eccos-up9 follow-up): the console's pasted-token path when discovery has
+ * nothing to go on.
+ *
+ * `debug_token`'s `target_ids` is issuance-time metadata Meta returns nullable
+ * — measured absent on a System User token that could read the WABA fine —
+ * so the operator's id seeds discovery instead, and Meta's live answer to
+ * `GET /<waba_id>/phone_numbers` is the authorization check: it is the same
+ * read every Cloud API operation on the WABA needs, and Meta refuses it for
+ * an id the token cannot load.
+ *
+ * A 4xx is that refusal, as a verdict — a mistyped id and an unassigned asset
+ * look the same to Graph ("does not exist, cannot be loaded due to missing
+ * permissions"), so the caller words both remedies. Anything else (5xx, a
+ * timeout, the pagination guards) is re-thrown: Meta failing is not Meta
+ * refusing, and must not be reported as one. An empty phone list is a
+ * readable WABA with no number, and is the caller's to judge.
+ */
+export type WabaProbe =
+  | { kind: "ok"; phones: PhoneNumber[] }
+  | { kind: "no_access"; error: MetaGraphError };
+
+export async function probeWabaWithToken(
+  cfg: MetaGraphConfig,
+  wabaId: string,
+  token: string,
+): Promise<WabaProbe> {
+  try {
+    return { kind: "ok", phones: await listPhoneNumbers(cfg, wabaId, token) };
+  } catch (error) {
+    if (error instanceof MetaGraphError && error.status >= 400 && error.status < 500) {
+      return { kind: "no_access", error };
+    }
+    throw error;
+  }
 }
 
 /** POST /<waba_id>/subscribed_apps pointing the callback at this Worker. */

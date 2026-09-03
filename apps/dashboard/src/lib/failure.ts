@@ -180,6 +180,10 @@ export function createTemplateFailureCopy(
  * a workable token from an unworkable one, because workability is a property of
  * the TOKEN — so the operator who cannot use it learns that here, in the
  * console's own words, together with the flow that does work for them.
+ *
+ * `no_access` and `no_phone` only ever follow an id the operator supplied;
+ * `no_waba` never does — the panel relies on that to know when to ask and when
+ * not to ask again.
  */
 export function tokenConnectFailureCopy(
   code: ManualConnectFailureCode,
@@ -201,10 +205,28 @@ export function tokenConnectFailureCopy(
           "It has expired or been revoked. The App Dashboard's test token lasts about a day — copy a fresh one and paste it here.",
       };
     case "no_waba":
+      // The panel answers this one with a question (the WABA id field), so
+      // this copy exists for the case where it somehow cannot.
       return {
-        title: "No WhatsApp account on this token",
+        title: "No WhatsApp account named",
         detail:
-          "This token names no WhatsApp Business Account with a phone number. Generate it with the WhatsApp account selected, or use a system-user token that has the account assigned as an asset.",
+          "Meta did not say which WhatsApp Business Account this token reaches. Nothing was attached. Enter the account's id and Meta will be asked whether this token can read it.",
+      };
+    case "no_access":
+      // Graph answers a mistyped id and an unassigned asset with the same
+      // refusal, so both remedies are named. Meta's sentence follows because
+      // it is the one thing here the console did not write.
+      return {
+        title: "This token cannot read that account",
+        // One template literal rather than a concatenation because biome's
+        // `useTemplate` rule refuses the latter; the sentence is unchanged.
+        detail: `Meta did not let this token read the WhatsApp Business Account you named. Check the id, and that the account is assigned to the token's system user with WhatsApp permissions.${detail ? ` Meta said: ${detail}` : ""}`,
+      };
+    case "no_phone":
+      return {
+        title: "No phone number on that account",
+        detail:
+          "Meta let this token read the WhatsApp Business Account you named, but there is no phone number on it. Add one in WhatsApp Manager, then attach again.",
       };
     case "multiple":
       // The panel renders the candidates itself, so this exists for the case

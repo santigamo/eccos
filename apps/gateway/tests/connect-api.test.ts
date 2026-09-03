@@ -5,6 +5,8 @@ import {
   getPhoneNumberOnboarding,
   inspectToken,
   listPhoneNumbers,
+  MetaGraphError,
+  probeWabaWithToken,
 } from "../src/meta/connect-api";
 import { connectRoutes, oauthStateIsValid } from "../src/routes/connect";
 
@@ -173,6 +175,110 @@ describe("listPhoneNumbers", () => {
     expect(requests[0]?.url).not.toContain("app-secret");
     expect(requests[0]?.url).not.toContain("access_token");
     expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer app-id|app-secret" });
+  });
+});
+
+/**
+ * The seed behind the console's WABA-id question (eccos-up9 follow-up).
+ *
+ * `debug_token`'s `target_ids` is nullable and was measured ABSENT on a System
+ * User token that could read its WABA perfectly well, so the operator's id has
+ * to be provable on its own. These tests pin the one distinction the whole
+ * design rests on: Meta REFUSING the read is a verdict the operator can act on,
+ * Meta FAILING is not, and the two must never be reported as the same thing.
+ */
+describe("probeWabaWithToken", () => {
+  const CFG = { META_GRAPH_VERSION: "v25.0" };
+
+  it("reads the phones behind a WABA the token can reach, with the token in the header only", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        JSON.stringify({ data: [{ id: "PN_1", display_phone_number: "+34 600 000 001" }] }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    await expect(probeWabaWithToken(CFG, "WABA_SEED", "biz-token")).resolves.toEqual({
+      kind: "ok",
+      phones: [{ id: "PN_1", display_phone_number: "+34 600 000 001" }],
+    });
+    expect(requests[0]?.url).toContain("/v25.0/WABA_SEED/phone_numbers");
+    expect(requests[0]?.url).not.toContain("access_token");
+    expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer biz-token" });
+  });
+
+  it("reports an empty WABA as readable with no phones, not as a refusal", async () => {
+    // INVARIANT: "Meta let us read it and there is nothing on it" is a
+    // different fact from "Meta would not let us read it", and only the caller
+    // can word them. The probe does not collapse them.
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [] }), { status: 200 })) as typeof fetch;
+
+    await expect(probeWabaWithToken(CFG, "WABA_EMPTY", "biz-token")).resolves.toEqual({
+      kind: "ok",
+      phones: [],
+    });
+  });
+
+  it("reads a 4xx as no_access carrying Meta's sentence", async () => {
+    // Graph answers a mistyped id and an unassigned asset with the same
+    // refusal, which is why the console has to name both remedies.
+    const refusal =
+      "Unsupported get request. Object with ID 'X' does not exist, cannot be loaded due to missing permissions, or does not support this operation.";
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          error: { message: refusal, type: "GraphMethodException", code: 100, error_subcode: 33 },
+        }),
+        { status: 400 },
+      )) as typeof fetch;
+
+    const probe = await probeWabaWithToken(CFG, "WABA_NOPE", "biz-token");
+    expect(probe.kind).toBe("no_access");
+    if (probe.kind !== "no_access") throw new Error("expected a refusal");
+    expect(probe.error).toBeInstanceOf(MetaGraphError);
+    expect(probe.error.status).toBe(400);
+    // Meta's sentence, and only Meta's — no "phone_numbers failed" prefix, so
+    // the console can show it as the sentence it is.
+    expect(probe.error.graphMessage).toBe(refusal);
+
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: { message: "(#200) Permissions error", code: 200 } }), {
+        status: 403,
+      })) as typeof fetch;
+    const forbidden = await probeWabaWithToken(CFG, "WABA_NOPE", "biz-token");
+    expect(forbidden.kind).toBe("no_access");
+    if (forbidden.kind !== "no_access") throw new Error("expected a refusal");
+    expect(forbidden.error.status).toBe(403);
+    expect(forbidden.error.graphMessage).toBe("(#200) Permissions error");
+  });
+
+  it("throws on a 5xx so the caller reports a failure, never a refusal", async () => {
+    // INVARIANT: Meta failing is not Meta refusing. Reporting a 503 as
+    // `no_access` would tell an operator their id or their asset grant is
+    // wrong when neither is.
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: { message: "Please reduce the amount of data" } }), {
+        status: 503,
+      })) as typeof fetch;
+
+    await expect(probeWabaWithToken(CFG, "WABA_SEED", "biz-token")).rejects.toThrow(
+      /phone_numbers failed: 503/,
+    );
+  });
+});
+
+describe("MetaGraphError", () => {
+  it("keeps Meta's sentence apart from its own prefix", () => {
+    // The prefixed `message` is what logs want; `graphMessage` is what an
+    // operator-facing console may show without the operation name leaking into
+    // the copy.
+    const error = new MetaGraphError("phone_numbers", 400, "Nope");
+    expect(error.message).toBe("phone_numbers failed: 400: Nope");
+    expect(error.graphMessage).toBe("Nope");
+    expect(new MetaGraphError("phone_numbers", 400, null).graphMessage).toBeNull();
   });
 });
 
