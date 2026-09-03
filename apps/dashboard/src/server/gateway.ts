@@ -5,6 +5,10 @@ import { createAuth, type Auth } from "../auth/auth";
 import { authConfigFromEnv } from "../auth/config";
 import { auditEvent } from "./audit";
 import type { SessionEvent } from "../lib/embedded-signup";
+// The console's authoring gate, shared with the create sheet — and, by
+// construction, the same module as `analyzeTemplate`, which is what makes the
+// two agree. See `lib/template-params.ts`.
+import { analyzeDraftBody } from "../lib/template-params";
 import {
   requireAuthContext,
   requireGatewayPermission,
@@ -16,6 +20,10 @@ import type {
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
+  CreateTemplateInput,
+  CreateTemplateResult,
+  DeleteTemplateInput,
+  DeleteTemplateResult,
   DeliveryListOpts,
   DeliveryRecord,
   GatewayApi,
@@ -39,6 +47,9 @@ export type {
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
+  CreateTemplateFailureCode,
+  CreateTemplateResult,
+  DeleteTemplateResult,
   DeliveryRecord,
   GatewayStatus,
   Health,
@@ -160,6 +171,8 @@ const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 const MAX_BODY_PARAMS = 30;
 const MAX_BODY_PARAM_LENGTH = 1024;
+/** Graph template ids (`hsm_id`) are numeric. */
+const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 
 function inputRecord(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -289,6 +302,90 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
     languageCode: record.languageCode.trim(),
     ...(values.length > 0 ? { bodyParams: values } : {}),
   };
+}
+
+/**
+ * The console's authoring validator — the strict one, and the place where the
+ * agreement with the send surface is enforced on the SERVER rather than only in
+ * the sheet.
+ *
+ * It runs the very `analyzeDraftBody` the form runs, so a request that skipped
+ * the UI cannot author a body the "Send test" sheet would later refuse; the
+ * gateway re-checks the same shapes and THROWS, which is only unreachable while
+ * this stays the strict one.
+ *
+ * Examples are mandatory, one per `{{n}}`: Meta requires an example value for
+ * every parameter, and they are what its reviewers read. Their character rules
+ * are the send validator's, byte for byte — an example travels to Meta as
+ * content exactly as a send parameter does.
+ *
+ * Exported for the same reason as {@link validateSendTestInput}: one call per
+ * rejected shape is cheaper than one route call each.
+ */
+export function validateCreateTemplateInput(input: unknown): CreateTemplateInput {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {
+    throw new Error("template name must be lowercase letters, numbers and underscores");
+  }
+  if (typeof record.language !== "string" || !LANGUAGE_PATTERN.test(record.language.trim())) {
+    throw new Error("invalid template language");
+  }
+  if (record.category !== "MARKETING" && record.category !== "UTILITY") {
+    // AUTHENTICATION is absent by design, not by omission: those are preset
+    // content plus OTP buttons, a creation shape this console does not build.
+    throw new Error("template category must be MARKETING or UTILITY");
+  }
+  if (typeof record.bodyText !== "string") throw new Error("template body is required");
+  // Not trimmed: leading and trailing whitespace is part of the message Meta
+  // will store, and silently rewriting an operator's body would make the
+  // preview a lie. Only its emptiness is judged on the trimmed form.
+  const bodyText = record.bodyText;
+  const draft = analyzeDraftBody(bodyText);
+  if (!draft.ok) throw new Error(draft.reason);
+
+  const raw = record.bodyExamples;
+  if (raw !== undefined && !Array.isArray(raw)) throw new Error("bodyExamples must be an array");
+  const examples = (raw ?? []) as unknown[];
+  if (examples.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+  if (examples.length !== draft.paramCount) {
+    throw new Error(`this body needs exactly ${draft.paramCount} example value(s)`);
+  }
+  const values = examples.map((value) => {
+    if (typeof value !== "string") throw new Error("example values must be strings");
+    const text = value.trim();
+    if (!text) throw new Error("every variable needs an example value");
+    if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("example value is too long");
+    // Meta rejects newlines and tabs inside a text parameter outright — the
+    // same rule the send validator applies, for the same reason.
+    if (/[\n\t]/.test(text)) throw new Error("example values cannot contain line breaks");
+    return text;
+  });
+
+  return {
+    wabaId,
+    name: record.name.trim(),
+    language: record.language.trim(),
+    category: record.category,
+    bodyText,
+    ...(values.length > 0 ? { bodyExamples: values } : {}),
+  };
+}
+
+/** One translation of one template, named by BOTH its name and its Graph id.
+ * The id is required because the name-only Meta call deletes every language. */
+export function validateDeleteTemplateInput(input: unknown): DeleteTemplateInput {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {
+    throw new Error("invalid template name");
+  }
+  if (typeof record.templateId !== "string" || !TEMPLATE_ID_PATTERN.test(record.templateId.trim())) {
+    throw new Error("invalid template id");
+  }
+  return { wabaId, name: record.name.trim(), templateId: record.templateId.trim() };
 }
 
 function validateSetupInput(input: unknown): { name?: string } | undefined {
@@ -897,6 +994,95 @@ export const sendTemplateTest = createServerFn({ method: "POST" })
             template: data.templateName,
             language: data.languageCode,
             ...(result.ok ? { messageId: result.messageId } : {}),
+          },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
+        });
+        return result;
+      }),
+  );
+
+/**
+ * Create one message template ("New template").
+ *
+ * `configure` (admin+), NOT `operate`. The line this codebase draws is: reads
+ * are `view`, acts that cause traffic are `operate`, and acts that change
+ * DURABLE TENANT STATE are `configure`. A template is durable state at Meta
+ * under the business's name: it counts against the WABA's template quota,
+ * a rejected one affects the business's review standing, and — because
+ * deleting an approved template locks its name for 30 days — even cleanup is
+ * consequential. Splitting create (`operate`) from delete (`configure`) was the
+ * alternative, and it is an escalation trap: an operator could author a
+ * mistake they then cannot remove.
+ *
+ * `scope: "any"` (the `listTemplates` precedent, not `sendTemplateTest`'s
+ * active-only rule): creation is a WABA-level write that needs the WABA id and
+ * its stored token, nothing from the data plane. An account whose number is
+ * still provisioning is exactly the one preparing its templates — authoring
+ * precedes provisioning.
+ */
+export const createTemplate = createServerFn({ method: "POST" })
+  .validator(validateCreateTemplateInput)
+  .handler(
+    ({ data }): Promise<Result<CreateTemplateResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("configure");
+        const scope = await resolveScope(gateway, data.wabaId, true, "any");
+        const result = await gateway.createTemplate(
+          { ...data, wabaId: scope.wabaId },
+          scope.accountId,
+        );
+        // NO body text and NO example value — ever. See `SensitiveAction`'s
+        // "template_create" doc comment: both are message content, and the
+        // audit log is not retention- or erasure-governed, so anything content
+        // shaped written here could never be erased again. The template NAME is
+        // an identifier and is already precedented by `template_test_send`.
+        auditEvent({
+          action: "template_create",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: {
+            wabaId: scope.wabaId,
+            template: data.name,
+            language: data.language,
+            category: data.category,
+            ...(result.ok ? { templateId: result.id, status: result.status } : {}),
+          },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
+        });
+        return result;
+      }),
+  );
+
+/**
+ * Delete ONE translation of a template.
+ *
+ * `configure` for the same reason as creation, and with more force: deleting an
+ * APPROVED template blocks its name from reuse for 30 days, which is the most
+ * durable consequence anything on this page has.
+ */
+export const deleteTemplate = createServerFn({ method: "POST" })
+  .validator(validateDeleteTemplateInput)
+  .handler(
+    ({ data }): Promise<Result<DeleteTemplateResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("configure");
+        const scope = await resolveScope(gateway, data.wabaId, true, "any");
+        const result = await gateway.deleteTemplate(
+          { ...data, wabaId: scope.wabaId },
+          scope.accountId,
+        );
+        auditEvent({
+          action: "template_delete",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: {
+            wabaId: scope.wabaId,
+            template: data.name,
+            templateId: data.templateId,
           },
           outcome: result.ok ? "success" : "failed",
           ...(result.ok ? {} : { detail: result.code }),

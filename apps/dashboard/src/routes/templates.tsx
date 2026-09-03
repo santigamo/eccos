@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute, useLoaderData } from "@tanstack/react-router";
+import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
@@ -21,6 +21,11 @@ import {
   SendTestSheet,
   type SendTestPhone,
 } from "../components/templates/send-test-sheet";
+import { CreateTemplateSheet } from "../components/templates/create-template-sheet";
+import {
+  DeleteTemplateDialog,
+  type DeleteTarget,
+} from "../components/templates/delete-template-dialog";
 
 export const Route = createFileRoute("/templates")({
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
@@ -79,7 +84,10 @@ function TemplatesPage() {
   const result = Route.useLoaderData();
   const { wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
+  const router = useRouter();
   const [target, setTarget] = useState<SendTarget | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
   // Sending needs a number to send FROM, so the column only exists once the
   // account has one. In the awaiting-a-phone state the WABA is connected and
@@ -139,37 +147,82 @@ function TemplatesPage() {
     header: "Action",
     cell: (info) => {
       const row = info.row.original;
-      // Only an approved template can be sent; a pending or rejected one holds
-      // the column's rhythm with a muted em-dash instead of a dead button.
-      if (!canSendTemplate(row.status) || !row.name || !row.language) {
+      // Only an approved template can be sent, and sending needs a number to
+      // send FROM. Deleting needs neither — but it does need the Graph id that
+      // identifies this exact name+language pair, and Meta gives a row already
+      // queued for deletion nothing left to delete.
+      const sendable = canSend && canSendTemplate(row.status) && Boolean(row.name && row.language);
+      const deletable =
+        Boolean(row.id && row.name && row.language) &&
+        row.status?.toUpperCase() !== "PENDING_DELETION";
+      // Data rule 5: a row with no action holds the column's rhythm with a
+      // muted em-dash rather than a dead button.
+      if (!sendable && !deletable) {
         return <span className="text-muted-foreground">—</span>;
       }
       return (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="rounded-none"
-          aria-label={`Send test message with ${row.name}`}
-          onClick={() =>
-            setTarget({
-              templateName: row.name ?? "",
-              languageCode: row.language ?? "",
-              status: row.status,
-              sendability: analyzeTemplate(row),
-            })
-          }
-        >
-          Send test
-        </Button>
+        <span className="flex items-center gap-2">
+          {sendable ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-none"
+              aria-label={`Send test message with ${row.name}`}
+              onClick={() =>
+                setTarget({
+                  templateName: row.name ?? "",
+                  languageCode: row.language ?? "",
+                  status: row.status,
+                  sendability: analyzeTemplate(row),
+                })
+              }
+            >
+              Send test
+            </Button>
+          ) : null}
+          {deletable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="rounded-none"
+              aria-label={`Delete ${row.name} (${row.language})`}
+              onClick={() =>
+                setDeleteTarget({
+                  templateId: row.id ?? "",
+                  name: row.name ?? "",
+                  language: row.language ?? "",
+                  status: row.status,
+                })
+              }
+            >
+              Delete
+            </Button>
+          ) : null}
+        </span>
       );
     },
   });
 
+  // Creation is a WABA-level act, so it is offered as soon as a WABA is
+  // selected — deliberately NOT gated on `canSend`. An account whose number is
+  // still provisioning is exactly the one preparing its templates. The role
+  // check is the server's: a refusal comes back typed and renders as copy in
+  // the sheet's notice (data rule 7), rather than as a hidden button.
+  const createAction = selectedWabaId ? (
+    <Button type="button" size="sm" onClick={() => setCreating(true)}>
+      New template
+    </Button>
+  ) : null;
+
   return (
-    <Page title="Templates" kicker="Cloud API">
+    <Page title="Templates" kicker="Cloud API" actions={createAction}>
       <LogGrid
-        columns={canSend ? [...baseColumns, actionColumn] : baseColumns}
+        // The column exists as soon as a WABA does: deleting works without a
+        // phone number, and the awaiting-a-phone account is exactly the one
+        // cleaning up its first drafts.
+        columns={selectedWabaId ? [...baseColumns, actionColumn] : baseColumns}
         data={items}
         emptyMessage={
           <GridEmptyState
@@ -194,6 +247,30 @@ function TemplatesPage() {
           status={target.status}
           sendability={target.sendability}
           phones={phones}
+        />
+      ) : null}
+      {creating && selectedWabaId ? (
+        <CreateTemplateSheet
+          // Remounted per opening, so a submitted draft never bleeds into the
+          // next one.
+          open
+          onOpenChange={(open) => {
+            if (!open) setCreating(false);
+          }}
+          wabaId={selectedWabaId}
+          onCreated={() => router.invalidate()}
+        />
+      ) : null}
+      {deleteTarget && selectedWabaId ? (
+        <DeleteTemplateDialog
+          // Remounted per row, so one row's refusal never shows over another.
+          key={deleteTarget.templateId}
+          wabaId={selectedWabaId}
+          target={deleteTarget}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+          onDeleted={() => router.invalidate()}
         />
       ) : null}
     </Page>

@@ -1,4 +1,4 @@
-import type { Failure, SendTestFailureCode } from "../server/gateway";
+import type { CreateTemplateFailureCode, Failure, SendTestFailureCode } from "../server/gateway";
 
 /**
  * What the console says about a `{ ok: false }` (eccos-k5a).
@@ -118,6 +118,48 @@ export function sendTestFailureCopy(
       return {
         title: "Meta refused the send",
         detail: detail ?? "Meta refused the message without saying why.",
+      };
+  }
+}
+
+/**
+ * What the console says about a refused template creation.
+ *
+ * Same discipline as {@link sendTestFailureCopy}: keyed on the closed
+ * `CreateTemplateFailureCode` the gateway decided, never on Meta's message
+ * text, which only ever appears as a secondary line.
+ */
+export function createTemplateFailureCopy(
+  code: CreateTemplateFailureCode,
+  detail: string | null,
+): FailureCopy {
+  switch (code) {
+    case "name_taken":
+      // Deliberately not worded around the 30-day post-deletion name lock:
+      // Meta answers with the same subcode for a template that simply exists,
+      // and for one whose name is still locked. This sentence is true of both
+      // without claiming which one happened.
+      return {
+        title: "Name already in use",
+        detail:
+          "A template with this name already exists in this language. Pick another name, or manage the existing one in WhatsApp Manager.",
+      };
+    case "invalid":
+      return {
+        title: "Meta refused the template",
+        detail:
+          "Something in the name, language, or body does not meet Meta's format rules.",
+      };
+    case "rate_limited":
+      return {
+        title: "Creation limit reached",
+        detail:
+          "Meta is rate-limiting template creation for this account. Wait a few minutes and try again.",
+      };
+    default:
+      return {
+        title: "Meta refused the template",
+        detail: detail ?? "Meta refused the template without saying why.",
       };
   }
 }

@@ -309,6 +309,82 @@ export type SendTemplateTestResult =
   | { ok: true; messageId: string }
   | { ok: false; code: SendTestFailureCode; detail: string | null };
 
+/**
+ * One console-authored message template (the "New template" sheet).
+ *
+ * Narrow for the same reason as {@link SendTemplateTestInput}: the gateway
+ * builds the Graph `components[]` itself from these validated fields, so a
+ * compromised console session can only ever author a **body-only text
+ * template** — never a media header, a button, or an authentication template.
+ * Widening this shape is a security decision, not a convenience one.
+ *
+ * The scope is also the intersection with what the console can SEND: every
+ * draft this accepts must come back from Meta as a row `analyzeTemplate`
+ * classifies `ready`, or the console would author templates its own "Send test"
+ * sheet refuses.
+ */
+export interface CreateTemplateInput {
+  wabaId: string;
+  /** Meta's charset: `^[a-z0-9_]{1,512}$`. Names are unique per name+language. */
+  name: string;
+  /** `en` / `es` / `en_US` / `pt_BR`. */
+  language: string;
+  /** AUTHENTICATION is deliberately absent: it is preset content plus OTP
+   * buttons, a different creation shape entirely. */
+  category: "MARKETING" | "UTILITY";
+  /** 1..1024 characters, positional `{{1}}..{{n}}` placeholders only. */
+  bodyText: string;
+  /** One example value per `{{n}}`, in order. Meta requires an example for
+   * every parameter, and they are what its reviewers read. */
+  bodyExamples?: string[];
+}
+
+/**
+ * Closed failure vocabulary for a refused template creation — the console owns
+ * the wording per code (same design as {@link SendTestFailureCode}; raw Graph
+ * errors never drive UI).
+ */
+export type CreateTemplateFailureCode =
+  /** Graph 100 / subcode 2388024 — this name already exists for this language.
+   * The 30-day post-deletion name lock also lands here. */
+  | "name_taken"
+  /** Graph 100 without a matching subcode — Meta refused the shape. */
+  | "invalid"
+  /** Graph 80008 — Meta is rate-limiting template creation for this account. */
+  | "rate_limited"
+  /** Anything else; `detail` carries Meta's own message text. */
+  | "graph";
+
+/**
+ * `status` and `category` are plain strings, not enums: they are Meta's answer,
+ * not the console's request. Creation returns `PENDING`, and the returned
+ * category may DIFFER from the one asked for — Meta recategorises on its own
+ * (`allow_category_change` is now the default behaviour), and the console says
+ * so rather than pretending it got what it asked for.
+ */
+export type CreateTemplateResult =
+  | { ok: true; id: string; status: string; category: string }
+  | { ok: false; code: CreateTemplateFailureCode; detail: string | null };
+
+/**
+ * Delete ONE translation of a template.
+ *
+ * `templateId` (Meta's `hsm_id`) is required, never a bare name: the name-only
+ * form of Meta's DELETE removes **every language** of that template, and the
+ * row the operator clicked is one name+language pair. The button must do what
+ * the row shows.
+ */
+export interface DeleteTemplateInput {
+  wabaId: string;
+  name: string;
+  /** Graph template id (`hsm_id`), digits only. */
+  templateId: string;
+}
+
+export type DeleteTemplateResult =
+  | { ok: true }
+  | { ok: false; code: "graph"; detail: string | null };
+
 export interface GatewayExport {
   inbound: InboundRow[];
   outbound: OutboundRow[];
@@ -349,6 +425,20 @@ export interface GatewayApi {
    * session must never hold a bigger send budget than a stolen API key.
    */
   sendTemplateTest(input: SendTemplateTestInput, accountId: string): Promise<SendTemplateTestResult>;
+  /**
+   * Create one message template on the WABA ("New template").
+   *
+   * Narrow on purpose (see {@link CreateTemplateInput}): the caller names a
+   * template and a body, and the gateway builds the Graph `components[]`.
+   * WABA-level like `listTemplates` / `setSubscriberConfig` — it needs only the
+   * WABA id and its stored token — so it works on a connected WABA that is
+   * still waiting for its phone number: authoring precedes provisioning.
+   * Ownership is enforced either way.
+   */
+  createTemplate(input: CreateTemplateInput, accountId: string): Promise<CreateTemplateResult>;
+  /** Delete one translation of a template (by `hsm_id`, never by bare name).
+   * WABA-level, same reachability as {@link GatewayApi.createTemplate}. */
+  deleteTemplate(input: DeleteTemplateInput, accountId: string): Promise<DeleteTemplateResult>;
   /** Re-run the provisioning saga for one WABA the account owns, whatever its
    * status (a `pending` WABA is precisely the one worth re-checking, so this is
    * the one operator method that does not require an already-active WABA).

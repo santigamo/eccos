@@ -148,6 +148,10 @@ const {
   recheckNumber,
   sendTemplateTest,
   validateSendTestInput,
+  createTemplate,
+  deleteTemplate,
+  validateCreateTemplateInput,
+  validateDeleteTemplateInput,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -830,6 +834,241 @@ describe("sendTemplateTest (Send test sheet)", () => {
     expect(audit).not.toContain("34600000011");
     expect(audit).not.toContain("600");
     expect(audit).not.toContain("Ada Lovelace");
+  });
+});
+
+// --- New template (routes/templates.tsx + components/templates/create-template-sheet.tsx) ---
+
+/**
+ * These live here, next to `sendTemplateTest`, rather than in a file of their
+ * own: the auth seam and the tenant module are mocked ONCE at this file's top
+ * level, and those registrations are process-global and outlive the file (see
+ * the header, and `helpers/server-fn-mocks`). A second file re-registering them
+ * would be a fresh instance of exactly the hazard that helper exists to close.
+ */
+describe("createTemplate (New template sheet)", () => {
+  const DRAFT = {
+    wabaId: "waba-a",
+    name: "order_update",
+    language: "en_US",
+    category: "UTILITY" as const,
+    bodyText: "Hi {{1}}, your order is on its way.",
+    bodyExamples: ["Ada"],
+  };
+
+  test("forwards the validated draft and the resolved accountId to the binding", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      createTemplate: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true, id: "1234567890", status: "PENDING", category: "UTILITY" };
+      },
+    });
+    const res = await createTemplate({ data: DRAFT });
+    expect(res).toEqual({
+      ok: true,
+      data: { ok: true, id: "1234567890", status: "PENDING", category: "UTILITY" },
+    });
+    expect(calls).toEqual([[DRAFT, "account-a"]]);
+  });
+
+  test("refuses every draft the gateway must never be asked to author", () => {
+    // The gateway re-checks these shapes and THROWS on them, so its throws are
+    // unreachable only while THIS validator is the strict one. Each case is a
+    // sentence the sheet can show instead of a server error.
+    expect(() => validateCreateTemplateInput({ ...DRAFT, name: "Order_Update" })).toThrow(
+      /lowercase/,
+    );
+    expect(() => validateCreateTemplateInput({ ...DRAFT, name: "order-update" })).toThrow(
+      /lowercase/,
+    );
+    expect(() => validateCreateTemplateInput({ ...DRAFT, language: "english" })).toThrow(/language/);
+    expect(() => validateCreateTemplateInput({ ...DRAFT, category: "AUTHENTICATION" })).toThrow(
+      /MARKETING or UTILITY/,
+    );
+    expect(() => validateCreateTemplateInput({ ...DRAFT, wabaId: undefined })).toThrow(/wabaId/);
+    // The agreement with the send surface, enforced on the SERVER: a body the
+    // "Send test" sheet could not read is a body this cannot author.
+    expect(() =>
+      validateCreateTemplateInput({ ...DRAFT, bodyText: "Hi {{customer_name}}" }),
+    ).toThrow(/Named parameters/);
+    expect(() => validateCreateTemplateInput({ ...DRAFT, bodyText: "Hi {{1}}, ref {{3}}" })).toThrow(
+      /no gaps/,
+    );
+    expect(() => validateCreateTemplateInput({ ...DRAFT, bodyText: "" })).toThrow(/empty/);
+    // One example per variable, no more and no fewer: Meta requires an example
+    // value for every parameter, and a mismatch would misalign them silently.
+    expect(() => validateCreateTemplateInput({ ...DRAFT, bodyExamples: [] })).toThrow(
+      /exactly 1 example/,
+    );
+    expect(() => validateCreateTemplateInput({ ...DRAFT, bodyExamples: ["Ada", "extra"] })).toThrow(
+      /exactly 1 example/,
+    );
+    expect(() => validateCreateTemplateInput({ ...DRAFT, bodyExamples: ["  "] })).toThrow(
+      /needs an example value/,
+    );
+    // The send validator's exact character rules: an example travels to Meta as
+    // content in the same way a send parameter does.
+    expect(() => validateCreateTemplateInput({ ...DRAFT, bodyExamples: ["one\ntwo"] })).toThrow(
+      /line breaks/,
+    );
+  });
+
+  test("keeps the body byte-for-byte, so the preview cannot be a lie", () => {
+    // Whitespace at either end is part of the message Meta will store. Trimming
+    // it here would make what the operator previewed differ from what is sent.
+    const spaced = validateCreateTemplateInput({ ...DRAFT, bodyText: "  Hi {{1}}  " });
+    expect(spaced.bodyText).toBe("  Hi {{1}}  ");
+  });
+
+  test("requires configure: a role without it is refused and the binding is never touched", async () => {
+    // Authoring is durable tenant state at Meta under the business's name — the
+    // `configure` class, not `operate`. A viewer or operator session cannot
+    // spend the WABA's template quota or its review standing.
+    let called = false;
+    withResources({
+      createTemplate: async () => {
+        called = true;
+        return { ok: true, id: "1", status: "PENDING", category: "UTILITY" };
+      },
+    });
+    fakeDeniedActions = new Set(["configure"]);
+    const res = await createTemplate({ data: DRAFT });
+    // Classified from the error's TYPE (eccos-k5a): a permission refusal is
+    // `forbidden`, never `unreachable`.
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("fails closed without a session", async () => {
+    let called = false;
+    withResources({
+      createTemplate: async () => {
+        called = true;
+        return { ok: true, id: "1", status: "PENDING", category: "UTILITY" };
+      },
+    });
+    fakeSessionHeaders = null;
+    const res = await createTemplate({ data: DRAFT });
+    expect(res).toMatchObject({ ok: false, kind: "unauthenticated" });
+    expect(called).toBe(false);
+  });
+
+  test("a WABA the account does not own is refused before Meta is called", async () => {
+    let called = false;
+    withResources({
+      createTemplate: async () => {
+        called = true;
+        return { ok: true, id: "1", status: "PENDING", category: "UTILITY" };
+      },
+    });
+    const res = await createTemplate({ data: { ...DRAFT, wabaId: "waba-foreign" } });
+    expect(res).toMatchObject({ ok: false, kind: "unreachable" });
+    expect(called).toBe(false);
+  });
+
+  test("a refused creation comes back as the typed inner failure, not a thrown error", async () => {
+    withResources({
+      createTemplate: async () => ({ ok: false, code: "name_taken", detail: "already exists" }),
+    });
+    expect(await createTemplate({ data: DRAFT })).toEqual({
+      ok: true,
+      data: { ok: false, code: "name_taken", detail: "already exists" },
+    });
+  });
+
+  test("the audit record carries NO body text and NO example value", async () => {
+    // THIS TEST EXISTS TO FAIL the moment someone "helpfully" adds the body to
+    // the audit line. Body text and example values are message content, and
+    // audit logs are neither retention-expired nor reachable by `eraseByPhone`
+    // — content written here could never be erased again. The template NAME is
+    // an identifier and stays, exactly as it does for `template_test_send`.
+    withResources({
+      createTemplate: async () => ({
+        ok: true,
+        id: "1234567890",
+        status: "PENDING",
+        category: "MARKETING",
+      }),
+    });
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await createTemplate({
+        data: {
+          ...DRAFT,
+          bodyText: "Hi {{1}}, your parcel reaches you today.",
+          bodyExamples: ["Ada Lovelace"],
+        },
+      });
+    } finally {
+      console.info = original;
+    }
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    expect(audit).toBeDefined();
+    expect(audit).toContain('"action":"template_create"');
+    expect(audit).toContain('"template":"order_update"');
+    expect(audit).toContain('"templateId":"1234567890"');
+    expect(audit).toContain('"category":"UTILITY"');
+    expect(audit).not.toContain("parcel");
+    expect(audit).not.toContain("Ada Lovelace");
+  });
+});
+
+describe("deleteTemplate (row action)", () => {
+  const TARGET = { wabaId: "waba-a", name: "order_update", templateId: "1234567890" };
+
+  test("forwards the name AND the Graph id, so one translation is removed", async () => {
+    // Never a bare name: Meta's name-only DELETE removes every language of the
+    // template, and the row the operator clicked is one name+language pair.
+    const calls: unknown[][] = [];
+    withResources({
+      deleteTemplate: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true };
+      },
+    });
+    expect(await deleteTemplate({ data: TARGET })).toEqual({ ok: true, data: { ok: true } });
+    expect(calls).toEqual([[TARGET, "account-a"]]);
+  });
+
+  test("refuses a target the gateway must never be asked to delete", () => {
+    expect(() => validateDeleteTemplateInput({ ...TARGET, templateId: "" })).toThrow(/template id/);
+    expect(() => validateDeleteTemplateInput({ ...TARGET, templateId: "abc" })).toThrow(
+      /template id/,
+    );
+    expect(() => validateDeleteTemplateInput({ ...TARGET, name: "Order Update" })).toThrow(
+      /template name/,
+    );
+    expect(() => validateDeleteTemplateInput({ ...TARGET, wabaId: undefined })).toThrow(/wabaId/);
+  });
+
+  test("requires configure, and audits the identifiers only", async () => {
+    withResources({ deleteTemplate: async () => ({ ok: true }) });
+    fakeDeniedActions = new Set(["configure"]);
+    expect(await deleteTemplate({ data: TARGET })).toMatchObject({
+      ok: false,
+      kind: "forbidden",
+      reason: "missing-permission",
+    });
+
+    fakeDeniedActions = new Set();
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await deleteTemplate({ data: TARGET });
+    } finally {
+      console.info = original;
+    }
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    expect(audit).toContain('"action":"template_delete"');
+    expect(audit).toContain('"templateId":"1234567890"');
   });
 });
 

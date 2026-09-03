@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  analyzeDraftBody,
   analyzeTemplate,
   canSendTemplate,
+  draftWarnings,
+  normalizeTemplateName,
   previewBody,
 } from "../src/lib/template-params";
 
@@ -155,5 +158,150 @@ describe("previewBody", () => {
     // The preview must never pretend a value exists: an unfilled slot keeps
     // {{n}} so what the operator sees is what Meta would receive.
     expect(previewBody("Hi {{1}}, order {{2}}", ["Ada", ""])).toBe("Hi Ada, order {{2}}");
+  });
+});
+
+// --- Authoring (the "New template" sheet) ------------------------------------
+
+describe("analyzeDraftBody", () => {
+  test("accepts a plain body and counts positional variables", () => {
+    // The create form's gate has to admit exactly what the send form's gate
+    // admits: positional {{1}}..{{n}} and nothing else.
+    expect(analyzeDraftBody("Welcome and congratulations!")).toEqual({ ok: true, paramCount: 0 });
+    expect(analyzeDraftBody("Hi {{1}}, order {{2}} shipped.")).toEqual({ ok: true, paramCount: 2 });
+    // A repeated variable is still one input — the same arithmetic
+    // `analyzeTemplate` does on the row Meta returns.
+    expect(analyzeDraftBody("Hi {{1}}, bye {{1}}.")).toEqual({ ok: true, paramCount: 1 });
+  });
+
+  test("blocks every draft the console could not later send", () => {
+    // Each of these is either a Meta rule or the mirror of a refusal
+    // `analyzeTemplate` already makes. A blocker carries a sentence, because
+    // the submit button is disabled and the reason has to be on screen.
+    const cases: [string, RegExp][] = [
+      ["", /cannot be empty/],
+      ["   ", /cannot be empty/],
+      ["Hi {{customer_name}}", /Named parameters/],
+      ["Hi {{1}}, ref {{3}}", /no gaps/],
+      ["Hi {{0}}", /numbered from/],
+      [`Hi ${Array.from({ length: 31 }, (_, i) => `{{${i + 1}}}`).join(" ")}`, /at most 30/],
+      ["x".repeat(1025), /1024/],
+    ];
+    for (const [body, reason] of cases) {
+      const result = analyzeDraftBody(body);
+      expect(result.ok, JSON.stringify(body.slice(0, 30))).toBe(false);
+      if (!result.ok) expect(result.reason).toMatch(reason);
+    }
+  });
+
+  test("1024 characters exactly is still allowed", () => {
+    // Meta's ceiling is inclusive; an off-by-one here would refuse a legal body.
+    expect(analyzeDraftBody("x".repeat(1024))).toEqual({ ok: true, paramCount: 0 });
+  });
+});
+
+describe("the agreement property (creation is the inverse of analysis)", () => {
+  test("every draft the form accepts comes back from Meta as a sendable row", () => {
+    // THE INVARIANT THIS WHOLE FEATURE RESTS ON. The console must never author
+    // a template its own "Send test" sheet then refuses: what Meta stores is
+    // the body typed here, and what the send sheet reads is `analyzeTemplate`
+    // over that stored body. If this ever goes red, the scope boundary of the
+    // create form has drifted away from the scope boundary of the send form —
+    // fix the form, not this test.
+    const drafts = [
+      "Welcome and congratulations!",
+      "Hi {{1}}, your order shipped.",
+      "Hi {{1}}, order {{2}} ships on {{3}}.",
+      "Hi {{1}}, bye {{1}}.",
+      "{{1}}",
+      "Line one\nline two {{1}}",
+      "Spaced {{ 1 }} placeholder",
+      "Padded {{01}} index",
+      "Braces } and { on their own {{1}}",
+      "Emoji ✅ and punctuation — {{1}}!",
+      "x".repeat(1024),
+      Array.from({ length: 30 }, (_, i) => `{{${i + 1}}}`).join(" "),
+      // Blocked drafts belong in the corpus too: the property is "accepted
+      // implies sendable", and a corpus with no refusals would not prove the
+      // filter is doing anything.
+      "Hi {{customer_name}}",
+      "Hi {{1}}, ref {{3}}",
+      "",
+    ];
+
+    let accepted = 0;
+    for (const body of drafts) {
+      const draft = analyzeDraftBody(body);
+      if (!draft.ok) continue;
+      accepted++;
+      // The row Meta returns for a body-only template created this way.
+      const row = analyzeTemplate({ components: [{ type: "BODY", text: body }] });
+      expect(row.kind, body.slice(0, 40)).toBe("ready");
+      if (row.kind === "ready") {
+        expect(row.paramCount, body.slice(0, 40)).toBe(draft.paramCount);
+        expect(row.bodyText).toBe(body);
+      }
+    }
+    // Non-vacuity: a property that quantifies over an empty set proves nothing.
+    expect(accepted).toBe(12);
+  });
+
+  test("the accepted parameter count is exactly the number of inputs the send sheet asks for", () => {
+    // Stated separately because it is the operational consequence: the example
+    // values collected at creation and the parameters collected at send time
+    // are the same list, in the same order.
+    for (let n = 0; n <= 5; n++) {
+      const body = `Body ${Array.from({ length: n }, (_, i) => `{{${i + 1}}}`).join(" ")}`;
+      const draft = analyzeDraftBody(body);
+      expect(draft).toEqual({ ok: true, paramCount: n });
+      expect(analyzeTemplate({ components: [{ type: "BODY", text: body }] })).toMatchObject({
+        kind: "ready",
+        paramCount: n,
+      });
+    }
+  });
+});
+
+describe("draftWarnings", () => {
+  test("flags the reseller-sourced review risks without blocking anything", () => {
+    // These are heuristics reported by resellers, not rules Meta publishes —
+    // which is precisely why they warn. The console does not wall an operator
+    // out of a template on a rule it cannot source.
+    expect(draftWarnings("{{1}} your order is ready for collection today")).toEqual([
+      expect.stringContaining("start or end with a variable"),
+    ]);
+    expect(draftWarnings("Your order is ready, {{1}}")).toEqual([
+      expect.stringContaining("start or end with a variable"),
+    ]);
+    expect(draftWarnings("{{1}} {{2}} {{3}}")).toHaveLength(2);
+  });
+
+  test("stays silent on a body that reads as a message", () => {
+    expect(draftWarnings("Hi {{1}}, your Eccos order is on its way and arrives tomorrow.")).toEqual(
+      [],
+    );
+    expect(draftWarnings("Welcome and congratulations!")).toEqual([]);
+    // A blocked draft has a blocker to show; piling warnings on top of it would
+    // bury the sentence that actually explains the disabled button.
+    expect(draftWarnings("Hi {{customer_name}}")).toEqual([]);
+  });
+});
+
+describe("normalizeTemplateName", () => {
+  test("coerces what is typed into Meta's charset, idempotently", () => {
+    // What the field shows is what the API receives: the operator never gets a
+    // rejection for a character the form let them type.
+    expect(normalizeTemplateName("Order Update!")).toBe("order_update");
+    expect(normalizeTemplateName("  Envío  Confirmado  ")).toBe("_envo_confirmado_");
+    expect(normalizeTemplateName("a-b.c")).toBe("abc");
+    for (const raw of ["Order Update!", "  Envío  ", "a-b.c", "already_fine_1"]) {
+      const once = normalizeTemplateName(raw);
+      expect(normalizeTemplateName(once), raw).toBe(once);
+      expect(once === "" || /^[a-z0-9_]{1,512}$/.test(once), raw).toBe(true);
+    }
+  });
+
+  test("caps at Meta's 512-character name limit", () => {
+    expect(normalizeTemplateName("a".repeat(600))).toHaveLength(512);
   });
 });

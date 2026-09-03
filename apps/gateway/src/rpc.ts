@@ -3,7 +3,7 @@ import { getGatewayStubForWaba } from "./gateway-stub";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { exchangeAndRegisterAll, startConnectForAccount } from "./routes/connect";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
-import { listTemplates } from "@eccos/core/templates";
+import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
 import { sendMessage } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
@@ -11,6 +11,11 @@ import type {
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
+  CreateTemplateFailureCode,
+  CreateTemplateInput,
+  CreateTemplateResult,
+  DeleteTemplateInput,
+  DeleteTemplateResult,
   DeliveryListOpts,
   DeliveryRecord,
   EraseByPhoneResult,
@@ -56,6 +61,13 @@ const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 const MAX_BODY_PARAMS = 30;
 const MAX_BODY_PARAM_LENGTH = 1024;
+/** Meta's body ceiling for a template component. */
+const MAX_TEMPLATE_BODY_LENGTH = 1024;
+/** Graph template ids (`hsm_id`) are numeric. */
+const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
+/** The only two categories the console authors; AUTHENTICATION is a different
+ * creation shape (preset content + OTP buttons) and is not offered. */
+const TEMPLATE_CATEGORIES = new Set(["MARKETING", "UTILITY"]);
 
 /**
  * Graph error codes worth naming, from Meta's Cloud API error reference.
@@ -71,17 +83,43 @@ const GRAPH_ERROR_CODES: Record<number, SendTestFailureCode> = {
   132001: "template_not_found",
 };
 
-/** Pull Meta's `{ error: { code, message } }` out of a parsed Graph body. */
-function graphError(error: unknown): { code: number | null; message: string | null } {
-  const body = error as { error?: { code?: unknown; message?: unknown } } | null;
+/** Pull Meta's `{ error: { code, error_subcode, message } }` out of a parsed
+ * Graph body. The subcode matters because Meta reuses code 100 for every
+ * malformed-request case and only the subcode says which one it was. */
+function graphError(error: unknown): {
+  code: number | null;
+  subcode: number | null;
+  message: string | null;
+} {
+  const body = error as
+    | { error?: { code?: unknown; error_subcode?: unknown; message?: unknown } }
+    | null;
   const inner = body && typeof body === "object" ? body.error : undefined;
   const message = typeof inner?.message === "string" ? inner.message.trim() : "";
   return {
     code: typeof inner?.code === "number" ? inner.code : null,
+    subcode: typeof inner?.error_subcode === "number" ? inner.error_subcode : null,
     // A blank message is as good as no message: the caller falls back to the
     // HTTP status rather than rendering an empty detail line.
     message: message || null,
   };
+}
+
+/**
+ * Why a template creation was refused, in the console's closed vocabulary.
+ *
+ * Kept separate from {@link GRAPH_ERROR_CODES} on purpose: that map is the
+ * SEND vocabulary and is keyed on `code` alone, while this one has to read the
+ * SUBCODE first — Meta answers a duplicate name+language with code 100,
+ * subcode 2388024, and answers half a dozen unrelated format problems with a
+ * bare code 100. Anything unlisted degrades to `graph` with Meta's own
+ * sentence, which is legible and can never be wrong.
+ */
+function createTemplateFailure(code: number | null, subcode: number | null): CreateTemplateFailureCode {
+  if (subcode === 2388024) return "name_taken";
+  if (code === 80008) return "rate_limited";
+  if (code === 100) return "invalid";
+  return "graph";
 }
 
 /**
@@ -208,6 +246,92 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult> {
     const { config: cfg } = await this.scoped(wabaId, accountId, { anyStatus: true });
     return listTemplates(cfg, limit);
+  }
+
+  /**
+   * Create one message template on the WABA ("New template").
+   *
+   * WABA-level **write**, reachable on a WABA of any provisioning status — the
+   * same asymmetry `setSubscriberConfig` documents: the Graph call needs only
+   * the WABA id and its stored token, and preparing templates on an account
+   * still waiting for its phone number is exactly the awaiting-a-phone use
+   * case. Ownership is still enforced (`getWabaRecord` is account-scoped).
+   *
+   * Deliberately does NOT draw on `SEND_RATE_LIMITER`: that budget is the send
+   * budget, shared with the API-key path, and burning it on authoring would let
+   * template creation starve message delivery. Meta's own 80008 is the creation
+   * limiter, and it maps to `rate_limited`.
+   *
+   * Nothing is sent, so there is no `logOutbound` row — and no line of this
+   * method ever logs the body text or an example value.
+   */
+  async createTemplate(input: CreateTemplateInput, accountId: string): Promise<CreateTemplateResult> {
+    const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
+
+    // Defense in depth, throw-not-code: the dashboard validator is the strict
+    // one and the only caller, so reaching any of these means that validator
+    // regressed — a programmer error, which belongs in the logs as a throw
+    // rather than in the UI as a failure code.
+    const examples = input.bodyExamples ?? [];
+    if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
+    if (!LANGUAGE_PATTERN.test(input.language)) throw new Error("invalid template language");
+    if (!TEMPLATE_CATEGORIES.has(input.category)) throw new Error("invalid template category");
+    if (typeof input.bodyText !== "string" || input.bodyText.length === 0) {
+      throw new Error("template body is required");
+    }
+    if (input.bodyText.length > MAX_TEMPLATE_BODY_LENGTH) throw new Error("template body is too long");
+    if (examples.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+    for (const value of examples) {
+      if (typeof value !== "string" || value.length === 0 || value.length > MAX_BODY_PARAM_LENGTH) {
+        throw new Error("example values must be 1-1024 characters");
+      }
+    }
+
+    const result = await createTemplate(cfg, {
+      name: input.name,
+      language: input.language,
+      category: input.category,
+      bodyText: input.bodyText,
+      ...(examples.length > 0 ? { examples } : {}),
+    });
+    if (!result.ok) {
+      const { code, subcode, message } = graphError(result.error);
+      const mapped = createTemplateFailure(code, subcode);
+      return {
+        ok: false,
+        code: mapped,
+        detail: mapped === "graph" ? (message ?? `HTTP ${result.status}`) : message,
+      };
+    }
+
+    // Meta's answer, not the console's request: `category` here is the one it
+    // ASSIGNED, which may differ from the one asked for, and the console says
+    // so rather than pretending otherwise.
+    const data = result.data as { id?: unknown; status?: unknown; category?: unknown } | null;
+    return {
+      ok: true,
+      id: typeof data?.id === "string" ? data.id : "",
+      status: typeof data?.status === "string" ? data.status : "PENDING",
+      category: typeof data?.category === "string" ? data.category : input.category,
+    };
+  }
+
+  /** Delete ONE translation of a template (by `hsm_id`). Same WABA-level
+   * reachability and ownership rules as {@link GatewayRPC.createTemplate}.
+   * `wabaId` is re-read from the scoped record so the Graph call can never be
+   * addressed at a WABA the account does not own. */
+  async deleteTemplate(input: DeleteTemplateInput, accountId: string): Promise<DeleteTemplateResult> {
+    const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
+    // Defense in depth again: only a regressed console can produce these.
+    if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
+    if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
+
+    const result = await deleteTemplate(cfg, { name: input.name, hsmId: input.templateId });
+    if (!result.ok) {
+      const { message } = graphError(result.error);
+      return { ok: false, code: "graph", detail: message ?? `HTTP ${result.status}` };
+    }
+    return { ok: true };
   }
 
   /** Operator-visible forwarding target (DO config first, env fallback). Never returns the secret.

@@ -35,6 +35,22 @@ export type SensitiveAction =
    * language, the returned messageId, and the failure code as `detail`.
    */
   | "template_test_send"
+  /**
+   * One message template authored from the console's "New template" sheet.
+   *
+   * NEVER carries the body text or any example value. Both are message
+   * content — the body is the message every future send of this template will
+   * carry, and an example is a sample value shown to Meta's reviewers — while
+   * audit logs are neither retention-expired nor reachable by `eraseByPhone`.
+   * Content here would be unerasable by construction. The record carries
+   * wabaId, the template NAME (an identifier, precedented by
+   * `template_test_send`), the language, the requested category, and on success
+   * the id and status Meta returned.
+   */
+  | "template_create"
+  /** One template translation deleted from the console. Carries wabaId, the
+   * template name and its Graph id — identifiers only, never content. */
+  | "template_delete"
   | "api_key_issue"
   | "api_key_revoke"
   | "export_data"
