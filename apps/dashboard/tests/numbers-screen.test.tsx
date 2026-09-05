@@ -19,10 +19,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { ConnectNumberPanel } = await import(
-  "../src/components/dashboard/connect-number"
-);
-const { AddNumberDisclosure } = await import("../src/routes/numbers");
+const { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices, ConnectNumberPanel } =
+  await import("../src/components/dashboard/connect-number");
+const { AddNumberButton } = await import("../src/routes/numbers");
 
 function render(heading = "Meta Embedded Signup"): string {
   return renderToStaticMarkup(<ConnectNumberPanel heading={heading} />);
@@ -131,43 +130,77 @@ describe("ConnectNumberPanel", () => {
   });
 });
 
-describe("AddNumberDisclosure", () => {
-  test("collapsed by default: a ghost control, not a standing panel", () => {
-    // docs/console-gaps-2026-09.md §6: under a populated table the connect
-    // panel read as a standing part of the page. Collapsed it is one ghost
-    // button, and the panel is not in the markup at all.
+describe("AddNumberButton", () => {
+  test("closed: the page's primary action in the header", () => {
+    // Moved from a ghost disclosure under the table to the `Page` header's
+    // action slot: level with the title, top right, and in the primary
+    // variant — the view's one solid button. The fork is not in the markup at
+    // all until the button opens it.
     const html = renderToStaticMarkup(
-      <AddNumberDisclosure expanded={false} onToggle={() => {}} />,
+      <AddNumberButton expanded={false} onToggle={() => {}} />,
     );
     expect(html).toContain("+ Add number");
-    expect(html).toContain("aria-expanded");
+    expect(html).toContain("bg-primary");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('aria-haspopup="dialog"');
     expect(html).not.toContain("Meta Embedded Signup");
   });
 
-  test("expanded it IS the same connect panel, unchanged", () => {
-    // Same component as first run — the disclosure adds a state, not a second
-    // form. The heading is the disclosure's own; the two Embedded Signup paths
-    // and the closing sentence are the panel's, exactly as on first run.
+  test("open: the trigger STAYS, and says so", () => {
+    // It used to render nothing while open, which is the defect this change
+    // set started from: with the trigger gone and the panel offering no close,
+    // the only ways out of /numbers were Meta's popup or leaving the page.
+    // Behind a backdrop a visible trigger asks no "which one do I use?"
+    // question, and Base UI needs it to restore focus to on close.
     const html = renderToStaticMarkup(
-      <AddNumberDisclosure expanded={true} onToggle={() => {}} />,
+      <AddNumberButton expanded={true} onToggle={() => {}} />,
     );
-    expect(html).toContain("Add another number");
-    expect(html).toContain("Keep the number on the WhatsApp Business app");
-    expect(html).toContain("Bring a number to the Cloud API");
-    expect(html).not.toContain("+ Add number");
+    expect(html).toContain("+ Add number");
+    expect(html).toContain('aria-expanded="true"');
   });
 
-  test("the disclosure never points at the token route", () => {
+  test("the button never points at the token route", () => {
     // Hard constraint from numbers.tsx: /numbers/attach-token stays unlinked
-    // from this page (the JSX comment at the import exists to keep it that
-    // way), so the disclosure must not grow an "or attach by token" line.
+    // from this page, so the add-number affordance must not grow an "or
+    // attach by token" line in either state.
     const collapsed = renderToStaticMarkup(
-      <AddNumberDisclosure expanded={false} onToggle={() => {}} />,
+      <AddNumberButton expanded={false} onToggle={() => {}} />,
     );
     const expanded = renderToStaticMarkup(
-      <AddNumberDisclosure expanded={true} onToggle={() => {}} />,
+      <AddNumberButton expanded={true} onToggle={() => {}} />,
     );
     expect(collapsed).not.toContain("token");
     expect(expanded).not.toContain("token");
+  });
+});
+
+describe("ConnectNumberChoices", () => {
+  // The fork with no container of its own — what the dialog renders on the
+  // populated page, and what `ConnectNumberPanel` frames on first run. Pinned
+  // separately so the split cannot quietly become two forks.
+  const bare = () => renderToStaticMarkup(<ConnectNumberChoices />);
+
+  test("carries the paths and the consequence, and no frame of its own", () => {
+    const html = bare();
+    expect(html).toContain("Keep the number on the WhatsApp Business app");
+    expect(html).toContain("Bring a number to the Cloud API");
+    expect(html).toContain("Removes the number from the WhatsApp Business app");
+    // No Frame, no heading: the container supplies both. A bordered glass
+    // panel inside a bordered glass dialog is the panel-in-panel this split
+    // exists to prevent.
+    expect(html).not.toContain("Meta Embedded Signup");
+    expect(html).not.toContain("data-slot=\"frame\"");
+  });
+
+  test("the framing sentence is shared, not duplicated", () => {
+    // Both containers render CONNECT_FORK_DESCRIPTION themselves — the panel
+    // in `FrameDescription`, the dialog in `DialogDescription` — so the fork
+    // itself must NOT carry it, or first run would show it twice.
+    // Compared on a fragment, not the whole constant: the apostrophe in
+    // "Meta's" is entity-escaped in the markup.
+    const fragment = "The choice locks the moment Meta";
+    expect(CONNECT_FORK_DESCRIPTION).toContain(fragment);
+    expect(bare()).not.toContain(fragment);
+    expect(render()).toContain(fragment);
   });
 });

@@ -12,10 +12,12 @@ import { Button } from "@/components/ui/button"
  * `--line` hairline, the solid `--popover` surface).
  *
  * An alert dialog rather than the plain `Dialog`: it is modal, it traps focus,
- * and — unlike `Sheet` — it does not dismiss on a backdrop click or Escape by
- * accident, which is the whole point when the action behind it is destructive.
- * The surface stays SOLID, per the design doc's glass rule: floating things sit
- * over text.
+ * and — unlike `Sheet` — Base UI forces `disablePointerDismissal` on this mode,
+ * so a click on the near-invisible `bg-black/10` backdrop cannot answer a
+ * destructive question on the operator's behalf. Escape is NOT blocked and must
+ * not be: Escape means Cancel, and a destructive act should only ever follow an
+ * explicit press of the action. The surface stays SOLID, per the design doc's
+ * glass rule: floating things sit over text.
  */
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />

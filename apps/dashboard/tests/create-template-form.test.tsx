@@ -28,8 +28,11 @@ const {
   CreateTemplateFields,
   CreateTemplateSheet,
   EMPTY_DRAFT,
+  discardDraftCopy,
   exampleValues,
+  isDraftDirty,
   noticeFor,
+  shouldGuardDismissal,
 } = await import("../src/components/templates/create-template-sheet");
 
 type Draft = typeof EMPTY_DRAFT;
@@ -318,5 +321,96 @@ describe("CreateTemplateFields", () => {
     const html = render({ body: "Hi {{1}}", examples: ["Ada"], footer: "", buttons: [] });
     expect(html).toContain("Hi Ada");
     expect(html).not.toContain("p-2.5");
+  });
+});
+
+/**
+ * The dismissal guard: what keeps an unsaved draft alive.
+ *
+ * Asserted through the pure predicates rather than the markup, deliberately.
+ * The sheet is a Base UI portal whose popup a static render cannot open (the
+ * first test in this file pins that), and the gestures the guard answers —
+ * a backdrop click, Escape, the close button — do not exist without a DOM. The
+ * predicates ARE the decision; the sheet only wires them to
+ * `disablePointerDismissal` and to `eventDetails.cancel()`.
+ */
+describe("the dismissal guard", () => {
+  // `createdDraft` is compared by reference, so the one test about it builds its
+  // draft object by hand instead of going through this helper.
+  const guard = (draft: Partial<Draft>, submitting = false) =>
+    shouldGuardDismissal({
+      draft: { ...EMPTY_DRAFT, ...draft },
+      submitting,
+      createdDraft: null,
+    });
+
+  test("an untouched draft is not dirty, so 'opened it by mistake' stays free", () => {
+    expect(isDraftDirty(EMPTY_DRAFT)).toBe(false);
+    expect(guard({})).toBe(false);
+  });
+
+  test("anything typed into the document arms the guard", () => {
+    expect(isDraftDirty({ ...EMPTY_DRAFT, name: "order_update" })).toBe(true);
+    expect(isDraftDirty({ ...EMPTY_DRAFT, body: "Hi {{1}}" })).toBe(true);
+    expect(isDraftDirty({ ...EMPTY_DRAFT, footer: "Powered by Eccos" })).toBe(true);
+    expect(guard({ body: "Hi {{1}}" })).toBe(true);
+  });
+
+  test("whitespace alone is not content", () => {
+    // Otherwise a stray space in the name would cost a confirmation.
+    expect(isDraftDirty({ ...EMPTY_DRAFT, name: "   ", body: "\n ", footer: " " })).toBe(false);
+  });
+
+  test("a language or category moved off its default is a deliberate choice", () => {
+    expect(isDraftDirty({ ...EMPTY_DRAFT, language: "es_ES" })).toBe(true);
+    expect(isDraftDirty({ ...EMPTY_DRAFT, category: "MARKETING" })).toBe(true);
+  });
+
+  test("a button row added and left blank is shape, not content", () => {
+    // One click to recreate: guarding it would make "+ Add button" a trap.
+    expect(
+      isDraftDirty({ ...EMPTY_DRAFT, buttons: [{ text: "", url: "", exampleUrl: "" }] }),
+    ).toBe(false);
+    expect(
+      isDraftDirty({
+        ...EMPTY_DRAFT,
+        buttons: [{ text: "Track", url: "", exampleUrl: "" }],
+      }),
+    ).toBe(true);
+  });
+
+  test("an example typed for a variable that has left the body still counts", () => {
+    // The examples array is only ever grown, so the value is still on screen
+    // the moment the variable is typed back — losing it would be a real loss.
+    expect(isDraftDirty({ ...EMPTY_DRAFT, examples: ["Ada"] })).toBe(true);
+    expect(isDraftDirty({ ...EMPTY_DRAFT, examples: ["", ""] })).toBe(false);
+  });
+
+  test("a submit in flight guards even a draft that looks empty", () => {
+    // Unmounting under a pending request throws away Meta's answer to a
+    // creation that may already have succeeded.
+    expect(guard({}, true)).toBe(true);
+  });
+
+  test("the draft Meta accepted is a receipt, and stops guarding", () => {
+    const created: Draft = { ...EMPTY_DRAFT, name: "order_update", body: "Hi {{1}}" };
+    expect(shouldGuardDismissal({ draft: created, submitting: false, createdDraft: created })).toBe(
+      false,
+    );
+    // Reference identity on purpose: editing produces a new object, and the
+    // guard re-arms on the very next keystroke.
+    const edited: Draft = { ...created, body: "Hi {{1}}!" };
+    expect(shouldGuardDismissal({ draft: edited, submitting: false, createdDraft: created })).toBe(
+      true,
+    );
+  });
+
+  test("the discard question names what is lost, and says something else mid-submit", () => {
+    // Two costs, two sentences: an unsent draft loses what was typed, an
+    // in-flight one loses Meta's answer.
+    expect(discardDraftCopy(false)).toContain("Nothing has been created yet");
+    expect(discardDraftCopy(false)).toContain("buttons");
+    expect(discardDraftCopy(true)).toContain("still being submitted");
+    expect(discardDraftCopy(true)).not.toContain("Nothing has been created yet");
   });
 });

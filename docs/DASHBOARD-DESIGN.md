@@ -82,6 +82,57 @@ Every route renders the same skeleton (the `Page` component in `src/ui.tsx`):
    the viewport (`flex min-h-full flex-col`) so structure reaches the bottom and
    the void reads as intentional.
 
+## Overlays (which surface, and which register)
+
+Anything that covers a page is one of three registers, and the register is chosen by
+what the operator is being asked to do — never by how much markup happens to fit.
+
+`Sheet` and `Dialog` are the **same primitive**: both wrap `@base-ui/react/dialog`
+(`src/components/ui/sheet.tsx:4`), and a sheet is that dialog docked to a side. "Which
+component" is therefore never the question. The register is.
+
+1. **AlertDialog — confirm a one-click destructive act requested elsewhere.** The
+   operator already pressed Delete on a row; this surface only asks whether they meant
+   it, and states the cost in the system's own terms (`delete-template-dialog.tsx`:
+   deleting an APPROVED template locks its name for 30 days, a draft locks nothing).
+   No fields. Two buttons, the destructive one carrying the verb.
+2. **Centred Dialog — a decision the operator must read before leaving the page.** No
+   fields, no submit: the choices themselves are the actions, because the fork is
+   structural and cannot be revisited afterwards. Shipped: the add-number fork on
+   `/numbers` — Meta fixes `featureType` the instant its popup spawns, so the console
+   has to ask first or not at all. The consequence copy is the whole payload, so the
+   surface is sized around it: the fork's amber line wraps to two lines at the house
+   sheet width (`sm:max-w-md` gives its column 328px; the line measures 363px), which
+   is why `Dialog` defaults to `sm:max-w-lg`. Measure before narrowing one.
+3. **Side Sheet — a task done beside the list, or one row inspected without acting on
+   it.** Task: a form with its own primary submit whose neighbouring list is genuinely
+   relevant (`create-template-sheet.tsx`, `send-test-sheet.tsx`). Inspection:
+   `template-preview-sheet.tsx`, read-only by construction.
+
+**The two edges that get mis-cut.**
+
+- **An irreversible side effect does not by itself pull a surface into the confirm
+  register.** `send-test-sheet.tsx` sends a real WhatsApp message to a real phone and
+  stays a Sheet, because its act is *composed* — pick the sender, type the recipient,
+  fill every `{{n}}`, read the preview — and the composition **is** the confirmation.
+  AlertDialog gates a one-click act; it does not gate a form. Stacking a confirm on
+  work the operator just built by hand only teaches them to dismiss confirms.
+- **Read-only inspection is its own register, and it lives in a Sheet.** A modal exists
+  to collect a decision; a look-up has no decision behind it, so a modal for one is
+  pure interruption. Inspection docks beside the row it came from and leaves the list
+  legible.
+
+**Dismissal — the corollary, and the defect this section was written from.** All three
+registers refuse backdrop and Escape dismissal while an irreversible operation is in
+flight or while unsaved input exists, and all three always offer an explicit close (the
+`SheetClose` X, a Cancel, a named way out of a fork). Base UI hands the confirm register
+half of that for free: alert-dialog mode forces `modal: true` and
+`disablePointerDismissal: true` (`@base-ui/react/dialog/root/useRenderDialogRoot.js:32`)
+but deliberately leaves Escape alone — which is right, because on a confirm **Escape
+means Cancel**. Deliberate abandonment always stays possible. A surface an operator
+cannot leave is not careful, it is broken: a decision shipped as a non-dismissible
+inline panel with no close is exactly the bug that produced this rule.
+
 ## Atmosphere, glass, and the lantern
 
 The console's dark is lit, not dead — three layers, all under the content:
@@ -198,11 +249,19 @@ wire hover/focus to the interaction tokens above, put any uppercase micro-label 
 the machine voice, and check its inks against the contrast floors (muted ≥4.5:1 on
 its real background; machine voice uses `--muted`, never `--faint`).
 
+**The overlay set is closed.** `Sheet`, `Dialog` and `AlertDialog` cover the three
+registers above; vendoring a fourth overlay means first naming a register those three
+cannot express. Whatever it is, its surface stays solid `--popover` — floating things
+sit over text.
+
 ## Before shipping a console change
 
-- Diff against the two laws, then the interaction-contrast rules, then the data
-  rules. If a screen looks "cleaner" but lost a green edge, a hover state, or an
-  evidence link, it regressed.
+- Diff against the two laws, then the interaction-contrast rules, then the overlay
+  registers, then the data rules. If a screen looks "cleaner" but lost a green edge,
+  a hover state, or an evidence link, it regressed.
+- A surface that covers the page names its register out loud — confirm, decision,
+  task, or inspection — and proves it can be left: an explicit close, plus Escape
+  whenever nothing irreversible is in flight and nothing is unsaved.
 - New values go through tokens; new imagery follows BRAND.md's glass recipes.
 - `bun run typecheck` + `bun run test` from `apps/dashboard`; verify visually
   against the landing — the parity test is a side-by-side with eccos.chat:

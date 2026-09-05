@@ -86,10 +86,24 @@ const SDK_REQUIRED_MESSAGE =
   "Connecting a number that is already on the WhatsApp Business app needs Meta's script, which did not load. Check for a blocker or an extension and try again. Do not use the other option: it would take the number off the app.";
 
 /**
- * Start Meta Embedded Signup. Rendered as the empty state of /numbers on first
- * run and, later, from the same page when the operator adds another number:
- * connecting a number is a recurring operation, not a first-run ritual, so it
- * has one surface rather than a wizard that only exists once.
+ * The sentence that frames the fork, shared by both containers so they cannot
+ * drift: the panel puts it in `FrameDescription` on first run, the dialog in
+ * `DialogDescription` on the populated page. Both readings need it BEFORE the
+ * cards, because "the choice locks" is the reason the fork is a screen at all.
+ */
+export const CONNECT_FORK_DESCRIPTION =
+  "Pick the one that matches where the number lives today. The choice locks the moment Meta's window opens.";
+
+/**
+ * Start Meta Embedded Signup: the fork itself, with no container of its own.
+ *
+ * Rendered as the empty state of /numbers on first run (through
+ * `ConnectNumberPanel` below, which frames it) and, later, from the same page
+ * when the operator adds another number (inside a centred dialog, which frames
+ * it differently). Connecting a number is a recurring operation, not a
+ * first-run ritual, so it has one surface rather than a wizard that only
+ * exists once — and this component is that surface, minus the frame, so the
+ * two containers cannot drift into two forks.
  *
  * ── TWO PATHS, ONE BUTTON ───────────────────────────────────────────────────
  * Preferred is Meta's JavaScript SDK: `FB.login()` opens the flow in a popup and
@@ -108,7 +122,15 @@ const SDK_REQUIRED_MESSAGE =
  * straight to a session-authenticated server function, which forwards it over
  * the private gateway binding. No account API key exists on this page.
  */
-export function ConnectNumberPanel({ heading }: { heading: string }) {
+export function ConnectNumberChoices({
+  className,
+  onBusyChange,
+}: {
+  className?: string;
+  /** Told whenever a flow opens or settles, so a container can refuse to be
+   * dismissed under it. See the effect below. */
+  onBusyChange?: (busy: boolean) => void;
+}) {
   /** The path whose flow is opening, or null. Also disables the other card. */
   const [starting, setStarting] = useState<ConnectPath | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +160,25 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+
+  /**
+   * Tell the container a flow is in flight, so it can refuse to be dismissed.
+   *
+   * This is the one thing the fork cannot own itself. Between `FB.login` and
+   * its callback, Meta's popup holds the flow while THIS component holds the
+   * `message` listener above and the `finish` closure below. A container that
+   * unmounted us here would not cancel any of it: the code exchange still
+   * completes, but a failure's `setError` lands on nothing and the abandonment
+   * event is lost. The dialog on /numbers refuses backdrop and Escape while
+   * this is true, per the overlay rule's dismissal corollary
+   * (docs/DASHBOARD-DESIGN.md) — an explicit close stays available, because
+   * being unable to leave is the bug this whole surface came from.
+   *
+   * First run passes nothing: there is no container to close.
+   */
+  useEffect(() => {
+    onBusyChange?.(starting !== null);
+  }, [starting, onBusyChange]);
 
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(async (code: string) => {
@@ -223,40 +264,22 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
   }
 
   return (
-    <Frame variant="default" spacing="lg" className="max-w-3xl">
-      <FramePanel fit>
-        {/* The header sits level with the body: FramePanel zeroes the nested
-            header's horizontal padding so the two do not stack (see frame.tsx).
+    <div className={cn("flex flex-col gap-4", className)}>
+      {error ? (
+        <p className={AUTH_ERROR_BANNER_CLASS} role="alert">
+          {error}
+        </p>
+      ) : null}
 
-            The title is in the MACHINE VOICE (Inter, 11px, uppercase,
-            tracking-wider), which is what the design contract gives panel
-            titles and empty-state labels. It was `text-sm font-semibold` —
-            stock shadcn card-title, a register this console does not have. */}
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            {heading}
-          </FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            Pick the one that matches where the number lives today. The choice
-            locks the moment Meta's window opens.
-          </FrameDescription>
-        </FrameHeader>
-
-        {error ? (
-          <p className={cn("mt-5", AUTH_ERROR_BANNER_CLASS)} role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        {/* Each choice IS the action: there is nothing to configure between
+      {/* Each choice IS the action: there is nothing to configure between
             picking and launching, and a confirm step here would only add a
             click before Meta's own multi-screen flow, which is where backing
             out is still free.
 
             `gap-2`, not `gap-px`: two bordered rows sharing a 1px seam is the
             anatomy of TABLE ROWS, and that is most of why this panel read as a
-            grid rather than as two controls at a fork. */}
-        <ul className="m-0 flex list-none flex-col gap-2 p-0 pt-5">
+          grid rather than as two controls at a fork. */}
+      <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {CONNECT_PATHS.map(({ path, title, detail, caution, tone, icon }) => (
             <li key={path}>
               <button
@@ -342,14 +365,48 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
           ))}
         </ul>
 
-        {/* No footer band. A full-bleed rule and its chrome for one 12px
-            sentence was another rectangle in a panel that already had too
-            many; the sentence earns its place (it sets the return expectation,
-            which matters most on the full-navigation fallback) and the rule
-            did not. */}
-        <p className="m-0 pt-4 text-xs text-muted-foreground">
-          Meta brings you back to this page when it is done.
-        </p>
+      {/* No footer band. A full-bleed rule and its chrome for one 12px
+          sentence was another rectangle in a panel that already had too
+          many; the sentence earns its place (it sets the return expectation,
+          which matters most on the full-navigation fallback) and the rule
+          did not. */}
+      <p className="m-0 text-xs text-muted-foreground">
+        Meta brings you back to this page when it is done.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The framed panel around the fork — FIRST RUN ONLY.
+ *
+ * With no number yet, /numbers IS this screen: the panel is the whole point,
+ * so it keeps its own `Frame`, its own heading in the MACHINE VOICE (Inter,
+ * 11px, uppercase, tracking-wider — what the design contract gives panel
+ * titles and empty-state labels; it was stock shadcn card-title, a register
+ * this console does not have), and its designed `max-w-3xl`.
+ *
+ * The populated page does NOT use this. There the same fork opens in a centred
+ * dialog, which supplies its own title and description slots, so wrapping
+ * `ConnectNumberChoices` in a second bordered, glass-filled surface would be a
+ * panel inside a panel. That is why the split exists: one fork, two containers,
+ * and the container is the only thing that differs.
+ */
+export function ConnectNumberPanel({ heading }: { heading: string }) {
+  return (
+    <Frame variant="default" spacing="lg" className="max-w-3xl">
+      <FramePanel fit>
+        {/* The header sits level with the body: FramePanel zeroes the nested
+            header's horizontal padding so the two do not stack (see frame.tsx). */}
+        <FrameHeader className="gap-1.5 pt-0">
+          <FrameTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            {heading}
+          </FrameTitle>
+          <FrameDescription className="max-w-prose text-pretty">
+            {CONNECT_FORK_DESCRIPTION}
+          </FrameDescription>
+        </FrameHeader>
+        <ConnectNumberChoices className="pt-5" />
       </FramePanel>
     </Frame>
   );

@@ -15,6 +15,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { createTemplate } from "../../server/gateway";
 import type { CreateTemplateResult } from "../../server/gateway";
 import { createTemplateFailureCopy, failureCopy } from "../../lib/failure";
@@ -59,8 +69,8 @@ const CATEGORIES: { value: TemplateCategory; label: string }[] = [
 
 export type TemplateCategory = "MARKETING" | "UTILITY";
 
-/** Everything the operator is typing. Held by `CreateTemplateForm`, rendered by
- * `CreateTemplateFields` — the split exists so the fields can be rendered in
+/** Everything the operator is typing. Held by `useCreateTemplateDraft`, rendered
+ * by `CreateTemplateFields` — the split exists so the fields can be rendered in
  * any state without driving a browser. */
 export interface TemplateDraft {
   name: string;
@@ -87,6 +97,60 @@ export const EMPTY_DRAFT: TemplateDraft = {
   footer: "",
   buttons: [],
 };
+
+/**
+ * Does this draft hold anything the operator would lose?
+ *
+ * The question is CONTENT, not shape: a button row added and left blank costs
+ * one click to recreate and does not count, while a language or a category
+ * moved off its default is a deliberate choice and does. Pure and exported
+ * because it is the seam the dismissal guard is tested through — the sheet is a
+ * Base UI portal, and a static render cannot open one.
+ */
+export function isDraftDirty(draft: TemplateDraft): boolean {
+  return (
+    draft.name.trim() !== "" ||
+    draft.body.trim() !== "" ||
+    draft.footer.trim() !== "" ||
+    draft.language !== EMPTY_DRAFT.language ||
+    draft.category !== EMPTY_DRAFT.category ||
+    // The examples array is only ever grown, so a value typed for a variable
+    // that has since left the body is still a value on screen to lose.
+    draft.examples.some((value) => value.trim() !== "") ||
+    draft.buttons.some(
+      (button) =>
+        button.text.trim() !== "" ||
+        button.url.trim() !== "" ||
+        button.exampleUrl.trim() !== "",
+    )
+  );
+}
+
+/**
+ * Must an accidental dismissal be refused right now?
+ *
+ * Three answers in one predicate, because they are one question — "is there
+ * anything behind this sheet that a stray click would destroy?":
+ *
+ * - A submit in flight always guards: unmounting the sheet under a pending
+ *   request throws away Meta's answer to a creation that may already have
+ *   succeeded.
+ * - The exact draft object Meta has ALREADY accepted never guards. What is on
+ *   screen then is a receipt, not unsaved work. The comparison is by reference
+ *   on purpose: every edit produces a new draft object, so the guard re-arms
+ *   the moment the operator types again.
+ * - Otherwise a dirty draft guards and a pristine one does not — "opened it by
+ *   mistake" is the common case and must stay one press away from closing.
+ */
+export function shouldGuardDismissal(state: {
+  draft: TemplateDraft;
+  submitting: boolean;
+  createdDraft: TemplateDraft | null;
+}): boolean {
+  if (state.submitting) return true;
+  if (state.createdDraft === state.draft) return false;
+  return isDraftDirty(state.draft);
+}
 
 export type CreateTemplateNotice =
   | { ok: true; id: string; status: string; recategorizedTo: string | null }
@@ -484,7 +548,7 @@ export function CreateTemplateFields({
   );
 }
 
-interface CreateTemplateFormProps {
+interface CreateTemplateDraftProps {
   wabaId: string;
   /** Called once Meta accepts the template, so the route can re-read the list
    * and show the new PENDING row without a manual refresh. */
@@ -502,11 +566,19 @@ interface CreateTemplateFormProps {
  * surface, or the console would author templates its own send sheet then
  * refuses. `analyzeDraftBody`, `analyzeDraftFooter`, `analyzeDraftButtons`
  * and `analyzeTemplate` live in one module for exactly that reason.
+ *
+ * A hook rather than state inside a form component because the SHEET has to
+ * read the same draft: its dismissal guard is a question about this state
+ * ("is there anything here to lose?"), and asking the form through a callback
+ * would make a second, lagging copy of the answer.
  */
-export function CreateTemplateForm({ wabaId, onCreated }: CreateTemplateFormProps) {
+function useCreateTemplateDraft({ wabaId, onCreated }: CreateTemplateDraftProps) {
   const [draft, setDraft] = useState<TemplateDraft>(EMPTY_DRAFT);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<CreateTemplateNotice | null>(null);
+  /** The exact draft object Meta accepted, so the guard can tell a receipt
+   * from unsaved work. Null until a creation succeeds. */
+  const [createdDraft, setCreatedDraft] = useState<TemplateDraft | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -514,6 +586,7 @@ export function CreateTemplateForm({ wabaId, onCreated }: CreateTemplateFormProp
     if (!analysis.ok) return;
     setSubmitting(true);
     setNotice(null);
+    setCreatedDraft(null);
     try {
       const values = exampleValues(draft);
       const result = await createTemplate({
@@ -548,22 +621,16 @@ export function CreateTemplateForm({ wabaId, onCreated }: CreateTemplateFormProp
         return;
       }
       setNotice(noticeFor(result.data, draft.category));
-      if (result.data.ok) onCreated?.();
+      if (result.data.ok) {
+        setCreatedDraft(draft);
+        onCreated?.();
+      }
     } finally {
       setSubmitting(false);
     }
   }
 
-  return (
-    <CreateTemplateFields
-      wabaId={wabaId}
-      draft={draft}
-      onDraftChange={setDraft}
-      submitting={submitting}
-      notice={notice}
-      onSubmit={onSubmit}
-    />
-  );
+  return { draft, setDraft, submitting, notice, createdDraft, onSubmit };
 }
 
 /** Per-code copy, never a raw Graph payload. */
@@ -623,29 +690,127 @@ function NoticeBody({ notice }: { notice: CreateTemplateNotice }) {
 }
 
 /**
- * The sheet around the form.
+ * The sheet around the form, and the guard that keeps a draft from evaporating.
  *
- * The title lives here rather than in `CreateTemplateForm` because Base UI's
+ * The title lives here rather than in the fields because Base UI's
  * `Dialog.Title` needs the dialog context — which is also why the fields are
  * what the tests render.
+ *
+ * This sheet holds a document, not a menu: a name, a language, a category, a
+ * body with its per-position examples, a footer and up to three URL buttons.
+ * The backdrop behind it is `bg-black/10`, all but invisible, so the two
+ * cheapest gestures in the room used to destroy all of it silently. They get
+ * two different answers, because they mean two different things:
+ *
+ * - A press OUTSIDE is not an intent to close, it is a click on the table
+ *   behind — usually to check the name of an existing row. While the guard is
+ *   armed `disablePointerDismissal` turns it into nothing at all; popping a
+ *   question at every stray click would be its own kind of rude.
+ * - Escape and the close button ARE deliberate, so they are answered rather
+ *   than ignored: Base UI's close is cancelled and the discard confirmation
+ *   asks once. The way out never disappears — it costs one more press.
+ *
+ * An untouched draft skips all of it and closes on the first press, because
+ * "opened it by mistake" is the common case and must stay free.
  */
 export function CreateTemplateSheet({
   open,
   onOpenChange,
   wabaId,
   onCreated,
-}: CreateTemplateFormProps & {
+}: CreateTemplateDraftProps & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const form = useCreateTemplateDraft({ wabaId, onCreated });
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const guarded = shouldGuardDismissal(form);
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet
+      open={open}
+      disablePointerDismissal={guarded}
+      onOpenChange={(next, details) => {
+        if (next || !guarded) {
+          onOpenChange(next);
+          return;
+        }
+        details.cancel();
+        setConfirmingDiscard(true);
+      }}
+    >
       <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-2">
           <SheetTitle className="text-sm">New template</SheetTitle>
         </SheetHeader>
-        <CreateTemplateForm wabaId={wabaId} onCreated={onCreated} />
+        <CreateTemplateFields
+          wabaId={wabaId}
+          draft={form.draft}
+          onDraftChange={form.setDraft}
+          submitting={form.submitting}
+          notice={form.notice}
+          onSubmit={form.onSubmit}
+        />
+        {/* Nested INSIDE the sheet's popup, not beside it: Base UI reads the
+            parent dialog from React context, and that is what lets the
+            confirmation take focus without two modals fighting over it. */}
+        {confirmingDiscard ? (
+          <DiscardDraftDialog
+            submitting={form.submitting}
+            onOpenChange={(next) => {
+              if (!next) setConfirmingDiscard(false);
+            }}
+            onDiscard={() => {
+              setConfirmingDiscard(false);
+              onOpenChange(false);
+            }}
+          />
+        ) : null}
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** What abandoning the draft actually costs, in the operator's terms — and it
+ * costs something different mid-flight. Exported so the wording is asserted
+ * directly, the same way `deleteConfirmCopy` is. */
+export function discardDraftCopy(submitting: boolean): string {
+  return submitting
+    ? "This template is still being submitted. Closing now abandons Meta's answer to a creation that may already have succeeded."
+    : "Nothing has been created yet. The name, body, examples, footer and buttons typed here are lost.";
+}
+
+/**
+ * The one question standing between a dirty draft and losing it.
+ *
+ * In the AlertDialog register, like `DeleteTemplateDialog`: modal, no pointer
+ * dismissal, and the act behind it is irreversible. Escape still closes THIS
+ * dialog, which is exactly right — Escape means Cancel, and cancelling here
+ * means the draft survives.
+ */
+function DiscardDraftDialog({
+  submitting,
+  onOpenChange,
+  onDiscard,
+}: {
+  submitting: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <AlertDialog open onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Discard this draft?</AlertDialogTitle>
+          <AlertDialogDescription>{discardDraftCopy(submitting)}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep editing</AlertDialogCancel>
+          <AlertDialogAction type="button" onClick={onDiscard}>
+            Discard draft
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
