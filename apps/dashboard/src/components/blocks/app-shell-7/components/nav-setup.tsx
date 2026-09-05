@@ -15,8 +15,9 @@ import {
  * The first-run checklist, in the sidebar above the user tile.
  *
  * Four facts, derived on every load (`lib/setup-checklist.ts`), each a link to
- * the page that produces the fact. No wizard, no stored progress, no route of
- * its own — see that module for the argument.
+ * the page that produces the fact — except a DONE step whose action is not
+ * repeatable, which renders as plain text. No wizard, no stored progress, no
+ * route of its own — see that module for the argument.
  *
  * ── WHERE "HIDE" PERSISTS, AND WHY THERE ────────────────────────────────────
  * `localStorage`, per viewer and per browser. The alternative considered was
@@ -88,22 +89,40 @@ export function NavSetup() {
         </button>
       </div>
       <ul className="m-0 mt-2 flex list-none flex-col p-0">
-        {steps.map((step) => (
-          <li key={step.id}>
-            <Link
-              to={step.href}
-              search={{ wabaId }}
-              className={cn(
-                "flex items-center gap-2 py-1 text-xs transition-colors hover:text-foreground",
-                step.state === "done" ? "text-muted-foreground" : "text-foreground",
-              )}
-            >
+        {steps.map((step) => {
+          const row = (
+            <>
               <StepMark state={step.state} />
               <span>{step.label}</span>
               <span className="sr-only">{STEP_STATE_WORDS[step.state]}</span>
-            </Link>
-          </li>
-        ))}
+            </>
+          )
+          return (
+            <li key={step.id}>
+              {step.href === null ? (
+                // A done step whose action is not repeatable (today: the
+                // workspace — creating one is a one-time act) is the row as
+                // text, never a link. See the href contract in
+                // `lib/setup-checklist.ts`: there IS no route that re-creates
+                // the thing a completed row names.
+                <span className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+                  {row}
+                </span>
+              ) : (
+                <Link
+                  to={step.href}
+                  search={{ wabaId }}
+                  className={cn(
+                    "flex items-center gap-2 py-1 text-xs transition-colors hover:text-foreground",
+                    step.state === "done" ? "text-muted-foreground" : "text-foreground",
+                  )}
+                >
+                  {row}
+                </Link>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </nav>
   )

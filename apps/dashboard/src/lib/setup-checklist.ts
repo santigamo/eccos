@@ -9,8 +9,13 @@ import type { DashboardState } from "../server/gateway";
  * exist for the first number and be in the way of every one after it. What a
  * new operator actually lacks is not a guided path — every step already has a
  * page — but the KNOWLEDGE THAT THE STEPS EXIST. So this is a reading of the
- * pages that already exist, rendered beside them, and every row is a link to
- * the real page rather than a step inside a flow.
+ * pages that already exist, rendered beside them. Every row links to the real
+ * page rather than a step inside a flow — EXCEPT a completed step whose action
+ * is not repeatable, which is no kind of door: linking a DONE row to the page
+ * that re-creates the thing the row says is finished would hand the operator
+ * a duplicate-maker (docs/console-gaps-2026-09.md §2). That exception lives
+ * in `href` below — null means no link — and is enforced by `nav-setup.tsx`
+ * when it renders.
  *
  * ── WHY NOTHING IS STORED ───────────────────────────────────────────────────
  * Each step is derived from server state on every load. Stored progress goes
@@ -35,8 +40,18 @@ export type SetupStepState = "done" | "in-progress" | "todo";
 export interface SetupStep {
   id: SetupStepId;
   label: string;
-  /** The real page for this step. There is no step-only route. */
-  href: string;
+  /**
+   * The real page for this step. There is no step-only route.
+   *
+   * `null` when the step is DONE and its action is not repeatable: a link
+   * would point at the page that re-creates the thing the row says is
+   * finished. The renderer (`nav-setup.tsx`) draws a null-href row as plain
+   * text. Only `workspace` loses its action this way — creating a workspace is
+   * not repeatable — while the other three steps are recurring actions (attach
+   * a number, point a forwarding target, read the inbound log) and always
+   * carry theirs.
+   */
+  href: string | null;
   state: SetupStepState;
 }
 
@@ -47,7 +62,15 @@ export function setupSteps(state: DashboardState, hasForwardingTarget: boolean):
     {
       id: "workspace",
       label: "Workspace",
-      href: "/onboarding",
+      // Creating a workspace is not repeatable, so a DONE workspace is the row
+      // as text, never a link: an href on it would open /onboarding, the page
+      // that creates ANOTHER workspace (docs/console-gaps-2026-09.md §1–2).
+      // The todo href stays /onboarding because a todo workspace can exist for
+      // one stage and one stage only — no-organization — where the root loader
+      // forces every other route to /onboarding (the revisit guard is
+      // `onboardingWorkspaceCreated` in __root.tsx) and creating a workspace
+      // IS the point of the page.
+      href: state.stage === "no-organization" ? "/onboarding" : null,
       // Reaching any of this at all means the session resolved a membership,
       // so the row is done the moment the checklist can be seen. It is listed
       // anyway: a checklist that starts at step two hides that step one

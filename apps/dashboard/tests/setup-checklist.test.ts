@@ -66,7 +66,10 @@ describe("setupSteps", () => {
     // operation, so every row is a link into the console an operator already
     // has (routes/numbers.tsx, bead eccos-up9).
     expect(setupSteps(ready(1), true).map((step) => [step.id, step.href])).toEqual([
-      ["workspace", "/onboarding"],
+          // A done workspace action is not repeatable, so the row carries NO
+          // href - a link would open the page that creates ANOTHER workspace
+          // (docs/console-gaps-2026-09.md §2; contract in lib/setup-checklist.ts).
+          ["workspace", null],
       ["number", "/numbers"],
       ["target", "/webhooks"],
       // INBOUND, and deliberately not a test send: a fresh WABA has no approved
@@ -75,6 +78,19 @@ describe("setupSteps", () => {
       // exercises the forwarding target above it too.
       ["message", "/inbound"],
     ]);
+  });
+
+  test("a done workspace row has no href; a todo one links to /onboarding", () => {
+    // The null contract from the ready case above, and its one live link: a
+    // todo workspace exists only for no-organization sessions, where
+    // /onboarding IS the first-run creation page (the root loader forces every
+    // other route there, so there is nowhere else to link a todo row).
+    const readyRow = setupSteps(ready(0), false).find((s) => s.id === "workspace");
+    const todoRow = setupSteps({ stage: "no-organization" }, false).find(
+      (s) => s.id === "workspace",
+    );
+    expect(readyRow?.href).toBeNull();
+    expect(todoRow?.href).toBe("/onboarding");
   });
 
   test("a session with no workspace has done nothing yet", () => {

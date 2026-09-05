@@ -8,7 +8,7 @@ import {
   useLocation,
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
-import { getDashboardState, hasForwardingTarget } from "../server/gateway"
+import { getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { normalizeSearchWabaId } from "../lib/search"
 import { requirementSatisfied } from "../lib/scope-requirements"
@@ -28,14 +28,16 @@ export const Route = createRootRoute({
     // to /signin before this loader executes. Server functions fail closed in
     // src/auth/server-auth.ts. Public routes are also handled there.
     const state = await getDashboardState({ data: { wabaId: deps.wabaId } })
-    if (state.ok && state.data.stage === "no-organization" && location.pathname !== "/onboarding") {
+    if (state.ok && !onboardingWorkspaceCreated(state.data.stage) && location.pathname !== "/onboarding") {
       throw redirect({ to: "/onboarding" })
     }
-    // /onboarding is FIRST RUN only, and stays that way: an account that
-    // already has a workspace must not land back on the step it completed.
-    // Creating an ADDITIONAL workspace is a different situation and has its own
-    // in-shell entry point (/workspaces/new) — see that route for the argument.
-    if (state.ok && state.data.stage === "ready" && location.pathname === "/onboarding") {
+    // /onboarding is FIRST RUN and stays that way — the decision is a single
+    // helper (`onboardingWorkspaceCreated`, pinned by
+    // tests/root-onboarding-guard.test.ts) so the three stages cannot drift
+    // back to a `=== "ready"` hole. Creating an ADDITIONAL workspace is a
+    // different conversation and has its own in-shell entry point
+    // (/workspaces/new) — see that route for the argument.
+    if (state.ok && onboardingWorkspaceCreated(state.data.stage) && location.pathname === "/onboarding") {
       throw redirect({ to: "/" })
     }
     // An account that cannot yet resolve what a route needs stays inside the app
@@ -140,6 +142,26 @@ export const Route = createRootRoute({
   }),
   component: RootComponent,
 })
+
+/**
+ * The /onboarding guard's whole decision, extracted out of the loader so the
+ * three stages can be pinned without a browser (tests/root-onboarding-guard.test.ts).
+ *
+ * /onboarding is FIRST RUN, and stays that way: an account that already has a
+ * workspace must not land back on the step it completed — in `account-ready`
+ * (a workspace exists, no active number yet) just as in `ready`. Creating an
+ * ADDITIONAL workspace is a different conversation and has its own in-shell
+ * entry point (/workspaces/new) — see that route for the argument.
+ *
+ * `unassigned` is a stage the gateway never returns today (getDashboardState
+ * resolves to no-organization / account-ready / ready); it counts as a
+ * workspace existing only because it is, by construction, not
+ * `no-organization`. The three stages the loader actually produces are pinned
+ * in the test file.
+ */
+export function onboardingWorkspaceCreated(stage: DashboardState["stage"]): boolean {
+  return stage !== "no-organization"
+}
 
 function RootComponent() {
   const state = Route.useLoaderData()
