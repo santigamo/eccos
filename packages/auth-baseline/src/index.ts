@@ -10,7 +10,6 @@
 export {
   createOrgAuthConfig,
   type OrgAuthConfig,
-  type OrgAuth,
 } from "./config";
 export {
   ac,

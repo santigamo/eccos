@@ -9,8 +9,15 @@
 /** Minimal auth instance shape for session resolution. */
 export interface AuthLike {
   api: {
-    getSession(args: { headers: Headers }): Promise<unknown>;
+    getSession(args: { headers: Headers }): Promise<SessionResult>;
   };
+}
+
+/** The raw Better Auth getSession result, minimally typed (the exact shape is
+ * version-dependent, so only the fields the guards consume are pinned). */
+export interface SessionResult {
+  user?: Record<string, unknown>;
+  session?: { activeOrganizationId?: string | null } & Record<string, unknown>;
 }
 
 type Auth = AuthLike;

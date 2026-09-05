@@ -15,7 +15,7 @@ export type { GatewayAction };
 
 /** Auth instance with the organization API surface the guards use. */
 export interface Auth extends AuthLike {
-  api: {
+  api: AuthLike["api"] & {
     listOrganizations(args: { headers: Headers }): Promise<unknown>;
     hasPermission(args: { body: Record<string, unknown>; headers: Headers }): Promise<{ success?: boolean } | null>;
   };
