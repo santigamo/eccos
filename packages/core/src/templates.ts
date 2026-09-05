@@ -27,8 +27,11 @@ export async function listTemplates(cfg: MetaAppConfig, limit = 100): Promise<Te
   return { ok: true, data: json };
 }
 
-/** One body-only text template, as the console authors it. Everything the
- * Graph request needs beyond the WABA id and its token. */
+/** A text message template as the console authors it: an optional static
+ * footer and URL buttons, everything the Graph request needs beyond the WABA
+ * id and its token. The scope stays the inverse of what "Send test" can
+ * build — this layer cannot express a header, a quick-reply, an OTP or an
+ * authentication shape. */
 export interface CreateTemplateBody {
   name: string;
   language: string;
@@ -36,6 +39,12 @@ export interface CreateTemplateBody {
   bodyText: string;
   /** One example value per positional placeholder, in order. */
   examples?: string[];
+  /** Static text shown under the body. No placeholders. */
+  footerText?: string;
+  /** URL buttons only, in order (one `BUTTONS` component, at most three). A
+   * `{{n}}` placeholder in `url` makes it dynamic and it then REQUIRES
+   * `exampleUrl`; a static URL carries none. */
+  buttons?: { text: string; url: string; exampleUrl?: string }[];
 }
 
 /**
@@ -46,10 +55,12 @@ export interface CreateTemplateBody {
  * this reports what Meta said and never decides what it means. Validation lives
  * with the caller (CLAUDE.md: core stays free of HTTP/routing concerns).
  *
- * Two Meta facts are baked into the request shape:
+ * Three Meta facts are baked into the request shape:
  *  - `example.body_text` is an **array of arrays** (one inner array per example
  *    set). A flat array is accepted by the create call and then produces
  *    review-doomed templates, so the nesting is asserted in the tests.
+ *  - A URL button's `example` is a FLAT array of one URL (not nested like the
+ *    body's), and only a dynamic URL (a `{{n}}` inside) carries one.
  *  - No `allow_category_change`: Meta recategorises regardless — it is now the
  *    default behaviour — and the response's `category` is the one that counts.
  *  - No `parameter_format`: POSITIONAL is the default, and positional is the
@@ -64,19 +75,38 @@ export async function createTemplate(
     return { ok: false, status: 0, error: "META_WABA_ID is not configured" };
   }
   const examples = input.examples ?? [];
+  const components: Record<string, unknown>[] = [
+    {
+      type: "BODY",
+      text: input.bodyText,
+      // A zero-parameter body carries NO `example` key at all: an empty
+      // example object is a shape Meta has no reason to accept.
+      ...(examples.length > 0 ? { example: { body_text: [examples] } } : {}),
+    },
+  ];
+  // Graph component order: BODY, then FOOTER, then BUTTONS. The FOOTER and
+  // BUTTONS components only exist when asked for — a body-only template must
+  // look exactly as it always did.
+  if (input.footerText) {
+    components.push({ type: "FOOTER", text: input.footerText });
+  }
+  if (input.buttons && input.buttons.length > 0) {
+    components.push({
+      type: "BUTTONS",
+      buttons: input.buttons.map((button) => ({
+        type: "URL",
+        text: button.text,
+        url: button.url,
+        // A dynamic URL's example is REQUIRED; a static URL carries none.
+        ...(button.exampleUrl ? { example: [button.exampleUrl] } : {}),
+      })),
+    });
+  }
   const body = {
     name: input.name,
     language: input.language,
     category: input.category,
-    components: [
-      {
-        type: "BODY",
-        text: input.bodyText,
-        // A zero-parameter body carries NO `example` key at all: an empty
-        // example object is a shape Meta has no reason to accept.
-        ...(examples.length > 0 ? { example: { body_text: [examples] } } : {}),
-      },
-    ],
+    components,
   };
 
   let res: Response;

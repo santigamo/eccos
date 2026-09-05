@@ -695,9 +695,16 @@ describe("sendTemplateTest (Send test sheet)", () => {
         return { ok: true, messageId: "wamid.SENT" };
       },
     });
-    const res = await sendTemplateTest({ data: { ...SEND, bodyParams: ["Ada"] } });
+    const res = await sendTemplateTest({
+      data: { ...SEND, bodyParams: ["Ada"], buttonParams: [{ index: 0, text: "https://e.cc/t/T-4" }] },
+    });
     expect(res).toEqual({ ok: true, data: { ok: true, messageId: "wamid.SENT" } });
-    expect(calls).toEqual([[{ ...SEND, bodyParams: ["Ada"] }, "account-a"]]);
+    expect(calls).toEqual([
+      [
+        { ...SEND, bodyParams: ["Ada"], buttonParams: [{ index: 0, text: "https://e.cc/t/T-4" }] },
+        "account-a",
+      ],
+    ]);
   });
 
   /**
@@ -739,6 +746,25 @@ describe("sendTemplateTest (Send test sheet)", () => {
       /line breaks/,
     );
     expect(() => validateSendTestInput({ ...SEND, bodyParams: ["  "] })).toThrow(/needs a value/);
+    // Button fills get the same server-side rules the body fills do.
+    expect(() =>
+      validateSendTestInput({ ...SEND, buttonParams: [{ index: 0, text: "a\nb" }] }),
+    ).toThrow(/line breaks/);
+    expect(() => validateSendTestInput({ ...SEND, buttonParams: [{ index: -1, text: "x" }] })).toThrow(
+      /index/,
+    );
+    expect(() => validateSendTestInput({ ...SEND, buttonParams: [{ index: 0.5, text: "x" }] })).toThrow(
+      /index/,
+    );
+    expect(() =>
+      validateSendTestInput({ ...SEND, buttonParams: [{ index: "0", text: "x" }] }),
+    ).toThrow(/index/);
+    expect(() =>
+      validateSendTestInput({
+        ...SEND,
+        buttonParams: Array.from({ length: 4 }, () => ({ index: 0, text: "x" })),
+      }),
+    ).toThrow(/button/);
     expect(() => validateSendTestInput({ ...SEND, templateName: "Hello World" })).toThrow(
       /template name/,
     );
@@ -915,6 +941,40 @@ describe("createTemplate (New template sheet)", () => {
     expect(() => validateCreateTemplateInput({ ...DRAFT, bodyExamples: ["one\ntwo"] })).toThrow(
       /line breaks/,
     );
+    // The footer and button rules are the create validator's own walls.
+    expect(() => validateCreateTemplateInput({ ...DRAFT, footerText: "Hi {{1}}" })).toThrow(
+      /placeholders/,
+    );
+    expect(() =>
+      validateCreateTemplateInput({ ...DRAFT, footerText: "x".repeat(61) }),
+    ).toThrow(/too long/);
+    expect(() => validateCreateTemplateInput({ ...DRAFT, footerText: "a\nb" })).toThrow(
+      /line breaks/,
+    );
+    expect(
+      validateCreateTemplateInput({
+        ...DRAFT,
+        buttons: [{ text: "Open", url: "https://e.com/track" }],
+      }),
+    ).toEqual(expect.objectContaining({ buttons: [{ text: "Open", url: "https://e.com/track" }] }));
+    expect(() =>
+      validateCreateTemplateInput({
+        ...DRAFT,
+        buttons: [{ text: "Status", url: "https://e.com/s/{{1}}" }],
+      }),
+    ).toThrow(/example/);
+    expect(() =>
+      validateCreateTemplateInput({
+        ...DRAFT,
+        buttons: [{ text: "x", url: "ftp://e.com" }],
+      }),
+    ).toThrow(/https/);
+    expect(() =>
+      validateCreateTemplateInput({
+        ...DRAFT,
+        buttons: Array.from({ length: 4 }, () => ({ text: "x", url: "https://e.com" })),
+      }),
+    ).toThrow(/3 button/);
   });
 
   test("keeps the body byte-for-byte, so the preview cannot be a lie", () => {

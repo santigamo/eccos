@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   analyzeDraftBody,
+  analyzeDraftButtons,
+  analyzeDraftFooter,
   analyzeTemplate,
   canSendTemplate,
   draftWarnings,
@@ -38,6 +40,7 @@ describe("analyzeTemplate", () => {
       kind: "ready",
       paramCount: 0,
       bodyText: "Welcome and congratulations!",
+      buttons: [],
     });
   });
 
@@ -49,6 +52,7 @@ describe("analyzeTemplate", () => {
       kind: "ready",
       paramCount: 2,
       bodyText: "Hi {{1}}, your order {{2}} shipped.",
+      buttons: [],
     });
   });
 
@@ -62,6 +66,7 @@ describe("analyzeTemplate", () => {
       kind: "ready",
       paramCount: 0,
       bodyText: null,
+      buttons: [],
     });
   });
 
@@ -99,19 +104,46 @@ describe("analyzeTemplate", () => {
     expect(new Set(reasons).size).toBe(3);
   });
 
-  test("refuses dynamic-URL, copy-code, OTP and flow buttons", () => {
+  test("refuses copy-code, OTP, flow and quick-reply buttons", () => {
+    // Each of these is a button the console neither builds nor fills; a
+    // template carrying one gets its own sentence rather than a dead send.
     const cases = [
-      { type: "URL", text: "Track", url: "https://example.com/{{1}}" },
       { type: "COPY_CODE", text: "Copy" },
       { type: "OTP", text: "Autofill" },
       { type: "FLOW", text: "Open" },
+      { type: "QUICK_REPLY", text: "Yes" },
     ];
     for (const button of cases) {
       const result = analyzeTemplate({
         components: [bodyComponent("hi"), { type: "BUTTONS", buttons: [button] }],
       });
       expect(result.kind, button.type).toBe("unsupported");
+      if (result.kind === "unsupported") expect(result.reason, button.type).toContain("button");
     }
+  });
+
+  test("a dynamic URL button is ready and lists its fill slots (§5.1)", () => {
+    // The §5.1 widening: a dynamic URL's `{{n}}` is filled at send time, so
+    // the template is sendable and the analysis says which slots the sheet
+    // must fill — the 0-based BUTTONS index and the URL up to the `{{n}}`.
+    const result = analyzeTemplate({
+      components: [
+        bodyComponent("Hi {{1}}"),
+        {
+          type: "BUTTONS",
+          buttons: [
+            { type: "URL", text: "Track", url: "https://example.com/track" },
+            { type: "URL", text: "Status", url: "https://example.com/status?t={{1}}" },
+          ],
+        },
+      ],
+    });
+    expect(result).toEqual({
+      kind: "ready",
+      paramCount: 1,
+      bodyText: "Hi {{1}}",
+      buttons: [{ index: 1, urlPrefix: "https://example.com/status?t=" }],
+    });
   });
 
   test("a static URL button does not disqualify a template", () => {
@@ -245,6 +277,37 @@ describe("the agreement property (creation is the inverse of analysis)", () => {
     // Non-vacuity: a property that quantifies over an empty set proves nothing.
     expect(accepted).toBe(12);
   });
+
+  test("footer and dynamic-URL button drafts round-trip sendable (§7 + §5.1)", () => {
+        // THE §7 EXTENSION OF THE SAME INVARIANT. A draft with a footer and a
+        // dynamic URL button must come back from Meta as a row `analyzeTemplate`
+        // classifies ready, with the exact button slot the sheet must fill.
+        const footer = "Powered by Eccos";
+        const button = {
+          text: "Status",
+          url: "https://example.com/status?t={{1}}",
+          exampleUrl: "https://example.com/status?t=T-4",
+        };
+        const row = analyzeTemplate({
+          components: [
+            { type: "BODY", text: "Hi {{1}}, your ticket is updated." },
+            { type: "FOOTER", text: footer },
+            { type: "BUTTONS", buttons: [{ type: "URL", text: button.text, url: button.url }] },
+          ],
+        });
+        expect(row).toEqual({
+          kind: "ready",
+          paramCount: 1,
+          bodyText: "Hi {{1}}, your ticket is updated.",
+          buttons: [{ index: 0, urlPrefix: "https://example.com/status?t=" }],
+        });
+        // The draft-side gates admit exactly the same draft.
+        expect(analyzeDraftFooter(footer)).toMatchObject({ ok: true });
+        expect(analyzeDraftButtons([button])).toMatchObject({ ok: true });
+        // And a dynamic button without its example stays blocked on the draft
+        // side — the mirror of what Meta would do with the row.
+        expect(analyzeDraftButtons([{ ...button, exampleUrl: "" }]).ok).toBe(false);
+      });
 
   test("the accepted parameter count is exactly the number of inputs the send sheet asks for", () => {
     // Stated separately because it is the operational consequence: the example

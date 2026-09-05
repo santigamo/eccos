@@ -110,6 +110,49 @@ describe("GatewayRPC.createTemplate", () => {
     expect(body.components[0]).not.toHaveProperty("example");
   });
 
+  it("passes a footer and URL buttons through to the Graph body", async () => {
+    // The RPC never reshapes what the console described: a footer becomes a
+    // FOOTER component after the BODY, and the buttons become a BUTTONS
+    // component with URL buttons in order — exampleUrls included for the
+    // dynamic ones, omitted for static ones.
+    const fetchSpy = mockCreateOk();
+    await makeRpc().createTemplate(
+      draft({
+        footerText: "Powered by Eccos",
+        buttons: [
+          { text: "Track", url: "https://example.com/track" },
+          {
+            text: "Status",
+            url: "https://example.com/status?t={{1}}",
+            exampleUrl: "https://example.com/status?t=T-4",
+          },
+        ],
+      }),
+      TEST_ACCOUNT_ID,
+    );
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.components).toEqual([
+      {
+        type: "BODY",
+        text: "Hi {{1}}, your order is on its way.",
+        example: { body_text: [["Ada"]] },
+      },
+      { type: "FOOTER", text: "Powered by Eccos" },
+      {
+        type: "BUTTONS",
+        buttons: [
+          { type: "URL", text: "Track", url: "https://example.com/track" },
+          {
+            type: "URL",
+            text: "Status",
+            url: "https://example.com/status?t={{1}}",
+            example: ["https://example.com/status?t=T-4"],
+          },
+        ],
+      },
+    ]);
+  });
+
   it("fails closed for a WABA the account does not own, without calling Meta", async () => {
     // Tenant isolation: ownership is decided by the control plane before any
     // credential is opened.
@@ -191,6 +234,15 @@ describe("GatewayRPC.createTemplate", () => {
       { bodyText: "x".repeat(1025) },
       { bodyExamples: [""] },
       { bodyExamples: Array.from({ length: 31 }, () => "x") },
+      { footerText: "" },
+      { footerText: "x".repeat(61) },
+      { footerText: "a one\na two" },
+      { footerText: "Hi {{1}}" },
+      { buttons: Array.from({ length: 4 }, () => ({ text: "x", url: "https://e.cc" })) },
+      { buttons: [{ text: "", url: "https://e.cc" }] },
+      { buttons: [{ text: "x", url: "ftp://e.cc" }] },
+      { buttons: [{ text: "x", url: "https://e.cc/{{1}}" }] },
+      { buttons: [{ text: "x", url: "https://e.cc/{{1}}", exampleUrl: "" }] },
     ]) {
       const error = await makeRpc()
         .createTemplate(draft(bad), TEST_ACCOUNT_ID)

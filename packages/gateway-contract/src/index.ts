@@ -438,6 +438,14 @@ export type ManualConnectResult =
       candidates?: TokenWabaCandidate[];
     };
 
+/** One variable's fill for a DYNAMIC URL button, at send time. */
+export interface ButtonUrlParam {
+  /** 0-based slot of the URL button in the template's BUTTONS component. */
+  index: number;
+  /** Substitution for the placeholder (`{{n}}`) inside that button's URL. */
+  text: string;
+}
+
 /**
  * One console-originated template send (the "Send test" sheet).
  *
@@ -455,6 +463,14 @@ export interface SendTemplateTestInput {
   languageCode: string;
   /** Positional {{1}}..{{n}} body values, in order. */
   bodyParams?: string[];
+  /** One entry per DYNAMIC URL button the template carries. `index` is the
+   * 0-based slot of that URL button in the template's BUTTONS component;
+   * `text` fills its `{{n}}` placeholder. Typed only, never a passthrough:
+   * the gateway builds Meta's button payload itself, so a compromised
+   * console session can still only produce a template send, never a
+   * freeform component. Widening this shape is a security decision, not a
+   * convenience one. */
+  buttonParams?: ButtonUrlParam[];
 }
 
 /**
@@ -486,9 +502,11 @@ export type SendTemplateTestResult =
  *
  * Narrow for the same reason as {@link SendTemplateTestInput}: the gateway
  * builds the Graph `components[]` itself from these validated fields, so a
- * compromised console session can only ever author a **body-only text
- * template** — never a media header, a button, or an authentication template.
- * Widening this shape is a security decision, not a convenience one.
+ * compromised console session can only ever author a **text template** — a
+ * body, an optional static footer, and up to three URL buttons with their
+ * example URLs — never a media header, a quick-reply, an OTP, a carousel or
+ * an authentication template. Widening this shape is a security decision,
+ * not a convenience one.
  *
  * The scope is also the intersection with what the console can SEND: every
  * draft this accepts must come back from Meta as a row `analyzeTemplate`
@@ -509,6 +527,12 @@ export interface CreateTemplateInput {
   /** One example value per `{{n}}`, in order. Meta requires an example for
    * every parameter, and they are what its reviewers read. */
   bodyExamples?: string[];
+  /** Static footer shown under the body. Text only — no placeholders. */
+  footerText?: string;
+  /** URL buttons only, in order (one `BUTTONS` component, at most three).
+   * A URL that carries a `{{n}}` placeholder is dynamic and REQUIRES
+   * `exampleUrl`; a static URL needs no example. */
+  buttons?: { text: string; url: string; exampleUrl?: string }[];
 }
 
 /**

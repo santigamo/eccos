@@ -112,7 +112,102 @@ describe("createTemplate", () => {
       examples: [],
     });
     const body = JSON.parse(String(requests[0]?.init?.body));
+    expect(body).toMatchObject({
+      components: [{ type: "BODY", text: "Welcome and congratulations!" }],
+    });
     expect(body.components[0]).not.toHaveProperty("example");
+    expect(body.components).toHaveLength(1);
+  });
+
+  it("emits a FOOTER component after the BODY when footerText is present", async () => {
+    // Component order matters to Meta: BODY, then FOOTER, then BUTTONS.
+    const { requests } = stubFetch(created);
+    await createTemplate(CFG, {
+      name: "order_update",
+      language: "en_US",
+      category: "UTILITY",
+      bodyText: "Hi {{1}}",
+      examples: ["Ada"],
+      footerText: "Powered by Eccos",
+    });
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    expect(body.components).toEqual([
+      { type: "BODY", text: "Hi {{1}}", example: { body_text: [["Ada"]] } },
+      { type: "FOOTER", text: "Powered by Eccos" },
+    ]);
+  });
+
+  it("emits a BUTTONS component with a static URL button that carries NO example", async () => {
+    // A static URL button needs no exampleUrl — Meta has nothing to substitute,
+    // and inventing one would be noise. The URL is sent as typed.
+    const { requests } = stubFetch(created);
+    await createTemplate(CFG, {
+      name: "track",
+      language: "en_US",
+      category: "UTILITY",
+      bodyText: "Your order shipped.",
+      buttons: [{ text: "Track order", url: "https://example.com/track" }],
+    });
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    expect(body.components).toEqual([
+      { type: "BODY", text: "Your order shipped." },
+      {
+        type: "BUTTONS",
+        buttons: [{ type: "URL", text: "Track order", url: "https://example.com/track" }],
+      },
+    ]);
+  });
+
+  it("emits a dynamic URL button with its example as a flat one-URL array", async () => {
+    // A `{{n}}` inside the URL makes it dynamic, and Meta REQUIRES the example
+    // value its reviewers and the send path will substitute. The button's
+    // `example` is FLAT (a single URL), unlike the body's array-of-arrays.
+    const { requests } = stubFetch(created);
+    await createTemplate(CFG, {
+      name: "status",
+      language: "en_US",
+      category: "UTILITY",
+      bodyText: "Your ticket {{1}} is updated.",
+      examples: ["T-4"],
+      buttons: [
+        {
+          text: "View status",
+          url: "https://example.com/status?t={{1}}",
+          exampleUrl: "https://example.com/status?t=T-4",
+        },
+      ],
+    });
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    expect(body.components).toEqual([
+      { type: "BODY", text: "Your ticket {{1}} is updated.", example: { body_text: [["T-4"]] } },
+      {
+        type: "BUTTONS",
+        buttons: [
+          {
+            type: "URL",
+            text: "View status",
+            url: "https://example.com/status?t={{1}}",
+            example: ["https://example.com/status?t=T-4"],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("emits BODY, FOOTER and BUTTONS together in Meta's component order", async () => {
+    const { requests } = stubFetch(created);
+    await createTemplate(CFG, {
+      name: "combined",
+      language: "en_US",
+      category: "MARKETING",
+      bodyText: "Hello {{1}}",
+      examples: ["Nia"],
+      footerText: "Eccos",
+      buttons: [{ text: "Visit", url: "https://example.com" }],
+    });
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    expect(body.components.map((c: { type: string }) => c.type)).toEqual(["BODY", "FOOTER", "BUTTONS"]);
+    expect(body.components[1]).toEqual({ type: "FOOTER", text: "Eccos" });
   });
 
   it("passes Meta's error envelope through untouched, and a throw as status 0", async () => {

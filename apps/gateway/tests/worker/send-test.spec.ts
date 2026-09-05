@@ -93,11 +93,56 @@ describe("GatewayRPC.sendTemplateTest", () => {
 
   it("omits the components array entirely for a zero-parameter template", async () => {
     // `hello_world` — the App Review screencast template. Meta rejects an empty
-    // `components` array, so the body must simply not carry one.
+    // `components` array, so the body must simply not carry one. The same holds
+    // when there are no button params either: neither kind of fill means NO
+    // components array at all.
     const fetchSpy = mockSendOk();
     await makeRpc().sendTemplateTest(input(), TEST_ACCOUNT_ID);
     const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
     expect(body.template).not.toHaveProperty("components");
+  });
+
+  it("emits one lowercase button component per button param, after the body", async () => {
+    // SEND-side orthography is lower case: `type: "button"`, `sub_type:
+    // "url"`, and the index is a STRING — the same lowercase family as the
+    // body component. (UPPER is the CREATE-side Graph shape.) Each dynamic
+    // URL button gets its own component, indexed by its 0-based slot in the
+    // template's BUTTONS component.
+    const fetchSpy = mockSendOk();
+    const result = await makeRpc().sendTemplateTest(
+      input({ bodyParams: ["Ada"], buttonParams: [{ index: 0, text: "https://e.cc/track/T-4" }] }),
+      TEST_ACCOUNT_ID,
+    );
+    expect(result).toEqual({ ok: true, messageId: "wamid.SENT" });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.template.components).toEqual([
+      { type: "body", parameters: [{ type: "text", text: "Ada" }] },
+      {
+        type: "button",
+        sub_type: "url",
+        index: "0",
+        parameters: [{ type: "text", text: "https://e.cc/track/T-4" }],
+      },
+    ]);
+  });
+
+  it("carries button components even when the body has no parameters", async () => {
+    // The body component only exists when there are body params; a button
+    // fill must still arrive on its own.
+    const fetchSpy = mockSendOk();
+    await makeRpc().sendTemplateTest(
+      input({ buttonParams: [{ index: 1, text: "https://e.cc/status?t=T-4" }] }),
+      TEST_ACCOUNT_ID,
+    );
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.template.components).toEqual([
+      {
+        type: "button",
+        sub_type: "url",
+        index: "1",
+        parameters: [{ type: "text", text: "https://e.cc/status?t=T-4" }],
+      },
+    ]);
   });
 
   it("fails closed for a WABA the account does not own, without calling Meta", async () => {
@@ -212,6 +257,13 @@ describe("GatewayRPC.sendTemplateTest", () => {
       { languageCode: "english" },
       { bodyParams: ["line one\nline two"] },
       { bodyParams: Array.from({ length: 31 }, () => "x") },
+      { buttonParams: [{ index: 0.5, text: "x" }] },
+      { buttonParams: [{ index: -1, text: "x" }] },
+      { buttonParams: [{ index: 12, text: "x" }] },
+      { buttonParams: [{ index: 0, text: "" }] },
+      { buttonParams: [{ index: "0", text: "x" }] },
+      { buttonParams: [{ index: 0, text: "a\nb" }] },
+      { buttonParams: Array.from({ length: 4 }, () => ({ index: 0, text: "x" })) },
     ]) {
       const error = await makeRpc()
         .sendTemplateTest(input(bad), TEST_ACCOUNT_ID)

@@ -20,9 +20,13 @@ import type { CreateTemplateResult } from "../../server/gateway";
 import { createTemplateFailureCopy, failureCopy } from "../../lib/failure";
 import {
   analyzeDraftBody,
+  analyzeDraftButtons,
+  analyzeDraftFooter,
   draftWarnings,
+  MAX_CREATE_BUTTONS,
   normalizeTemplateName,
   previewBody,
+  type DraftButton,
 } from "../../lib/template-params";
 
 /**
@@ -66,6 +70,12 @@ export interface TemplateDraft {
   /** Example values by position. Only ever grown, which is what preserves a
    * value when its variable is removed from the body and typed back. */
   examples: string[];
+  /** Static footer shown under the body. No placeholders, within Meta's
+   * ceiling; empty means no footer component. */
+  footer: string;
+  /** URL buttons in BUTTONS order (at most three). A URL that carries a
+   * `{{n}}` placeholder is dynamic and REQUIRES an example URL. */
+  buttons: DraftButton[];
 }
 
 export const EMPTY_DRAFT: TemplateDraft = {
@@ -74,6 +84,8 @@ export const EMPTY_DRAFT: TemplateDraft = {
   category: "UTILITY",
   body: "",
   examples: [],
+  footer: "",
+  buttons: [],
 };
 
 export type CreateTemplateNotice =
@@ -129,13 +141,37 @@ export function CreateTemplateFields({
   const analysis = analyzeDraftBody(draft.body);
   const warnings = draftWarnings(draft.body);
   const values = exampleValues(draft);
+  const footerAnalysis = analyzeDraftFooter(draft.footer);
+  const buttonsAnalysis = analyzeDraftButtons(draft.buttons);
   const blocked = !analysis.ok && draft.body.length > 0;
+  const footerBlocked = !footerAnalysis.ok && draft.footer.length > 0;
+  const buttonsBlocked = !buttonsAnalysis.ok;
 
   function setExample(index: number, value: string) {
     const examples = [...draft.examples];
     while (examples.length <= index) examples.push("");
     examples[index] = value;
     onDraftChange({ ...draft, examples });
+  }
+
+  function setFooter(value: string) {
+    onDraftChange({ ...draft, footer: value });
+  }
+
+  function setButton(index: number, patch: Partial<DraftButton>) {
+    onDraftChange({
+      ...draft,
+      buttons: draft.buttons.map((button, i) => (i === index ? { ...button, ...patch } : button)),
+    });
+  }
+
+  function addButton() {
+    if (draft.buttons.length >= MAX_CREATE_BUTTONS) return;
+    onDraftChange({ ...draft, buttons: [...draft.buttons, { text: "", url: "", exampleUrl: "" }] });
+  }
+
+  function removeButton(index: number) {
+    onDraftChange({ ...draft, buttons: draft.buttons.filter((_, i) => i !== index) });
   }
 
   const preview = draft.body ? previewBody(draft.body, values) : null;
@@ -271,6 +307,103 @@ export function CreateTemplateFields({
         </div>
       ) : null}
 
+      <div>
+        <label htmlFor="create-template-footer" className={LABEL}>
+          Footer
+        </label>
+        <Input
+          id="create-template-footer"
+          autoComplete="off"
+          value={draft.footer}
+          onChange={(event) => setFooter(event.target.value)}
+          placeholder="Powered by Eccos"
+          aria-invalid={footerBlocked}
+          aria-describedby={footerBlocked ? "create-template-footer-error" : undefined}
+        />
+        <p className={HELP}>Static text shown under the body. No variables.</p>
+        {footerBlocked && !footerAnalysis.ok ? (
+          <p
+            id="create-template-footer-error"
+            className="mt-1 m-0 max-w-prose text-xs text-pretty text-[#ff7777]"
+          >
+            {footerAnalysis.reason}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <p className={LABEL}>Buttons</p>
+        {draft.buttons.map((button, index) => {
+          const dynamic = button.url.includes("{{");
+          return (
+            <div key={index} className="flex flex-col gap-3 border border-(--line) p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Button {index + 1}</span>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline underline-offset-4"
+                  onClick={() => removeButton(index)}
+                >
+                  Remove
+                </button>
+              </div>
+              <div>
+                <label htmlFor={`create-template-button-${index}-text`} className={LABEL}>
+                  Label
+                </label>
+                <Input
+                  id={`create-template-button-${index}-text`}
+                  autoComplete="off"
+                  value={button.text}
+                  onChange={(event) => setButton(index, { text: event.target.value })}
+                />
+              </div>
+              <div>
+                <label htmlFor={`create-template-button-${index}-url`} className={LABEL}>
+                  URL
+                </label>
+                <Input
+                  id={`create-template-button-${index}-url`}
+                  autoComplete="off"
+                  value={button.url}
+                  onChange={(event) => setButton(index, { url: event.target.value })}
+                  placeholder="https://example.com/…"
+                />
+              </div>
+              {dynamic ? (
+                <div>
+                  <label htmlFor={`create-template-button-${index}-example`} className={LABEL}>
+                    Example URL
+                  </label>
+                  <Input
+                    id={`create-template-button-${index}-example`}
+                    autoComplete="off"
+                    value={button.exampleUrl}
+                    onChange={(event) => setButton(index, { exampleUrl: event.target.value })}
+                    placeholder="https://example.com/…"
+                  />
+                  <p className={HELP}>Required: this is what Meta's reviewers read.</p>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        {buttonsBlocked && !buttonsAnalysis.ok ? (
+          <p className="m-0 max-w-prose text-xs text-pretty text-[#ff7777]">
+            {buttonsAnalysis.reason}
+          </p>
+        ) : null}
+        {draft.buttons.length < MAX_CREATE_BUTTONS ? (
+          <button
+            type="button"
+            onClick={addButton}
+            className="w-fit text-xs text-muted-foreground underline underline-offset-4"
+          >
+            + Add button
+          </button>
+        ) : null}
+      </div>
+
       {preview ? (
         <div>
           <span className={LABEL}>Preview</span>
@@ -294,7 +427,7 @@ export function CreateTemplateFields({
         type="submit"
         className="w-fit self-start"
         aria-busy={submitting}
-        disabled={submitting || !analysis.ok}
+        disabled={submitting || !analysis.ok || footerBlocked || buttonsBlocked}
       >
         {submitting ? "Submitting…" : "Create template"}
       </Button>
@@ -310,8 +443,8 @@ export function CreateTemplateFields({
       </output>
 
       <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">
-        {"The console creates text templates: a body with positional variables ({{1}}, {{2}}…). "}
-        {"For media headers, buttons, carousels, or authentication templates, use "}
+        {"The console creates text templates: a body with positional variables ({{1}}, {{2}}…), an optional footer, and up to three URL buttons. "}
+        {"For media headers, carousels, authentication templates, or quick-reply buttons, use "}
         <a
           href={managerUrl(wabaId)}
           target="_blank"
@@ -337,11 +470,13 @@ interface CreateTemplateFormProps {
  * "New template" — authoring one message template from the console.
  *
  * The scope is the exact inverse of what the "Send test" sheet can build: a
- * BODY with positional `{{1}}..{{n}}` parameters, nothing else. That is not a
- * coincidence and not a limitation to relax casually — the creation surface has
- * to be a SUBSET of the sending surface, or the console would author templates
- * its own send sheet then refuses. `analyzeDraftBody` and `analyzeTemplate`
- * live in one module for exactly that reason.
+ * BODY with positional `{{1}}..{{n}}` parameters, an optional static footer,
+ * and up to three URL buttons (static or `{{n}}`-dynamic, in which case the
+ * example URL is mandatory). That is not a coincidence and not a limitation to
+ * relax casually — the creation surface has to be a SUBSET of the send
+ * surface, or the console would author templates its own send sheet then
+ * refuses. `analyzeDraftBody`, `analyzeDraftFooter`, `analyzeDraftButtons`
+ * and `analyzeTemplate` live in one module for exactly that reason.
  */
 export function CreateTemplateForm({ wabaId, onCreated }: CreateTemplateFormProps) {
   const [draft, setDraft] = useState<TemplateDraft>(EMPTY_DRAFT);
@@ -364,6 +499,20 @@ export function CreateTemplateForm({ wabaId, onCreated }: CreateTemplateFormProp
           category: draft.category,
           bodyText: draft.body,
           ...(values.length > 0 ? { bodyExamples: values } : {}),
+          ...(draft.footer.trim() ? { footerText: draft.footer } : {}),
+          ...(draft.buttons.filter((button) => button.text.trim() && button.url.trim()).length > 0
+            ? {
+                buttons: draft.buttons
+                  .filter((button) => button.text.trim() && button.url.trim())
+                  .map((button) => ({
+                    text: button.text,
+                    url: button.url,
+                    ...(button.url.includes("{{") && button.exampleUrl
+                      ? { exampleUrl: button.exampleUrl }
+                      : {}),
+                  })),
+              }
+            : {}),
         },
       });
       if (!result.ok) {

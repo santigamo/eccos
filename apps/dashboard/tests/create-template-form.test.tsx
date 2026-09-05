@@ -170,6 +170,61 @@ describe("CreateTemplateFields", () => {
     expect(render({}, unmapped)).toContain("raw graph text");
   });
 
+  test("renders the footer field and the button add/remove group", () => {
+    const html = render();
+    expect(html).toContain("Footer");
+    expect(html).toContain('id="create-template-footer"');
+    expect(html).toContain("Add button");
+    expect(html).toContain("Buttons");
+  });
+
+  test("a dynamic URL reveals its example field; a static one does not", () => {
+    // Dynamic = the URL carries a {{n}}: that is exactly when Meta requires the
+    // example URL, so the field exists only then.
+    const dynamic = render({
+      body: "hi",
+      buttons: [{ text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "" }],
+    });
+    expect(dynamic).toContain("Example URL");
+    const staticOne = render({
+      body: "hi",
+      buttons: [{ text: "Track", url: "https://e.com/track", exampleUrl: "" }],
+    });
+    expect(staticOne).not.toContain("Example URL");
+  });
+
+  test("a blocked footer or button disables submit and says why", () => {
+    const footer = render({ body: "hi", footer: "Hi {{1}}!" });
+    expect(footer).toContain("cannot contain variables");
+    expect(submitDisabled(footer)).toBe(true);
+
+    const buttons = render({
+      body: "hi",
+      buttons: [{ text: "x", url: "ftp://e.com", exampleUrl: "" }],
+    });
+    expect(buttons).toContain("https");
+    // A button whose URL is not https is blocked; the same draft with a valid
+    // URL and a filled dynamic example submits.
+    expect(submitDisabled(buttons)).toBe(true);
+    const ok = render({
+      body: "hi",
+      buttons: [{ text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "https://e.com/s?t=T" }],
+    });
+    expect(submitDisabled(ok)).toBe(false);
+    // Four buttons is impossible to author (the add control caps at three).
+    const four = render({
+      body: "hi",
+      buttons: [
+        { text: "a", url: "https://e.com/1", exampleUrl: "" },
+        { text: "b", url: "https://e.com/2", exampleUrl: "" },
+        { text: "c", url: "https://e.com/3", exampleUrl: "" },
+        { text: "d", url: "https://e.com/4", exampleUrl: "" },
+      ],
+    });
+    expect(four).toContain("at most 3");
+    expect(submitDisabled(four)).toBe(true);
+  });
+
   test("states the scope wall once, with the way out", () => {
     // The same honesty pattern as the send sheet's `unsupported` copy: what the
     // console does NOT do, said plainly, with the tool that does.

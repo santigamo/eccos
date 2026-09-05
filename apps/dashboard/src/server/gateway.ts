@@ -175,6 +175,16 @@ const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 const MAX_BODY_PARAMS = 30;
 const MAX_BODY_PARAM_LENGTH = 1024;
+/** A BUTTONS component carries at most 3 URL buttons (Meta's own cap). */
+const MAX_BUTTON_PARAMS = 3;
+/** Upper bound for a URL button's 0-based slot index in the BUTTONS component. */
+const MAX_BUTTON_URL_INDEX = 9;
+/** Meta's documented ceiling for a template footer, and the console's own. */
+const MAX_FOOTER_LENGTH = 60;
+/** Meta's conservative button-label ceiling, applied at authoring time. */
+const MAX_BUTTON_TEXT_LENGTH = 25;
+/** URL-button count cap on authoring, mirroring the send-side one. */
+const MAX_CREATE_BUTTONS = 3;
 /** Graph template ids (`hsm_id`) are numeric. */
 const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 /** A pasted Meta access token: printable ASCII, no whitespace. */
@@ -309,6 +319,11 @@ function validateSubscriberInput(input: unknown): SetSubscriberConfigInput & Das
  * shapes as defense in depth, but this is where an operator's typing is turned
  * into a Meta-shaped request).
  *
+ * `buttonParams` gets the same treatment as `bodyParams`: at most three
+ * entries, an integer 0-based slot index within bounds, and a text value
+ * without line breaks. Included only when non-empty, exactly like
+ * `bodyParams`.
+ *
  * `wabaId` and `phoneNumberId` are REQUIRED: a test send must never silently
  * fall back to "the account's first WABA". Which number the message leaves from
  * is the whole point of the exercise.
@@ -355,6 +370,32 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
     if (/[\n\t]/.test(text)) throw new Error("template parameters cannot contain line breaks");
     return text;
   });
+  const rawButtons = record.buttonParams;
+  if (rawButtons !== undefined && !Array.isArray(rawButtons)) {
+    throw new Error("buttonParams must be an array");
+  }
+  const buttonParams = (rawButtons ?? []) as unknown[];
+  if (buttonParams.length > MAX_BUTTON_PARAMS) throw new Error("too many button parameters");
+  const buttons = buttonParams.map((value) => {
+    const button = value as Record<string, unknown>;
+    if (!button || typeof button !== "object" || Array.isArray(button)) {
+      throw new Error("button parameters must be objects");
+    }
+    if (typeof button.index !== "number" || !Number.isInteger(button.index)) {
+      throw new Error("button parameter index must be a whole number");
+    }
+    if (button.index < 0 || button.index > MAX_BUTTON_URL_INDEX) {
+      throw new Error("button parameter index is out of range");
+    }
+    if (typeof button.text !== "string") throw new Error("every button parameter needs a value");
+    const text = button.text.trim();
+    if (!text) throw new Error("every button parameter needs a value");
+    if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("button parameter is too long");
+    if (/[\n\t]/.test(text)) {
+      throw new Error("button parameters cannot contain line breaks");
+    }
+    return { index: button.index, text };
+  });
   return {
     wabaId,
     phoneNumberId: record.phoneNumberId.trim(),
@@ -362,6 +403,7 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
     templateName: record.templateName.trim(),
     languageCode: record.languageCode.trim(),
     ...(values.length > 0 ? { bodyParams: values } : {}),
+    ...(buttons.length > 0 ? { buttonParams: buttons } : {}),
   };
 }
 
@@ -374,6 +416,13 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
  * the UI cannot author a body the "Send test" sheet would later refuse; the
  * gateway re-checks the same shapes and THROWS, which is only unreachable while
  * this stays the strict one.
+ *
+ * Widened to the footer and URL buttons: a static footer (no placeholders,
+ * within Meta's ceiling), and up to three https URL buttons — a dynamic URL (a
+ * `{{n}}` placeholder) REQUIRES its example URL, a static URL carries none.
+ * The refused set is unchanged: AUTHENTICATION, media headers, quick-replies,
+ * carousels and OTP/copy-code/flow buttons stay outside exactly as the send
+ * sheet's analysis keeps them unbuildable.
  *
  * Examples are mandatory, one per `{{n}}`: Meta requires an example value for
  * every parameter, and they are what its reviewers read. Their character rules
@@ -424,6 +473,58 @@ export function validateCreateTemplateInput(input: unknown): CreateTemplateInput
     return text;
   });
 
+  const footerRaw = record.footerText;
+  if (footerRaw !== undefined) {
+    if (typeof footerRaw !== "string") throw new Error("footer text is required when present");
+    const footer = footerRaw.trim();
+    if (!footer) throw new Error("footer text cannot be empty");
+    if (footer.length > MAX_FOOTER_LENGTH) throw new Error("footer text is too long");
+    if (/\{\{/.test(footer)) throw new Error("footer text cannot contain placeholders");
+    if (/[\n\t]/.test(footer)) throw new Error("footer text cannot contain line breaks");
+  }
+
+  const rawButtons = record.buttons;
+  if (rawButtons !== undefined && !Array.isArray(rawButtons)) throw new Error("buttons must be an array");
+  const buttonList = (rawButtons ?? []) as unknown[];
+  if (buttonList.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
+  const buttons = buttonList.map((value) => {
+    const button = value as Record<string, unknown>;
+    if (!button || typeof button !== "object" || Array.isArray(button)) {
+      throw new Error("buttons must be objects");
+    }
+    if (typeof button.text !== "string") throw new Error("every button needs a label");
+    const text = button.text.trim();
+    if (!text) throw new Error("every button needs a label");
+    if (text.length > MAX_BUTTON_TEXT_LENGTH) throw new Error("button label is too long");
+    if (typeof button.url !== "string") throw new Error("every button needs a url");
+    const url = button.url.trim();
+    if (!url) throw new Error("every button needs a url");
+    if (!/^https?:\/\//.test(url)) throw new Error("button url must be https");
+    if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
+      throw new Error("buttons cannot contain line breaks");
+    }
+    const dynamic = url.includes("{{");
+    if (dynamic) {
+      if (typeof button.exampleUrl !== "string") {
+        throw new Error("a dynamic URL button needs an example url");
+      }
+      const example = button.exampleUrl.trim();
+      if (!example) throw new Error("a dynamic URL button needs an example url");
+      if (!/^https?:\/\//.test(example)) {
+        throw new Error("button example url must be https");
+      }
+    } else if (button.exampleUrl !== undefined && button.exampleUrl !== "") {
+      throw new Error("a static URL button carries no example");
+    }
+    return {
+      text,
+      url,
+      ...(dynamic && button.exampleUrl
+        ? { exampleUrl: String(button.exampleUrl).trim() }
+        : {}),
+    };
+  });
+
   return {
     wabaId,
     name: record.name.trim(),
@@ -431,6 +532,8 @@ export function validateCreateTemplateInput(input: unknown): CreateTemplateInput
     category: record.category,
     bodyText,
     ...(values.length > 0 ? { bodyExamples: values } : {}),
+    ...(footerRaw !== undefined ? { footerText: String(footerRaw).trim() } : {}),
+    ...(buttons.length > 0 ? { buttons } : {}),
   };
 }
 

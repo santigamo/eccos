@@ -123,6 +123,33 @@ describe("SendTestForm", () => {
     expect(html).toMatch(/<output[^>]*aria-atomic="true"/);
   });
 
+  test("dynamic URL buttons render as one input per slot, URL prefix as hint", () => {
+    // §5.1: a template with a dynamic URL button gains a labelled "Button
+    // links" group — a positional group of its own, like the body's — with one
+    // input per dynamic button, the URL up to the {{n}} as the placeholder.
+    const html = render(
+      analyzeTemplate({
+        components: [
+          { type: "BODY", text: "Hi {{1}}" },
+          {
+            type: "BUTTONS",
+            buttons: [{ type: "URL", text: "Status", url: "https://e.com/s?t={{1}}" }],
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("Button links");
+    expect(html).toContain('id="send-test-button-0"');
+    expect(html).toContain("https://e.com/s?t=");
+    expect(html).toContain("Send test message");
+  });
+
+  test("a template with no dynamic URL buttons has no button group", () => {
+    const html = render(ready("Welcome and congratulations!"));
+    expect(html).not.toContain("Button links");
+    expect(html).not.toContain("send-test-button-");
+  });
+
   test("labels wear the functional register (Inter uppercase 11px, tracking-wider)", () => {
     const html = render(ready("Hi {{1}}"));
     expect(html).toContain("text-[11px]");

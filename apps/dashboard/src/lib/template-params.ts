@@ -2,21 +2,31 @@
  * What the console's "Send test" sheet can actually build from one Meta
  * message-template row.
  *
- * Scope decided deliberately: **positional `{{1}}..{{n}}` body parameters
- * only.** That is the shape `hello_world` (zero parameters, the App Review
- * screencast template) and most real templates take, and it is one small pure
- * parser. Everything else — media headers need an asset-upload flow, named
- * parameters need a different request shape, authentication/OTP templates,
- * dynamic-URL and flow buttons, carousels — is its own project. A template this
- * cannot build gets an honest sentence and no send button rather than a button
- * that fails at Meta.
+ * Scope decided deliberately: **positional `{{1}}..{{n}}` body parameters, plus
+ * the fill for any dynamic URL button.** That is the shape `hello_world` (zero
+ * parameters, the App Review screencast template), most real templates, and —
+ * with §7's create surface — every template this console authors. Everything
+ * else — media headers need an asset-upload flow, named parameters need a
+ * different request shape, authentication/OTP templates, quick-reply, copy-code
+ * and flow buttons, carousels — is its own project. A template this cannot
+ * build gets an honest sentence and no send button rather than a button that
+ * fails at Meta.
  *
  * Pure, type-free of `cloudflare:workers`, so it is exercisable directly under
  * plain `bun test` (same discipline as `lib/failure.ts`).
  */
 
 export type TemplateSendability =
-  | { kind: "ready"; paramCount: number; bodyText: string | null }
+  | {
+      kind: "ready";
+      paramCount: number;
+      bodyText: string | null;
+      /** The dynamic URL button slots the sheet must fill, in BUTTONS order.
+       * `index` is the 0-based slot of that URL button in the template's
+       * BUTTONS component; `urlPrefix` is the URL up to its `{{n}}`
+       * placeholder, for the input's label/hint. */
+      buttons: { index: number; urlPrefix: string }[];
+    }
   /** `reason` is operator-facing copy: it is rendered verbatim in the sheet. */
   | { kind: "unsupported"; reason: string };
 
@@ -91,8 +101,12 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
     // parameters it answers 132000, which maps to a legible
     // "parameter_mismatch" line. A documented gamble — the alternative is
     // refusing to send `hello_world` on a response shape we cannot control.
-    return { kind: "ready", paramCount: 0, bodyText: null };
+    return { kind: "ready", paramCount: 0, bodyText: null, buttons: [] };
   }
+
+  // Dynamic URL buttons the sheet must fill, in BUTTONS order. Filled while
+  // walking the parts; a template with none stays `[]`.
+  const buttonSlots: { index: number; urlPrefix: string }[] = [];
 
   for (const part of parts) {
     const type = upper(part.type);
@@ -118,18 +132,26 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
     }
     if (type === "BUTTONS") {
       const buttons = Array.isArray(part.buttons) ? (part.buttons as Component[]) : [];
-      for (const button of buttons) {
+      for (let index = 0; index < buttons.length; index++) {
+        const button = buttons[index] ?? {};
         const buttonType = upper(button.type);
         if (buttonType === "COPY_CODE" || buttonType === "OTP" || buttonType === "FLOW") {
           return unsupported(
             `This template has a ${buttonType.toLowerCase()} button, which the console cannot build. ${SEND_THROUGH_API}`,
           );
         }
+        if (buttonType === "QUICK_REPLY") {
+          // A quick reply is a reply this console does not handle (no inbound
+          // button-payload handling), so a template offering one is a promise
+          // the operator would have to keep elsewhere.
+          return unsupported(
+            `This template has a quick-reply button, which the console cannot build. ${SEND_THROUGH_API}`,
+          );
+        }
         const url = (button as { url?: unknown }).url;
         if (typeof url === "string" && url.includes("{{")) {
-          return unsupported(
-            `This template has a button with a dynamic URL, which the console cannot fill in yet. ${SEND_THROUGH_API}`,
-          );
+          // §5.1: the console fills a dynamic URL's placeholder at send time.
+          buttonSlots.push({ index, urlPrefix: url.slice(0, url.indexOf("{{")) });
         }
       }
     }
@@ -148,7 +170,7 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
     indices.add(Number(match[1]));
   }
   if (indices.size === 0) {
-    return { kind: "ready", paramCount: 0, bodyText: body ? bodyText : null };
+    return { kind: "ready", paramCount: 0, bodyText: body ? bodyText : null, buttons: buttonSlots };
   }
   const max = Math.max(...indices);
   // Meta numbers positional parameters 1..n with no gaps. A row that breaks
@@ -161,7 +183,7 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
       );
     }
   }
-  return { kind: "ready", paramCount: max, bodyText };
+  return { kind: "ready", paramCount: max, bodyText, buttons: buttonSlots };
 }
 
 /** Only an approved template can be sent; everything else is a Meta review state. */
@@ -255,6 +277,88 @@ export function analyzeDraftBody(text: string): DraftAnalysis {
     }
   }
   return { ok: true, paramCount: max };
+}
+
+/** Meta's documented ceiling for a template FOOTER, mirrored here so the
+ * create sheet and the server validator share one number. */
+export const MAX_FOOTER_LENGTH = 60;
+/** A BUTTONS component holds at most 3 URL buttons (Meta's own cap). */
+export const MAX_CREATE_BUTTONS = 3;
+/** Meta's conservative button-label ceiling, applied at authoring time. */
+export const MAX_BUTTON_TEXT_LENGTH = 25;
+
+/** One URL button as the create sheet collects it. A dynamic URL (a `{{n}}`
+ * placeholder) REQUIRES `exampleUrl`; a static URL carries none. */
+export interface DraftButton {
+  text: string;
+  url: string;
+  exampleUrl: string;
+}
+
+/**
+ * Can the console author this footer text?
+ *
+ * Static text only — no placeholders and no line breaks, within Meta's
+ * documented ceiling. A footer never carries a parameter, so there is nothing
+ * for the send sheet to fill later: exactly one shape, and this is it.
+ */
+export function analyzeDraftFooter(text: string): DraftAnalysis {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return { ok: true, paramCount: 0 };
+  if (trimmed.length > MAX_FOOTER_LENGTH) {
+    return { ok: false, reason: `A footer is at most ${MAX_FOOTER_LENGTH} characters.` };
+  }
+  if (/\{\{/.test(trimmed)) {
+    return { ok: false, reason: "A footer cannot contain variables like {{1}}." };
+  }
+  if (/[\n\t]/.test(trimmed)) {
+    return { ok: false, reason: "A footer must be a single line of text." };
+  }
+  return { ok: true, paramCount: 0 };
+}
+
+/**
+ * Can the console author this set of URL buttons?
+ *
+ * The mirror of what `analyzeTemplate` admits on the send side: at most three
+ * URL buttons (Meta's own ceiling), an https URL, and an example URL required
+ * exactly when the URL is dynamic. A quick-reply, OTP or copy-code button is
+ * refused here precisely because `analyzeTemplate` refuses it there.
+ */
+export function analyzeDraftButtons(buttons: DraftButton[]): DraftAnalysis {
+  if (buttons.length > MAX_CREATE_BUTTONS) {
+    return { ok: false, reason: `A template carries at most ${MAX_CREATE_BUTTONS} buttons.` };
+  }
+  for (const [index, button] of buttons.entries()) {
+    const label = button.text.trim();
+    if (!label) {
+      return { ok: false, reason: `Button ${index + 1} needs a label.` };
+    }
+    if (label.length > MAX_BUTTON_TEXT_LENGTH) {
+      return {
+        ok: false,
+        reason: `Button ${index + 1}'s label is over ${MAX_BUTTON_TEXT_LENGTH} characters.`,
+      };
+    }
+    if (/[\n\t]/.test(label)) {
+      return { ok: false, reason: `Button ${index + 1}'s label must be one line.` };
+    }
+    const url = button.url.trim();
+    if (!url) {
+      return { ok: false, reason: `Button ${index + 1} needs a URL.` };
+    }
+    if (!/^https?:\/\//.test(url)) {
+      return { ok: false, reason: `Button ${index + 1}'s URL must start with https://.` };
+    }
+    const dynamic = url.includes("{{");
+    if (dynamic && !button.exampleUrl.trim()) {
+      return {
+        ok: false,
+        reason: `Button ${index + 1} has a dynamic URL and needs an example URL.`,
+      };
+    }
+  }
+  return { ok: true, paramCount: 0 };
 }
 
 /**

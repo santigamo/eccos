@@ -79,8 +79,26 @@ const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 const MAX_BODY_PARAMS = 30;
 const MAX_BODY_PARAM_LENGTH = 1024;
+/** A BUTTONS component carries at most 3 URL buttons — the same cap the
+ * create validator applies, so a later-created template can always be sent. */
+const MAX_BUTTON_PARAMS = 3;
+/** Upper bound for a URL button's 0-based slot index in the BUTTONS
+ * component. Meta caps BUTTONS at 3 buttons, so this is a loose ceiling that
+ * exists to bound the index, not to mirror Meta's exact count. */
+const MAX_BUTTON_URL_INDEX = 9;
 /** Meta's body ceiling for a template component. */
 const MAX_TEMPLATE_BODY_LENGTH = 1024;
+/** Meta documents ~60 chars for a footer; the console's create validator uses
+ * the same explicit ceiling so the gateway's mirrored throw is reachable only
+ * by a regressed caller. */
+const MAX_FOOTER_LENGTH = 60;
+/** A BUTTONS component takes at most 3 URL buttons (Meta's own cap). */
+const MAX_CREATE_BUTTONS = 3;
+/** Meta's conservative button label ceiling — the console validates the same
+ * figure, and a longer label is refused at create time, never at send. */
+const MAX_BUTTON_TEXT_LENGTH = 25;
+/** Ceiling for a URL or an example URL on a URL button. */
+const MAX_BUTTON_URL_LENGTH = 2000;
 /** Graph template ids (`hsm_id`) are numeric. */
 const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 /**
@@ -317,6 +335,44 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         throw new Error("example values must be 1-1024 characters");
       }
     }
+    const footerText = input.footerText;
+    if (footerText !== undefined) {
+      if (typeof footerText !== "string" || footerText.length === 0) {
+        throw new Error("footer text is required when present");
+      }
+      if (footerText.length > MAX_FOOTER_LENGTH) throw new Error("footer text is too long");
+      if (/[\n\t]/.test(footerText)) throw new Error("footer text must not contain newlines or tabs");
+      if (/\{\{/.test(footerText)) throw new Error("footer text cannot contain placeholders");
+    }
+    const buttons = input.buttons ?? [];
+    if (buttons.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
+    for (const button of buttons) {
+      if (typeof button !== "object" || button === null) {
+        throw new Error("buttons must be objects");
+      }
+      const { text, url, exampleUrl } = button as {
+        text?: unknown;
+        url?: unknown;
+        exampleUrl?: unknown;
+      };
+      if (typeof text !== "string" || text.length === 0 || text.length > MAX_BUTTON_TEXT_LENGTH) {
+        throw new Error("button text must be 1-25 characters");
+      }
+      if (typeof url !== "string" || url.length === 0 || url.length > MAX_BUTTON_URL_LENGTH) {
+        throw new Error("button url is required");
+      }
+      if (!/^https?:\/\//.test(url)) throw new Error("button url must be http(s)");
+      if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
+        throw new Error("button text and url cannot contain newlines or tabs");
+      }
+      const dynamic = url.includes("{{");
+      if (dynamic && (typeof exampleUrl !== "string" || exampleUrl.length === 0)) {
+        throw new Error("a dynamic URL button requires an example url");
+      }
+      if (exampleUrl !== undefined && typeof exampleUrl !== "string") {
+        throw new Error("button example url must be a string");
+      }
+    }
 
     const result = await createTemplate(cfg, {
       name: input.name,
@@ -324,6 +380,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       category: input.category,
       bodyText: input.bodyText,
       ...(examples.length > 0 ? { examples } : {}),
+      ...(footerText !== undefined ? { footerText } : {}),
+      ...(buttons.length > 0 ? { buttons } : {}),
     });
     if (!result.ok) {
       const { code, subcode, message } = graphError(result.error);
@@ -477,6 +535,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     // programmer error and belongs in the logs as a throw, not in the UI as a
     // failure code.
     const bodyParams = input.bodyParams ?? [];
+    const buttonParams = input.buttonParams ?? [];
     if (!TO_PATTERN.test(input.to)) throw new Error("to must be 5-15 digits");
     if (!TEMPLATE_NAME_PATTERN.test(input.templateName)) throw new Error("invalid templateName");
     if (!LANGUAGE_PATTERN.test(input.languageCode)) throw new Error("invalid languageCode");
@@ -486,6 +545,18 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         throw new Error("body parameters must be 1-1024 characters");
       }
       if (/[\n\t]/.test(value)) throw new Error("body parameters must not contain newlines or tabs");
+    }
+    if (buttonParams.length > MAX_BUTTON_PARAMS) throw new Error("too many button parameters");
+    for (const button of buttonParams) {
+      if (typeof button !== "object" || button === null) throw new Error("button parameters must be objects");
+      const { index, text } = button as { index?: unknown; text?: unknown };
+      if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > MAX_BUTTON_URL_INDEX) {
+        throw new Error("button parameter index must be an integer 0-9");
+      }
+      if (typeof text !== "string" || text.length === 0 || text.length > MAX_BODY_PARAM_LENGTH) {
+        throw new Error("button parameter text must be 1-1024 characters");
+      }
+      if (/[\n\t]/.test(text)) throw new Error("button parameters must not contain newlines or tabs");
     }
 
     if (this.env.SEND_RATE_LIMITER) {
@@ -499,22 +570,34 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       if (!success) return { ok: false, code: "rate_limited", detail: null };
     }
 
+    const components: Record<string, unknown>[] = [];
+    if (bodyParams.length > 0) {
+      components.push({
+        type: "body",
+        parameters: bodyParams.map((text) => ({ type: "text", text })),
+      });
+    }
+    // One component per button param, after the body — lowercase orthography,
+    // exactly like `body` above: UPPER is the CREATE-side Graph shape, this is
+    // the SEND-side one. A wrong fill maps to parameter_mismatch via
+    // GRAPH_ERROR_CODES; the console validator plus the re-checks above are what
+    // keep a wrong fill from getting here.
+    for (const button of buttonParams) {
+      components.push({
+        type: "button",
+        sub_type: "url",
+        index: String(button.index),
+        parameters: [{ type: "text", text: button.text }],
+      });
+    }
+
     const metaBody: Record<string, unknown> = {
       to: input.to,
       type: "template",
       template: {
         name: input.templateName,
         language: { code: input.languageCode },
-        ...(bodyParams.length > 0
-          ? {
-              components: [
-                {
-                  type: "body",
-                  parameters: bodyParams.map((text) => ({ type: "text", text })),
-                },
-              ],
-            }
-          : {}),
+        ...(components.length > 0 ? { components } : {}),
       },
     };
 

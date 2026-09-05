@@ -19,6 +19,7 @@ import { sendTemplateTest } from "../../server/gateway";
 import type { SendTemplateTestResult } from "../../server/gateway";
 import { failureCopy, sendTestFailureCopy } from "../../lib/failure";
 import { previewBody, type TemplateSendability } from "../../lib/template-params";
+import type { ButtonUrlParam } from "@eccos/gateway-contract";
 import { StatusTag } from "../../ui";
 
 export interface SendTestPhone {
@@ -60,11 +61,21 @@ export function SendTestForm({
   const [phoneNumberId, setPhoneNumberId] = useState(phones[0]?.phoneNumberId ?? "");
   const [recipient, setRecipient] = useState("");
   const [params, setParams] = useState<string[]>(() => Array.from({ length: paramCount }, () => ""));
+  const buttonSlots = sendability.kind === "ready" ? sendability.buttons : [];
+  const [buttonParams, setButtonParams] = useState<ButtonUrlParam[]>(() =>
+    buttonSlots.map((slot) => ({ index: slot.index, text: "" })),
+  );
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   function setParam(index: number, value: string) {
     setParams((current) => current.map((entry, i) => (i === index ? value : entry)));
+  }
+
+  function setButtonParam(index: number, value: string) {
+    setButtonParams((current) =>
+      current.map((entry, i) => (i === index ? { ...entry, text: value } : entry)),
+    );
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -171,6 +182,27 @@ export function SendTestForm({
           />
         </div>
       ))}
+
+      {buttonSlots.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">Button links</p>
+          {buttonSlots.map((slot, index) => (
+            <div key={slot.index}>
+              <label htmlFor={`send-test-button-${slot.index}`} className={LABEL}>
+                Button {slot.index + 1}
+              </label>
+              <Input
+                id={`send-test-button-${slot.index}`}
+                required
+                autoComplete="off"
+                value={buttonParams[index]?.text ?? ""}
+                onChange={(event) => setButtonParam(index, event.target.value)}
+                placeholder={slot.urlPrefix}
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {preview ? (
         <div>
