@@ -22,6 +22,7 @@ import {
   type SendTestPhone,
 } from "../components/templates/send-test-sheet";
 import { CreateTemplateSheet } from "../components/templates/create-template-sheet";
+import { TemplatePreviewSheet } from "../components/templates/template-preview-sheet";
 import {
   DeleteTemplateDialog,
   type DeleteTarget,
@@ -50,6 +51,13 @@ interface SendTarget {
   languageCode: string;
   status: string | undefined;
   sendability: TemplateSendability;
+}
+
+/** The template row the preview sheet is open for. */
+interface PreviewTarget {
+  templateName: string;
+  language: string | undefined;
+  components?: unknown;
 }
 
 const columnHelper = createColumnHelper<DataGridFeatures, TemplateItem>();
@@ -88,6 +96,7 @@ function TemplatesPage() {
   const [target, setTarget] = useState<SendTarget | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
 
   // Sending needs a number to send FROM, so the column only exists once the
   // account has one. In the awaiting-a-phone state the WABA is connected and
@@ -150,18 +159,46 @@ function TemplatesPage() {
       // Only an approved template can be sent, and sending needs a number to
       // send FROM. Deleting needs neither — but it does need the Graph id that
       // identifies this exact name+language pair, and Meta gives a row already
-      // queued for deletion nothing left to delete.
+      // queued for deletion nothing left to delete. Previewing needs nothing
+      // beyond the row itself: `listTemplates` requests no `fields`, so the
+      // default Meta response already carries `components` and the sheet
+      // renders that array (docs/console-gaps-2026-09 §4).
       const sendable = canSend && canSendTemplate(row.status) && Boolean(row.name && row.language);
       const deletable =
         Boolean(row.id && row.name && row.language) &&
         row.status?.toUpperCase() !== "PENDING_DELETION";
+      // Preview is read-only and always says something honest: every row can
+      // be previewed, including one whose `components` came back empty (the
+      // sheet answers with a graceful empty state, not a crash).
+      const previewable = Boolean(row.name);
       // Data rule 5: a row with no action holds the column's rhythm with a
       // muted em-dash rather than a dead button.
-      if (!sendable && !deletable) {
+      if (!previewable && !sendable && !deletable) {
         return <span className="text-muted-foreground">—</span>;
       }
       return (
         <span className="flex items-center gap-2">
+          {previewable ? (
+            // Ghost anatomy, quiet: previewing reads the row and never mutates,
+            // so it rests lighter than "Send test" beside it — the page's one
+            // primary and the destructive ink stay elsewhere.
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="rounded-none"
+              aria-label={`Preview ${row.name}`}
+              onClick={() =>
+                setPreviewTarget({
+                  templateName: row.name ?? "",
+                  language: row.language,
+                  components: row.components,
+                })
+              }
+            >
+              Preview
+            </Button>
+          ) : null}
           {sendable ? (
             <Button
               type="button"
@@ -182,11 +219,18 @@ function TemplatesPage() {
             </Button>
           ) : null}
           {deletable ? (
+            // Deleting removes a template, so the trigger must not read at the
+            // same weight as "Send test" beside it — destructive ink, ghost
+            // anatomy (docs/console-gaps-2026-09 §3). The ink is the semantic
+            // --color-destructive-foreground token, never a literal hex, and
+            // the fill stays ghost: this page's one primary is elsewhere.
+            // Hover keeps the ink because the ghost variant's own hover
+            // rule would otherwise white it back out.
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="rounded-none"
+              className="rounded-none text-destructive-foreground hover:text-destructive-foreground"
               aria-label={`Delete ${row.name} (${row.language})`}
               onClick={() =>
                 setDeleteTarget({
@@ -247,6 +291,20 @@ function TemplatesPage() {
           status={target.status}
           sendability={target.sendability}
           phones={phones}
+        />
+      ) : null}
+      {previewTarget ? (
+        <TemplatePreviewSheet
+          // Remounted per row, so one row's components never render over
+          // another's.
+          key={`preview:${previewTarget.templateName}:${previewTarget.language ?? ""}`}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPreviewTarget(null);
+          }}
+          templateName={previewTarget.templateName}
+          language={previewTarget.language}
+          components={previewTarget.components}
         />
       ) : null}
       {creating && selectedWabaId ? (

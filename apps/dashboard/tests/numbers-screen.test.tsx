@@ -22,6 +22,7 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 const { ConnectNumberPanel } = await import(
   "../src/components/dashboard/connect-number"
 );
+const { AddNumberDisclosure } = await import("../src/routes/numbers");
 
 function render(heading = "Meta Embedded Signup"): string {
   return renderToStaticMarkup(<ConnectNumberPanel heading={heading} />);
@@ -127,5 +128,46 @@ describe("ConnectNumberPanel", () => {
     // green edge has regressed, so this is pinned rather than assumed.
     expect(html).toContain("hover:border-(--ghost-edge-hover)");
     expect(html).toContain("group-hover:text-primary");
+  });
+});
+
+describe("AddNumberDisclosure", () => {
+  test("collapsed by default: a ghost control, not a standing panel", () => {
+    // docs/console-gaps-2026-09.md §6: under a populated table the connect
+    // panel read as a standing part of the page. Collapsed it is one ghost
+    // button, and the panel is not in the markup at all.
+    const html = renderToStaticMarkup(
+      <AddNumberDisclosure expanded={false} onToggle={() => {}} />,
+    );
+    expect(html).toContain("+ Add number");
+    expect(html).toContain("aria-expanded");
+    expect(html).not.toContain("Meta Embedded Signup");
+  });
+
+  test("expanded it IS the same connect panel, unchanged", () => {
+    // Same component as first run — the disclosure adds a state, not a second
+    // form. The heading is the disclosure's own; the two Embedded Signup paths
+    // and the closing sentence are the panel's, exactly as on first run.
+    const html = renderToStaticMarkup(
+      <AddNumberDisclosure expanded={true} onToggle={() => {}} />,
+    );
+    expect(html).toContain("Add another number");
+    expect(html).toContain("Keep the number on the WhatsApp Business app");
+    expect(html).toContain("Bring a number to the Cloud API");
+    expect(html).not.toContain("+ Add number");
+  });
+
+  test("the disclosure never points at the token route", () => {
+    // Hard constraint from numbers.tsx: /numbers/attach-token stays unlinked
+    // from this page (the JSX comment at the import exists to keep it that
+    // way), so the disclosure must not grow an "or attach by token" line.
+    const collapsed = renderToStaticMarkup(
+      <AddNumberDisclosure expanded={false} onToggle={() => {}} />,
+    );
+    const expanded = renderToStaticMarkup(
+      <AddNumberDisclosure expanded={true} onToggle={() => {}} />,
+    );
+    expect(collapsed).not.toContain("token");
+    expect(expanded).not.toContain("token");
   });
 });
