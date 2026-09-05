@@ -410,16 +410,41 @@ export function CreateTemplateFields({
           <p className="m-0 font-mono text-[11px] break-all text-muted-foreground">
             {draft.name || "—"} {"·"} {draft.language} {"·"} {draft.category}
           </p>
-          {/* Quiet and inert: `--ghost-fill` is the ghost CONTROL body, and a
-              preview that wore it would read as something to click. Square and
-              `bg-muted`, exactly like the send sheet's preview — what must not
-              lie is the CONTENT (the text, the substituted values, the line
-              breaks, the unfilled slots); the container is chrome, and a
-              rounded bubble here would make the console contradict itself
-              sheet to sheet. */}
+          {/* The panel is what the operator confirms BEFORE submitting, so it
+              draws exactly what the form now authors, in Meta's order: the
+              substituted body, then the footer, then every URL button with its
+              label and its URL. A typed footer or button that never reached
+              this panel would be the same contradiction class as the
+              collected-but-never-sent button params, so it must not be
+              invisible here. */}
           <p className="mt-1 m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
             {preview}
           </p>
+          {draft.footer.trim() ? (
+            <p className="mt-1 m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
+              {draft.footer}
+            </p>
+          ) : null}
+          {draft.buttons.length > 0 ? (
+            <div className="mt-1 flex flex-col gap-2">
+              {draft.buttons.map((button, index) => (
+                // Buttons have no names - the authoring order IS the identity,
+                // the same convention the template preview sheet applies.
+                // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
+                <div key={index} className="flex flex-col gap-1 border border-(--line) p-2.5">
+                  <span className="text-sm text-foreground">{button.text}</span>
+                  {button.url ? (
+                    // A dynamic URL keeps its `{{n}}` literal - there are no
+                    // values to fill in this panel, the same convention as the
+                    // template preview sheet.
+                    <span className="font-mono text-xs break-all text-muted-foreground">
+                      {button.url}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

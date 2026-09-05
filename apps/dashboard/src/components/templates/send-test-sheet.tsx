@@ -50,6 +50,56 @@ const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-fore
  * dialog: closed, it renders nothing at all, so a static-markup test of
  * `SendTestSheet` would assert against an empty string. Tests render this.
  */
+/**
+ * The exact request the send sheet builds from its form state — exported pure so
+ * the test suite can pin it (a static-markup test cannot submit a form, and
+ * that gap is exactly how the collected-but-never-sent button-params regression
+ * once hid). The button-params rule: they ride only when at least one is
+ * filled, because the slots exist for every dynamic URL button even when the
+ * operator leaves them empty in a template that also has body-only sends.
+ */
+export function assembleSendTestPayload(input: {
+  wabaId: string;
+  phoneNumberId: string;
+  recipient: string;
+  templateName: string;
+  languageCode: string;
+  params: string[];
+  buttonParams: ButtonUrlParam[];
+}) {
+  return {
+    wabaId: input.wabaId,
+    phoneNumberId: input.phoneNumberId,
+    to: input.recipient,
+    templateName: input.templateName,
+    languageCode: input.languageCode,
+    ...(input.params.length > 0 ? { bodyParams: input.params } : {}),
+    ...(input.buttonParams.some((p) => p.text.trim()) ? { buttonParams: input.buttonParams } : {}),
+  };
+}
+
+/**
+ * The button lines the send sheet's preview draws, one per dynamic URL slot.
+ *
+ * Pure and exported for the same reason `assembleSendTestPayload` is: a
+ * static-markup test cannot type into the inputs, so the assembled-URL contract
+ * is pinned here instead. A filled slot reads `Button 1 -> https://e.cc/t/T-4`
+ * (prefix + the typed fill, exactly what the gateway sends); an empty one keeps
+ * the `{{n}}` literal so the preview shows what is still missing.
+ */
+export function assemblePreviewButtonUrls(
+  slots: { index: number; urlPrefix: string }[],
+  fills: { index: number; text: string }[],
+): { label: string; url: string }[] {
+  return slots.map((slot, position) => {
+    const fill = fills[position]?.text.trim();
+    return {
+      label: `Button ${position + 1}`,
+      url: fill ? `${slot.urlPrefix}${fill}` : `${slot.urlPrefix}{{n}}`,
+    };
+  });
+}
+
 export function SendTestForm({
   wabaId,
   templateName,
@@ -68,6 +118,7 @@ export function SendTestForm({
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
+
   function setParam(index: number, value: string) {
     setParams((current) => current.map((entry, i) => (i === index ? value : entry)));
   }
@@ -83,16 +134,17 @@ export function SendTestForm({
     setSending(true);
     setNotice(null);
     try {
-      const result = await sendTemplateTest({
-        data: {
-          wabaId,
-          phoneNumberId,
-          to: recipient,
-          templateName,
-          languageCode,
-          ...(params.length > 0 ? { bodyParams: params } : {}),
-        },
-      });
+            const result = await sendTemplateTest({
+            data: assembleSendTestPayload({
+              wabaId,
+              phoneNumberId,
+              recipient,
+              templateName,
+              languageCode,
+              params,
+              buttonParams,
+            }),
+          });
       if (!result.ok) {
         // A boundary failure (unreachable / unauthenticated / forbidden) is a
         // different class from a refused send, and keeps its own mapping.
@@ -120,6 +172,10 @@ export function SendTestForm({
   }
 
   const preview = sendability.bodyText ? previewBody(sendability.bodyText, params) : null;
+  // The preview's button lines: what the operator typed, assembled into the
+  // URLs Meta will receive, rendered under the body preview.
+  const previewButtonLines =
+    buttonSlots.length > 0 ? assemblePreviewButtonUrls(buttonSlots, buttonParams) : [];
 
   return (
     <form onSubmit={onSubmit} aria-busy={sending} className="flex flex-col gap-4 px-4 pb-4">
@@ -212,6 +268,19 @@ export function SendTestForm({
           <p className="m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
             {preview}
           </p>
+          {previewButtonLines.length > 0 ? (
+            // The button URLs are the second thing the operator confirms before
+            // sending: the typed fill shows next to the body the same way it will
+            // be assembled for Meta. An empty slot keeps its `{{n}}` so the
+            // preview shows what is still missing.
+            <div className="mt-1 flex flex-col gap-1">
+              {previewButtonLines.map((entry) => (
+                <p key={entry.label} className="m-0 font-mono text-xs break-all text-muted-foreground">
+                  {entry.label} {"→"} {entry.url}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

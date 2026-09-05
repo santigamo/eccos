@@ -21,9 +21,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { SendTestForm, SendTestSheet } = await import(
-  "../src/components/templates/send-test-sheet"
-);
+const {
+  SendTestForm,
+  SendTestSheet,
+  assembleSendTestPayload,
+  assemblePreviewButtonUrls,
+} = await import("../src/components/templates/send-test-sheet");
 const { analyzeTemplate } = await import("../src/lib/template-params");
 
 const PHONES = [{ phoneNumberId: "PNID1", displayPhoneNumber: "+34600000000" }];
@@ -150,6 +153,29 @@ describe("SendTestForm", () => {
     expect(html).not.toContain("send-test-button-");
   });
 
+  test("the preview lists each button URL, an empty fill keeping its {{n}}", () => {
+    // The second thing the operator confirms before sending: the assembled
+    // URL, or the literal placeholder when the fill is still missing — the
+    // preview never pretends a value exists. Static render cannot type, so
+    // the filled path is pinned through `assemblePreviewButtonUrls` below;
+    // here the untouched slot renders its `{{n}}` next to the body.
+    const html = render(
+      analyzeTemplate({
+        components: [
+          { type: "BODY", text: "Hi {{1}}" },
+          {
+            type: "BUTTONS",
+            buttons: [{ type: "URL", text: "Status", url: "https://e.com/s?t={{1}}" }],
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("Preview");
+    expect(html).toContain("Button 1");
+    expect(html).toContain("https://e.com/s?t="); // assembled prefix + literal
+    expect(html).toContain("{{n}}");
+  });
+
   test("labels wear the functional register (Inter uppercase 11px, tracking-wider)", () => {
     const html = render(ready("Hi {{1}}"));
     expect(html).toContain("text-[11px]");
@@ -180,5 +206,99 @@ describe("SendTestForm", () => {
     expect(html).toContain("bg-(--ghost-fill)");
     expect(html).toContain("border-(--line-strong)");
     expect(html).toContain("hover:border-(--ghost-edge-hover)");
+  });
+});
+
+describe("assembleSendTestPayload", () => {
+  const BASE = {
+    wabaId: "waba-a",
+    phoneNumberId: "PNID1",
+    recipient: "34600000000",
+    templateName: "cita_encontrada",
+    languageCode: "es",
+  };
+
+  test("TRIPWIRE: collected button params actually ride the request", () => {
+    // The regression this pins: the sheet once rendered required "Button links"
+    // inputs, collected their values, and then dropped them on submit — the
+    // operator filled every field and Meta got a body-only message, answered
+    // 132000, and the console looked broken. A static-markup test cannot
+    // submit a form, so the payload assembly is exported and pinned here.
+    const payload = assembleSendTestPayload({
+      ...BASE,
+      params: [],
+      buttonParams: [{ index: 0, text: "T-4" }],
+    });
+    expect(payload.buttonParams).toEqual([{ index: 0, text: "T-4" }]);
+  });
+
+  test("all-empty button slots ride nothing, and a body-only send has no button params", () => {
+    // Slots exist for every dynamic URL button even before typing; an
+    // untouched send must not ship empty-text entries, and a body-only
+    // template must not grow a button component at all.
+    const empty = assembleSendTestPayload({
+      ...BASE,
+      params: [],
+      buttonParams: [
+        { index: 0, text: "" },
+        { index: 1, text: "  " },
+      ],
+    });
+    expect("buttonParams" in empty).toBe(false);
+    const bodyOnly = assembleSendTestPayload({ ...BASE, params: ["Ada"], buttonParams: [] });
+    const { recipient: _recipient, ...baseTo } = BASE;
+    expect(bodyOnly).toEqual({ ...baseTo, to: BASE.recipient, bodyParams: ["Ada"] });
+    expect("buttonParams" in bodyOnly).toBe(false);
+  });
+
+  test("a mixed send carries both positional groups", () => {
+    const payload = assembleSendTestPayload({
+      ...BASE,
+      params: ["2026-09-05"],
+      buttonParams: [{ index: 0, text: "T-4" }],
+    });
+    expect(payload.bodyParams).toEqual(["2026-09-05"]);
+    expect(payload.buttonParams).toEqual([{ index: 0, text: "T-4" }]);
+  });
+});
+
+describe("assemblePreviewButtonUrls", () => {
+  test("a filled slot assembles the URL exactly as the gateway will send it", () => {
+    // The preview's claim: `urlPrefix + typed fill`. This is the same
+    // assembly the gateway performs at send time, so what the operator sees
+    // in the preview is what Meta receives.
+    expect(
+      assemblePreviewButtonUrls(
+        [{ index: 0, urlPrefix: "https://e.cc/t/" }],
+        [{ index: 0, text: "T-4" }],
+      ),
+    ).toEqual([{ label: "Button 1", url: "https://e.cc/t/T-4" }]);
+  });
+
+  test("an empty slot keeps the {{n}} literal rather than pretending a value exists", () => {
+    expect(
+      assemblePreviewButtonUrls(
+        [{ index: 0, urlPrefix: "https://e.cc/t/" }],
+        [{ index: 0, text: "" }],
+      ),
+    ).toEqual([{ label: "Button 1", url: "https://e.cc/t/{{n}}" }]);
+  });
+
+  test("labels count in BUTTONS order, one line per slot", () => {
+    expect(
+      assemblePreviewButtonUrls(
+        [
+          { index: 0, urlPrefix: "https://e.cc/a/" },
+          { index: 1, urlPrefix: "https://e.cc/b/" },
+        ],
+        [
+          { index: 0, text: "A" },
+          { index: 1, text: "" },
+        ],
+      ),
+    ).toEqual([
+      { label: "Button 1", url: "https://e.cc/a/A" },
+      { label: "Button 2", url: "https://e.cc/b/{{n}}" },
+    ]);
   });
 });

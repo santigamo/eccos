@@ -272,4 +272,51 @@ describe("CreateTemplateFields", () => {
     const html = render({ body: "Hi {{1}}" });
     expect(html).toContain("border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap");
   });
+
+  test("the draft preview shows a typed footer and each button, in Meta's order", () => {
+    // The panel the operator confirms BEFORE submitting must draw what the
+    // form now authors: footer under the substituted body, then every URL
+    // button. A typed footer or button that never reached this panel would be
+    // the same contradiction class as the collected-but-never-sent params.
+    const html = render({
+      body: "Hi {{1}}",
+      examples: ["Ada"],
+      footer: "Thanks from Eccos",
+      buttons: [
+        { text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "https://e.com/s?t=T" },
+        { text: "Track", url: "https://e.com/track", exampleUrl: "" },
+      ],
+    });
+    expect(html).toContain("Hi Ada");
+    expect(html).toContain("Thanks from Eccos");
+    expect(html).toContain("Status");
+    expect(html).toContain("Track");
+    // Meta's order inside the panel: body, then footer, then the buttons. The
+    // slice from the Preview label onwards is needed because the footer and
+    // button LABELS also appear in the input values ABOVE the panel.
+    const previewHtml = html.slice(html.indexOf(">Preview<"));
+    expect(previewHtml.indexOf("Hi Ada")).toBeLessThan(previewHtml.indexOf("Thanks from Eccos"));
+    expect(previewHtml.indexOf("Thanks from Eccos")).toBeLessThan(previewHtml.indexOf("Status"));
+    expect(previewHtml.indexOf("Status")).toBeLessThan(previewHtml.indexOf("Track"));
+  });
+
+  test("a dynamic URL in the draft preview keeps its {{n}} literal", () => {
+    // The same convention as the read-only preview sheet: there are no values
+    // to fill inside the creation preview, so the placeholder shows as Meta
+    // authored it rather than vanishing or pretending a value exists.
+    const html = render({
+      body: "Hi {{1}}",
+      footer: "",
+      buttons: [{ text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "https://e.com/s?t=T" }],
+    });
+    expect(html).toContain("https://e.com/s?t={{1}}");
+  });
+
+  test("a draft with no footer and no buttons leaves the preview body-only", () => {
+    // Unchanged from before authoring existed: the panel stays a single muted
+    // body block, never a stack of empty components.
+    const html = render({ body: "Hi {{1}}", examples: ["Ada"], footer: "", buttons: [] });
+    expect(html).toContain("Hi Ada");
+    expect(html).not.toContain("p-2.5");
+  });
 });
