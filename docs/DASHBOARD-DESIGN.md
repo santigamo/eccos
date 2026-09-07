@@ -133,6 +133,50 @@ means Cancel**. Deliberate abandonment always stays possible. A surface an opera
 cannot leave is not careful, it is broken: a decision shipped as a non-dismissible
 inline panel with no close is exactly the bug that produced this rule.
 
+## Waiting (what the console owes an operator mid-navigation)
+
+Every log route crosses an RPC service binding to the gateway on entry, and TanStack
+keeps the **previous match mounted** until the next one resolves. Meanwhile
+`useLocation()` reads `state.location`, which the router points at the destination the
+instant a link is pressed — so the sidebar repaints its active item immediately and the
+page under it does not. Left alone, that combination is the worst reading in the
+product: the navigation claims to have happened and the content says otherwise, and a
+fast gateway still feels like a dead click.
+
+Two layers answer it, and the seam between them is a duration:
+
+1. **The rail** (`route-progress.tsx`, `.route-progress` in `app.css`) — a 2px sweep
+   across the top edge, above the masthead, driven by `router.state.isLoading`. It
+   lights on **every** navigation with no delay and costs no layout, which is what makes
+   it the answer to the click itself. It is **indeterminate on purpose**: the router
+   knows a load is in flight and never how far along it is, and a creeping percentage
+   would be the one invented number in a console whose data rules are about exact
+   readings. It also announces through a live region, because a route change swaps the
+   main region with no focus move.
+2. **The route's own skeleton** (`pendingComponent`, via `GridPending`) — the
+   destination's real title, kicker and column headers over skeleton rows. This is the
+   answer to the **wait**, not the click: past `defaultPendingMs` (350ms) the previous
+   page's rows have stopped being context and become a lie, so they are replaced by the
+   structure of the page that was asked for.
+
+The rules that follow from it:
+
+- **Never a bare spinner over a page.** What is already known at navigation time — the
+  title, the kicker, the column headers — is rendered; only what is genuinely pending
+  is drawn as a skeleton. A page that knows its own name says it.
+- **Never a fake percentage, and never a relative estimate.** Indeterminate work reads
+  as indeterminate, the same honesty the failure rule (data rule 7) asks for.
+- **A skeleton row is never an empty row.** The vendored data grid takes its skeleton
+  cell from `meta.skeleton`; `LogGrid` fills a default in so a loading grid never paints
+  structure with nothing in it, which reads as broken rather than as loading.
+- **No `defaultPendingComponent`.** The timeout that promotes a match to its pending
+  view is only armed for routes that have one, so a default arms it for the **root**
+  match — whose component is the entire chrome. A slow root load would blank the shell
+  instead of filling the page inside it. Pending views are declared per route.
+- **Motion only for state change** still holds: the sweep exists because something is
+  happening, and under `prefers-reduced-motion` it stops travelling and holds a steady
+  dim green rail. The answer survives; the movement does not.
+
 ## Atmosphere, glass, and the lantern
 
 The console's dark is lit, not dead — three layers, all under the content:
@@ -193,7 +237,14 @@ everywhere. Rest → hover → active must each be visibly distinct:
   `--ghost-fill` with a `--line-strong` edge; hover raises the fill and turns the
   edge green (`--ghost-edge-hover`). One primary per view; everything else is ghost.
 - **Table rows**: `hover:bg-white/[.03]` — visible, quiet. No information exists
-  only on hover.
+  only on hover. A row that **opens something** (the template name on /templates) owes
+  the reader a real control inside it — focusable, labelled, and marked at rest with the
+  door anatomy `COUNT_LINK` gives a count that navigates. The row click is a wide target
+  over that control, never the only way in: the grid hangs `onRowClick` off a bare
+  `<tr>` with no role and no tab stop, so a row-only affordance is unreachable by
+  keyboard and invisible until a pointer guesses. Anything else in the row that takes a
+  click (a kebab, an inline button) stops its own event, or reaching for it also opens
+  the row.
 - **Focus**: the green ring, everywhere. Never removed, never recolored.
 
 ## Data rules (how this console shows numbers)
@@ -220,7 +271,12 @@ Eccos system — the practices, not the brand):
    never scrolls horizontally.
 5. **Actions only where they mean something.** Row actions render only on rows
    where they apply (Retry on `failed`); other rows hold the rhythm with a muted
-   em-dash. No dead buttons.
+   em-dash. No dead buttons — and a row with nothing to offer shows the em-dash, not an
+   empty menu. Where a row carries more than one **writing** act, they collapse into one
+   right-aligned kebab under a screen-reader-only header: the deliberate second click is
+   right for acts that leave the console (a real WhatsApp send, a delete at Meta), and
+   it stops the row's identity from competing with a rank of buttons. Read-only acts
+   stay out of that menu and live on the row itself.
 6. **Empty states have structure.** A pixel label (`NO DELIVERIES YET`), one
    normal-size muted sentence saying what will appear, and an action link only when
    a real action exists (clear filters, configure a target). Never a lone tiny
@@ -262,6 +318,9 @@ sit over text.
 - A surface that covers the page names its register out loud — confirm, decision,
   task, or inspection — and proves it can be left: an explicit close, plus Escape
   whenever nothing irreversible is in flight and nothing is unsaved.
+- Anything that waits answers the click before it answers the wait: the rail lights
+  immediately, the route's own skeleton takes over past `defaultPendingMs`, and neither
+  invents a number. A new route with a loader ships with a `pendingComponent`.
 - New values go through tokens; new imagery follows BRAND.md's glass recipes.
 - `bun run typecheck` + `bun run test` from `apps/dashboard`; verify visually
   against the landing — the parity test is a side-by-side with eccos.chat:

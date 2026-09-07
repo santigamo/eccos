@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
+import { GridPending } from "../components/grid/grid-pending";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listOutbound } from "../server/gateway";
 import type { OutboundRow } from "../server/gateway";
@@ -13,6 +14,11 @@ export const Route = createFileRoute("/outbound")({
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => listOutbound({ data: { wabaId: deps.wabaId } }),
   component: OutboundPage,
+  // Past `defaultPendingMs` the previous page's rows are replaced by this
+  // page's structure, instead of lingering under the new sidebar highlight.
+  pendingComponent: () => (
+    <GridPending title="Outbound" kicker="Logs" columns={columns} />
+  ),
 });
 
 const columnHelper = createColumnHelper<DataGridFeatures, OutboundRow>();

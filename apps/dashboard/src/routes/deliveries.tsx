@@ -3,6 +3,7 @@ import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-route
 import { createColumnHelper } from "@tanstack/react-table";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { LogGrid } from "../components/grid/log-grid";
+import { GridPending } from "../components/grid/grid-pending";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { listDeliveries, retryDelivery } from "../server/gateway";
 import type { DeliveryRecord } from "../server/gateway";
@@ -34,9 +35,72 @@ export const Route = createFileRoute("/deliveries")({
   loader: ({ deps }) =>
     listDeliveries({ data: { status: deps.status, before: deps.before, wabaId: deps.wabaId } }),
   component: DeliveriesPage,
+  // Past `defaultPendingMs` the previous page's rows are replaced by this
+  // page's structure, instead of lingering under the new sidebar highlight.
+  // Also the reason `deliveryColumns` is hoisted below: the pending view needs
+  // the headers without the retry closure the action column carries.
+  pendingComponent: () => (
+    <GridPending title="Deliveries" kicker="Logs" columns={deliveryColumns} />
+  ),
 });
 
 const columnHelper = createColumnHelper<DataGridFeatures, DeliveryRecord>();
+
+/**
+ * The six columns that describe a delivery. Module-level, so the route's
+ * `pendingComponent` can render the real headers while the loader runs — the
+ * Retry column stays inside the component below, because it closes over the
+ * in-flight retry state and there is nothing to retry on a page that has not
+ * loaded yet.
+ */
+const deliveryColumns = [
+  columnHelper.accessor("id", {
+    id: "id",
+    header: "ID",
+    cell: (info) => (
+      <span className="font-mono text-xs tabular-nums">{info.getValue()}</span>
+    ),
+    meta: {
+      headerClassName: "text-right",
+      cellClassName: "text-right whitespace-nowrap",
+    },
+  }),
+  columnHelper.accessor("phone_number_id", {
+    id: "phone_number_id",
+    header: "Phone ID",
+    cell: (info) => <span className="font-mono text-xs">{info.getValue() ?? "\u2014"}</span>,
+    meta: { cellClassName: "text-foreground/80 break-all" },
+  }),
+  columnHelper.accessor("status", {
+    id: "status",
+    header: "Status",
+    cell: (info) => <StatusTag status={info.getValue()} />,
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("attempts", {
+    id: "attempts",
+    header: "Attempts",
+    cell: (info) => info.getValue(),
+    meta: {
+      headerClassName: "text-right",
+      cellClassName: "text-right whitespace-nowrap",
+    },
+  }),
+  columnHelper.accessor("next_attempt_at", {
+    id: "next_attempt_at",
+    header: "Next attempt",
+    cell: (info) => (
+      <span className="font-mono text-xs">{fmtTs(info.getValue())}</span>
+    ),
+    meta: { cellClassName: "whitespace-nowrap" },
+  }),
+  columnHelper.accessor("last_error", {
+    id: "last_error",
+    header: "Last error",
+    cell: (info) => info.getValue() ?? "\u2014",
+    meta: { cellClassName: "text-foreground/80 break-words" },
+  }),
+];
 
 function DeliveriesPage() {
   const result = Route.useLoaderData();
@@ -84,52 +148,7 @@ function DeliveriesPage() {
   }
 
   const deliveriesColumns = [
-    columnHelper.accessor("id", {
-      id: "id",
-      header: "ID",
-      cell: (info) => (
-        <span className="font-mono text-xs tabular-nums">{info.getValue()}</span>
-      ),
-      meta: {
-        headerClassName: "text-right",
-        cellClassName: "text-right whitespace-nowrap",
-      },
-    }),
-    columnHelper.accessor("phone_number_id", {
-      id: "phone_number_id",
-      header: "Phone ID",
-      cell: (info) => <span className="font-mono text-xs">{info.getValue() ?? "\u2014"}</span>,
-      meta: { cellClassName: "text-foreground/80 break-all" },
-    }),
-    columnHelper.accessor("status", {
-      id: "status",
-      header: "Status",
-      cell: (info) => <StatusTag status={info.getValue()} />,
-      meta: { cellClassName: "whitespace-nowrap" },
-    }),
-    columnHelper.accessor("attempts", {
-      id: "attempts",
-      header: "Attempts",
-      cell: (info) => info.getValue(),
-      meta: {
-        headerClassName: "text-right",
-        cellClassName: "text-right whitespace-nowrap",
-      },
-    }),
-    columnHelper.accessor("next_attempt_at", {
-      id: "next_attempt_at",
-      header: "Next attempt",
-      cell: (info) => (
-        <span className="font-mono text-xs">{fmtTs(info.getValue())}</span>
-      ),
-      meta: { cellClassName: "whitespace-nowrap" },
-    }),
-    columnHelper.accessor("last_error", {
-      id: "last_error",
-      header: "Last error",
-      cell: (info) => info.getValue() ?? "\u2014",
-      meta: { cellClassName: "text-foreground/80 break-words" },
-    }),
+    ...deliveryColumns,
     columnHelper.display({
       id: "action",
       header: "Action",

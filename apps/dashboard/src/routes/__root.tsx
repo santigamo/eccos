@@ -8,6 +8,7 @@ import {
   useLocation,
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
+import { RouteProgress } from "../components/dashboard/route-progress"
 import { getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { normalizeSearchWabaId } from "../lib/search"
@@ -198,6 +199,9 @@ function RootDocument({
         >
           Skip to main content
         </a>
+        {/* Above the chrome and outside it: a navigation is an app-level
+            event, and the pre-auth screens navigate too. */}
+        <RouteProgress />
         {lanternExempt ? null : <CursorLight />}
         {children}
         <Scripts />

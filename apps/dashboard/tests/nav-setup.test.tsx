@@ -22,7 +22,14 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 let loaderData: { ok: boolean; data: DashboardState; hasForwardingTarget: boolean } | undefined;
 let searchParams: { wabaId?: string } = {};
 
+// SPREAD, not replaced. `mock.module` swaps the module for the whole test
+// process and the FIRST stub for a specifier fixes which keys exist, so a
+// partial stub here silently strips exports a later file re-mocks and needs
+// (`createFileRoute` in tests/templates-screen.test.tsx). Only the hooks this
+// file feeds are overridden.
+const routerModule = await import("@tanstack/react-router");
 mock.module("@tanstack/react-router", () => ({
+  ...routerModule,
   Link: (props: { to: string; children: React.ReactNode; className?: string }) => (
     <a href={props.to} className={props.className} data-testid="checklist-link">
       {props.children}

@@ -6,13 +6,20 @@ import { renderToStaticMarkup } from "react-dom/server";
  * The templates page (`routes/templates.tsx`) — the per-row action column, and
  * the Preview door eccos-6je (docs/console-gaps-2026-09 §4) adds to it.
  *
+ * WHAT MOVED (eccos-pxr). Preview is no longer a button in the action column:
+ * the row opens it, and the template NAME is the focusable, visibly-marked
+ * control that says so. Send test and Delete moved into a kebab menu. Base UI
+ * renders a closed menu as nothing at all, so what the menu HOLDS cannot be
+ * reached by a static render — the tests below pin the trigger, and the
+ * absence of inline buttons is what proves the two acts went inside it.
+ *
  * WHAT THESE TESTS CAN REACH. The page is a TanStack Router route, so the
  * router hooks are stubbed with `mock.module` before the import — the same
  * approach as `tests/nav-setup.test.tsx` — and the loader data is fed
  * directly. React's `renderToStaticMarkup` needs no DOM. What is pinned here
- * is exactly what an operator's eye lands on in the grid: every named row
- * carries a ghost "Preview" control in its action cell, while a nameless row
- * holds the rhythm with the muted em-dash (data rule 5).
+ * is exactly what an operator's eye lands on in the grid: a named row is a
+ * door with a kebab at its end, while a nameless row holds the rhythm with the
+ * muted em-dash (data rule 5).
  *
  * THE SHEET ITSELF IS NOT OPENED HERE. Opening it — and reading the row's
  * `components` into the header/body/footer/buttons — is a click-driven
@@ -28,7 +35,12 @@ let loaderData: unknown;
 let searchParams: { wabaId?: string } = {};
 let rootData: unknown;
 
+// SPREAD, not replaced — see the same note in tests/nav-setup.test.tsx. The
+// first stub for a specifier fixes which keys exist for the whole process, so
+// a partial one strips exports the next file needs.
+const routerModule = await import("@tanstack/react-router");
 mock.module("@tanstack/react-router", () => ({
+  ...routerModule,
   createFileRoute: () => (opts: unknown) => ({
     ...(opts as object),
     useLoaderData: () => loaderData,
@@ -143,40 +155,69 @@ const ROW_WITH_COMPONENTS = {
 };
 
 describe("TemplatesPage row actions", () => {
-  test("every named row carries a Preview control, labelled with the row's name", () => {
+  test("the name is the door into the preview: focusable, labelled, and marked", () => {
+    // Preview moved off the action column and onto the ROW. The row click is
+    // the wide target; this button is the one a keyboard can reach and the one
+    // that says on screen that the row opens something — without it the
+    // preview would exist only for a pointer that happened to try, which is
+    // the affordance-on-hover the design contract rules out.
     const html = render([ROW_WITH_COMPONENTS]);
     expect(html).toContain('aria-label="Preview order_update"');
-    expect(html).toContain("Preview");
+    expect(html).toContain(">order_update</button>");
+    // The console's existing door anatomy (`COUNT_LINK` in src/ui.tsx): quiet
+    // at rest, underlined and green under the pointer.
+    expect(html).toContain("hover:underline");
+    expect(html).toContain("hover:text-primary");
   });
 
-  test("Preview renders beside Send test, and the row keeps the other actions", () => {
-    // APPROVED + a phone: both doors read in order — preview first, the send
-    // beside it.
+  test("the row itself is the wide target", () => {
     const html = render([ROW_WITH_COMPONENTS]);
-    expect(html).toContain('aria-label="Preview order_update"');
-    expect(html).toContain('aria-label="Send test message');
+    // The grid only paints this once a caller passes `onRowClick`, so it is
+    // the observable proof that the row opens the preview too.
+    const row = html.slice(html.indexOf('data-row-id="123"'));
+    expect(row.slice(0, row.indexOf(">"))).toContain("cursor-pointer");
   });
 
-  test("a nameless row holds the column with the muted em-dash, no Preview", () => {
+  test("Send test and Delete are behind one kebab, not inline on the row", () => {
+    // Both of these WRITE — one sends a real WhatsApp message, the other
+    // deletes a template at Meta — so they cost a deliberate second click and
+    // stop competing with the row's own name for width.
+    const html = render([ROW_WITH_COMPONENTS]);
+    expect(html).toContain('aria-label="Actions for order_update (es_ES)"');
+    expect(html).toContain('aria-haspopup="menu"');
+    // The items live inside a closed Base UI menu, which is portalled and
+    // renders nothing until it opens — so their absence here IS the assertion
+    // that neither is sitting inline in the cell.
+    expect(html).not.toContain("Send test");
+    expect(html).not.toContain("Delete");
+  });
+
+  test("the action column carries no visible header, only a labelled one", () => {
+    // Every other header on this grid names what is IN the column; a word over
+    // a single kebab would name the column instead of the act.
+    const html = render([ROW_WITH_COMPONENTS]);
+    expect(html).toContain('<span class="sr-only">Actions</span>');
+  });
+
+  test("a nameless row holds both columns with the muted em-dash", () => {
     // Data rule 5: no dead controls. A row Meta returned without a name has no
-    // identity to preview- or send by, so it shows neither button.
+    // identity to preview by, and no id to delete by, so it offers neither a
+    // door nor a menu.
     const html = render([{ language: "en_US", status: "PENDING" }]);
-    expect(html).not.toContain("Preview");
+    expect(html).not.toContain("aria-label=\"Preview");
+    expect(html).not.toContain("aria-label=\"Actions for");
     expect(html).toContain('<span class="text-muted-foreground">');
   });
 
-  test("the Preview control stays square and ghost — never a second primary", () => {
+  test("the kebab stays square and ghost — never a second primary", () => {
+    // The page's ONE primary is "New template" above the grid, carrying the
+    // `--caustic` glow. Square on every corner, like every control (law 1).
     const html = render([ROW_WITH_COMPONENTS]);
-    // The ghost variant rests on `--ghost-fill-hover` and gains ink on hover —
-    // the page's ONE primary is "New template" above the grid, carrying the
-    // `--caustic` glow; Preview must not wear it (docs/DASHBOARD-DESIGN.md:
-    // one primary per view). Square on every corner, like every control (law
-    // 1).
-    const previewStart = html.indexOf('aria-label="Preview order_update"');
-    expect(previewStart).toBeGreaterThan(-1);
-    const previewButton = html.slice(previewStart, html.indexOf(">Preview</button>", previewStart));
-    expect(previewButton).toContain("rounded-none");
-    expect(previewButton).toContain("hover:bg-(--ghost-fill-hover)");
-    expect(previewButton).not.toContain("--caustic");
+    const start = html.indexOf('aria-label="Actions for order_update');
+    expect(start).toBeGreaterThan(-1);
+    const trigger = html.slice(start, html.indexOf("</button>", start));
+    expect(trigger).toContain("rounded-none");
+    expect(trigger).toContain("hover:bg-(--ghost-fill-hover)");
+    expect(trigger).not.toContain("--caustic");
   });
 });

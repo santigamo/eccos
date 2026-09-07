@@ -8,6 +8,26 @@ export function getRouter() {
   const router = createRouter({
     routeTree,
     scrollRestoration: true,
+    // TWO LAYERS OF PENDING FEEDBACK, and these numbers are the seam between
+    // them. `RouteProgress` (mounted in __root) lights immediately on every
+    // navigation and costs no layout; a route's `pendingComponent` replaces
+    // the PREVIOUS page's content with the new page's structure, which is the
+    // right answer only once the wait is long enough that stale rows under a
+    // moving rail have become confusing.
+    //
+    // Below ~350ms swapping a table out and back reads as a flash, so the rail
+    // owns that window alone (TanStack's own default is 1000ms, which leaves
+    // most gateway round trips showing the wrong page's rows). `pendingMinMs`
+    // then keeps a skeleton that did appear on screen long enough to be read
+    // rather than blinking.
+    //
+    // Deliberately NO `defaultPendingComponent`: the timeout that promotes a
+    // match to its pending view is only armed for routes that HAVE one, and a
+    // default would arm it for the ROOT match too — whose component is the
+    // whole app chrome. A slow root load would blank the shell instead of
+    // filling the page.
+    defaultPendingMs: 350,
+    defaultPendingMinMs: 400,
   });
 
   return router;
