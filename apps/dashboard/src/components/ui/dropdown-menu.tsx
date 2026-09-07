@@ -73,6 +73,19 @@ function DropdownMenuLabel({
   )
 }
 
+/**
+ * SQUARE PASS, plus one correction the upstream style gets wrong for a dark
+ * console: the destructive variant's INK is `--destructive-foreground`
+ * (#ff7777), never `--destructive` (#e03131), which the token contract fixes
+ * as a SURFACE colour and rules out as text — it lands at ~3.9:1 on this
+ * background. The 10%/20% focus washes keep `--destructive` because a wash is
+ * a surface.
+ *
+ * Corrected here rather than at the call site: a variant-prefixed utility beats
+ * an unprefixed override on specificity, and tailwind-merge does not treat the
+ * two as the same key — so `className="text-destructive-foreground"` on the
+ * item silently loses, which is exactly how #e03131 reached production once.
+ */
 function DropdownMenuItem({
   className,
   inset,
@@ -88,7 +101,7 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "group/dropdown-menu-item relative flex cursor-default items-center gap-2 rounded-none px-2 py-2 text-xs outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[variant=destructive]:*:[svg]:text-destructive",
+        "group/dropdown-menu-item relative flex cursor-default items-center gap-2 rounded-none px-2 py-2 text-xs outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive-foreground data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive-foreground dark:data-[variant=destructive]:focus:bg-destructive/20 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[variant=destructive]:*:[svg]:text-destructive-foreground",
         className
       )}
       {...props}

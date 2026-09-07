@@ -454,13 +454,10 @@ function TemplateRowActions({
             <DropdownMenuItem onClick={onSend}>Send test</DropdownMenuItem>
           ) : null}
           {onDelete ? (
-            <DropdownMenuItem
-              variant="destructive"
-              // The vendored destructive variant paints `--destructive`
-              // (#e03131), which the contract forbids as text on dark.
-              className="text-destructive-foreground focus:text-destructive-foreground"
-              onClick={onDelete}
-            >
+            // The destructive ink lives in the component, not here: a
+            // variant-prefixed utility beats an unprefixed className, so an
+            // override at this call site loses silently.
+            <DropdownMenuItem variant="destructive" onClick={onDelete}>
               Delete
             </DropdownMenuItem>
           ) : null}
