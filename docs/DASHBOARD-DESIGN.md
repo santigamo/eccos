@@ -122,6 +122,14 @@ component" is therefore never the question. The register is.
   pure interruption. Inspection docks beside the row it came from and leaves the list
   legible.
 
+**Opening one from a bubbling click.** An overlay mounted inside a click handler
+registers its outside-press listener while that click is still propagating, so the
+same gesture reaches the listener and dismisses what it just opened. Anything that
+opens an overlay from a row, a cell, or any element that is not itself the trigger
+must call `stopPropagation()` — /templates shipped a preview that opened and vanished,
+and the row read as inert while the name cell beside it worked because that one already
+stopped its own click.
+
 **Dismissal — the corollary, and the defect this section was written from.** All three
 registers refuse backdrop and Escape dismissal while an irreversible operation is in
 flight or while unsaved input exists, and all three always offer an explicit close (the

@@ -329,7 +329,16 @@ function TemplatesPage() {
         // that can be tabbed to and the one that says so. Both land on the
         // same read-only sheet, and the kebab beside them stops its own click
         // so opening the menu never opens the sheet behind it.
-        onRowClick={openPreview}
+        //
+        // `stopPropagation` is load-bearing, not tidiness: without it the
+        // click carries on to the document, the sheet's outside-press listener
+        // catches it milliseconds after mounting, and the preview closes in
+        // the gesture that opened it. That shipped once — the row looked inert
+        // while the name cell, which already stopped its own click, worked.
+        onRowClick={(row, event) => {
+          event.stopPropagation();
+          openPreview(row);
+        }}
         emptyMessage={
           <GridEmptyState
             label="NO TEMPLATES"

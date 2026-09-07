@@ -1305,7 +1305,7 @@ function DataGridTableBodyRow<TData extends object>({
       data-depth={row.depth || undefined}
       data-row-pinned={isRowPinned || undefined}
       data-row-pinned-boundary={pinnedBoundary}
-      onClick={() => props.onRowClick && props.onRowClick(row.original)}
+      onClick={(event) => props.onRowClick && props.onRowClick(row.original, event)}
       className={cn(
         "hover:bg-muted/40 data-[state=selected]:bg-muted/50",
         props.onRowClick && "cursor-pointer",

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react"
+import { useMemo, type MouseEvent, type ReactNode } from "react"
 import { useTable } from "@tanstack/react-table"
 import type { ColumnDef } from "@tanstack/react-table"
 
@@ -34,10 +34,18 @@ export function LogGrid<TData extends object>({
   /** Render the pending skeleton instead of rows — what a route's
    *  `pendingComponent` mounts while its loader is in flight. */
   isLoading?: boolean
-  /** Opens the row's own surface. The grid puts this on the `<tr>`, which has
-   *  no keyboard path of its own, so a caller that uses it owes the row a
-   *  focusable control as well — see the name cell on /templates. */
-  onRowClick?: (row: TData) => void
+  /**
+   * Opens the row's own surface.
+   *
+   * Two obligations come with using it. The grid puts this on a bare `<tr>`
+   * with no keyboard path, so the row also owes the reader a focusable control
+   * (the name cell on /templates). And a handler that OPENS AN OVERLAY must
+   * call `event.stopPropagation()`: otherwise the same click reaches the
+   * document, where the overlay's outside-press listener — registered while
+   * this very click was still propagating — reads it as a dismissal and shuts
+   * the overlay in the gesture that opened it.
+   */
+  onRowClick?: (row: TData, event: MouseEvent<HTMLTableRowElement>) => void
 }) {
   // The vendored grid reads its skeleton cell out of `meta.skeleton`, which is
   // opt-in per column — so a grid that never declared one paints ten EMPTY

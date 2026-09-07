@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef } from "react"
-import type { ReactNode } from "react"
+import type { MouseEvent, ReactNode } from "react"
 import {
   columnFacetingFeature,
   columnFilteringFeature,
@@ -299,7 +299,15 @@ export interface DataGridProps<
   table?: Table<TFeatures, TData>
   recordCount: number
   children?: ReactNode
-  onRowClick?: (row: TData) => void
+  /**
+   * Opens whatever the row stands for. The EVENT is handed over on purpose:
+   * a handler that mounts an overlay must call `stopPropagation()`, or the
+   * same click keeps travelling to the document, where the overlay's own
+   * outside-press listener — registered while this click was still
+   * propagating — reads it as a dismissal and closes it in the same gesture.
+   * /templates shipped exactly that: the preview opened and vanished.
+   */
+  onRowClick?: (row: TData, event: MouseEvent<HTMLTableRowElement>) => void
   isLoading?: boolean
   loadingMode?: "skeleton" | "spinner"
   loadingMessage?: ReactNode | string
