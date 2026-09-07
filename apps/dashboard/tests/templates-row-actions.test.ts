@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 /**
  * Two defects the /templates row actions shipped with, both of them invisible
  * to a static render and both caught by opening the real page in production:
- * the Delete item drew the surface red as text, and the row click opened the
- * preview and closed it in the same gesture.
+ * the Delete item drew the surface red as text, and the kebab's click shield
+ * stretched across the whole action column, swallowing the row click.
  *
  * ── THE INK ─────────────────────────────────────────────────────────────────
  *
@@ -56,33 +56,35 @@ describe("DropdownMenuItem destructive ink", () => {
 });
 
 /**
- * The row-click / outside-press collision (eccos-pxr), pinned here because it
- * is the same class of defect as the ink above: invisible to a static render,
- * and it reached production.
+ * The row-click dead zone (eccos-pxr), the second regression this change
+ * shipped and the second one only a real pointer could find.
  *
- * A `<tr onClick>` that mounts an overlay hands the click on to the document,
- * where the overlay's own outside-press listener — registered while that very
- * click was still propagating — reads it as a dismissal. /templates shipped
- * with the preview opening and closing in one gesture: the row looked inert
- * while the NAME cell beside it worked, because the name button already
- * stopped its own click.
+ * The kebab sits inside a `<tr onClick>` that opens the preview, so it stops
+ * its own click — correct. But the shield around it was `flex justify-end` in
+ * the column that takes the TABLE'S SLACK, so it stretched across everything
+ * right of Status and ate every row click that landed there. The row looked
+ * inert over half its width while the name cell, well outside the shield,
+ * worked fine.
  *
- * `renderToStaticMarkup` produces no events and Base UI renders a closed sheet
- * as nothing, so the guard itself is unreachable at runtime here — the shape of
- * the call is what gets pinned.
+ * (The first theory was that the sheet dismissed itself on the opening click.
+ * It cannot: Base UI registers outside-press on `document` in the CAPTURE
+ * phase — `useDismiss.js` — so that listener does not exist yet when the click
+ * passes, and it never sees it.)
  */
-describe("row click that opens an overlay", () => {
-  test("the grid hands the event to onRowClick", async () => {
-    const table = await Bun.file(
-      new URL("../src/components/reui/data-grid/data-grid-table.tsx", import.meta.url),
-    ).text();
-    expect(table).toContain("props.onRowClick(row.original, event)");
-  });
-
-  test("/templates stops the click before it reaches the document", async () => {
+describe("the kebab shield", () => {
+  test("covers the trigger, not the column", async () => {
     const route = await Bun.file(
       new URL("../src/routes/templates.tsx", import.meta.url),
     ).text();
-    expect(route).toMatch(/onRowClick=\{\(row, event\) => \{\s*event\.stopPropagation\(\);/);
+    const shield = route.slice(route.indexOf("<span\n      className="));
+    expect(shield.slice(0, 60)).toContain('className="inline-flex"');
+    expect(shield.slice(0, 60)).not.toContain("justify-end");
+  });
+
+  test("the row handler stays plain — nothing to stop", async () => {
+    const route = await Bun.file(
+      new URL("../src/routes/templates.tsx", import.meta.url),
+    ).text();
+    expect(route).toContain("onRowClick={openPreview}");
   });
 });

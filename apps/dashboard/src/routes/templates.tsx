@@ -329,16 +329,7 @@ function TemplatesPage() {
         // that can be tabbed to and the one that says so. Both land on the
         // same read-only sheet, and the kebab beside them stops its own click
         // so opening the menu never opens the sheet behind it.
-        //
-        // `stopPropagation` is load-bearing, not tidiness: without it the
-        // click carries on to the document, the sheet's outside-press listener
-        // catches it milliseconds after mounting, and the preview closes in
-        // the gesture that opened it. That shipped once — the row looked inert
-        // while the name cell, which already stopped its own click, worked.
-        onRowClick={(row, event) => {
-          event.stopPropagation();
-          openPreview(row);
-        }}
+        onRowClick={openPreview}
         emptyMessage={
           <GridEmptyState
             label="NO TEMPLATES"
@@ -437,9 +428,16 @@ function TemplateRowActions({
     // click has to stop here — otherwise reaching for the menu would also open
     // the sheet behind it. The menu's own items are portalled and never bubble
     // through the row at all.
+    //
+    // `inline-flex`, and it matters: this column takes the table's slack, so a
+    // `flex justify-end` shield stretches across the whole width of it and
+    // swallows every row click that lands right of Status. That shipped, and
+    // the row read as dead over half the table while the name cell — well
+    // outside the shield — kept working. The cell's `text-right` is what puts
+    // this at the right edge; the span itself covers only the trigger.
     // biome-ignore lint/a11y/useKeyWithClickEvents: not a control — a shield over one. It takes no role and no tab stop; the keyboard reaches the trigger inside it directly, and a key handler here would fire on the trigger's own Enter.
     <span
-      className="flex justify-end"
+      className="inline-flex"
       onClick={(event) => event.stopPropagation()}
     >
       <DropdownMenu>
