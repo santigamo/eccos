@@ -367,6 +367,7 @@
     var href = link.getAttribute("href") || "";
     if (/^mailto:/i.test(href)) return "email";
     if (/github\.com\/santigamo\/eccos/i.test(href)) return "github";
+    if (/^https?:\/\/app\.eccos\.chat/i.test(href)) return "app";
     if (/^https?:\/\//i.test(href) && !/^https?:\/\/(www\.)?eccos\.chat/i.test(href)) return "outbound";
     if (link.classList.contains("lang-switch")) return "lang";
     return "nav";

@@ -864,6 +864,18 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .hero .actions { margin-top: 32px; }
 
+/* One line of plain fact under a pair of CTAs: what the button can and cannot
+   do yet. --muted, never --faint: this sits over the hero imagery, where only
+   the 7:1 tone clears the scrim. Narrower than the lede so it reads as a
+   footnote to the buttons, not a second paragraph. */
+.actions-note {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  max-width: 52ch;
+}
+
 /* ---------- §2 facts strip ---------- */
 
 /* On paper the strip sinks: a well the colour of the hatch, so the five facts
