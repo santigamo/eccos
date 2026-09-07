@@ -50,6 +50,11 @@ interface MetaButton {
 export interface PreviewContent {
   /** The template's static HEADER text, if it carries one. */
   header: string;
+  /** The HEADER's format when it is NOT text — `IMAGE`, `VIDEO`, `DOCUMENT`,
+   * `LOCATION`. A media header has no `text` at all (it carries an
+   * `example.header_handle`), so without this the preview drew nothing where
+   * Meta puts the most visible part of the message. */
+  headerFormat: string | null;
   /** The BODY text; `{{n}}` placeholders left exactly as Meta authored them. */
   body: string;
   /** The static FOOTER text, if it has one. */
@@ -78,7 +83,12 @@ export function previewContent(components: unknown): PreviewContent | null {
   if (!Array.isArray(components)) return null;
   const parts = components as MetaComponent[];
 
-  const header = text(parts.find((part) => upper(part.type) === "HEADER"));
+  const headerPart = parts.find((part) => upper(part.type) === "HEADER");
+  const header = text(headerPart);
+  // A text header is rendered as its text; anything else is rendered as what it
+  // IS, because there is no text to show and silence reads as "no header".
+  const headerFormat =
+    headerPart && upper(headerPart.format) !== "TEXT" ? upper(headerPart.format) || "MEDIA" : null;
   const body = text(parts.find((part) => upper(part.type) === "BODY"));
   const footer = text(parts.find((part) => upper(part.type) === "FOOTER"));
 
@@ -90,8 +100,8 @@ export function previewContent(components: unknown): PreviewContent | null {
       }))
     : [];
 
-  if (!header && !body && !footer && buttons.length === 0) return null;
-  return { header, body, footer, buttons };
+  if (!header && !headerFormat && !body && !footer && buttons.length === 0) return null;
+  return { header, headerFormat, body, footer, buttons };
 }
 
 const LABEL =
@@ -120,7 +130,24 @@ export function TemplatePreview({ components }: TemplatePreviewProps) {
 
   return (
     <div className="flex flex-col gap-4 px-4 pb-4">
-      {content.header ? (
+      {content.headerFormat ? (
+        <div>
+          <span className={LABEL}>Header</span>
+          {/* THE BUG THIS REPLACED: the preview read the header's `text` only,
+              and a media header has none — so an IMAGE header rendered as
+              nothing at all and the sheet showed a complete-looking message
+              missing its most visible part. Named, not drawn: previewing the
+              asset would mean fetching Meta's example handle, and a placeholder
+              that says what it is beats a picture the console had to go and
+              get. */}
+          <p className="m-0 flex items-center gap-2 border border-(--line) bg-muted p-3 text-xs text-muted-foreground">
+            <span className="font-medium tracking-wider text-foreground uppercase">
+              {content.headerFormat}
+            </span>
+            <span>supplied when the message is sent</span>
+          </p>
+        </div>
+      ) : content.header ? (
         <div>
           <span className={LABEL}>Header</span>
           <p className="m-0 text-sm text-pretty text-foreground whitespace-pre-wrap">

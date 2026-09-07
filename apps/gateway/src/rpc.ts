@@ -36,6 +36,7 @@ import type {
   ReconcileWabaResult,
   ResubscribeResult,
   SendTemplateTestInput,
+  TemplateHeaderMediaFormat,
   SendTemplateTestResult,
   SendTestFailureCode,
   SetSubscriberConfigInput,
@@ -86,6 +87,9 @@ const MAX_BUTTON_PARAMS = 3;
  * component. Meta caps BUTTONS at 3 buttons, so this is a loose ceiling that
  * exists to bound the index, not to mirror Meta's exact count. */
 const MAX_BUTTON_URL_INDEX = 9;
+/** The header formats a template can carry that a single link can fill. */
+const HEADER_MEDIA_FORMATS: TemplateHeaderMediaFormat[] = ["image", "video", "document"];
+const MAX_HEADER_LINK_LENGTH = 2048;
 /** Meta's body ceiling for a template component. */
 const MAX_TEMPLATE_BODY_LENGTH = 1024;
 /** Meta documents ~60 chars for a footer; the console's create validator uses
@@ -558,6 +562,24 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       }
       if (/[\n\t]/.test(text)) throw new Error("button parameters must not contain newlines or tabs");
     }
+    const headerMedia = input.headerMedia;
+    if (headerMedia !== undefined) {
+      if (typeof headerMedia !== "object" || headerMedia === null) {
+        throw new Error("headerMedia must be an object");
+      }
+      if (!HEADER_MEDIA_FORMATS.includes(headerMedia.format)) {
+        throw new Error("headerMedia format must be image, video or document");
+      }
+      const link = headerMedia.link;
+      if (typeof link !== "string" || link.length === 0 || link.length > MAX_HEADER_LINK_LENGTH) {
+        throw new Error("headerMedia link must be 1-2048 characters");
+      }
+      // `https` only. Meta dereferences this from its own network, so `http`
+      // leaks the asset in transit and no other scheme is fetchable at all.
+      // Eccos never opens it — this checks the string and nothing more.
+      if (!link.startsWith("https://")) throw new Error("headerMedia link must be https");
+      if (/[\s]/.test(link)) throw new Error("headerMedia link must not contain whitespace");
+    }
 
     if (this.env.SEND_RATE_LIMITER) {
       // The SAME key as the HTTP middleware (`worker.ts`): console sends and
@@ -571,6 +593,16 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     }
 
     const components: Record<string, unknown>[] = [];
+    // Header first, which is both Meta's documented order and the order the
+    // message renders in. `{ type: "image", image: { link } }` — Meta fetches
+    // the link itself, so this path uploads nothing and Eccos makes no request
+    // of its own.
+    if (headerMedia) {
+      components.push({
+        type: "header",
+        parameters: [{ type: headerMedia.format, [headerMedia.format]: { link: headerMedia.link } }],
+      });
+    }
     if (bodyParams.length > 0) {
       components.push({
         type: "body",

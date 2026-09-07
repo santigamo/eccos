@@ -775,6 +775,67 @@ describe("sendTemplateTest (Send test sheet)", () => {
     expect(() => validateSendTestInput({ ...SEND, phoneNumberId: "" })).toThrow(/phoneNumberId/);
   });
 
+  test("the media header link is https, and nothing else gets through", () => {
+    // The link is handed to META, which dereferences it from its own network —
+    // Eccos parses the string and never opens it, so there is no request here
+    // to be talked into making. What the scheme check buys is the asset not
+    // travelling in clear, and shapes Meta cannot fetch at all being refused
+    // with a sentence instead of a Graph error.
+    const media = { format: "image", link: "https://cdn.example.com/a.png" };
+    expect(validateSendTestInput({ ...SEND, headerMedia: media })).toEqual({
+      ...SEND,
+      headerMedia: media,
+    });
+    // Trimmed, because a pasted URL carries whitespace.
+    expect(
+      validateSendTestInput({
+        ...SEND,
+        headerMedia: { format: "video", link: "  https://cdn.example.com/a.mp4  " },
+      }).headerMedia,
+    ).toEqual({ format: "video", link: "https://cdn.example.com/a.mp4" });
+
+    expect(() =>
+      validateSendTestInput({ ...SEND, headerMedia: { format: "image", link: "http://x/a.png" } }),
+    ).toThrow(/https/);
+    expect(() =>
+      validateSendTestInput({
+        ...SEND,
+        headerMedia: { format: "image", link: "data:image/png;base64,AAAA" },
+      }),
+    ).toThrow(/https/);
+    expect(() =>
+      validateSendTestInput({ ...SEND, headerMedia: { format: "image", link: "/relative.png" } }),
+    ).toThrow(/full URL/);
+    // A URL carrying a username or password is one the operator did not mean
+    // to hand to a third party's fetcher.
+    expect(() =>
+      validateSendTestInput({
+        ...SEND,
+        headerMedia: { format: "image", link: "https://user:pw@cdn.example.com/a.png" },
+      }),
+    ).toThrow(/credentials/);
+    // The format set is CLOSED: it is what the gateway turns into a Meta
+    // parameter type, so an unknown one would build a component by string
+    // concatenation from operator input.
+    expect(() =>
+      validateSendTestInput({ ...SEND, headerMedia: { format: "sticker", link: "https://x/a" } }),
+    ).toThrow(/image, video or document/);
+    expect(() =>
+      validateSendTestInput({ ...SEND, headerMedia: { format: "image", link: "" } }),
+    ).toThrow(/media link/);
+    expect(() =>
+      validateSendTestInput({ ...SEND, headerMedia: "https://x/a.png" }),
+    ).toThrow(/object/);
+  });
+
+  test("no media header means no headerMedia field at all", () => {
+    // Meta answers 132000 for a header parameter on a template with no header
+    // just as readily as for a missing one, so an absent field must stay absent
+    // rather than become an empty object.
+    expect("headerMedia" in validateSendTestInput(SEND)).toBe(false);
+    expect("headerMedia" in validateSendTestInput({ ...SEND, headerMedia: null })).toBe(false);
+  });
+
   test("requires operate: a role without it is refused and the binding is never touched", async () => {
     let called = false;
     withResources({

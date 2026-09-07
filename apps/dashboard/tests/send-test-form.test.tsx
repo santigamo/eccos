@@ -82,12 +82,39 @@ describe("SendTestForm", () => {
     // Data rule 5: no dead buttons. The row still opens the sheet, because
     // "why can I not send this one?" is the operator's actual question — but
     // what they get is the answer, not a control that fails at Meta.
+    //
+    // A LOCATION header, not the IMAGE one this used to use: an image header is
+    // now a field to fill (see below), and a location carries coordinates
+    // rather than an asset, so it is the honest remaining dead end.
     const html = render(
-      analyzeTemplate({ components: [{ type: "HEADER", format: "IMAGE" }] }),
+      analyzeTemplate({ components: [{ type: "HEADER", format: "LOCATION" }] }),
     );
-    expect(html).toContain("uploaded asset");
+    expect(html).toContain("location");
     expect(html).not.toContain("<button");
     expect(html).not.toContain("Send test message");
+  });
+
+  test("a media header asks for one link, and says who fetches it", () => {
+    // The unblock for the App Review clip: Citta's approved templates all carry
+    // an IMAGE header, and the sheet refused every one of them until this
+    // field existed. It asks for a link rather than a file because Meta
+    // dereferences the URL itself — so the console gained the send without
+    // gaining an upload flow.
+    const html = render(
+      analyzeTemplate({
+        components: [{ type: "HEADER", format: "IMAGE" }, { type: "BODY", text: "hi" }],
+      }),
+    );
+    expect(html).toContain('id="send-test-header-media"');
+    expect(html).toContain("image header");
+    expect(html).toContain("Meta fetches it");
+    expect(html).toContain("Send test message");
+  });
+
+  test("a body-only template grows no media field", () => {
+    expect(render(ready("Welcome and congratulations!"))).not.toContain(
+      "send-test-header-media",
+    );
   });
 
   test("states the test-number allowlist rule where the recipient is typed", () => {
@@ -216,6 +243,8 @@ describe("assembleSendTestPayload", () => {
     recipient: "34600000000",
     templateName: "cita_encontrada",
     languageCode: "es",
+    headerMedia: null,
+    headerLink: "",
   };
 
   test("TRIPWIRE: collected button params actually ride the request", () => {
@@ -246,9 +275,58 @@ describe("assembleSendTestPayload", () => {
     });
     expect("buttonParams" in empty).toBe(false);
     const bodyOnly = assembleSendTestPayload({ ...BASE, params: ["Ada"], buttonParams: [] });
-    const { recipient: _recipient, ...baseTo } = BASE;
+    const {
+      recipient: _recipient,
+      headerMedia: _headerMedia,
+      headerLink: _headerLink,
+      ...baseTo
+    } = BASE;
     expect(bodyOnly).toEqual({ ...baseTo, to: BASE.recipient, bodyParams: ["Ada"] });
     expect("buttonParams" in bodyOnly).toBe(false);
+  });
+
+  test("TRIPWIRE: a collected media link actually rides the request", () => {
+    // Same regression class as the button params above, and the reason this
+    // whole assembly is exported: the field is required in the UI, so dropping
+    // it on submit would show the operator a filled form and hand Meta a
+    // template with no header parameter — 132000, and a console that looks
+    // broken while the form looks complete.
+    const payload = assembleSendTestPayload({
+      ...BASE,
+      params: [],
+      buttonParams: [],
+      headerMedia: "image",
+      headerLink: "  https://cdn.example.com/a.png  ",
+    });
+    expect(payload.headerMedia).toEqual({
+      format: "image",
+      // Trimmed here, not at the gateway: a pasted URL carries whitespace and
+      // Meta would refuse it.
+      link: "https://cdn.example.com/a.png",
+    });
+  });
+
+  test("the format is the gate, not the typed value", () => {
+    // A template with no media header must never grow a header component, even
+    // if something left a link in state; and a media template with an empty
+    // field sends nothing rather than an empty link, so Meta's own error names
+    // the missing parameter.
+    const noHeader = assembleSendTestPayload({
+      ...BASE,
+      params: [],
+      buttonParams: [],
+      headerMedia: null,
+      headerLink: "https://cdn.example.com/stale.png",
+    });
+    expect("headerMedia" in noHeader).toBe(false);
+    const emptyLink = assembleSendTestPayload({
+      ...BASE,
+      params: [],
+      buttonParams: [],
+      headerMedia: "video",
+      headerLink: "   ",
+    });
+    expect("headerMedia" in emptyLink).toBe(false);
   });
 
   test("a mixed send carries both positional groups", () => {

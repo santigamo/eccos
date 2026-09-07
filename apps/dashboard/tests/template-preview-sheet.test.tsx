@@ -145,3 +145,57 @@ describe("TemplatePreview", () => {
     expect(html).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 });
+describe("a media header (eccos-dxh)", () => {
+  test("is named, where it used to be drawn as nothing at all", () => {
+    // THE DEFECT. `previewContent` read the HEADER's `text`, and a media header
+    // has none — it carries an `example.header_handle`. So an IMAGE header
+    // produced an empty string, the block was skipped, and the sheet rendered
+    // BODY + FOOTER + BUTTONS as if the template had no header. Every one of
+    // Citta's production templates previewed that way: complete-looking, and
+    // missing the most visible part of the message.
+    //
+    // Worse than a gap: the sheet exists to answer "what will Meta render?",
+    // and it disagreed with the send sheet beside it, which DID see the header.
+    const html = renderToStaticMarkup(
+      <TemplatePreview
+        components={[
+          { type: "HEADER", format: "IMAGE" },
+          { type: "BODY", text: "Hi {{1}}" },
+        ]}
+      />,
+    );
+    expect(html).toContain("Header");
+    expect(html).toContain("IMAGE");
+    expect(html).toContain("supplied when the message is sent");
+  });
+
+  test("every media format says which one it is", () => {
+    for (const format of ["IMAGE", "VIDEO", "DOCUMENT", "LOCATION"]) {
+      const html = renderToStaticMarkup(
+        <TemplatePreview components={[{ type: "HEADER", format }, { type: "BODY", text: "x" }]} />,
+      );
+      expect(html).toContain(format);
+    }
+  });
+
+  test("a header alone is still worth a preview", () => {
+    // `previewContent` returned null when every text field was empty, which for
+    // a media-header-only template meant the empty state — "Meta returned this
+    // template without a components array" — a sentence that was simply untrue.
+    const html = renderToStaticMarkup(
+      <TemplatePreview components={[{ type: "HEADER", format: "VIDEO" }]} />,
+    );
+    expect(html).not.toContain("without a components array");
+    expect(html).toContain("VIDEO");
+  });
+
+  test("a text header still renders as its text, not as a placeholder", () => {
+    const html = renderToStaticMarkup(
+      <TemplatePreview
+        components={[{ type: "HEADER", format: "TEXT", text: "Your order" }]}
+      />,
+    );
+    expect(html).toContain("Your order");
+    expect(html).not.toContain("supplied when the message is sent");
+  });
+});

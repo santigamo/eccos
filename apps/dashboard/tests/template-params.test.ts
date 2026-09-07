@@ -41,6 +41,7 @@ describe("analyzeTemplate", () => {
       paramCount: 0,
       bodyText: "Welcome and congratulations!",
       buttons: [],
+      headerMedia: null,
     });
   });
 
@@ -53,6 +54,7 @@ describe("analyzeTemplate", () => {
       paramCount: 2,
       bodyText: "Hi {{1}}, your order {{2}} shipped.",
       buttons: [],
+      headerMedia: null,
     });
   });
 
@@ -67,6 +69,7 @@ describe("analyzeTemplate", () => {
       paramCount: 0,
       bodyText: null,
       buttons: [],
+      headerMedia: null,
     });
   });
 
@@ -84,10 +87,39 @@ describe("analyzeTemplate", () => {
     }
   });
 
-  test("refuses a media header, an authentication template, and a parameterised header", () => {
-    const media = analyzeTemplate({
-      components: [{ type: "HEADER", format: "IMAGE" }, bodyComponent("hi")],
+  test("a media header is a slot to fill, not a dead end", () => {
+    // It used to be refused ("needs an uploaded asset"), which was true only of
+    // the media-id path. Meta also accepts a public https link it fetches
+    // itself, so the sheet asks for one link and the console gained the send
+    // without gaining an upload flow or a fetcher.
+    for (const [format, expected] of [
+      ["IMAGE", "image"],
+      ["VIDEO", "video"],
+      ["DOCUMENT", "document"],
+    ] as const) {
+      expect(
+        analyzeTemplate({ components: [{ type: "HEADER", format }, bodyComponent("hi")] }),
+      ).toEqual({
+        kind: "ready",
+        paramCount: 0,
+        bodyText: "hi",
+        buttons: [],
+        headerMedia: expected,
+      });
+    }
+  });
+
+  test("a location header stays refused — it is not an asset", () => {
+    // A LOCATION header carries latitude/longitude/name/address, so the one
+    // link the sheet asks for would be the wrong question entirely.
+    const location = analyzeTemplate({
+      components: [{ type: "HEADER", format: "LOCATION" }, bodyComponent("hi")],
     });
+    expect(location.kind).toBe("unsupported");
+    expect(location.kind === "unsupported" && location.reason).toContain("location");
+  });
+
+  test("refuses an authentication template and a parameterised text header", () => {
     const auth = analyzeTemplate({
       category: "AUTHENTICATION",
       components: [bodyComponent("{{1}} is your code")],
@@ -95,13 +127,12 @@ describe("analyzeTemplate", () => {
     const header = analyzeTemplate({
       components: [{ type: "HEADER", format: "TEXT", text: "Order {{1}}" }, bodyComponent("hi")],
     });
-    expect(media.kind).toBe("unsupported");
     expect(auth.kind).toBe("unsupported");
     expect(header.kind).toBe("unsupported");
     // Distinct reasons: each dead end has to say which one it is, or the
     // operator learns nothing from opening the sheet.
-    const reasons = [media, auth, header].map((r) => (r.kind === "unsupported" ? r.reason : ""));
-    expect(new Set(reasons).size).toBe(3);
+    const reasons = [auth, header].map((r) => (r.kind === "unsupported" ? r.reason : ""));
+    expect(new Set(reasons).size).toBe(2);
   });
 
   test("refuses copy-code, OTP, flow and quick-reply buttons", () => {
@@ -143,6 +174,7 @@ describe("analyzeTemplate", () => {
       paramCount: 1,
       bodyText: "Hi {{1}}",
       buttons: [{ index: 1, urlPrefix: "https://example.com/status?t=" }],
+      headerMedia: null,
     });
   });
 
@@ -300,6 +332,7 @@ describe("the agreement property (creation is the inverse of analysis)", () => {
           paramCount: 1,
           bodyText: "Hi {{1}}, your ticket is updated.",
           buttons: [{ index: 0, urlPrefix: "https://example.com/status?t=" }],
+          headerMedia: null,
         });
         // The draft-side gates admit exactly the same draft.
         expect(analyzeDraftFooter(footer)).toMatchObject({ ok: true });

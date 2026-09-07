@@ -35,6 +35,8 @@ import type {
   ResubscribeResult,
   SendTemplateTestInput,
   SendTemplateTestResult,
+  TemplateHeaderMedia,
+  TemplateHeaderMediaFormat,
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
@@ -396,6 +398,7 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
     }
     return { index: button.index, text };
   });
+  const headerMedia = validateHeaderMedia(record.headerMedia);
   return {
     wabaId,
     phoneNumberId: record.phoneNumberId.trim(),
@@ -404,8 +407,53 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
     languageCode: record.languageCode.trim(),
     ...(values.length > 0 ? { bodyParams: values } : {}),
     ...(buttons.length > 0 ? { buttonParams: buttons } : {}),
+    ...(headerMedia ? { headerMedia } : {}),
   };
 }
+
+/**
+ * The media header's one field: a link Meta will fetch.
+ *
+ * `https` ONLY, and that is not decoration. Meta dereferences this URL from its
+ * own network, so an `http` link leaks the asset in transit and a `data:` or
+ * `file:` one is a shape Meta cannot use at all. Embedded credentials are
+ * refused too — a URL carrying a username or password is one an operator did
+ * not mean to hand to a third party's fetcher.
+ *
+ * Eccos itself never dereferences it: this validator parses the URL, it does
+ * not open it, so nothing here can be turned into a request made on Eccos'
+ * behalf.
+ */
+function validateHeaderMedia(value: unknown): TemplateHeaderMedia | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("headerMedia must be an object");
+  }
+  const media = value as Record<string, unknown>;
+  const format = media.format;
+  if (typeof format !== "string" || !HEADER_MEDIA_FORMATS.includes(format as TemplateHeaderMediaFormat)) {
+    throw new Error("headerMedia format must be image, video or document");
+  }
+  if (typeof media.link !== "string") throw new Error("the header needs a media link");
+  const link = media.link.trim();
+  if (!link) throw new Error("the header needs a media link");
+  if (link.length > MAX_HEADER_LINK_LENGTH) throw new Error("header media link is too long");
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    throw new Error("header media link must be a full URL");
+  }
+  if (url.protocol !== "https:") throw new Error("header media link must start with https://");
+  if (url.username || url.password) {
+    throw new Error("header media link must not carry credentials");
+  }
+  return { format: format as TemplateHeaderMediaFormat, link };
+}
+
+const HEADER_MEDIA_FORMATS: TemplateHeaderMediaFormat[] = ["image", "video", "document"];
+/** Meta's own cap is far higher; this is a sanity bound on operator input. */
+const MAX_HEADER_LINK_LENGTH = 2048;
 
 /**
  * The console's authoring validator — the strict one, and the place where the

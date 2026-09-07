@@ -471,6 +471,27 @@ export interface SendTemplateTestInput {
    * freeform component. Widening this shape is a security decision, not a
    * convenience one. */
   buttonParams?: ButtonUrlParam[];
+  /** The asset for a template whose HEADER is IMAGE, VIDEO or DOCUMENT.
+   * Required for such a template and forbidden for any other: Meta answers
+   * 132000 either way round.
+   *
+   * Typed like {@link buttonParams} and for the same reason — a closed set of
+   * formats and one https link, never a passthrough component. What it does
+   * NOT do is upload anything: `link` is a public URL that **Meta** fetches at
+   * send time. Eccos never dereferences it, so this adds a send capability
+   * without adding a fetcher, and there is no request Eccos can be talked into
+   * making on someone's behalf. */
+  headerMedia?: TemplateHeaderMedia;
+}
+
+/** The header formats the console can fill from a link. LOCATION is not one of
+ * them: it carries latitude/longitude/name/address rather than an asset. */
+export type TemplateHeaderMediaFormat = "image" | "video" | "document";
+
+export interface TemplateHeaderMedia {
+  format: TemplateHeaderMediaFormat;
+  /** Public `https://` URL. Fetched by Meta, never by Eccos. */
+  link: string;
 }
 
 /**

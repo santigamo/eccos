@@ -2,19 +2,26 @@
  * What the console's "Send test" sheet can actually build from one Meta
  * message-template row.
  *
- * Scope decided deliberately: **positional `{{1}}..{{n}}` body parameters, plus
- * the fill for any dynamic URL button.** That is the shape `hello_world` (zero
- * parameters, the App Review screencast template), most real templates, and —
- * with §7's create surface — every template this console authors. Everything
- * else — media headers need an asset-upload flow, named parameters need a
+ * Scope decided deliberately: **positional `{{1}}..{{n}}` body parameters, the
+ * fill for any dynamic URL button, and one link for a media header.** That is
+ * the shape `hello_world` (zero parameters, the App Review screencast
+ * template), most real templates, and — with §7's create surface — every
+ * template this console authors. Everything else — named parameters need a
  * different request shape, authentication/OTP templates, quick-reply, copy-code
- * and flow buttons, carousels — is its own project. A template this cannot
- * build gets an honest sentence and no send button rather than a button that
- * fails at Meta.
+ * and flow buttons, carousels, location headers — is its own project. A
+ * template this cannot build gets an honest sentence and no send button rather
+ * than a button that fails at Meta.
+ *
+ * A MEDIA HEADER IS A LINK, NOT AN UPLOAD. Meta accepts either a media id or a
+ * public `https://` URL it fetches itself; the console asks for the URL, so
+ * this gained a send capability without gaining a file-upload path, a storage
+ * decision, or a fetcher of its own.
  *
  * Pure, type-free of `cloudflare:workers`, so it is exercisable directly under
  * plain `bun test` (same discipline as `lib/failure.ts`).
  */
+
+import type { TemplateHeaderMediaFormat } from "@eccos/gateway-contract";
 
 export type TemplateSendability =
   | {
@@ -26,6 +33,9 @@ export type TemplateSendability =
        * BUTTONS component; `urlPrefix` is the URL up to its `{{n}}`
        * placeholder, for the input's label/hint. */
       buttons: { index: number; urlPrefix: string }[];
+      /** Set when the template's HEADER carries an asset, so the sheet asks
+       * for one link. `null` for a text header or no header at all. */
+      headerMedia: TemplateHeaderMediaFormat | null;
     }
   /** `reason` is operator-facing copy: it is rendered verbatim in the sheet. */
   | { kind: "unsupported"; reason: string };
@@ -50,6 +60,14 @@ const POSITIONAL = /\{\{\s*(\d+)\s*\}\}/g;
 const ANY_PLACEHOLDER = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 const SEND_THROUGH_API = "Send it through the API instead.";
+
+/** Meta's header formats the console can fill with one link, mapped to the
+ * lowercase orthography the SEND-side Graph shape uses. */
+const MEDIA_HEADER_FORMATS: Record<string, TemplateHeaderMediaFormat | undefined> = {
+  IMAGE: "image",
+  VIDEO: "video",
+  DOCUMENT: "document",
+};
 
 function components(row: TemplateRow): Component[] | null {
   return Array.isArray(row.components) ? (row.components as Component[]) : null;
@@ -101,12 +119,14 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
     // parameters it answers 132000, which maps to a legible
     // "parameter_mismatch" line. A documented gamble — the alternative is
     // refusing to send `hello_world` on a response shape we cannot control.
-    return { kind: "ready", paramCount: 0, bodyText: null, buttons: [] };
+    return { kind: "ready", paramCount: 0, bodyText: null, buttons: [], headerMedia: null };
   }
 
   // Dynamic URL buttons the sheet must fill, in BUTTONS order. Filled while
   // walking the parts; a template with none stays `[]`.
   const buttonSlots: { index: number; urlPrefix: string }[] = [];
+  // Set if the walk finds a media HEADER; the sheet then asks for one link.
+  let headerMedia: TemplateHeaderMediaFormat | null = null;
 
   for (const part of parts) {
     const type = upper(part.type);
@@ -116,10 +136,19 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
       );
     }
     if (type === "HEADER") {
-      if (upper(part.format) !== "TEXT") {
-        return unsupported(
-          `This template's header carries media, which needs an uploaded asset. ${SEND_THROUGH_API}`,
-        );
+      const format = upper(part.format);
+      if (format !== "TEXT") {
+        const media = MEDIA_HEADER_FORMATS[format];
+        if (!media) {
+          // LOCATION, and anything Meta adds later. A location header carries
+          // latitude/longitude/name/address, not an asset, so the one link the
+          // sheet asks for would be the wrong question.
+          return unsupported(
+            `This template's header is a ${format.toLowerCase() || "kind"} the console cannot build. ${SEND_THROUGH_API}`,
+          );
+        }
+        headerMedia = media;
+        continue;
       }
       if (text(part).includes("{{")) {
         // One parameter group only in v1: a header placeholder would need its
@@ -170,7 +199,13 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
     indices.add(Number(match[1]));
   }
   if (indices.size === 0) {
-    return { kind: "ready", paramCount: 0, bodyText: body ? bodyText : null, buttons: buttonSlots };
+    return {
+      kind: "ready",
+      paramCount: 0,
+      bodyText: body ? bodyText : null,
+      buttons: buttonSlots,
+      headerMedia,
+    };
   }
   const max = Math.max(...indices);
   // Meta numbers positional parameters 1..n with no gaps. A row that breaks
@@ -183,7 +218,7 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
       );
     }
   }
-  return { kind: "ready", paramCount: max, bodyText, buttons: buttonSlots };
+  return { kind: "ready", paramCount: max, bodyText, buttons: buttonSlots, headerMedia };
 }
 
 /** Only an approved template can be sent; everything else is a Meta review state. */

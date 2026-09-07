@@ -19,7 +19,10 @@ import { sendTemplateTest } from "../../server/gateway";
 import type { SendTemplateTestResult } from "../../server/gateway";
 import { failureCopy, sendTestFailureCopy } from "../../lib/failure";
 import { previewBody, type TemplateSendability } from "../../lib/template-params";
-import type { ButtonUrlParam } from "@eccos/gateway-contract";
+import type {
+  ButtonUrlParam,
+  TemplateHeaderMediaFormat,
+} from "@eccos/gateway-contract";
 import { StatusTag } from "../../ui";
 
 export interface SendTestPhone {
@@ -66,7 +69,12 @@ export function assembleSendTestPayload(input: {
   languageCode: string;
   params: string[];
   buttonParams: ButtonUrlParam[];
+  /** The template's media header format, or null when it has none. */
+  headerMedia: TemplateHeaderMediaFormat | null;
+  /** What the operator typed into the media link field. */
+  headerLink: string;
 }) {
+  const headerLink = input.headerLink.trim();
   return {
     wabaId: input.wabaId,
     phoneNumberId: input.phoneNumberId,
@@ -75,6 +83,12 @@ export function assembleSendTestPayload(input: {
     languageCode: input.languageCode,
     ...(input.params.length > 0 ? { bodyParams: input.params } : {}),
     ...(input.buttonParams.some((p) => p.text.trim()) ? { buttonParams: input.buttonParams } : {}),
+    // Rides only for a template that HAS a media header. Meta answers 132000
+    // for a header parameter on a template with no header just as readily as
+    // for a missing one, so the format is the gate, not the typed value.
+    ...(input.headerMedia && headerLink
+      ? { headerMedia: { format: input.headerMedia, link: headerLink } }
+      : {}),
   };
 }
 
@@ -115,6 +129,8 @@ export function SendTestForm({
   const [buttonParams, setButtonParams] = useState<ButtonUrlParam[]>(() =>
     buttonSlots.map((slot) => ({ index: slot.index, text: "" })),
   );
+  const headerMedia = sendability.kind === "ready" ? sendability.headerMedia : null;
+  const [headerLink, setHeaderLink] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -143,6 +159,8 @@ export function SendTestForm({
               languageCode,
               params,
               buttonParams,
+              headerMedia,
+              headerLink,
             }),
           });
       if (!result.ok) {
@@ -238,6 +256,30 @@ export function SendTestForm({
           />
         </div>
       ))}
+
+      {headerMedia ? (
+        <div>
+          <label htmlFor="send-test-header-media" className={LABEL}>
+            {`${headerMedia} header`}
+          </label>
+          <Input
+            id="send-test-header-media"
+            required
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            value={headerLink}
+            onChange={(event) => setHeaderLink(event.target.value)}
+            placeholder="https://…"
+          />
+          {/* Says who fetches it, because that is the surprising part and the
+              reason no upload is asked for. */}
+          <p className="mt-1 mb-0 max-w-prose text-xs text-pretty text-muted-foreground">
+            A public link to the {headerMedia}. Meta fetches it when the message
+            is sent.
+          </p>
+        </div>
+      ) : null}
 
       {buttonSlots.length > 0 ? (
         <div className="flex flex-col gap-3">

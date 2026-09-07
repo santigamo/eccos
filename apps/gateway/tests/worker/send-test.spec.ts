@@ -145,6 +145,50 @@ describe("GatewayRPC.sendTemplateTest", () => {
     ]);
   });
 
+  it("puts the media header first, as a link Meta will fetch", async () => {
+    // The unblock for a template with an IMAGE/VIDEO/DOCUMENT header. The
+    // parameter's `type` IS the format and the object key repeats it —
+    // `{ type: "image", image: { link } }` — which is why the format set is a
+    // closed enum rather than operator text: it is the one field that names a
+    // Graph shape. Header first, matching both Meta's documented order and the
+    // order the message renders in.
+    //
+    // NOTE WHAT IS ABSENT: no upload, no media id, no fetch. Meta dereferences
+    // the URL from its own network, so this send capability added no fetcher to
+    // the gateway.
+    const fetchSpy = mockSendOk();
+    await makeRpc().sendTemplateTest(
+      input({
+        bodyParams: ["Ada"],
+        headerMedia: { format: "image", link: "https://cdn.e.cc/a.png" },
+      }),
+      TEST_ACCOUNT_ID,
+    );
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.template.components).toEqual([
+      {
+        type: "header",
+        parameters: [{ type: "image", image: { link: "https://cdn.e.cc/a.png" } }],
+      },
+      { type: "body", parameters: [{ type: "text", text: "Ada" }] },
+    ]);
+  });
+
+  it("carries a media header on its own, with no body parameters", async () => {
+    const fetchSpy = mockSendOk();
+    await makeRpc().sendTemplateTest(
+      input({ headerMedia: { format: "document", link: "https://cdn.e.cc/a.pdf" } }),
+      TEST_ACCOUNT_ID,
+    );
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.template.components).toEqual([
+      {
+        type: "header",
+        parameters: [{ type: "document", document: { link: "https://cdn.e.cc/a.pdf" } }],
+      },
+    ]);
+  });
+
   it("fails closed for a WABA the account does not own, without calling Meta", async () => {
     // Tenant isolation: ownership is decided by the control plane before any
     // credential is opened.
@@ -264,6 +308,14 @@ describe("GatewayRPC.sendTemplateTest", () => {
       { buttonParams: [{ index: "0", text: "x" }] },
       { buttonParams: [{ index: 0, text: "a\nb" }] },
       { buttonParams: Array.from({ length: 4 }, () => ({ index: 0, text: "x" })) },
+      // The header link is the one field an operator types that becomes part
+      // of a Graph shape, so the gateway re-checks it rather than trusting the
+      // console validator that already did.
+      { headerMedia: { format: "sticker", link: "https://cdn.e.cc/a.png" } },
+      { headerMedia: { format: "image", link: "http://cdn.e.cc/a.png" } },
+      { headerMedia: { format: "image", link: "" } },
+      { headerMedia: { format: "image", link: "https://cdn.e.cc/a b.png" } },
+      { headerMedia: "https://cdn.e.cc/a.png" },
     ]) {
       const error = await makeRpc()
         .sendTemplateTest(input(bad), TEST_ACCOUNT_ID)

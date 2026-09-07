@@ -119,10 +119,18 @@ is no way to express a button URL parameter or a text-header parameter, and
    explaining the real reason — mixing two positional groups is where the numbering starts
    lying to the operator. So this needs a UI that *labels* which group each input belongs
    to, not just another text box. Do it after 1, and only with that labelling.
-3. **Leave refused:** `AUTHENTICATION` (the console must not mint OTPs — that is the
-   customer's system's job), carousel, limited-time offer, media headers (need an uploaded
-   asset), `COPY_CODE` / `OTP` / `FLOW` buttons, and named parameters. Each refusal keeps
-   its sentence.
+3. **Media headers turned out to be cheap, and the reason they were deferred was wrong.**
+   This list used to refuse them "need an uploaded asset", which is true only of the
+   media-**id** path. Meta's send API also accepts `{ type: "image", image: { link } }` —
+   a public `https` URL **Meta** fetches at send time. So the console asks for one link
+   and gained the send without gaining a file-upload flow, a storage decision, or a
+   fetcher of its own. Shipped 2026-09-07; it is what unblocked the App Review clip,
+   because every one of Citta's approved templates carries an IMAGE header.
+4. **Leave refused:** `AUTHENTICATION` (the console must not mint OTPs — that is the
+   customer's system's job), carousel, limited-time offer, **location** headers (they
+   carry coordinates, not an asset, so the one link is the wrong question),
+   `COPY_CODE` / `OTP` / `FLOW` buttons, and named parameters. Each refusal keeps its
+   sentence.
 
 **Widening `SendTemplateTestInput` is a security decision, not a convenience one** — its
 doc comment says so, and the reason stands: the gateway builds the Meta message itself so a
@@ -170,7 +178,7 @@ Missing, in rough order of how often a real template needs it:
 | **Text header** | Static first, parameterised later (same numbering trap as §5.2). |
 | **URL buttons** | Static and dynamic. Pairs naturally with §5.1 — build the send and the authoring together, or the console will create templates it cannot send. |
 | **Quick-reply buttons** | Needs inbound button-payload handling to be worth anything; check what the parser does with them first. |
-| **Media header** | Needs an uploaded asset and a handle from Meta's resumable upload API. Real work; defer. |
+| **Media header** | Still deferred, and here the reason really is the upload: CREATING one needs an `example.header_handle` from Meta's resumable upload API. SENDING one does not — that took a link and shipped (§5.1). Do not copy the send-side conclusion here. |
 | **More languages** | The list is hardcoded; Meta supports ~60. Trivial, but decide whether a long select or a searchable combobox. |
 | **AUTHENTICATION category** | Deliberately excluded (`rpc.ts` comment: preset content + OTP buttons, a different creation shape). Keep excluded. |
 
