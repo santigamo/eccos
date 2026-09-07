@@ -76,12 +76,29 @@ describe("select popup width", () => {
 
   test("its trigger holds one width and says what the menu says", async () => {
     // `w-fit` made the console's one header control re-flow on every use, and
-    // the raw value read "all" while the menu it opens says "all statuses".
+    // the raw value read "all" while the menu it opens says what the items say.
+    // The queue's own words changed with the vocabulary split (`pending` is
+    // shown as `waiting` now), so this pins the SHAPE — a fixed width and a
+    // trigger that renders the item's label — rather than the copy.
     const route = await Bun.file(
       new URL("../src/routes/deliveries.tsx", import.meta.url),
     ).text();
     const trigger = route.slice(route.indexOf("<SelectTrigger"));
     expect(trigger.slice(0, 200)).toMatch(/className="w-\d/);
-    expect(route).toContain('value === "all" ? "all statuses" : value');
+    expect(route).toContain('value === "all" ? "all states"');
+  });
+
+  test("every log filter uses the same trigger idiom", async () => {
+    // Three header selects now (queue, messages, events) and one idiom: a fixed
+    // trigger width and a `SelectValue` render prop, so none of them re-flows
+    // on use or shows the raw value where the menu shows a phrase.
+    for (const name of ["deliveries", "messages", "events"]) {
+      const route = await Bun.file(
+        new URL(`../src/routes/${name}.tsx`, import.meta.url),
+      ).text();
+      const trigger = route.slice(route.indexOf("<SelectTrigger"));
+      expect(trigger.slice(0, 200), name).toMatch(/className="w-\d/);
+      expect(route, name).toContain('<SelectContent align="end">');
+    }
   });
 });

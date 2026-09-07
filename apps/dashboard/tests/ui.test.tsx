@@ -5,8 +5,8 @@ import { Page, StatusTag, Unreachable, fmtTs } from "../src/ui";
 /**
  * Lightweight render smoke tests for the primitives every operator view is
  * built from (`Page`, `Unreachable`, `StatusTag`) — including the
- * "Gateway unreachable" state that all six views (Status/Deliveries/Inbound/
- * Outbound/Templates/Settings) fall back to when the `GATEWAY` RPC binding
+ * "Gateway unreachable" state that every view (Status/Messages/Events/
+ * Forwarding queue/Templates/Settings) falls back to when the `GATEWAY` RPC binding
  * can't be reached (see `tests/gateway.test.ts` for the data-layer side of
  * that same state). Views reach this card through `FailureView`, which routes
  * the other failure classes elsewhere — `tests/failure-view.test.tsx` covers
@@ -52,12 +52,12 @@ describe("Page (shared page shell, all views)", () => {
   });
 
   test("renders with no actions supplied", () => {
-    const html = renderToStaticMarkup(<Page title="Inbound">{null}</Page>);
-    expect(html).toContain("Inbound");
+    const html = renderToStaticMarkup(<Page title="Events">{null}</Page>);
+    expect(html).toContain("Events");
   });
 });
 
-describe("StatusTag (Deliveries / Outbound / Templates status column)", () => {
+describe("StatusTag (the status column on every log and table)", () => {
   test.each([
     ["delivered", "delivered"],
     ["failed", "failed"],
@@ -67,9 +67,29 @@ describe("StatusTag (Deliveries / Outbound / Templates status column)", () => {
     const html = renderToStaticMarkup(<StatusTag status={status} />);
     expect(html).toContain(expected);
   });
+
+  test("the forward hop's own words carry their tones", () => {
+    // `forwarded` is success, `held` and `retrying` are amber (a state with
+    // something to do about it), and `queued` is NEUTRAL — it is the ordinary
+    // state of a healthy queue for a few seconds, and colouring it would fire
+    // on every well-behaved gateway (data rule 1).
+    expect(renderToStaticMarkup(<StatusTag status="forwarded" />)).toContain("--tag-live-bg");
+    expect(renderToStaticMarkup(<StatusTag status="held" />)).toContain("240,160,32");
+    expect(renderToStaticMarkup(<StatusTag status="queued" />)).toContain("--tag-soon-bg");
+  });
+
+  test("a counted label takes the tone of its state word", () => {
+    // `retrying 2/6` is one tag because the ratio IS the reading — 5/6 is one
+    // attempt from terminal and 1/6 is noise. Without the first-word lookup it
+    // would miss the map and fall back to neutral, losing the amber it was
+    // written for.
+    const html = renderToStaticMarkup(<StatusTag status="retrying 2/6" />);
+    expect(html).toContain("retrying 2/6");
+    expect(html).toContain("240,160,32");
+  });
 });
 
-describe("fmtTs (timestamp formatting used across Deliveries/Inbound/Outbound)", () => {
+describe("fmtTs (timestamp formatting used across every log view)", () => {
   test("formats a numeric epoch-ms timestamp as ISO", () => {
     expect(fmtTs(0)).toBe(new Date(0).toISOString());
   });

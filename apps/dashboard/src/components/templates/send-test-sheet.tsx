@@ -365,8 +365,8 @@ function NoticeBody({ notice, wabaId }: { notice: Notice; wabaId: string }) {
           Sent {"·"} {notice.messageId}
         </span>{" "}
         {/* Data rule 2: the result links to the row that evidences it. */}
-        <Link to="/outbound" search={{ wabaId }} className="underline underline-offset-4">
-          View in outbound
+        <Link to="/messages" search={{ wabaId }} className="underline underline-offset-4">
+          View in messages
         </Link>
       </span>
     );

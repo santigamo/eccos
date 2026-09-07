@@ -70,7 +70,7 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
       to a gateway that has somewhere to send.
 - [ ] Visual: Connection fields (WABA ID, phone number ID, display phone, connected-at) render, and
       missing values show `—` rather than blank/`null`/`undefined`.
-- [ ] Visual: Inbound/Outbound/Deliveries count cards lay out in the responsive grid
+- [ ] Visual: Events/Messages/Forwards count cards lay out in the responsive grid
       (`repeat(auto-fit, minmax(220px, 1fr))`) — 3 columns wide, wrapping to fewer as the window
       narrows.
 - [ ] Unreachable: badge falls back to "unreachable" label in the unhealthy (red) color; the
@@ -80,44 +80,91 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
       focus ring. Confirm nothing else is a false-interactive element (a fact cell that is not a
       link must not be announced as one).
 
-## Deliveries (`/deliveries`, `src/routes/deliveries.tsx`)
+## Forwarding queue (`/deliveries`, `src/routes/deliveries.tsx`)
 
-- [ ] Visual: table columns (ID, Status, Attempts, Next attempt, Last error, Action) align and the
-      status column uses the expected color (delivered=green, pending=amber, failed=red).
-- [ ] Visual: the status `<select>` filter lists `all statuses` plus the known + observed statuses,
-      sorted; selecting one updates the URL search (`?status=...`) and the table.
-- [ ] Visual/empty state: filtering to a status with no rows shows "No deliveries match this
-      view." (not a blank table); with no filter and no data, shows "No deliveries."
-- [ ] Interaction: "Retry" button on a row disables itself and shows `…` while in flight, then
-      re-enables; the row list refreshes after retry (via `router.invalidate()`).
+Unlisted in the sidebar and reachable from every count link in the console.
+
+- [ ] Visual: table columns (Batch, Enqueued, Events, State, Attempts, When, Last error, Action)
+      align; State uses the FORWARD vocabulary (`forwarded` green, `held`/`retrying` amber,
+      `queued` neutral, `failed` red) and never the words `pending` or `delivered`.
+- [ ] Data: Attempts renders `2 / 6`, never a bare count — the ceiling is what makes it mean
+      something, and `0 / 6` on a held row reads as "nothing spent".
+- [ ] Data: the When column NAMES its moment — `finished <time>` on a terminal row, `next <time>`
+      on one waiting with a target, and a bare `held` with **no time at all** when no target is
+      configured. A held row showing a next attempt in the past is the exact bug this replaced.
+- [ ] Data: the Events column says what the batch carries (`1 reply`, `2 delivered · 1 read`), and
+      `content expired` on a row whose payload retention has swept.
+- [ ] Visual/copy: with no target and a held backlog, the amber rail line above the grid reads
+      "Forwarding is held — no target is set…" and links to `/webhooks`. With a target set, or
+      with nothing waiting, it renders nothing at all (no rail, no margin).
+- [ ] Visual: the state `<select>` filter lists `all states` plus the observed states under their
+      translated labels (`waiting` / `forwarded` / `failed`); selecting one updates the URL search
+      (`?status=pending`) — the VALUES stay the database's, because every count link uses them.
+- [ ] Visual/empty state: filtering to a state with no rows shows "No batches match this view."
+      (not a blank table); with no filter and no data, "NO BATCHES YET".
+- [ ] Interaction: "Retry" appears ONLY on a failed row — never on a forwarded one, which
+      `retryDelivery` would happily replay into the customer's system a second time. It disables
+      itself and shows `…` while in flight, then the list refreshes (`router.invalidate()`).
 - [ ] Pagination: "Load older →" is disabled when the current page is short (<50 rows); clicking it
       appends `before=<oldestId>` to the URL; "← Latest" appears only when paginated and clears it.
 - [ ] Responsive: at ≈375px the table wrapper scrolls horizontally instead of squashing columns
       unreadably.
 - [ ] Keyboard: the filter `<select>`, every row's "Retry" button, and both pager buttons are
-      reachable via `Tab` and operable via keyboard (`Enter`/`Space` for buttons, arrow keys for
-      the select).
-- [ ] Accessibility: the filter control has an accessible name (visible label or equivalent) and
-      the "Retry" buttons are `<button type="button">` (not divs) so they're announced as buttons.
+      reachable via `Tab` and operable via keyboard.
+- [ ] Accessibility: the filter control has an accessible name and the "Retry" buttons are
+      `<button type="button">` so they're announced as buttons.
 - [ ] Unreachable: shows the shared unreachable card instead of the table/filter/pager.
 
-## Inbound (`/inbound`, `src/routes/inbound.tsx`)
+## Events (`/events`, `src/routes/events.tsx`)
 
-- [ ] Visual: table (Received, Type, Summary) renders; `received_at` formats as an ISO timestamp;
-      the one-line summary is derived sensibly from the JSON payload (text, transport ID, or a
-      truncated JSON fallback) — no raw unformatted JSON blob overflowing the row.
-- [ ] Empty state: "No inbound events." shown when there are zero rows.
-- [ ] Responsive: table wrapper scrolls horizontally at narrow widths rather than breaking layout.
-- [ ] Accessibility: table has a `<thead>` with real `<th>` header cells (already the case in
-      source — confirm nothing regresses this).
+Every normalised callback Meta sent — `reply` and `echo` are a human writing, `delivered` /
+`read` / `failed` are Meta reporting on messages **we** sent.
+
+- [ ] Copy: the count row above the grid reads `N events · replies X · echoes Y · …`, with
+      `replies` and `echoes` present EVEN AT ZERO. On a workspace whose only traffic is its own
+      delivery receipts it must read `2 events · replies 0 · echoes 0 · delivered 2` — never
+      anything that suggests two customers wrote in.
+- [ ] Visual: KIND is the event's own word in plain text, told apart by INK WEIGHT and not colour
+      (reply/echo full-strength, delivered/read muted, failed red). No status tag on it.
+- [ ] Visual: PARTY shows `from +34…` on a reply, `to +34…` on an echo, and `↳ #1042 <template>`
+      on a status — a real link into the message sheet. When no message matches the wamid, the
+      tail of the wamid, muted. Never the workspace's own phone id.
+- [ ] Visual: DETAIL clamps to two lines and shows message text, or `131047 · <Meta's sentence>`
+      on a failure, or `—` on a plain status. It must NEVER show a wamid.
+- [ ] Visual: FORWARD is the batch's state in the forward vocabulary; `—` when the event has no
+      batch (ingested before the link existed, or its batch aged out).
+- [ ] Interaction: clicking a row opens the event sheet; the KIND cell is the focusable door that
+      says so, and the PARTY link stops its own click so it opens the message rather than the row.
+- [ ] Sheet: the "As forwarded" block shows the event JSON verbatim, plus how many other events
+      rode in the same batch. The Forwarding section names the batch `#N`, its state, `n of 6`,
+      the moment, and any last error in red; a held batch shows no invented next time.
+- [ ] URL: opening a sheet writes `?event=<id>`; pasting that URL back opens the same sheet, and an
+      id that is not on the page renders the "NOT IN THIS VIEW" state rather than nothing.
+- [ ] Filter: the `<select>` narrows by forward state (`all forwards` / waiting / forwarded /
+      failed); the count-row entries narrow by kind (`?kind=reply`).
+- [ ] Pagination: same cursor contract as the queue.
+- [ ] Empty state: "NO EVENTS YET" with no data; "No matches" plus a Clear-filters action when
+      narrowed.
+- [ ] Column visibility: PHONE appears only on a WABA with more than one number.
 - [ ] Unreachable: shows the shared unreachable card.
 
-## Outbound (`/outbound`, `src/routes/outbound.tsx`)
+## Messages (`/messages`, `src/routes/messages.tsx`)
 
-- [ ] Visual: table (Created, Recipient, Status, Transport ID, Error) renders; status color-coding
-      matches Deliveries' conventions (sent/delivered=green, pending=amber, failed/rejected=red).
-- [ ] Empty state: "No outbound messages." shown when there are zero rows.
-- [ ] Responsive: table wrapper scrolls horizontally at narrow widths.
+- [ ] Visual: table (Created, To, Message, Meta, Trail, Error) renders; the MESSAGE cell reads
+      `#1042 · template <name> · <lang>` and is the focusable door into the message sheet. The
+      wamid must NOT appear in the table — it lives in full inside the sheet.
+- [ ] Visual: META is `sent` / `failed` (Eccos → Meta) and TRAIL is `delivered · read` (Meta →
+      phone), with a failed status in red carrying its Graph code. A failed send shows `—` in
+      TRAIL, because without a wamid nothing can be about it.
+- [ ] Sheet: facts (To, From number, Sent at, full Meta message id, Meta status, Error), the trail
+      as rows with each event's own timestamp and the forward state of the batch that carried it,
+      and the Request block showing the Meta body as sent.
+- [ ] URL: `?message=<id>` addresses the sheet, same contract as /events.
+- [ ] Filter: `all messages` / `sent` / `failed`, updating `?status=`; the Status page's
+      per-status count links land here already filtered.
+- [ ] Pagination: same cursor contract as the queue.
+- [ ] Empty state: "NO MESSAGES YET"; "No matches" plus Clear filters when narrowed.
+- [ ] Column visibility: PHONE appears only on a WABA with more than one number.
 - [ ] Unreachable: shows the shared unreachable card.
 
 ## Templates (`/templates`, `src/routes/templates.tsx`)

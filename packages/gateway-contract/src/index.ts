@@ -9,6 +9,17 @@
 
 export type Health = "healthy" | "degraded" | "unhealthy";
 
+/**
+ * One normalised callback as it was stored — and, since eccos-9ty, the two
+ * things it is joined to.
+ *
+ * The joined fields are all OPTIONAL and all nullable. Optional because a
+ * caller compiled against an older contract still type-checks, and nullable
+ * because the joins genuinely miss: a row ingested before `delivery_id`
+ * existed has no batch, and a status event whose wamid has no outbound row
+ * (sent from outside Eccos, or aged out of the content window) has no message.
+ * A reader must render the absence, never invent the link.
+ */
 export interface InboundRow {
   id: number;
   type: string;
@@ -17,6 +28,71 @@ export interface InboundRow {
   phone_number_id: string | null;
   payload: string;
   received_at: number;
+  /**
+   * The forwarding batch this event was enqueued in — the EVENT→BATCH KEY.
+   *
+   * Before it existed the only thing tying an event to its delivery was that
+   * `ingest()` stamped both with the same `now`, which is a coincidence and not
+   * a key: two callbacks arriving in the same millisecond produce two batches
+   * with identical timestamps, and a retention sweep can delete one side.
+   * Null on rows written before the column, and on rows whose batch has since
+   * been deleted (delivery-audit retention).
+   */
+  delivery_id?: number | null;
+  /** `deliveries.status` of {@link InboundRow.delivery_id}: `pending`,
+   * `delivered` or `failed`. The console TRANSLATES it — see
+   * `lib/forwarding.ts`; `delivered` here means the SUBSCRIBER got the batch,
+   * never that the customer's phone got a message. */
+  delivery_status?: string | null;
+  /** Forward attempts spent on the batch. `0` with `pending` is a row nothing
+   * has been tried against — queued, or held for want of a target. */
+  delivery_attempts?: number | null;
+  delivery_created_at?: number | null;
+  /** Null while the batch has not finished. Never substitute `created_at` —
+   * see {@link DeliveryRecord.finished_at}. */
+  delivery_finished_at?: number | null;
+  delivery_next_attempt_at?: number | null;
+  delivery_last_error?: string | null;
+  /** How many events the batch carries in total, this one included. The sheet
+   * says "+N other events in this batch" from it, so the operator knows what
+   * else rode along with what their receiver got. */
+  delivery_event_count?: number | null;
+  /**
+   * The outbound message this event is ABOUT, joined on the wamid.
+   *
+   * Only ever set for a status kind (`delivered` / `read` / `failed`), which is
+   * the only kind that carries `transport_message_id`. A reply or an echo is
+   * not about one of our sends and must never show one.
+   */
+  outbound_id?: number | null;
+  /** `outbound_messages.request` — the Meta body as sent. Carried raw so the
+   * console derives its one-line label with the SAME function the message log
+   * uses (`lib/messages.ts`), instead of a second summary written here. */
+  outbound_request?: string | null;
+}
+
+/**
+ * One status callback about an outbound message, in the order Meta sent it —
+ * the message's TRAIL.
+ *
+ * This is the join the console could not make before: the wamid was printed in
+ * full on two different pages and was a door on neither. Populated per page of
+ * {@link OutboundRow}, so a list read costs one extra query and not one per row.
+ */
+export interface OutboundTrailEvent {
+  /** `delivered` · `read` · `failed`. Meta→phone vocabulary, never a forward. */
+  type: string;
+  /** The event's OWN timestamp (Meta's `at`), falling back to when Eccos
+   * received it. The two differ by the callback's flight time, and the first is
+   * the one an operator compares against a customer's screenshot. */
+  at: number;
+  /** Graph error code on a `failed` status, e.g. `131047`. Null otherwise. */
+  errorCode: string | null;
+  /** `deliveries.status` of the batch that carried this event, or null when it
+   * has none. Translated by the console, exactly like
+   * {@link InboundRow.delivery_status}. */
+  deliveryStatus: string | null;
+  deliveryAttempts: number | null;
 }
 
 export interface OutboundRow {
@@ -28,6 +104,15 @@ export interface OutboundRow {
   status: string;
   error: string | null;
   created_at: number;
+  /**
+   * What came back from Meta about this message, oldest first. Optional for the
+   * same reason as {@link InboundRow}'s joined fields; an EMPTY array is a fact
+   * (nothing has come back yet), `undefined` only means the caller did not ask.
+   *
+   * Always empty when `status` is `failed`: a refused send has no wamid, so
+   * there is nothing for a status callback to be about.
+   */
+  trail?: OutboundTrailEvent[];
 }
 
 export interface DeliveryRecord {
@@ -55,6 +140,17 @@ export interface DeliveryRecord {
 
 export interface OperatorCounts {
   inbound: number;
+  /**
+   * The same total, split by event kind — `reply` / `echo` (a human wrote) and
+   * `delivered` / `read` / `failed` (Meta reporting on OUR sends).
+   *
+   * The flat `inbound` above cannot tell those apart, and that is the bug this
+   * exists for: two template sends produce two `delivered` rows, and a console
+   * that reads "2 inbound events" says two customers wrote in when nobody did.
+   * Optional so an older caller still type-checks; readers treat a missing key
+   * as zero, never as unknown.
+   */
+  inboundByType?: Record<string, number>;
   outbound: Record<string, number>;
   deliveries: Record<string, number>;
 }
@@ -72,6 +168,20 @@ export type TemplatesResult = { ok: true; data: unknown } | { ok: false; error: 
 export type ListOpts = { wabaId: string; limit?: number; before?: number };
 
 export type DeliveryListOpts = ListOpts & { status?: string };
+
+/**
+ * Narrowing for the event log. Both filters speak the DATABASE's vocabulary,
+ * not the console's: `type` is an `inbound_events.type` value and
+ * `deliveryStatus` a `deliveries.status` value. The console owns the
+ * translation (`waiting` → `pending`, `forwarded` → `delivered`) and the
+ * gateway stays free of console words — a filter that spoke UI would have to
+ * change every time the UI renames something.
+ */
+export type InboundListOpts = ListOpts & { type?: string; deliveryStatus?: string };
+
+/** `status` is an `outbound_messages.status` value (`sent` / `failed`) — what
+ * META answered, never a forward state. */
+export type OutboundListOpts = ListOpts & { status?: string };
 
 /**
  * The newest forwarding attempt on a WABA — the answer to the only question the
@@ -614,8 +724,8 @@ export interface GatewayApi {
    * account-scoped and fails closed when the WABA is not owned by the account. */
   getStatus(wabaId: string, accountId: string): Promise<GatewayStatus>;
   getConfig(wabaId: string, accountId: string): Promise<Record<string, string>>;
-  listInbound(opts: ListOpts, accountId: string): Promise<InboundRow[]>;
-  listOutbound(opts: ListOpts, accountId: string): Promise<OutboundRow[]>;
+  listInbound(opts: InboundListOpts, accountId: string): Promise<InboundRow[]>;
+  listOutbound(opts: OutboundListOpts, accountId: string): Promise<OutboundRow[]>;
   listDeliveries(opts: DeliveryListOpts, accountId: string): Promise<DeliveryRecord[]>;
   getDelivery(id: number, wabaId: string, accountId: string): Promise<DeliveryRecord | null>;
   retryDelivery(

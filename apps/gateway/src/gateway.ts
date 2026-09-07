@@ -9,6 +9,7 @@ import type {
   InboundRow,
   OperatorCounts,
   OutboundRow,
+  OutboundTrailEvent,
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
@@ -262,6 +263,18 @@ export class EccosGateway extends DurableObject<Env> {
         ON inbound_events (received_at);`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_outbound_created
         ON outbound_messages (created_at);`);
+      // The wamid join: a status event (`delivered`/`read`/`failed`) names the
+      // outbound message it is about by `transport_message_id`, and the console
+      // resolves that per page. Without an index each page is a full scan of
+      // outbound_messages, billed as rows read.
+      this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_outbound_transport
+        ON outbound_messages (transport_message_id);`);
+      // Kind-filtered event pages (`?kind=reply`) walk id DESC within one type.
+      // Leading `type` makes that a range seek instead of a scan-and-discard,
+      // which matters precisely on the filter an operator reaches for most: the
+      // handful of real replies inside thousands of status callbacks.
+      this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_type
+        ON inbound_events (type, id);`);
       // Additive migration for objects created before a column existed. `type`
       // matters: SQLite applies column affinity on write, so an epoch-ms
       // timestamp landing in a TEXT column would come back out as a string and
@@ -285,13 +298,32 @@ export class EccosGateway extends DurableObject<Env> {
       // column exists to stop. NULL is also the live meaning — queued, held for
       // want of a forwarding target, or waiting between retries.
       ensureColumn("deliveries", "finished_at", "INTEGER");
+      // The EVENT→BATCH KEY. Until now the only thing linking an event to the
+      // delivery that carried it was that `ingest()` stamped both with the same
+      // `now` — a coincidence, not a key: two callbacks landing in the same
+      // millisecond produce two batches with identical timestamps, and either
+      // side can be pruned independently. So the console could show "this event
+      // was forwarded" for no row at all, and the queue could not say which
+      // events a failed batch was holding.
+      //
+      // No foreign key, deliberately: retention deletes deliveries and
+      // inbound_events on different windows (docs/data-lifecycle.md), so the
+      // pointer is expected to dangle and every reader treats a missing join as
+      // "the batch is gone", never as an error. Rows that predate the column
+      // stay NULL and are never backfilled — there is no honest value to guess.
+      ensureColumn("inbound_events", "delivery_id", "INTEGER");
+      // After the column exists, not with the indexes above: a fresh object
+      // creates the table without it (the CREATE TABLE stays the historical
+      // shape, additive migrations are the only way a column arrives).
+      this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_delivery
+        ON inbound_events (delivery_id);`);
     });
   }
 
   ingest(events: WhatsAppCallbackEvent[]): { received: number } {
     if (events.length === 0) return { received: 0 };
     const now = Date.now();
-    let inserted = 0;
+    const insertedIds: number[] = [];
     this.ctx.storage.transactionSync(() => {
       for (const ev of events) {
         const tmid = "transportMessageId" in ev ? ev.transportMessageId : null;
@@ -311,22 +343,49 @@ export class EccosGateway extends DurableObject<Env> {
             now,
           )
           .toArray();
-        if (insertedRows.length > 0) inserted++;
+        const row = insertedRows[0];
+        if (row) insertedIds.push(Number(row.id));
       }
-      if (inserted > 0) {
+      if (insertedIds.length > 0) {
         const phoneIds = new Set(events.map((event) => event.phoneNumberId?.trim() || null));
         const phoneNumberId = phoneIds.size === 1 ? [...phoneIds][0] ?? null : null;
-        this.sql.exec(
-          `INSERT INTO deliveries (phone_number_id, payload, status, attempts, next_attempt_at, created_at)
-           VALUES (?, ?, 'pending', 0, ?, ?)`,
-          phoneNumberId,
-          JSON.stringify({ events }),
-          now,
-          now,
-        );
+        const batch = this.sql
+          .exec(
+            `INSERT INTO deliveries (phone_number_id, payload, status, attempts, next_attempt_at, created_at)
+             VALUES (?, ?, 'pending', 0, ?, ?)
+             RETURNING id`,
+            phoneNumberId,
+            JSON.stringify({ events }),
+            now,
+            now,
+          )
+          .toArray()[0];
+        // The link, written in the SAME transaction that created both sides, so
+        // an event never exists with a batch it cannot name.
+        //
+        // A second statement rather than stamping each row at insert time (which
+        // would mean inserting the delivery first): the batch is only created
+        // when something new arrived, and a delivery inserted up-front and
+        // rolled back on an all-duplicate callback would burn an AUTOINCREMENT
+        // id. Those ids are now VISIBLE — the console calls a batch `#N` — and a
+        // numbering with holes invites an operator to hunt for a delivery that
+        // was never a delivery.
+        //
+        // Only the rows this call inserted are stamped. A duplicate keeps the
+        // `delivery_id` of the batch that first carried it, which is the honest
+        // answer: that is the batch the subscriber received it in.
+        if (batch) {
+          const deliveryId = Number(batch.id);
+          const placeholders = insertedIds.map(() => "?").join(", ");
+          this.sql.exec(
+            `UPDATE inbound_events SET delivery_id = ? WHERE id IN (${placeholders})`,
+            deliveryId,
+            ...insertedIds,
+          );
+        }
       }
     });
-    if (inserted > 0) this.ctx.storage.setAlarm(now);
+    if (insertedIds.length > 0) this.ctx.storage.setAlarm(now);
     return { received: events.length };
   }
 
@@ -433,26 +492,138 @@ export class EccosGateway extends DurableObject<Env> {
 
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---
 
-  listInbound(opts: { limit?: number; before?: number } = {}): InboundRow[] {
-    return this.sql
+  /**
+   * One page of the event log, with both of its joins resolved.
+   *
+   * The joins are the point. An event alone answers "what arrived"; an operator
+   * asks "what did the relay DO with it", and that needs the batch it went out
+   * in (`deliveries`, via the `delivery_id` written at ingest) and — for a
+   * status callback — the message it is about (`outbound_messages`, via the
+   * wamid). Both were reachable in principle and joined nowhere, so the same
+   * wamid was printed in full on two pages and was a door on neither.
+   *
+   * Two statements per page, never per row: the LEFT JOINs ride the page query,
+   * and the per-batch event count is one grouped read over the page's batch ids
+   * through `idx_inbound_delivery`.
+   *
+   * `deliveryStatus` filters on the joined table, which drops events with no
+   * batch — correct, and deliberate: an event that has no delivery is neither
+   * waiting nor forwarded nor failed, so it belongs in none of those views.
+   */
+  listInbound(
+    opts: { limit?: number; before?: number; type?: string; deliveryStatus?: string } = {},
+  ): InboundRow[] {
+    const where = ["e.id < ?"];
+    const params: unknown[] = [opts.before ?? Number.MAX_SAFE_INTEGER];
+    if (opts.type) {
+      where.push("e.type = ?");
+      params.push(opts.type);
+    }
+    if (opts.deliveryStatus) {
+      where.push("d.status = ?");
+      params.push(opts.deliveryStatus);
+    }
+    params.push(clampPage(opts.limit));
+    const rows = this.sql
       .exec(
-        `SELECT id, type, transport_message_id, message_id, phone_number_id, payload, received_at
-         FROM inbound_events WHERE id < ? ORDER BY id DESC LIMIT ?`,
-        opts.before ?? Number.MAX_SAFE_INTEGER,
-        clampPage(opts.limit),
+        `SELECT e.id, e.type, e.transport_message_id, e.message_id, e.phone_number_id,
+                e.payload, e.received_at, e.delivery_id,
+                d.status          AS delivery_status,
+                d.attempts        AS delivery_attempts,
+                d.created_at      AS delivery_created_at,
+                d.finished_at     AS delivery_finished_at,
+                d.next_attempt_at AS delivery_next_attempt_at,
+                d.last_error      AS delivery_last_error,
+                o.id              AS outbound_id,
+                o.request         AS outbound_request
+         FROM inbound_events e
+         LEFT JOIN deliveries d ON d.id = e.delivery_id
+         LEFT JOIN outbound_messages o ON o.transport_message_id = e.transport_message_id
+         WHERE ${where.join(" AND ")}
+         ORDER BY e.id DESC LIMIT ?`,
+        ...params,
       )
       .toArray() as unknown as InboundRow[];
+
+    const batchIds = [...new Set(rows.map((row) => row.delivery_id).filter((id): id is number => id != null))];
+    if (batchIds.length === 0) return rows;
+    const counts = new Map<number, number>();
+    for (const row of this.sql
+      .exec(
+        `SELECT delivery_id, COUNT(*) AS c FROM inbound_events
+         WHERE delivery_id IN (${batchIds.map(() => "?").join(", ")})
+         GROUP BY delivery_id`,
+        ...batchIds,
+      )
+      .toArray()) {
+      counts.set(Number(row.delivery_id), Number(row.c));
+    }
+    for (const row of rows) {
+      row.delivery_event_count = row.delivery_id == null ? null : counts.get(row.delivery_id) ?? null;
+    }
+    return rows;
   }
 
-  listOutbound(opts: { limit?: number; before?: number } = {}): OutboundRow[] {
-    return this.sql
+  listOutbound(opts: { limit?: number; before?: number; status?: string } = {}): OutboundRow[] {
+    const where = ["id < ?"];
+    const params: unknown[] = [opts.before ?? Number.MAX_SAFE_INTEGER];
+    if (opts.status) {
+      where.push("status = ?");
+      params.push(opts.status);
+    }
+    params.push(clampPage(opts.limit));
+    const rows = this.sql
       .exec(
         `SELECT id, transport_message_id, recipient, phone_number_id, request, status, error, created_at
-         FROM outbound_messages WHERE id < ? ORDER BY id DESC LIMIT ?`,
-        opts.before ?? Number.MAX_SAFE_INTEGER,
-        clampPage(opts.limit),
+         FROM outbound_messages WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?`,
+        ...params,
       )
       .toArray() as unknown as OutboundRow[];
+    return this.withTrails(rows);
+  }
+
+  /**
+   * Hangs each message's status callbacks off it — the message's trail.
+   *
+   * ONE query for the whole page (`transport_message_id IN (…)`), against the
+   * existing `uq_inbound_status` index, rather than one per row: a per-row read
+   * would turn a 50-row page into 51 statements, and Cloudflare bills rows
+   * scanned. A message with no wamid (a refused send) contributes no key and
+   * gets the empty array without any read at all.
+   */
+  private withTrails(rows: OutboundRow[]): OutboundRow[] {
+    const wamids = [...new Set(rows.map((row) => row.transport_message_id).filter((id): id is string => !!id))];
+    for (const row of rows) row.trail = [];
+    if (wamids.length === 0) return rows;
+    const byWamid = new Map<string, OutboundTrailEvent[]>();
+    for (const event of this.sql
+      .exec(
+        `SELECT e.transport_message_id, e.type, e.payload, e.received_at,
+                d.status AS delivery_status, d.attempts AS delivery_attempts
+         FROM inbound_events e
+         LEFT JOIN deliveries d ON d.id = e.delivery_id
+         WHERE e.transport_message_id IN (${wamids.map(() => "?").join(", ")})
+         ORDER BY e.id ASC`,
+        ...wamids,
+      )
+      .toArray()) {
+      const wamid = event.transport_message_id as string;
+      const list = byWamid.get(wamid) ?? [];
+      list.push({
+        type: event.type as string,
+        // Meta's own `at` when the payload carries one, so the trail can be
+        // read against a customer's screenshot; `received_at` is Eccos' clock
+        // and only stands in when the payload cannot be parsed.
+        ...readEventMoment(event.payload as string, Number(event.received_at)),
+        deliveryStatus: (event.delivery_status as string | null) ?? null,
+        deliveryAttempts: event.delivery_attempts == null ? null : Number(event.delivery_attempts),
+      });
+      byWamid.set(wamid, list);
+    }
+    for (const row of rows) {
+      if (row.transport_message_id) row.trail = byWamid.get(row.transport_message_id) ?? [];
+    }
+    return rows;
   }
 
   listDeliveries(opts: { status?: string; limit?: number; before?: number } = {}): DeliveryRecord[] {
@@ -475,9 +646,11 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   private listAllInbound(): InboundRow[] {
+    // The export is the STORED rows, so `delivery_id` belongs in it (it is a
+    // column) and the joins do not (they are derived at read time).
     return this.sql
       .exec(
-        `SELECT id, type, transport_message_id, message_id, phone_number_id, payload, received_at
+        `SELECT id, type, transport_message_id, message_id, phone_number_id, payload, received_at, delivery_id
          FROM inbound_events ORDER BY id DESC`,
       )
       .toArray() as unknown as InboundRow[];
@@ -550,8 +723,19 @@ export class EccosGateway extends DurableObject<Env> {
       }
       return out;
     };
+    // Split by kind as well as totalled. The flat count cannot tell a customer
+    // writing in (`reply` / `echo`) from Meta reporting on one of our own sends
+    // (`delivered` / `read` / `failed`), and every one of those is a row in the
+    // same table — so "2 inbound events" read as "two customers wrote in" on a
+    // workspace where nobody had. One extra GROUP BY over a table the flat
+    // COUNT already scans.
+    const inboundByType: Record<string, number> = {};
+    for (const row of this.sql.exec("SELECT type, COUNT(*) AS c FROM inbound_events GROUP BY type").toArray()) {
+      inboundByType[row.type as string] = Number(row.c);
+    }
     return {
       inbound: Number(inboundRow?.c ?? 0),
+      inboundByType,
       outbound: byStatus("outbound_messages"),
       deliveries: byStatus("deliveries"),
     };
@@ -1021,6 +1205,28 @@ function erasureTargetsEvent(ev: unknown, digits: string, wamids: Set<string>): 
     if (typeof e[key] === "string" && wamids.has(e[key] as string)) return true;
   }
   return false;
+}
+
+/**
+ * The two facts a trail entry needs out of a stored event payload: WHEN Meta
+ * says it happened, and — on a `failed` status — the Graph error code.
+ *
+ * Parsed here rather than shipped as raw payloads over the binding: a trail is
+ * a handful of scalars per message, and sending whole event JSONs so the
+ * console could pluck two fields would multiply a page's wire size for nothing.
+ * A payload that will not parse falls back to `received_at`, Eccos' own clock —
+ * later than Meta's by the callback's flight time, and honest about it.
+ */
+function readEventMoment(payload: string, receivedAt: number): { at: number; errorCode: string | null } {
+  try {
+    const event = JSON.parse(payload) as Record<string, unknown>;
+    return {
+      at: typeof event.at === "number" && Number.isFinite(event.at) ? event.at : receivedAt,
+      errorCode: typeof event.errorCode === "string" ? event.errorCode : null,
+    };
+  } catch {
+    return { at: receivedAt, errorCode: null };
+  }
 }
 
 function clampPage(limit?: number): number {

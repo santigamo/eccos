@@ -45,7 +45,9 @@ function setupStepsOf(state: DashboardState, hasTarget: boolean) {
   return setupSteps(state, hasTarget);
 }
 
-function stateFor(stage: DashboardState["stage"], inbound = 0): DashboardState {
+/** `replies`, not a flat inbound count: the last step counts the kinds a HUMAN
+ * produces, so a workspace full of its own delivery receipts leaves it todo. */
+function stateFor(stage: DashboardState["stage"], replies = 0): DashboardState {
   const base = {
     resources: {
       account: { accountId: "account-a", name: "A", createdAt: 1 },
@@ -59,13 +61,15 @@ function stateFor(stage: DashboardState["stage"], inbound = 0): DashboardState {
   if (stage === "account-ready") {
     return { stage: "account-ready", ...base } as unknown as DashboardState;
   }
-  // inbound 0: with a forwarding target the checklist must NOT be complete
+  // replies 0: with a forwarding target the checklist must NOT be complete
   // (first message still todo) — a complete checklist hides itself, which is
   // pinned separately below.
   return {
     stage: "ready",
     ...base,
-    status: { counts: { inbound, outbound: {}, deliveries: {} } },
+    status: {
+      counts: { inbound: replies, inboundByType: { reply: replies }, outbound: {}, deliveries: {} },
+    },
     scope: {},
   } as unknown as DashboardState;
 }
@@ -73,9 +77,9 @@ function stateFor(stage: DashboardState["stage"], inbound = 0): DashboardState {
 function renderFor(
   stage: DashboardState["stage"],
   hasForwardingTarget = false,
-  inbound = 0,
+  replies = 0,
 ): string {
-  loaderData = { ok: true, data: stateFor(stage, inbound), hasForwardingTarget };
+  loaderData = { ok: true, data: stateFor(stage, replies), hasForwardingTarget };
   searchParams = {};
   return renderToStaticMarkup(<NavSetup />);
 }
@@ -96,7 +100,7 @@ describe("NavSetup rendering of the href contract", () => {
     const html = renderFor("ready", true);
     expect(html).toContain('href="/numbers"');
     expect(html).toContain('href="/webhooks"');
-    expect(html).toContain('href="/inbound"');
+    expect(html).toContain('href="/events"');
     expect(html).not.toContain('href="/onboarding"');
   });
 

@@ -50,7 +50,7 @@ describe("per-route pending views", () => {
   test("every log route can show its own structure while it loads", async () => {
     // Each of these crosses the RPC service binding to the gateway on entry,
     // which is exactly the wait that used to render as the wrong page's rows.
-    for (const route of ["templates", "deliveries", "inbound", "outbound"]) {
+    for (const route of ["templates", "deliveries", "messages", "events"]) {
       const source = await Bun.file(
         new URL(`../src/routes/${route}.tsx`, import.meta.url),
       ).text();

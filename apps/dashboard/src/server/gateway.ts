@@ -28,8 +28,10 @@ import type {
   DeliveryRecord,
   GatewayApi,
   GatewayStatus,
+  InboundListOpts,
   InboundRow,
   ManualConnectResult,
+  OutboundListOpts,
   OutboundRow,
   ReconcileWabaResult,
   ResubscribeResult,
@@ -42,6 +44,8 @@ import type {
 } from "@eccos/gateway-contract";
 
 type DashboardListOpts = Omit<DeliveryListOpts, "wabaId">;
+type DashboardInboundOpts = Omit<InboundListOpts, "wabaId">;
+type DashboardOutboundOpts = Omit<OutboundListOpts, "wabaId">;
 
 // Re-export the shared contract types the routes render against, so the whole
 // dashboard reads the operator surface from a single source of truth
@@ -61,6 +65,7 @@ export type {
   ManualConnectResult,
   OperatorCounts,
   OutboundRow,
+  OutboundTrailEvent,
   ProvisioningStatus,
   ReconcileWabaResult,
   ResubscribeResult,
@@ -242,23 +247,67 @@ function validateScopeInput(input: unknown): DashboardScopeInput | undefined {
   return wabaId ? { wabaId } : {};
 }
 
+/** One optional short string filter — a status, a kind. Bounded so a hand-built
+ * request cannot push an unbounded value into a SQL parameter. */
+function optionalFilter(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0 || value.length > 100) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+  return value;
+}
+
+/** The `before` cursor: a row id, so a positive safe integer and nothing else. */
+function optionalCursor(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
 function validateDeliveryInput(input: unknown): (DashboardListOpts & DashboardScopeInput) | undefined {
   if (input === undefined) return undefined;
   const record = inputRecord(input);
   const wabaId = optionalWabaId(record.wabaId);
-  const status = record.status === undefined ? undefined : record.status;
-  if (status !== undefined && (typeof status !== "string" || status.length === 0 || status.length > 100)) {
-    throw new Error("status must be a non-empty string");
-  }
-  const limit = record.limit === undefined ? undefined : record.limit;
-  if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0)) {
-    throw new Error("limit must be a positive integer");
-  }
-  const before = record.before === undefined ? undefined : record.before;
-  if (before !== undefined && (typeof before !== "number" || !Number.isSafeInteger(before) || before <= 0)) {
-    throw new Error("before must be a positive integer");
-  }
+  const status = optionalFilter(record.status, "status");
+  const limit = optionalCursor(record.limit, "limit");
+  const before = optionalCursor(record.before, "before");
   return { ...(wabaId ? { wabaId } : {}), ...(status !== undefined ? { status } : {}), ...(limit !== undefined ? { limit } : {}), ...(before !== undefined ? { before } : {}) };
+}
+
+/**
+ * The event log's narrowing. `type` is an `inbound_events.type` value and
+ * `deliveryStatus` a `deliveries.status` value — the route translates the
+ * console's words (`waiting`, `forwarded`) before they get here, so the wire
+ * carries the database's vocabulary and only that.
+ */
+function validateInboundInput(input: unknown): (DashboardInboundOpts & DashboardScopeInput) | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  const type = optionalFilter(record.type, "type");
+  const deliveryStatus = optionalFilter(record.deliveryStatus, "deliveryStatus");
+  const before = optionalCursor(record.before, "before");
+  return {
+    ...(wabaId ? { wabaId } : {}),
+    ...(type !== undefined ? { type } : {}),
+    ...(deliveryStatus !== undefined ? { deliveryStatus } : {}),
+    ...(before !== undefined ? { before } : {}),
+  };
+}
+
+function validateOutboundInput(input: unknown): (DashboardOutboundOpts & DashboardScopeInput) | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  const status = optionalFilter(record.status, "status");
+  const before = optionalCursor(record.before, "before");
+  return {
+    ...(wabaId ? { wabaId } : {}),
+    ...(status !== undefined ? { status } : {}),
+    ...(before !== undefined ? { before } : {}),
+  };
 }
 
 function validateRetryInput(input: unknown): { id: number; wabaId: string } {
@@ -1209,18 +1258,18 @@ export const listDeliveries = createServerFn({ method: "GET" })
   );
 
 export const listInbound = createServerFn({ method: "GET" })
-  .validator(validateScopeInput)
+  .validator(validateInboundInput)
   .handler(({ data }): Promise<Result<InboundRow[]>> =>
     withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
-      gateway.listInbound({ wabaId: scope.wabaId }, scope.accountId),
+      gateway.listInbound({ ...data, wabaId: scope.wabaId }, scope.accountId),
     ),
   );
 
 export const listOutbound = createServerFn({ method: "GET" })
-  .validator(validateScopeInput)
+  .validator(validateOutboundInput)
   .handler(({ data }): Promise<Result<OutboundRow[]>> =>
     withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
-      gateway.listOutbound({ wabaId: scope.wabaId }, scope.accountId),
+      gateway.listOutbound({ ...data, wabaId: scope.wabaId }, scope.accountId),
     ),
   );
 

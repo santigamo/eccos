@@ -50,6 +50,20 @@ const STATUS_TONES: Record<string, StatusTone> = {
   // Eccos has no pause semantics, and a tag that reads as a toggle but is not
   // one lies about the interaction contract.
   forwarding: "success",
+  // ── The forward hop's own words (lib/forwarding.ts) ──────────────────────
+  // `forwarded` exists so `delivered` never has to mean two things on one
+  // screen: here it is Eccos → subscriber, and on the event log `delivered` is
+  // Meta → the customer's phone.
+  forwarded: "success",
+  // Held is a CONFIGURATION state, not a fault: nothing has been attempted and
+  // nothing has failed. Amber says "you have something to do", which is exactly
+  // right — the something is naming a receiver.
+  held: "warning",
+  // Neutral, and deliberately not amber: a queued batch is the ordinary state
+  // of a healthy queue for the few seconds before the alarm drains it. Colour
+  // here would fire on every well-behaved gateway (data rule 1).
+  queued: "neutral",
+  retrying: "warning",
   degraded: "warning",
   pending: "warning",
   "no target": "warning",
@@ -68,9 +82,18 @@ const TONE_CLASSES: Record<StatusTone, string> = {
   neutral: "bg-(--tag-soon-bg) text-muted-foreground border-(--line-strong)",
 }
 
-/** Colored status label; unknown statuses render in the neutral tone. */
+/**
+ * Colored status label; unknown statuses render in the neutral tone.
+ *
+ * A label may carry a COUNT with its state word (`retrying 2/6`) — the ratio is
+ * the reading on a retrying batch, and splitting it across two elements would
+ * put the number outside the tag that gives it meaning. The tone then comes
+ * from the first word, so a counted label cannot silently fall back to neutral
+ * and lose the amber it was written for.
+ */
 export function StatusTag({ status }: { status: string }) {
-  const tone = STATUS_TONES[status.toLowerCase()] ?? "neutral"
+  const lower = status.toLowerCase()
+  const tone = STATUS_TONES[lower] ?? STATUS_TONES[lower.split(" ")[0] ?? ""] ?? "neutral"
   return (
     <span
       className={cn(
@@ -119,7 +142,7 @@ export function StatusCounts({
   counts: Record<string, number>
   label: string
   /** Log view these counts are evidence for. */
-  target: "deliveries" | "outbound"
+  target: "deliveries" | "messages"
   wabaId?: string
 }) {
   const entries = Object.entries(counts)
@@ -157,7 +180,12 @@ export function StatusCounts({
                 {body}
               </Link>
             ) : (
-              <Link to="/outbound" search={search} className={className}>
+              // The status rides along here too now. It used to be dropped —
+              // /outbound had no filter to land in, so `failed 1` opened an
+              // unfiltered log and left the operator to find the row. /messages
+              // has the filter, so the count reaches its own evidence (data
+              // rule 2) instead of the neighbourhood of it.
+              <Link to="/messages" search={{ status, ...search }} className={className}>
                 {body}
               </Link>
             )}

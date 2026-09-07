@@ -48,10 +48,23 @@ function accountReady(wabaCount: number): DashboardState {
   };
 }
 
-function ready(inbound: number): DashboardState {
+/**
+ * `replies` and not a flat inbound count, which is the whole point of the
+ * fixture: `counts.inbound` includes the `delivered` receipts for the
+ * operator's OWN sends, so a workspace where nobody has written in still has a
+ * non-zero one.
+ */
+function ready(replies: number, statuses = 0): DashboardState {
   return {
     stage: "ready",
-    status: { counts: { inbound, outbound: {}, deliveries: {} } },
+    status: {
+      counts: {
+        inbound: replies + statuses,
+        inboundByType: { reply: replies, delivered: statuses },
+        outbound: {},
+        deliveries: {},
+      },
+    },
     scope: {},
   } as unknown as DashboardState;
 }
@@ -72,11 +85,11 @@ describe("setupSteps", () => {
           ["workspace", null],
       ["number", "/numbers"],
       ["target", "/webhooks"],
-      // INBOUND, and deliberately not a test send: a fresh WABA has no approved
-      // template for minutes to days, so a send would gate first run on Meta's
-      // review queue. Receiving a message needs nothing but the number, and it
-      // exercises the forwarding target above it too.
-      ["message", "/inbound"],
+      // THE EVENT LOG, and deliberately not a test send: a fresh WABA has no
+      // approved template for minutes to days, so a send would gate first run
+      // on Meta's review queue. Receiving a message needs nothing but the
+      // number, and it exercises the forwarding target above it too.
+      ["message", "/events"],
     ]);
   });
 
@@ -128,6 +141,23 @@ describe("setupSteps", () => {
   test("the last step needs a received message, not just a live number", () => {
     expect(stateOf(ready(0), true).message).toBe("todo");
     expect(stateOf(ready(3), true).message).toBe("done");
+  });
+
+  test("a delivery receipt for the operator's own send does not tick it", () => {
+    // THE BUG THIS PINS. `inbound_events` holds every normalised callback, so
+    // sending one template produces a `delivered` row — and the step, read off
+    // the flat total, announced that a first message had arrived from a
+    // customer who had never written. Only `reply` and `echo` are a human.
+    expect(stateOf(ready(0, 5), true).message).toBe("todo");
+  });
+
+  test("an echo counts, because coexistence is still a human writing", () => {
+    const withEcho = {
+      stage: "ready",
+      status: { counts: { inbound: 1, inboundByType: { echo: 1 }, outbound: {}, deliveries: {} } },
+      scope: {},
+    } as unknown as DashboardState;
+    expect(stateOf(withEcho, true).message).toBe("done");
   });
 
   test("all four facts complete the checklist, which then has nothing to say", () => {

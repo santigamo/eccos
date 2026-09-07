@@ -53,7 +53,8 @@ and get **normalized events** forwarded to your backend.
   app, HMAC-signed and retried with exponential backoff.
 - 🪪 **Onboarding + operator console** — the Workers target ships an Embedded Signup `/connect`
   flow, plus a separate operator console Worker (`apps/dashboard/`) for ops visibility — status,
-  inbound/outbound/deliveries, the subscriber target and resubscribe — reachable only over a
+  the message and event logs, the forwarding queue, the subscriber target and resubscribe —
+  reachable only over a
   private RPC binding and gated by Cloudflare Access. Per-number GDPR erasure is available through
   the scoped HTTP/RPC API.
 

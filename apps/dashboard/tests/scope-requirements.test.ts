@@ -78,9 +78,14 @@ describe("SCOPE_REQUIREMENTS", () => {
       // number. The token panel left for /numbers/attach-token.
       "/settings": "none",
       "/": "number",
+      // Named but UNLISTED, the second route in that shape after
+      // /numbers/attach-token: the forwarding queue is the destination of every
+      // `StatusCounts` link in the console, so it must never be bounced — and
+      // it shows a hop /events already renders as a column, so it does not earn
+      // a third sidebar row.
       "/deliveries": "number",
-      "/inbound": "number",
-      "/outbound": "number",
+      "/events": "number",
+      "/messages": "number",
     });
   });
 
@@ -115,8 +120,8 @@ describe("scope predicates", () => {
     expect(requirementSatisfied("/settings", limbo)).toBe(true);
     expect(requirementSatisfied("/", limbo)).toBe(false);
     expect(requirementSatisfied("/deliveries", limbo)).toBe(false);
-    expect(requirementSatisfied("/inbound", limbo)).toBe(false);
-    expect(requirementSatisfied("/outbound", limbo)).toBe(false);
+    expect(requirementSatisfied("/events", limbo)).toBe(false);
+    expect(requirementSatisfied("/messages", limbo)).toBe(false);
   });
 
   test("an account with no WABA at all only reaches the ways out", () => {
@@ -168,6 +173,11 @@ describe("nav and the root redirect agree", () => {
     // never map → nav.
     expect(SCOPE_REQUIREMENTS["/numbers/attach-token"]).toBe("none");
     expect(NAV_ITEMS.some((item) => item.href === "/numbers/attach-token")).toBe(false);
+    // /deliveries is the same asymmetry for a different reason: reachable
+    // because every count in the console links to it, unlisted because the
+    // forward is a state on an event rather than a third kind of thing.
+    expect(SCOPE_REQUIREMENTS["/deliveries"]).toBe("number");
+    expect(NAV_ITEMS.some((item) => item.href === "/deliveries")).toBe(false);
     // And nothing else in the interface points at it either — the sentence on
     // /numbers that used to send operators to Settings was removed, not
     // repointed (routes/numbers.tsx).
@@ -176,7 +186,7 @@ describe("nav and the root redirect agree", () => {
 
 describe("the sidebar's groups", () => {
   test("three named groups over a lead row, and no collapsibles", () => {
-    // Nine items do not need collapsing; what the grouping buys is that the
+    // Eight items do not need collapsing; what the grouping buys is that the
     // `requires` levels cluster, so a fresh account dims the whole LOGS group
     // as "later" rather than three unrelated grey rows.
     expect(NAV_MAIN.map((group) => group.label)).toEqual([
@@ -188,7 +198,11 @@ describe("the sidebar's groups", () => {
     expect(NAV_MAIN.map((group) => group.items.map((item) => item.href))).toEqual([
       ["/"],
       ["/numbers", "/webhooks", "/templates"],
-      ["/deliveries", "/inbound", "/outbound"],
+      // TWO LOGS. One send used to produce a row in each of three: an outbound
+      // message, a `delivered` callback under "Inbound", and a forwarding
+      // batch. Messages and Events are the two UNITS; the forward is a state on
+      // an event and the queue keeps its route without a row here.
+      ["/messages", "/events"],
       ["/settings"],
     ]);
   });

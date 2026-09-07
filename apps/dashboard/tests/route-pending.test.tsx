@@ -112,8 +112,8 @@ describe("GridPending", () => {
 
   test("no empty state while loading — nothing is known to be absent yet", () => {
     const html = renderToStaticMarkup(
-      <GridPending title="Inbound" kicker="Logs" columns={columns} />,
+      <GridPending title="Events" kicker="Logs" columns={columns} />,
     );
-    expect(html).not.toContain("NO INBOUND");
+    expect(html).not.toContain("NO EVENTS");
   });
 });

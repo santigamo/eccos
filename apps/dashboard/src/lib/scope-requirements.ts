@@ -34,9 +34,13 @@ export type ScopeRequirement = "none" | "waba" | "number";
  * It is deliberately NOT a mirror of `NAV_MAIN`: a route may be reachable
  * without being advertised. `/numbers/attach-token` is exactly that — it is in
  * this map so it is never bounced, and out of the sidebar so the customers it
- * cannot serve never meet it (see `routes/numbers_.attach-token.tsx`). The
- * anti-drift test in `tests/scope-requirements.test.ts` checks the nav against
- * this map, never the other way round, for that reason.
+ * cannot serve never meet it (see `routes/numbers_.attach-token.tsx`).
+ * `/deliveries` is the second: the forwarding queue is addressed by every
+ * `StatusCounts` link in the console and by both log sheets, and shows a hop
+ * that /events already renders as a column, so it is reachable without earning
+ * a third sidebar row. The anti-drift test in
+ * `tests/scope-requirements.test.ts` checks the nav against this map, never the
+ * other way round, for that reason.
  */
 export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/numbers": "none",
@@ -47,8 +51,8 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/settings": "none",
   "/": "number",
   "/deliveries": "number",
-  "/inbound": "number",
-  "/outbound": "number",
+  "/events": "number",
+  "/messages": "number",
 };
 
 const DEFAULT_REQUIREMENT: ScopeRequirement = "number";

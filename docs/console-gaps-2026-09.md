@@ -188,6 +188,52 @@ authoring it at all.
 
 ---
 
+## 8. The three log pages name the wrong things — the information-design review
+
+**Added 2026-09-07, from a second review; this one is not in the seven above.** Measured on
+production: the workspace had two happenings (two template sends, minutes apart) and the
+console showed **nine table rows across three pages**.
+
+Five findings, each verified in the code:
+
+1. **"Inbound" was not inbound.** `inbound_events` holds every normalised callback —
+   `delivered` / `read` (Meta reporting on messages *we* sent), `failed`, `reply` (a
+   customer wrote) and `echo` (coexistence). Only the last two are a human. Both live rows
+   read `Type: delivered`, so a page called Inbound with 2 rows read as "two customers
+   wrote in" when nobody had.
+2. **"Summary" showed a wamid.** `inboundSummary()` returned `text` if present and
+   `transportMessageId` otherwise; a status event has no text, so the column named Summary
+   printed ~60 characters of base64 on most rows.
+3. **The three logs never linked.** Outbound's `Transport ID` and Inbound's `Summary` were
+   the same wamid — the join key — printed twice in full and clickable nowhere. Data rule 2
+   was honoured within a page and not across them.
+4. **`Phone ID` was a constant column on all three pages** (the workspace's own
+   `phone_number_id`), while Inbound had no column for who the event concerned: a `reply`
+   carries `from` and nothing showed it.
+5. **The queue could not say "held".** With no forwarding target the gateway deliberately
+   HOLDS the drain (the long comment in `alarm()`). The console rendered that as `PENDING`,
+   attempts 0, next attempt in the past — indistinguishable from stuck.
+
+**What shipped.** Two logs in the sidebar — **Messages** (from outbound) and **Events**
+(from inbound) — with `/deliveries` retitled *Forwarding queue* and kept as an **unlisted
+route**, because every `StatusCounts` link in the console addresses it and the forward is a
+state on an event rather than a third kind of thing. Two read-only inspection sheets in the
+Sheet register, URL-addressable. The vocabulary split into three hops is now **data rule 9**
+in `DASHBOARD-DESIGN.md`, which is the durable half of this: `delivered` never means a
+forward again.
+
+**Gateway work, all additive and none of it optional.** `inbound_events.delivery_id` — the
+event→batch key, written inside `ingest()`'s own transaction. Before it, the only thing
+tying an event to the batch that carried it was that both were stamped with the same `now`,
+which is a coincidence and not a key. `listInbound` joins the batch and (for status kinds)
+the outbound message; `listOutbound` returns each message's trail in one query per page;
+`getCounts` splits inbound by kind, which is also what fixes the "First message" checklist
+step (it ticked on a delivery receipt for the operator's own send). Three indexes.
+`WhatsAppCallbackEvent` — the public forwarding contract — is untouched.
+
+**Also fixed in passing:** Inbound and Outbound had no pagination at all, so row 51 was
+unreachable by any means. Both now carry the `before` cursor `/deliveries` already had.
+
 ## Suggested order
 
 **Round 1 — small, unambiguous, ship together**
@@ -202,6 +248,11 @@ authoring it at all.
 **Round 3 — the real work, one pass**
 6. §5.1 button URL parameters on send + §7 footer and URL buttons on create
 7. §5.2 header parameters, with the group labelling
+
+**Round 4 — the log redesign (§8)**
+8. Shipped 2026-09-07 as one pass, because its halves do not separate: the gateway join is
+   what makes the console's join possible, and renaming the pages without it would have left
+   two logs that still could not point at each other.
 
 Rounds 1 and 2 are independent of each other and of Round 3. Round 3 should not be split
 across the send and the create halves.

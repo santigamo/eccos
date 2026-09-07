@@ -86,6 +86,12 @@ Practical options, in order of effort:
   JSONL snapshot to external storage (R2, or just downloaded locally). This repo does not
   ship that export script today — treat it as a follow-up if point-in-time backups of the
   Workers target become a requirement.
+- **A dangling `inbound_events.delivery_id` is expected, not corruption.** The column points at
+  the forwarding batch that carried an event, and the two tables age out on *different* windows
+  (content vs delivery-audit) — so a surviving event can name a batch that is already gone, and a
+  surviving batch can outlive every event it carried. Every reader treats a missing join as "the
+  batch is gone", which is why there is no foreign key. Rows written before the column existed are
+  NULL and are never backfilled: there is no honest value to guess.
 - **Restore** means redeploying the Worker (code is stateless) and, if the DO instance itself
   was lost/recreated, replaying an application-level export back through `ingest()` /
   `logOutbound()` / `saveConfig()`. There's no "restore a SQLite file" primitive for DO

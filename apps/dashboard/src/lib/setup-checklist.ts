@@ -57,7 +57,16 @@ export interface SetupStep {
 
 export function setupSteps(state: DashboardState, hasForwardingTarget: boolean): SetupStep[] {
   const wabas = state.stage === "account-ready" ? state.resources.wabas : [];
-  const inbound = state.stage === "ready" ? state.status.counts.inbound : 0;
+  // COUNTED BY KIND, and that is the fix. `counts.inbound` is every normalised
+  // callback, so a `delivered` receipt for the operator's OWN test send ticked
+  // "First message" — the step then said a customer had written in when nobody
+  // had, which is the same misread the Events log was renamed to end.
+  // `reply` and `echo` are the two kinds a human produces (a customer writing
+  // in, and the business writing from the WhatsApp Business app under
+  // coexistence); either one proves the whole pipe, which is what this step is
+  // for.
+  const byType = state.stage === "ready" ? state.status.counts.inboundByType ?? {} : {};
+  const humanMessages = (byType.reply ?? 0) + (byType.echo ?? 0);
   return [
     {
       id: "workspace",
@@ -93,14 +102,14 @@ export function setupSteps(state: DashboardState, hasForwardingTarget: boolean):
     {
       id: "message",
       label: "First message",
-      href: "/inbound",
-      // INBOUND, deliberately, and not a test send. A fresh WABA has no
-      // approved template for minutes to days and the console has no free-text
-      // send, so making the last step a send would gate first run on Meta's
-      // review queue. "Message the number from your phone and watch it land"
-      // needs nothing but the number, and it exercises the whole pipe —
+      href: "/events",
+      // AN INCOMING MESSAGE, deliberately, and not a test send. A fresh WABA
+      // has no approved template for minutes to days and the console has no
+      // free-text send, so making the last step a send would gate first run on
+      // Meta's review queue. "Message the number from your phone and watch it
+      // land" needs nothing but the number, and it exercises the whole pipe —
       // including the forwarding target above it.
-      state: inbound > 0 ? "done" : "todo",
+      state: humanMessages > 0 ? "done" : "todo",
     },
   ];
 }

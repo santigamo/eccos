@@ -14,7 +14,7 @@ deploy/rollback mechanics and the environment-variable matrix, see
 |---|---|---|
 | **Webhook ack latency** (`POST /webhooks/meta` response time) | p99 < 500 ms | The handler only verifies the signature, parses the payload, and writes to the Durable Object (`ingest()`) — it never waits on the downstream subscriber forward, which happens later via the DO alarm. Meta expects a fast response and will eventually disable a webhook subscription that times out or errors repeatedly, so this is the one latency budget that really matters. |
 | **Forwarding success rate** (`deliveries` reaching `delivered`, not `failed`) | > 99% over a rolling day | A `deliveries` row only reaches `failed` after `FORWARD_MAX_ATTEMPTS` (default 6) exponential-backoff attempts (5s, ×5 per attempt, capped at 1h — see `backoffMs()` in `apps/gateway/src/gateway.ts`). Sustained failures almost always mean the *subscriber* endpoint (`SUBSCRIBER_WEBHOOK_URL`) is down or rejecting requests, not Eccos itself. |
-| **Outbound send success rate** (`POST /v1/wabas/<WABA_ID>/messages` → `outbound_messages.status`) | > 99% "sent" | A "failed" row means the Meta Graph API call itself failed (bad token, invalid template/number, rate limit) — check `outbound_messages.error` via the dashboard's Outbound page. |
+| **Outbound send success rate** (`POST /v1/wabas/<WABA_ID>/messages` → `outbound_messages.status`) | > 99% "sent" | A "failed" row means the Meta Graph API call itself failed (bad token, invalid template/number, rate limit) — check `outbound_messages.error` via the dashboard's Messages page. |
 | **Readiness** (`GET /ready`) | 200 except during active incidents | Unlike liveness, a 503 here means "don't route real traffic here" — see below. |
 
 There is no SLA and no automated alerting shipped in this repo (see Follow-ups). These numbers
@@ -182,7 +182,7 @@ for the current early volume; revisit if traffic grows enough to make log volume
    only, the Durable Object's stored state (config, deliveries, inbound/outbound logs) is
    untouched by a rollback.
 5. **Confirm recovery.** Re-run `./scripts/smoke.sh <url>`, check `GET /ready` is back to 200,
-   and watch the Deliveries page drain (`pending` count falling, `failed` count not growing).
+   and watch the forwarding queue drain (`waiting` count falling, `failed` count not growing).
 
 ## DLQ / manual replay
 
@@ -194,12 +194,15 @@ There is no separate dead-letter queue. A delivery that exhausts `FORWARD_MAX_AT
 window (`DELIVERY_RETENTION_DAYS`, default 90) the row is hard-deleted with no archive; see
 [docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows).
 
-**Inspect today:** the dashboard's Deliveries page (`apps/dashboard`, route `/deliveries`) lists
+**Inspect today:** the dashboard's forwarding queue (`apps/dashboard`, route `/deliveries`) lists
 rows with server-side status filtering and pagination, showing `attempts`, `last_error`, and the
 stored `payload` per row.
 
-**Replay today:** click "Retry" on a row (works for `failed` *or* already-`delivered` rows, i.e.
-it doubles as a manual re-send). That calls `GatewayRPC.retryDelivery(id)` →
+**Replay today:** click "Retry" on a row. `retryDelivery` itself accepts a `failed` *or* an
+already-`delivered` row (so it doubles as a manual re-send), but **the console only offers the
+button on a failed one**: replaying a delivered batch lands a second copy in the customer's
+system, and a duplicate-maker is not a one-click row action. A deliberate re-send of a
+delivered batch is an RPC call, not a click. That calls `GatewayRPC.retryDelivery(id)` →
 `EccosGateway.retryDelivery(id)`, which resets `status='pending'`, `attempts=0`, clears
 `last_error` and `finished_at`, and re-arms the alarm — the next alarm tick attempts the forward again. This is a
 one-row-at-a-time operator action; there is no "retry all failed" bulk action.

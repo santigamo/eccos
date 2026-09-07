@@ -95,7 +95,7 @@ defaults; `operator` and `viewer` are configured custom roles):
 
 | Dashboard operation | Minimum role | MFA / step-up (§8) | Notes |
 |---|---|---|---|
-| View status, logs (inbound/outbound/deliveries), templates | viewer | — | Read-only |
+| View status, logs (messages/events/forwarding queue), templates | viewer | — | Read-only |
 | Retry delivery | operator | — | |
 | Subscriber config read | operator | — | Secret value never returned |
 | Subscriber config write | admin | **Yes** | TOTP (owner/admin) + ≤15 min recent auth |

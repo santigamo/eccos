@@ -176,46 +176,56 @@ function ScopePanel({ scope }: { scope: DashboardScope }) {
 function FactsStripSection({ counts, selectedWabaId }: { counts: GatewayStatus["counts"]; selectedWabaId: string }) {
   const outbound = countTotal(counts.outbound);
   const deliveries = countTotal(counts.deliveries);
+  const byType = counts.inboundByType ?? {};
+  const humanEvents = (byType.reply ?? 0) + (byType.echo ?? 0);
   return (
     <FactsStrip label="Traffic at a glance">
       <FactCell
-        kicker="Inbound"
-        caption="events received"
+        kicker="Events"
+        caption="callbacks received"
         value={
           <Link
-            to="/inbound"
+            to="/events"
             search={{ wabaId: selectedWabaId }}
-            aria-label={`${counts.inbound} inbound events received`}
+            aria-label={`${counts.inbound} events received`}
             className={COUNT_LINK}
           >
             {counts.inbound}
           </Link>
         }
-      />
+      >
+        {/* The caption says CALLBACKS, not messages, and the sub-line says how
+            many were a human. This cell used to be "Inbound / events received",
+            which on a workspace whose only traffic was its own delivery
+            receipts read as inbound customer messages that did not exist. */}
+        <p className="mt-3 text-muted-foreground text-sm">
+          {humanEvents === 1 ? "1 from a person" : `${humanEvents} from a person`}
+        </p>
+      </FactCell>
       <FactCell
-        kicker="Outbound"
+        kicker="Messages"
         caption="messages sent"
         value={
           <Link
-            to="/outbound"
+            to="/messages"
             search={{ wabaId: selectedWabaId }}
-            aria-label={`${outbound} outbound messages sent`}
+            aria-label={`${outbound} messages sent`}
             className={COUNT_LINK}
           >
             {outbound}
           </Link>
         }
       >
-        <StatusCounts label="outbound" counts={counts.outbound} target="outbound" wabaId={selectedWabaId} />
+        <StatusCounts label="messages" counts={counts.outbound} target="messages" wabaId={selectedWabaId} />
       </FactCell>
       <FactCell
-        kicker="Deliveries"
-        caption="forward attempts"
+        kicker="Forwards"
+        caption="batches to your subscriber"
         value={
           <Link
             to="/deliveries"
             search={{ wabaId: selectedWabaId }}
-            aria-label={`${deliveries} delivery forward attempts`}
+            aria-label={`${deliveries} forwarding batches`}
             className={COUNT_LINK}
           >
             {deliveries}

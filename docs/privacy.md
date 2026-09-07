@@ -110,10 +110,14 @@ The only way to *see* stored data (outside direct database access) is the operat
 - It is reachable only after passing **Cloudflare Access** at the edge, re-verified in-Worker
   (`apps/dashboard/src/access.ts`) — see `docs/threat-model.md` §3.4. Until Access is configured,
   a deployed dashboard has **no** application-level login of its own.
-- It renders inbound message text directly: `apps/dashboard/src/routes/inbound.tsx`
-  (`inboundSummary()`) reads `ev.text` off the stored payload and displays it in a table row. So
-  once someone passes the Access policy, they can read message content for as long as it's
-  retained — the Access policy *is* the access-control boundary, there is no additional per-field
+- It renders inbound message text directly: `apps/dashboard/src/routes/events.tsx`
+  (via `eventReading()` in `src/lib/logs.ts`) reads `ev.text` off the stored payload and displays
+  it in a table row, and the event inspection sheet
+  (`src/components/logs/event-sheet.tsx`) shows the **whole stored event JSON verbatim** —
+  deliberately, since "what did my receiver actually get" is the console's reason to exist, and a
+  summary cannot answer it. The message sheet likewise shows the outbound request body as sent.
+  So once someone passes the login, they can read message content for as long as it's
+  retained — authentication *is* the access-control boundary, there is no additional per-field
   redaction.
 - The console **never** displays `SUBSCRIBER_SECRET` or an account API key — `getSubscriberConfig()`
   returns `{ url, hasSecret: boolean, lastForward }` only (`apps/gateway/src/gateway.ts`), never the

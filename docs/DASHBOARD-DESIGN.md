@@ -112,7 +112,19 @@ component" is therefore never the question. The register is.
 3. **Side Sheet — a task done beside the list, or one row inspected without acting on
    it.** Task: a form with its own primary submit whose neighbouring list is genuinely
    relevant (`create-template-sheet.tsx`, `send-test-sheet.tsx`). Inspection:
-   `template-preview-sheet.tsx`, read-only by construction.
+   `template-preview-sheet.tsx`, read-only by construction, and the two log sheets
+   (`components/logs/message-sheet.tsx`, `event-sheet.tsx`) — one message or one event,
+   hop by hop, with the full Meta ids and the forwarded JSON that do not fit in a row.
+   Inspection sheets are **URL-addressable** (`/messages?message=1042`,
+   `/events?event=77`): a forensic finding is worth nothing if it cannot be pasted to a
+   colleague, and the address is not a loader dep, so opening one never re-paints the
+   list underneath it. An addressed row that is not on the current page says so and
+   offers the page that holds it — it never silently opens nothing.
+   The event sheet carries **exactly one act**, Retry on a failed batch, and that does not
+   move it out of the inspection register: it is the same act its row already offers,
+   placed where the operator has just read the evidence for it. Sending them back out to
+   the row to press it would be the interruption the register exists to avoid. One act
+   the reader arrived wanting is not a second register; a form is.
 
 **The two edges that get mis-cut.**
 
@@ -242,9 +254,12 @@ everywhere. Rest → hover → active must each be visibly distinct:
   `--ghost-fill` with a `--line-strong` edge; hover raises the fill and turns the
   edge green (`--ghost-edge-hover`). One primary per view; everything else is ghost.
 - **Table rows**: `hover:bg-white/[.03]` — visible, quiet. No information exists
-  only on hover. A row that **opens something** (the template name on /templates) owes
+  only on hover. A row that **opens something** (the template name on /templates, the
+  MESSAGE cell on /messages, the KIND cell on /events) owes
   the reader a real control inside it — focusable, labelled, and marked at rest with the
-  door anatomy `COUNT_LINK` gives a count that navigates. The row click is a wide target
+  door anatomy `COUNT_LINK` gives a count that navigates. A row may hold **two** doors to
+  two different destinations (an event's KIND opens its own sheet; its PARTY opens the
+  message the event is about) — what is not allowed is a destination with no door. The row click is a wide target
   over that control, never the only way in: the grid hangs `onRowClick` off a bare
   `<tr>` with no role and no tab stop, so a row-only affordance is unreachable by
   keyboard and invisible until a pointer guesses. Anything else in the row that takes a
@@ -309,6 +324,29 @@ Eccos system — the practices, not the brand):
 8. **Charts (when they arrive)**: zero baseline for length encodings, direct labels
    over legends, color only to distinguish series, drawn from the `--chart-*`
    tokens. Default to stillness — motion only for state change.
+9. **One word, one hop.** A relay has three hops and they share vocabulary, so the
+   console names each hop in words that cannot be confused with the others:
+
+   | hop | words | where |
+   |---|---|---|
+   | Eccos → Meta | `sent` · `failed` | /messages, META column |
+   | Meta → the phone | `delivered` · `read` · `failed` | /events KIND, /messages TRAIL |
+   | Eccos → subscriber | `forwarded` · `held` · `queued` · `retrying n/6` · `failed` | /events FORWARD, the queue |
+
+   The database keeps its own words (`deliveries.status` is `pending`/`delivered`/
+   `failed`, and that is the forwarding contract — it does not move). The console
+   translates at the edge, in `lib/forwarding.ts`, tested without a DOM. **`delivered`
+   never means a forward again**: it meant both "your subscriber got the batch" and "the
+   customer's phone got the message" on one screen, and no colour or column heading
+   fixes a word that is already taken.
+
+   Three of those words are the same row state read three ways, and the reading needs a
+   fact the row does not carry: `pending` is `held` with no forwarding target, `queued`
+   with one and no attempt spent, `retrying n/6` with one and attempts spent. A state an
+   operator cannot act on (`queued`) stays neutral; the two that ask for something take
+   amber. And a column that shows a timestamp **names which moment it is** — `finished` /
+   `next` / `held` — because "Next attempt" over a held row's arrival time is a lie by
+   label, not a rounding error.
 
 ## Component base
 
@@ -336,6 +374,9 @@ sit over text.
   immediately, the route's own skeleton takes over past `defaultPendingMs`, and neither
   invents a number. A new route with a loader ships with a `pendingComponent`.
 - New values go through tokens; new imagery follows BRAND.md's glass recipes.
+- A word on a new surface is checked against data rule 9's table before it is written.
+  If it names a hop, it uses that hop's vocabulary; if it names a state, the state's
+  derivation is a pure function in `lib/`, not a ternary in a cell.
 - `bun run typecheck` + `bun run test` from `apps/dashboard`; verify visually
   against the landing — the parity test is a side-by-side with eccos.chat:
   **same building, different room.**

@@ -5,7 +5,6 @@ import {
   SendIcon,
   FileTextIcon,
   SettingsIcon,
-  CheckCheckIcon,
   WebhookIcon,
   PhoneIcon,
 } from "lucide-react"
@@ -56,7 +55,7 @@ export type NavGroup = {
 /**
  * The sidebar, in three named groups plus the lead Status row.
  *
- * GROUPED, NOT COLLAPSIBLE. Nine items do not need collapsing — the reference
+ * GROUPED, NOT COLLAPSIBLE. Eight items do not need collapsing — the reference
  * console this borrows its information architecture from collapses because it
  * carries fifteen, and there is no `Collapsible` primitive vendored here. What
  * the grouping buys is that the `requires` levels cluster visually: on a fresh
@@ -110,25 +109,25 @@ export const NAV_MAIN: NavGroup[] = [
     id: "logs",
     label: "Logs",
     items: [
+      // TWO LOGS, NOT THREE. `Deliveries` used to sit here beside `Inbound` and
+      // `Outbound`, and the three were one happening counted three times: a
+      // template send produced an outbound row, a `delivered` callback in
+      // "Inbound", and a forwarding batch. The forward is a STATE on an event,
+      // so it is a column on /events; the queue keeps its route (every
+      // `StatusCounts` link addresses it) and leaves this list, the way
+      // /numbers/attach-token does.
       {
-        id: "deliveries",
-        label: "Deliveries",
-        href: "/deliveries",
-        icon: <CheckCheckIcon aria-hidden="true" />,
-        requires: "number",
-      },
-      {
-        id: "inbound",
-        label: "Inbound",
-        href: "/inbound",
-        icon: <InboxIcon aria-hidden="true" />,
-        requires: "number",
-      },
-      {
-        id: "outbound",
-        label: "Outbound",
-        href: "/outbound",
+        id: "messages",
+        label: "Messages",
+        href: "/messages",
         icon: <SendIcon aria-hidden="true" />,
+        requires: "number",
+      },
+      {
+        id: "events",
+        label: "Events",
+        href: "/events",
+        icon: <InboxIcon aria-hidden="true" />,
         requires: "number",
       },
     ],

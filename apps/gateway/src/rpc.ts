@@ -28,10 +28,11 @@ import type {
   GatewayApi,
   GatewayStatus,
   Health,
+  InboundListOpts,
   InboundRow,
-  ListOpts,
   ManualConnectResult,
   OperatorCounts,
+  OutboundListOpts,
   OutboundRow,
   ReconcileWabaResult,
   ResubscribeResult,
@@ -264,12 +265,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return publicConfig(await stub.getAllConfig());
   }
 
-  async listInbound(opts: ListOpts, accountId: string): Promise<InboundRow[]> {
+  async listInbound(opts: InboundListOpts, accountId: string): Promise<InboundRow[]> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.listInbound(opts);
   }
 
-  async listOutbound(opts: ListOpts, accountId: string): Promise<OutboundRow[]> {
+  async listOutbound(opts: OutboundListOpts, accountId: string): Promise<OutboundRow[]> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.listOutbound(opts);
   }

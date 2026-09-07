@@ -8,7 +8,7 @@ import {
 
 describe("safeRedirectTarget", () => {
   test("accepts same-origin absolute paths, preserving query strings", () => {
-    expect(safeRedirectTarget("/inbound?wabaId=abc")).toBe("/inbound?wabaId=abc");
+    expect(safeRedirectTarget("/events?wabaId=abc")).toBe("/events?wabaId=abc");
     expect(safeRedirectTarget("/")).toBe("/");
     expect(safeRedirectTarget("/deliveries")).toBe("/deliveries");
   });

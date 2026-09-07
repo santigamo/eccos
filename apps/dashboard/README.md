@@ -1,8 +1,10 @@
 # @eccos/dashboard — operator console
 
 A small **operator console** for an Eccos gateway: a [TanStack Start](https://tanstack.com/start)
-(React) app that runs as its own Cloudflare Worker. It renders gateway status, delivery/inbound/
-outbound logs and templates, and exposes a few operator actions (retry a delivery, rotate the
+(React) app that runs as its own Cloudflare Worker. It renders gateway status, two logs —
+**Messages** (what Eccos sent, with everything Meta reported back about it) and **Events**
+(every normalised callback, with what Eccos did with each) — plus the unlisted forwarding
+queue and templates, and exposes a few operator actions (retry a forwarding batch, rotate the
 subscriber-forwarding target, re-run the Meta webhook subscription).
 
 The console's visual language — what it inherits from the eccos.chat landing, the

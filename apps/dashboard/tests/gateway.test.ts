@@ -565,9 +565,9 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
   });
 });
 
-// --- Inbound view (routes/inbound.tsx) ---
+// --- Events view (routes/events.tsx) ---
 
-describe("listInbound (Inbound view)", () => {
+describe("listInbound (Events view)", () => {
   test("reachable: returns inbound rows", async () => {
     withResources({
       listInbound: async () => [
@@ -590,9 +590,9 @@ describe("listInbound (Inbound view)", () => {
   });
 });
 
-// --- Outbound view (routes/outbound.tsx) ---
+// --- Messages view (routes/messages.tsx) ---
 
-describe("listOutbound (Outbound view)", () => {
+describe("listOutbound (Messages view)", () => {
   test("reachable: returns outbound rows", async () => {
     withResources({
       listOutbound: async () => [
