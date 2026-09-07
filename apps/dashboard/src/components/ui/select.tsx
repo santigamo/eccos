@@ -65,6 +65,15 @@ function SelectTrigger({
  * `min-w-(--anchor-width)` in particular looks harmless and is the worst of
  * them: it adds nothing `w-(--anchor-width)` was not already doing and removes
  * the floor, so every option clips mid-word. /deliveries shipped exactly that.
+ *
+ * ── alignItemWithTrigger DEFAULTS TO FALSE HERE ─────────────────────────────
+ * Base UI defaults it to TRUE, which makes the popup "overlap the trigger so
+ * the selected item's text is aligned with the trigger's value text" — the
+ * macOS native-select behaviour. In a web console it reads as the list landing
+ * ON the control instead of dropping from it, and it covers the very thing the
+ * operator just clicked. Every select here opens BELOW its trigger, at
+ * `sideOffset`, like every other menu in the product. The data-grid pagination
+ * was already passing `false` by hand, which is how long this had been wrong.
  */
 function SelectContent({
   className,
@@ -73,7 +82,7 @@ function SelectContent({
   sideOffset = 4,
   align = "center",
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<

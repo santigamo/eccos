@@ -42,6 +42,31 @@ describe("select popup width", () => {
     expect(offenders).toEqual([]);
   });
 
+  test("a select drops below its trigger, it does not land on it", () => {
+    // Base UI defaults `alignItemWithTrigger` to TRUE: the popup "overlaps the
+    // trigger so the selected item's text is aligned with the trigger's value
+    // text" — the macOS native-select behaviour, which in a web console reads
+    // as the list landing on the control and covering what was just clicked.
+    // The data-grid pagination was passing `false` by hand long before anyone
+    // noticed the default was wrong for every other select too.
+    expect(select).toContain("alignItemWithTrigger = false");
+  });
+
+  test("no call site still passes the override by hand", async () => {
+    const offenders: string[] = [];
+    for await (const file of new Bun.Glob("**/*.tsx").scan({
+      cwd: new URL("../src", import.meta.url).pathname,
+      absolute: true,
+    })) {
+      if (file.endsWith("/ui/select.tsx")) continue;
+      const source = await Bun.file(file).text();
+      if (source.includes("alignItemWithTrigger")) {
+        offenders.push(file.slice(file.indexOf("/src/") + 1));
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test("the deliveries filter opens inward from the page's right edge", async () => {
     const route = await Bun.file(
       new URL("../src/routes/deliveries.tsx", import.meta.url),
