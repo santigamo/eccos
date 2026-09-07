@@ -273,7 +273,7 @@ export function CreateTemplateFields({
           <SelectTrigger id="create-template-language" size="sm" className="w-full rounded-none">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent align="start" className="min-w-(--anchor-width)">
+          <SelectContent align="start">
             {LANGUAGES.map((entry) => (
               <SelectItem key={entry.code} value={entry.code}>
                 {entry.label} {"·"} {entry.code}
@@ -297,7 +297,7 @@ export function CreateTemplateFields({
           <SelectTrigger id="create-template-category" size="sm" className="w-full rounded-none">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent align="start" className="min-w-(--anchor-width)">
+          <SelectContent align="start">
             {CATEGORIES.map((entry) => (
               <SelectItem key={entry.value} value={entry.value}>
                 {entry.label}

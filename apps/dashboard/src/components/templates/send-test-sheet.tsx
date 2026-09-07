@@ -191,7 +191,7 @@ export function SendTestForm({
             <SelectTrigger id="send-test-from" size="sm" className="w-full rounded-none">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent align="start" className="min-w-(--anchor-width)">
+            <SelectContent align="start">
               {phones.map((phone) => (
                 <SelectItem key={phone.phoneNumberId} value={phone.phoneNumberId}>
                   {phone.displayPhoneNumber || phone.phoneNumberId}

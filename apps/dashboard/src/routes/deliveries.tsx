@@ -192,10 +192,30 @@ function DeliveriesPage() {
         value={activeStatus}
         onValueChange={(value) => onFilterChange(value ?? "all")}
       >
-        <SelectTrigger id="delivery-status-filter" size="sm" className="h-7 rounded-none">
-          <SelectValue />
+        {/* A FIXED WIDTH, not `w-fit`: the trigger's own width would follow
+            whatever is selected, so the one control in this page's header
+            jumped and re-flowed every time it was used. 9rem holds the longest
+            label with room to spare. */}
+        <SelectTrigger id="delivery-status-filter" size="sm" className="w-36">
+          {/* The trigger renders the ITEM'S LABEL, not the raw value. Without
+              this it read `all` while the menu it opens says `all statuses` —
+              two names for the same choice, and the shorter one is the one a
+              sighted operator reads (the descriptive label is `sr-only`). */}
+          <SelectValue>
+            {(value: string | null) => (value === "all" ? "all statuses" : value)}
+          </SelectValue>
         </SelectTrigger>
-        <SelectContent align="start" className="min-w-(--anchor-width)">
+        {/* `align="end"`: this control sits at the right edge of the page, so
+            the popup has to grow inward.
+
+            NO `min-w` OVERRIDE HERE, and that is the whole bug this replaced.
+            The call site passed `min-w-(--anchor-width)`, which tailwind-merge
+            reads as the same key as the component's `min-w-36` and drops it —
+            leaving the popup pinned to `w-(--anchor-width)`, 55px, with every
+            option clipped mid-word ("all statu…", "delivere…"). The component's
+            floor is what makes the list readable; the anchor width was never
+            adding anything, since `w-(--anchor-width)` already matches it. */}
+        <SelectContent align="end">
           <SelectItem value="all">all statuses</SelectItem>
           {statuses.map((s) => (
             <SelectItem key={s} value={s}>

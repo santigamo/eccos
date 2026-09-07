@@ -55,6 +55,17 @@ function SelectTrigger({
   )
 }
 
+/**
+ * The popup, and one class it must keep: `min-w-36`.
+ *
+ * `w-(--anchor-width)` matches the trigger exactly, which for a short trigger
+ * ("all", 55px) is far narrower than the options inside it. `min-w-36` is the
+ * readability FLOOR that saves that case, and a call site passing any `min-w-*`
+ * of its own replaces it — tailwind-merge reads both as the same key. Passing
+ * `min-w-(--anchor-width)` in particular looks harmless and is the worst of
+ * them: it adds nothing `w-(--anchor-width)` was not already doing and removes
+ * the floor, so every option clips mid-word. /deliveries shipped exactly that.
+ */
 function SelectContent({
   className,
   children,
