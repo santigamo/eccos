@@ -86,6 +86,18 @@ describe("dropdown menu rows", () => {
     expect(menu).toContain("cursor-pointer");
   });
 
+  test("so does a select option", async () => {
+    // Base UI's Select DOES move focus onto the highlighted option, so its
+    // `focus:` styling was already working once `--accent` became a real lift —
+    // only the cursor was still saying "not a control". The popup's scroll
+    // arrows keep `cursor-default`: they are not choices.
+    const select = await Bun.file(
+      new URL("../src/components/ui/select.tsx", import.meta.url),
+    ).text();
+    const item = select.slice(select.indexOf('data-slot="select-item"'));
+    expect(item.slice(0, 700)).not.toContain("cursor-default");
+  });
+
   test("the destructive row's ink is the foreground token", () => {
     // Fixed in the COMPONENT, not at the call site: a variant-prefixed utility
     // beats an unprefixed override on specificity, and tailwind-merge does not
