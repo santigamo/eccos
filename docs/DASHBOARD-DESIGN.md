@@ -114,7 +114,8 @@ component" is therefore never the question. The register is.
    relevant (`create-template-sheet.tsx`, `send-test-sheet.tsx`). Inspection:
    `template-preview-sheet.tsx`, read-only by construction, and the two log sheets
    (`components/logs/message-sheet.tsx`, `event-sheet.tsx`) — one message or one event,
-   hop by hop, with the full Meta ids and the forwarded JSON that do not fit in a row.
+   hop by hop, with the full Meta ids, what the thing actually said, and the provider
+   payload behind a disclosure (data rule 10).
    Inspection sheets are **URL-addressable** (`/messages?message=1042`,
    `/events?event=77`): a forensic finding is worth nothing if it cannot be pasted to a
    colleague, and the address is not a loader dep, so opening one never re-paints the
@@ -348,6 +349,43 @@ Eccos system — the practices, not the brand):
    `next` / `held` — because "Next attempt" over a held row's arrival time is a lie by
    label, not a rounding error.
 
+10. **Raw provider output is never a surface's primary content — and it is never
+    deleted either.** The masthead says OPERATOR CONSOLE: the default reader is an
+    operator, not an integrator, and a section that opens onto pretty-printed Meta JSON
+    asks them to be one. So a surface holding a stored payload leads with what it can
+    READ out of it and keeps the payload one `<details>` disclosure down
+    (`RawDisclosure` in `components/logs/sheet-parts.tsx`), under a summary that states
+    the claim the payload backs — "exactly what your receiver got". Both halves are
+    load-bearing: when Meta answers `132000`, that body is the only thing that explains
+    why, so deleting it would push debugging out of the product into Cloudflare logs and
+    leave the operator with nothing to hand their developer. A disclosure is **not** an
+    overlay — it reveals in place rather than covering the page — so the closed overlay
+    set below is untouched by it, and `<summary>` is focusable and Enter-activated by
+    the browser, which is a stronger guarantee than any handler we would write.
+
+    **The readable half is built only from what is STORED.** `outbound_messages.request`
+    carries a template's name, its language and its parameter VALUES, and not one word
+    of its copy — the copy only ever lived at Meta. So the message sheet renders
+    `{{1}} Ada`, labelled by slot, and *links* to the template while saying the link is
+    today's copy. Joining to the template as it stands now to draw a preview is
+    forbidden: a thirty-day-old message whose template has since been edited would
+    render words it never carried, with the authority of a preview, and on a forensic
+    surface that is the worst failure mode there is, because it does not look like one.
+    The readers are pure and live in `lib/` (`requestReading`, `eventReading`), so every
+    branch is asserted without a DOM — the same discipline as `lib/forwarding.ts`.
+
+    **Each silence is its own sentence.** A body swept by content retention, a body that
+    will not parse, a template send that filled no parameters, a delivery receipt that
+    carries no content by construction, and a message kind the console has no reading
+    for are five different facts. One shared "nothing to show" would tell an operator
+    that their `hello_world` send was somehow damaged.
+
+    The rule reaches past the log sheets. An error card whose body is
+    `JSON.stringify(providerError)` is the same defect, and it is only tolerable while
+    the console has no reading of that payload at all — `/templates`' load-failure card
+    is the outstanding case (eccos-1ri). Where the console *can* read a payload, the
+    disclosure is where the payload lives.
+
 ## Component base
 
 The console is **shadcn + reui.io blocks**, kept structurally intact and restyled
@@ -360,7 +398,11 @@ its real background; machine voice uses `--muted`, never `--faint`).
 **The overlay set is closed.** `Sheet`, `Dialog` and `AlertDialog` cover the three
 registers above; vendoring a fourth overlay means first naming a register those three
 cannot express. Whatever it is, its surface stays solid `--popover` — floating things
-sit over text.
+sit over text. The `<details>` disclosure of data rule 10 does **not** count against
+that set and no accordion component is needed for one: it reveals in place instead of
+covering the page, and the browser already gives its `<summary>` a tab stop and Enter
+activation. It is styled like every other ghost control — square, `--line-strong` edge
+on `--ghost-fill`, green edge and lift on hover, the green focus ring.
 
 ## Before shipping a console change
 
@@ -374,6 +416,10 @@ sit over text.
   immediately, the route's own skeleton takes over past `defaultPendingMs`, and neither
   invents a number. A new route with a loader ships with a `pendingComponent`.
 - New values go through tokens; new imagery follows BRAND.md's glass recipes.
+- A surface showing something a provider stored says what it READS out of it first, and
+  keeps the payload behind the disclosure (data rule 10). If the readable half would
+  have to join to a live record to exist, it does not get built: a record is not a
+  preview.
 - A word on a new surface is checked against data rule 9's table before it is written.
   If it names a hop, it uses that hop's vocabulary; if it names a state, the state's
   derivation is a pure function in `lib/`, not a ternary in a cell.

@@ -16,6 +16,176 @@ export const EMPTY_CELL = "—";
 
 // --- Outbound: what Eccos asked Meta to send --------------------------------
 
+/** Records with a string index, told apart from arrays and from `null` — which
+ * `typeof` calls an object and which every reader below would otherwise walk. */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** A non-empty string, or nothing. An empty string is not a value an operator
+ * needs to see and would render as a labelled blank. */
+function asText(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/**
+ * One value the stored request supplies, and the slot it fills.
+ *
+ * WHAT IS NOT HERE, AND CANNOT BE: a template's body text.
+ * `outbound_messages.request` stores the Meta SEND body, which names the
+ * template and carries the values — the copy itself only ever lived at Meta.
+ * `{{1}} Ada` is therefore a record of what was sent; the same values poured
+ * into the template as it stands TODAY would be a reconstruction, and a
+ * template edited or deleted since would put words into a message that never
+ * carried them. On a forensic surface that is the worst kind of wrong, because
+ * it does not look wrong.
+ */
+export interface RequestValue {
+  /** `{{1}}` · `{{order_id}}` · `Header` · `Button 1 URL`. */
+  slot: string;
+  /** Verbatim from the stored body. */
+  value: string;
+  /** A value COPIED rather than read — a link, a media id, a filename. Renders
+   * monospace, the same rule `FactRow`'s `mono` follows. */
+  mono: boolean;
+}
+
+export interface RequestReading {
+  /** Meta's own message `type` from the stored request: `template`, `text`,
+   * `image`… Not a console word — the request is what it is. */
+  kind: string;
+  /** Template identity, when the send is one. */
+  template: { name: string | null; language: string | null } | null;
+  /**
+   * The message text ITSELF, on the sends that genuinely carry it: a free-form
+   * `text` send through `POST /v1/wabas/:wabaId/messages` stores `text.body`,
+   * and a media send stores its caption. A template send never does.
+   */
+  text: string | null;
+  /** Every value the request supplies, in the order Meta renders them —
+   * header, then body, then buttons. */
+  values: RequestValue[];
+}
+
+/** The media kinds whose stored body the console reads. Listed rather than
+ * derived: `interactive`, `location`, `contacts` and `reaction` have shapes
+ * this does not pretend to summarise, and their raw body is right there. */
+const MEDIA_KINDS = ["image", "video", "audio", "document", "sticker"];
+
+/**
+ * WHAT WAS SENT, read out of the stored Meta body.
+ *
+ * `null` when the body is empty (content retention swept it) or is not JSON at
+ * all — both cases the caller says out loud rather than rendering an empty
+ * section.
+ */
+export function requestReading(request: string): RequestReading | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(request);
+  } catch {
+    return null;
+  }
+  const body = asRecord(parsed);
+  if (!body) return null;
+  const reading: RequestReading = {
+    kind: asText(body.type) ?? "message",
+    template: null,
+    text: null,
+    values: [],
+  };
+  if (reading.kind === "template") readTemplateSend(body.template, reading);
+  else if (reading.kind === "text") reading.text = asText(asRecord(body.text)?.body);
+  else if (MEDIA_KINDS.includes(reading.kind)) readMediaSend(asRecord(body[reading.kind]), reading);
+  return reading;
+}
+
+/** What one `parameters[]` entry actually carries. `null` for a shape this does
+ * not read — the raw body below the section is the answer for those. */
+function paramValue(param: Record<string, unknown>): { value: string; mono: boolean } | null {
+  const text = asText(param.text);
+  if (text) return { value: text, mono: false };
+  const type = asText(param.type)?.toLowerCase() ?? "";
+  const inner = asRecord(param[type]);
+  if (!inner) return null;
+  // A media parameter names the asset Meta fetches for itself — `{ type:
+  // "image", image: { link } }`. The link (or the id) IS the value, and the
+  // format travels with it because "https://…" alone does not say what Meta
+  // put at the top of the message.
+  const ref = asText(inner.link) ?? asText(inner.id);
+  if (ref) {
+    const filename = asText(inner.filename);
+    return { value: `${type} · ${ref}${filename ? ` · ${filename}` : ""}`, mono: true };
+  }
+  // `currency` and `date_time` carry a `fallback_value`, which is exactly what
+  // the recipient saw whenever Meta could not localize the parameter.
+  const fallback = asText(inner.fallback_value);
+  return fallback ? { value: fallback, mono: false } : null;
+}
+
+function readTemplateSend(template: unknown, reading: RequestReading): void {
+  const record = asRecord(template);
+  if (!record) return;
+  reading.template = {
+    name: asText(record.name),
+    language: asText(asRecord(record.language)?.code),
+  };
+  if (!Array.isArray(record.components)) return;
+  // Meta numbers body placeholders by POSITION, so the counter advances on
+  // every parameter — including one this cannot read. Skipping a slot silently
+  // would renumber every value after it and put the right text against the
+  // wrong `{{n}}`.
+  let positional = 0;
+  let headerPositional = 0;
+  for (const raw of record.components) {
+    const component = asRecord(raw);
+    if (!component) continue;
+    const type = asText(component.type)?.toLowerCase() ?? "";
+    const parameters = Array.isArray(component.parameters) ? component.parameters : [];
+    for (const rawParam of parameters) {
+      const param = asRecord(rawParam);
+      if (!param) continue;
+      const named = asText(param.parameter_name);
+      let slot: string;
+      // A button's fill is a URL fragment or a payload code — pasted, never
+      // read as prose — so it takes the copy register whatever its parameter
+      // type says.
+      let mono = false;
+      if (type === "header") {
+        headerPositional += 1;
+        // A media header has exactly one parameter and no placeholder to
+        // name, so it is labelled by what it IS; a text header's placeholders
+        // are numbered inside the header, not continuing the body's run.
+        slot = asText(param.text) ? `Header {{${named ?? headerPositional}}}` : "Header";
+      } else if (type === "button") {
+        const index = Number(component.index ?? 0);
+        const position = Number.isFinite(index) ? index + 1 : 1;
+        slot = `Button ${position}${asText(component.sub_type)?.toLowerCase() === "url" ? " URL" : ""}`;
+        mono = true;
+      } else {
+        positional += 1;
+        slot = `{{${named ?? positional}}}`;
+      }
+      const value = paramValue(param);
+      if (value) reading.values.push({ slot, value: value.value, mono: mono || value.mono });
+    }
+  }
+}
+
+function readMediaSend(media: Record<string, unknown> | null, reading: RequestReading): void {
+  if (!media) return;
+  // The caption IS the message the recipient reads; the asset is a reference
+  // the operator copies. Two different registers, so two different fields.
+  reading.text = asText(media.caption);
+  const link = asText(media.link);
+  const ref = link ?? asText(media.id);
+  if (ref) reading.values.push({ slot: link ? "Link" : "Media id", value: ref, mono: true });
+  const filename = asText(media.filename);
+  if (filename) reading.values.push({ slot: "Filename", value: filename, mono: false });
+}
+
 export interface MessageSummary {
   /** `#1042` — the outbound row id, which is the only stable name a message
    * has inside the console. The wamid names it at META, and is 60 characters of
@@ -38,27 +208,19 @@ export interface MessageSummary {
  * the console never stores a second copy of the same fact. A body it cannot
  * parse still yields a usable line: the id always works, which is the point of
  * leading with it.
+ *
+ * One parser, `requestReading`, behind both this and the sheet's readable
+ * section — the grid's name for a message and the sheet's reading of it can
+ * never disagree about which template a row is.
  */
 export function messageSummary(id: number, request: string): MessageSummary {
-  const summary: MessageSummary = { ref: `#${id}`, kind: "message", name: null, language: null };
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(request) as Record<string, unknown>;
-  } catch {
-    return summary;
-  }
-  if (typeof body.type === "string" && body.type) summary.kind = body.type;
-  const template = body.template;
-  if (template && typeof template === "object") {
-    const t = template as { name?: unknown; language?: unknown };
-    if (typeof t.name === "string") summary.name = t.name;
-    const language = t.language;
-    if (language && typeof language === "object") {
-      const code = (language as { code?: unknown }).code;
-      if (typeof code === "string") summary.language = code;
-    }
-  }
-  return summary;
+  const reading = requestReading(request);
+  return {
+    ref: `#${id}`,
+    kind: reading?.kind ?? "message",
+    name: reading?.template?.name ?? null,
+    language: reading?.template?.language ?? null,
+  };
 }
 
 /** `#1042 · template cita_encontrada · es`. The separator is the console's
@@ -100,6 +262,23 @@ export interface EventReading {
    * `phone_number_id`, the workspace's OWN number, identical on every row.
    */
   party: { direction: "from" | "to"; phone: string } | null;
+  /** What the customer wrote (a `reply`) or what Eccos' own send said (an
+   * `echo`). Null on a status callback, which carries no text at all. */
+  text: string | null;
+  /** Meta's Graph error code on a `failed` status, e.g. `131047`. */
+  errorCode: string | null;
+  /** Meta's own sentence about that failure. It is Meta's words, shown as
+   * evidence beside the code an operator will search for — not the console
+   * speaking (data rule 7 governs what the CONSOLE claims, and it claims
+   * nothing here). */
+  errorMessage: string | null;
+  /**
+   * The event's OWN moment, from Meta's `timestamp` — when the phone received
+   * it, when it was read, when the customer wrote. Not `received_at`, which is
+   * when the callback reached Eccos; the two differ by flight time and the
+   * first is the one an operator compares against a customer's screenshot.
+   */
+  at: number | null;
   /**
    * The row's content, in one string. Message text for a reply or an echo;
    * `131047 · Re-engagement message` for a failure. Null for a plain status,
@@ -122,27 +301,36 @@ export function eventReading(type: string, payload: string): EventReading {
     kind: type,
     family: EVENT_FAMILIES[type] ?? "status",
     party: null,
+    text: null,
+    errorCode: null,
+    errorMessage: null,
+    at: null,
     detail: null,
   };
-  let event: Record<string, unknown>;
-  try {
-    event = JSON.parse(payload) as Record<string, unknown>;
-  } catch {
-    return reading;
-  }
-  if (typeof event.from === "string" && event.from) {
-    reading.party = { direction: "from", phone: event.from };
-  } else if (typeof event.to === "string" && event.to) {
-    reading.party = { direction: "to", phone: event.to };
-  }
-  if (typeof event.text === "string" && event.text) {
-    reading.detail = event.text;
-    return reading;
-  }
-  const code = typeof event.errorCode === "string" ? event.errorCode : null;
-  const message = typeof event.errorMessage === "string" ? event.errorMessage : null;
-  if (code || message) {
-    reading.detail = [code, message].filter((part): part is string => !!part).join(" · ");
+  const event = (() => {
+    try {
+      return asRecord(JSON.parse(payload));
+    } catch {
+      return null;
+    }
+  })();
+  if (!event) return reading;
+  const from = asText(event.from);
+  const to = asText(event.to);
+  if (from) reading.party = { direction: "from", phone: from };
+  else if (to) reading.party = { direction: "to", phone: to };
+  if (typeof event.at === "number" && Number.isFinite(event.at)) reading.at = event.at;
+  reading.text = asText(event.text);
+  reading.errorCode = asText(event.errorCode);
+  reading.errorMessage = asText(event.errorMessage);
+  // `detail` is the ONE-LINE form the log grid shows, derived from the fields
+  // above rather than parsed a second time: the sheet and the row it was opened
+  // from cannot disagree about what an event says.
+  if (reading.text) reading.detail = reading.text;
+  else if (reading.errorCode || reading.errorMessage) {
+    reading.detail = [reading.errorCode, reading.errorMessage]
+      .filter((part): part is string => !!part)
+      .join(" · ");
   }
   return reading;
 }

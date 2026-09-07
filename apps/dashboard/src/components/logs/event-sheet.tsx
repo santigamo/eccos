@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { GridEmptyState } from "../grid/empty-state";
-import { FactRow, JsonBlock, SheetSection } from "./sheet-parts";
+import { FactRow, MessagePanel, RawDisclosure, SheetSection } from "./sheet-parts";
 import type { InboundRow } from "../../server/gateway";
 import { FORWARD_MAX_ATTEMPTS, deliveryMoment, forwardReading } from "../../lib/forwarding";
 import {
@@ -19,11 +19,18 @@ import { StatusTag, fmtTsShort } from "../../ui";
 /**
  * ONE EVENT, AND WHAT THE RECEIVER GOT.
  *
- * The middle section is the single most valuable thing this console can show a
- * developer: the event JSON **verbatim**, byte for byte what Eccos POSTed
- * inside the batch envelope. Every argument about an integration ends there —
- * "my handler never saw the text" is answered by the text being in the payload
- * or not, not by a summary the console composed.
+ * The middle section says what the event ACTUALLY CARRIES, which is a short
+ * list and always was: a reply or an echo has a party and a text, a status has
+ * a message reference and Meta's own moment, a failure has a code and Meta's
+ * sentence about it. All of that used to be legible only by reading JSON on a
+ * console whose masthead says OPERATOR CONSOLE.
+ *
+ * The event JSON is still here, one disclosure down, and it is still the single
+ * most valuable thing this console can show a DEVELOPER: byte for byte what
+ * Eccos POSTed inside the batch envelope. Every argument about an integration
+ * ends there — "my handler never saw the text" is answered by the text being in
+ * the payload or not, not by a summary the console composed. That claim is why
+ * the disclosure exists, so the claim is what its summary says.
  *
  * Below it, the forwarding state of the batch this event rode in, in the
  * forward hop's own vocabulary (`lib/forwarding.ts`): `held` is not `pending`,
@@ -77,6 +84,19 @@ export function EventDetail({ row, hasForwardingTarget, wabaId, onRetry, retryin
     <div className="flex flex-col gap-4 px-4 pb-4">
       <SheetSection label="Facts">
         <dl className="m-0">
+          {/* TWO MOMENTS, NAMED. `at` is Meta's own timestamp — when the phone
+              got it, when it was read, when the customer wrote — and
+              `received_at` is when the callback reached Eccos. They differ by
+              the callback's flight time, and the first is the one an operator
+              compares against a customer's screenshot, so the sheet shows both
+              rather than picking one and heading it "time". */}
+          {reading.at !== null ? (
+            <FactRow
+              label="Happened at"
+              value={<span title={String(reading.at)}>{fmtTsShort(reading.at)}</span>}
+              mono
+            />
+          ) : null}
           <FactRow
             label="Received"
             value={<span title={String(row.received_at)}>{fmtTsShort(row.received_at)}</span>}
@@ -101,13 +121,44 @@ export function EventDetail({ row, hasForwardingTarget, wabaId, onRetry, retryin
         </dl>
       </SheetSection>
 
-      <SheetSection label="As forwarded">
-        <JsonBlock>{prettyJson(row.payload)}</JsonBlock>
-        <p className="mt-2 mb-0 text-muted-foreground text-xs">
-          {others > 0
-            ? `Sent inside {"events":[…]} with ${others} other ${others === 1 ? "event" : "events"}.`
-            : 'Sent inside {"events":[…]} as the only event in its batch.'}
-        </p>
+      <SheetSection label="What arrived">
+        {reading.text ? <MessagePanel>{reading.text}</MessagePanel> : null}
+
+        {reading.errorCode || reading.errorMessage ? (
+          <dl className="m-0">
+            {/* Meta's code first, because that is what an operator searches for
+                and quotes in a support case; Meta's sentence beside it, marked
+                as Meta's in the section's own words rather than restated as if
+                the console had diagnosed anything (data rule 7). */}
+            <FactRow label="Error code" value={reading.errorCode ?? EMPTY_CELL} mono tone="destructive" />
+            {reading.errorMessage ? (
+              <FactRow label="Meta says" value={reading.errorMessage} tone="destructive" />
+            ) : null}
+          </dl>
+        ) : null}
+
+        {!reading.text && !reading.errorCode && !reading.errorMessage ? (
+          // A receipt with nothing in it is not a gap, and saying so beats an
+          // empty section that reads as a parse failure. Grounded in what the
+          // ROW carries rather than in the kind's name: an event type the
+          // parser learns to emit later would otherwise inherit a sentence
+          // about receipts that nobody checked.
+          <p className="m-0 text-muted-foreground text-sm">
+            {row.transport_message_id
+              ? `A ${reading.kind} event carries no text — it reports on the message it names.`
+              : "This event carries no text. What your receiver got is below."}
+          </p>
+        ) : null}
+
+        <RawDisclosure
+          summary="Event JSON, exactly what your receiver got"
+          json={prettyJson(row.payload)}
+          note={
+            others > 0
+              ? `Sent inside {"events":[…]} with ${others} other ${others === 1 ? "event" : "events"}.`
+              : 'Sent inside {"events":[…]} as the only event in its batch.'
+          }
+        />
       </SheetSection>
 
       <SheetSection

@@ -6,6 +6,7 @@ import {
   messageSummary,
   messageSummaryText,
   prettyJson,
+  requestReading,
   wamidTail,
 } from "../src/lib/logs";
 
@@ -48,6 +49,135 @@ describe("messageSummary", () => {
   });
 });
 
+describe("requestReading", () => {
+  test("a template send is its VALUES, labelled by slot — never the template's copy", () => {
+    // The stored body carries the name, the language and what was poured into
+    // each slot. It does not carry one word of the body text, which only ever
+    // lived at Meta, so this is a record of the send and not a preview of it.
+    const reading = requestReading(
+      JSON.stringify({
+        to: "34600000000",
+        type: "template",
+        template: {
+          name: "cita_encontrada",
+          language: { code: "es" },
+          components: [
+            {
+              type: "header",
+              parameters: [{ type: "image", image: { link: "https://cdn.example/a.png" } }],
+            },
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: "Ada" },
+                { type: "text", text: "Renovación DNI" },
+              ],
+            },
+            {
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [{ type: "text", text: "abc123" }],
+            },
+          ],
+        },
+      }),
+    );
+    expect(reading?.template).toEqual({ name: "cita_encontrada", language: "es" });
+    // Header, then body, then buttons — the order Meta renders them.
+    expect(reading?.values).toEqual([
+      { slot: "Header", value: "image · https://cdn.example/a.png", mono: true },
+      { slot: "{{1}}", value: "Ada", mono: false },
+      { slot: "{{2}}", value: "Renovación DNI", mono: false },
+      // Mono: a button fill is a URL fragment an operator pastes, not prose.
+      { slot: "Button 1 URL", value: "abc123", mono: true },
+    ]);
+    // A template send has no text of its own, and claiming one would be the
+    // reconstruction this whole reading refuses to make.
+    expect(reading?.text).toBeNull();
+  });
+
+  test("a free-form text send DOES carry its message, so it is shown", () => {
+    // `POST /v1/wabas/:wabaId/messages` stores the caller's body verbatim, and
+    // for a `text` send that body is the message.
+    const reading = requestReading(
+      JSON.stringify({ to: "34600000000", type: "text", text: { body: "on my way" } }),
+    );
+    expect(reading?.text).toBe("on my way");
+    expect(reading?.values).toEqual([]);
+  });
+
+  test("a media send names the asset and shows the caption as the message", () => {
+    const reading = requestReading(
+      JSON.stringify({
+        to: "34600000000",
+        type: "document",
+        document: { link: "https://cdn.example/f.pdf", filename: "cita.pdf", caption: "Adjunto" },
+      }),
+    );
+    expect(reading?.text).toBe("Adjunto");
+    expect(reading?.values).toEqual([
+      { slot: "Link", value: "https://cdn.example/f.pdf", mono: true },
+      { slot: "Filename", value: "cita.pdf", mono: false },
+    ]);
+  });
+
+  test("a parameter this cannot read still costs its slot number", () => {
+    // Meta numbers body placeholders by POSITION. Skipping an unreadable one
+    // would renumber every value after it and put the right text against the
+    // wrong `{{n}}` — a quiet lie on a forensic surface.
+    const reading = requestReading(
+      JSON.stringify({
+        type: "template",
+        template: {
+          name: "t",
+          language: { code: "es" },
+          components: [
+            {
+              type: "body",
+              parameters: [{ type: "location", location: {} }, { type: "text", text: "second" }],
+            },
+          ],
+        },
+      }),
+    );
+    expect(reading?.values).toEqual([{ slot: "{{2}}", value: "second", mono: false }]);
+  });
+
+  test("named parameters keep their names", () => {
+    // The console's own send path only builds positional templates, but an API
+    // caller can send `parameter_format: NAMED`, and `{{3}}` would be a made-up
+    // number for a slot Meta calls `order_id`.
+    const reading = requestReading(
+      JSON.stringify({
+        type: "template",
+        template: {
+          name: "t",
+          components: [
+            { type: "body", parameters: [{ type: "text", parameter_name: "order_id", text: "A-9" }] },
+          ],
+        },
+      }),
+    );
+    expect(reading?.values).toEqual([{ slot: "{{order_id}}", value: "A-9", mono: false }]);
+  });
+
+  test("a swept or unreadable body reads as nothing at all, not as an empty send", () => {
+    expect(requestReading("")).toBeNull();
+    expect(requestReading("{oops")).toBeNull();
+    expect(requestReading("null")).toBeNull();
+  });
+
+  test("a kind the console has no reading for yields no invented values", () => {
+    const reading = requestReading(
+      JSON.stringify({ to: "34600000000", type: "interactive", interactive: { type: "button" } }),
+    );
+    expect(reading?.kind).toBe("interactive");
+    expect(reading?.values).toEqual([]);
+    expect(reading?.text).toBeNull();
+  });
+});
+
 describe("eventReading", () => {
   test("a reply names who wrote and what they said", () => {
     const payload = JSON.stringify({
@@ -61,6 +191,10 @@ describe("eventReading", () => {
       kind: "reply",
       family: "message",
       party: { direction: "from", phone: "34600000000" },
+      text: "hola",
+      errorCode: null,
+      errorMessage: null,
+      at: 1,
       detail: "hola",
     });
   });
@@ -100,8 +234,37 @@ describe("eventReading", () => {
       kind: "reply",
       family: "message",
       party: null,
+      text: null,
+      errorCode: null,
+      errorMessage: null,
+      at: null,
       detail: null,
     });
+  });
+
+  test("the code and the sentence stay APART, so the sheet can label each", () => {
+    // `detail` joins them for the one-line grid cell; the sheet shows the code
+    // an operator quotes in a support case under its own label, and Meta's
+    // sentence under Meta's name. Joining is a rendering, not the reading.
+    const payload = JSON.stringify({
+      type: "failed",
+      transportMessageId: "wamid.X",
+      errorCode: "131047",
+      errorMessage: "Re-engagement message",
+      at: 1_700_000_000_000,
+    });
+    const reading = eventReading("failed", payload);
+    expect(reading.errorCode).toBe("131047");
+    expect(reading.errorMessage).toBe("Re-engagement message");
+    expect(reading.text).toBeNull();
+  });
+
+  test("Meta's own moment is read out, and it is not `received_at`", () => {
+    // The two differ by the callback's flight time, and Meta's is the one an
+    // operator compares against a customer's screenshot. It was legible only
+    // inside the raw JSON before this.
+    const payload = JSON.stringify({ type: "read", transportMessageId: "w", at: 1_700_000_002_000 });
+    expect(eventReading("read", payload).at).toBe(1_700_000_002_000);
   });
 });
 

@@ -340,6 +340,7 @@ function MessagesPage() {
           }}
           row={rows.find((row) => row.id === message) ?? null}
           hasForwardingTarget={hasForwardingTarget}
+          wabaId={selectedWabaId}
         />
       ) : null}
     </Page>

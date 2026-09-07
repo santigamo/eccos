@@ -97,12 +97,73 @@ describe("MessageDetail", () => {
     expect(html).toContain("131047");
   });
 
-  test("the request is the Meta body as sent, pretty-printed", () => {
+  test("a template send reads as its VALUES, labelled by slot", () => {
+    // The readable answer to "what did this message say" that the sheet used
+    // to give as pretty-printed JSON and nothing else.
+    const filled: OutboundRow = {
+      ...message,
+      request: JSON.stringify({
+        to: "34600000000",
+        type: "template",
+        template: {
+          name: "cita_encontrada",
+          language: { code: "es" },
+          components: [
+            {
+              type: "header",
+              parameters: [{ type: "image", image: { link: "https://cdn.example/a.png" } }],
+            },
+            { type: "body", parameters: [{ type: "text", text: "Ada" }] },
+          ],
+        },
+      }),
+    };
+    const html = renderToStaticMarkup(<MessageDetail row={filled} hasForwardingTarget={true} />);
+    expect(html).toContain("What was sent");
+    expect(html).toContain("{{1}}");
+    expect(html).toContain("Ada");
+    expect(html).toContain("image · https://cdn.example/a.png");
+  });
+
+  test("the template is a LINK, and the link says it is today's copy", () => {
+    // The one thing this sheet must never do is pour these values into the
+    // template as it stands now: a template edited since would render a
+    // message that was never sent, with the authority of a preview.
+    const html = renderToStaticMarkup(
+      <MessageDetail row={message} hasForwardingTarget={true} wabaId="WABA1" />,
+    );
+    expect(html).toContain('href="/templates"');
+    expect(html).toContain("as it stands now");
+  });
+
+  test("a free-form text send shows the message itself", () => {
+    const text: OutboundRow = {
+      ...message,
+      request: JSON.stringify({ to: "34600000000", type: "text", text: { body: "on my way" } }),
+    };
+    const html = renderToStaticMarkup(<MessageDetail row={text} hasForwardingTarget={true} />);
+    expect(html).toContain("on my way");
+    // Nothing to link to: there is no template behind a free-form send.
+    expect(html).not.toContain('href="/templates"');
+  });
+
+  test("the Meta body is KEPT, behind a disclosure rather than as the section", () => {
+    // Deleting it would push a 132000 argument out of the product and into
+    // Cloudflare logs. It is still in the markup, and it is no longer the
+    // first thing an operator meets.
     const html = renderToStaticMarkup(
       <MessageDetail row={message} hasForwardingTarget={true} />,
     );
-    expect(html).toContain("cita_encontrada");
-    expect(html).toContain("Request");
+    expect(html).toContain("<details");
+    expect(html).toContain("Request body, exactly as sent to Meta");
+    expect(html).toContain("&quot;name&quot;: &quot;cita_encontrada&quot;");
+  });
+
+  test("a swept body says so, and offers no disclosure over nothing", () => {
+    const swept: OutboundRow = { ...message, request: "" };
+    const html = renderToStaticMarkup(<MessageDetail row={swept} hasForwardingTarget={true} />);
+    expect(html).toContain("past its retention window");
+    expect(html).not.toContain("<details");
   });
 });
 
@@ -127,15 +188,58 @@ const statusEvent: InboundRow = {
 };
 
 describe("EventDetail", () => {
-  test("the event JSON is shown VERBATIM — the sheet's whole reason to exist", () => {
+  test("the event JSON is KEPT VERBATIM, behind a disclosure", () => {
     // What the receiver got, byte for byte. Every "my handler never saw it"
-    // argument ends here rather than at a summary the console composed.
+    // argument ends here rather than at a summary the console composed — which
+    // is exactly why the disclosure's summary makes that claim, and why the
+    // payload moved rather than went away.
     const html = renderToStaticMarkup(
       <EventDetail row={statusEvent} hasForwardingTarget={true} />,
     );
-    expect(html).toContain("As forwarded");
+    expect(html).toContain("<details");
+    expect(html).toContain("Event JSON, exactly what your receiver got");
     expect(html).toContain("&quot;transportMessageId&quot;: &quot;wamid.");
     expect(html).toContain("2 other events");
+  });
+
+  test("a delivery receipt says it carries no content, rather than showing a gap", () => {
+    const html = renderToStaticMarkup(
+      <EventDetail row={statusEvent} hasForwardingTarget={true} />,
+    );
+    expect(html).toContain("What arrived");
+    expect(html).toContain("A delivered event carries no text");
+  });
+
+  test("Meta's own moment and Eccos' are both named, never merged", () => {
+    // They differ by the callback's flight time; the first is what an operator
+    // compares against a customer's screenshot, and it was legible only inside
+    // the raw JSON before this.
+    const html = renderToStaticMarkup(
+      <EventDetail row={statusEvent} hasForwardingTarget={true} />,
+    );
+    expect(html).toContain("Happened at");
+    expect(html).toContain(">Received<");
+  });
+
+  test("a failure names the Graph code and Meta's sentence, each under its own label", () => {
+    const failure: InboundRow = {
+      ...statusEvent,
+      id: 79,
+      type: "failed",
+      payload: JSON.stringify({
+        type: "failed",
+        transportMessageId: WAMID,
+        errorCode: "131047",
+        errorMessage: "Re-engagement message",
+        at: 1_700_000_001_000,
+      }),
+    };
+    const html = renderToStaticMarkup(<EventDetail row={failure} hasForwardingTarget={true} />);
+    expect(html).toContain("Error code");
+    expect(html).toContain("131047");
+    // Meta's words, attributed to Meta — the console diagnoses nothing here.
+    expect(html).toContain("Meta says");
+    expect(html).toContain("Re-engagement message");
   });
 
   test("a held batch says held, with no invented next time", () => {
@@ -208,6 +312,8 @@ describe("EventDetail", () => {
     const html = renderToStaticMarkup(<EventDetail row={reply} hasForwardingTarget={true} />);
     expect(html).toContain(">From<");
     expect(html).toContain("+34600000000");
+    // And what they wrote, as a message rather than as a JSON field.
+    expect(html).toContain(">hola<");
   });
 });
 
