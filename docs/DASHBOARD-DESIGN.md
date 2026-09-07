@@ -63,7 +63,12 @@ re-copy; the two must not drift independently):
 the glass family (see "Atmosphere, glass, and the lantern").
 
 Any new theme-varying value must be a token here — a hardcoded color in a component
-rule is off-system. The semantic inks are fixed: **warning `#f0a020`**, **destructive
+rule is off-system. **`--accent` is the hover LIFT and must never equal a surface**
+(`--popover`, `--muted`, `--secondary`, `--card`, `--background`): it was `#0f1d1e`,
+the same value as three of them, so every `hover:bg-accent` in the console painted a
+row in its own background and no dropdown row, select option or filter row had a hover
+at all. It is a translucent white lift for that reason — one value that works over any
+of those grounds. The semantic inks are fixed: **warning `#f0a020`**, **destructive
 surface `#e03131`**, **destructive text on dark `#ff7777`** (never `#e03131` as text —
 ~3.9:1). Vivid green never dims on hover; it **brightens** to `--color-glow`.
 
@@ -247,6 +252,10 @@ everywhere. Rest → hover → active must each be visibly distinct:
   shield stretched across a wide cell (`flex justify-end` in a column holding the
   table's slack) swallows every row click that lands in the empty part of it, and the
   row reads as dead over half the table.
+- **Menus and select popups**: the active row is `data-highlighted`, which is what
+  Base UI sets — **not** `:focus`, which upstream shadcn styles because Radix moves DOM
+  focus and Base UI does not. A menu row is a control: it takes `cursor-pointer`, not
+  the vendored `cursor-default`.
 - **Focus**: the green ring, everywhere. Never removed, never recolored.
 
 ## Data rules (how this console shows numbers)
@@ -270,7 +279,10 @@ Eccos system — the practices, not the brand):
 4. **Header alignment = cell alignment.** Numeric columns right-align header and
    cells together; timestamps stay left-aligned. Tables keep 1px row rules, pixel
    headers in `--muted`, and scroll inside their own container — the page body
-   never scrolls horizontally.
+   never scrolls horizontally. A table with FEW short columns sizes them in
+   percentages: `table-auto` hands the leftover to whichever column asks, which on
+   /templates left the page reading as a strip down the left quarter. The action
+   column stays unsized so the leftover lands there and the kebab keeps the right edge.
 5. **Actions only where they mean something.** Row actions render only on rows
    where they apply (Retry on `failed`); other rows hold the rhythm with a muted
    em-dash. No dead buttons — and a row with nothing to offer shows the em-dash, not an

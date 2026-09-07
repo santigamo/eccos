@@ -236,7 +236,7 @@ function DeliveriesPage() {
 
   return (
     <Page title="Deliveries" kicker="Logs" actions={filterControl}>
-      {retryError ? <p className="mb-4 border-l-2 border-destructive px-3 py-2 text-sm text-destructive" role="alert">{retryError}</p> : null}
+      {retryError ? <p className="mb-4 border-l-2 border-destructive px-3 py-2 text-sm text-destructive-foreground" role="alert">{retryError}</p> : null}
       <LogGrid
         columns={deliveriesColumns}
         data={rows}

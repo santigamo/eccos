@@ -1,90 +1,75 @@
 import { describe, expect, test } from "bun:test";
 
 /**
- * Two defects the /templates row actions shipped with, both of them invisible
- * to a static render and both caught by opening the real page in production:
- * the Delete item drew the surface red as text, and the kebab's click shield
- * stretched across the whole action column, swallowing the row click.
+ * How the /templates row is laid out — the three things about it that no
+ * static render can see, and that were therefore only found by opening the
+ * real page.
  *
- * ── THE INK ─────────────────────────────────────────────────────────────────
- *
- * THE TOKEN CONTRACT (docs/DASHBOARD-DESIGN.md). `--destructive` (#e03131) is
- * a SURFACE colour. As text on this console's dark ground it lands at ~3.9:1,
- * under the 4.5:1 floor, so destructive TEXT is always
- * `--destructive-foreground` (#ff7777). The 10%/20% focus washes keep
- * `--destructive`, because a wash is a surface.
- *
- * WHY THE FIX HAD TO GO IN THE COMPONENT. The vendored item ships
- * `data-[variant=destructive]:text-destructive`. Overriding that from a call
- * site with `className="text-destructive-foreground"` looks right and does
- * nothing: the variant-prefixed utility carries an attribute selector and wins
- * on specificity, and tailwind-merge does not treat the prefixed and
- * unprefixed classes as the same key, so it never drops the loser. The
- * /templates Delete item shipped that way and rendered rgb(224, 49, 49) in
- * production.
- *
- * WHY THIS READS SOURCE. A Base UI menu item cannot be rendered outside
- * `<Menu.Root>` ("MenuRootContext is missing"), and an open menu lives in a
- * portal that a static render never produces — so the class string itself is
- * the only reachable surface for this assertion.
+ * The component-level colour and hover rules this row depends on live in
+ * `tests/interaction-contrast.test.ts`; what is pinned here is the geometry
+ * that belongs to this route.
  */
 
-const source = await Bun.file(
-  new URL("../src/components/ui/dropdown-menu.tsx", import.meta.url),
+const route = await Bun.file(
+  new URL("../src/routes/templates.tsx", import.meta.url),
 ).text();
 
-describe("DropdownMenuItem destructive ink", () => {
-  test("destructive text uses the foreground token, never the surface one", () => {
-    expect(source).toContain("data-[variant=destructive]:text-destructive-foreground");
-    expect(source).toContain(
-      "data-[variant=destructive]:focus:text-destructive-foreground",
-    );
-  });
-
-  test("no bare --destructive is left as ink", () => {
-    // `text-destructive` followed by anything other than `-foreground`. The
-    // background utilities (`focus:bg-destructive/10`) are deliberately spared.
-    const inkAsSurface = /text-destructive(?!-foreground)/.exec(source);
-    expect(inkAsSurface).toBeNull();
-  });
-
-  test("the focus wash stays on the surface colour", () => {
-    // Not an oversight: a 10% fill is a surface, and swapping it would lose
-    // the red the focused row is supposed to read as.
-    expect(source).toContain("data-[variant=destructive]:focus:bg-destructive/10");
-  });
-});
-
-/**
- * The row-click dead zone (eccos-pxr), the second regression this change
- * shipped and the second one only a real pointer could find.
- *
- * The kebab sits inside a `<tr onClick>` that opens the preview, so it stops
- * its own click — correct. But the shield around it was `flex justify-end` in
- * the column that takes the TABLE'S SLACK, so it stretched across everything
- * right of Status and ate every row click that landed there. The row looked
- * inert over half its width while the name cell, well outside the shield,
- * worked fine.
- *
- * (The first theory was that the sheet dismissed itself on the opening click.
- * It cannot: Base UI registers outside-press on `document` in the CAPTURE
- * phase — `useDismiss.js` — so that listener does not exist yet when the click
- * passes, and it never sees it.)
- */
 describe("the kebab shield", () => {
-  test("covers the trigger, not the column", async () => {
-    const route = await Bun.file(
-      new URL("../src/routes/templates.tsx", import.meta.url),
-    ).text();
+  // The kebab sits inside a `<tr onClick>` that opens the preview, so it stops
+  // its own click — correct. But the shield around it was `flex justify-end`,
+  // and this column takes what is left of the table, so it stretched across
+  // everything right of Status and ate every row click that landed there. The
+  // row looked inert over half its width while the name cell, well outside the
+  // shield, worked fine.
+  //
+  // (The first theory was that the sheet dismissed itself on the opening click.
+  // It cannot: Base UI registers outside-press on `document` in the CAPTURE
+  // phase — `floating-ui-react/hooks/useDismiss.js` — so that listener does not
+  // exist yet when the click passes, and never sees it.)
+  test("covers the trigger, not the column", () => {
     const shield = route.slice(route.indexOf("<span\n      className="));
     expect(shield.slice(0, 60)).toContain('className="inline-flex"');
     expect(shield.slice(0, 60)).not.toContain("justify-end");
   });
 
-  test("the row handler stays plain — nothing to stop", async () => {
-    const route = await Bun.file(
-      new URL("../src/routes/templates.tsx", import.meta.url),
-    ).text();
+  test("the row handler stays plain — nothing to stop", () => {
     expect(route).toContain("onRowClick={openPreview}");
+  });
+});
+
+describe("column widths", () => {
+  test("the data columns are sized in proportion, so the table fills its panel", () => {
+    // `table-auto` sizes a column to its content and hands the rest to whoever
+    // asks. With four columns of short values — a name, a two-letter language,
+    // a tag — that put the whole page in a strip down the left quarter with a
+    // thousand pixels of nothing beside it. The other log views never show this
+    // because they carry seven columns of timestamps and ids.
+    //
+    // Percentages, not fixed widths, so the split survives a laptop and a wide
+    // monitor.
+    expect(route).toContain('const NAME_WIDTH = "w-[');
+    expect(route).toContain('const LANGUAGE_WIDTH = "w-[');
+    expect(route).toContain('const STATUS_WIDTH = "w-[');
+    for (const line of route.split("\n")) {
+      if (line.includes("_WIDTH = ")) expect(line).toContain("%]");
+    }
+  });
+
+  test("the action column stays unsized and keeps the kebab at the edge", () => {
+    // Sizing it too would leave the leftover with nowhere to go and put the
+    // kebab back in the middle of the row.
+    const action = route.slice(route.indexOf('id: "action"'));
+    expect(action.slice(0, 1600)).not.toContain("w-[");
+  });
+
+  test("the pending view carries the same four columns", () => {
+    // Otherwise the three real columns stretch across the full width while the
+    // loader runs and snap back the moment the rows land. A skeleton that
+    // predicts a different layout from the one replacing it is worse than none.
+    const pending = route.slice(route.indexOf("const pendingColumns"));
+    expect(pending.slice(0, 400)).toContain("nameColumn()");
+    expect(pending.slice(0, 400)).toContain("languageColumn");
+    expect(pending.slice(0, 400)).toContain("statusColumn");
+    expect(pending.slice(0, 400)).toContain('id: "action"');
   });
 });

@@ -76,6 +76,24 @@ interface PreviewTarget {
 const columnHelper = createColumnHelper<DataGridFeatures, TemplateItem>();
 
 /**
+ * PROPORTIONAL COLUMN WIDTHS, and this table is the one that needs them.
+ *
+ * `table-auto` sizes every column to its content and hands the leftover to
+ * whichever column asks for it. With only four columns of short values —
+ * a name, a two-letter language, a tag — that left the whole page reading as a
+ * strip of text down the left quarter and a thousand pixels of nothing, with
+ * the kebab marooned at the far edge. The other log views never show it
+ * because they carry seven columns of timestamps and ids.
+ *
+ * Percentages rather than fixed widths, so the split holds on a laptop and on
+ * a wide monitor. The action column is deliberately unsized: it takes what is
+ * left and pins the kebab to the right edge.
+ */
+const NAME_WIDTH = "w-[44%]";
+const LANGUAGE_WIDTH = "w-[16%]";
+const STATUS_WIDTH = "w-[24%]";
+
+/**
  * The name cell — and, when the page can open one, the row's visible door into
  * the preview.
  *
@@ -117,7 +135,10 @@ function nameColumn(onPreview?: (row: TemplateItem) => void) {
         </button>
       );
     },
-    meta: { cellClassName: "whitespace-nowrap" },
+    meta: {
+      headerClassName: NAME_WIDTH,
+      cellClassName: `${NAME_WIDTH} whitespace-nowrap`,
+    },
   });
 }
 
@@ -125,7 +146,10 @@ const languageColumn = columnHelper.accessor("language", {
   id: "language",
   header: "Language",
   cell: (info) => info.getValue() ?? "—",
-  meta: { cellClassName: "whitespace-nowrap" },
+  meta: {
+    headerClassName: LANGUAGE_WIDTH,
+    cellClassName: `${LANGUAGE_WIDTH} whitespace-nowrap`,
+  },
 });
 
 const statusColumn = columnHelper.accessor("status", {
@@ -135,7 +159,10 @@ const statusColumn = columnHelper.accessor("status", {
     const status = info.getValue();
     return status ? <StatusTag status={status} /> : "—";
   },
-  meta: { cellClassName: "whitespace-nowrap" },
+  meta: {
+    headerClassName: STATUS_WIDTH,
+    cellClassName: `${STATUS_WIDTH} whitespace-nowrap`,
+  },
 });
 
 /**
@@ -157,7 +184,7 @@ const pendingColumns = [
     id: "action",
     header: () => <span className="sr-only">Actions</span>,
     cell: () => null,
-    meta: { headerClassName: "w-full", cellClassName: "w-full", skeleton: null },
+    meta: { skeleton: null },
   }),
 ];
 
@@ -206,7 +233,7 @@ function TemplatesPage() {
                 The gateway returned an error while loading message templates.
               </FrameDescription>
             </FrameHeader>
-            <pre className="mt-2 overflow-auto border border-destructive/20 bg-destructive/10 p-3 text-destructive text-xs whitespace-pre-wrap break-words">
+            <pre className="mt-2 overflow-auto border border-destructive/20 bg-destructive/10 p-3 text-destructive-foreground text-xs whitespace-pre-wrap break-words">
               {detail}
             </pre>
           </FramePanel>
@@ -297,8 +324,8 @@ function TemplatesPage() {
     // the first column instead, and the name floats half a screen away from
     // its own language and status.
     meta: {
-      headerClassName: "w-full text-right",
-      cellClassName: "w-full text-right whitespace-nowrap",
+      headerClassName: "text-right",
+      cellClassName: "text-right whitespace-nowrap",
     },
   });
 

@@ -146,7 +146,7 @@ export function WorkspaceFormFields({
             maxLength={200}
           />
           {fieldErrors.name ? (
-            <p id={`${nameId}-error`} className="text-destructive text-xs" role="alert">
+            <p id={`${nameId}-error`} className="text-destructive-foreground text-xs" role="alert">
               {fieldErrors.name}
             </p>
           ) : null}

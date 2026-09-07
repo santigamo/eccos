@@ -42,7 +42,7 @@ function NoticeBox({ notice }: { notice: Notice | null }) {
       className={
         notice.ok
           ? "bg-success/10 text-success mt-3 block border border-success/20 p-3 text-xs whitespace-pre-wrap break-words"
-          : "bg-destructive/10 text-destructive mt-3 block border border-destructive/20 p-3 text-xs whitespace-pre-wrap break-words"
+          : "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs whitespace-pre-wrap break-words"
       }
     >
       {notice.text}

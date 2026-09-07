@@ -18,10 +18,11 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
           "hover:bg-(--ghost-fill-hover) hover:text-foreground aria-expanded:bg-(--ghost-fill-hover) aria-expanded:text-foreground",
-        // Dark ink is --destructive-foreground (#ff7777): #e03131 as text on
-        // #070c0f is ~3.9:1.
+        // The ink is --destructive-foreground (#ff7777) in BOTH modes, so there
+        // is no `dark:` override left to state: #e03131 is a surface colour and
+        // reads at ~3.9:1 as text on #070c0f. The washes stay `--destructive`.
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:text-destructive-foreground dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+          "bg-destructive/10 text-destructive-foreground hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

@@ -98,7 +98,7 @@ export function LoginForm({
               }
             />
             {fieldErrors.email ? (
-              <p id="signin-email-error" className="text-destructive text-xs" role="alert">
+              <p id="signin-email-error" className="text-destructive-foreground text-xs" role="alert">
                 {fieldErrors.email}
               </p>
             ) : null}
@@ -116,7 +116,7 @@ export function LoginForm({
             hasError={Boolean(fieldErrors.password) || Boolean(error)}
           />
           {fieldErrors.password ? (
-            <p id="signin-password-error" className="text-destructive text-xs" role="alert">
+            <p id="signin-password-error" className="text-destructive-foreground text-xs" role="alert">
               {fieldErrors.password}
             </p>
           ) : null}

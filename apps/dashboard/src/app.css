@@ -95,8 +95,15 @@
   --secondary-foreground: #e6e9ef;
   --muted: #0f1d1e;
   --muted-foreground: rgba(236, 244, 240, 0.66);
-  --accent: #0f1d1e;
-  --accent-foreground: #e6e9ef;
+  /* --accent IS THE HOVER LIFT, and it must never equal the surface it lifts
+     off. It was #0f1d1e — the same value as --popover, --muted and --secondary
+     — so every `hover:bg-accent` in the console painted a row in exactly its
+     own background: a dropdown row, a select option and a filter row all had
+     no hover at all, whatever selector they used. A translucent white lift
+     works on any of those grounds, and 8% is the same step --ghost-fill takes
+     (the sidebar's own row hover is 7%). */
+  --accent: rgba(255, 255, 255, 0.08);
+  --accent-foreground: #f2f6f4;
   --destructive: #e03131;
   --border: rgba(255, 255, 255, 0.07);
   /* 0.35 white composites to >= 3:1 contrast over the card panel
