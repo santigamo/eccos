@@ -1,0 +1,13 @@
+# Eccos is open source and wants to be found — by search engines, by AI
+# crawlers, and by the agents people point at a page mid-conversation.
+# Everything is allowed on purpose.
+#
+# This file also holds the ground: with no robots.txt of our own, Cloudflare's
+# "managed robots.txt" (AI Crawl Control -> Signals) fills the gap with a
+# default that disallows the training crawlers. That toggle is off for this
+# zone; this file is the belt to that braces.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://eccos.chat/sitemap-index.xml

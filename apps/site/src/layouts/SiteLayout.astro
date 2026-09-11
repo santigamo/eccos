@@ -72,9 +72,17 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 <link rel="stylesheet" href="/styles.css">
 {landing && <script is:inline defer src="/js/shader.js" data-astro-rerun></script>}
 <script is:inline defer src="/js/site.js"></script>
+{/* Owner opt-out, source-only comment so the how-to does not ship in the HTML.
+    `?nostats` stores the tracker's own `umami.disabled` flag and this browser
+    stops counting; `?nostats=0` clears it. It runs before the deferred
+    tracker, so the visit that flips the switch is not counted either.
+    Self-hosted Umami has no per-site IP exclusion (that is a Cloud feature);
+    the server-side counterpart is IGNORE_IP on the instance, which only
+    covers one fixed address, so this flag is what survives a new device or a
+    new IP. */}
+<script is:inline>(function(){try{var m=/[?&]nostats(?:=([^&]*))?(?=&|$)/.exec(location.search);if(!m)return;if(m[1]==="0"||m[1]==="false"){localStorage.removeItem("umami.disabled");console.info("[eccos] analytics re-enabled for this browser")}else{localStorage.setItem("umami.disabled","1");console.info("[eccos] analytics disabled for this browser")}}catch(e){}})();</script>
 <!-- Umami. `data-domains` keeps the tracker idle on workers.dev previews and
-     localhost; owner-traffic exclusion is handled in the Umami dashboard
-     (Exclude IPs) plus the native `umami.disabled` localStorage flag. -->
+     localhost; `data-do-not-track` honours the browser signal. -->
 <script is:inline defer src="https://analytics.imsanti.dev/script.js" data-website-id="907a5d9e-193a-43d7-a84e-cc73aba4df99" data-domains="eccos.chat,www.eccos.chat" data-do-not-track="true"></script>
 </head>
 <body>
