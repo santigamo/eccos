@@ -1,7 +1,7 @@
 # Production Readiness
 
 > Baseline snapshot: **2026-08-28**, including the post-deploy evidence and remediation follow-up.
-> The commercial gate below is a living addendum updated **2026-08-28**.
+> The commercial gate below is a living addendum updated **2026-09-16**.
 > Owner: Santi (@santigamo). This file is the single source of truth for Eccos's
 > production-readiness posture: profile, per-artifact claims, gate status, waivers,
 > evidence, and remaining gaps. Update it whenever a gate's status changes.
@@ -84,7 +84,6 @@ drill. The gateway deploy and live post-deploy smoke are recorded above.
 | `eccos-0x0.9` | Deploy the Better Auth dashboard (auth D1 + secrets), run the fresh-state cutover, record smoke evidence |
 | `eccos-v80` | Production-shaped two-number acceptance, migration/rollback evidence, and the remaining technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
 | `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
-| `eccos-n0o` | Meta Tech Provider/App Review/Access approval for third-party onboarding |
 | `eccos-49b` | Meta-facing gateway origins still resolve to `workers.dev` while the Meta app declares `eccos.chat` — a reviewer sees the declared domain and the working endpoints disagree. The `api.eccos.chat` custom-domain route and the ordered cutover runbook are in the repo ([docs/deployment.md](./docs/deployment.md#cutover--moving-the-meta-facing-origin-to-a-custom-domain)); the deploy, the Meta panel edits and the `GATEWAY_PUBLIC_URL` flip are pending |
 | `eccos-8yy` | DPA and processor onboarding package |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
@@ -126,13 +125,18 @@ surface, two-account Worker isolation tests, provisioning saga/reconciliation, a
 deploy/smoke are implemented and validated locally or in the deployed gateway. They are not yet
 complete release evidence: the production-shaped two-number exercise, migration/rollback proof,
 adversarial review, and the external/legal/operations criteria below remain open. The
-production-shaped two-number exercise is blocked until Meta Tech Provider approval (`eccos-n0o`)
-is available.
+production-shaped two-number exercise is no longer blocked externally: Meta approved the app on
+**2026-09-16** (`eccos-n0o`, closed), so Embedded Signup completes for accounts with no role on
+our Meta app and a second real number can be onboarded the way a customer would.
 
 ### External / legal / ops criteria (required where applicable)
 
 - Meta **Tech Provider** enablement, **App Review**, and **Access** approval as applicable
-  (`eccos-n0o`).
+  (`eccos-n0o`) — **done (2026-09-16)**. Business Verification 2026-08-24, Tech Provider Access
+  Verification, app published 2026-09-01, and App Review approved 2026-09-16 with
+  `whatsapp_business_messaging`, `whatsapp_business_management` and `public_profile` at advanced
+  access. Not permanent: Meta re-reviews periodically against the reviewer instructions declared
+  on the app, so those instructions must track the console's connect path.
 - GDPR **DPA**/processing agreement covering the cloud operator role (`eccos-8yy`).
 - **Better Auth production cutover** for the customer dashboard — deploy + fresh auth D1 + smoke
   (`eccos-0x0.9`).
