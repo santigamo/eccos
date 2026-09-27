@@ -28,6 +28,13 @@ const ENV = {
   RECCADO_ENDPOINT: ENDPOINT,
 };
 
+const KEY_ID = "833ce64a804f457bb47e40ba6d4bddf7";
+
+/** A reccado refusal: `status` is always `rejected`, the reason is in `error`. */
+function rejected(error: string) {
+  return { status: "rejected", requestId: "", keyId: KEY_ID, error };
+}
+
 interface Captured {
   url: string;
   method?: string;
@@ -209,8 +216,20 @@ describe("status mapping", () => {
     expect(await send()).toEqual({ status: "sent" });
   });
 
+  // The bodies below are the shapes reccado actually answers with
+  // (docs/INTEGRATING.md §4 in the provider repo), not a simplified envelope:
+  // a refusal is `status: "rejected"` with its reason in `error`, and carries
+  // `requestId: ""`. An earlier version of these tests used
+  // `{status: "recipient_suppressed"}`, which the provider never sends — so the
+  // adapter matched a shape that could not occur and every suppressed
+  // recipient was reported as a broken deployment.
   test("502 permanent_failure is undeliverable", async () => {
-    mockProvider(502, { status: "permanent_failure" });
+    mockProvider(502, {
+      status: "permanent_failure",
+      requestId: "req_1",
+      keyId: KEY_ID,
+      providerMessageId: null,
+    });
     expect(await send()).toEqual({
       status: "undeliverable",
       reason: "permanent_failure",
@@ -218,7 +237,13 @@ describe("status mapping", () => {
   });
 
   test("504 unknown is unresolved — and is never retried", async () => {
-    mockProvider(504, { status: "unknown" });
+    mockProvider(504, {
+      status: "unknown",
+      requestId: "req_1",
+      keyId: KEY_ID,
+      providerMessageId: null,
+      error: "ambiguous",
+    });
     expect(await send()).toEqual({ status: "unresolved" });
     // TERMINAL: exactly one request left the Worker. A replay would return the
     // stored status without re-asking, and delivery events cannot resolve it
@@ -226,13 +251,26 @@ describe("status mapping", () => {
     expect(captured.length).toBe(1);
   });
 
-  test("403 recipient_suppressed is undeliverable, not a thrown misconfiguration", async () => {
-    mockProvider(403, { status: "recipient_suppressed" });
+  test("403 rejected/recipient_suppressed is undeliverable, not a thrown misconfiguration", async () => {
+    mockProvider(403, rejected("recipient_suppressed"));
     expect(await send()).toEqual({
       status: "undeliverable",
       reason: "recipient_suppressed",
     });
   });
+
+  // The key's recipient policy refused THIS address. That is a fact about the
+  // recipient, not about the deployment: the same key sends to other
+  // addresses, and only a different address (or a policy change) fixes it.
+  for (const code of ["not_allowed_by_policy", "denied_by_policy"]) {
+    test(`403 rejected/${code} is undeliverable (recipient-level), not a misconfiguration`, async () => {
+      mockProvider(403, rejected(code));
+      expect(await send()).toEqual({
+        status: "undeliverable",
+        reason: "recipient_rejected_by_policy",
+      });
+    });
+  }
 
   test("a 200 with an unreadable body is still a send", async () => {
     globalThis.fetch = (async () =>
@@ -242,48 +280,65 @@ describe("status mapping", () => {
 });
 
 describe("statuses that throw — a bug here or an operational emergency", () => {
-  const cases: [number, string, string][] = [
-    [400, "idempotency_key_required", "idempotency_key_required"],
-    [401, "missing_authorization", "missing_authorization"],
-    [409, "idempotency_conflict", "idempotency_conflict"],
-    [415, "unsupported_media_type", "unsupported_media_type"],
-    [429, "quota_exceeded", "quota_exceeded"],
+  // [http, provider body, expected kind, expected providerStatus]
+  const cases: [number, unknown, string, string][] = [
+    [400, rejected("idempotency_key_required"), "idempotency_key_required", "idempotency_key_required"],
+    [401, rejected("missing_authorization"), "missing_authorization", "missing_authorization"],
+    [
+      409,
+      { status: "idempotency_conflict", requestId: "req_1", keyId: KEY_ID },
+      "idempotency_conflict",
+      "idempotency_conflict",
+    ],
+    [429, rejected("quota_exceeded"), "quota_exceeded", "quota_exceeded"],
   ];
 
-  for (const [status, providerStatus, kind] of cases) {
+  for (const [status, body, kind, providerStatus] of cases) {
     test(`${status} ${providerStatus} throws (${kind})`, async () => {
-      mockProvider(status, { status: providerStatus });
+      mockProvider(status, body);
       const error = (await send().catch((e) => e)) as MailProviderError;
       expect(error).toBeInstanceOf(MailProviderError);
       expect(error.kind).toBe(kind);
       expect(error.httpStatus).toBe(status);
+      // The reason, not the generic `rejected`, is what an operator needs.
+      expect(error.providerStatus).toBe(providerStatus);
     });
   }
 
+  test("415 (plain-text body) throws as unsupported_media_type", async () => {
+    globalThis.fetch = (async () =>
+      new Response("Unsupported Media Type", { status: 415 })) as typeof fetch;
+    const error = (await send().catch((e) => e)) as MailProviderError;
+    expect(error.kind).toBe("unsupported_media_type");
+    expect(error.httpStatus).toBe(415);
+  });
+
   // Every other 403 is a deployment that is wrong, not a message that failed.
-  for (const providerStatus of [
+  for (const code of [
     "invalid_api_key",
     "insufficient_scope",
     "key_expired",
     "key_revoked",
     "template_not_allowed",
     "template_not_found",
-    "denied_by_policy",
     "test_key_not_allowed_in_production_send",
   ]) {
-    test(`403 ${providerStatus} throws as a misconfiguration`, async () => {
-      mockProvider(403, { status: providerStatus });
+    test(`403 rejected/${code} throws as a misconfiguration naming the reason`, async () => {
+      mockProvider(403, rejected(code));
       const error = (await send().catch((e) => e)) as MailProviderError;
       expect(error).toBeInstanceOf(MailProviderError);
       expect(error.kind).toBe("misconfiguration");
-      expect(error.providerStatus).toBe(providerStatus);
+      expect(error.providerStatus).toBe(code);
+      expect(error.message).toContain(code);
+      expect(error.message).not.toContain("rejected the send: rejected");
     });
   }
 
-  test("403 quota_exceeded alarms as a quota failure, not a misconfiguration", async () => {
-    mockProvider(403, { status: "quota_exceeded" });
+  test("an unknown 403 reason is still a refusal, never a delivery outcome", async () => {
+    mockProvider(403, rejected("some_future_reason"));
     const error = (await send().catch((e) => e)) as MailProviderError;
-    expect(error.kind).toBe("quota_exceeded");
+    expect(error.kind).toBe("misconfiguration");
+    expect(error.providerStatus).toBe("some_future_reason");
   });
 
   test("an undefined status throws rather than being guessed at", async () => {

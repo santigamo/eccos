@@ -17,8 +17,13 @@
  *   502 {"status":"permanent_failure"}      — definitively did not arrive
  *   504 {"status":"unknown"}                — TERMINAL (see SendOutcome)
  *   409 {"status":"idempotency_conflict"}   — same key, different payload
- *   429 quota_exceeded
- *   401 missing_authorization · 400 idempotency_key_required · 403 everything else
+ *   every refusal: {"status":"rejected","requestId":"","keyId","error":"<reason>"}
+ *     429 quota_exceeded · 401 missing_authorization
+ *     400 idempotency_key_required · 403 every other reason
+ *
+ * BRANCH ON `error`, NOT `status`: a refusal's `status` is always `rejected`
+ * (provider docs/INTEGRATING.md §4). Matching `status === "recipient_suppressed"`
+ * never fired, so a suppressed recipient was reported as a broken deployment.
  *
  * Security/privacy invariants (contract §8):
  * - the API key lives only in a Worker secret (`RECCADO_API_KEY`), never in the
@@ -60,14 +65,28 @@ export interface ReccadoMailEnv {
  */
 const MAX_BODY_BYTES = 100 * 1024;
 
-/** Provider `status` values that a 403 can carry. */
+/** Provider `error` reasons a 403 `rejected` can carry that we act on. */
 const SUPPRESSED = "recipient_suppressed";
 const QUOTA_EXCEEDED = "quota_exceeded";
+/**
+ * The key's recipient policy refused this address: it matched no allow rule
+ * (`not_allowed_by_policy`) or matched a `!` deny rule (`denied_by_policy`).
+ * Recipient-level, like a suppression — the key still sends elsewhere.
+ */
+const POLICY_REJECTIONS: readonly string[] = ["not_allowed_by_policy", "denied_by_policy"];
 
 interface ProviderBody {
   status?: string;
   requestId?: string;
+  keyId?: string;
   providerMessageId?: string | null;
+  /** The refusal reason; present on every `status: "rejected"`. */
+  error?: string;
+}
+
+/** The reason code to branch on and report: `error` first, `status` as fallback. */
+function providerCode(body: ProviderBody): string | undefined {
+  return body.error ?? body.status;
 }
 
 export class ReccadoMailSender implements MailSender {
@@ -224,6 +243,7 @@ async function readBody(response: Response): Promise<ProviderBody> {
  * fetch mock for each one.
  */
 export function mapResponse(status: number, body: ProviderBody): SendOutcome {
+  const code = providerCode(body);
   switch (status) {
     // The provider owns the message. `duplicate` is a replay of a stored key:
     // still a success, and the caller may want to know it did not re-send.
@@ -244,31 +264,36 @@ export function mapResponse(status: number, body: ProviderBody): SendOutcome {
       throw new MailProviderError(
         "idempotency_key_required",
         "reccado rejected the send: the Idempotency-Key header is required",
-        { httpStatus: status, providerStatus: body.status },
+        { httpStatus: status, providerStatus: code },
       );
     case 401:
       throw new MailProviderError(
         "missing_authorization",
         "reccado rejected the send: missing authorization",
-        { httpStatus: status, providerStatus: body.status },
+        { httpStatus: status, providerStatus: code },
       );
     case 403:
-      // The one 403 that is a delivery outcome rather than a broken
-      // deployment: the address is suppressed at the provider.
-      if (body.status === SUPPRESSED) {
+      // The 403s that are delivery outcomes rather than a broken deployment:
+      // the address is suppressed at the provider, or the key's recipient
+      // policy refuses it. Both are about THIS recipient.
+      if (code === SUPPRESSED) {
         return { status: "undeliverable", reason: "recipient_suppressed" };
       }
-      // A quota refusal can also arrive as a 403; it is an emergency either way.
-      if (body.status === QUOTA_EXCEEDED) {
+      if (code !== undefined && POLICY_REJECTIONS.includes(code)) {
+        return { status: "undeliverable", reason: "recipient_rejected_by_policy" };
+      }
+      // Defensive: reccado answers quota as 429, but if it ever arrives as a
+      // 403 it is an emergency either way.
+      if (code === QUOTA_EXCEEDED) {
         throw new MailProviderError("quota_exceeded", "reccado sending quota exceeded", {
           httpStatus: status,
-          providerStatus: body.status,
+          providerStatus: code,
         });
       }
       throw new MailProviderError(
         "misconfiguration",
-        `reccado rejected the send: ${body.status ?? "forbidden"}`,
-        { httpStatus: status, providerStatus: body.status },
+        `reccado rejected the send: ${code ?? "forbidden"}`,
+        { httpStatus: status, providerStatus: code },
       );
     case 409:
       // Impossible by construction under deriveIdempotencyKey — the key derives
@@ -277,24 +302,24 @@ export function mapResponse(status: number, body: ProviderBody): SendOutcome {
       throw new MailProviderError(
         "idempotency_conflict",
         "reccado reported an idempotency conflict: the key derivation is broken",
-        { httpStatus: status, providerStatus: body.status },
+        { httpStatus: status, providerStatus: code },
       );
     case 415:
       throw new MailProviderError(
         "unsupported_media_type",
         "reccado rejected the send: the body must be application/json",
-        { httpStatus: status, providerStatus: body.status },
+        { httpStatus: status, providerStatus: code },
       );
     case 429:
       throw new MailProviderError("quota_exceeded", "reccado sending quota exceeded", {
         httpStatus: status,
-        providerStatus: body.status,
+        providerStatus: code,
       });
     default:
       throw new MailProviderError(
         "unexpected_status",
         `reccado answered an undefined status ${status}`,
-        { httpStatus: status, providerStatus: body.status },
+        { httpStatus: status, providerStatus: code },
       );
   }
 }

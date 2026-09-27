@@ -44,6 +44,10 @@ const SUPPRESSED: SendOutcome = {
   status: "undeliverable",
   reason: "recipient_suppressed",
 };
+const POLICY_REJECTED: SendOutcome = {
+  status: "undeliverable",
+  reason: "recipient_rejected_by_policy",
+};
 
 /** Collect the structured warn lines a policy emits. */
 let warnings: string[] = [];
@@ -191,6 +195,36 @@ describe("undeliverable at invitation is surfaced to the inviter", () => {
       }
     })();
     expect(error!.code).toBe(MAIL_SUPPRESSED_CODE);
+  });
+});
+
+describe("a recipient refused by the key's policy follows the undeliverable policy", () => {
+  function thrown(apply: typeof applyVerificationSendPolicy) {
+    try {
+      apply(POLICY_REJECTED, CTX);
+    } catch (e) {
+      return e as MailUndeliverableError;
+    }
+    return undefined;
+  }
+
+  test("sign-up surfaces it with the blocked message — retyping cannot fix it", () => {
+    const error = thrown(applyVerificationSendPolicy);
+    expect(error).toBeInstanceOf(MailUndeliverableError);
+    expect(error!.code).toBe(MAIL_SUPPRESSED_CODE);
+    expect(error!.message.toLowerCase()).toContain("blocked");
+    expect(error!.message).not.toContain("typos");
+  });
+
+  test("invitation surfaces it to the inviter", () => {
+    expect(thrown(applyInvitationSendPolicy)?.code).toBe(MAIL_SUPPRESSED_CODE);
+  });
+
+  test("password reset swallows it and logs the distinct reason", () => {
+    expect(() => applyResetSendPolicy(POLICY_REJECTED, CTX)).not.toThrow();
+    const [event] = parsedWarnings();
+    expect(event?.event).toBe("send-undeliverable");
+    expect(event?.reason).toBe("recipient_rejected_by_policy");
   });
 });
 

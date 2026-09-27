@@ -36,13 +36,20 @@ Content-Type: application/json        # 415 otherwise; 100 KB body cap
 | `202` | `{"status":"accepted"}` | Queued | `{status:"sent"}` |
 | `502` | `{"status":"permanent_failure"}` | Definitively did not arrive | `{status:"undeliverable", reason:"permanent_failure"}` |
 | `504` | `{"status":"unknown"}` | **Terminal**, see below | `{status:"unresolved"}` |
-| `403` | `{"status":"recipient_suppressed"}` | Address blocked at the provider | `{status:"undeliverable", reason:"recipient_suppressed"}` |
-| `400` | `idempotency_key_required` | We omitted the header | **throws** |
-| `401` | `missing_authorization` | No bearer token reached the provider | **throws** |
-| `403` | anything else | `invalid_api_key`, `insufficient_scope`, `key_expired`, `key_revoked`, `template_not_allowed`, `template_not_found`, `denied_by_policy`, `test_key_not_allowed_in_production_send` | **throws** (misconfiguration) |
-| `409` | `idempotency_conflict` | Same key, different payload | **throws** (the key derivation is broken) |
+| `403` | `{"status":"rejected","error":"recipient_suppressed"}` | Address blocked at the provider | `{status:"undeliverable", reason:"recipient_suppressed"}` |
+| `403` | `{"status":"rejected","error":"not_allowed_by_policy"\|"denied_by_policy"}` | The key's recipient policy refuses this address | `{status:"undeliverable", reason:"recipient_rejected_by_policy"}` |
+| `400` | `error: idempotency_key_required` | We omitted the header | **throws** |
+| `401` | `error: missing_authorization` | No bearer token reached the provider | **throws** |
+| `403` | any other `error` | `invalid_api_key`, `insufficient_scope`, `key_expired`, `key_revoked`, `template_not_allowed`, `template_not_found`, `test_key_not_allowed_in_production_send`, or an unknown reason | **throws** (misconfiguration) |
+| `409` | `{"status":"idempotency_conflict"}` | Same key, different payload | **throws** (the key derivation is broken) |
 | `415` | — | Body was not `application/json` | **throws** |
-| `429` | `quota_exceeded` | Sending budget exhausted | **throws** — should alarm |
+| `429` | `error: quota_exceeded` | Sending budget exhausted | **throws** — should alarm |
+
+**Every refusal is `{"status":"rejected","requestId":"","keyId":"…","error":"<reason>"}`,
+so the adapter branches on `error`, never on `status` alone.** An earlier version
+matched `status === "recipient_suppressed"`, which never fires, and reported every
+suppressed recipient as a misconfiguration. The thrown error's `providerStatus`
+carries the `error` reason for the same reason.
 
 The three outcomes (`sent`, `unresolved`, `undeliverable`) are delivery facts
 and never throw. Everything that throws indicates a bug in this code or an
@@ -139,6 +146,8 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 - **Invitation may**, because the inviter is authenticated and typed the address.
 - **`recipient_suppressed` gets its own message** ("email to this address is
   currently blocked"), never the typo message: retyping cannot fix a suppression.
+  A recipient-policy refusal (`recipient_rejected_by_policy`) shows the same
+  "blocked" message for the same reason; the log keeps the distinct reason.
 
 > **Known gap — better-auth 1.7.2 swallows these throws at two of the three call
 > sites.** Sign-up (`dist/api/routes/sign-up.mjs`), forgot-password

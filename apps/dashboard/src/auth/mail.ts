@@ -75,8 +75,20 @@ export const AUTH_LINK_EXPIRY_SECONDS = 60 * 60;
 /** The same duration written the way a screen says it. Keep the two in step. */
 export const AUTH_LINK_EXPIRY_LABEL = "one hour";
 
-/** Why a message definitively will not arrive. */
-export type UndeliverableReason = "permanent_failure" | "recipient_suppressed";
+/**
+ * Why a message definitively will not arrive.
+ *
+ * `recipient_rejected_by_policy` is the key's recipient policy refusing THIS
+ * address (reccado `not_allowed_by_policy` / `denied_by_policy`). It is a fact
+ * about the recipient, like a suppression: the same key still sends to other
+ * addresses, and only a different address (or a policy change) fixes it. It is
+ * kept distinct from `recipient_suppressed` so the operator log says which one
+ * it was; the user sees the same "blocked" message for both.
+ */
+export type UndeliverableReason =
+  | "permanent_failure"
+  | "recipient_suppressed"
+  | "recipient_rejected_by_policy";
 
 /**
  * What became of a send.
@@ -91,7 +103,8 @@ export type UndeliverableReason = "permanent_failure" | "recipient_suppressed";
  *   time is the ENTIRE record that the message was ever in doubt. Do not add a
  *   retry or replay loop here or at a call site.
  * - `undeliverable` — the message definitively did not arrive (502
- *   `permanent_failure`, or 403 `recipient_suppressed`).
+ *   `permanent_failure`, or a 403 `rejected` whose `error` is
+ *   `recipient_suppressed`, `not_allowed_by_policy` or `denied_by_policy`).
  */
 export type SendOutcome =
   | { status: "sent"; deduplicated?: boolean }
@@ -126,9 +139,11 @@ export type MailFailureKind =
   /** 401 — no/blank bearer token reached the provider. Misconfiguration. */
   | "missing_authorization"
   /**
-   * 403 for anything other than `recipient_suppressed`: invalid_api_key,
-   * insufficient_scope, key_expired, key_revoked, template_not_allowed,
-   * template_not_found, denied_by_policy, test_key_not_allowed_in_production_send.
+   * 403 for any refusal that is not recipient-level (i.e. not
+   * recipient_suppressed / not_allowed_by_policy / denied_by_policy):
+   * invalid_api_key, insufficient_scope, key_expired, key_revoked,
+   * template_not_allowed, template_not_found,
+   * test_key_not_allowed_in_production_send, and any reason not yet known.
    * Every one is a deployment that is wrong, not a message that failed.
    */
   | "misconfiguration"
@@ -152,6 +167,11 @@ export type MailFailureKind =
 export class MailProviderError extends Error {
   readonly kind: MailFailureKind;
   readonly httpStatus?: number;
+  /**
+   * The provider's reason code: the body's `error` when present (every
+   * refusal is `status: "rejected"`, so `status` alone says nothing), else its
+   * `status`.
+   */
   readonly providerStatus?: string;
 
   constructor(
@@ -195,24 +215,27 @@ export class MailUndeliverableError extends Error {
     super(undeliverableMessage(reason));
     this.name = "MailUndeliverableError";
     this.reason = reason;
+    // A policy refusal shares the suppression code: both mean "this address is
+    // blocked", and the console maps codes to messages.
     this.code =
-      reason === "recipient_suppressed"
-        ? MAIL_SUPPRESSED_CODE
-        : MAIL_UNDELIVERABLE_CODE;
+      reason === "permanent_failure"
+        ? MAIL_UNDELIVERABLE_CODE
+        : MAIL_SUPPRESSED_CODE;
   }
 }
 
 /**
  * The user-facing wording for each undeliverable reason.
  *
- * `recipient_suppressed` gets its OWN message and never the typo one: the
- * address is blocked at the provider, so retyping it cannot fix anything and
- * telling someone to check for typos would send them in a circle.
+ * `recipient_suppressed` (and a policy refusal) gets its OWN message and never
+ * the typo one: the address is blocked at the provider, so retyping it cannot
+ * fix anything and telling someone to check for typos would send them in a
+ * circle.
  */
 export function undeliverableMessage(reason: UndeliverableReason): string {
-  return reason === "recipient_suppressed"
-    ? "Email to this address is currently blocked. Use a different address."
-    : "That email address cannot receive mail. Check it for typos and try again.";
+  return reason === "permanent_failure"
+    ? "That email address cannot receive mail. Check it for typos and try again."
+    : "Email to this address is currently blocked. Use a different address.";
 }
 
 /**
