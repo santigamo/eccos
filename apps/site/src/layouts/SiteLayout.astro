@@ -70,15 +70,15 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 {hasPixelPreload && <link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>}
 <!-- theme override, applied before the stylesheet so an override never flashes -->
 <script is:inline>(function(){function sync(doc){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")doc.documentElement.setAttribute("data-theme",t);else doc.documentElement.removeAttribute("data-theme")}catch(e){}}sync(document);document.documentElement.classList.add("js");document.addEventListener("astro:before-swap",function(e){sync(e.newDocument);if(document.documentElement.classList.contains("js"))e.newDocument.documentElement.classList.add("js")})})();</script>
-{/* Locale redirect, and why the destination carries a marker.
-    This runs before the deferred tracker, so a visitor bounced from `/` to
-    `/en` is never counted on `/` — measured 2026-09-28: 19 pageviews, every
-    one of them on `/en`, none on `/`. The marker is how the three cases stay
-    tellable apart in the analytics: no param = entered `/en` deliberately,
-    `lang=auto` = sent here by the browser's language list, `lang=pref` = a
-    returning visitor's stored choice. The canonical stays the clean URL, so
-    the query adds no duplicate. */}
-{landing && pageLocale === "es" && <script is:inline>(function(){try{if(location.pathname!=="/"&&location.pathname!=="")return;var saved=localStorage.getItem("eccos-locale");if(saved==="en"){location.replace("/en?lang=pref");return}if(saved==="es")return;var languages=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||""];for(var i=0;i<languages.length;i++){var code=String(languages[i]).toLowerCase().split("-")[0];if(code==="en"){location.replace("/en?lang=auto");return}if(code==="es")return}}catch(e){}})();</script>}
+{/* No automatic language redirect, on purpose.
+    Until 2026-09-30 an inline script sent `/` to `/en` when the browser asked
+    for English. Googlebot renders with an en-US locale, so what it stored
+    under `/` was the English page: Search Console reported `/en` as "Duplicate,
+    Google chose a different canonical than the user" and picked `/`. One URL
+    indexed with the wrong content, the other discarded, and the Spanish
+    landing never crawled at all. Google's own guidance is hreflang plus a
+    visible switch, which is what the masthead already offers. Don't put it
+    back. */}
 <link rel="stylesheet" href="/styles.css">
 {landing && <script is:inline defer src="/js/shader.js" data-astro-rerun></script>}
 <script is:inline defer src="/js/site.js"></script>

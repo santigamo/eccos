@@ -174,15 +174,6 @@
     });
   }
 
-  var localeSwitch = document.querySelector(".lang-switch");
-  if (localeSwitch) {
-    listen(localeSwitch, "click", function () {
-      var locale = localeSwitch.getAttribute("hreflang");
-      if (locale !== "en" && locale !== "es") return;
-      try { localStorage.setItem("eccos-locale", locale); } catch (e) {}
-    });
-  }
-
   if (LIGHT_MQ) {
     var onScheme = function () { if (themeMode === "auto") transitionMode("auto"); };
     if (LIGHT_MQ.addEventListener) listen(LIGHT_MQ, "change", onScheme);
