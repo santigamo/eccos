@@ -1,0 +1,95 @@
+---
+/**
+ * Structured data for the landing: the entity, and the questions it answers.
+ *
+ * Without this, Eccos is prose a crawler has to interpret; with it, Eccos is a
+ * SoftwareApplication with a licence, a repository and a price. Everything here
+ * comes from src/data/product.ts, so the graph cannot claim something the page
+ * does not say — including the FAQ, which is the same array the visible band
+ * renders (Google only honours FAQPage when the answers are on the page).
+ *
+ * Inline JSON, no request: the site's zero-third-party invariant holds.
+ */
+import { COPY, PRICING, SITE, type Locale } from "../data/product";
+
+interface Props {
+  locale: Locale;
+  pageUrl: string;
+}
+
+const { locale, pageUrl } = Astro.props;
+const copy = COPY[locale];
+
+const provider = {
+  "@type": "Person",
+  name: SITE.provider,
+  email: SITE.email,
+  address: {
+    "@type": "PostalAddress",
+    addressLocality: "Manresa",
+    addressRegion: "Barcelona",
+    addressCountry: "ES",
+  },
+};
+
+const graph = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      // One id across both locales: the Spanish and English landings describe
+      // the same piece of software, not two products.
+      "@id": `${SITE.url}/#eccos`,
+      name: "Eccos",
+      url: pageUrl,
+      description: copy.definition,
+      applicationCategory: "DeveloperApplication",
+      applicationSubCategory: "WhatsApp Business messaging gateway",
+      operatingSystem: "Cloudflare Workers, Docker, Linux, macOS",
+      inLanguage: locale,
+      license: SITE.licenseUrl,
+      codeRepository: SITE.repo,
+      sameAs: [SITE.repo],
+      featureList: copy.features,
+      provider,
+      author: provider,
+      offers: {
+        "@type": "Offer",
+        url: `${pageUrl}#pricing`,
+        priceCurrency: PRICING.currency,
+        price: PRICING.firstNumber,
+        description:
+          locale === "es"
+            ? "Eccos Cloud, por número conectado y mes: 5 € el primer número, mensajes ilimitados. Autoalojarlo es gratis bajo licencia MIT."
+            : "Eccos Cloud, per connected number per month: 5 € for the first number, messages unlimited. Self-hosting is free under the MIT licence.",
+        priceSpecification: {
+          "@type": "UnitPriceSpecification",
+          priceCurrency: PRICING.currency,
+          price: PRICING.firstNumber,
+          referenceQuantity: {
+            "@type": "QuantitativeValue",
+            value: 1,
+            unitText: locale === "es" ? "número conectado" : "connected number",
+          },
+          billingDuration: 1,
+          billingIncrement: 1,
+        },
+      },
+    },
+    {
+      "@type": "FAQPage",
+      "@id": `${pageUrl}#faq`,
+      url: pageUrl,
+      inLanguage: locale,
+      about: { "@id": `${SITE.url}/#eccos` },
+      mainEntity: copy.faq.map((item) => ({
+        "@type": "Question",
+        name: item.q,
+        acceptedAnswer: { "@type": "Answer", text: item.a },
+      })),
+    },
+  ],
+};
+---
+
+<script type="application/ld+json" is:inline set:html={JSON.stringify(graph)} />

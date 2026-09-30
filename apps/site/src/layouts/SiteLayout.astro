@@ -1,6 +1,7 @@
 ---
 import { getAbsoluteLocaleUrl, getRelativeLocaleUrl } from "astro:i18n";
 import { ClientRouter } from "astro:transitions";
+import LandingSchema from "../components/LandingSchema.astro";
 
 type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate";
 
@@ -64,11 +65,20 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 {landing && <meta property="og:image" content="https://eccos.chat/assets/banner.jpg">}
 {landing && <meta property="og:image:alt" content={es ? "Eccos, gateway open source para WhatsApp" : "Eccos, an open-source WhatsApp gateway"}>}
 {landing && <meta name="twitter:card" content="summary_large_image">}
+{landing && <LandingSchema locale={pageLocale as "en" | "es"} pageUrl={ogUrl} />}
 <link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
 {hasPixelPreload && <link rel="preload" href="/assets/fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin>}
 <!-- theme override, applied before the stylesheet so an override never flashes -->
 <script is:inline>(function(){function sync(doc){try{var t=localStorage.getItem("eccos-theme");if(t==="light"||t==="dark")doc.documentElement.setAttribute("data-theme",t);else doc.documentElement.removeAttribute("data-theme")}catch(e){}}sync(document);document.documentElement.classList.add("js");document.addEventListener("astro:before-swap",function(e){sync(e.newDocument);if(document.documentElement.classList.contains("js"))e.newDocument.documentElement.classList.add("js")})})();</script>
-{landing && pageLocale === "es" && <script is:inline>(function(){try{if(location.pathname!=="/"&&location.pathname!=="")return;var saved=localStorage.getItem("eccos-locale");if(saved==="en"){location.replace("/en");return}if(saved==="es")return;var languages=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||""];for(var i=0;i<languages.length;i++){var code=String(languages[i]).toLowerCase().split("-")[0];if(code==="en"){location.replace("/en");return}if(code==="es")return}}catch(e){}})();</script>}
+{/* Locale redirect, and why the destination carries a marker.
+    This runs before the deferred tracker, so a visitor bounced from `/` to
+    `/en` is never counted on `/` — measured 2026-09-28: 19 pageviews, every
+    one of them on `/en`, none on `/`. The marker is how the three cases stay
+    tellable apart in the analytics: no param = entered `/en` deliberately,
+    `lang=auto` = sent here by the browser's language list, `lang=pref` = a
+    returning visitor's stored choice. The canonical stays the clean URL, so
+    the query adds no duplicate. */}
+{landing && pageLocale === "es" && <script is:inline>(function(){try{if(location.pathname!=="/"&&location.pathname!=="")return;var saved=localStorage.getItem("eccos-locale");if(saved==="en"){location.replace("/en?lang=pref");return}if(saved==="es")return;var languages=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||""];for(var i=0;i<languages.length;i++){var code=String(languages[i]).toLowerCase().split("-")[0];if(code==="en"){location.replace("/en?lang=auto");return}if(code==="es")return}}catch(e){}})();</script>}
 <link rel="stylesheet" href="/styles.css">
 {landing && <script is:inline defer src="/js/shader.js" data-astro-rerun></script>}
 <script is:inline defer src="/js/site.js"></script>
