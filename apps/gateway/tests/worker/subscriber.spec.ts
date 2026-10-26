@@ -63,14 +63,25 @@ describe("subscriber config (feature A)", () => {
         at: 1_700_000_000_000,
       },
     ]);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("redirect", { status: 302, headers: { location: "http://127.0.0.1/hook" } }),
-    );
+    // The mock builds a real Request from the same arguments, so workerd
+    // validates the init exactly as the production fetch would. A bare
+    // mockResolvedValue skipped that check, which is how `redirect: "error"`
+    // (rejected by workerd: only "follow" or "manual") passed this suite while
+    // every real forward threw before reaching the network (eccos-ugb6).
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      new Request(input, init);
+      return new Response("redirect", { status: 302, headers: { location: "http://127.0.0.1/hook" } });
+    });
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       await i.alarm();
       const call = fetchMock.mock.calls.find(([url]) => String(url) === "https://subscriber.example/hook");
-      expect(call?.[1]?.redirect).toBe("error");
-      expect(i.getDelivery(1)).toMatchObject({ status: "pending", last_error: "subscriber returned 302" });
+      expect(call?.[1]?.redirect).toBe("manual");
+      // Exactly one request: the Location was never followed.
+      expect(fetchMock.mock.calls).toHaveLength(1);
+      expect(i.getDelivery(1)).toMatchObject({
+        status: "pending",
+        last_error: "subscriber returned 302 (redirects are not followed)",
+      });
     });
   });
 

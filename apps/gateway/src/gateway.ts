@@ -1086,16 +1086,26 @@ export class EccosGateway extends DurableObject<Env> {
     }
     headers["x-webhook-event"] = firstType;
     headers["x-idempotency-key"] = await sha256Hex(payload);
+    // "manual", never "follow": validateSubscriberUrl vetted THIS url only, and
+    // following a Location would let the subscriber point the gateway anywhere.
+    // Not "error" either: workerd rejects it outright ("Invalid redirect
+    // value"), so every forward threw before reaching the network (eccos-ugb6).
+    // With "manual" the 3xx comes back as the response and is a failed attempt.
     const res = await fetch(url, {
       method: "POST",
       headers,
       body: payload,
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(FORWARD_FETCH_TIMEOUT_MS),
     });
     const ok = res.ok;
     if (res.body) await res.body.cancel().catch(() => undefined);
-    return ok ? { ok: true } : { ok: false, reason: `subscriber returned ${res.status}` };
+    if (ok) return { ok: true };
+    const redirected = res.status >= 300 && res.status < 400;
+    return {
+      ok: false,
+      reason: `subscriber returned ${res.status}${redirected ? " (redirects are not followed)" : ""}`,
+    };
   }
 
   private async processDelivery(row: DeliveryRow, maxAttempts: number): Promise<void> {

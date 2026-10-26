@@ -290,7 +290,8 @@ export function FromMetaPanel({
  *  - `x-idempotency-key` is `sha256Hex` of the same raw body;
  *  - `FORWARD_MAX_ATTEMPTS` is 6 (wrangler.jsonc, and the code's own default),
  *    `backoffMs` is `min(5s · 5^(n-1), 1h)` and `withJitter` spreads it ±10%;
- *  - `FORWARD_FETCH_TIMEOUT_MS` is 5s and the fetch is `redirect: "error"`.
+ *  - `FORWARD_FETCH_TIMEOUT_MS` is 5s and the fetch is `redirect: "manual"`
+ *    (a 3xx comes back as the response and fails the attempt).
  * If any of them changes there, it changes here.
  */
 export function ReceiverReference() {
