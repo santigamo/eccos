@@ -451,6 +451,18 @@ export function createAuth(config: AuthConfig) {
         sameSite: "lax" as const,
         secure: secureCookies,
       },
+      // The rate-limit key is `${ip}|${path}` (see rateLimit above), so the IP
+      // source decides who shares a counter (eccos-fzgx). Better Auth defaults to
+      // `x-forwarded-for`, which a Worker does not reliably receive: with no IP
+      // it falls back to ONE shared bucket per path, and a single caller could
+      // exhaust sign-up or resend for every visitor. When the header does
+      // arrive, the client wrote it, so it is also a way to dodge the limit.
+      // `cf-connecting-ip` is set by Cloudflare's edge on every request to the
+      // custom domain and overwrites any client-supplied value; it is the only
+      // header read.
+      ipAddress: {
+        ipAddressHeaders: ["cf-connecting-ip"],
+      },
     },
   };
 

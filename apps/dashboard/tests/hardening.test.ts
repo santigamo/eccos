@@ -90,6 +90,30 @@ describe("distributed rate limiting", () => {
     expect(blocked.status).toBe(429);
   });
 
+  test("counters key on cf-connecting-ip, not on a caller-chosen header (eccos-fzgx)", async () => {
+    const { auth } = await createTestAuth();
+    const signIn = (clientIp: string, forwardedFor?: string) =>
+      auth.handler(
+        new Request(`${BASE_URL}/api/auth/sign-in/email`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: BASE_URL,
+            "cf-connecting-ip": clientIp,
+            ...(forwardedFor ? { "x-forwarded-for": forwardedFor } : {}),
+          },
+          body: JSON.stringify({ email: "nobody@corp.test", password: "wrong-password-1" }),
+        }),
+      );
+    for (let i = 0; i < 10; i++) await signIn("203.0.113.7");
+    // The same visitor stays blocked even when it invents a forwarding header...
+    expect((await signIn("203.0.113.7", "198.51.100.99")).status).toBe(429);
+    // ...while a different visitor still has its own budget. Without an IP
+    // header Better Auth falls back to one shared per-path bucket, so one
+    // caller exhausting it locked every other visitor out.
+    expect((await signIn("203.0.113.8")).status).not.toBe(429);
+  });
+
   test("the resend endpoint carries its own rule (eccos-hk5)", async () => {
     const { auth } = await createTestAuth();
     // POST /send-verification-email takes an arbitrary caller-supplied address
