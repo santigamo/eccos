@@ -190,10 +190,14 @@ is simply absent, and comes back **`403 invalid_api_key`** — so the operator i
 told their key is bad when what is actually bad is their pairing. Carrying one
 value makes that failure unreachable. Do not split it back apart.
 
-The host stays configuration rather than a constant: the provider's custom
-domain currently sits behind Cloudflare Access and answers only on its
-`workers.dev` host, the contract is identical on both, and hardcoding either
-would strand the deployment the moment the other becomes live.
+The host stays configuration rather than a constant, and it must be the
+provider's **custom domain** (`inbox.imsanti.dev` today). It once pointed at the
+provider's `workers.dev` host, back when the custom domain sat behind Cloudflare
+Access. On 2026-09-11 the provider closed `workers.dev`, and from then on every
+send got Cloudflare's `error code: 1042` as a 404. Sign-up still answered 200
+(better-auth only logs a failed send), so every verification mail was silently
+dropped until 2026-10-23 (eccos-3db). If the adapter logs `reccado answered an
+undefined status 404`, check this host first.
 
 It is a **secret, not a var**: it carries the provider host, and
 `apps/dashboard/wrangler.jsonc` is in a public repo — the Cloudflare account
