@@ -142,6 +142,8 @@ const {
   listOutbound,
   listTemplates,
   retryDelivery,
+  retryFailedDeliveries,
+  validateRetryFailedInput,
   getSubscriberConfig,
   setSubscriberConfig,
   hasForwardingTarget,
@@ -562,6 +564,181 @@ describe("listDeliveries / retryDelivery (Deliveries view)", () => {
     gatewayBinding = undefined;
     const res = await retryDelivery({ data: { id: 7, wabaId: "waba-a" } });
     expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
+  });
+});
+
+/**
+ * The bulk retry on the forwarding queue (`retryFailedDeliveries`): the per-row
+ * Retry at window scale, so it is held to the per-row Retry's rules (`operate`,
+ * a WABA the account owns, the account taken from the session) and to a
+ * stricter one on input, since a window is a range an operator typed.
+ */
+describe("retryFailedDeliveries (bulk retry)", () => {
+  const FROM = 1_760_000_000_000;
+  const TO = FROM + 7 * 86_400_000;
+
+  test("forwards the window, the resolved WABA and the session's account to the gateway", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      retryFailedDeliveries: async (...args: unknown[]) => {
+        calls.push(args);
+        return { requeued: 790, skippedRedacted: 3 };
+      },
+    });
+    const res = await retryFailedDeliveries({ data: { wabaId: "waba-a", from: FROM, to: TO } });
+    expect(res).toEqual({ ok: true, data: { requeued: 790, skippedRedacted: 3 } });
+    expect(calls).toEqual([[{ from: FROM, to: TO }, "waba-a", "account-a"]]);
+  });
+
+  test("a browser-supplied accountId never reaches the gateway", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      retryFailedDeliveries: async (...args: unknown[]) => {
+        calls.push(args);
+        return { requeued: 1, skippedRedacted: 0 };
+      },
+    });
+    await retryFailedDeliveries({
+      data: { wabaId: "waba-a", from: FROM, to: TO, accountId: "account-evil" },
+    });
+    // Stripped by the validator, and the account is resolved from the session.
+    expect(calls).toEqual([[{ from: FROM, to: TO }, "waba-a", "account-a"]]);
+  });
+
+  test("a WABA the account does not own is refused before the gateway is called", async () => {
+    let called = false;
+    withResources({
+      retryFailedDeliveries: async () => {
+        called = true;
+        return { requeued: 0, skippedRedacted: 0 };
+      },
+    });
+    const res = await retryFailedDeliveries({
+      data: { wabaId: "waba-foreign", from: FROM, to: TO },
+    });
+    expect(res).toEqual(unreachable('WABA "waba-foreign" is not owned by account "account-a"'));
+    expect(called).toBe(false);
+  });
+
+  test("a viewer cannot: the refusal is typed and the gateway is never touched", async () => {
+    let called = false;
+    withResources({
+      retryFailedDeliveries: async () => {
+        called = true;
+        return { requeued: 1, skippedRedacted: 0 };
+      },
+    });
+    // The viewer role: `view` and nothing else.
+    fakeDeniedActions = new Set(["operate", "configure", "administer", "erase"]);
+    const res = await retryFailedDeliveries({ data: { wabaId: "waba-a", from: FROM, to: TO } });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("operate is enough: an operator, who holds nothing above it, can", async () => {
+    // The class is `operate`, the per-row Retry's. Denying everything above it
+    // must change nothing, or the act has quietly moved up a role.
+    withResources({
+      retryFailedDeliveries: async () => ({ requeued: 2, skippedRedacted: 0 }),
+    });
+    fakeDeniedActions = new Set(["configure", "administer", "erase"]);
+    const res = await retryFailedDeliveries({ data: { wabaId: "waba-a", from: FROM, to: TO } });
+    expect(res).toEqual({ ok: true, data: { requeued: 2, skippedRedacted: 0 } });
+  });
+
+  test("fails closed without a session", async () => {
+    let called = false;
+    withResources({
+      retryFailedDeliveries: async () => {
+        called = true;
+        return { requeued: 1, skippedRedacted: 0 };
+      },
+    });
+    fakeSessionHeaders = null;
+    const res = await retryFailedDeliveries({ data: { wabaId: "waba-a", from: FROM, to: TO } });
+    expect(res).toMatchObject({ ok: false, kind: "unauthenticated" });
+    expect(called).toBe(false);
+  });
+
+  test("a gateway fault comes back as the graceful error shape", async () => {
+    withResources({
+      retryFailedDeliveries: async () => {
+        throw new Error("invalid retry window: from and to must be epoch ms with from <= to");
+      },
+    });
+    const res = await retryFailedDeliveries({ data: { wabaId: "waba-a", from: FROM, to: TO } });
+    expect(res).toEqual(
+      unreachable("invalid retry window: from and to must be epoch ms with from <= to"),
+    );
+  });
+
+  test("a missing binding yields the graceful error shape", async () => {
+    withResources({});
+    gatewayBinding = undefined;
+    const res = await retryFailedDeliveries({ data: { wabaId: "waba-a", from: FROM, to: TO } });
+    expect(res).toEqual(unreachable(UNCONFIGURED_ERROR));
+  });
+
+  test("the validator accepts a window, and from equal to to is one instant", () => {
+    expect(validateRetryFailedInput({ wabaId: " waba-a ", from: FROM, to: TO })).toEqual({
+      wabaId: "waba-a",
+      from: FROM,
+      to: TO,
+    });
+    expect(validateRetryFailedInput({ wabaId: "waba-a", from: FROM, to: FROM })).toEqual({
+      wabaId: "waba-a",
+      from: FROM,
+      to: FROM,
+    });
+  });
+
+  test("the validator refuses an inverted window", () => {
+    expect(() => validateRetryFailedInput({ wabaId: "waba-a", from: TO, to: FROM })).toThrow(
+      /from must not be after to/,
+    );
+  });
+
+  test("the validator refuses anything that is not a finite whole number", () => {
+    const bad = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, "1760000000000", null];
+    for (const value of bad) {
+      expect(() => validateRetryFailedInput({ wabaId: "waba-a", from: value, to: TO })).toThrow(
+        /from must be/,
+      );
+      expect(() => validateRetryFailedInput({ wabaId: "waba-a", from: FROM, to: value })).toThrow(
+        /to must be/,
+      );
+    }
+    expect(() => validateRetryFailedInput({ wabaId: "waba-a", to: TO })).toThrow(/from must be/);
+    expect(() => validateRetryFailedInput({ wabaId: "waba-a", from: FROM })).toThrow(/to must be/);
+  });
+
+  test("the validator needs a WABA, and a well-formed one", () => {
+    expect(() => validateRetryFailedInput({ from: FROM, to: TO })).toThrow(/wabaId is required/);
+    expect(() => validateRetryFailedInput({ wabaId: "  ", from: FROM, to: TO })).toThrow(
+      /wabaId is required/,
+    );
+    expect(() => validateRetryFailedInput({ wabaId: "waba a;", from: FROM, to: TO })).toThrow(
+      /invalid wabaId/,
+    );
+    expect(() => validateRetryFailedInput(undefined)).toThrow(/invalid dashboard request/);
+    expect(() => validateRetryFailedInput([FROM, TO])).toThrow(/invalid dashboard request/);
+  });
+
+  test("a refused request never reaches the gateway", () => {
+    let called = false;
+    withResources({
+      retryFailedDeliveries: async () => {
+        called = true;
+        return { requeued: 0, skippedRedacted: 0 };
+      },
+    });
+    // The server function runs the validator first, so a hand-built request
+    // with an inverted window stops there, with a sentence rather than a
+    // Durable Object error.
+    expect(() =>
+      retryFailedDeliveries({ data: { wabaId: "waba-a", from: TO, to: FROM } }),
+    ).toThrow(/from must not be after to/);
+    expect(called).toBe(false);
   });
 });
 

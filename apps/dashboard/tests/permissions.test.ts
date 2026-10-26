@@ -188,6 +188,23 @@ describe("tenant helpers", () => {
     ).rejects.toThrow(ForbiddenError);
   });
 
+  test("operate is the line for retrying failed deliveries: a viewer is refused with its reason", async () => {
+    // `retryFailedDeliveries` and `retryDelivery` both ask for `operate`. The
+    // viewer holds `view` only, so the bulk act is out of reach for the role
+    // that can read the queue but not touch it, and the refusal carries the
+    // code the console branches on instead of a sentence it would have to match.
+    const { auth, db } = await createTestAuth();
+    const { organizationId, viewerHeaders, operatorHeaders } = await seedOrganization(auth, db);
+    const refused = await requirePermission(auth, viewerHeaders, organizationId, "operate").catch(
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(ForbiddenError);
+    expect((refused as ForbiddenError).reason).toBe("missing-permission");
+    expect(await requirePermission(auth, operatorHeaders, organizationId, "operate")).toBe(
+      organizationId,
+    );
+  });
+
   test("requirePermission fails closed for a non-member even with a valid org id", async () => {
     const { auth, db } = await createTestAuth();
     const { organizationId, outsiderHeaders } = await seedOrganization(auth, db);

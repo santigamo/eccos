@@ -15,6 +15,7 @@ import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { HeldNotice } from "../components/logs/held-notice";
 import { LogPager } from "../components/logs/log-pager";
+import { RetryFailedSheet } from "../components/logs/retry-failed-sheet";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
 import { listDeliveries, retryDelivery } from "../server/gateway";
@@ -224,6 +225,7 @@ function DeliveriesPage() {
   const router = useRouter();
   const [retrying, setRetrying] = useState<number | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [retryWindowOpen, setRetryWindowOpen] = useState(false);
   const rows = useMemo(() => (result.ok ? result.data : []), [result]);
 
   if (!result.ok) {
@@ -360,6 +362,19 @@ function DeliveriesPage() {
     </>
   );
 
+  // The window act, offered where the per-row Retry is, and gated the way it
+  // is: the role check is the server's (`operate`), so a viewer who opens the
+  // sheet reads the refusal there. It follows the same rule of "only where it
+  // means something" too: no failed batch on this WABA, no button.
+  const hasFailed =
+    (ready?.status.counts.deliveries.failed ?? 0) > 0 || rows.some((row) => row.status === "failed");
+  const retryWindowAction =
+    selectedWabaId && hasFailed ? (
+      <Button type="button" variant="outline" size="sm" onClick={() => setRetryWindowOpen(true)}>
+        Retry failed…
+      </Button>
+    ) : null;
+
   // A narrowed view that came back empty is a different message from a gateway
   // that has never forwarded anything: the first one has a way out.
   const isNarrowed = status !== undefined || before !== undefined;
@@ -388,7 +403,16 @@ function DeliveriesPage() {
   );
 
   return (
-    <Page title="Forwarding queue" kicker="Logs" actions={filterControl}>
+    <Page
+      title="Forwarding queue"
+      kicker="Logs"
+      actions={
+        <>
+          {retryWindowAction}
+          {filterControl}
+        </>
+      }
+    >
       {/* Always mounted, and silent unless it has something to say — the
           component owns that decision so the queue and the event log cannot
           disagree about when forwarding is held. */}
@@ -413,6 +437,18 @@ function DeliveriesPage() {
           oldestId !== undefined && navigate({ search: (prev) => ({ ...prev, before: oldestId }) })
         }
       />
+
+      {/* Mounted whenever a WABA is selected, NOT whenever the button shows: a
+          successful replay empties the failed count, the button goes with it,
+          and the result the operator is reading must not. */}
+      {selectedWabaId ? (
+        <RetryFailedSheet
+          open={retryWindowOpen}
+          onOpenChange={setRetryWindowOpen}
+          wabaId={selectedWabaId}
+          onRetried={() => router.invalidate()}
+        />
+      ) : null}
     </Page>
   );
 }

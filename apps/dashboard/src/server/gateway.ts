@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { env } from "cloudflare:workers";
+import { z } from "zod";
 import { createAuth, type Auth } from "../auth/auth";
 import { authConfigFromEnv } from "../auth/config";
 import { auditEvent } from "./audit";
@@ -35,6 +36,7 @@ import type {
   OutboundRow,
   ReconcileWabaResult,
   ResubscribeResult,
+  RetryFailedResult,
   SendTemplateTestInput,
   SendTemplateTestResult,
   TemplateHeaderMedia,
@@ -69,6 +71,7 @@ export type {
   ProvisioningStatus,
   ReconcileWabaResult,
   ResubscribeResult,
+  RetryFailedResult,
   SendTemplateTestResult,
   SendTestFailureCode,
   SetSubscriberConfigInput,
@@ -318,6 +321,40 @@ function validateRetryInput(input: unknown): { id: number; wabaId: string } {
   const wabaId = optionalWabaId(record.wabaId);
   if (!wabaId) throw new Error("wabaId is required");
   return { id: record.id, wabaId };
+}
+
+/**
+ * The bulk retry's request: a WABA and a window of epoch milliseconds.
+ *
+ * Zod refuses what the gateway would otherwise throw on (`NaN`, `Infinity`, a
+ * fraction, an inverted window) so the operator reads a sentence naming the
+ * field instead of a Durable Object error, and a hand-built request never gets
+ * as far as the RPC. Unknown keys are stripped, which is how a browser-supplied
+ * `accountId` stays what it always is here: UX input that never reaches the
+ * gateway. Both ends are inclusive, matching `RetryFailedWindow`.
+ */
+const retryFailedInput = z
+  .object({
+    wabaId: z
+      .string("wabaId is required")
+      .trim()
+      .min(1, "wabaId is required")
+      .regex(WABA_ID_PATTERN, "invalid wabaId"),
+    from: z
+      .number("from must be a number of epoch milliseconds")
+      .int("from must be a whole number of epoch milliseconds"),
+    to: z
+      .number("to must be a number of epoch milliseconds")
+      .int("to must be a whole number of epoch milliseconds"),
+  })
+  .refine((window) => window.from <= window.to, { message: "from must not be after to", path: ["to"] });
+
+export function validateRetryFailedInput(input: unknown): z.infer<typeof retryFailedInput> {
+  const parsed = retryFailedInput.safeParse(inputRecord(input));
+  // The first issue only, as a plain sentence: a ZodError's own message is a
+  // JSON dump of every issue, which is not something to show an operator.
+  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "invalid dashboard request");
+  return parsed.data;
 }
 
 /** A WABA the operator is asking about by id; the account is never theirs to pick. */
@@ -1293,6 +1330,33 @@ export const retryDelivery = createServerFn({ method: "POST" })
       withScopedGateway(
         { action: "operate", wabaId: data.wabaId, rejectUnknown: true },
         (gateway, scope) => gateway.retryDelivery(data.id, scope.wabaId, scope.accountId),
+      ),
+  );
+
+/**
+ * Re-send every failed delivery of one WABA enqueued inside a window.
+ *
+ * `operate`, the same class and the same scope rules as `retryDelivery`: it is
+ * that act at scale, so it is neither easier nor harder to reach. The WABA is
+ * validated against the account resolved from the session (`rejectUnknown`),
+ * and the window is the only thing the browser decides. The gateway applies it
+ * to the `created_at` of each row, and counts what retention already emptied
+ * instead of replaying it.
+ *
+ * Like `retryDelivery`, it writes no audit line.
+ */
+export const retryFailedDeliveries = createServerFn({ method: "POST" })
+  .validator(validateRetryFailedInput)
+  .handler(
+    ({ data }): Promise<Result<RetryFailedResult>> =>
+      withScopedGateway(
+        { action: "operate", wabaId: data.wabaId, rejectUnknown: true },
+        (gateway, scope) =>
+          gateway.retryFailedDeliveries(
+            { from: data.from, to: data.to },
+            scope.wabaId,
+            scope.accountId,
+          ),
       ),
   );
 
