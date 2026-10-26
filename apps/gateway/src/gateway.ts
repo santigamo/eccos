@@ -13,9 +13,11 @@ import type {
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
+import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
 
-interface Env {
+/** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
+interface Env extends OpsAlertEnv {
   FORWARD_MAX_ATTEMPTS: string;
   /** Content retention window (days): past it, `inbound_events` and `outbound_messages`
    * rows are deleted, terminal `deliveries` rows keep only metadata (payload redacted),
@@ -33,6 +35,7 @@ interface DeliveryRow {
   payload: string;
   attempts: number;
   next_attempt_at: number;
+  phone_number_id: string | null;
 }
 
 /** Result of one forward attempt. The failure branch carries why, so the reason
@@ -48,6 +51,8 @@ const MAX_CONTENT_RETENTION_DAYS = 90;
 const DEFAULT_DELIVERY_RETENTION_DAYS = 90;
 const OPERATOR_MAX_PAGE = 200;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** At most one failed-delivery alert per Durable Object (one WABA) per window. */
+export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 /** Retention only needs to run periodically, not on every alarm. alarm() fires
  * once per ingest, so sweeping there ran thousands of scans a day to delete the
  * same zero rows. */
@@ -213,6 +218,12 @@ export class EccosGateway extends DurableObject<Env> {
     this.sql = ctx.storage.sql;
     ctx.blockConcurrencyWhile(async () => {
       this.sql.exec(`CREATE TABLE IF NOT EXISTS config (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );`);
+      // Operator-only bookkeeping (alert throttling). Kept out of `config`,
+      // which the console reads back through getConfig.
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );`);
@@ -941,7 +952,7 @@ export class EccosGateway extends DurableObject<Env> {
     const rows = hasTarget
       ? (this.sql
           .exec(
-            `SELECT id, payload, attempts, next_attempt_at FROM deliveries
+            `SELECT id, payload, attempts, next_attempt_at, phone_number_id FROM deliveries
        WHERE status = 'pending' AND next_attempt_at <= ?
        ORDER BY id LIMIT ?`,
             now,
@@ -1146,6 +1157,74 @@ export class EccosGateway extends DurableObject<Env> {
         row.id,
       );
     }
+    if (ok) return;
+
+    // Until eccos-r8x0 a failed forward wrote only `last_error`, so a fault that
+    // failed every account was invisible to the operator. One structured line
+    // per failed attempt (Workers Logs), never the payload.
+    const terminal = attempts >= maxAttempts;
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        area: "forward",
+        event: terminal ? "delivery-failed" : "attempt-failed",
+        waba: this.wabaIdForOps(),
+        phoneNumberId: row.phone_number_id,
+        deliveryId: row.id,
+        attempt: attempts,
+        error: error?.slice(0, 200) ?? null,
+      }),
+    );
+    if (terminal) await this.alertTerminalFailure(row.phone_number_id, error);
+  }
+
+  /**
+   * Counts one delivery that exhausted its attempts and decides whether it
+   * earns an alert. At most one alert per OPS_ALERT_INTERVAL_MS; the failures
+   * in between are counted and reported by the next alert, so a subscriber that
+   * is down all day costs 24 messages, not one per event.
+   *
+   * Synchronous SQL with no await between the read and the write: the six
+   * concurrent forwards of one alarm run in this same object, and two of them
+   * must not both decide to send.
+   */
+  recordTerminalFailure(now: number): { send: boolean; count: number } {
+    const read = (key: string): number =>
+      Number(this.sql.exec("SELECT value FROM ops_state WHERE key = ?", key).toArray()[0]?.value ?? 0);
+    const write = (key: string, value: number): void => {
+      this.sql.exec(
+        "INSERT INTO ops_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        key,
+        String(value),
+      );
+    };
+    const count = read("failures_since_alert") + 1;
+    if (now - read("failure_alert_at") < OPS_ALERT_INTERVAL_MS) {
+      write("failures_since_alert", count);
+      return { send: false, count };
+    }
+    write("failure_alert_at", now);
+    write("failures_since_alert", 0);
+    return { send: true, count };
+  }
+
+  private async alertTerminalFailure(phoneNumberId: string | null, error: string | null): Promise<void> {
+    const { send, count } = this.recordTerminalFailure(Date.now());
+    if (!send) return;
+    await sendOpsAlert(
+      this.env,
+      [
+        "Eccos: deliveries are failing",
+        `WABA ${this.wabaIdForOps()} · phone number id ${phoneNumberId ?? "unknown"}`,
+        `${count} ${count === 1 ? "delivery" : "deliveries"} exhausted every retry since the last alert`,
+        `Last error: ${error?.slice(0, 200) ?? "unknown"}`,
+      ].join("\n"),
+    );
+  }
+
+  /** The WABA this object serves, read off its idFromName name (gateway-stub.ts). */
+  private wabaIdForOps(): string {
+    return this.ctx.id.name?.split(":waba:")[1] ?? "unknown";
   }
 }
 
