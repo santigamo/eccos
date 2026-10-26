@@ -775,6 +775,56 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /**
+   * Re-enqueue every `failed` delivery enqueued inside [from, to] (eccos-r92o):
+   * the recovery step after a gateway fault such as eccos-ugb6, where hundreds
+   * of rows failed through no fault of the subscriber and the per-row Retry is
+   * not a real option.
+   *
+   * Operator action with an explicit window, never "all": a replayed event can
+   * be days old, and only the subscriber can say how late is too late. Each row
+   * goes out with the same `x-idempotency-key` it always had, so a subscriber
+   * that dedupes on it stays safe. Redacted rows cannot be replayed (see
+   * retryDelivery); they are counted and left as they are.
+   *
+   * Count and update run in one synchronous turn, so the reported number is the
+   * number moved. One alarm wake; the drain takes ALARM_BATCH rows at a time.
+   */
+  retryFailedDeliveries(from: number, to: number): { requeued: number; skippedRedacted: number } {
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+      throw new Error("invalid retry window: from and to must be epoch ms with from <= to");
+    }
+    const count = (redacted: boolean): number =>
+      Number(
+        this.sql
+          .exec(
+            `SELECT COUNT(*) AS c FROM deliveries
+             WHERE status = 'failed' AND created_at BETWEEN ? AND ? AND (payload = ?) = ?`,
+            from,
+            to,
+            REDACTED_PAYLOAD,
+            redacted ? 1 : 0,
+          )
+          .toArray()[0]?.c ?? 0,
+      );
+    const requeued = count(false);
+    const skippedRedacted = count(true);
+    if (requeued > 0) {
+      const now = Date.now();
+      this.sql.exec(
+        `UPDATE deliveries
+         SET status = 'pending', attempts = 0, last_error = NULL, finished_at = NULL, next_attempt_at = ?
+         WHERE status = 'failed' AND created_at BETWEEN ? AND ? AND payload != ?`,
+        now,
+        from,
+        to,
+        REDACTED_PAYLOAD,
+      );
+      this.ctx.storage.setAlarm(now);
+    }
+    return { requeued, skippedRedacted };
+  }
+
+  /**
    * Right-to-erasure (GDPR Art. 17): removes every trace of a phone number from
    * the three data tables, within whatever is still inside the retention window.
    *

@@ -115,6 +115,24 @@ export interface OutboundRow {
   trail?: OutboundTrailEvent[];
 }
 
+/**
+ * Which failed deliveries a bulk retry re-enqueues: those ENQUEUED inside
+ * [from, to] (epoch ms, both inclusive). The window is always explicit because
+ * a replayed event can be days old and only the subscriber can say how late is
+ * too late.
+ */
+export interface RetryFailedWindow {
+  from: number;
+  to: number;
+}
+
+export interface RetryFailedResult {
+  /** Rows moved back to `pending`, attempts reset. */
+  requeued: number;
+  /** Failed rows inside the window whose payload retention already emptied; left alone. */
+  skippedRedacted: number;
+}
+
 export interface DeliveryRecord {
   id: number;
   phone_number_id: string | null;
@@ -733,6 +751,12 @@ export interface GatewayApi {
     wabaId: string,
     accountId: string,
   ): Promise<{ ok: boolean; previousStatus: string | null }>;
+  /** Re-enqueue every failed delivery enqueued inside the window (eccos-r92o). */
+  retryFailedDeliveries(
+    window: RetryFailedWindow,
+    wabaId: string,
+    accountId: string,
+  ): Promise<RetryFailedResult>;
   listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult>;
   getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig>;
   setSubscriberConfig(

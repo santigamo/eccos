@@ -36,6 +36,8 @@ import type {
   OutboundRow,
   ReconcileWabaResult,
   ResubscribeResult,
+  RetryFailedResult,
+  RetryFailedWindow,
   SendTemplateTestInput,
   TemplateHeaderMediaFormat,
   SendTemplateTestResult,
@@ -293,6 +295,16 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   ): Promise<{ ok: boolean; previousStatus: string | null }> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.retryDelivery(id);
+  }
+
+  /** Bulk re-enqueue of failed deliveries inside an explicit window (eccos-r92o). */
+  async retryFailedDeliveries(
+    window: RetryFailedWindow,
+    wabaId: string,
+    accountId: string,
+  ): Promise<RetryFailedResult> {
+    const { stub } = await this.scoped(wabaId, accountId);
+    return stub.retryFailedDeliveries(window.from, window.to);
   }
 
   /** WABA-level read: the Graph call needs only the WABA id and its token, so a
