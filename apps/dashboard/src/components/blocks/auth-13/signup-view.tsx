@@ -19,6 +19,7 @@ import {
   resendVerificationOutcome,
 } from "@/components/auth/auth-page";
 import { PasswordField } from "@/components/auth/password-field";
+import { track } from "@/lib/analytics";
 import {
   validateEmail,
   validateName,
@@ -56,6 +57,7 @@ export function SignUpView() {
     event.preventDefault();
     setPending(true);
     setError(null);
+    track("signup_submit");
     let result: Awaited<ReturnType<typeof authClient.signUp.email>>;
     try {
       result = await authClient.signUp.email({

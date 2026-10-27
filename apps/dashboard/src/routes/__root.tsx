@@ -9,13 +9,32 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
+import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
+import { getAnalyticsConfig } from "../server/analytics"
 import { getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
+import type { AnalyticsConfig } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
 import { requirementSatisfied } from "../lib/scope-requirements"
 import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
+
+let documentAnalytics: Promise<AnalyticsConfig | null> | undefined
+
+/**
+ * Once per document: the session only changes across full page loads, so
+ * client navigations reuse the answer. Failures are not cached and never fail
+ * the loader.
+ */
+function loadAnalyticsConfig(): Promise<AnalyticsConfig | null> {
+  if (typeof window === "undefined") return getAnalyticsConfig().catch(() => null)
+  documentAnalytics ??= getAnalyticsConfig().catch(() => {
+    documentAnalytics = undefined
+    return null
+  })
+  return documentAnalytics
+}
 
 export const Route = createRootRoute({
   validateSearch: (search: Record<string, unknown>): ScopeSearch => {
@@ -63,13 +82,14 @@ export const Route = createRootRoute({
     // The checklist read is deliberately NOT folded into `getDashboardState`:
     // that shape drives the root redirect and the stage machine, and display
     // data has no business deciding where an operator lands.
-    const [user, forwardingTarget] = await Promise.all([
+    const [user, forwardingTarget, analytics] = await Promise.all([
       getSessionUser(),
       state.ok && state.data.stage !== "no-organization"
         ? hasForwardingTarget({ data: { wabaId: deps.wabaId } })
         : Promise.resolve(false),
+      loadAnalyticsConfig(),
     ])
-    return { ...state, user, hasForwardingTarget: forwardingTarget }
+    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics }
   },
   head: () => ({
     meta: [
@@ -168,7 +188,10 @@ function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
   return (
-    <RootDocument lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}>
+    <RootDocument
+      lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}
+      analytics={state.analytics}
+    >
       {state.ok && state.data.stage !== "no-organization" ? (
         // Authenticated tenant context. The chrome wraps every state that has
         // an organization, including the one with no WABA yet: the user is
@@ -186,11 +209,17 @@ function RootComponent() {
 function RootDocument({
   children,
   lanternExempt,
-}: Readonly<{ children: ReactNode; lanternExempt: boolean }>) {
+  analytics,
+}: Readonly<{
+  children: ReactNode
+  lanternExempt: boolean
+  analytics: AnalyticsConfig | null
+}>) {
   return (
     <html lang="en" className="dark">
       <head>
         <HeadContent />
+        <AnalyticsScripts analytics={analytics} />
       </head>
       <body>
         <a
@@ -203,6 +232,7 @@ function RootDocument({
             event, and the pre-auth screens navigate too. */}
         <RouteProgress />
         {lanternExempt ? null : <CursorLight />}
+        <AnalyticsIdentify userId={analytics?.userId ?? null} />
         {children}
         <Scripts />
       </body>

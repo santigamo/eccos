@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
+import { track, whenUmamiReady } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 /**
@@ -58,6 +60,17 @@ function skippedDetail(skipped: number): string {
  * fills up is.
  */
 export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeSearch) {
+  // Counted once per gateway redirect: a reload or Back renders the same URL.
+  // Success carries no parameter; it is tracked in `connect-number.tsx`.
+  useEffect(() => {
+    if (!connectError && !connectSkipped) return;
+    if (revisitedDocument()) return;
+    const result = connectError ?? "skipped";
+    void whenUmamiReady().then((umami) => {
+      if (umami) track("connect_outcome", { result });
+    });
+  }, [connectError, connectSkipped]);
+
   const detail = connectError
     ? CONNECT_FAILURES[connectError]
     : connectSkipped
@@ -78,4 +91,14 @@ export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeS
       {detail}
     </output>
   );
+}
+
+/** Was this document reached by a reload or history traversal? */
+function revisitedDocument(): boolean {
+  try {
+    const [entry] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+    return entry?.type === "reload" || entry?.type === "back_forward";
+  } catch {
+    return false;
+  }
 }

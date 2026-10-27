@@ -35,10 +35,17 @@
   // uses the server-side OAuth redirect to the gateway, which is the flow that
   // has always worked and the only one a self-hoster without a console has.
   // `META_GRAPH_VERSION` must match the gateway's (docs/deployment.md).
+  //
+  // Analytics (Umami) is opt-in: leave ANALYTICS_SCRIPT_URL or
+  // ANALYTICS_WEBSITE_ID empty to disable it. ANALYTICS_EXCLUDE_USER_IDS is a
+  // secret (`wrangler secret put`), never a var.
   "vars": {
     "META_APP_ID": "1424473183036863",
     "META_ES_CONFIG_ID": "2132668137322605",
-    "META_GRAPH_VERSION": "v25.0"
+    "META_GRAPH_VERSION": "v25.0",
+    "ANALYTICS_SCRIPT_URL": "https://analytics.imsanti.dev/script.js",
+    "ANALYTICS_WEBSITE_ID": "907a5d9e-193a-43d7-a84e-cc73aba4df99",
+    "ANALYTICS_DOMAINS": "app.eccos.chat"
   },
 
   // Dedicated auth D1 database (identity plane — docs/auth-tenancy-contract.md §3).

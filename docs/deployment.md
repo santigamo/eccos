@@ -92,6 +92,13 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 | `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
 | `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
 | `META_GRAPH_VERSION` | `v25.0` | Passed to `FB.init`. Keep equal to the gateway's — see [Meta Graph API version](#meta-graph-api-version) |
+| `ANALYTICS_SCRIPT_URL` | `""` | Umami tracker script URL. The checked-in `wrangler.jsonc` carries the hosted service's values — **blank this and `ANALYTICS_WEBSITE_ID` on a self-hosted deployment**: either one empty renders no tracker at all |
+| `ANALYTICS_WEBSITE_ID` | `""` | Umami website id |
+| `ANALYTICS_DOMAINS` | `app.eccos.chat` | Umami `data-domains`: exact hostnames the tracker counts on (no subdomain wildcard) |
+
+`ANALYTICS_EXCLUDE_USER_IDS` (optional, `wrangler secret put`) is a comma-separated list of Better
+Auth user ids whose browsers get no tracker at all — a secret rather than a var so no personal id is
+committed to this public repo.
 
 The dashboard reaches the gateway via the `GATEWAY` service binding declared in
 `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP); its own secrets are the three

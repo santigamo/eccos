@@ -20,6 +20,7 @@ import {
   loginOptions,
   parseSessionEvent,
 } from "../../lib/embedded-signup";
+import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
@@ -154,6 +155,7 @@ export function ConnectNumberChoices({
     function onMessage(event: MessageEvent) {
       const parsed = parseSessionEvent(event.origin, event.data);
       if (!parsed) return;
+      trackSessionEvent(parsed);
       // Telemetry must never break the flow the operator is in the middle of.
       void recordConnectSessionEvent({ data: parsed }).catch(() => {});
     }
@@ -197,12 +199,14 @@ export function ConnectNumberChoices({
       setError(result.data.error);
       return;
     }
+    track("connect_outcome", { result: "ok" });
     // The numbers table is a loader read; a reload is the honest way to show
     // what provisioning just did without duplicating its state here.
     window.location.assign(CONNECT_RETURN_PATH);
   }, []);
 
   async function start(path: ConnectPath) {
+    track("connect_choice", { path });
     setStarting(path);
     setError(null);
     try {
@@ -242,6 +246,7 @@ export function ConnectNumberChoices({
       }
 
       pendingState.current = handoff.data.state;
+      track("es_popup_open");
       sdk.login((response) => {
         const code = response.authResponse?.code;
         if (!code) {
