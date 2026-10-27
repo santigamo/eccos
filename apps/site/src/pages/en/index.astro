@@ -1,7 +1,11 @@
 ---
 import SiteLayout from "../../layouts/SiteLayout.astro";
+import Faq from "../../components/Faq.astro";
 import content from "../../page-content/landing.html?raw";
+import { splitAtFaq } from "../../lib/landing";
 import { getAbsoluteLocaleUrl } from "astro:i18n";
+
+const [before, after] = splitAtFaq(content);
 ---
 <SiteLayout
   title="Eccos · open-source WhatsApp gateway"
@@ -9,5 +13,7 @@ import { getAbsoluteLocaleUrl } from "astro:i18n";
   canonical={getAbsoluteLocaleUrl("en")}
   landing
 >
-  <Fragment set:html={content} />
+  <Fragment set:html={before} />
+  <Faq locale="en" />
+  <Fragment set:html={after} />
 </SiteLayout>

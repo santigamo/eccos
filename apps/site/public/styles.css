@@ -1198,6 +1198,41 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .wrap-tight p { color: var(--muted); max-width: 62ch; }
 
+/* ---------- §7b FAQ ---------- */
+
+/* Rows share the grid's rules instead of becoming cards: one 1px rule per
+   question, the answer set to the prose measure so a quoted passage reads the
+   same on the page as it does wherever an answer engine repeats it. */
+.faq { margin: 0; border-top: 1px solid var(--line); }
+.faq-row {
+  padding: clamp(22px, 2.4vw, 30px) var(--gut);
+  border-bottom: 1px solid var(--line);
+}
+.faq-row:last-child { border-bottom: 0; }
+.faq dt {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 46ch;
+}
+.faq dd {
+  margin: 10px 0 0;
+  color: var(--muted);
+  max-width: var(--measure);
+}
+
+@media (min-width: 900px) {
+  /* Question left, answer right: the scan column stays narrow and the answer
+     keeps its measure. */
+  .faq-row {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: clamp(20px, 3vw, 48px);
+    align-items: start;
+  }
+  .faq dd { margin-top: 0; }
+}
+
 /* ---------- §8 provider ---------- */
 
 .provider {

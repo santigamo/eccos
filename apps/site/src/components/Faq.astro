@@ -1,0 +1,51 @@
+---
+/**
+ * The FAQ band, rendered from src/data/product.ts — the same array that feeds
+ * the FAQPage JSON-LD in SiteLayout. Two lists would drift; this one cannot.
+ *
+ * It sits between the data band (§7) and the provider band (§8), so the page
+ * answers the buyer's objections before it introduces who is behind it.
+ */
+import { COPY, type Locale } from "../data/product";
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const es = locale === "es";
+const faq = COPY[locale].faq;
+
+/**
+ * Answers are stored as plain text, because the JSON-LD and /llms.txt quote
+ * them verbatim and an answer engine should get a URL it can follow. On the
+ * page the same URL becomes a link — the text stays identical, it just clicks.
+ */
+const linkify = (text: string) => text.split(/(https?:\/\/[^\s),]+)/g);
+---
+
+<div class="hatch" aria-hidden="true"></div>
+
+<section class="band" id="faq" aria-labelledby="faq-h">
+  <div class="wrap statement solo">
+    <p class="label reveal">{es ? "Preguntas frecuentes" : "Frequently asked"}</p>
+    <h2 id="faq-h" class="reveal">
+      {es ? "Lo que se pregunta " : "What people ask "}<span class="px"
+        >{es ? "antes de conectar" : "before connecting"}</span
+      >
+    </h2>
+  </div>
+
+  <dl class="faq">
+    {
+      faq.map((item) => (
+        <div class="faq-row reveal">
+          <dt>{item.q}</dt>
+          <dd>
+            {linkify(item.a).map((part) => (part.startsWith("http") ? <a href={part}>{part}</a> : part))}
+          </dd>
+        </div>
+      ))
+    }
+  </dl>
+</section>

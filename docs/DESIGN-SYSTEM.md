@@ -189,6 +189,14 @@ favicon stay dark — dark is the canonical brand rendering.
 - **Data table** (`.dtable`): machine-voice column headers, 1px row rules,
   green ✓ marks, lives inside a labelled `tabindex="0"` scroll container —
   the page body never scrolls horizontally.
+- **FAQ rows** (`.faq`, §7b): no accordion and no cards — a `dl` whose rows
+  share the grid's 1px rules, question left (≤46ch, Inter 600) and answer
+  right at the prose measure, collapsing to one column below 900px. The band
+  is rendered from `src/data/product.ts`, the same array that feeds the
+  FAQPage JSON-LD, because Google only honours the markup when the answers
+  are visible on the page — and an answer engine quotes what it can see.
+  Answers are stored as plain text and linkified at render, so the page and
+  the quoted passage stay the same sentence.
 - **Stat cells**: `.statnum` in pixel face `clamp(2.25rem, 4.8vw, 3.5rem)`,
   count-up on first view; caption muted, ≤30ch.
 - **Masthead**: sticky, blur backdrop over `rgba(7,12,15,.7)`, 1px bottom
@@ -283,7 +291,13 @@ These outrank aesthetics. Before shipping any site change, verify:
    never touch their text.
 3. **Zero third-party requests** except the Umami snippet, verbatim, exactly
    once per page (all five pages).
-4. **Routes are frozen** (`/privacy`, `/terms`, `/data-deletion` registered
+   Inline `application/ld+json` is not a request and is allowed.
+4. **`/llms.txt` is generated, never hand-written** — it and the landing's
+   JSON-LD and FAQ all read `src/data/product.ts`. A price or a guarantee
+   edited in the landing copy but not there leaves the machine-readable
+   surfaces contradicting the page, which is the failure this arrangement
+   exists to prevent.
+5. **Routes are frozen** (`/privacy`, `/terms`, `/data-deletion` registered
    with Meta); `wrangler.jsonc` keeps `html_handling: "drop-trailing-slash"`.
    (Local `wrangler dev` 404s `/` — local quirk only; verify the home with
    `python3 -m http.server` from `public/`.)

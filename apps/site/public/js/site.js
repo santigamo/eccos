@@ -174,15 +174,6 @@
     });
   }
 
-  var localeSwitch = document.querySelector(".lang-switch");
-  if (localeSwitch) {
-    listen(localeSwitch, "click", function () {
-      var locale = localeSwitch.getAttribute("hreflang");
-      if (locale !== "en" && locale !== "es") return;
-      try { localStorage.setItem("eccos-locale", locale); } catch (e) {}
-    });
-  }
-
   if (LIGHT_MQ) {
     var onScheme = function () { if (themeMode === "auto") transitionMode("auto"); };
     if (LIGHT_MQ.addEventListener) listen(LIGHT_MQ, "change", onScheme);
@@ -353,21 +344,44 @@
   /* ---------- 6. Umami event tracking ----------
 
      One delegated capture-phase click listener names every meaningful link
-     click ("area-click") and sends href, label text and owning section id as
-     event properties. Registered once per window (it must survive the
-     astro:before-swap / astro:page-load cycle, unlike everything above) and
-     silently inert when the tracker never loaded. */
+     click ("area-click") with href, label text, section and page language.
+     Registered once per window and inert when the tracker never loaded.
+     Pageviews are Umami's own: it wraps history.pushState, which is how
+     <ClientRouter> navigates. */
+
+  var APP_ORIGIN = "https://app.eccos.chat";
+
+  function pageLang() {
+    return (document.documentElement.lang || "").slice(0, 2) || "en";
+  }
 
   function trackEvent(name, props) {
     if (!window.umami || typeof window.umami.track !== "function") return;
-    try { window.umami.track(name, props); } catch (e) {}
+    try {
+      var data = props || {};
+      data.lang = pageLang();
+      window.umami.track(name, data);
+    } catch (e) {}
+  }
+
+  function appPath(href) {
+    try {
+      var url = new URL(href, window.location.href);
+      if (url.origin !== APP_ORIGIN) return null;
+      return url.pathname.toLowerCase().replace(/\/+$/, "") || "/";
+    } catch (e) {
+      return null;
+    }
   }
 
   function eventArea(link) {
     var href = link.getAttribute("href") || "";
     if (/^mailto:/i.test(href)) return "email";
     if (/github\.com\/santigamo\/eccos/i.test(href)) return "github";
-    if (/^https?:\/\/app\.eccos\.chat/i.test(href)) return "app";
+    var path = appPath(href);
+    if (path === "/signup") return "signup";
+    if (path === "/signin") return "signin";
+    if (path !== null) return "app";
     if (/^https?:\/\//i.test(href) && !/^https?:\/\/(www\.)?eccos\.chat/i.test(href)) return "outbound";
     if (link.classList.contains("lang-switch")) return "lang";
     return "nav";
@@ -378,6 +392,34 @@
     return sec ? sec.id : "";
   }
 
+  /* The landing band a CTA sits in, carried to the app as utm_content. The
+     final CTA band has no id (frozen fragment), so its heading id names it. */
+  function attributionSection(link) {
+    var band = link.closest("section");
+    if (band) {
+      if (band.id) return band.id;
+      var label = band.getAttribute("aria-labelledby");
+      if (label) return label.replace(/-h$/, "");
+    }
+    if (link.closest("header")) return "header";
+    if (link.closest("footer")) return "footer";
+    if (link.closest("nav")) return "nav";
+    return "page";
+  }
+
+  function attributeAppLinks() {
+    var links = document.querySelectorAll('a[href^="' + APP_ORIGIN + '"]');
+    for (var i = 0; i < links.length; i++) {
+      var url;
+      try { url = new URL(links[i].getAttribute("href")); } catch (e) { continue; }
+      url.searchParams.set("utm_source", "eccos.chat");
+      url.searchParams.set("utm_medium", "landing");
+      url.searchParams.set("utm_content", attributionSection(links[i]));
+      url.searchParams.set("utm_term", pageLang());
+      links[i].setAttribute("href", url.toString());
+    }
+  }
+
   if (!window.__eccosTracked) {
     window.__eccosTracked = true;
     document.addEventListener("click", function (e) {
@@ -386,10 +428,41 @@
       var link = target.closest("a[href]");
       if (!link) return;
       trackEvent(eventArea(link) + "-click", {
-        href: link.getAttribute("href"),
+        /* without the query: the UTM rewrite would split one CTA in two */
+        href: (link.getAttribute("href") || "").replace(/\?[^#]*/, ""),
         text: (link.textContent || "").trim().slice(0, 60),
         section: sectionOf(link)
       });
     }, true);
   }
+
+  /* "pricing-view": once per page, when #pricing fills half the screen (or
+     all of itself, if shorter). A band taller than the viewport never reaches
+     a 0.5 ratio, hence the threshold ladder and the height check. */
+  var pricingObserver = null;
+
+  function trackPricingView() {
+    var pricing = document.getElementById("pricing");
+    if (!pricing || !("IntersectionObserver" in window)) return;
+    pricingObserver = new IntersectionObserver(function (entries, observer) {
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        var enough = Math.min(window.innerHeight / 2, entry.boundingClientRect.height);
+        if (!entry.isIntersecting || entry.intersectionRect.height < enough) continue;
+        observer.disconnect();
+        trackEvent("pricing-view");
+        return;
+      }
+    }, { threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1] });
+    pricingObserver.observe(pricing);
+  }
+
+  document.addEventListener("astro:before-swap", function () {
+    if (pricingObserver) pricingObserver.disconnect();
+    pricingObserver = null;
+  });
+  document.addEventListener("astro:page-load", function () {
+    attributeAppLinks();
+    trackPricingView();
+  });
 })();

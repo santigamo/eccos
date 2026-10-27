@@ -1,6 +1,6 @@
 {
   "name": "@eccos/dashboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Eccos operator dashboard — TanStack Start (React) on Cloudflare Workers, talks to the gateway over an RPC service binding.",
   "type": "module",
   "private": true,
