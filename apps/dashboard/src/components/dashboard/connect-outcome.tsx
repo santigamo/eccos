@@ -60,19 +60,12 @@ function skippedDetail(skipped: number): string {
  * fills up is.
  */
 export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeSearch) {
-  // The outcome arrives once, in the URL the gateway redirects with. Tracked
-  // here because both /numbers containers render this same component — the
-  // first-run panel and the populated page — and neither owns the reading.
-  // Success is silent in the URL, so "ok" is reported where it is observed
-  // (`connect-number.tsx`'s completed exchange).
-  // The parameter also outlives the moment: a reload or a Back to this URL
-  // renders the same banner again, and must not count the same outcome twice.
+  // Counted once per gateway redirect: a reload or Back renders the same URL.
+  // Success carries no parameter; it is tracked in `connect-number.tsx`.
   useEffect(() => {
     if (!connectError && !connectSkipped) return;
     if (revisitedDocument()) return;
     const result = connectError ?? "skipped";
-    // This lands on a fresh document load (the gateway's redirect), where the
-    // deferred tracker may not have run yet when the effect does.
     void whenUmamiReady().then((umami) => {
       if (umami) track("connect_outcome", { result });
     });
