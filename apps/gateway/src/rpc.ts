@@ -13,6 +13,7 @@ import { sendMessage } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import type {
+  AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
@@ -29,6 +30,7 @@ import type {
   GatewayStatus,
   Health,
   InboundListOpts,
+  IssuedApiKey,
   InboundRow,
   ManualConnectResult,
   OperatorCounts,
@@ -690,6 +692,23 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async listAccountResources(accountId: string): Promise<AccountResources> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).listAccountResources(account);
+  }
+
+  /** Account-key management for the console (eccos-bm92): the same control-plane
+   * methods the admin HTTP routes use, scoped to the dashboard-resolved account. */
+  async listApiKeys(accountId: string): Promise<AccountKeyResource[]> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).listApiKeys(account);
+  }
+
+  async issueApiKey(accountId: string, label?: string): Promise<IssuedApiKey> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).issueApiKey(account, label);
+  }
+
+  async revokeApiKey(accountId: string, keyId: string): Promise<boolean> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).revokeApiKey(account, keyId);
   }
 
   /** Idempotent organization→account provisioning (contract §2). Creates no API

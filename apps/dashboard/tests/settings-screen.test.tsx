@@ -19,6 +19,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { SettingsView } = await import("../src/routes/settings");
+const { IssuedKeyNotice } = await import("../src/components/dashboard/api-keys");
 
 describe("SettingsView", () => {
   const html = renderToStaticMarkup(<SettingsView accountId="account-a" />);
@@ -57,5 +58,64 @@ describe("SettingsView", () => {
     expect(empty).toContain("Settings");
     expect(empty).not.toContain("Gateway unreachable");
     expect(empty).not.toContain("Account ID");
+  });
+});
+
+describe("API keys panel", () => {
+  const keys = {
+    ok: true as const,
+    data: [
+      { keyId: "key_live", label: "prod", createdAt: 1, revokedAt: null },
+      { keyId: "key_old", label: null, createdAt: 0, revokedAt: 2 },
+    ],
+  };
+
+  test("an administrator gets the create form, the list, and the send snippet", () => {
+    const html = renderToStaticMarkup(
+      <SettingsView accountId="account-a" keys={keys} wabaId="1234567890" />,
+    );
+    expect(html).toContain("API keys");
+    expect(html).toContain("Create key");
+    expect(html).toContain("key_live");
+    expect(html).toContain("Revoke");
+    expect(html).toContain("Revoked");
+    expect(html).toContain("https://api.eccos.chat/v1/wabas/1234567890/messages");
+    expect(html).toContain("Authorization: Bearer &lt;API_KEY&gt;");
+  });
+
+  test("a role without administer sees the refusal, and no control to act with", () => {
+    const html = renderToStaticMarkup(
+      <SettingsView
+        accountId="account-a"
+        keys={{
+          ok: false,
+          kind: "forbidden",
+          reason: "missing-permission",
+          error: 'missing "administer" permission in this organization',
+        }}
+      />,
+    );
+    expect(html).toContain("API keys");
+    expect(html).toContain("Not available to your role");
+    expect(html).not.toContain("Create key");
+    expect(html).not.toContain("Revoke");
+    expect(html).not.toContain("Bearer");
+  });
+
+  test("with no WABA yet the snippet keeps the placeholder", () => {
+    const html = renderToStaticMarkup(
+      <SettingsView accountId="account-a" keys={{ ok: true, data: [] }} />,
+    );
+    expect(html).toContain("/v1/wabas/&lt;WABA_ID&gt;/messages");
+    expect(html).toContain("No keys yet");
+  });
+
+  test("a new key is shown once, with a copy control and the warning", () => {
+    const html = renderToStaticMarkup(
+      <IssuedKeyNotice issued={{ keyId: "key_new", apiKey: "ek_secret" }} onDone={() => {}} />,
+    );
+    expect(html).toContain("ek_secret");
+    expect(html).toContain("Copy");
+    expect(html).toContain("You won&#x27;t see this key again");
   });
 });

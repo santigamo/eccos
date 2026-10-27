@@ -324,6 +324,13 @@ export interface AccountKeyResource {
   revokedAt: number | null;
 }
 
+/** A freshly issued account key. `apiKey` exists only in this value: the gateway
+ * stores its hash and can never return it again. */
+export interface IssuedApiKey {
+  keyId: string;
+  apiKey: string;
+}
+
 export interface AccountPhoneResource {
   wabaId: string;
   phoneNumberId: string;
@@ -801,6 +808,13 @@ export interface GatewayApi {
   exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
+  /** The account's API keys, metadata only (never the secret or its hash). */
+  listApiKeys(accountId: string): Promise<AccountKeyResource[]>;
+  /** Issue an `ek_` key for the account; the raw key is returned once, here. */
+  issueApiKey(accountId: string, label?: string): Promise<IssuedApiKey>;
+  /** Revoke one of the account's keys. False when the key is not the account's
+   * or is already revoked. */
+  revokeApiKey(accountId: string, keyId: string): Promise<boolean>;
   /** Start Embedded Signup for one already-resolved account id (the dashboard
    * resolves it from the organization link; never a browser-supplied id).
    *
