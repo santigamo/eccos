@@ -20,6 +20,7 @@ import {
   loginOptions,
   parseSessionEvent,
 } from "../../lib/embedded-signup";
+import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
@@ -154,6 +155,9 @@ export function ConnectNumberChoices({
     function onMessage(event: MessageEvent) {
       const parsed = parseSessionEvent(event.origin, event.data);
       if (!parsed) return;
+      // The funnel reading of the same event: which screen the customer left
+      // on (`es_cancel`), Meta's own error code (`es_error`), or completion.
+      trackSessionEvent(parsed);
       // Telemetry must never break the flow the operator is in the middle of.
       void recordConnectSessionEvent({ data: parsed }).catch(() => {});
     }
@@ -197,12 +201,16 @@ export function ConnectNumberChoices({
       setError(result.data.error);
       return;
     }
+    // A completed exchange is the one place the console OBSERVES a successful
+    // connect (the gateway's redirect path arrives with no outcome parameter).
+    track("connect_outcome", { result: "ok" });
     // The numbers table is a loader read; a reload is the honest way to show
     // what provisioning just did without duplicating its state here.
     window.location.assign(CONNECT_RETURN_PATH);
   }, []);
 
   async function start(path: ConnectPath) {
+    track("connect_choice", { path });
     setStarting(path);
     setError(null);
     try {
@@ -242,6 +250,7 @@ export function ConnectNumberChoices({
       }
 
       pendingState.current = handoff.data.state;
+      track("es_popup_open");
       sdk.login((response) => {
         const code = response.authResponse?.code;
         if (!code) {

@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
+import { track, whenUmamiReady } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 /**
@@ -58,6 +60,24 @@ function skippedDetail(skipped: number): string {
  * fills up is.
  */
 export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeSearch) {
+  // The outcome arrives once, in the URL the gateway redirects with. Tracked
+  // here because both /numbers containers render this same component — the
+  // first-run panel and the populated page — and neither owns the reading.
+  // Success is silent in the URL, so "ok" is reported where it is observed
+  // (`connect-number.tsx`'s completed exchange).
+  // The parameter also outlives the moment: a reload or a Back to this URL
+  // renders the same banner again, and must not count the same outcome twice.
+  useEffect(() => {
+    if (!connectError && !connectSkipped) return;
+    if (revisitedDocument()) return;
+    const result = connectError ?? "skipped";
+    // This lands on a fresh document load (the gateway's redirect), where the
+    // deferred tracker may not have run yet when the effect does.
+    void whenUmamiReady().then((umami) => {
+      if (umami) track("connect_outcome", { result });
+    });
+  }, [connectError, connectSkipped]);
+
   const detail = connectError
     ? CONNECT_FAILURES[connectError]
     : connectSkipped
@@ -78,4 +98,14 @@ export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeS
       {detail}
     </output>
   );
+}
+
+/** Was this document reached by a reload or history traversal? */
+function revisitedDocument(): boolean {
+  try {
+    const [entry] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+    return entry?.type === "reload" || entry?.type === "back_forward";
+  } catch {
+    return false;
+  }
 }

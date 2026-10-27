@@ -35,10 +35,27 @@
   // uses the server-side OAuth redirect to the gateway, which is the flow that
   // has always worked and the only one a self-hoster without a console has.
   // `META_GRAPH_VERSION` must match the gateway's (docs/deployment.md).
+  //
+  // ── Analytics (Umami, opt-in) ────────────────────────────────────────────
+  // ONE website shared with the landing (hostname separates app from site).
+  // Leave `ANALYTICS_SCRIPT_URL` or `ANALYTICS_WEBSITE_ID` EMPTY to disable it
+  // entirely: a self-hosted console then renders no tracker, installs no hook
+  // and runs no analytics code path — the promise docs/privacy.md makes.
+  //
+  // `ANALYTICS_DOMAINS` is passed to Umami's `data-domains`, which matches
+  // hostnames LITERALLY (no subdomain wildcard): app.eccos.chat in production,
+  // `localhost` when measuring a local run. `ANALYTICS_EXCLUDE_USER_IDS` is a
+  // comma-separated Better Auth user id list whose traffic is not counted at
+  // all — set it at deploy time (`wrangler secret put ANALYTICS_EXCLUDE_USER_IDS`)
+  // rather than committing a personal id to this public repo. It is a secret,
+  // not a var: Wrangler rejects a binding name declared as both.
   "vars": {
     "META_APP_ID": "1424473183036863",
     "META_ES_CONFIG_ID": "2132668137322605",
-    "META_GRAPH_VERSION": "v25.0"
+    "META_GRAPH_VERSION": "v25.0",
+    "ANALYTICS_SCRIPT_URL": "https://analytics.imsanti.dev/script.js",
+    "ANALYTICS_WEBSITE_ID": "907a5d9e-193a-43d7-a84e-cc73aba4df99",
+    "ANALYTICS_DOMAINS": "app.eccos.chat"
   },
 
   // Dedicated auth D1 database (identity plane — docs/auth-tenancy-contract.md §3).

@@ -4,6 +4,7 @@ import { AuthSplitShell } from "./components/auth";
 import { LoginForm, type FormSubmitEvent } from "./components/login-form";
 import { authErrorMessage } from "@/components/auth/auth-page";
 import { validateEmail } from "./components/validation";
+import { track } from "@/lib/analytics";
 
 /**
  * Sign-in view on the reui auth-13 split-screen skeleton, adapted to the
@@ -44,6 +45,7 @@ export function SignInView({
     setFieldErrors({});
     setPending(true);
     setError(null);
+    track("signin_submit");
     let result: Awaited<ReturnType<typeof authClient.signIn.email>>;
     try {
       result = await authClient.signIn.email({

@@ -9,13 +9,38 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
+import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
+import { getAnalyticsContext } from "../server/analytics"
 import { getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
+import type { AnalyticsClientConfig } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
 import { requirementSatisfied } from "../lib/scope-requirements"
 import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
+
+let documentAnalytics: Promise<AnalyticsClientConfig | null> | undefined
+
+/**
+ * The analytics context, resolved once per DOCUMENT.
+ *
+ * Who is signed in and which workspace is active only change across a full
+ * page load (sign-in/out, onboarding, workspace switch and invitation accept
+ * all `location.assign`/`reload`), so re-asking on every client navigation
+ * would buy an extra server-fn request and three Better Auth reads for an
+ * answer that cannot have moved. On the server every request IS a document,
+ * so nothing is memoized there. A failure is never cached, and never fails the
+ * loader: a missing pageview is worth less than the console.
+ */
+function loadAnalyticsContext(): Promise<AnalyticsClientConfig | null> {
+  if (typeof window === "undefined") return getAnalyticsContext().catch(() => null)
+  documentAnalytics ??= getAnalyticsContext().catch(() => {
+    documentAnalytics = undefined
+    return null
+  })
+  return documentAnalytics
+}
 
 export const Route = createRootRoute({
   validateSearch: (search: Record<string, unknown>): ScopeSearch => {
@@ -60,16 +85,25 @@ export const Route = createRootRoute({
     // together because they do not depend on each other: two sequential awaits
     // here would add a round trip to every navigation.
     //
+    // The analytics context joins them for the same reason, and it is the one
+    // piece of document markup that needs server data: the tracker config and
+    // the HASHED user id (the raw id never leaves the Worker). Null when
+    // analytics is off or the user is excluded, which is exactly what makes
+    // `RootDocument` render no script at all. `head()` stays static — see the
+    // note there. It is resolved once per document, not per navigation
+    // (`loadAnalyticsContext`).
+    //
     // The checklist read is deliberately NOT folded into `getDashboardState`:
     // that shape drives the root redirect and the stage machine, and display
     // data has no business deciding where an operator lands.
-    const [user, forwardingTarget] = await Promise.all([
+    const [user, forwardingTarget, analytics] = await Promise.all([
       getSessionUser(),
       state.ok && state.data.stage !== "no-organization"
         ? hasForwardingTarget({ data: { wabaId: deps.wabaId } })
         : Promise.resolve(false),
+      loadAnalyticsContext(),
     ])
-    return { ...state, user, hasForwardingTarget: forwardingTarget }
+    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics }
   },
   head: () => ({
     meta: [
@@ -88,7 +122,8 @@ export const Route = createRootRoute({
       // this head, so an unfurl can never leak a workspace name, a number, or
       // anything else scoped to whoever happened to render the page — and an
       // unfurler is unauthenticated anyway, so it only ever sees the sign-in
-      // shell.
+      // shell. The Umami tags are loader-driven, so they are rendered by
+      // `RootDocument` instead of being added here.
       {
         name: "description",
         content:
@@ -168,7 +203,10 @@ function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
   return (
-    <RootDocument lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}>
+    <RootDocument
+      lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}
+      analytics={state.analytics}
+    >
       {state.ok && state.data.stage !== "no-organization" ? (
         // Authenticated tenant context. The chrome wraps every state that has
         // an organization, including the one with no WABA yet: the user is
@@ -186,11 +224,19 @@ function RootComponent() {
 function RootDocument({
   children,
   lanternExempt,
-}: Readonly<{ children: ReactNode; lanternExempt: boolean }>) {
+  analytics,
+}: Readonly<{
+  children: ReactNode
+  lanternExempt: boolean
+  analytics: AnalyticsClientConfig | null
+}>) {
   return (
     <html lang="en" className="dark">
       <head>
         <HeadContent />
+        {/* Analytics, when this Worker is configured for it. Null config ⇒
+            no script tag, no inline hook, nothing to opt out of. */}
+        <AnalyticsScripts analytics={analytics} />
       </head>
       <body>
         <a
@@ -203,6 +249,9 @@ function RootDocument({
             event, and the pre-auth screens navigate too. */}
         <RouteProgress />
         {lanternExempt ? null : <CursorLight />}
+        {/* Renders nothing; calls `umami.identify` once the deferred tracker is
+            ready. Hashed id only — the raw user id never reaches this file. */}
+        <AnalyticsIdentify user={analytics?.user ?? null} />
         {children}
         <Scripts />
       </body>
