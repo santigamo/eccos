@@ -5,7 +5,7 @@
 #
 #   ./scripts/check-site-links.sh
 #
-# Pure shell + rg + python3; no dependencies. Exits non-zero on the first
+# Pure shell + grep + python3; no dependencies. Exits non-zero on the first
 # problem found (safe to gate a deploy on its exit code).
 set -euo pipefail
 
@@ -20,7 +20,7 @@ cd "$SITE_ROOT"
 fail=0
 
 # Every generated HTML file in dist/ (index, subdirectories, and 404.html).
-PAGES=$(rg --files -g '*.html' | sort)
+PAGES=$(find . -type f -name '*.html' | sed 's|^\./||' | sort)
 if [[ -z "$PAGES" ]]; then
   echo "no pages found under $SITE_ROOT" >&2
   exit 1
@@ -35,9 +35,9 @@ for page in $PAGES; do
   # Internal hrefs/srcs that point at the site itself (/, /privacy, assets…).
   # Skip: external http(s), mailto, fragment-only, and query-only hrefs.
   refs="$(
-    rg -o '(href|src)="[^"]+"' "$file" \
+    grep -oE '(href|src)="[^"]+"' "$file" \
       | sed -E 's/^(href|src)="//; s/"$//' \
-      | rg '^/' || true
+      | grep '^/' || true
   )"
 
   for ref in $refs; do
