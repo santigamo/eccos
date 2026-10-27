@@ -400,6 +400,7 @@ export function CreateTemplateFields({
         {draft.buttons.map((button, index) => {
           const dynamic = button.url.includes("{{");
           return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition ("Button n"); the inputs are controlled
             <div key={index} className="flex flex-col gap-3 border border-(--line) p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted-foreground">Button {index + 1}</span>

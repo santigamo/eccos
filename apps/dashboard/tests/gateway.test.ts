@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { UnauthorizedError } from "../src/auth/session";
 
@@ -73,9 +73,22 @@ const ORG_ID = "org-fixture";
 // mocked resolveMemberships while permissions.test.ts (same bun process) keeps
 // working against the real requirePermission/verifyMembership/ForbiddenError.
 const realTenant = await import("../src/auth/tenant?real-module");
+const realServerAuth = await import("../src/auth/server-auth?real-module");
+
+// Bun cannot unregister a `mock.module`, and re-registering the real module
+// later does not replace it. So the fakes below are scoped to THIS file by
+// construction: once its tests finish they delegate to the real modules, and a
+// later file (`tests/workspace-select.test.ts` in CI's Linux order) gets real
+// auth no matter which order bun walks the directory in.
+let fakesActive = true;
+afterAll(() => {
+  fakesActive = false;
+});
+
 mock.module("../src/auth/tenant", () => ({
   ...realTenant,
-  resolveMemberships: async () => fakeMemberships,
+  resolveMemberships: (...args: Parameters<typeof realTenant.resolveMemberships>) =>
+    fakesActive ? Promise.resolve(fakeMemberships) : realTenant.resolveMemberships(...args),
 }));
 
 // The seam throws the SAME typed errors the real guards do — the boundary in
@@ -84,40 +97,46 @@ mock.module("../src/auth/tenant", () => ({
 // from `realTenant` because that is the very class the mocked `../auth/tenant`
 // re-publishes, and therefore the one gateway.ts holds.
 const { ForbiddenError } = realTenant;
-// THIS REGISTRATION OUTLIVES THIS FILE. Bun's module registry is process-global
-// and never resets between test files, so any later-running test that imports
-// `../src/auth/server-auth` gets THIS mock, not the real module. A test that
-// needs the real one must import it through the `?real-module` query specifier
-// — `tests/request-memo.test.ts` does exactly that, and says why.
+// This registration outlives the file (see `fakesActive` above), so every fake
+// falls through to the real module once this file's tests are done.
+const fakeServerAuth = {
+  UnauthorizedError,
+  // Mirrors the real requirePermission's fail-closed ladder: no session,
+  // no membership, ambiguous membership, then the capability check.
+  requireGatewayPermission: async (_auth: unknown, _request: Request, action: string) => {
+    if (!fakeSessionHeaders) throw new UnauthorizedError();
+    if (fakeMemberships.length === 0) {
+      throw new ForbiddenError(
+        "no organization membership — create or join an organization first",
+        "no-organization",
+      );
+    }
+    if (fakeMemberships.length > 1) {
+      throw new ForbiddenError("select an organization", "select-organization");
+    }
+    if (fakeDeniedActions.has(action)) {
+      throw new ForbiddenError(
+        `missing "${action}" permission in this organization`,
+        "missing-permission",
+      );
+    }
+    return ORG_ID;
+  },
+  resolveMemberships: async () => fakeMemberships,
+  requireAuthContext: async (_auth: unknown, _request: Request) => {
+    if (!fakeSessionHeaders) throw new UnauthorizedError();
+    return { session: { userId: "user-1", email: "op@corp.test", emailVerified: true, name: "Op", sessionId: "sess-1", activeOrganizationId: null } };
+  },
+};
 mock.module("../src/auth/server-auth", () => ({
-      UnauthorizedError,
-      // Mirrors the real requirePermission's fail-closed ladder: no session,
-      // no membership, ambiguous membership, then the capability check.
-      requireGatewayPermission: async (_auth: unknown, _request: Request, action: string) => {
-        if (!fakeSessionHeaders) throw new UnauthorizedError();
-        if (fakeMemberships.length === 0) {
-          throw new ForbiddenError(
-            "no organization membership — create or join an organization first",
-            "no-organization",
-          );
-        }
-        if (fakeMemberships.length > 1) {
-          throw new ForbiddenError("select an organization", "select-organization");
-        }
-        if (fakeDeniedActions.has(action)) {
-          throw new ForbiddenError(
-            `missing "${action}" permission in this organization`,
-            "missing-permission",
-          );
-        }
-        return ORG_ID;
-      },
-      resolveMemberships: async () => fakeMemberships,
-      requireAuthContext: async (_auth: unknown, _request: Request) => {
-        if (!fakeSessionHeaders) throw new UnauthorizedError();
-        return { session: { userId: "user-1", email: "op@corp.test", emailVerified: true, name: "Op", sessionId: "sess-1", activeOrganizationId: null } };
-      },
-    }));
+  ...realServerAuth,
+  requireGatewayPermission: (...args: Parameters<typeof realServerAuth.requireGatewayPermission>) =>
+    fakesActive ? fakeServerAuth.requireGatewayPermission(...args) : realServerAuth.requireGatewayPermission(...args),
+  resolveMemberships: (...args: Parameters<typeof realTenant.resolveMemberships>) =>
+    fakesActive ? fakeServerAuth.resolveMemberships() : realTenant.resolveMemberships(...args),
+  requireAuthContext: (...args: Parameters<typeof realServerAuth.requireAuthContext>) =>
+    fakesActive ? fakeServerAuth.requireAuthContext(...args) : realServerAuth.requireAuthContext(...args),
+}));
 
 installServerFnMocks({
   env: workerEnv,
