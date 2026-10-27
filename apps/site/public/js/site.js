@@ -344,21 +344,64 @@
   /* ---------- 6. Umami event tracking ----------
 
      One delegated capture-phase click listener names every meaningful link
-     click ("area-click") and sends href, label text and owning section id as
-     event properties. Registered once per window (it must survive the
-     astro:before-swap / astro:page-load cycle, unlike everything above) and
-     silently inert when the tracker never loaded. */
+     click ("area-click") and sends href, label text, owning section id and the
+     page language as event properties. Links into the app are classified by
+     pathname, so sign-up and sign-in read the same on both landings.
+     Registered once per window (it must survive the astro:before-swap /
+     astro:page-load cycle, unlike everything above) and silently inert when
+     the tracker never loaded.
+
+     Pageviews under <ClientRouter>: Umami's tracker patches
+     history.pushState and history.replaceState and sends its own pageview
+     300 ms after the URL it sees changes. The router soft-navigates with
+     pushState, so client-side route changes are already counted — a
+     umami.track() from astro:page-load would count every one of them twice,
+     which is why this file has none. The gap is back/forward: a popstate
+     traversal reuses history state and never calls pushState, so neither
+     Umami nor this file counts that view; left uncounted rather than risk
+     double counting the push navigations. */
+
+  var APP_ORIGIN = "https://app.eccos.chat";
+  var APP_LINKS = 'a[href^="' + APP_ORIGIN + '"]';
+
+  function pageLang() {
+    return (document.documentElement.lang || "").slice(0, 2) || "en";
+  }
 
   function trackEvent(name, props) {
     if (!window.umami || typeof window.umami.track !== "function") return;
-    try { window.umami.track(name, props); } catch (e) {}
+    try {
+      var data = props || {};
+      data.lang = pageLang();
+      window.umami.track(name, data);
+    } catch (e) {}
+  }
+
+  /* Query strings are dropped: the attribution below appends UTM parameters
+     to every app link, and those would make two clicks on the same CTA look
+     like different destinations. */
+  function cleanHref(href) {
+    return href.replace(/\?[^#]*/, "");
+  }
+
+  function appPath(href) {
+    try {
+      var url = new URL(href, window.location.href);
+      if (url.origin !== APP_ORIGIN) return null;
+      return url.pathname.toLowerCase().replace(/\/+$/, "") || "/";
+    } catch (e) {
+      return null;
+    }
   }
 
   function eventArea(link) {
     var href = link.getAttribute("href") || "";
     if (/^mailto:/i.test(href)) return "email";
     if (/github\.com\/santigamo\/eccos/i.test(href)) return "github";
-    if (/^https?:\/\/app\.eccos\.chat/i.test(href)) return "app";
+    var path = appPath(href);
+    if (path === "/signup") return "signup";
+    if (path === "/signin") return "signin";
+    if (path !== null) return "app";
     if (/^https?:\/\//i.test(href) && !/^https?:\/\/(www\.)?eccos\.chat/i.test(href)) return "outbound";
     if (link.classList.contains("lang-switch")) return "lang";
     return "nav";
@@ -369,6 +412,47 @@
     return sec ? sec.id : "";
   }
 
+  /* Where a CTA was clicked travels with it to the app, because the referrer
+     stops being useful after the hop. The rewrite happens here, at runtime,
+     so the published landing fragments stay the documents they are. */
+  function attributionSection(link) {
+    /* The band, not the nearest id: the final CTA band carries no id of its
+       own (the fragment is frozen), and the nearest id above it is <main>.
+       Its heading id names it instead — "cta-h" reads as "cta". */
+    var band = link.closest("section");
+    if (band) {
+      if (band.id) return band.id;
+      var label = band.getAttribute("aria-labelledby");
+      if (label) return label.replace(/-h$/, "");
+    }
+    if (link.closest("header")) return "header";
+    if (link.closest("footer")) return "footer";
+    if (link.closest("nav")) return "nav";
+    return "page";
+  }
+
+  function attributeAppLinks() {
+    var links = document.querySelectorAll(APP_LINKS);
+    for (var i = 0; i < links.length; i++) {
+      var link = links[i];
+      var raw = link.getAttribute("href");
+      var url;
+      try {
+        url = new URL(raw);
+      } catch (e) {
+        continue;
+      }
+      /* set(), not append(): a second pass must not duplicate the campaign,
+         and an href that already carries utm_* is updated, not extended. */
+      url.searchParams.set("utm_source", "eccos.chat");
+      url.searchParams.set("utm_medium", "landing");
+      url.searchParams.set("utm_content", attributionSection(link));
+      url.searchParams.set("utm_term", pageLang());
+      var next = url.toString();
+      if (next !== raw) link.setAttribute("href", next);
+    }
+  }
+
   if (!window.__eccosTracked) {
     window.__eccosTracked = true;
     document.addEventListener("click", function (e) {
@@ -377,10 +461,68 @@
       var link = target.closest("a[href]");
       if (!link) return;
       trackEvent(eventArea(link) + "-click", {
-        href: link.getAttribute("href"),
+        href: cleanHref(link.getAttribute("href") || ""),
         text: (link.textContent || "").trim().slice(0, 60),
         section: sectionOf(link)
       });
     }, true);
   }
+
+  /* #pricing filling half the screen is the landing's buying signal. A band
+     taller than the viewport can never reach a 0.5 intersection ratio, so the
+     test is against the screen instead: half of it is pricing (or the whole
+     band, when the band is shorter than that). The threshold ladder matters —
+     an observer reports crossings, so a single 0 would fire once with the band
+     a sliver on screen and never again while it grows. One event per page
+     view: disconnect after firing, rebuild on the next astro:page-load. */
+  var PRICING_STEPS = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
+  var pricingObserver = null;
+  /* Per page view, not per observer: the first load runs trackPageLoad twice
+     (directly and on astro:page-load), and an observer that already fired
+     before the second pass must not be replaced by one that fires again. */
+  var pricingSent = false;
+
+  function trackPricingView() {
+    if (pricingObserver) {
+      pricingObserver.disconnect();
+      pricingObserver = null;
+    }
+    if (pricingSent) return;
+    var pricing = document.getElementById("pricing");
+    if (!pricing || !("IntersectionObserver" in window)) return;
+
+    var observer = new IntersectionObserver(function (entries) {
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (!entry.isIntersecting) continue;
+        var enough = Math.min(window.innerHeight / 2, entry.boundingClientRect.height);
+        if (entry.intersectionRect.height < enough) continue;
+        observer.disconnect();
+        if (pricingObserver === observer) pricingObserver = null;
+        pricingSent = true;
+        trackEvent("pricing-view");
+        return;
+      }
+    }, { threshold: PRICING_STEPS });
+    pricingObserver = observer;
+    observer.observe(pricing);
+  }
+
+  function trackPageLoad() {
+    attributeAppLinks();
+    trackPricingView();
+  }
+
+  document.addEventListener("astro:before-swap", function () {
+    pricingSent = false;
+    if (!pricingObserver) return;
+    pricingObserver.disconnect();
+    pricingObserver = null;
+  });
+  document.addEventListener("astro:page-load", trackPageLoad);
+
+  /* <ClientRouter> also fires astro:page-load on the first load, but only if
+     its own module ran; this pass keeps attribution and the pricing observer
+     alive when it did not. Both are idempotent. */
+  trackPageLoad();
 })();
