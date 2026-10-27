@@ -29,9 +29,18 @@ the same content, minus the Workers target's extra `config` table and message-id
 events plus ids/timestamps/error codes — there is no code path that downloads or persists WhatsApp
 media (images/audio/documents) today.
 
-**No analytics/telemetry data is collected or sent to any third party by this codebase.** The only
-network calls Eccos itself makes are to `graph.facebook.com` (Meta Cloud API) and to the operator's
-own `SUBSCRIBER_WEBHOOK_URL`.
+**The gateway sends no analytics or telemetry.** Its only network calls are to `graph.facebook.com`
+(Meta Cloud API) and to the operator's own `SUBSCRIBER_WEBHOOK_URL`.
+
+**The operator console has one opt-in analytics integration (Umami).** It is on only when
+`ANALYTICS_SCRIPT_URL` and `ANALYTICS_WEBSITE_ID` are set (`apps/dashboard/wrangler.jsonc`; see
+[`docs/deployment.md`](deployment.md)). When on, the browser loads that Umami tracker and sends
+pageviews and funnel events whose properties are enums and Meta error codes, plus a pseudonymous
+user id (first 16 hex chars of SHA-256 of `eccos:` + the account id). Every query parameter except
+`utm_*` is stripped from the URL and referrer before sending. Users listed in
+`ANALYTICS_EXCLUDE_USER_IDS` never load the tracker. The checked-in `wrangler.jsonc` carries Eccos
+Cloud's own values; a self-hosted deployment should blank them, and with either one empty nothing is
+rendered.
 
 ## 2. Retention
 
@@ -99,8 +108,10 @@ Third parties that see this data, and why:
   `observability.enabled` in `wrangler.jsonc`) retains Workers Logs of whatever the app
   `console.log`s (see §5 and `SECURITY.md`). No data is deliberately sent to Cloudflare beyond
   what's needed to run the Worker/DO.
-- **No other third party is contacted by this codebase** — no analytics SDKs, no error-reporting
-  services, no mailing list, no license-check phone-home.
+- **Umami** (console only, opt-in) — the analytics instance the operator configures, as described in
+  §1. Eccos Cloud runs its own, self-hosted; nothing reaches it unless the `ANALYTICS_*` vars are set.
+- **No other third party is contacted by this codebase** — no error-reporting services, no mailing
+  list, no license-check phone-home.
 
 ## 4. Operator access to stored data
 
