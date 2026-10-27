@@ -1,5 +1,8 @@
-import { createFileRoute, useLoaderData } from "@tanstack/react-router";
+import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { Page } from "../ui";
+import { listApiKeys, type AccountKeyResource, type Result } from "../server/gateway";
+import { ApiKeysPanel } from "../components/dashboard/api-keys";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Frame,
   FrameDescription,
@@ -9,7 +12,7 @@ import {
 } from "../components/reui/frame";
 
 /**
- * Settings — the workspace's own identifiers, and nothing else.
+ * Settings — the workspace's own identifiers and its API keys.
  *
  * It used to carry the forwarding target, the re-subscribe handshake and the
  * pasted-token panel. All three left, and each for its own reason: the first
@@ -20,34 +23,63 @@ import {
  *
  * The page keeps `requires: "none"` — but on the Workspace panel's own merits
  * now, not the token panel's: the account id is an account-level fact and does
- * not wait on a number.
+ * not wait on a number. API keys are account-level too.
  */
 export const Route = createFileRoute("/settings")({
+  loader: () => listApiKeys(),
   component: SettingsPage,
+  pendingComponent: () => (
+    <Page title="Settings" kicker="Configuration">
+      <Skeleton className="h-40 max-w-xl" />
+    </Page>
+  ),
 });
 
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
+  const keys = Route.useLoaderData();
+  const router = useRouter();
   // Both post-organization stages carry the account, in two shapes. Reachable
   // before any WABA exists, which is exactly why nothing here may need one.
   const ready = scope.ok && scope.data.stage === "ready" ? scope.data.scope : null;
   const pending =
     scope.ok && scope.data.stage === "account-ready" ? scope.data.resources : null;
   const accountId = ready?.accountId ?? pending?.account?.accountId;
-  return <SettingsView accountId={accountId} />;
+  const wabaId = ready?.selectedWabaId ?? pending?.wabas[0]?.wabaId;
+  return (
+    <SettingsView
+      accountId={accountId}
+      keys={keys}
+      wabaId={wabaId}
+      onKeysChanged={() => void router.invalidate()}
+    />
+  );
 }
 
 /**
  * The page itself, free of router hooks so it can be rendered directly
  * (`tests/settings-screen.test.tsx`).
  */
-export function SettingsView({ accountId }: { accountId?: string }) {
+export function SettingsView({
+  accountId,
+  keys,
+  wabaId,
+  onKeysChanged,
+}: {
+  accountId?: string;
+  keys?: Result<AccountKeyResource[]>;
+  wabaId?: string;
+  onKeysChanged?: () => void;
+}) {
   return (
     <Page title="Settings" kicker="Configuration">
       {/* A readable measure: full-bleed rows on a wide viewport read as a
           broken layout, not as a panel. */}
       <div className="flex max-w-xl flex-col gap-4">
         {accountId ? <WorkspacePanel accountId={accountId} /> : null}
+        {accountId && keys ? (
+          <ApiKeysPanel keys={keys} wabaId={wabaId} onChanged={onKeysChanged} />
+        ) : null}
       </div>
     </Page>
   );

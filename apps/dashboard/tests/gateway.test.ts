@@ -176,6 +176,11 @@ const {
   validateDeleteTemplateInput,
   connectWithToken,
   validateTokenConnectInput,
+  listApiKeys,
+  issueApiKey,
+  revokeApiKey,
+  validateIssueKeyInput,
+  validateRevokeKeyInput,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -1970,5 +1975,101 @@ describe("failure classification (authorization vs. transport)", () => {
     });
     const res = await getGatewayStatus();
     expect(res).toEqual(unreachable("Durable Object reset"));
+  });
+});
+
+// --- API keys (routes/settings.tsx) ---
+
+describe("listApiKeys / issueApiKey / revokeApiKey (Settings, API keys)", () => {
+  const RAW_KEY = "ek_rawsecretvalue_never_logged";
+
+  function keyBinding(calls: unknown[][]) {
+    withResources({
+      listApiKeys: async (...args: unknown[]) => {
+        calls.push(["list", ...args]);
+        return [{ keyId: "key_a1", label: "prod", createdAt: 1, revokedAt: null }];
+      },
+      issueApiKey: async (...args: unknown[]) => {
+        calls.push(["issue", ...args]);
+        return { keyId: "key_new", apiKey: RAW_KEY };
+      },
+      revokeApiKey: async (...args: unknown[]) => {
+        calls.push(["revoke", ...args]);
+        return true;
+      },
+    });
+  }
+
+  test("every call is scoped to the session's account, never a browser-supplied one", async () => {
+    const calls: unknown[][] = [];
+    keyBinding(calls);
+    expect(await listApiKeys()).toMatchObject({ ok: true, data: [{ keyId: "key_a1" }] });
+    expect(await issueApiKey({ data: { label: " prod ", accountId: "account-b" } })).toEqual({
+      ok: true,
+      data: { keyId: "key_new", apiKey: RAW_KEY },
+    });
+    expect(await revokeApiKey({ data: { keyId: "key_a1", accountId: "account-b" } })).toEqual({
+      ok: true,
+      data: true,
+    });
+    expect(calls).toEqual([
+      ["list", "account-a"],
+      ["issue", "account-a", "prod"],
+      ["revoke", "account-a", "key_a1"],
+    ]);
+  });
+
+  test("requires administer: an admin-less role is refused and the binding is never touched", async () => {
+    const calls: unknown[][] = [];
+    keyBinding(calls);
+    fakeDeniedActions = new Set(["administer", "erase"]);
+    for (const res of [
+      await listApiKeys(),
+      await issueApiKey({ data: {} }),
+      await revokeApiKey({ data: { keyId: "key_a1" } }),
+    ]) {
+      expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("fails closed without a session", async () => {
+    const calls: unknown[][] = [];
+    keyBinding(calls);
+    fakeSessionHeaders = null;
+    expect(await issueApiKey({ data: {} })).toMatchObject({ ok: false, kind: "unauthenticated" });
+    expect(calls).toEqual([]);
+  });
+
+  test("audits issue and revoke by key id, and never writes the raw key", async () => {
+    keyBinding([]);
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await issueApiKey({ data: { label: "prod" } });
+      await revokeApiKey({ data: { keyId: "key_a1" } });
+    } finally {
+      console.info = original;
+    }
+    const audits = emitted.filter((line) => line.includes('"area":"audit"'));
+    expect(audits).toHaveLength(2);
+    expect(audits[0]).toContain('"action":"api_key_issue"');
+    expect(audits[0]).toContain('"keyId":"key_new"');
+    expect(audits[1]).toContain('"action":"api_key_revoke"');
+    expect(audits[1]).toContain('"keyId":"key_a1"');
+    for (const line of emitted) expect(line).not.toContain(RAW_KEY);
+  });
+
+  test("the validators refuse malformed input", () => {
+    expect(validateIssueKeyInput({})).toEqual({});
+    expect(validateIssueKeyInput({ label: "   " })).toEqual({});
+    expect(() => validateIssueKeyInput({ label: 7 })).toThrow();
+    expect(() => validateIssueKeyInput({ label: "x".repeat(201) })).toThrow();
+    expect(validateRevokeKeyInput({ keyId: "key_abc123" })).toEqual({ keyId: "key_abc123" });
+    expect(() => validateRevokeKeyInput({ keyId: "key_../x" })).toThrow();
+    expect(() => validateRevokeKeyInput({})).toThrow();
   });
 });

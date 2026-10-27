@@ -18,6 +18,7 @@ import {
 import { ForbiddenError, resolveMemberships } from "../auth/tenant";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
+  AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
@@ -31,6 +32,7 @@ import type {
   GatewayStatus,
   InboundListOpts,
   InboundRow,
+  IssuedApiKey,
   ManualConnectResult,
   OutboundListOpts,
   OutboundRow,
@@ -53,6 +55,7 @@ type DashboardOutboundOpts = Omit<OutboundListOpts, "wabaId">;
 // dashboard reads the operator surface from a single source of truth
 // (`@eccos/gateway-contract`) — no more hand-mirrored shapes.
 export type {
+  AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
@@ -63,6 +66,7 @@ export type {
   GatewayStatus,
   Health,
   InboundRow,
+  IssuedApiKey,
   ManualConnectFailureCode,
   ManualConnectResult,
   OperatorCounts,
@@ -1061,12 +1065,12 @@ export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler
 );
 
 /**
- * Resolve the caller's Eccos account for an Embedded Signup mutation, creating
- * the link if this is the organization's first connection. Shared by
- * `startConnect` and the SDK exchange so the two cannot drift on who is allowed
- * to connect a number.
+ * Resolve the caller's Eccos account for an `administer` action (Embedded
+ * Signup, token attach, API keys), creating the link if this is the
+ * organization's first one. Shared so those actions cannot drift on who is
+ * allowed to perform them.
  */
-async function connectActorAccount(
+async function adminActorAccount(
   gateway: GatewayApi,
 ): Promise<{ actor: ActorContext; accountId: string }> {
   const actor = await requireActor("administer");
@@ -1117,7 +1121,7 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<ConnectExchangeResult>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await connectActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway);
         const result = await gateway.exchangeConnectCodeForAccountId(
           accountId,
           data.code,
@@ -1193,7 +1197,7 @@ export const connectWithToken = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<ManualConnectResult>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await connectActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway);
         const result = await gateway.connectWabaWithToken(accountId, data.token, data.wabaId);
         // NO token, and nothing derived from one. `candidates` is counted, not
         // listed, because the count is what makes the line legible; the WABA
@@ -1266,7 +1270,7 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<{ recorded: true }>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await connectActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway);
         auditEvent({
           action: "connect_session_event",
           actorUserId: actor.session.userId,
@@ -1282,6 +1286,79 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
           outcome: data.errorCode ? "failed" : "success",
         });
         return { recorded: true as const };
+      }),
+  );
+
+// --- API keys (settings page, eccos-bm92) ---
+
+const KEY_ID_PATTERN = /^key_[A-Za-z0-9]{1,64}$/;
+const MAX_KEY_LABEL_LENGTH = 200;
+
+export function validateIssueKeyInput(input: unknown): { label?: string } {
+  const label = inputRecord(input).label;
+  if (label === undefined || label === null) return {};
+  if (typeof label !== "string") throw new Error("label must be a string");
+  const trimmed = label.trim();
+  if (trimmed.length > MAX_KEY_LABEL_LENGTH) {
+    throw new Error(`label must be at most ${MAX_KEY_LABEL_LENGTH} characters`);
+  }
+  return trimmed ? { label: trimmed } : {};
+}
+
+export function validateRevokeKeyInput(input: unknown): { keyId: string } {
+  const keyId = inputRecord(input).keyId;
+  if (typeof keyId !== "string" || !KEY_ID_PATTERN.test(keyId)) throw new Error("invalid keyId");
+  return { keyId };
+}
+
+/** Key metadata for the caller's account. `administer`, like issuing: which
+ * keys exist is part of managing them. */
+export const listApiKeys = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<AccountKeyResource[]>> =>
+    withGateway(async (gateway) => {
+      const { accountId } = await adminActorAccount(gateway);
+      return gateway.listApiKeys(accountId);
+    }),
+);
+
+/** Issue an `ek_` key. The raw key crosses this boundary once, in the return
+ * value, and never reaches a log or audit line. */
+export const issueApiKey = createServerFn({ method: "POST" })
+  .validator(validateIssueKeyInput)
+  .handler(
+    ({ data }): Promise<Result<IssuedApiKey>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await adminActorAccount(gateway);
+        const issued = await gateway.issueApiKey(accountId, data.label);
+        auditEvent({
+          action: "api_key_issue",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          resource: { keyId: issued.keyId },
+          outcome: "success",
+        });
+        return issued;
+      }),
+  );
+
+/** Revoke one key of the caller's account; `false` when it is not one. */
+export const revokeApiKey = createServerFn({ method: "POST" })
+  .validator(validateRevokeKeyInput)
+  .handler(
+    ({ data }): Promise<Result<boolean>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await adminActorAccount(gateway);
+        const revoked = await gateway.revokeApiKey(accountId, data.keyId);
+        auditEvent({
+          action: "api_key_revoke",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          resource: { keyId: data.keyId },
+          outcome: revoked ? "success" : "failed",
+        });
+        return revoked;
       }),
   );
 

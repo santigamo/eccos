@@ -854,6 +854,26 @@ export class EccosControlPlane extends DurableObject<Env> {
     return revoked.length > 0;
   }
 
+  /** Key metadata of one account; the hash never leaves this method. */
+  listApiKeys(accountId: string): ApiKeySummary[] {
+    return this.keysOf(this.requireAccount(accountId));
+  }
+
+  private keysOf(accountId: string): ApiKeySummary[] {
+    return this.sql
+      .exec(
+        "SELECT key_id, label, created_at, revoked_at FROM api_keys WHERE account_id = ? ORDER BY key_id",
+        accountId,
+      )
+      .toArray()
+      .map((row) => ({
+        keyId: row.key_id as string,
+        label: row.label as string | null,
+        createdAt: row.created_at as number,
+        revokedAt: row.revoked_at as number | null,
+      }));
+  }
+
   /** Resolves an API key to its owner. Revoked keys fail closed (return null). */
   async authenticateApiKey(
     raw: string,
@@ -1622,18 +1642,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     if (!account) {
       return { account: null, keys: [], wabas: [], phones: [] };
     }
-    const keys = this.sql
-      .exec(
-        "SELECT key_id, label, created_at, revoked_at FROM api_keys WHERE account_id = ? ORDER BY key_id",
-        id,
-      )
-      .toArray()
-      .map((row) => ({
-        keyId: row.key_id as string,
-        label: row.label as string | null,
-        createdAt: row.created_at as number,
-        revokedAt: row.revoked_at as number | null,
-      }));
+    const keys = this.keysOf(id);
     const wabaRows = this.sql
       .exec(
         `SELECT w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
