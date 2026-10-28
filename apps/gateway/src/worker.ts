@@ -107,6 +107,22 @@ function logEvent(event: string, cid: string, status: number, meta: LogMeta = {}
   );
 }
 
+/** Names only — the `field` of each change and the keys of its value — so an
+ * ignored webhook says what Meta sent without logging any content. */
+function webhookShape(payload: unknown): string {
+  const parts = new Set<string>();
+  const entries = (payload as { entry?: unknown })?.entry;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const changes = (entry as { changes?: unknown })?.changes;
+    for (const change of Array.isArray(changes) ? changes : []) {
+      const { field, value } = (change ?? {}) as { field?: unknown; value?: unknown };
+      const keys = value && typeof value === "object" ? Object.keys(value).sort().join("+") : "";
+      parts.add(`${typeof field === "string" ? field : "?"}:${keys}`);
+    }
+  }
+  return [...parts].join(",").slice(0, 300);
+}
+
 function noStore(c: { header(name: string, value: string): void }): void {
   c.header("Cache-Control", "no-store");
 }
@@ -253,7 +269,11 @@ app.post("/webhooks/meta", async (c) => {
   }
   batches = known;
   if (batches.length === 0) {
-    logEvent("webhook_ignored", cid, 200, { bodyBytes: rawBody.length, ignoredEventCount });
+    logEvent("webhook_ignored", cid, 200, {
+      bodyBytes: rawBody.length,
+      ignoredEventCount,
+      shape: webhookShape(payload),
+    });
     return c.json({ ok: true, received: 0 });
   }
   const results = await Promise.all(
