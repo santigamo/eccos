@@ -13,6 +13,7 @@ import { authConfigFromEnv } from "./auth/config";
 import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
+import { beginTiming, finishTiming, logPerf } from "./server/timing";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -76,6 +77,7 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
     return forbidden();
   }
   const { pathname } = url;
+  beginTiming(request);
   // Media answers 401 rather than redirecting: an <img> cannot follow a sign-in page.
   const media = parseMediaPath(pathname);
   if (media) {
@@ -118,9 +120,14 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   }
 
   const response = await startHandler(request, opts);
+  const report = finishTiming(request);
   if (request.method === "POST" || !pathname.startsWith("/assets/")) {
     const headers = new Headers(response.headers);
     headers.set("Cache-Control", "private, no-store");
+    if (report) {
+      headers.set("Server-Timing", report.header);
+      if (pathname.startsWith("/_serverFn/")) logPerf(pathname, response.status, report);
+    }
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,

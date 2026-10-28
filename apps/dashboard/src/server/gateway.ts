@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createAuth, type Auth } from "../auth/auth";
 import { authConfigFromEnv } from "../auth/config";
 import { auditEvent } from "./audit";
+import { timedProxy } from "./timing";
 import type { SessionEvent } from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
@@ -806,7 +807,7 @@ async function withGateway<T>(
     // authorization refusal must come back classified as one, not escape as a
     // thrown server-function error (or, worse, get reported as a dead gateway).
     if (action) await requireGatewayPermission(requestAuth(), getRequest(), action);
-    return { ok: true, data: await fn(gateway) };
+    return { ok: true, data: await fn(timedProxy(getRequest().headers, gateway, "rpc-")) };
   } catch (err) {
     return classifyFailure(err);
   }
