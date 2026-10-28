@@ -443,7 +443,10 @@ export function createAuth(config: AuthConfig) {
     advanced: {
       // Native joins: one statement for session+user and for member+organization
       // instead of fallback queries (each D1 round trip is ~55 ms).
-      database: { joins: true },
+      // validateSchema: createAuth() runs per request and 1.7.3+ introspects the
+      // schema on every new instance (D1 falls back to ~2 PRAGMAs per table, and
+      // each auth call awaits it). Schema drift is guarded by migrations + tests.
+      database: { joins: true, validateSchema: false },
       // Explicit production posture: origin validation MUST run regardless of
       // NODE_ENV (Better Auth otherwise skips it in test environments).
       disableOriginCheck: false,
