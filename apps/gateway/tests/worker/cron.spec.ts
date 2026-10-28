@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { createScheduledController, reset, runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, createScheduledController, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EccosControlPlane } from "../../src/control-plane";
 import type { EccosGateway } from "../../src/gateway";
@@ -19,7 +19,7 @@ const CALLBACK_URL = "https://gateway.example/webhooks/meta";
  * mocks applied.
  */
 function runScheduled(): Promise<void> {
-  return worker.scheduled(createScheduledController({ scheduledTime: new Date() }), env);
+  return worker.scheduled!(createScheduledController({ scheduledTime: new Date() }), env, createExecutionContext());
 }
 
 async function registerPending(wabaId: string, phoneId: string): Promise<void> {

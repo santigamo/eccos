@@ -3,6 +3,7 @@ import {
   defaultStreamHandler,
 } from "@tanstack/react-start/server";
 import { createServerEntry, type ServerEntry } from "@tanstack/react-start/server-entry";
+import * as Sentry from "@sentry/cloudflare";
 import { env } from "cloudflare:workers";
 import { getAuthForRequest } from "./auth/request-auth";
 import {
@@ -13,6 +14,7 @@ import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
 import { beginTiming, finishTiming, logPerf } from "./server/timing";
+import { sentryOptions } from "./lib/sentry";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -136,4 +138,4 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   return response;
 };
 
-export default createServerEntry({ fetch: handleFetch });
+export default Sentry.withSentry(() => sentryOptions, createServerEntry({ fetch: handleFetch }));

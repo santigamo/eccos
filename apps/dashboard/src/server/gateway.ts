@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/cloudflare";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { env } from "cloudflare:workers";
@@ -847,6 +848,7 @@ async function classifyFailure(err: unknown): Promise<Failure> {
     }
     return { ok: false, kind: "forbidden", reason, error: message(err) };
   }
+  Sentry.captureException(err);
   return { ok: false, kind: "unreachable", error: message(err) };
 }
 

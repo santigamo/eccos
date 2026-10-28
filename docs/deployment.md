@@ -100,6 +100,10 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 Auth user ids whose browsers get no tracker at all — a secret rather than a var so no personal id is
 committed to this public repo.
 
+Error reporting is opt-in: the dashboard reads `VITE_SENTRY_DSN` at **build** time (server and
+browser share it), so put it in the repo `.env` that `scripts/deploy-dashboard.sh` sources. Unset
+builds a dashboard with Sentry disabled.
+
 The dashboard reaches the gateway via the `GATEWAY` service binding declared in
 `apps/dashboard/wrangler.jsonc` (RPC only, never public HTTP); its own secrets are the three
 above.
@@ -127,6 +131,7 @@ wrangler secret put ECCOS_ADMIN_API_KEY
 wrangler secret put ECCOS_TOKEN_ENCRYPTION_KEY
 wrangler secret put META_APP_ID     # optional: Embedded Signup /connect
 wrangler secret put META_ES_CONFIG_ID # optional: Embedded Signup /connect
+wrangler secret put SENTRY_DSN      # optional: error reporting to Sentry; unset disables it
 # Set GATEWAY_PUBLIC_URL in wrangler.jsonc (or pass --var) for dashboard-initiated Embedded Signup.
 cd ../..
 

@@ -13,6 +13,7 @@
   "dependencies": {
     "@eccos/core": "workspace:*",
     "@eccos/gateway-contract": "workspace:*",
+    "@sentry/cloudflare": "11.10.0",
     "hono": "^4.6.14",
     "zod": "^3.24.1"
   }

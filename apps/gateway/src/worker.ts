@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import * as Sentry from "@sentry/cloudflare";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
@@ -17,9 +18,14 @@ import { validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
+import { EccosGateway as Gateway } from "./gateway";
+import { EccosControlPlane as ControlPlane } from "./control-plane";
+import { sentryOptions } from "./sentry";
 
-export { EccosGateway } from "./gateway";
-export { EccosControlPlane } from "./control-plane";
+export const EccosGateway = Sentry.instrumentDurableObjectWithSentry(sentryOptions, Gateway);
+export type EccosGateway = Gateway;
+export const EccosControlPlane = Sentry.instrumentDurableObjectWithSentry(sentryOptions, ControlPlane);
+export type EccosControlPlane = ControlPlane;
 export { GatewayRPC } from "./rpc";
 
 type Bindings = Env;
@@ -139,6 +145,7 @@ function noStore(c: { header(name: string, value: string): void }): void {
 }
 
 app.onError((error, c) => {
+  Sentry.captureException(error);
   const path = new URL(c.req.url).pathname;
   const webhook = path === "/webhooks/meta";
   logEvent("unhandled_error", correlationId(c), webhook ? 200 : 500, {
@@ -779,4 +786,4 @@ const worker = {
   },
 };
 
-export default worker;
+export default Sentry.withSentry(sentryOptions, worker);

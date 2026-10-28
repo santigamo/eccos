@@ -3,6 +3,7 @@
   "name": "eccos",
   "main": "src/worker.ts",
   "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
 
   "observability": {
     "enabled": true,
@@ -115,4 +116,5 @@
   // on Settings — and leaving it unset disables the admin routes outright.
   // Per-tenant WABA credentials and subscriber settings live in the control
   // plane / per-WABA Durable Object state — never in Worker vars.
+  // SENTRY_DSN (optional secret) turns on error reporting; unset disables it.
 }
