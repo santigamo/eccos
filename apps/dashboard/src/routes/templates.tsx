@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidatePage } from "../lib/invalidate";
 import { createColumnHelper } from "@tanstack/react-table";
 import { MoreHorizontalIcon } from "lucide-react";
 import { GridEmptyState } from "../components/grid/empty-state";
@@ -39,8 +40,10 @@ import {
   DeleteTemplateDialog,
   type DeleteTarget,
 } from "../components/templates/delete-template-dialog";
+import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 export const Route = createFileRoute("/templates")({
+  staleTime: CONFIG_STALE_MS,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => listTemplates({ data: { wabaId: deps.wabaId } }),
   component: TemplatesPage,
@@ -392,7 +395,7 @@ function TemplatesPage() {
             if (!open) setCreating(false);
           }}
           wabaId={selectedWabaId}
-          onCreated={() => router.invalidate()}
+          onCreated={() => invalidatePage(router)}
         />
       ) : null}
       {deleteTarget && selectedWabaId ? (
@@ -404,7 +407,7 @@ function TemplatesPage() {
           onOpenChange={(open) => {
             if (!open) setDeleteTarget(null);
           }}
-          onDeleted={() => router.invalidate()}
+          onDeleted={() => invalidatePage(router)}
         />
       ) : null}
     </Page>

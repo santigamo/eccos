@@ -1,4 +1,5 @@
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidatePage } from "../lib/invalidate";
 import { Page } from "../ui";
 import {
   getConversationRetention,
@@ -16,6 +17,7 @@ import {
   FramePanel,
   FrameTitle,
 } from "../components/reui/frame";
+import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
  * Settings — the workspace's own identifiers, its API keys and its conversation history window.
@@ -32,11 +34,16 @@ import {
  * not wait on a number. API keys are account-level too.
  */
 export const Route = createFileRoute("/settings")({
+  staleTime: CONFIG_STALE_MS,
   loader: () => Promise.all([listApiKeys(), getConversationRetention()]),
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
-      <Skeleton className="h-40 max-w-xl" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Skeleton className="h-40" />
+        <Skeleton className="h-40" />
+        <Skeleton className="h-56 lg:col-span-2" />
+      </div>
     </Page>
   ),
 });
@@ -58,7 +65,7 @@ function SettingsPage() {
       keys={keys}
       retention={retention}
       wabaId={wabaId}
-      onKeysChanged={() => void router.invalidate()}
+      onKeysChanged={() => void invalidatePage(router)}
     />
   );
 }
@@ -82,15 +89,15 @@ export function SettingsView({
 }) {
   return (
     <Page title="Settings" kicker="Configuration">
-      {/* A readable measure: full-bleed rows on a wide viewport read as a
-          broken layout, not as a panel. */}
-      <div className="flex max-w-xl flex-col gap-4">
+      <div className="grid items-start gap-4 lg:grid-cols-2">
         {accountId ? <WorkspacePanel accountId={accountId} /> : null}
         {accountId && retention ? (
           <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
         ) : null}
         {accountId && keys ? (
-          <ApiKeysPanel keys={keys} wabaId={wabaId} onChanged={onKeysChanged} />
+          <div className="lg:col-span-2">
+            <ApiKeysPanel keys={keys} wabaId={wabaId} onChanged={onKeysChanged} />
+          </div>
         ) : null}
       </div>
     </Page>

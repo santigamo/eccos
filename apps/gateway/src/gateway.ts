@@ -19,6 +19,7 @@ import type {
   OutboundTrailEvent,
   SetSubscriberConfigInput,
   SubscriberConfig,
+  ThreadView,
 } from "@eccos/gateway-contract";
 import {
   type NewMessage,
@@ -461,6 +462,9 @@ export class EccosGateway extends DurableObject<Env> {
         );`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_at ON messages (wa_id, at);`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_target ON messages (target_id);`);
+        // Partial: the newest window-opening inbound of a thread reads at most one index entry.
+        this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_inbound ON messages (wa_id, at)
+          WHERE direction = 'in' AND type <> 'system';`);
         // Media bookkeeping (eccos-yqbz.6). One row per media id, in states: `failed`
         // (retried once `next_attempt_at` passes), `stored` (the R2 object exists),
         // `gone` (given up), `erased` (tombstone: the R2 object is due to be deleted).
@@ -878,6 +882,36 @@ export class EccosGateway extends DurableObject<Env> {
       .toArray();
     const items = rows.slice(0, limit).map(toMessageRecord).reverse();
     return { items, nextCursor: rows.length > limit ? encodeCursor(lastPosition(rows, limit)) : null };
+  }
+
+  /**
+   * Everything the console needs to open a thread, in one local read: a page of
+   * messages, the stored contact name, and where a reply goes out from. The reply
+   * is thread-wide, whatever page is asked for: the newest customer message that
+   * is not a system notice names the number and opens the window. With none, the
+   * reply uses the newest number named on the returned page and no window is open.
+   */
+  getThreadView(opts: { waId: string; limit?: number; cursor?: string }): ThreadView {
+    const page = this.getConversation(opts);
+    const waId = waIdOf(opts.waId);
+    const name = this.sql.exec(`SELECT name FROM contacts WHERE wa_id = ?`, waId).toArray()[0]?.name;
+    const inbound = this.sql
+      .exec(
+        `SELECT at, phone_number_id FROM messages
+         WHERE wa_id = ? AND direction = 'in' AND type <> 'system'
+         ORDER BY at DESC, rowid DESC LIMIT 1`,
+        waId,
+      )
+      .toArray()[0];
+    const newestNumber = [...page.items].reverse().find((m) => m.phoneNumberId)?.phoneNumberId ?? null;
+    const inboundNumber = (inbound?.phone_number_id as string | null | undefined) ?? null;
+    return {
+      page,
+      contactName: (name as string | null | undefined) ?? null,
+      reply: inbound && inboundNumber
+        ? { phoneNumberId: inboundNumber, lastInboundAt: Number(inbound.at) }
+        : { phoneNumberId: newestNumber, lastInboundAt: null },
+    };
   }
 
   /**

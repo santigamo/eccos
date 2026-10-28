@@ -8,21 +8,22 @@ import { ConversationThread } from "../components/conversations/conversation-thr
 import { FailureView } from "../components/dashboard/failure";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { RefreshControls } from "../components/logs/refresh-controls";
+import { useWhenIdle } from "../hooks/use-idle-prefetch";
 import { useLastGood } from "../hooks/use-last-good";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { useOlderPages } from "../hooks/use-older-pages";
-import { findInPages } from "../lib/history";
+import { prefetchThread, useThread } from "../hooks/use-thread";
 import { failureCopy, loaderFailure } from "../lib/failure";
 import {
   conversationsSearch,
   conversationTitle,
-  replyLineOf,
   threadEntries,
   type ReplyLine,
 } from "../lib/conversations";
 import { canSendMessages, getConversation, listConversations } from "../server/gateway";
 import type { ConversationSummary, CursorPage, Failure, MessageRecord } from "../server/gateway";
 import { Page } from "../ui";
+import { LIVE_STALE_MS } from "../lib/route-stale";
 
 /**
  * ── CONVERSATIONS ───────────────────────────────────────────────────────────
@@ -40,60 +41,28 @@ import { Page } from "../ui";
 
 const PAGE_SIZE = 50;
 
-/** How many list pages a thread's name may be looked up across, when its number is not on the first. */
-const NAME_LOOKUP_PAGES = 5;
+const IDLE_THREADS = 3;
 
 /** One grid for the list and the thread, shared with the pending view so the two never disagree on shape. */
 const PANES =
   "grid min-h-0 flex-1 grid-cols-1 border-y border-(--line) md:h-[min(72vh,46rem)] md:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]";
 
 export const Route = createFileRoute("/conversations")({
+  staleTime: LIVE_STALE_MS,
   validateSearch: conversationsSearch,
-  loaderDeps: ({ search }) => ({ wabaId: search.wabaId, waId: search.waId }),
+  // The open thread is not a dep: it is read by `useThread`, so opening one
+  // leaves the list on screen and waits in the thread pane alone.
+  loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: async ({ deps }) => {
-    const [conversations, messages, canSend] = await Promise.all([
+    const [conversations, canSend] = await Promise.all([
       listConversations({ data: { wabaId: deps.wabaId, limit: PAGE_SIZE } }).catch(loaderFailure),
-      deps.waId
-        ? getConversation({ data: { wabaId: deps.wabaId, waId: deps.waId, limit: PAGE_SIZE } }).catch(loaderFailure)
-        : null,
       canSendMessages().catch(() => false),
     ]);
-    const waId = deps.waId;
-    if (!messages?.ok || !waId) return { conversations, thread: messages?.ok ? null : messages, canSend };
-    const name = conversations.ok ? await nameOf(deps.wabaId, waId, conversations.data) : null;
-    const reply = await replyLineOf(messages.data, (cursor) => olderThread(deps.wabaId, waId, cursor), Date.now());
-    return {
-      conversations,
-      thread: { ok: true as const, data: { page: messages.data, name, reply } },
-      canSend,
-    };
+    return { conversations, canSend };
   },
   component: ConversationsPage,
   pendingComponent: ConversationsPending,
 });
-
-/** One older page of a thread, for the walk back to the customer's newest message. A failed read ends the walk. */
-function olderThread(wabaId: string | undefined, waId: string, cursor: string) {
-  return getConversation({ data: { wabaId, waId, limit: PAGE_SIZE, cursor } }).then(
-    (read) => (read.ok ? read.data : null),
-    () => null,
-  );
-}
-
-/**
- * The name Meta gave a customer, read from the list. The list's first page may
- * not carry the number, so older pages are read, a few at most. A number that
- * is not found has no name, and its title falls back to the number.
- */
-async function nameOf(wabaId: string | undefined, waId: string, first: CursorPage<ConversationSummary>) {
-  const found = await findInPages(
-    first,
-    (item) => item.waId === waId,
-    (cursor) => listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor } }),
-    NAME_LOOKUP_PAGES,
-  );
-  return found?.name ?? null;
-}
 
 /** The failed refresh behind a page that is still showing its last good data. */
 function refreshFailure(...reads: Array<{ ok: boolean; failure?: Failure | null } | null>): Failure | null {
@@ -112,7 +81,10 @@ function ConversationsPage() {
   const ready = root.ok && root.data.stage === "ready" ? root.data : null;
   const selectedWabaId = wabaId ?? ready?.scope.selectedWabaId;
   const conversations = useLastGood(loaded.conversations, selectedWabaId ?? "");
-  const thread = useLastGood(loaded.thread, `${selectedWabaId ?? ""}:${waId ?? ""}`);
+  const thread = useLastGood(
+    useThread(selectedWabaId, waId, conversations.ok ? conversations.data : null, loaded),
+    `${selectedWabaId ?? ""}:${waId ?? ""}`,
+  );
   const now = Date.now();
   const phones = ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
 
@@ -140,6 +112,7 @@ function ConversationsPage() {
             key={selectedWabaId ?? ""}
             page={conversations.data}
             wabaId={selectedWabaId}
+            linkWabaId={wabaId ?? null}
             selectedWaId={waId}
             now={now}
           />
@@ -148,13 +121,15 @@ function ConversationsPage() {
           data-pane="thread"
           className={waId ? "flex min-h-0 min-w-0 flex-1 flex-col" : "hidden min-h-0 min-w-0 flex-1 flex-col md:flex"}
         >
-          {!waId || !thread ? (
+          {!waId ? (
             <div className="flex flex-1 items-center justify-center p-6">
               <GridEmptyState
                 label="NO CONVERSATION OPEN"
                 description="Choose a conversation to read its messages."
               />
             </div>
+          ) : !thread ? (
+            <ThreadPending />
           ) : thread.ok ? (
             <ConversationThreadPane
               key={`${selectedWabaId ?? ""}:${waId}`}
@@ -192,14 +167,20 @@ function RefreshNotice({ failure }: { failure: Failure }) {
 function ConversationListPane({
   page,
   wabaId,
+  linkWabaId,
   selectedWaId,
   now,
 }: {
   page: CursorPage<ConversationSummary>;
   wabaId?: string;
+  linkWabaId: string | null;
   selectedWaId?: string;
   now: number;
 }) {
+  // The newest three are the likeliest clicks; same keys as a hover's prefetch.
+  useWhenIdle(() => {
+    for (const { waId } of page.items.slice(0, IDLE_THREADS)) prefetchThread(wabaId, waId);
+  }, [wabaId]);
   const older = useOlderPages(page, {
     key: (item) => item.waId,
     fetchOlder: (cursor) => listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor } }),
@@ -208,6 +189,7 @@ function ConversationListPane({
     <ConversationList
       items={older.items}
       wabaId={wabaId}
+      linkWabaId={linkWabaId}
       selectedWaId={selectedWaId}
       now={now}
       canLoadOlder={older.canLoadOlder}
@@ -283,10 +265,23 @@ function ConversationThreadPane({
   );
 }
 
+/** The thread pane while a thread opens: the list beside it stays as it is. */
+function ThreadPending() {
+  return (
+    <div aria-busy="true" className="flex flex-1 flex-col gap-4 p-4">
+      <Skeleton className="h-6 w-48" />
+      <Skeleton className="h-10 w-2/3" />
+      <Skeleton className="ml-auto h-10 w-1/2" />
+      <Skeleton className="h-16 w-3/5" />
+      <Skeleton className="ml-auto h-10 w-2/5" />
+    </div>
+  );
+}
+
 /** Answers the wait with the page's own shape: its title, its kicker and the two panes, over skeleton rows. */
 function ConversationsPending() {
   return (
-    <Page title="Conversations" kicker="Logs">
+    <Page title="Conversations" kicker="Inbox">
       <div aria-busy="true" className={PANES}>
         <div className="flex flex-col gap-3 p-4 md:border-r md:border-(--line)">
           {PENDING_ROWS.map((row) => (

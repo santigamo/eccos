@@ -4,15 +4,15 @@ import {
 } from "@tanstack/react-start/server";
 import { createServerEntry, type ServerEntry } from "@tanstack/react-start/server-entry";
 import { env } from "cloudflare:workers";
-import { createAuth } from "./auth/auth";
+import { getAuthForRequest } from "./auth/request-auth";
 import {
   blockedAuthEndpointResponse,
   isBlockedAuthEndpoint,
 } from "./auth/blocked-endpoints";
-import { authConfigFromEnv } from "./auth/config";
 import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
+import { beginTiming, finishTiming, logPerf } from "./server/timing";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -76,10 +76,11 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
     return forbidden();
   }
   const { pathname } = url;
+  beginTiming(request);
   // Media answers 401 rather than redirecting: an <img> cannot follow a sign-in page.
   const media = parseMediaPath(pathname);
   if (media) {
-    const auth = createAuth(authConfigFromEnv(env));
+    const auth = getAuthForRequest(request, env);
     return serveMedia(
       request,
       { organizationFor: (req) => requireGatewayPermission(auth, req, "view"), gateway: env.GATEWAY },
@@ -95,7 +96,7 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
     if (isBlockedAuthEndpoint(pathname)) {
       return blockedAuthEndpointResponse();
     }
-    const auth = createAuth(authConfigFromEnv(env));
+    const auth = getAuthForRequest(request, env);
     return auth.handler(request);
   }
 
@@ -104,7 +105,7 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   // public; server functions fail closed per-call in src/auth/server-auth.ts.
   if (!pathname.startsWith("/assets/")) {
     const isPublic = PUBLIC_PATHS.has(pathname);
-    const auth = createAuth(authConfigFromEnv(env));
+    const auth = getAuthForRequest(request, env);
     const session = await resolveSession(auth, request);
     if (!session && !isPublic) {
       return signInRedirect(request.url);
@@ -118,9 +119,14 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   }
 
   const response = await startHandler(request, opts);
+  const report = finishTiming(request);
   if (request.method === "POST" || !pathname.startsWith("/assets/")) {
     const headers = new Headers(response.headers);
     headers.set("Cache-Control", "private, no-store");
+    if (report) {
+      headers.set("Server-Timing", report.header);
+      if (pathname.startsWith("/_serverFn/")) logPerf(pathname, response.status, report);
+    }
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,

@@ -11,6 +11,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { NAV_MAIN, type NavGroup } from "./data"
+import { useIdlePrefetch } from "@/hooks/use-idle-prefetch"
 import { hasNumberScope, hasWabaScope } from "@/lib/scope-requirements"
 
 export function NavMain() {
@@ -25,6 +26,7 @@ export function NavMain() {
   const scope = root.ok ? root.data : null
   const hasNumber = scope !== null && hasNumberScope(scope)
   const hasWaba = scope !== null && hasWabaScope(scope)
+  useIdlePrefetch({ hasNumber, hasWaba }, wabaId)
 
   return (
     <>

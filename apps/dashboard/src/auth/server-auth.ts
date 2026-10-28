@@ -49,5 +49,5 @@ export async function requireAuthContext(
  * run for both auth'd and anonymous visitors.
  */
 export async function hasSession(auth: Auth, request: Request): Promise<boolean> {
-  return resolveSession(auth, request) !== null;
+  return (await resolveSession(auth, request)) !== null;
 }

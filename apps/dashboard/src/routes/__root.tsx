@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from "react"
 import {
   Outlet,
-  createRootRoute,
+  createRootRouteWithContext,
+  rootRouteId,
   HeadContent,
   Scripts,
   redirect,
@@ -11,11 +12,13 @@ import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
-import { getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
+import { type getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
+import { useRootRefresh } from "../hooks/use-root-refresh"
 import type { AnalyticsConfig } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
 import { requirementSatisfied } from "../lib/scope-requirements"
+import type { Bootstrap } from "../lib/bootstrap"
 import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
@@ -36,42 +39,33 @@ function loadAnalyticsConfig(): Promise<AnalyticsConfig | null> {
   return documentAnalytics
 }
 
-export const Route = createRootRoute({
+type RootState = Awaited<ReturnType<typeof getDashboardState>>
+
+export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState> }>()({
   validateSearch: (search: Record<string, unknown>): ScopeSearch => {
     const wabaId = normalizeSearchWabaId(search.wabaId)
     return wabaId ? { wabaId } : {}
   },
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
-  loader: async ({ deps, location }) => {
+  // The root is reused across navigations: scope changes and `invalidate`
+  // reload it, a pathname change does not. The pathname-dependent redirects
+  // therefore run in `beforeLoad`, per navigation, against the bootstrap the
+  // root already holds for the requested scope (no request); only a new scope
+  // or an invalidated root awaits a read, which the loader then takes.
+  staleTime: 30_000,
+  preloadStaleTime: 30_000,
+  beforeLoad: ({ context, location, matches, search }) => {
     // Page-level auth gate lives in the SERVER ENTRY (src/server.ts): it runs
     // before routing for every request, so anonymous page loads are redirected
-    // to /signin before this loader executes. Server functions fail closed in
+    // to /signin before this runs. Server functions fail closed in
     // src/auth/server-auth.ts. Public routes are also handled there.
-    const state = await getDashboardState({ data: { wabaId: deps.wabaId } })
-    if (state.ok && !onboardingWorkspaceCreated(state.data.stage) && location.pathname !== "/onboarding") {
-      throw redirect({ to: "/onboarding" })
-    }
-    // /onboarding is FIRST RUN and stays that way — the decision is a single
-    // helper (`onboardingWorkspaceCreated`, pinned by
-    // tests/root-onboarding-guard.test.ts) so the three stages cannot drift
-    // back to a `=== "ready"` hole. Creating an ADDITIONAL workspace is a
-    // different conversation and has its own in-shell entry point
-    // (/workspaces/new) — see that route for the argument.
-    if (state.ok && onboardingWorkspaceCreated(state.data.stage) && location.pathname === "/onboarding") {
-      throw redirect({ to: "/" })
-    }
-    // An account that cannot yet resolve what a route needs stays inside the app
-    // chrome and lands on /numbers, whose empty state is the connect flow —
-    // rather than rendering a "gateway unreachable" card that would blame the
-    // wrong thing. What each route needs lives in `lib/scope-requirements.ts`,
-    // shared with the sidebar so the lock and the bounce cannot disagree.
-    if (
-      state.ok &&
-      state.data.stage !== "no-organization" &&
-      !requirementSatisfied(location.pathname, state.data)
-    ) {
-      throw redirect({ to: "/numbers" })
-    }
+    const root = matches.find((m) => m.routeId === rootRouteId)
+    const held = root?.status === "success" && !root.invalid ? (root.loaderData as RootState | undefined) : undefined
+    if (held) return redirectFor(location.pathname, held)
+    return context.bootstrap.read(search.wabaId).then((state) => redirectFor(location.pathname, state))
+  },
+  loader: async ({ deps, context }) => {
+    const state = await context.bootstrap.take(deps.wabaId)
     // Display identity for the sidebar's account section, and the one setup
     // fact the state above does not carry (whether a forwarding target is
     // configured — `lib/setup-checklist.ts`). Both are deduped with the
@@ -184,9 +178,38 @@ export function onboardingWorkspaceCreated(stage: DashboardState["stage"]): bool
   return stage !== "no-organization"
 }
 
+/**
+ * The root's pathname guards as a pure decision, so they run against a held
+ * snapshot as well as a fresh read (tests/root-guard.test.ts).
+ *
+ * /onboarding is FIRST RUN and stays that way (`onboardingWorkspaceCreated`
+ * below). Creating an ADDITIONAL workspace is a different conversation with its
+ * own in-shell entry point (/workspaces/new) — see that route for the argument.
+ *
+ * An account that cannot yet resolve what a route needs stays inside the app
+ * chrome and lands on /numbers, whose empty state is the connect flow, rather
+ * than a "gateway unreachable" card that would blame the wrong thing. What each
+ * route needs lives in `lib/scope-requirements.ts`, shared with the sidebar so
+ * the lock and the bounce cannot disagree.
+ */
+export function rootRedirect(pathname: string, state: RootState): "/onboarding" | "/" | "/numbers" | undefined {
+  if (!state.ok) return undefined
+  const created = onboardingWorkspaceCreated(state.data.stage)
+  if (!created && pathname !== "/onboarding") return "/onboarding"
+  if (created && pathname === "/onboarding") return "/"
+  if (state.data.stage !== "no-organization" && !requirementSatisfied(pathname, state.data)) return "/numbers"
+  return undefined
+}
+
+function redirectFor(pathname: string, state: RootState): void {
+  const to = rootRedirect(pathname, state)
+  if (to) throw redirect({ to })
+}
+
 function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
+  useRootRefresh()
   return (
     <RootDocument
       lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
+import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { UnauthorizedError } from "../src/auth/session";
 
 /**
@@ -40,15 +41,82 @@ import { UnauthorizedError } from "../src/auth/session";
  * run. The helper's header carries the full mechanism.
  */
 
+/** When set, every `getRequest()` returns this one Request (production behaviour). */
+let pinnedRequest: Request | null = null;
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
 const workerEnv: {
   BETTER_AUTH_URL?: string;
   readonly GATEWAY?: typeof gatewayBinding;
 } = {
   get GATEWAY() {
-    return gatewayBinding;
+    return bridgeLegacyMocks(gatewayBinding);
   },
 };
+
+type Binding = NonNullable<typeof gatewayBinding>;
+
+/**
+ * The server functions talk to the gateway through the organization-scoped
+ * `read*` methods. Most fixtures below still describe the gateway with the
+ * account-scoped methods (link / resources / getStatus ...), so this derives
+ * the new surface from them (selection via the shared `selectWaba`, exactly as
+ * the gateway does); a fixture that defines a new method wins.
+ */
+function bridgeLegacyMocks(binding: typeof gatewayBinding): typeof gatewayBinding {
+  if (!binding) return binding;
+  const b = binding;
+  type Org = { organizationId: string; wabaId?: string; rejectUnknown?: boolean; mode?: "active" | "any" };
+  const context = async (organizationId: unknown) => {
+    let link = (await b.getOrganizationAccountLink!(organizationId)) as
+      | { accountId: string; status: string }
+      | null;
+    if (!link) {
+      const ensured = (await b.ensureOrganizationAccount!(organizationId)) as { accountId: string };
+      link = { accountId: ensured.accountId, status: "active" };
+    }
+    if (link.status !== "active") throw new Error("This organization is not linked to an Eccos account");
+    const resources = (await b.listAccountResources!(link.accountId)) as {
+      account: unknown;
+      wabas: Parameters<typeof selectWaba>[1];
+    };
+    if (!resources.account) throw new Error(`Account "${link.accountId}" is not configured`);
+    return { accountId: link.accountId, resources };
+  };
+  const scoped = async (org: Org) => {
+    const { accountId, resources } = await context(org.organizationId);
+    const waba = selectWaba(accountId, resources.wabas, org.wabaId, org.rejectUnknown, org.mode);
+    return { accountId, wabaId: waba.wabaId, waba, scope: { accountId, wabaId: waba.wabaId, resources } };
+  };
+  const read =
+    (name: string) =>
+    async (org: Org, opts?: object) => {
+      const { accountId, wabaId, scope } = await scoped(org);
+      return { scope, data: await b[name]!({ ...opts, wabaId }, accountId) };
+    };
+  const wabaLevel = (name: string) => async (org: Org) => {
+    const { accountId, wabaId, scope } = await scoped(org);
+    return { scope, data: await b[name]!(wabaId, accountId) };
+  };
+  const derived: Binding = {
+    resolveOrganizationScope: (organizationId: unknown) => context(organizationId),
+    readStatus: wabaLevel("getStatus"),
+    readSubscriberConfig: wabaLevel("getSubscriberConfig"),
+    readInbound: read("listInbound"),
+    readOutbound: read("listOutbound"),
+    readDeliveries: read("listDeliveries"),
+    readConversations: read("listConversations"),
+    readConversation: read("getConversation"),
+    readThreadView: read("getThreadView"),
+    readDashboardState: async (org: Org) => {
+      const { accountId, resources } = await context(org.organizationId);
+      if (resources.wabas.every((waba) => waba.status !== "active")) {
+        return { accountId, resources, status: null };
+      }
+      return { accountId, resources, status: await wabaLevel("getStatus")(org) };
+    },
+  };
+  return { ...derived, ...b };
+}
 
 workerEnv.BETTER_AUTH_URL = "http://localhost:3000";
 
@@ -143,6 +211,7 @@ installServerFnMocks({
   // The server-function request carries the current fake session's headers
   // (or none). Read at call time, so this stays correct per test.
   getRequest: () => {
+    if (pinnedRequest) return pinnedRequest;
     const headers = new Headers();
     if (fakeSessionHeaders) {
       for (const [k, v] of fakeSessionHeaders.entries()) headers.set(k, v);
@@ -155,6 +224,7 @@ const {
   getGatewayStatus,
   getDashboardOverview,
   getDashboardState,
+  getAccountResources,
   startConnect,
   listDeliveries,
   listInbound,
@@ -188,12 +258,14 @@ const {
   validateRetentionInput,
   listConversations,
   getConversation,
+  getThreadView,
   validateConversationListInput,
   validateConversationInput,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
   gatewayBinding = undefined;
+  pinnedRequest = null;
   fakeSessionHeaders = null;
   fakeMemberships = [{ id: "org-fixture" }];
   fakeDeniedActions = new Set();
@@ -2189,6 +2261,40 @@ describe("listConversations / getConversation (Conversations view)", () => {
     expect(threadArgs).toEqual([{ waId: "15550100001", limit: 50, wabaId: "waba-a" }, "account-a"]);
   });
 
+  test("opening a thread is one gateway read that carries the page, the name and the reply line", async () => {
+    const calls: string[] = [];
+    const view = {
+      page: { items: [], nextCursor: null },
+      contactName: "Ana",
+      reply: { phoneNumberId: "PN1", lastInboundAt: 1000 },
+    };
+    withResources({
+      getThreadView: async (opts: unknown, account: unknown) => {
+        calls.push(JSON.stringify([opts, account]));
+        return view;
+      },
+      getConversation: async () => {
+        calls.push("getConversation");
+        return { items: [], nextCursor: null };
+      },
+      listConversations: async () => {
+        calls.push("listConversations");
+        return { items: [], nextCursor: null };
+      },
+    });
+
+    const { prefetchThread, useThread } = await import("../src/hooks/use-thread?real-module");
+    expect(typeof useThread).toBe("function");
+    prefetchThread("waba-a", "15550100001");
+    prefetchThread("waba-a", "15550100001");
+    for (let n = 0; n < 50 && calls.length === 0; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toEqual([JSON.stringify([{ waId: "15550100001", limit: 50, wabaId: "waba-a" }, "account-a"])]);
+
+    const direct = await getThreadView({ data: { waId: "15550100001", limit: 50 } });
+    expect(direct).toMatchObject({ ok: true, data: view });
+  });
+
   test("a WABA the account does not own reads the account's own, never another's", async () => {
     const seen: unknown[] = [];
     withResources({
@@ -2255,5 +2361,108 @@ describe("the conversation composer's server functions", () => {
     });
     expect(await canSendMessages()).toBe(true);
     expect(await sendText({ data: TEXT })).toMatchObject({ ok: true, data: { ok: true, messageId: "wamid.SENT" } });
+  });
+});
+
+/**
+ * One control-plane trip + one data trip per scoped read (perf/cp-context).
+ * These bindings implement ONLY the new surface, so a regression to the old
+ * link -> resources -> account-scoped read choreography throws.
+ */
+describe("one gateway call per scoped read", () => {
+  function contextBinding(overrides: Record<string, (...args: unknown[]) => unknown> = {}) {
+    const calls: string[] = [];
+    const args: Record<string, unknown[]> = {};
+    const scope = { accountId: "account-a", wabaId: "waba-a", resources: resourcesFor("account-a") };
+    const record = (name: string, value: unknown) => async (...a: unknown[]) => {
+      calls.push(name);
+      args[name] = a;
+      return typeof value === "function" ? (value as (...x: unknown[]) => unknown)(...a) : value;
+    };
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
+    gatewayBinding = {
+      readConversations: record("readConversations", { scope, data: { items: [], nextCursor: null } }),
+      readSubscriberConfig: record("readSubscriberConfig", { scope, data: { url: null } }),
+      readDashboardState: record("readDashboardState", { accountId: "account-a", resources: scope.resources, status: null }),
+      ...Object.fromEntries(Object.entries(overrides).map(([k, v]) => [k, record(k, v)])),
+    };
+    return { calls, args };
+  }
+
+  test("a data read is exactly one gateway call carrying the validated organization", async () => {
+    const { calls, args } = contextBinding();
+    const res = await listConversations({ data: { wabaId: "waba-a", limit: 5 } });
+    expect(res).toEqual({ ok: true, data: { items: [], nextCursor: null } });
+    expect(calls).toEqual(["readConversations"]);
+    expect(args.readConversations).toEqual([
+      { organizationId: ORG_ID, wabaId: "waba-a", rejectUnknown: undefined, mode: undefined },
+      { limit: 5 },
+    ]);
+  });
+
+  test("requested WABA, rejectUnknown and mode reach the gateway, which owns the selection", async () => {
+    const { args } = contextBinding();
+    await getSubscriberConfig({ data: { wabaId: "waba-foreign" } });
+    expect(args.readSubscriberConfig).toEqual([
+      { organizationId: ORG_ID, wabaId: "waba-foreign", rejectUnknown: undefined, mode: "any" },
+    ]);
+  });
+
+  test("the root loader needs one call and no separate context resolution", async () => {
+    const { calls } = contextBinding();
+    const res = await getDashboardState();
+    expect(res).toMatchObject({ ok: true, data: { stage: "account-ready" } });
+    expect(calls).toEqual(["readDashboardState"]);
+  });
+
+  test("a gateway refusal keeps its message and is not cached", async () => {
+    let attempt = 0;
+    const { calls } = contextBinding({
+      readConversations: () => {
+        if (++attempt === 1) throw new Error('WABA "waba-p" is still provisioning');
+        return { scope: {}, data: { items: [], nextCursor: null } };
+      },
+    });
+    expect(await listConversations()).toEqual(unreachable('WABA "waba-p" is still provisioning'));
+    expect((await listConversations()).ok).toBe(true);
+    expect(calls).toEqual(["readConversations", "readConversations"]);
+  });
+
+  test("the resolved context is memoized per Request for the remaining consumers", async () => {
+    const calls: string[] = [];
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
+    gatewayBinding = {
+      resolveOrganizationScope: async () => {
+        calls.push("resolveOrganizationScope");
+        return { accountId: "account-a", resources: resourcesFor("account-a") };
+      },
+    };
+    pinnedRequest = new Request("http://localhost:3000/", { headers: fakeSessionHeaders });
+    await getAccountResources();
+    await getAccountResources();
+    expect(calls).toEqual(["resolveOrganizationScope"]);
+    pinnedRequest = new Request("http://localhost:3000/", { headers: fakeSessionHeaders });
+    await getAccountResources();
+    expect(calls).toHaveLength(2);
+  });
+});
+
+describe("selectWaba (shared by the dashboard and the gateway)", () => {
+  const w = (wabaId: string, status: "active" | "pending" | "failed" = "active") =>
+    wabaFixture("account-a", wabaId, { status }) as unknown as Parameters<typeof selectWaba>[1][number];
+
+  test("default prefers the first active WABA, falling back to the first by id", () => {
+    expect(selectWaba("account-a", [w("a", "pending"), w("b")]).wabaId).toBe("b");
+    expect(() => selectWaba("account-a", [w("a", "pending")])).toThrow('WABA "a" is still provisioning');
+    expect(() => selectWaba("account-a", [])).toThrow('Account "account-a" has no registered WABAs');
+  });
+
+  test("a foreign WABA falls back unless rejectUnknown, and mode any admits pending", () => {
+    expect(selectWaba("account-a", [w("a")], "foreign").wabaId).toBe("a");
+    expect(() => selectWaba("account-a", [w("a")], "foreign", true)).toThrow(
+      'WABA "foreign" is not owned by account "account-a"',
+    );
+    expect(selectWaba("account-a", [w("a", "pending")], "a", false, "any").wabaId).toBe("a");
+    expect(() => selectWaba("account-a", [w("a", "failed")], "a")).toThrow('WABA "a" provisioning failed');
   });
 });

@@ -12,8 +12,7 @@ import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { env } from "cloudflare:workers";
 import type { GatewayApi } from "@eccos/gateway-contract";
-import { createAuth } from "./auth/auth";
-import { authConfigFromEnv } from "./auth/config";
+import { getAuthForRequest } from "./auth/request-auth";
 import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
 import {
   ForbiddenError,
@@ -40,7 +39,7 @@ export interface PendingInvitationView {
 }
 
 function authInstance() {
-  return createAuth(authConfigFromEnv(env));
+  return getAuthForRequest(getRequest(), env);
 }
 
 /** The current request (server environment). */

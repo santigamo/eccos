@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidatePage } from "../lib/invalidate";
 import { createColumnHelper } from "@tanstack/react-table";
 
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import {
 import { EMPTY_CELL } from "../lib/logs";
 import { normalizeSearchBefore, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { Page, StatusTag, fmtTs } from "../ui";
+import { LIVE_STALE_MS } from "../lib/route-stale";
 
 /**
  * ── THE FORWARDING QUEUE ────────────────────────────────────────────────────
@@ -72,6 +74,7 @@ const STATUS_LABELS: Record<string, string> = {
 type DeliveriesSearch = { status?: string; before?: number; wabaId?: string };
 
 export const Route = createFileRoute("/deliveries")({
+  staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): DeliveriesSearch => {
     const status = normalizeSearchStatus(search.status);
     const before = normalizeSearchBefore(search.before);
@@ -264,7 +267,7 @@ function DeliveriesPage() {
         setRetryError(retry.error);
         return;
       }
-      await router.invalidate();
+      await invalidatePage(router);
     } catch (error) {
       // A THROW, not a `{ ok: false }`: the server function's own validator and
       // the network are the two things that raise here, and without this the
@@ -446,7 +449,7 @@ function DeliveriesPage() {
           open={retryWindowOpen}
           onOpenChange={setRetryWindowOpen}
           wabaId={selectedWabaId}
-          onRetried={() => router.invalidate()}
+          onRetried={() => invalidatePage(router)}
         />
       ) : null}
     </Page>

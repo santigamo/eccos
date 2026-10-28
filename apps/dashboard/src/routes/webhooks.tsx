@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { ReactNode } from "react";
 import { getSubscriberConfig } from "../server/gateway";
 import type { OperatorCounts, Result, SubscriberConfig } from "../server/gateway";
@@ -14,6 +15,7 @@ import {
   fmtTsShort,
 } from "../ui";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import { FailureView } from "../components/dashboard/failure";
 import { ForwardingTargetPanel } from "../components/dashboard/forwarding-target";
 import { ResubscribeAction } from "../components/dashboard/resubscribe-action";
@@ -25,6 +27,7 @@ import {
   FramePanel,
   FrameTitle,
 } from "../components/reui/frame";
+import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
  * Webhooks — both legs of the plumbing, on one page.
@@ -42,10 +45,27 @@ import {
  * that case to /numbers). It therefore needs no "no number yet" note.
  */
 export const Route = createFileRoute("/webhooks")({
+  staleTime: CONFIG_STALE_MS,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => getSubscriberConfig({ data: { wabaId: deps.wabaId } }),
   component: WebhooksPage,
+  pendingComponent: WebhooksPending,
 });
+
+/** The page's own title over its facts strip and target panel, still to be read. */
+function WebhooksPending() {
+  return (
+    <Page title="Webhooks" kicker="Integration">
+      <div aria-busy="true">
+        <Skeleton className="h-24 w-full" />
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
+        </div>
+      </div>
+    </Page>
+  );
+}
 
 function WebhooksPage() {
   const result = Route.useLoaderData();
@@ -85,14 +105,15 @@ function WebhooksPage() {
         selectedWabaId={selectedWabaId}
       />
 
-      <div className="mt-6 flex flex-col gap-6">
-        <div className="flex max-w-xl flex-col gap-2">
+      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
+        <div className={`flex flex-col gap-2 ${ready ? "" : "lg:col-span-2"}`}>
           <ForwardingTargetPanel
             config={config}
             wabaId={selectedWabaId}
             // The route owns the data, so re-reading it after a write is the
-            // route's job — which is also what keeps the panel router-free.
-            onSaved={() => void router.invalidate()}
+            // route's job — which is also what keeps the panel router-free. The root
+            // is included: it carries the forwarding flag the setup checklist reads.
+            onSaved={() => void invalidateRoutes(router, "/webhooks", rootRouteId)}
           />
           {/* The model, stated plainly and in the functional register. It is
               the question every operator asks next ("per number, or per
@@ -115,7 +136,9 @@ function WebhooksPage() {
           />
         ) : null}
 
-        <ReceiverReference />
+        <div className="lg:col-span-2">
+          <ReceiverReference />
+        </div>
       </div>
     </Page>
   );
@@ -250,7 +273,7 @@ export function FromMetaPanel({
   wabaId?: string;
 }) {
   return (
-    <Frame variant="default" spacing="lg" className="max-w-xl">
+    <Frame variant="default" spacing="lg">
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -296,7 +319,7 @@ export function FromMetaPanel({
  */
 export function ReceiverReference() {
   return (
-    <Frame variant="default" spacing="lg" className="max-w-xl">
+    <Frame variant="default" spacing="lg">
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">

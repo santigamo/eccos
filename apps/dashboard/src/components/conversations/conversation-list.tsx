@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { prefetchThread } from "../../hooks/use-thread";
 import {
   FileTextIcon,
   ImageIcon,
@@ -37,6 +38,12 @@ const TYPE_ICON: Record<string, LucideIcon> = {
 export interface ConversationListProps {
   items: ConversationSummary[];
   wabaId?: string;
+  /**
+   * The `wabaId` the row links carry: the URL's own, `null` when it has none
+   * (the default number). Writing the resolved id instead changes the root and
+   * list loaders' deps and reloads both. Defaults to `wabaId`.
+   */
+  linkWabaId?: string | null;
   selectedWaId?: string;
   now: number;
   canLoadOlder: boolean;
@@ -53,6 +60,7 @@ export interface ConversationListProps {
 export function ConversationList({
   items,
   wabaId,
+  linkWabaId,
   selectedWaId,
   now,
   canLoadOlder,
@@ -77,6 +85,7 @@ export function ConversationList({
                 key={conversation.waId}
                 conversation={conversation}
                 wabaId={wabaId}
+                linkWabaId={linkWabaId === undefined ? wabaId : (linkWabaId ?? undefined)}
                 selected={conversation.waId === selectedWaId}
                 now={now}
               />
@@ -111,22 +120,27 @@ export function ConversationList({
 function ConversationRow({
   conversation,
   wabaId,
+  linkWabaId,
   selected,
   now,
 }: {
   conversation: ConversationSummary;
   wabaId?: string;
+  linkWabaId?: string;
   selected: boolean;
   now: number;
 }) {
   const { waId, name, messageCount, lastMessage } = conversation;
   const Icon = TYPE_ICON[lastMessage.type] ?? MessageSquareTextIcon;
+  const prefetch = () => prefetchThread(wabaId, waId, { items: [conversation], nextCursor: null });
   return (
     <li>
       <Link
         to="/conversations"
-        search={{ wabaId, waId }}
+        search={{ wabaId: linkWabaId, waId }}
         aria-current={selected ? "true" : undefined}
+        onMouseEnter={prefetch}
+        onFocus={prefetch}
         className="block border-b border-(--line) px-4 py-3 outline-none transition-colors hover:bg-white/[.03] focus-visible:ring-1 focus-visible:ring-ring aria-[current=true]:bg-(--tag-live-bg) aria-[current=true]:shadow-[inset_2px_0_0_0_var(--color-glow)]"
       >
         <span className="flex items-baseline justify-between gap-3">

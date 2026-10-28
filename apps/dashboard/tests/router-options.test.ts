@@ -29,11 +29,11 @@ describe("router pending options", () => {
   test("a route's skeleton waits for a load the rail alone can no longer carry", () => {
     // TanStack's own default is 1000ms, which leaves most gateway round trips
     // showing the PREVIOUS page's rows under the new sidebar highlight. Below
-    // ~350ms, though, swapping a table out and back reads as a flash — so the
-    // rail owns that window alone and the skeleton takes over past it.
-    expect(routerSource).toContain("defaultPendingMs: 350");
+    // ~300ms, though, a fresh read usually lands, and a skeleton armed sooner
+    // only adds its minimum on top — so the rail owns that window alone.
+    expect(routerSource).toContain("defaultPendingMs: 300");
     // And a skeleton that did reach the screen stays long enough to be read.
-    expect(routerSource).toContain("defaultPendingMinMs: 400");
+    expect(routerSource).toContain("defaultPendingMinMs: 200");
   });
 
   test("no default pending component — it would blank the whole app shell", () => {
@@ -43,6 +43,64 @@ describe("router pending options", () => {
     // root load would replace the sidebar, the masthead and the page with a
     // skeleton instead of filling the page inside them.
     expect(routerSource).not.toContain("defaultPendingComponent:");
+  });
+});
+
+describe("router reuse policy", () => {
+  test("hover and focus preload, after a short delay, and a preload serves the click", () => {
+    expect(routerSource).toContain('defaultPreload: "intent"');
+    expect(routerSource).toContain("defaultPreloadDelay: 50");
+    expect(routerSource).toContain("defaultPreloadStaleTime: 30_000");
+  });
+
+  test("no global staleTime: each route says how long its data lives", () => {
+    expect(routerSource).not.toContain("defaultStaleTime");
+  });
+
+  test("live lists stay fresh 5s, configuration 30s", async () => {
+    const policy = await Bun.file(new URL("../src/lib/route-stale.ts", import.meta.url)).text();
+    expect(policy).toContain("LIVE_STALE_MS = 5_000");
+    expect(policy).toContain("CONFIG_STALE_MS = 30_000");
+    const expected = {
+      conversations: "LIVE",
+      messages: "LIVE",
+      events: "LIVE",
+      deliveries: "LIVE",
+      settings: "CONFIG",
+      templates: "CONFIG",
+      webhooks: "CONFIG",
+    };
+    for (const [route, kind] of Object.entries(expected)) {
+      const source = await Bun.file(new URL(`../src/routes/${route}.tsx`, import.meta.url)).text();
+      expect(source).toContain(`staleTime: ${kind}_STALE_MS`);
+    }
+  });
+
+  test("the root is reused for 30s, keyed by wabaId, with no shouldReload", async () => {
+    const source = await Bun.file(new URL("../src/routes/__root.tsx", import.meta.url)).text();
+    expect(source).toContain("staleTime: 30_000");
+    expect(source).toContain("preloadStaleTime: 30_000");
+    expect(source).toContain("loaderDeps: ({ search }) => ({ wabaId: search.wabaId })");
+    expect(source).not.toContain("shouldReload");
+  });
+
+  test("the router carries the per-instance bootstrap in its context", () => {
+    expect(routerSource).toContain("context: { bootstrap: createBootstrap(");
+  });
+
+  test("no page invalidates the whole tree: they go through lib/invalidate", async () => {
+    for (const file of [
+      "hooks/use-live-refresh.ts",
+      "routes/settings.tsx",
+      "routes/webhooks.tsx",
+      "routes/numbers.tsx",
+      "routes/templates.tsx",
+      "routes/deliveries.tsx",
+      "components/conversations/conversation-composer.tsx",
+    ]) {
+      const source = await Bun.file(new URL(`../src/${file}`, import.meta.url)).text();
+      expect(source).not.toMatch(/router\.invalidate\(\)/);
+    }
   });
 });
 
@@ -56,6 +114,15 @@ describe("per-route pending views", () => {
       ).text();
       expect(source).toContain("pendingComponent:");
       expect(source).toContain("<GridPending");
+    }
+  });
+
+  test("every other route that loads its own data has one too", async () => {
+    for (const route of ["conversations", "settings", "webhooks"]) {
+      const source = await Bun.file(
+        new URL(`../src/routes/${route}.tsx`, import.meta.url),
+      ).text();
+      expect(source).toContain("pendingComponent:");
     }
   });
 

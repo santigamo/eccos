@@ -10,7 +10,7 @@
     "./tenant": "./src/tenant.ts"
   },
   "dependencies": {
-    "better-auth": "1.7.2"
+    "better-auth": "1.7.14"
   },
   "devDependencies": {
     "@types/bun": "latest"

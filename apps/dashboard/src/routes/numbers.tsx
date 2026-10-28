@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
 import { FailureView } from "../components/dashboard/failure";
@@ -106,7 +107,7 @@ function NumbersPage() {
       resources={resources}
       connectError={connectError}
       connectSkipped={connectSkipped}
-      onRefresh={() => router.invalidate()}
+      onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
     />
   );
 }

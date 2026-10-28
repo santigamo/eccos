@@ -14,6 +14,7 @@ import type { GatewayAction } from "./permissions";
 export type { GatewayAction };
 import { UnauthorizedError } from "./session";
 import { getSessionOnce } from "./request-memo";
+import { getMembershipsOnce, roleAllows } from "./identity";
 
 /**
  * Why an authorization check refused, as a code callers can branch on.
@@ -57,11 +58,6 @@ export interface Membership {
   name: string;
 }
 
-interface OrganizationLike {
-  id?: unknown;
-  name?: unknown;
-}
-
 /**
  * List the organizations the signed-in user belongs to. Resolved from Better
  * Auth memberships only; an empty result means the user must onboard into an
@@ -71,13 +67,8 @@ export async function resolveMemberships(
   auth: Auth,
   headers: Headers,
 ): Promise<Membership[]> {
-  const orgs = (await auth.api.listOrganizations({ headers })) as OrganizationLike[];
-  return orgs
-    .filter((org) => typeof org?.id === "string")
-    .map((org) => ({
-      id: String(org.id),
-      name: String(org.name ?? ""),
-    }));
+  const memberships = await getMembershipsOnce(auth, headers);
+  return memberships.map(({ id, name }) => ({ id, name }));
 }
 
 /**
@@ -122,7 +113,7 @@ export async function requirePermission(
   const rawSession = session.session as { activeOrganizationId?: string | null };
   let orgId = organizationId ?? rawSession.activeOrganizationId ?? "";
 
-  const memberships = await resolveMemberships(auth, headers);
+  const memberships = await getMembershipsOnce(auth, headers);
   if (!orgId) {
     // No explicit selector and no stored active org. A single membership is not
     // ambiguous, so default to it rather than dead-ending a user who has
@@ -141,15 +132,12 @@ export async function requirePermission(
       throw new ForbiddenError("select an organization", "select-organization");
     }
   }
-  if (!memberships.some((m) => m.id === orgId)) {
+  const member = memberships.find((m) => m.id === orgId);
+  if (!member) {
     throw new ForbiddenError("not a member of the requested organization", "not-a-member");
   }
 
-  const result = (await auth.api.hasPermission({
-    body: { permissions: { gateway: [action] }, organizationId: orgId },
-    headers,
-  })) as { success?: boolean } | null;
-  if (result?.success !== true) {
+  if (!roleAllows(member.role, action)) {
     throw new ForbiddenError(
       `missing "${action}" permission in this organization`,
       "missing-permission",

@@ -1,4 +1,6 @@
 import { createRouter } from "@tanstack/react-router";
+import { getDashboardState } from "./server/gateway";
+import { createBootstrap } from "./lib/bootstrap";
 import { routeTree } from "./routeTree.gen";
 
 // TanStack Start picks up this `getRouter` factory to build a router instance
@@ -7,6 +9,9 @@ import { routeTree } from "./routeTree.gen";
 export function getRouter() {
   const router = createRouter({
     routeTree,
+    // One bootstrap read per navigation, shared by the root guard and loader.
+    // Per router instance, so request-local on the server.
+    context: { bootstrap: createBootstrap((wabaId) => getDashboardState({ data: { wabaId } })) },
     scrollRestoration: true,
     // TWO LAYERS OF PENDING FEEDBACK, and these numbers are the seam between
     // them. `RouteProgress` (mounted in __root) lights immediately on every
@@ -15,19 +20,28 @@ export function getRouter() {
     // right answer only once the wait is long enough that stale rows under a
     // moving rail have become confusing.
     //
-    // Below ~350ms swapping a table out and back reads as a flash, so the rail
-    // owns that window alone (TanStack's own default is 1000ms, which leaves
-    // most gateway round trips showing the wrong page's rows). `pendingMinMs`
-    // then keeps a skeleton that did appear on screen long enough to be read
-    // rather than blinking.
+    // A fresh read takes ~100–250ms, so the rail owns that window alone: a
+    // skeleton armed earlier lands just before the data and `pendingMinMs`
+    // then holds it on screen, turning a 160ms read into a ~450ms one
+    // (measured in prod). Past 300ms the skeleton takes over, and the minimum
+    // keeps it from blinking.
     //
     // Deliberately NO `defaultPendingComponent`: the timeout that promotes a
     // match to its pending view is only armed for routes that HAVE one, and a
     // default would arm it for the ROOT match too — whose component is the
     // whole app chrome. A slow root load would blank the shell instead of
     // filling the page.
-    defaultPendingMs: 350,
-    defaultPendingMinMs: 400,
+    defaultPendingMs: 300,
+    defaultPendingMinMs: 200,
+    // Hover or focus starts the route's load, so the click lands on data that
+    // is already there or in flight. The delay skips a pointer merely crossing
+    // the sidebar; `preloadStaleTime` lets a hover's result serve the click
+    // that follows it. Staleness per route lives in `lib/route-stale.ts`; the
+    // root sets its own 30s window in __root and is reloaded by scope changes,
+    // targeted invalidation and a refocused tab (`use-root-refresh.ts`).
+    defaultPreload: "intent",
+    defaultPreloadDelay: 50,
+    defaultPreloadStaleTime: 30_000,
   });
 
   return router;
