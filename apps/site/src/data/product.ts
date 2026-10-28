@@ -42,6 +42,8 @@ export const DATA_TERMS = {
   contentRetentionDays: 30,
   contentRetentionMinDays: 7,
   contentRetentionMaxDays: 90,
+  conversationRetentionMinDays: 30,
+  conversationRetentionMaxDays: 3650,
   jurisdiction: "Cloudflare's European jurisdiction",
 } as const;
 
@@ -95,7 +97,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "Do you store my messages?",
-        a: "On Eccos Cloud, message content is kept 30 days by default and is configurable between 7 and 90 days, with storage pinned to Cloudflare's European jurisdiction. Data is never cross-referenced between businesses, never sold or shared with data brokers, and never used for advertising or to train models; per-number erasure is available through the API. Self-hosted, none of it reaches us at all.",
+        a: "On Eccos Cloud, conversation history is kept forever by default, or for a window you set between 30 and 3650 days. The short forwarding buffer deletes message content after 30 days by default, configurable between 7 and 90 days. Storage is pinned to Cloudflare's European jurisdiction. Data is never cross-referenced between businesses, never sold or shared with data brokers, and never used for advertising or to train models; per-number erasure is available through the API. Self-hosted, none of it reaches us at all.",
       },
       {
         q: "Do I need my own Meta app, or to become a Tech Provider?",
@@ -143,7 +145,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "¿Guardáis mis mensajes?",
-        a: "En Eccos Cloud el contenido de los mensajes se conserva 30 días por defecto y es configurable entre 7 y 90, con el almacenamiento fijado a la jurisdicción europea de Cloudflare. Los datos no se cruzan nunca entre empresas, no se venden ni se comparten con intermediarios de datos y no se usan para publicidad ni para entrenar modelos; hay borrado por número a través de la API. Autoalojado, nada de eso llega a nosotros.",
+        a: "En Eccos Cloud el historial de conversaciones se conserva para siempre por defecto, o durante una ventana de entre 30 y 3650 días que tú eliges. El buffer de reenvío elimina el contenido de los mensajes a los 30 días por defecto, configurable entre 7 y 90, con el almacenamiento fijado a la jurisdicción europea de Cloudflare. Los datos no se cruzan nunca entre empresas, no se venden ni se comparten con intermediarios de datos y no se usan para publicidad ni para entrenar modelos; hay borrado por número a través de la API. Autoalojado, nada de eso llega a nosotros.",
       },
       {
         q: "¿Necesito mi propia app de Meta o ser Tech Provider?",

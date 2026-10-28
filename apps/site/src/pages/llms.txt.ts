@@ -55,7 +55,8 @@ free under the ${SITE.license} licence.
 
 ## Data handling (Eccos Cloud)
 
-- Message content is kept ${DATA_TERMS.contentRetentionDays} days by default, configurable between ${DATA_TERMS.contentRetentionMinDays} and ${DATA_TERMS.contentRetentionMaxDays} days
+- Conversation history is kept forever by default, or for a window you set between ${DATA_TERMS.conversationRetentionMinDays} and ${DATA_TERMS.conversationRetentionMaxDays} days
+- The forwarding buffer keeps message content ${DATA_TERMS.contentRetentionDays} days by default, configurable between ${DATA_TERMS.contentRetentionMinDays} and ${DATA_TERMS.contentRetentionMaxDays} days
 - Storage is pinned to ${DATA_TERMS.jurisdiction}
 - Never cross-referenced between businesses, never sold or shared with data brokers, never used for advertising or to train models
 - Per-number erasure is available through the API
