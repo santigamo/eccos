@@ -55,18 +55,25 @@ export interface SetupStep {
   state: SetupStepState;
 }
 
+/**
+ * The kinds a human produces: a customer writing in (`reply` for text,
+ * `message` for any other type) and the business writing from the WhatsApp
+ * Business app under coexistence (`echo` / `message_echo`).
+ */
+export function humanMessageCount(byType: Record<string, number>): number {
+  return (byType.reply ?? 0) + (byType.message ?? 0) + (byType.echo ?? 0) + (byType.message_echo ?? 0);
+}
+
 export function setupSteps(state: DashboardState, hasForwardingTarget: boolean): SetupStep[] {
   const wabas = state.stage === "account-ready" ? state.resources.wabas : [];
   // COUNTED BY KIND, and that is the fix. `counts.inbound` is every normalised
   // callback, so a `delivered` receipt for the operator's OWN test send ticked
   // "First message" — the step then said a customer had written in when nobody
   // had, which is the same misread the Events log was renamed to end.
-  // `reply` and `echo` are the two kinds a human produces (a customer writing
-  // in, and the business writing from the WhatsApp Business app under
-  // coexistence); either one proves the whole pipe, which is what this step is
-  // for.
+  // Only messages are a human (see `humanMessageCount`); any one proves the
+  // whole pipe, which is what this step is for.
   const byType = state.stage === "ready" ? state.status.counts.inboundByType ?? {} : {};
-  const humanMessages = (byType.reply ?? 0) + (byType.echo ?? 0);
+  const humanMessages = humanMessageCount(byType);
   return [
     {
       id: "workspace",

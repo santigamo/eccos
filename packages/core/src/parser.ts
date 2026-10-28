@@ -175,6 +175,13 @@ function messageContent(message: Record<string, unknown>): MessageContent {
   return compact(content);
 }
 
+/** A text, button or interactive reply with nothing in it carries no message; it yields no event. */
+function isEmptyReply(content: MessageContent): boolean {
+  if (content.messageType === "text" || content.messageType === "button") return !content.text;
+  const kind = content.interactive?.type;
+  return (kind === "button_reply" || kind === "list_reply") && !content.interactive?.body;
+}
+
 function parseMetaMessage(message: Record<string, unknown>): WhatsAppCallbackEvent | null {
   const from = getString(message.from);
   const messageId = getString(message.id);
@@ -183,7 +190,8 @@ function parseMetaMessage(message: Record<string, unknown>): WhatsAppCallbackEve
 
   const text = metaMessageBody(message);
   if (text) return { type: "reply", from, messageId, text, at };
-  return { type: "message", from, messageId, at, ...messageContent(message) };
+  const content = messageContent(message);
+  return isEmptyReply(content) ? null : { type: "message", from, messageId, at, ...content };
 }
 
 function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent[] {
@@ -268,7 +276,8 @@ function parseEchoEntry(echo: Record<string, unknown>): WhatsAppCallbackEvent | 
 
   const text = echo.type === "text" ? getString(asRecord(echo.text)?.body) : null;
   if (text) return { type: "echo", to, messageId, text, at };
-  return { type: "message_echo", to, messageId, at, ...messageContent(echo) };
+  const content = messageContent(echo);
+  return isEmptyReply(content) ? null : { type: "message_echo", to, messageId, at, ...content };
 }
 
 export function parseMetaEchoesBatches(payload: unknown): MetaWebhookBatch[] {

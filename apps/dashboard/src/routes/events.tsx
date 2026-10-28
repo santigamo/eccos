@@ -39,8 +39,9 @@ import { cn } from "@/lib/utils";
  *
  * This is the old /inbound, and the rename is the bug fix. `inbound_events`
  * holds EVERY callback: `delivered` and `read` are Meta reporting on messages
- * WE sent, `failed` is one of our sends refused, and only `reply` and `echo`
- * are a human writing. A page called "Inbound" showing two `delivered` rows
+ * WE sent, `failed` is one of our sends refused, and only the message kinds
+ * (`reply` / `echo`, and `message` / `message_echo` for non-text) are a human
+ * writing. A page called "Inbound" showing two `delivered` rows
  * said two customers had written in, on a workspace where nobody had.
  *
  * So the count row spells the split out — `2 events · replies 0 · echoes 0 ·
@@ -529,7 +530,7 @@ function EventsPage() {
  * The count row, and the sentence it exists to make unmisreadable.
  *
  * Ink follows family, not magnitude (`lib/logs.ts` decides which is which):
- * replies and echoes are what a human did and read at full strength; the status
+ * messages and echoes are what a human did and read at full strength; the status
  * kinds are traffic and stay muted; `failed` takes the one semantic colour on
  * the row. Every entry is a door into this page filtered to it — including the
  * total, which is the door back out of a filter.

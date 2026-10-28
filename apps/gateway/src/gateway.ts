@@ -734,10 +734,10 @@ export class EccosGateway extends DurableObject<Env> {
       }
       return out;
     };
-    // Split by kind as well as totalled. The flat count cannot tell a customer
-    // writing in (`reply` / `echo`) from Meta reporting on one of our own sends
-    // (`delivered` / `read` / `failed`), and every one of those is a row in the
-    // same table — so "2 inbound events" read as "two customers wrote in" on a
+    // Split by kind as well as totalled. The flat count cannot tell a human
+    // writing (`reply` / `echo` / `message` / `message_echo`) from Meta
+    // reporting on one of our own sends (`delivered` / `read` / `failed`), and
+    // every one of those is a row in the same table — so "2 inbound events" read as "two customers wrote in" on a
     // workspace where nobody had. One extra GROUP BY over a table the flat
     // COUNT already scans.
     const inboundByType: Record<string, number> = {};

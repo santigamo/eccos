@@ -416,7 +416,7 @@ export interface EventCountEntry {
  * be told that no read receipts have arrived — so it drops out, and the row
  * stays short on a young workspace.
  *
- * Order is fixed rather than by count: the two kinds that mean a human did
+ * Order is fixed rather than by count: the kinds that mean a human did
  * something lead, always, so an operator's eye lands in the same place on every
  * workspace.
  */

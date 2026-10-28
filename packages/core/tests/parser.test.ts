@@ -122,6 +122,51 @@ describe("parseMetaWebhook", () => {
     });
   });
 
+  it("serializes reply and echo byte-for-byte as the forwarding contract", () => {
+    const [reply] = parseMetaWebhook(
+      envelope({
+        metadata: { phone_number_id: "PHONE_ID" },
+        messages: [{ from: "34600000000", id: "wamid.M", timestamp: TS_SEC, type: "text", text: { body: "Hola" } }],
+      }),
+    );
+    expect(JSON.stringify(reply)).toBe(
+      '{"type":"reply","from":"34600000000","messageId":"wamid.M","text":"Hola","at":1700000000000,"phoneNumberId":"PHONE_ID"}',
+    );
+    const [echoed] = parseMetaEchoes({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA_ID",
+          changes: [
+            {
+              field: "smb_message_echoes",
+              value: {
+                metadata: { phone_number_id: "PHONE_ID" },
+                message_echoes: [
+                  { to: "16505551234", id: "wamid.E", timestamp: TS_SEC, type: "text", text: { body: "Hi" } },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(echoed)).toBe(
+      '{"type":"echo","to":"16505551234","messageId":"wamid.E","text":"Hi","at":1700000000000,"phoneNumberId":"PHONE_ID"}',
+    );
+  });
+
+  it("drops a text with an empty body and a button or reply with an empty title", () => {
+    const from = { from: "34600000000", id: "wamid.M", timestamp: TS_SEC };
+    const messages = [
+      { ...from, type: "text", text: { body: "   " } },
+      { ...from, type: "button", button: { text: "", payload: "P" } },
+      { ...from, type: "interactive", interactive: { type: "button_reply", button_reply: { id: "b", title: "" } } },
+      { ...from, type: "interactive", interactive: { type: "list_reply", list_reply: { id: "l", title: " " } } },
+    ];
+    expect(parseMetaWebhook(envelope({ messages }))).toHaveLength(0);
+  });
+
   it("parses a quick-reply button and an interactive button_reply", () => {
     const button = parseMetaWebhook(
       envelope({
@@ -450,6 +495,28 @@ describe("non-text echoes", () => {
     expect(
       echo({ type: "edit", edit: { original_message_id: "wamid.ORIG", message: { type: "image", image: IMAGE } } }),
     ).toMatchObject({ messageType: "edit", media: MEDIA_REF, originalMessageId: "wamid.ORIG" });
+  });
+
+  it("parses an edit whose new content is empty as just the original message id", () => {
+    expect(
+      echo({ type: "edit", edit: { original_message_id: "wamid.ORIG", message: { type: "text", text: { body: "" } } } }),
+    ).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "edit",
+      originalMessageId: "wamid.ORIG",
+    });
+  });
+
+  it("drops a text echo with an empty body and a button echo with an empty title", () => {
+    for (const empty of [
+      { type: "text", text: { body: " " } },
+      { type: "button", button: { text: "" } },
+    ]) {
+      expect(parseMetaEchoes(echoEnvelope(empty))).toHaveLength(0);
+    }
   });
 
   it("parses a revoke", () => {

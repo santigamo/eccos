@@ -147,7 +147,7 @@ describe("setupSteps", () => {
     // THE BUG THIS PINS. `inbound_events` holds every normalised callback, so
     // sending one template produces a `delivered` row — and the step, read off
     // the flat total, announced that a first message had arrived from a
-    // customer who had never written. Only `reply` and `echo` are a human.
+    // customer who had never written. Only the message kinds are a human.
     expect(stateOf(ready(0, 5), true).message).toBe("todo");
   });
 
@@ -158,6 +158,17 @@ describe("setupSteps", () => {
       scope: {},
     } as unknown as DashboardState;
     expect(stateOf(withEcho, true).message).toBe("done");
+  });
+
+  test("a non-text message or echo counts too", () => {
+    for (const kind of ["message", "message_echo"]) {
+      const withMessage = {
+        stage: "ready",
+        status: { counts: { inbound: 1, inboundByType: { [kind]: 1 }, outbound: {}, deliveries: {} } },
+        scope: {},
+      } as unknown as DashboardState;
+      expect(stateOf(withMessage, true).message).toBe("done");
+    }
   });
 
   test("all four facts complete the checklist, which then has nothing to say", () => {
