@@ -36,7 +36,11 @@ export const Route = createFileRoute("/settings")({
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
-      <Skeleton className="h-40 max-w-xl" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Skeleton className="h-40" />
+        <Skeleton className="h-40" />
+        <Skeleton className="h-56 lg:col-span-2" />
+      </div>
     </Page>
   ),
 });
@@ -82,15 +86,15 @@ export function SettingsView({
 }) {
   return (
     <Page title="Settings" kicker="Configuration">
-      {/* A readable measure: full-bleed rows on a wide viewport read as a
-          broken layout, not as a panel. */}
-      <div className="flex max-w-xl flex-col gap-4">
+      <div className="grid items-start gap-4 lg:grid-cols-2">
         {accountId ? <WorkspacePanel accountId={accountId} /> : null}
         {accountId && retention ? (
           <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
         ) : null}
         {accountId && keys ? (
-          <ApiKeysPanel keys={keys} wabaId={wabaId} onChanged={onKeysChanged} />
+          <div className="lg:col-span-2">
+            <ApiKeysPanel keys={keys} wabaId={wabaId} onChanged={onKeysChanged} />
+          </div>
         ) : null}
       </div>
     </Page>
