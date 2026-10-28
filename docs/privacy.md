@@ -137,8 +137,12 @@ Third parties that see this data, and why:
   what's needed to run the Worker/DO.
 - **Umami** (console only, opt-in) — the analytics instance the operator configures, as described in
   §1. Eccos Cloud runs its own, self-hosted; nothing reaches it unless the `ANALYTICS_*` vars are set.
-- **No other third party is contacted by this codebase** — no error-reporting services, no mailing
-  list, no license-check phone-home.
+- **Sentry** (opt-in) — error reports from the gateway (`SENTRY_DSN`) and the console
+  (`VITE_SENTRY_DSN`): error message, stack trace, request method and path. Headers, bodies, query
+  strings, cookies and user identity are turned off (`dataCollection` in `apps/gateway/src/sentry.ts`
+  and `apps/dashboard/src/lib/sentry.ts`). Nothing is sent unless a DSN is set; Eccos Cloud sets both.
+- **No other third party is contacted by this codebase** — no mailing list, no license-check
+  phone-home.
 
 ## 4. Operator access to stored data
 
