@@ -821,6 +821,19 @@ export interface GatewayExport {
   config: Record<string, string>;
 }
 
+/** Names one stored media object: the WABA it belongs to and its Meta media id. */
+export interface MediaRequest {
+  wabaId: string;
+  mediaId: string;
+}
+
+/** A stored media object, streamed. The body is a read-once stream: the caller owns it. */
+export interface MediaObject {
+  body: ReadableStream<Uint8Array>;
+  contentType: string;
+  size: number;
+}
+
 export interface GatewayApi {
   /** Every method requires the owning account's id: the gateway is unconditionally
    * account-scoped and fails closed when the WABA is not owned by the account. */
@@ -888,6 +901,9 @@ export interface GatewayApi {
    * number across inbound_events, outbound_messages, and deliveries. */
   eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult>;
   exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
+  /** One stored media object of the account's WABA, or null when it is not stored (yet,
+   * or any more). The bytes are streamed from R2; nothing is buffered in the gateway. */
+  getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
   /** The account's API keys, metadata only (never the secret or its hash). */

@@ -19,6 +19,7 @@ delivery of WhatsApp events, plus a short operator-visible history.
 | Delivery/status/echo events | Business phone number id when Meta supplies it, Meta transport message id, delivery/read/failed status, error codes, or (for `echo` / `message_echo`) staff-sent reply text, captions and media ids from WhatsApp coexistence | `inbound_events` (statuses share the same table as replies) | DO SQLite / `bun:sqlite` |
 | Conversations (`messages`, `contacts`) | Per customer number: the customer's number (`wa_id`), every message in and out with its text or caption, the remaining normalized fields (media ids, locations, contact cards, reactions, errors), direction, status, and Meta's timestamps; the contact's name, once a history or app-state sync supplies one | `messages` + `contacts` | DO SQLite (Workers target only) |
 | Forwarding queue (`deliveries`) | Business phone number id and a JSON copy of the batch of normalized events (`{ events: [...] }`) queued to POST to your subscriber, plus attempt count / last error | `deliveries` | DO SQLite / `bun:sqlite` |
+| Media files | The bytes of images, audio, video, documents and stickers sent or received, as Meta serves them | `MEDIA` R2 bucket (`eccos-media`, EU), under `waba/<wabaId>/media/` | Cloudflare R2 (Workers target only) |
 | Coexistence sync payloads | The raw, unparsed `history` (past chats, incl. media message metadata) and `smb_app_state_sync` (contacts: names and phone numbers) webhooks Meta sends once when a WhatsApp Business app number is onboarded, stored verbatim with a SHA-256, size, and arrival time | `sync_payloads` + `sync_payload_parts` | DO SQLite (Workers target only) |
 | Onboarding/config metadata | Account/WABA/phone ownership, WABA callback URL, and Meta access token; plus `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable subscriber URL/secret | Control-plane `accounts`/`wabas`/`phones` tables plus the WABA `config` table | DO SQLite (`apps/gateway/src/control-plane.ts`, `apps/gateway/src/gateway.ts`) |
 
@@ -26,15 +27,16 @@ Source of truth for the exact columns: `apps/gateway/src/gateway.ts` (`CREATE TA
 for the Workers target, `src/db/client.ts` for the Bun target — the two schemas are effectively
 the same content, minus the Workers target's extra `config` table and message-id dedupe indexes.
 
-**No media/attachment bytes are stored.** The normalized event contract
-(`packages/core/src/types.ts`, `WhatsAppCallbackEvent`) carries text, captions, locations,
-contact cards and Meta media *ids* plus ids/timestamps/error codes — there is no code path that downloads or persists WhatsApp
-media (images/audio/documents) today.
-
-**Media may be stored in R2, but nothing is written there yet.** The Workers target binds an
-EU-jurisdiction R2 bucket (`MEDIA`, `eccos-media`) for media files that later phases will download
-from Meta. Each object sits under its WABA's prefix (`waba/<wabaId>/media/<mediaId>`) with its content
-type and SHA-256 as metadata. No public URLs are issued. A WABA's prefix can be purged with `deleteMediaForWaba`, but nothing calls it yet.
+**Media files are stored.** The normalized event contract (`packages/core/src/types.ts`,
+`WhatsAppCallbackEvent`) carries Meta media *ids*; the gateway downloads the bytes from Meta
+after the message arrives. Images, audio, video, documents and stickers are kept in the Workers
+target's EU-jurisdiction R2 bucket (`MEDIA`, `eccos-media`), one object per media id under the
+WABA's prefix (`waba/<wabaId>/media/<mediaId>`), with its content type and SHA-256 as metadata.
+The bytes are downloaded on the gateway's alarm, never in the webhook request. They are served only
+to a signed-in member of the workspace that owns the WABA, at `/media/<wabaId>/<mediaId>`, with
+private caching. No public URLs are issued and the bucket is not public. Each object follows the
+conversation it belongs to: it is deleted when its message is pruned by the workspace's retention
+window or when the number is erased (see the sections below).
 
 **The gateway sends no analytics or telemetry.** Its only network calls are to `graph.facebook.com`
 (Meta Cloud API) and to the operator's own `SUBSCRIBER_WEBHOOK_URL`.
@@ -56,7 +58,9 @@ made of) is kept until a number is erased or the workspace's window passes. The 
 **forever**. A workspace can choose to delete conversations after a window of 30 to 3650 days
 in Settings. The window is stored once, on the account in the control plane
 (`conversation_retention_days`), and each WABA's gateway applies it on its hourly sweep. The
-windows below apply only to the short relay buffer.
+windows below apply only to the short relay buffer. A media file has the life of its message: when
+the sweep deletes the last message that references a media id, the gateway deletes that R2 object
+on the same alarm.
 
 Both targets prune old relay rows on an ongoing basis; the Workers target uses a **split**
 retention model so message content ages out before the operational audit trail does:
@@ -229,7 +233,10 @@ operator account).
   only a Meta message id; (b) a phone number quoted inside the free text of *another*
   contact's message is not matched (that row is the other data subject's content); (c) erasure
   covers this gateway's storage only — events already forwarded to your
-  `SUBSCRIBER_WEBHOOK_URL` live in your downstream system and must be erased there separately.
+  `SUBSCRIBER_WEBHOOK_URL` live in your downstream system and must be erased there separately;
+  (d) the media files of the erased messages are deleted from R2 in the same request, and a
+  media object that cannot be deleted stays queued for the alarm, which retries it, and the
+  erasure call reports the failure so it can be repeated.
 - Beyond that there is **no full "purge everything now" action** in `GatewayApi`. To wipe the
   entire store immediately, an operator must either wait for the alarm-driven prune, or
   delete/reset the Durable Object (e.g. via a new `wrangler.jsonc` migration that deletes the

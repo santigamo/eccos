@@ -387,7 +387,7 @@ describe("conversation store: erasure and retention", () => {
       ]);
       i.logOutbound("wamid.WO1", WA, textSend(WA, "to mine"), "sent", null);
 
-      const result = i.eraseByPhone(WA);
+      const result = await i.eraseByPhone(WA);
       expect(result).toMatchObject({ ok: true, counts: { messagesDeleted: 2, contactsDeleted: 1 } });
       expect(i.getConversation({ waId: WA }).items).toEqual([]);
       expect(i.listConversations().items.map((c) => c.waId)).toEqual([OTHER]);
@@ -399,7 +399,7 @@ describe("conversation store: erasure and retention", () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       i.logOutbound("wamid.ERA1", TYPED, textSend(TYPED, "gone"), "sent", null, PHONE_NUMBER_ID, META_ID);
 
-      const result = i.eraseByPhone(TYPED);
+      const result = await i.eraseByPhone(TYPED);
       expect(result).toMatchObject({ ok: true, counts: { messagesDeleted: 1, contactsDeleted: 1 } });
       expect(i.getConversation({ waId: META_ID }).items).toEqual([]);
       expect(i.exportData().contacts).toEqual([]);

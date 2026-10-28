@@ -6,6 +6,7 @@ const LIST_PAGE_SIZE = 1000;
 export interface MediaInput {
   wabaId: string;
   mediaId: string;
+  /** A stream must have a known length (a `FixedLengthStream`): R2 refuses an unbounded body. */
   body: ReadableStream | ArrayBuffer | ArrayBufferView | Blob | string;
   contentType: string;
   /** Hex SHA-256 of `body`. R2 rejects the write when the bytes do not match. */
@@ -30,13 +31,21 @@ function mediaKey(wabaId: string, mediaId: string): string {
 }
 
 export async function putMedia(bucket: R2Bucket, input: MediaInput): Promise<void> {
-  const { wabaId, mediaId, body, contentType, sha256 } = input;
-  if (sha256 !== undefined && !SHA256_HEX.test(sha256)) throw new Error("Invalid SHA-256 digest");
+  const { wabaId, mediaId, body, contentType } = input;
+  if (input.sha256 !== undefined && !SHA256_HEX.test(input.sha256)) throw new Error("Invalid SHA-256 digest");
+  // Meta and R2 both take lowercase hex; the stored metadata must match what R2 checked.
+  const sha256 = input.sha256?.toLowerCase();
   await bucket.put(mediaKey(wabaId, mediaId), body, {
     httpMetadata: { contentType },
     customMetadata: sha256 ? { sha256 } : undefined,
     sha256,
   });
+}
+
+/** Deletes the objects for these media ids under one WABA. Missing keys are not an error. */
+export async function deleteMediaObjects(bucket: R2Bucket, wabaId: string, mediaIds: string[]): Promise<void> {
+  if (mediaIds.length === 0) return;
+  await bucket.delete(mediaIds.map((mediaId) => mediaKey(wabaId, mediaId)));
 }
 
 export async function getMedia(

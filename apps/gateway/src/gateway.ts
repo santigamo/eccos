@@ -33,6 +33,8 @@ import {
 import type { EccosControlPlane } from "./control-plane";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { type HistoryMessage, type SyncItem, mapSyncItem, syncItems } from "./history";
+import { downloadMetaMedia, MediaPermanentError } from "./media-download";
+import { deleteMediaObjects } from "./media-store";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -40,6 +42,9 @@ import { isPublicConfigKey } from "./private-config-keys";
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
 interface Env extends OpsAlertEnv {
   FORWARD_MAX_ATTEMPTS: string;
+  /** WhatsApp media bytes, under `waba/<wabaId>/media/` (src/media-store.ts). */
+  MEDIA: R2Bucket;
+  META_GRAPH_VERSION?: string;
   /** Content retention window (days): past it, `inbound_events` and `outbound_messages`
    * rows are deleted, terminal `deliveries` rows keep only metadata (payload redacted),
    * and `pending` `deliveries` rows — including events held for want of a forwarding
@@ -83,6 +88,14 @@ const SYNC_RETRY_MS = 60_000;
 const SHARING_OFF_KEY = "__history_sharing_off__";
 const ALARM_BATCH = 40;
 const ALARM_MAX_CONCURRENCY = 6;
+/** Media downloads per alarm, and how many stream at once: each can move up to 100 MB. */
+const MEDIA_BATCH = 5;
+const MEDIA_CONCURRENCY = 2;
+/** Attempts before a media id is given up. Backoff between them runs 5s, 25s, 2m, 10m. */
+const MEDIA_MAX_ATTEMPTS = 5;
+/** How long a failed token lookup or R2 purge waits before the alarm tries again. */
+const MEDIA_RETRY_MS = 60_000;
+const MEDIA_PURGE_BATCH = 100;
 const DEFAULT_CONTENT_RETENTION_DAYS = 30;
 const MIN_CONTENT_RETENTION_DAYS = 7;
 const MAX_CONTENT_RETENTION_DAYS = 90;
@@ -439,6 +452,22 @@ export class EccosGateway extends DurableObject<Env> {
         );`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_at ON messages (wa_id, at);`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_target ON messages (target_id);`);
+        // Media bookkeeping (eccos-yqbz.6). One row per media id, in states: `failed`
+        // (retried once `next_attempt_at` passes), `stored` (the R2 object exists),
+        // `gone` (given up), `erased` (tombstone: the R2 object is due to be deleted).
+        this.sql.exec(`CREATE TABLE IF NOT EXISTS media (
+          media_id        TEXT PRIMARY KEY,
+          state           TEXT NOT NULL,
+          attempts        INTEGER NOT NULL DEFAULT 0,
+          last_error      TEXT,
+          next_attempt_at INTEGER,
+          updated_at      INTEGER NOT NULL
+        );`);
+        this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_media_retry ON media (state, next_attempt_at);`);
+        // Partial, on the media id: finding the media messages reads only those rows,
+        // not the whole conversation store on every alarm.
+        this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_media ON messages (json_extract(content, '$.media.id'))
+          WHERE json_extract(content, '$.media.id') IS NOT NULL;`);
         // Same transaction as the CREATE TABLEs: a backfill that fails rolls the
         // tables back too, so the next start retries instead of finding a
         // half-filled store that looks complete.
@@ -1116,7 +1145,7 @@ export class EccosGateway extends DurableObject<Env> {
    * they need no wamid join. Returns per-table counts so the operator can
    * evidence the erasure.
    */
-  eraseByPhone(phone: string): EraseByPhoneResult {
+  async eraseByPhone(phone: string): Promise<EraseByPhoneResult> {
     const digits = normalizePhoneNumber(phone);
     if (!digits) {
       return { ok: false, error: "invalid phone number: expected at least 5 digits" };
@@ -1235,13 +1264,22 @@ export class EccosGateway extends DurableObject<Env> {
         if (row) waIds.add(row.wa_id as string);
       }
       const placeholders = [...waIds].map(() => "?").join(", ");
+      const mediaIds = this.mediaIdsOf(`wa_id IN (${placeholders})`, ...waIds);
       counts.messagesDeleted = this.sql
         .exec(`DELETE FROM messages WHERE wa_id IN (${placeholders}) RETURNING id`, ...waIds)
         .toArray().length;
       counts.contactsDeleted = this.sql
         .exec(`DELETE FROM contacts WHERE wa_id IN (${placeholders}) RETURNING wa_id`, ...waIds)
         .toArray().length;
+      this.tombstoneUnreferencedMedia(mediaIds);
     });
+    // The R2 objects go in the same request, so a successful erasure has deleted
+    // its media. If R2 refuses, the tombstones keep the work queued: the alarm
+    // retries it, and an operator's retry of this call finishes it at once.
+    if (!(await this.purgeErasedMedia())) {
+      this.ctx.storage.setAlarm(Date.now() + MEDIA_RETRY_MS);
+      throw new Error("messages erased, but their media could not be deleted yet; retry the erasure");
+    }
     return { ok: true, phone: digits, counts };
   }
 
@@ -1430,7 +1468,7 @@ export class EccosGateway extends DurableObject<Env> {
       nextSweepAt = now + SWEEP_INTERVAL_MS;
     }
 
-    // One alarm serves delivery, retention and sync: arm the earliest of their wakes, so
+    // One alarm serves delivery, retention, sync and media: arm the earliest of their wakes, so
     // a sync backlog or retry cannot push a due delivery back.
     const wakes: number[] = [];
     // Only reschedule against `next_attempt_at` when there is somewhere to send.
@@ -1464,9 +1502,13 @@ export class EccosGateway extends DurableObject<Env> {
        */
       wakes.push(nextSweepAt);
     }
+
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
     if (syncWake !== null) wakes.push(Date.now() + syncWake);
+    // Last, after the sweep, so the media of the messages it just pruned is purged in this same alarm.
+    const mediaWakeAt = await this.mediaStep(now);
+    if (mediaWakeAt !== null) wakes.push(mediaWakeAt);
     if (wakes.length > 0) this.ctx.storage.setAlarm(Math.min(...wakes));
     if (hasWorkerError) throw workerError;
   }
@@ -1770,6 +1812,126 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /**
+   * The media half of alarm(). Purges erased objects, then downloads one bounded
+   * batch of media that messages reference and that is not yet settled. Nothing
+   * here runs in a webhook request: ingest only schedules the alarm.
+   *
+   * Returns when the alarm must run again, or null when nothing is waiting.
+   * Never throws: a media failure must not hold up deliveries or the sweep.
+   */
+  private async mediaStep(now: number): Promise<number | null> {
+    const wakes: number[] = [];
+    const due = this.dueMediaIds(now);
+    if (due.length > 0) {
+      const token = await this.metaToken();
+      if (token === null) {
+        wakes.push(now + MEDIA_RETRY_MS);
+      } else {
+        await runBoundedPool(due, MEDIA_CONCURRENCY, (mediaId) => this.downloadOneMedia(mediaId, token));
+        // A full batch may hide more due work: come back now rather than at the next retry.
+        if (due.length === MEDIA_BATCH) wakes.push(now);
+      }
+    }
+    // Last, so an object the batch above wrote for a message erased meanwhile is deleted in this alarm.
+    if (!(await this.purgeErasedMedia())) wakes.push(now + MEDIA_RETRY_MS);
+
+    const next = this.sql
+      .exec(`SELECT MIN(next_attempt_at) AS next FROM media WHERE state = 'failed'`)
+      .toArray()[0]?.next;
+    if (next != null) wakes.push(Number(next));
+    return wakes.length > 0 ? Math.min(...wakes) : null;
+  }
+
+  /** Media ids a message references that need a download: no row yet, or a failed
+   * attempt whose backoff has passed. Stored, given-up and erased ids never come back. */
+  private dueMediaIds(now: number): string[] {
+    return this.sql
+      .exec(
+        `SELECT DISTINCT json_extract(m.content, '$.media.id') AS media_id
+         FROM messages m
+         WHERE json_extract(m.content, '$.media.id') IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM media d
+             WHERE d.media_id = json_extract(m.content, '$.media.id')
+               AND (d.state != 'failed' OR d.next_attempt_at > ?)
+           )
+         LIMIT ?`,
+        now,
+        MEDIA_BATCH,
+      )
+      .toArray()
+      .map((row) => String(row.media_id));
+  }
+
+  /** The WABA's Meta token for the media downloads, or null when the lookup fails. Logged, and
+   * the caller waits and retries: a missing token is never an attempt against a media id. */
+  private async metaToken(): Promise<string | null> {
+    try {
+      return await getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps());
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          area: "media",
+          event: "token-lookup-failed",
+          waba: this.wabaIdForOps(),
+          error: String(error).slice(0, 200),
+        }),
+      );
+      return null;
+    }
+  }
+
+  /** Downloads one media id into R2 and records the outcome. Never throws: a failure
+   * becomes a `failed` row with backoff, or a `gone` row once it cannot succeed. */
+  private async downloadOneMedia(mediaId: string, token: string): Promise<void> {
+    const now = Date.now();
+    // Checked again here, with no await before the write: the due list was read before
+    // the token lookup, and an overlapping run may have settled this id since.
+    const prior = this.sql
+      .exec(`SELECT state, attempts, next_attempt_at FROM media WHERE media_id = ?`, mediaId)
+      .toArray()[0];
+    if (prior && (prior.state !== "failed" || Number(prior.next_attempt_at) > now)) return;
+    const attempts = Number(prior?.attempts ?? 0) + 1;
+
+    let state: "stored" | "failed" | "gone" = "stored";
+    let lastError: string | null = null;
+    let nextAttemptAt: number | null = null;
+    try {
+      await downloadMetaMedia({
+        bucket: this.env.MEDIA,
+        wabaId: this.wabaIdForOps(),
+        mediaId,
+        token,
+        graphVersion: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
+      });
+    } catch (error) {
+      state = error instanceof MediaPermanentError || attempts >= MEDIA_MAX_ATTEMPTS ? "gone" : "failed";
+      lastError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+      nextAttemptAt = state === "failed" ? now + withJitter(backoffMs(attempts)) : null;
+    }
+    // The message may have been erased or pruned while the bytes were in flight. Then nothing
+    // may be recorded as stored: the id is tombstoned, and the purge after this batch deletes
+    // the object that was just written.
+    if (!this.isReferenced(mediaId)) {
+      this.markErased(mediaId, now);
+      return;
+    }
+    this.sql.exec(
+      `INSERT INTO media (media_id, state, attempts, last_error, next_attempt_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(media_id) DO UPDATE SET state = excluded.state, attempts = excluded.attempts,
+         last_error = excluded.last_error, next_attempt_at = excluded.next_attempt_at, updated_at = excluded.updated_at`,
+      mediaId,
+      state,
+      attempts,
+      lastError,
+      nextAttemptAt,
+      now,
+    );
+  }
+
+  /**
    * Deletes conversation history past the workspace's window. The window lives in
    * the control plane only, so it is read once per sweep here. NULL keeps everything,
    * and a failed lookup deletes nothing: an unknown window is never guessed.
@@ -1780,13 +1942,83 @@ export class EccosGateway extends DurableObject<Env> {
    */
   async pruneConversations(now: number): Promise<void> {
     const days = await this.conversationRetentionDays();
-    if (days != null) {
-      const cutoff = now - days * DAY_MS;
+    if (days == null) return;
+    const cutoff = now - days * DAY_MS;
+    this.ctx.storage.transactionSync(() => {
+      const mediaIds = this.mediaIdsOf(`at < ?`, cutoff);
       this.sql.exec(`DELETE FROM messages WHERE at < ?`, cutoff);
       this.sql.exec(`DELETE FROM history_media WHERE at < ?`, cutoff);
       this.sql.exec(
         `DELETE FROM contacts WHERE source != 'app_state' AND wa_id NOT IN (SELECT wa_id FROM messages)`,
       );
+      this.tombstoneUnreferencedMedia(mediaIds);
+    });
+  }
+
+  /** Media ids referenced by the messages matching `where`. Read before the rows go. */
+  private mediaIdsOf(where: string, ...params: unknown[]): string[] {
+    return this.sql
+      .exec(
+        `SELECT DISTINCT json_extract(content, '$.media.id') AS media_id FROM messages
+         WHERE (${where}) AND json_extract(content, '$.media.id') IS NOT NULL`,
+        ...params,
+      )
+      .toArray()
+      .map((row) => String(row.media_id));
+  }
+
+  /** Tombstones each media id that no remaining message references, so its R2 object
+   * is deleted by `purgeErasedMedia`. Runs after the messages are deleted, inside the
+   * same transaction, so an object is never left with no tombstone. */
+  private tombstoneUnreferencedMedia(mediaIds: string[]): void {
+    for (const mediaId of new Set(mediaIds)) {
+      if (!this.isReferenced(mediaId)) this.markErased(mediaId, Date.now());
+    }
+  }
+
+  private isReferenced(mediaId: string): boolean {
+    return this.sql
+      .exec(`SELECT 1 FROM messages WHERE json_extract(content, '$.media.id') = ? LIMIT 1`, mediaId)
+      .toArray().length > 0;
+  }
+
+  private markErased(mediaId: string, now: number): void {
+    this.sql.exec(
+      `INSERT INTO media (media_id, state, attempts, last_error, next_attempt_at, updated_at)
+       VALUES (?, 'erased', 0, NULL, NULL, ?)
+       ON CONFLICT(media_id) DO UPDATE SET state = 'erased', next_attempt_at = NULL, updated_at = excluded.updated_at`,
+      mediaId,
+      now,
+    );
+  }
+
+  /** Deletes the R2 objects of every tombstoned media id, then the tombstones. The rows go
+   * first, so an object a concurrent download writes during the R2 call is tombstoned
+   * afresh and caught by the next purge. Returns false when R2 refuses: the tombstones
+   * are restored and the next attempt picks them up. */
+  private async purgeErasedMedia(): Promise<boolean> {
+    for (;;) {
+      const ids = this.sql
+        .exec(`SELECT media_id FROM media WHERE state = 'erased' LIMIT ?`, MEDIA_PURGE_BATCH)
+        .toArray()
+        .map((row) => String(row.media_id));
+      if (ids.length === 0) return true;
+      this.sql.exec(`DELETE FROM media WHERE media_id IN (${ids.map(() => "?").join(", ")})`, ...ids);
+      try {
+        await deleteMediaObjects(this.env.MEDIA, this.wabaIdForOps(), ids);
+      } catch (error) {
+        for (const mediaId of ids) this.markErased(mediaId, Date.now());
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            area: "media",
+            event: "purge-failed",
+            waba: this.wabaIdForOps(),
+            error: String(error).slice(0, 200),
+          }),
+        );
+        return false;
+      }
     }
   }
 
