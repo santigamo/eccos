@@ -184,6 +184,10 @@ const {
   getConversationRetention,
   setConversationRetention,
   validateRetentionInput,
+  listConversations,
+  getConversation,
+  validateConversationListInput,
+  validateConversationInput,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -2154,5 +2158,69 @@ describe("getConversationRetention / setConversationRetention (Settings, convers
     for (const days of [undefined, "90", 29, 3651, 90.5, Number.NaN]) {
       expect(() => validateRetentionInput({ days })).toThrow();
     }
+  });
+});
+
+// --- Conversations view (routes/conversations.tsx) ---
+
+describe("listConversations / getConversation (Conversations view)", () => {
+  test("reads the selected WABA, forwarding the page cursor unchanged", async () => {
+    const listArgs: unknown[] = [];
+    const threadArgs: unknown[] = [];
+    withResources({
+      listConversations: async (...args: unknown[]) => {
+        listArgs.push(...args);
+        return { items: [], nextCursor: "MTIzOjQ1Ng==" };
+      },
+      getConversation: async (...args: unknown[]) => {
+        threadArgs.push(...args);
+        return { items: [], nextCursor: null };
+      },
+    });
+
+    const list = await listConversations({ data: { limit: 50, cursor: "MTIzOjQ1Ng==" } });
+    expect(list.ok).toBe(true);
+    expect(listArgs).toEqual([{ limit: 50, cursor: "MTIzOjQ1Ng==", wabaId: "waba-a" }, "account-a"]);
+
+    const thread = await getConversation({ data: { waId: "15550100001", limit: 50 } });
+    expect(thread.ok).toBe(true);
+    expect(threadArgs).toEqual([{ waId: "15550100001", limit: 50, wabaId: "waba-a" }, "account-a"]);
+  });
+
+  test("a WABA the account does not own reads the account's own, never another's", async () => {
+    const seen: unknown[] = [];
+    withResources({
+      listConversations: async (opts: { wabaId: string }) => {
+        seen.push(opts.wabaId);
+        return { items: [], nextCursor: null };
+      },
+    });
+    const res = await listConversations({ data: { wabaId: "waba-foreign" } });
+    expect(res.ok).toBe(true);
+    expect(seen).toEqual(["waba-a"]);
+  });
+
+  test("gateway unreachable is surfaced as { ok: false }, like every log view", async () => {
+    withResources({
+      listConversations: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(await listConversations({ data: {} })).toEqual(unreachable("boom"));
+  });
+
+  test("missing binding yields the graceful error shape", async () => {
+    withResources({});
+    gatewayBinding = undefined;
+    expect(await getConversation({ data: { waId: "15550100001" } })).toEqual(unreachable(UNCONFIGURED_ERROR));
+  });
+
+  test("the validators refuse a malformed number, cursor or limit before any RPC", () => {
+    expect(validateConversationInput({ waId: "+1 (555) 010-0001" })).toEqual({ waId: "+1 (555) 010-0001" });
+    expect(() => validateConversationInput({})).toThrow(/waId must be a phone number/);
+    expect(() => validateConversationInput({ waId: "abc" })).toThrow(/waId must be a phone number/);
+    expect(() => validateConversationInput({ waId: "15550100001", cursor: "../etc" })).toThrow(/cursor/);
+    expect(() => validateConversationListInput({ limit: 0 })).toThrow(/limit/);
+    expect(validateConversationListInput(undefined)).toBeUndefined();
   });
 });

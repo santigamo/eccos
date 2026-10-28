@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import {
   ActivityIcon,
   InboxIcon,
+  MessagesSquareIcon,
   SendIcon,
   FileTextIcon,
   SettingsIcon,
@@ -102,6 +103,21 @@ export const NAV_MAIN: NavGroup[] = [
         href: "/templates",
         icon: <FileTextIcon aria-hidden="true" />,
         requires: "waba",
+      },
+    ],
+  },
+  {
+    // Conversations is a customer's thread, not a third log of the same hops:
+    // it reads the same stored messages as Messages, grouped by who wrote them.
+    id: "inbox",
+    label: "Inbox",
+    items: [
+      {
+        id: "conversations",
+        label: "Conversations",
+        href: "/conversations",
+        icon: <MessagesSquareIcon aria-hidden="true" />,
+        requires: "number",
       },
     ],
   },
