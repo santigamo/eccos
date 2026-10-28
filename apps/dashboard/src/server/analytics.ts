@@ -1,8 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { env } from "cloudflare:workers";
-import { createAuth } from "../auth/auth";
-import { authConfigFromEnv } from "../auth/config";
+import { getAuthForRequest } from "../auth/request-auth";
 import { resolveSession } from "../auth/session";
 import type { AnalyticsConfig } from "../lib/analytics";
 
@@ -26,7 +25,7 @@ export const getAnalyticsConfig = createServerFn({ method: "GET" }).handler(
     const websiteId = vars.ANALYTICS_WEBSITE_ID?.trim();
     if (!scriptUrl || !websiteId) return null;
 
-    const session = await resolveSession(createAuth(authConfigFromEnv(env)), getRequest());
+    const session = await resolveSession(getAuthForRequest(getRequest(), env), getRequest());
     const excluded = vars.ANALYTICS_EXCLUDE_USER_IDS?.split(",").map((id) => id.trim()) ?? [];
     if (session && excluded.includes(session.userId)) return null;
 

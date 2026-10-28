@@ -2,8 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
-import { createAuth, type Auth } from "../auth/auth";
-import { authConfigFromEnv } from "../auth/config";
+import type { Auth } from "../auth/auth";
+import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
@@ -146,7 +146,7 @@ export type { ForbiddenReason, Membership } from "../auth/tenant";
 
 /** Build the request-scoped auth instance from the Worker bindings. */
 function requestAuth(): Auth {
-  return createAuth(authConfigFromEnv(env));
+  return getAuthForRequest(getRequest(), env);
 }
 
 /** Authenticated actor context for audit events. */

@@ -40,6 +40,16 @@ export async function timed<T>(key: unknown, name: string, fn: () => Promise<T>)
   }
 }
 
+/** Count an event under `name` for the request `key` (Headers or Request) without timing it. */
+export function count(key: unknown, name: string): void {
+  const headers = key instanceof Request ? key.headers : key;
+  const timing = typeof headers === "object" && headers ? byRequest.get(headers) : undefined;
+  if (!timing) return;
+  const stage = timing.stages.get(name) ?? { ms: 0, n: 0 };
+  stage.n += 1;
+  timing.stages.set(name, stage);
+}
+
 export interface TimingReport {
   header: string;
   total: number;
