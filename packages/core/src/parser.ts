@@ -182,20 +182,37 @@ function isEmptyReply(content: MessageContent): boolean {
   return (kind === "button_reply" || kind === "list_reply") && !content.interactive?.body;
 }
 
-function parseMetaMessage(message: Record<string, unknown>): WhatsAppCallbackEvent | null {
+/** Meta's `contacts[]` of a change value: the profile name each sender set, keyed by wa_id. */
+function profileNames(value: Record<string, unknown>): Map<string, string> {
+  const names = new Map<string, string>();
+  const contacts = Array.isArray(value.contacts) ? value.contacts : [];
+  for (const contact of contacts) {
+    const record = asRecord(contact);
+    const waId = getString(record?.wa_id);
+    const name = getString(asRecord(record?.profile)?.name);
+    if (waId && name) names.set(waId, name);
+  }
+  return names;
+}
+
+function parseMetaMessage(message: Record<string, unknown>, names: Map<string, string>): WhatsAppCallbackEvent | null {
   const from = getString(message.from);
   const messageId = getString(message.id);
   const at = parseTimestampMs(message.timestamp);
   if (!from || !messageId || !at) return null;
 
+  const profileName = names.get(from);
   const text = metaMessageBody(message);
-  if (text) return { type: "reply", from, messageId, text, at };
+  if (text) return compact<WhatsAppCallbackEvent>({ type: "reply", from, messageId, text, at, profileName });
   const content = messageContent(message);
-  return isEmptyReply(content) ? null : { type: "message", from, messageId, at, ...content };
+  return isEmptyReply(content)
+    ? null
+    : compact<WhatsAppCallbackEvent>({ type: "message", from, messageId, at, profileName, ...content });
 }
 
 function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent[] {
   const events: WhatsAppCallbackEvent[] = [];
+  const names = profileNames(value);
 
   const statuses = Array.isArray(value.statuses) ? value.statuses : [];
   for (const status of statuses) {
@@ -209,7 +226,7 @@ function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent
   for (const message of messages) {
     const record = asRecord(message);
     if (!record) continue;
-    const event = parseMetaMessage(record);
+    const event = parseMetaMessage(record, names);
     if (event) events.push(event);
   }
 

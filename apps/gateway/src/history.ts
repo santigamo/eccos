@@ -108,7 +108,8 @@ export function mapSyncItem(item: SyncItem, wabaId: string): SyncUnit | null {
     message: {
       ...parsed,
       waId,
-      direction: outbound ? "out" : "in",
+      // A business-sent message is an echo, the same as a live Business App reply; "out" is an API send.
+      direction: outbound ? "echo" : "in",
       origin: "history",
       status: outbound ? historyStatus(item.raw.history_context) : null,
     },

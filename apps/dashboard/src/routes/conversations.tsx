@@ -12,8 +12,7 @@ import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { useOlderPages } from "../hooks/use-older-pages";
 import { findInPages } from "../lib/history";
 import { failureCopy, loaderFailure } from "../lib/failure";
-import { conversationTitle, normalizeWaId, threadEntries } from "../lib/conversations";
-import { normalizeSearchWabaId } from "../lib/search";
+import { conversationsSearch, conversationTitle, threadEntries } from "../lib/conversations";
 import { getConversation, listConversations } from "../server/gateway";
 import type { ConversationSummary, CursorPage, Failure, MessageRecord } from "../server/gateway";
 import { Page } from "../ui";
@@ -41,13 +40,8 @@ const NAME_LOOKUP_PAGES = 5;
 const PANES =
   "grid min-h-0 flex-1 grid-cols-1 border-y border-(--line) md:h-[min(72vh,46rem)] md:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]";
 
-type ConversationsSearch = { wabaId?: string; waId?: string };
-
 export const Route = createFileRoute("/conversations")({
-  validateSearch: (search: Record<string, unknown>): ConversationsSearch => ({
-    wabaId: normalizeSearchWabaId(search.wabaId),
-    waId: normalizeWaId(search.waId),
-  }),
+  validateSearch: conversationsSearch,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, waId: search.waId }),
   loader: async ({ deps }) => {
     const [conversations, messages] = await Promise.all([

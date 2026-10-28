@@ -88,17 +88,19 @@ export function ConversationList({
                 Older conversations did not load. Try again.
               </p>
             ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="rounded-none"
-              disabled={!canLoadOlder || loadingOlder}
-              aria-busy={loadingOlder}
-              onClick={onLoadOlder}
-            >
-              Load older →
-            </Button>
+            {canLoadOlder || loadingOlder ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-none"
+                disabled={!canLoadOlder || loadingOlder}
+                aria-busy={loadingOlder}
+                onClick={onLoadOlder}
+              >
+                Load older →
+              </Button>
+            ) : null}
           </div>
         </>
       )}

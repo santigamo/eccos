@@ -1,4 +1,5 @@
 import type { ConversationSummary, MessageRecord } from "../server/gateway";
+import { normalizeSearchWabaId } from "./search";
 
 /**
  * How the conversation inbox READS a stored message (`src/routes/conversations.tsx`).
@@ -21,6 +22,15 @@ export function normalizeWaId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return WA_ID_PATTERN.test(trimmed) ? trimmed.replace(/\D/g, "") : undefined;
+}
+
+/**
+ * The `?wabaId=` and `?waId=` a conversations URL carries. A bare id is read as the
+ * JSON number the router makes of it (`?waId=34600111222`), so both forms select the same thread.
+ */
+export function conversationsSearch(search: Record<string, unknown>): { wabaId?: string; waId?: string } {
+  const asText = (value: unknown) => (typeof value === "number" ? String(value) : value);
+  return { wabaId: normalizeSearchWabaId(asText(search.wabaId)), waId: normalizeWaId(asText(search.waId)) };
 }
 
 type Json = Record<string, unknown>;
@@ -196,9 +206,37 @@ export function conversationTitle(waId: string, name: string | null): string {
   return name ?? `+${waId}`;
 }
 
-/** The last message as the list previews it. The staff's own sends are marked as theirs. */
+/**
+ * Who sent a stored message, as the thread labels it. Only a send through Eccos's
+ * API is "Sent via Eccos"; a reply the staff wrote in the WhatsApp Business app,
+ * live or imported from history, is not.
+ */
+export function senderLabelOf(message: Pick<MessageRecord, "direction" | "origin">): string {
+  if (message.direction === "in") return "Customer";
+  return message.direction === "out" && message.origin === "live"
+    ? "Sent via Eccos"
+    : "Sent from the WhatsApp Business app";
+}
+
+/** What a message without text is called, in the list and the thread alike. */
+const TYPE_LABEL: Record<string, string> = {
+  image: "Photo",
+  sticker: "Sticker",
+  audio: "Audio message",
+  video: "Video",
+  document: "Document",
+  location: "Location",
+  contacts: "Contact",
+  reaction: "Reaction",
+  edit: "Edited message",
+  revoke: "Message deleted",
+  unsupported: "Unsupported message",
+  media_placeholder: "Media not available",
+};
+
+/** The last message as the list previews it: its text or caption, else what kind it is. The staff's own sends are marked as theirs. */
 export function previewOf(last: ConversationSummary["lastMessage"]): string {
-  const body = last.type === "revoke" ? "Message deleted" : (last.text ?? last.type);
+  const body = last.type === "revoke" ? "Message deleted" : (last.text ?? TYPE_LABEL[last.type] ?? last.type);
   return last.direction === "in" ? body : `You: ${body}`;
 }
 

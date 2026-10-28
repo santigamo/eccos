@@ -88,14 +88,15 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 ```ts
 | { type: "delivered" | "read"; transportMessageId; at }
 | { type: "failed"; transportMessageId; at; errorCode?; errorMessage? }
-| { type: "reply"; from; messageId; text; at }
+| { type: "reply"; from; messageId; text; at; profileName? }
 | { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 // Additive: every other message type, inbound and echoed, instead of being dropped
-| { type: "message"; from; messageId; at } & MessageContent
+| { type: "message"; from; messageId; at; profileName? } & MessageContent
 | { type: "message_echo"; to; messageId; at } & MessageContent
 ```
 
-`reply` / `echo` are unchanged and still carry text, button and interactive replies. Everything
+`reply` / `echo` are unchanged and still carry text, button and interactive replies. `profileName` is
+the sender's WhatsApp profile name, present only when Meta sends one (`reply` and inbound `message` only). Everything
 else arrives as `message` (inbound) or `message_echo` (coexistence), with Meta's raw type in
 `messageType` and only the fields that type uses (`MessageContent` in `packages/core/src/types.ts`):
 

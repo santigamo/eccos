@@ -546,3 +546,60 @@ describe("non-text echoes", () => {
     });
   });
 });
+
+describe("profile names", () => {
+  const contacts = [{ profile: { name: "Ana" }, wa_id: "34600000000" }];
+  const text = { from: "34600000000", id: "wamid.P1", timestamp: TS_SEC, type: "text", text: { body: "Hola" } };
+
+  it("carries the sender's profile name on a reply, keyed by wa_id", () => {
+    const [reply] = parseMetaWebhook(envelope({ contacts, messages: [text] }));
+    expect(reply).toEqual({ type: "reply", from: "34600000000", messageId: "wamid.P1", text: "Hola", at: TS_MS, profileName: "Ana" });
+  });
+
+  it("carries it on a non-text message too", () => {
+    const [image] = parseMetaWebhook(
+      envelope({
+        contacts,
+        messages: [{ from: "34600000000", id: "wamid.P2", timestamp: TS_SEC, type: "image", image: { id: "MEDIA_1" } }],
+      }),
+    );
+    expect(image).toMatchObject({ type: "message", messageType: "image", profileName: "Ana" });
+  });
+
+  it("names only the sender: another contact in the same change does not leak in", () => {
+    const [reply] = parseMetaWebhook(
+      envelope({ contacts: [...contacts, { profile: { name: "Luis" }, wa_id: "34600000009" }], messages: [text] }),
+    );
+    expect(reply).toMatchObject({ profileName: "Ana" });
+  });
+
+  it("leaves profileName out when Meta gives none, so the serialized event is unchanged", () => {
+    const [noName] = parseMetaWebhook(envelope({ contacts: [{ wa_id: "34600000000" }], messages: [text] }));
+    expect(JSON.stringify(noName)).toBe(
+      '{"type":"reply","from":"34600000000","messageId":"wamid.P1","text":"Hola","at":1700000000000}',
+    );
+    const [blank] = parseMetaWebhook(envelope({ contacts: [{ profile: { name: " " }, wa_id: "34600000000" }], messages: [text] }));
+    expect(blank).not.toHaveProperty("profileName");
+  });
+
+  it("never puts a profile name on an echo, which has no sender profile", () => {
+    const [echo] = parseMetaEchoes({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA_ID",
+          changes: [
+            {
+              field: "smb_message_echoes",
+              value: {
+                contacts,
+                message_echoes: [{ to: "34600000000", id: "wamid.E1", timestamp: TS_SEC, type: "text", text: { body: "Hola" } }],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(echo).not.toHaveProperty("profileName");
+  });
+});

@@ -2,16 +2,10 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
-import type { ThreadEntry } from "../../lib/conversations";
+import { senderLabelOf, type ThreadEntry } from "../../lib/conversations";
 import { fmtTs, fmtTsShort } from "../../ui";
 import { GridEmptyState } from "../grid/empty-state";
 import { MessageBody } from "./message-body";
-
-const DIRECTION_LABEL = {
-  in: "Customer",
-  out: "Sent via Eccos",
-  echo: "Sent from the WhatsApp Business app",
-} as const;
 
 export interface ConversationThreadProps {
   wabaId?: string;
@@ -99,17 +93,19 @@ export function ConversationThread({
           ) : (
             <>
               <div className="mb-4 flex justify-center">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="rounded-none"
-                  disabled={!canLoadOlder || loadingOlder}
-                  aria-busy={loadingOlder}
-                  onClick={loadOlderHere}
-                >
-                  ← Load older
-                </Button>
+                {canLoadOlder || loadingOlder ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none"
+                    disabled={!canLoadOlder || loadingOlder}
+                    aria-busy={loadingOlder}
+                    onClick={loadOlderHere}
+                  >
+                    ← Load older
+                  </Button>
+                ) : null}
                 {olderFailed ? (
                   <p role="alert" className="ml-3 self-center text-sm text-destructive-foreground">
                     Messages did not load. Try again.
@@ -149,7 +145,7 @@ function MessageBubble({ entry, wabaId }: { entry: ThreadEntry; wabaId?: string 
         }
       >
         <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-          {DIRECTION_LABEL[message.direction]}
+          {senderLabelOf(message)}
         </p>
         <div className="mt-1.5 break-words text-foreground">
           <MessageBody entry={entry} wabaId={wabaId} />
