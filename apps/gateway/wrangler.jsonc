@@ -38,6 +38,15 @@
     ]
   },
 
+  // Media bytes (WhatsApp media, once a later phase downloads it) live under
+  // `waba/<wabaId>/media/` in this bucket — see src/media-store.ts. Pinned to the
+  // EU jurisdiction like the Durable Objects; the bucket must be created with
+  // `wrangler r2 bucket create eccos-media --jurisdiction eu` before the first
+  // deploy that carries this binding.
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "eccos-media", "jurisdiction": "eu" }
+  ],
+
   // Rate limiting went GA with a top-level "ratelimits" key; the old
   // "unsafe.bindings" form still works but makes every deploy warn about
   // experimental fields. Same namespace_id, so the limiter keeps its state.
