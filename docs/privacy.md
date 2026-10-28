@@ -18,6 +18,7 @@ delivery of WhatsApp events, plus a short operator-visible history.
 | Outbound (sent) messages | Business phone number id, recipient phone number (`to`), the full outbound request JSON (which includes message content you asked Eccos to send), Meta transport message id, send status/error | `outbound_messages` | DO SQLite / `bun:sqlite` |
 | Delivery/status/echo events | Business phone number id when Meta supplies it, Meta transport message id, delivery/read/failed status, error codes, or (for `echo`) staff-sent reply text from WhatsApp coexistence | `inbound_events` (statuses share the same table as replies) | DO SQLite / `bun:sqlite` |
 | Forwarding queue (`deliveries`) | Business phone number id and a JSON copy of the batch of normalized events (`{ events: [...] }`) queued to POST to your subscriber, plus attempt count / last error | `deliveries` | DO SQLite / `bun:sqlite` |
+| Coexistence sync payloads | The raw, unparsed `history` (past chats, incl. media message metadata) and `smb_app_state_sync` (contacts: names and phone numbers) webhooks Meta sends once when a WhatsApp Business app number is onboarded, stored verbatim with a SHA-256, size, and arrival time | `sync_payloads` + `sync_payload_parts` | DO SQLite (Workers target only) |
 | Onboarding/config metadata | Account/WABA/phone ownership, WABA callback URL, and Meta access token; plus `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable subscriber URL/secret | Control-plane `accounts`/`wabas`/`phones` tables plus the WABA `config` table | DO SQLite (`apps/gateway/src/control-plane.ts`, `apps/gateway/src/gateway.ts`) |
 
 Source of truth for the exact columns: `apps/gateway/src/gateway.ts` (`CREATE TABLE` statements)
@@ -59,10 +60,14 @@ model so message content ages out before the operational audit trail does:
     row that still drains later and reaches the subscriber as an empty body. This covers events
     the gateway is *holding* because no forwarding target has been configured yet — the hold
     lasts a retention window, not forever.
-    After this window no message content or contact phone number remains anywhere in storage,
-    whether or not it was ever forwarded.
+    After this window no message content or contact phone number remains anywhere in storage
+    except the coexistence sync payloads below, whether or not it was ever forwarded.
   - **`DELIVERY_RETENTION_DAYS`** (default **90**): past it, the metadata-only terminal
     `deliveries` rows are deleted entirely.
+  - **Coexistence sync payloads are not expired for now.** Meta sends them only once and they
+    cannot be requested again, so `sync_payloads`/`sync_payload_parts` are outside the sweep and
+    kept indefinitely. They are not forwarded to the subscriber, not included
+    in the export, and not covered by per-number erasure yet.
 
   Both are plain (non-secret) `vars` entries in `apps/gateway/wrangler.jsonc`; the Workers target
   uses only the split vars and has no tenant-wide retention setting. All values are guard-railed

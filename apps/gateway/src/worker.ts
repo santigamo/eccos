@@ -15,6 +15,7 @@ import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { validateSubscriberUrl } from "./gateway";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
+import { syncFieldsByWaba } from "./sync-capture";
 
 export { EccosGateway } from "./gateway";
 export { EccosControlPlane } from "./control-plane";
@@ -250,10 +251,30 @@ app.post("/webhooks/meta", async (c) => {
     logEvent("webhook_invalid_json", cid, 400, { bodyBytes: rawBody.length });
     return c.json({ ok: false, error: "invalid json" }, 400);
   }
+  const cp = getControlPlane(c.env);
+  // Sync webhooks are stored for any registered WABA whatever its status (the
+  // sync lands before the WABA turns active). A failed capture answers 5xx so
+  // Meta retries: these payloads are never sent again.
+  try {
+    await Promise.all(
+      [...syncFieldsByWaba(payload)]
+        .filter(([wabaId]) => WABA_ID_PATTERN.test(wabaId))
+        .map(async ([wabaId, fields]) => {
+          if (!(await cp.getWabaById(wabaId))) return;
+          const stored = await getGatewayStubForWaba(c.env, wabaId).captureSyncPayload(fields, rawBody);
+          logEvent("webhook_sync_captured", cid, 200, { wabaId, fields: fields.join(","), ...stored });
+        }),
+    );
+  } catch (error) {
+    logEvent("webhook_sync_capture_failed", cid, 503, {
+      bodyBytes: rawBody.length,
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+    return c.json({ ok: false, error: "sync capture failed" }, 503);
+  }
   let batches = mergeBatches([...parseMetaWebhookBatches(payload), ...parseMetaEchoesBatches(payload)]);
   // Only ingest WABAs AND phone numbers registered in the control plane;
   // unregistered batches are ignored while the webhook still answers 200.
-  const cp = getControlPlane(c.env);
   const known: MetaWebhookBatch[] = [];
   let ignoredEventCount = 0;
   for (const batch of batches) {

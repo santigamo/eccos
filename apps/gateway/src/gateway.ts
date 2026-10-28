@@ -51,6 +51,8 @@ const MAX_CONTENT_RETENTION_DAYS = 90;
 const DEFAULT_DELIVERY_RETENTION_DAYS = 90;
 const OPERATOR_MAX_PAGE = 200;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Well under the 2 MB DO SQLite row limit; history webhooks can be many MB. */
+export const SYNC_PART_BYTES = 512 * 1024;
 /** At most one failed-delivery alert per Durable Object (one WABA) per window. */
 export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 /** Retention only needs to run periodically, not on every alarm. alarm() fires
@@ -328,7 +330,62 @@ export class EccosGateway extends DurableObject<Env> {
       // shape, additive migrations are the only way a column arrives).
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_delivery
         ON inbound_events (delivery_id);`);
+      // Raw coexistence sync webhooks (history, contacts). Meta sends them once
+      // per number, so they are kept verbatim for reprocessing and are outside
+      // the retention sweep.
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_payloads (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        fields      TEXT NOT NULL,
+        sha256      TEXT NOT NULL UNIQUE,
+        byte_size   INTEGER NOT NULL,
+        part_count  INTEGER NOT NULL,
+        received_at INTEGER NOT NULL
+      );`);
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_payload_parts (
+        payload_id INTEGER NOT NULL,
+        ordinal    INTEGER NOT NULL,
+        chunk      BLOB NOT NULL,
+        PRIMARY KEY (payload_id, ordinal)
+      );`);
     });
+  }
+
+  /** Stores a raw sync webhook body once, keyed by its SHA-256 (a Meta retry
+   * of the same body is a duplicate). */
+  async captureSyncPayload(
+    fields: string[],
+    rawBody: string,
+  ): Promise<{ duplicate: boolean; bytes: number; parts: number }> {
+    const bytes = new TextEncoder().encode(rawBody);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const parts = Math.max(1, Math.ceil(bytes.length / SYNC_PART_BYTES));
+    let duplicate = true;
+    this.ctx.storage.transactionSync(() => {
+      const row = this.sql
+        .exec(
+          `INSERT OR IGNORE INTO sync_payloads (fields, sha256, byte_size, part_count, received_at)
+           VALUES (?, ?, ?, ?, ?) RETURNING id`,
+          fields.join(","),
+          sha256,
+          bytes.length,
+          parts,
+          Date.now(),
+        )
+        .toArray()[0];
+      if (!row) return;
+      duplicate = false;
+      for (let i = 0; i < parts; i++) {
+        const chunk = bytes.slice(i * SYNC_PART_BYTES, (i + 1) * SYNC_PART_BYTES);
+        this.sql.exec(
+          `INSERT INTO sync_payload_parts (payload_id, ordinal, chunk) VALUES (?, ?, ?)`,
+          row.id,
+          i,
+          chunk.buffer,
+        );
+      }
+    });
+    return { duplicate, bytes: bytes.length, parts };
   }
 
   ingest(events: WhatsAppCallbackEvent[]): { received: number } {
