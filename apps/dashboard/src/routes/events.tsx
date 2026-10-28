@@ -16,6 +16,8 @@ import { LogGrid } from "../components/grid/log-grid";
 import { EventSheet } from "../components/logs/event-sheet";
 import { HeldNotice } from "../components/logs/held-notice";
 import { LogPager } from "../components/logs/log-pager";
+import { RefreshControls } from "../components/logs/refresh-controls";
+import { useLiveRefresh } from "../hooks/use-live-refresh";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
 import { listInbound, retryDelivery } from "../server/gateway";
@@ -300,6 +302,8 @@ function EventsPage() {
   const { kind, forward, before, event, wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
+  const liveRefresh = useLiveRefresh("events");
+  const refreshControls = <RefreshControls {...liveRefresh} />;
   const router = useRouter();
   const [retrying, setRetrying] = useState<number | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
@@ -307,7 +311,7 @@ function EventsPage() {
 
   if (!result.ok) {
     return (
-      <Page title="Events" kicker="Logs">
+      <Page title="Events" kicker="Logs" actions={refreshControls}>
         <FailureView failure={result} />
       </Page>
     );
@@ -437,6 +441,7 @@ function EventsPage() {
           ))}
         </SelectContent>
       </Select>
+      {refreshControls}
     </>
   );
 

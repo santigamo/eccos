@@ -7,6 +7,8 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { LogPager } from "../components/logs/log-pager";
+import { RefreshControls } from "../components/logs/refresh-controls";
+import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { MessageSheet } from "../components/logs/message-sheet";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
@@ -215,11 +217,13 @@ function MessagesPage() {
   const { status, before, message, wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
+  const liveRefresh = useLiveRefresh("messages");
+  const refreshControls = <RefreshControls {...liveRefresh} />;
   const rows = useMemo(() => (result.ok ? result.data : []), [result]);
 
   if (!result.ok) {
     return (
-      <Page title="Messages" kicker="Logs">
+      <Page title="Messages" kicker="Logs" actions={refreshControls}>
         <FailureView failure={result} />
       </Page>
     );
@@ -280,6 +284,7 @@ function MessagesPage() {
           ))}
         </SelectContent>
       </Select>
+      {refreshControls}
     </>
   );
 
