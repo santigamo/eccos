@@ -1575,6 +1575,47 @@ export const deleteTemplate = createServerFn({ method: "POST" })
 // --- Operator actions (webhooks page) ---
 
 /** Read the current outbound-forwarding target. The secret is never exposed. */
+/** Conversation retention for the caller's account; null keeps them forever. */
+export const getConversationRetention = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<number | null>> =>
+    withGateway(async (gateway) => {
+      const { accountId } = await adminActorAccount(gateway);
+      return gateway.getConversationRetention(accountId);
+    }),
+);
+
+/**
+ * Sets the window for conversation history. `days` is null (keep forever) or a
+ * whole number of days within the bounds the control plane enforces too.
+ */
+export function validateRetentionInput(input: unknown): { days: number | null } {
+  const days = inputRecord(input).days;
+  if (days === null) return { days: null };
+  if (typeof days !== "number" || !Number.isInteger(days) || days < 30 || days > 3650) {
+    throw new Error("days must be null (keep forever) or a whole number from 30 to 3650");
+  }
+  return { days };
+}
+
+export const setConversationRetention = createServerFn({ method: "POST" })
+  .validator(validateRetentionInput)
+  .handler(
+    ({ data }): Promise<Result<number | null>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await adminActorAccount(gateway);
+        const stored = await gateway.setConversationRetention(accountId, data.days);
+        auditEvent({
+          action: "conversation_retention_set",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          resource: { days: stored },
+          outcome: "success",
+        });
+        return stored;
+      }),
+  );
+
 export const getSubscriberConfig = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(({ data }): Promise<Result<SubscriberConfig>> =>

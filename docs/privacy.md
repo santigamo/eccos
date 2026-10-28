@@ -51,8 +51,15 @@ rendered.
 
 ## 2. Retention
 
-Both targets prune old rows on an ongoing basis; the Workers target uses a **split** retention
-model so message content ages out before the operational audit trail does:
+**Conversation history** (the messages and contacts a workspace's WhatsApp conversations are
+made of) is kept until a number is erased or the workspace's window passes. The default is
+**forever**. A workspace can choose to delete conversations after a window of 30 to 3650 days
+in Settings. The window is stored once, on the account in the control plane
+(`conversation_retention_days`), and each WABA's gateway applies it on its hourly sweep. The
+windows below apply only to the short relay buffer.
+
+Both targets prune old relay rows on an ongoing basis; the Workers target uses a **split**
+retention model so message content ages out before the operational audit trail does:
 
 - **Workers target (`apps/gateway/`, the active v1 target):** `EccosGateway.alarm()`
   (`apps/gateway/src/gateway.ts`) sweeps with two windows:
@@ -70,7 +77,7 @@ model so message content ages out before the operational audit trail does:
     (`inbound_events`, `outbound_messages`, `deliveries`) whether or not it was ever forwarded.
     The conversation store (`messages`, `contacts`) and the coexistence sync payloads below are
     outside this sweep: the conversation store is the record of the conversation itself, and its
-    retention will be configured per workspace rather than by `CONTENT_RETENTION_DAYS`.
+    retention is the workspace's own window, not `CONTENT_RETENTION_DAYS`.
   - **`DELIVERY_RETENTION_DAYS`** (default **90**): past it, the metadata-only terminal
     `deliveries` rows are deleted entirely.
   - **Coexistence sync payloads are not expired for now.** Meta sends them only once and they
@@ -191,8 +198,9 @@ operator account).
   a known phone.
 
 **Delete (Workers target):**
-- Normal operation already removes message content automatically after ~30 days and the
-  remaining delivery metadata after ~90 (§2).
+- Normal operation removes relay-buffer content automatically after ~30 days and the remaining
+  delivery metadata after ~90 (§2). Conversation history is not removed by that sweep: it stays
+  until a number is erased, or until the workspace's window (if set) passes.
 - <a id="erasure"></a>**Per-number erasure (GDPR Art. 17)** — `EccosGateway.eraseByPhone(phone)`,
   exposed as `GatewayRPC.eraseByPhone()` (operator RPC, service binding only) and as
   `POST /v1/wabas/<WABA_ID>/privacy/erasure` with body `{"phone": "+34..."}` behind the account

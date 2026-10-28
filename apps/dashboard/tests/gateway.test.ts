@@ -181,6 +181,9 @@ const {
   revokeApiKey,
   validateIssueKeyInput,
   validateRevokeKeyInput,
+  getConversationRetention,
+  setConversationRetention,
+  validateRetentionInput,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -2071,5 +2074,85 @@ describe("listApiKeys / issueApiKey / revokeApiKey (Settings, API keys)", () => 
     expect(validateRevokeKeyInput({ keyId: "key_abc123" })).toEqual({ keyId: "key_abc123" });
     expect(() => validateRevokeKeyInput({ keyId: "key_../x" })).toThrow();
     expect(() => validateRevokeKeyInput({})).toThrow();
+  });
+});
+
+describe("getConversationRetention / setConversationRetention (Settings, conversation history)", () => {
+  function retentionBinding(calls: unknown[][], stored: number | null = null) {
+    withResources({
+      getConversationRetention: async (...args: unknown[]) => {
+        calls.push(["get", ...args]);
+        return stored;
+      },
+      setConversationRetention: async (...args: unknown[]) => {
+        calls.push(["set", ...args]);
+        return args[1] as number | null;
+      },
+    });
+  }
+
+  test("reads null (keep forever) by default and is scoped to the session's account", async () => {
+    const calls: unknown[][] = [];
+    retentionBinding(calls);
+    expect(await getConversationRetention()).toEqual({ ok: true, data: null });
+    expect(calls).toEqual([["get", "account-a"]]);
+  });
+
+  test("sets a window and forever, always on the session's account", async () => {
+    const calls: unknown[][] = [];
+    retentionBinding(calls);
+    expect(await setConversationRetention({ data: { days: 90, accountId: "account-b" } })).toEqual({
+      ok: true,
+      data: 90,
+    });
+    expect(await setConversationRetention({ data: { days: null } })).toEqual({ ok: true, data: null });
+    expect(calls).toEqual([
+      ["set", "account-a", 90],
+      ["set", "account-a", null],
+    ]);
+  });
+
+  test("requires administer: an admin-less role is refused and the binding is never touched", async () => {
+    const calls: unknown[][] = [];
+    retentionBinding(calls);
+    fakeDeniedActions = new Set(["administer"]);
+    expect(await getConversationRetention()).toMatchObject({
+      ok: false,
+      kind: "forbidden",
+      reason: "missing-permission",
+    });
+    expect(await setConversationRetention({ data: { days: 30 } })).toMatchObject({
+      ok: false,
+      kind: "forbidden",
+      reason: "missing-permission",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  test("audits a change with the stored window, and nothing about the conversations", async () => {
+    retentionBinding([]);
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await setConversationRetention({ data: { days: 365 } });
+    } finally {
+      console.info = original;
+    }
+    const audits = emitted.filter((line) => line.includes('"area":"audit"'));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toContain('"action":"conversation_retention_set"');
+    expect(audits[0]).toContain('"days":365');
+  });
+
+  test("the validator accepts null and whole days from 30 to 3650, and refuses the rest", () => {
+    expect(validateRetentionInput({ days: null })).toEqual({ days: null });
+    expect(validateRetentionInput({ days: 30 })).toEqual({ days: 30 });
+    expect(validateRetentionInput({ days: 3650 })).toEqual({ days: 3650 });
+    for (const days of [undefined, "90", 29, 3651, 90.5, Number.NaN]) {
+      expect(() => validateRetentionInput({ days })).toThrow();
+    }
   });
 });

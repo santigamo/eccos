@@ -728,6 +728,18 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).revokeApiKey(account, keyId);
   }
 
+  /** Conversation retention for the account: null keeps conversations forever. */
+  async getConversationRetention(accountId: string): Promise<number | null> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).getConversationRetentionDays(account);
+  }
+
+  /** Stores the account's conversation retention. The control plane is the only copy. */
+  async setConversationRetention(accountId: string, days: number | null): Promise<number | null> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).setConversationRetentionDays(account, days);
+  }
+
   /** Idempotent organization→account provisioning (contract §2). Creates no API
    * key; concurrent/retried calls converge to one account and one link. */
   async ensureOrganizationAccount(

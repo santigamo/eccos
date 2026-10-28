@@ -119,10 +119,17 @@ the existing file and skip table creation for anything that already exists.
 
 ## Retention (split content / delivery windows)
 
-Both targets prune old rows on an ongoing basis rather than growing the database forever.
+Both targets prune their relay buffer on an ongoing basis rather than growing the database
+forever. Conversation history is the exception: it is the workspace's record, not a buffer.
 
-**Workers target (`apps/gateway`)** — retention is split in two windows, because message
-content lives in *three* tables (`deliveries.payload` carries a full copy of each forwarded
+**Conversation history (Workers target, `apps/gateway`)** — messages and contacts are kept
+until a number is erased (`eraseByPhone`) or the workspace's own window passes. The default is
+**forever**. The window is set per workspace in Settings (30 to 3650 days) and stored once, on
+the account's control-plane row as `conversation_retention_days` (NULL = forever). The windows
+below never touch conversation history.
+
+**Relay buffer (Workers target, `apps/gateway`)** — retention is split in two windows, because
+message content lives in *three* tables (`deliveries.payload` carries a full copy of each forwarded
 event batch) while the operational audit trail (did the forward succeed, how many attempts,
 what error) should outlive the content itself:
 
@@ -136,13 +143,12 @@ Coexistence sync payloads (`sync_payloads` + `sync_payload_parts`: the raw `hist
 not expired for now — Meta sends them once per number and they cannot be fetched again.
 
 The conversation store (`messages` + `contacts`, written from the same events and sends) is **outside both
-windows**: it is the conversation record itself, not a relay buffer, so it is not expired by
-`CONTENT_RETENTION_DAYS`. Its retention is per workspace and is not configurable yet; until then it is
-removed only by per-number erasure (`eraseByPhone`).
+windows**: it is the conversation record itself, not a relay buffer. Its retention is the workspace's
+own window described above, not `CONTENT_RETENTION_DAYS`.
 
-So after ~30 days no message content (bodies, phone numbers) exists in `inbound_events`, `outbound_messages`
-or `deliveries`, but the conversation store and the sync payloads keep theirs, and the
-metadata-only delivery rows remain another ~60 days as operational/audit evidence. A redacted
+So after ~30 days no relay-buffer content (bodies, phone numbers) exists outside the sync payloads
+and conversation history, and the metadata-only delivery rows remain another ~60 days as
+operational/audit evidence. A redacted
 delivery row (`payload = ''`) can no longer be replayed — `retryDelivery` refuses it — and the
 dashboard shows it with an empty payload.
 
@@ -155,8 +161,8 @@ for a long time: `alarm()` **holds** the drain while no forwarding target is con
 [operations.md](./operations.md#incident-runbook)), so held events wait for a receiver — but
 only for the content window, like everything else. There is no unbounded held archive.
 
-The Workers target uses only the split vars; there is no tenant-wide retention setting. Both
-values are guarded: non-numeric or non-positive values fall back to the defaults instead of
+The relay buffer uses only the split vars; the workspace's conversation window does not apply to
+it. Both values are guarded: non-numeric or non-positive values fall back to the defaults instead of
 feeding a destructive window (`resolveRetentionDays()` in
 `apps/gateway/src/gateway.ts`).
 
@@ -172,7 +178,9 @@ re-armed by `setAlarm()` while there is delivery work, so the sweep runs at leas
 there's pending work — and when the drain is **held** for want of a forwarding target, `alarm()`
 re-arms itself on that same hourly cadence for as long as any row is held, so a target-less
 WABA that stopped receiving traffic still ages its held content out on time. Nothing is
-re-armed once the queue is empty. The Bun target prunes once per delivery-loop tick
+re-armed once the queue is empty. The same hourly sweep applies the workspace's conversation window
+(`pruneConversations()`): it asks the control plane once per sweep, and deletes nothing when the
+window is forever or the lookup fails. The Bun target prunes once per delivery-loop tick
 (`processPending()`, every 5s via `startDeliveryLoop()`). Both are simple `DELETE`/`UPDATE
 ... WHERE <timestamp> < cutoff` statements. Workers scans stay inside one WABA's object, and
 the Bun scan stays inside one self-hosted instance.

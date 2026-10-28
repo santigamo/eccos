@@ -1,7 +1,13 @@
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { Page } from "../ui";
-import { listApiKeys, type AccountKeyResource, type Result } from "../server/gateway";
+import {
+  getConversationRetention,
+  listApiKeys,
+  type AccountKeyResource,
+  type Result,
+} from "../server/gateway";
 import { ApiKeysPanel } from "../components/dashboard/api-keys";
+import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Frame,
@@ -12,7 +18,7 @@ import {
 } from "../components/reui/frame";
 
 /**
- * Settings — the workspace's own identifiers and its API keys.
+ * Settings — the workspace's own identifiers, its API keys and its conversation history window.
  *
  * It used to carry the forwarding target, the re-subscribe handshake and the
  * pasted-token panel. All three left, and each for its own reason: the first
@@ -26,7 +32,7 @@ import {
  * not wait on a number. API keys are account-level too.
  */
 export const Route = createFileRoute("/settings")({
-  loader: () => listApiKeys(),
+  loader: () => Promise.all([listApiKeys(), getConversationRetention()]),
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
@@ -37,7 +43,7 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
-  const keys = Route.useLoaderData();
+  const [keys, retention] = Route.useLoaderData();
   const router = useRouter();
   // Both post-organization stages carry the account, in two shapes. Reachable
   // before any WABA exists, which is exactly why nothing here may need one.
@@ -50,6 +56,7 @@ function SettingsPage() {
     <SettingsView
       accountId={accountId}
       keys={keys}
+      retention={retention}
       wabaId={wabaId}
       onKeysChanged={() => void router.invalidate()}
     />
@@ -63,11 +70,13 @@ function SettingsPage() {
 export function SettingsView({
   accountId,
   keys,
+  retention,
   wabaId,
   onKeysChanged,
 }: {
   accountId?: string;
   keys?: Result<AccountKeyResource[]>;
+  retention?: Result<number | null>;
   wabaId?: string;
   onKeysChanged?: () => void;
 }) {
@@ -77,6 +86,9 @@ export function SettingsView({
           broken layout, not as a panel. */}
       <div className="flex max-w-xl flex-col gap-4">
         {accountId ? <WorkspacePanel accountId={accountId} /> : null}
+        {accountId && retention ? (
+          <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
+        ) : null}
         {accountId && keys ? (
           <ApiKeysPanel keys={keys} wabaId={wabaId} onChanged={onKeysChanged} />
         ) : null}

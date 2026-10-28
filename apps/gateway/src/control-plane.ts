@@ -271,6 +271,24 @@ function validateOrganizationId(organizationId: string): string {
   return v;
 }
 
+/** Null keeps conversations forever; a number is a retention window in days. */
+export const CONVERSATION_RETENTION_MIN_DAYS = 30;
+export const CONVERSATION_RETENTION_MAX_DAYS = 3650;
+
+function validateConversationRetentionDays(days: number | null): number | null {
+  if (days === null) return null;
+  if (
+    !Number.isInteger(days) ||
+    days < CONVERSATION_RETENTION_MIN_DAYS ||
+    days > CONVERSATION_RETENTION_MAX_DAYS
+  ) {
+    throw new Error(
+      `invalid conversation retention: expected null (keep forever) or an integer from ${CONVERSATION_RETENTION_MIN_DAYS} to ${CONVERSATION_RETENTION_MAX_DAYS} days`,
+    );
+  }
+  return days;
+}
+
 function validateLabel(
   label: string | null | undefined,
   field: string,
@@ -688,6 +706,11 @@ export class EccosControlPlane extends DurableObject<Env> {
         status          TEXT NOT NULL DEFAULT 'active',
         created_at      INTEGER NOT NULL
       );`);
+      // NULL is the default and means keep forever (see `setConversationRetentionDays`).
+      const accountColumns = this.sql.exec("PRAGMA table_info(accounts)").toArray();
+      if (!accountColumns.some((row) => row.name === "conversation_retention_days")) {
+        this.sql.exec("ALTER TABLE accounts ADD COLUMN conversation_retention_days INTEGER");
+      }
       const wabaColumns = this.sql.exec("PRAGMA table_info(wabas)").toArray();
       if (!wabaColumns.some((row) => row.name === "status")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
@@ -852,6 +875,44 @@ export class EccosControlPlane extends DurableObject<Env> {
       )
       .toArray();
     return revoked.length > 0;
+  }
+
+  /** The workspace's conversation retention in days; null keeps them forever. */
+  getConversationRetentionDays(accountId: string): number | null {
+    return this.conversationRetentionOf(this.requireAccount(accountId));
+  }
+
+  /** The retention of the account that owns a WABA, asked by the WABA's gateway on
+   * its retention tick. Throws for an unknown WABA, so the caller deletes nothing. */
+  getConversationRetentionDaysForWaba(wabaId: string): number | null {
+    const id = validateWabaId(wabaId, "wabaId");
+    const row = this.sql
+      .exec(
+        "SELECT a.conversation_retention_days AS days FROM wabas w JOIN accounts a ON a.account_id = w.account_id WHERE w.waba_id = ?",
+        id,
+      )
+      .toArray()[0];
+    if (!row) throw new Error(`WABA ${id} does not exist`);
+    return (row.days as number | null) ?? null;
+  }
+
+  /** Stores the retention and returns it. */
+  setConversationRetentionDays(accountId: string, days: number | null): number | null {
+    const id = this.requireAccount(accountId);
+    const value = validateConversationRetentionDays(days);
+    this.sql.exec(
+      "UPDATE accounts SET conversation_retention_days = ? WHERE account_id = ?",
+      value,
+      id,
+    );
+    return value;
+  }
+
+  private conversationRetentionOf(accountId: string): number | null {
+    const row = this.sql
+      .exec("SELECT conversation_retention_days AS days FROM accounts WHERE account_id = ?", accountId)
+      .toArray()[0];
+    return (row?.days as number | null) ?? null;
   }
 
   /** Key metadata of one account; the hash never leaves this method. */
