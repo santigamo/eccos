@@ -948,6 +948,10 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
       expect(record.provisioning_error).toBe(SYNC_UNCONFIRMED_ERROR);
       expect(record.coexistence_sync_status).toBe("unconfirmed");
       expect(record.history_sync_request_id).toBeNull();
+      // The contacts refusal recorded before history failed is kept.
+      expect(syncUnavailableReason(record.contacts_sync_request_id as string)).toBe(
+        "already_synced",
+      );
     });
 
     await cp((instance) => instance.retryWabaProvisioning(accountId, wabaId));
@@ -955,6 +959,91 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
     expect(syncCalls).toHaveLength(2);
     await cp(async (instance) => {
       expect((await instance.getWabaRecord(accountId, wabaId))?.status).toBe("failed");
+    });
+  });
+
+  it("the closed window (2593108) is not a settling refusal and is never retried", async () => {
+    const accountId = "acc-coex-window-code";
+    const wabaId = "WABA_COEX_WINDOW_CODE";
+    await createAccount(accountId);
+    const { syncCalls } = mockGraph((call) =>
+      call.syncType === SMB_APP_DATA_SYNC_TYPE.history ? refused(2593108) : accepted("REQ_CONT"),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+    await cp((instance) => instance.retryWabaProvisioning(accountId, wabaId));
+    await provisionWaba(env, accountId, wabaId);
+
+    expect(syncCalls).toHaveLength(2);
+    await cp((instance) => {
+      const record = row(instance, wabaId);
+      expect(record.status).toBe("failed");
+      expect(record.coexistence_sync_status).toBe("unconfirmed");
+      expect(record.contacts_sync_request_id).toBe("REQ_CONT");
+      expect(record.history_sync_request_id).toBeNull();
+    });
+  });
+
+  it("sharing off (2593109) on the contacts sync is not a documented refusal", async () => {
+    const accountId = "acc-coex-contacts-2593109";
+    const wabaId = "WABA_COEX_CONTACTS_2593109";
+    await createAccount(accountId);
+    const { syncCalls } = mockGraph(() => refused(2593109));
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    expect(syncCalls).toHaveLength(1);
+    await cp((instance) => {
+      const record = row(instance, wabaId);
+      expect(record.status).toBe("failed");
+      expect(record.provisioning_error).toBe(SYNC_UNCONFIRMED_ERROR);
+      expect(record.coexistence_sync_status).toBe("unconfirmed");
+      expect(record.contacts_sync_request_id).toBeNull();
+    });
+  });
+
+  describe("on a WABA with several numbers", () => {
+    const TWO_PHONES = [
+      { phoneNumberId: "PN_COEX_A", displayPhoneNumber: "+34 600 000 010" },
+      { phoneNumberId: "PN_COEX_B", displayPhoneNumber: "+34 600 000 011" },
+    ];
+
+    it("one number accepted and the other refused records the sync as unavailable", async () => {
+      const accountId = "acc-coex-multi-refused";
+      const wabaId = "WABA_COEX_MULTI_REFUSED";
+      await createAccount(accountId);
+      mockGraph((call) => (call.url.includes("PN_COEX_B") ? refused(2593107) : accepted("REQ_A")));
+
+      await begin(accountId, wabaId, "coexistence", TWO_PHONES);
+      await provisionWaba(env, accountId, wabaId);
+
+      await cp(async (instance) => {
+        const waba = await instance.getWabaRecord(accountId, wabaId);
+        expect(waba?.status).toBe("active");
+        expect(waba?.coexistence.status).toBe("unavailable");
+        expect(syncUnavailableReason(waba!.coexistence.contactsRequestId)).toBe("already_synced");
+        expect(syncUnavailableReason(waba!.coexistence.historyRequestId)).toBe("already_synced");
+      });
+    });
+
+    it("one number refused and the other failing unknown stays unconfirmed", async () => {
+      const accountId = "acc-coex-multi-unknown";
+      const wabaId = "WABA_COEX_MULTI_UNKNOWN";
+      await createAccount(accountId);
+      mockGraph((call) => (call.url.includes("PN_COEX_A") ? refused(2593107) : refused(100)));
+
+      await begin(accountId, wabaId, "coexistence", TWO_PHONES);
+      await provisionWaba(env, accountId, wabaId);
+
+      await cp((instance) => {
+        const record = row(instance, wabaId);
+        expect(record.status).toBe("failed");
+        expect(record.provisioning_error).toBe(SYNC_UNCONFIRMED_ERROR);
+        expect(record.coexistence_sync_status).toBe("unconfirmed");
+        expect(record.contacts_sync_request_id).toBeNull();
+      });
     });
   });
 });

@@ -107,4 +107,17 @@ describe("SMB App Data sync requests", () => {
     expect((error as MetaGraphError).message).toContain("within 24 hours");
     expect((error as MetaGraphError).code).toBe(2593108);
   });
+
+  test("Meta's code is read from an integer string too, and from nothing else", async () => {
+    const codeOf = async (code: unknown) => {
+      captureFetch(new Response(JSON.stringify({ error: { message: "refused", code } }), { status: 400 }));
+      const error = await initiateHistorySync(CFG, PHONE, TOKEN).catch((e: unknown) => e);
+      return (error as MetaGraphError).code;
+    };
+    expect(await codeOf("2593107")).toBe(2593107);
+    expect(await codeOf("2593107abc")).toBeNull();
+    expect(await codeOf("")).toBeNull();
+    expect(await codeOf(null)).toBeNull();
+    expect(await codeOf(true)).toBeNull();
+  });
 });

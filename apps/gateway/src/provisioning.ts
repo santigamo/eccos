@@ -65,13 +65,16 @@ class AwaitingPhoneNumberError extends Error {
 const SYNC_ACCEPTED_WITHOUT_REQUEST_ID = "accepted";
 
 /**
- * Meta's documented refusals that settle a sync rather than leave it in doubt
- * (eccos-7lg). Anything else after the request left stays unconfirmed.
+ * Meta's refusals that settle a sync rather than leave it in doubt (eccos-7lg).
+ * `2593109` only ever concerns history. Anything else after the request left
+ * stays unconfirmed.
  */
-function syncRefusal(error: unknown): SyncUnavailableReason | null {
+function syncRefusal(kind: "contacts" | "history", error: unknown): SyncUnavailableReason | null {
   if (!(error instanceof MetaGraphError)) return null;
   if (error.code === SMB_APP_DATA_ALREADY_SYNCED_CODE) return "already_synced";
-  if (error.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE) return "history_sharing_off";
+  if (kind === "history" && error.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE) {
+    return "history_sharing_off";
+  }
   return null;
 }
 
@@ -358,7 +361,7 @@ async function runCoexistenceSync(
         const accepted = await step.initiate(appConfig, phoneNumberId, claim.metaAccessToken);
         requestId ??= accepted.requestId;
       } catch (error) {
-        const reason = syncRefusal(error);
+        const reason = syncRefusal(step.kind, error);
         if (!reason) throw error;
         // A refusal on any number wins: that number's data is not coming.
         refusal ??= reason;

@@ -37,8 +37,9 @@
  *     onboarding". The machine-readable form of the deadline in `coexistence.ts`.
  *   - A 200 on the history call means the request was *accepted*, not that
  *     history will arrive: Meta says so explicitly, and a business that turned
- *     history sharing off surfaces as `2593109` — on the `history` webhook, or
- *     as the refusal of the call itself.
+ *     history sharing off surfaces as `2593109` on the `history` webhook. Meta
+ *     does not document it as a refusal of the call; it is handled defensively
+ *     in case Meta ever returns it on the history call.
  *
  * These functions only ask Meta to start synchronising; the contacts and
  * history themselves arrive as webhooks.
@@ -74,6 +75,12 @@ export const SMB_APP_DATA_HISTORY_SHARING_OFF_CODE = 2593109;
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+/** Meta's `error.code`, also when it arrives as an integer string. */
+function metaErrorCode(value: unknown): number | null {
+  const code = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof code === "number" && Number.isInteger(code) ? code : null;
 }
 
 /**
@@ -126,7 +133,7 @@ async function postSmbAppDataSync(
   if (!res.ok) {
     const error = asRecord(asRecord(json)?.error);
     const message = typeof error?.message === "string" ? error.message : null;
-    const code = typeof error?.code === "number" ? error.code : null;
+    const code = metaErrorCode(error?.code);
     throw new MetaGraphError(`${SMB_APP_DATA_EDGE} ${syncType}`, res.status, message, code);
   }
   const requestId = asRecord(json)?.request_id;

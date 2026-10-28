@@ -384,8 +384,13 @@ export interface CoexistenceResource {
   /** Epoch ms by which message history must have been initiated; null when nothing is owed. */
   deadlineAt: number | null;
   contactsStartedAt: number | null;
+  /**
+   * Meta's request id for the sync, or a placeholder: `accepted` when Meta
+   * confirmed without one, `unavailable:<reason>` when it refused the sync.
+   */
   contactsRequestId: string | null;
   historyStartedAt: number | null;
+  /** Same shape as `contactsRequestId`. */
   historyRequestId: string | null;
   /** Why the sync step did not complete, in words meant for an operator. */
   error: string | null;
