@@ -1,4 +1,5 @@
 import { createFileRoute, useLoaderData } from "@tanstack/react-router";
+import { useMemo } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConversationList } from "../components/conversations/conversation-list";
@@ -6,13 +7,15 @@ import { ConversationThread } from "../components/conversations/conversation-thr
 import { FailureView } from "../components/dashboard/failure";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { RefreshControls } from "../components/logs/refresh-controls";
+import { useLastGood } from "../hooks/use-last-good";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { useOlderPages } from "../hooks/use-older-pages";
-import { loaderFailure } from "../lib/failure";
-import { conversationTitle, normalizeWaId, threadEntries, uniqueBy } from "../lib/conversations";
+import { findInPages } from "../lib/history";
+import { failureCopy, loaderFailure } from "../lib/failure";
+import { conversationTitle, normalizeWaId, threadEntries } from "../lib/conversations";
 import { normalizeSearchWabaId } from "../lib/search";
 import { getConversation, listConversations } from "../server/gateway";
-import type { ConversationSummary, CursorPage, MessageRecord } from "../server/gateway";
+import type { ConversationSummary, CursorPage, Failure, MessageRecord } from "../server/gateway";
 import { Page } from "../ui";
 
 /**
@@ -25,10 +28,14 @@ import { Page } from "../ui";
  *
  * The selection is the URL (`?waId=`), like every scope on the console, so a
  * thread can be pasted to a colleague. "Load older" pages backwards by cursor
- * and keeps what it loaded across live refreshes.
+ * and keeps what it loaded across live refreshes. A refresh that fails keeps
+ * showing what loaded before.
  */
 
 const PAGE_SIZE = 50;
+
+/** How many list pages a thread's name may be looked up across, when its number is not on the first. */
+const NAME_LOOKUP_PAGES = 5;
 
 /** One grid for the list and the thread, shared with the pending view so the two never disagree on shape. */
 const PANES =
@@ -43,40 +50,68 @@ export const Route = createFileRoute("/conversations")({
   }),
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, waId: search.waId }),
   loader: async ({ deps }) => {
-    const [conversations, thread] = await Promise.all([
+    const [conversations, messages] = await Promise.all([
       listConversations({ data: { wabaId: deps.wabaId, limit: PAGE_SIZE } }).catch(loaderFailure),
       deps.waId
         ? getConversation({ data: { wabaId: deps.wabaId, waId: deps.waId, limit: PAGE_SIZE } }).catch(loaderFailure)
         : null,
     ]);
-    return { conversations, thread };
+    if (!messages?.ok) return { conversations, thread: messages };
+    const name = deps.waId && conversations.ok ? await nameOf(deps.wabaId, deps.waId, conversations.data) : null;
+    return { conversations, thread: { ok: true as const, data: { page: messages.data, name } } };
   },
   component: ConversationsPage,
   pendingComponent: ConversationsPending,
 });
 
+/**
+ * The name Meta gave a customer, read from the list. The list's first page may
+ * not carry the number, so older pages are read, a few at most. A number that
+ * is not found has no name, and its title falls back to the number.
+ */
+async function nameOf(wabaId: string | undefined, waId: string, first: CursorPage<ConversationSummary>) {
+  const found = await findInPages(
+    first,
+    (item) => item.waId === waId,
+    (cursor) => listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor } }),
+    NAME_LOOKUP_PAGES,
+  );
+  return found?.name ?? null;
+}
+
+/** The failed refresh behind a page that is still showing its last good data. */
+function refreshFailure(...reads: Array<{ ok: boolean; failure?: Failure | null } | null>): Failure | null {
+  for (const read of reads) {
+    if (read?.ok && read.failure) return read.failure;
+  }
+  return null;
+}
+
 function ConversationsPage() {
-  const { conversations, thread } = Route.useLoaderData();
+  const loaded = Route.useLoaderData();
   const { wabaId, waId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const liveRefresh = useLiveRefresh("conversations");
   const refreshControls = <RefreshControls {...liveRefresh} />;
   const ready = root.ok && root.data.stage === "ready" ? root.data : null;
   const selectedWabaId = wabaId ?? ready?.scope.selectedWabaId;
+  const conversations = useLastGood(loaded.conversations, selectedWabaId ?? "");
+  const thread = useLastGood(loaded.thread, `${selectedWabaId ?? ""}:${waId ?? ""}`);
+  const now = Date.now();
 
   if (!conversations.ok) {
     return (
-      <Page title="Conversations" kicker="Logs" actions={refreshControls}>
+      <Page title="Conversations" kicker="Inbox" actions={refreshControls}>
         <FailureView failure={conversations} />
       </Page>
     );
   }
 
-  const name = conversations.data.items.find((item) => item.waId === waId)?.name ?? null;
-  const now = Date.now();
+  const failure = refreshFailure(conversations, thread);
 
   return (
-    <Page title="Conversations" kicker="Logs" actions={refreshControls}>
+    <Page title="Conversations" kicker="Inbox" actions={refreshControls}>
+      {failure ? <RefreshNotice failure={failure} /> : null}
       <div className={PANES}>
         {/* On a phone the list and the thread take turns: a selected thread
             hides the list, and its back link brings the list back. */}
@@ -106,10 +141,10 @@ function ConversationsPage() {
           ) : thread.ok ? (
             <ConversationThreadPane
               key={`${selectedWabaId ?? ""}:${waId}`}
-              page={thread.data}
+              page={thread.data.page}
               wabaId={selectedWabaId}
               waId={waId}
-              title={conversationTitle(waId, name)}
+              title={conversationTitle(waId, thread.data.name)}
             />
           ) : (
             <div className="p-4">
@@ -119,6 +154,16 @@ function ConversationsPage() {
         </div>
       </div>
     </Page>
+  );
+}
+
+/** A refresh that failed while the page keeps showing what loaded before. */
+function RefreshNotice({ failure }: { failure: Failure }) {
+  const { title } = failureCopy(failure);
+  return (
+    <p role="alert" className="border-b border-(--line) px-4 py-2 text-sm text-destructive-foreground">
+      Could not refresh ({title.toLowerCase()}). Showing what loaded before.
+    </p>
   );
 }
 
@@ -137,13 +182,13 @@ function ConversationListPane({
   selectedWaId?: string;
   now: number;
 }) {
-  const older = useOlderPages(page, (cursor) =>
-    listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor } }),
-  );
-  const items = uniqueBy([...page.items, ...older.items], (item) => item.waId);
+  const older = useOlderPages(page, {
+    key: (item) => item.waId,
+    fetchOlder: (cursor) => listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor } }),
+  });
   return (
     <ConversationList
-      items={items}
+      items={older.items}
       wabaId={wabaId}
       selectedWaId={selectedWaId}
       now={now}
@@ -156,8 +201,9 @@ function ConversationListPane({
 }
 
 /**
- * One thread with its older pages. The page is newest first, as the gateway
- * returns it; the thread reads oldest first, so the list is reversed here.
+ * One thread with its older pages. The gateway returns each page oldest first
+ * and walks older with the cursor, so the older pages are kept before the ones
+ * already loaded (`oldestFirst`).
  */
 function ConversationThreadPane({
   page,
@@ -170,15 +216,17 @@ function ConversationThreadPane({
   waId: string;
   title: string;
 }) {
-  const older = useOlderPages(page, (cursor) =>
-    getConversation({ data: { wabaId, waId, limit: PAGE_SIZE, cursor } }),
-  );
-  const newestFirst = uniqueBy([...page.items, ...older.items], (message) => message.id);
+  const older = useOlderPages(page, {
+    key: (message) => message.id,
+    oldestFirst: true,
+    fetchOlder: (cursor) => getConversation({ data: { wabaId, waId, limit: PAGE_SIZE, cursor } }),
+  });
+  const entries = useMemo(() => threadEntries(older.items), [older.items]);
   return (
     <ConversationThread
       wabaId={wabaId}
       title={title}
-      entries={threadEntries(newestFirst.reverse())}
+      entries={entries}
       canLoadOlder={older.canLoadOlder}
       loadingOlder={older.loading}
       olderFailed={older.failed}

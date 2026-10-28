@@ -191,11 +191,12 @@ describe("ConversationThread: every message type reads", () => {
     expect(html).toContain('src="/media/waba-a/media-video-1"');
   });
 
-  test("a document is a link named by its file", () => {
+  test("a document is a link named by its file, with a note that it may be unavailable", () => {
     const html = renderToStaticMarkup(<ConversationThread {...threadProps()} />);
     expect(html).toContain('href="/media/waba-a/media-document-1"');
     expect(html).toContain('download="presupuesto.pdf"');
     expect(html).toContain(">presupuesto.pdf<");
+    expect(html).toContain("May be unavailable");
   });
 
   test("a location names its place and links to a map", () => {
@@ -268,7 +269,7 @@ describe("ConversationThread: pagination and empty states", () => {
 
   test("a failed older page says so beside the control", () => {
     const html = renderToStaticMarkup(<ConversationThread {...threadProps({ olderFailed: true })} />);
-    expect(html).toContain("Older messages did not load. Try again.");
+    expect(html).toContain("Messages did not load. Try again.");
   });
 
   test("a thread with nothing in the retained history says so", () => {
@@ -357,7 +358,7 @@ describe("the conversations page", () => {
 
   test("with a number selected, the thread shows and the list steps aside on a phone", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: page([...THREAD].reverse(), "cursor-2") });
+    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: "Cliente de prueba" } });
     const html = renderToStaticMarkup(<Route.component />);
     // The mobile contract: a selected thread hides the list below md, and the
     // thread takes the whole row. Desktop shows both.
@@ -366,6 +367,41 @@ describe("the conversations page", () => {
     expect(html).toContain("← Conversations");
     expect(html).toContain("Hola, ¿tenéis cita mañana?");
     expectDesignContract(html);
+  });
+
+  test("the gateway's oldest-first page is read as it arrives: the first message on top, the newest at the bottom", () => {
+    searchParams = { wabaId: WABA, waId: CUSTOMER };
+    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: null } });
+    const html = renderToStaticMarkup(<Route.component />);
+    const first = html.indexOf("Hola, ¿tenéis cita mañana?");
+    const reply = html.indexOf("Sí, a las 10:30.");
+    const failed = html.indexOf("Recordatorio");
+    expect(first).toBeGreaterThan(-1);
+    expect(reply).toBeGreaterThan(first);
+    expect(failed).toBeGreaterThan(reply);
+  });
+
+  test("a thread whose number is past the list's first page is titled by its name", () => {
+    searchParams = { wabaId: WABA, waId: CUSTOMER };
+    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: "Cliente de prueba" } });
+    const html = renderToStaticMarkup(<Route.component />);
+    expect(html).toContain('<h2 class="truncate text-base font-medium text-foreground">Cliente de prueba</h2>');
+  });
+
+  test("a number nobody named is titled with its digits, written as a number", () => {
+    searchParams = { wabaId: WABA, waId: CUSTOMER };
+    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: null } });
+    const html = renderToStaticMarkup(<Route.component />);
+    expect(html).toContain(`>+${CUSTOMER}</h2>`);
+    expect(html).not.toContain(`++${CUSTOMER}`);
+  });
+
+  test("the page's kicker is the nav group the page sits in", () => {
+    searchParams = { wabaId: WABA };
+    ready({ ok: true, data: page([SUMMARY]) });
+    const html = renderToStaticMarkup(<Route.component />);
+    expect(html).toContain("Inbox");
+    expect(html).not.toContain("Logs");
   });
 
   test("with no number selected, the list fills a phone and the thread waits for a choice", () => {

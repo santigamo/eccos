@@ -12,14 +12,15 @@ const MEDIA_TYPES = new Set(["image", "sticker", "audio", "video", "document"]);
 const WA_ID_PATTERN = /^\+?[0-9][0-9 ()-]{3,31}$/;
 
 /**
- * A customer's number as the URL and the server both take it, or undefined.
- * The URL normalizes first, so a bad `?waId=` never reaches the gateway as a
- * refusal that would read as an outage.
+ * A customer's number as the URL and the server both take it: digits only, so
+ * a pasted "+34 600 ..." reads the same as "34600...", or undefined. The URL
+ * normalizes first, so a bad `?waId=` never reaches the gateway as a refusal
+ * that would read as an outage.
  */
 export function normalizeWaId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const normalized = value.trim();
-  return WA_ID_PATTERN.test(normalized) ? normalized : undefined;
+  const trimmed = value.trim();
+  return WA_ID_PATTERN.test(trimmed) ? trimmed.replace(/\D/g, "") : undefined;
 }
 
 type Json = Record<string, unknown>;
@@ -32,14 +33,22 @@ function str(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** The stored `content`, read defensively: a row that will not parse reads as empty. */
+const parsedContent = new WeakMap<MessageRecord, Json>();
+
+/** The stored `content`, read defensively and parsed once per message: a row that will not parse reads as empty. */
 export function contentOf(message: MessageRecord): Json {
-  if (!message.content) return {};
-  try {
-    return asRecord(JSON.parse(message.content)) ?? {};
-  } catch {
-    return {};
+  const cached = parsedContent.get(message);
+  if (cached) return cached;
+  let content: Json = {};
+  if (message.content) {
+    try {
+      content = asRecord(JSON.parse(message.content)) ?? {};
+    } catch {
+      content = {};
+    }
   }
+  parsedContent.set(message, content);
+  return content;
 }
 
 /**
@@ -124,7 +133,7 @@ export interface ThreadEntry {
   text: string | null;
   edited: boolean;
   deleted: boolean;
-  /** Emoji reacted onto this message, in the order they arrived. */
+  /** The emoji each sender's latest reaction carries; a sender holds at most one. */
   reactions: string[];
 }
 
@@ -134,15 +143,16 @@ export interface ThreadEntry {
  * An edit, a revoke or a reaction names the message it acts on. When that
  * message is in the thread the act folds into it and stops being a row of its
  * own; when it is not, the act stays as a row, because it is still a fact the
- * operator should see. The newest edit wins, since the input is in time order.
+ * operator should see. The newest edit wins, since the input is in time order,
+ * and so does each sender's newest reaction: an empty one removes it.
  */
 export function threadEntries(messages: MessageRecord[]): ThreadEntry[] {
-  const rows: ThreadEntry[] = messages.map((message) => ({
+  const rows = messages.map((message) => ({
     message,
     text: message.text,
     edited: false,
     deleted: false,
-    reactions: [],
+    reactedBy: new Map<string, string>(),
   }));
   const entries = new Map(rows.map((row) => [row.message.id, row]));
   const folded = new Set<string>();
@@ -155,14 +165,19 @@ export function threadEntries(messages: MessageRecord[]): ThreadEntry[] {
     } else if (message.type === "revoke") {
       target.deleted = true;
     } else if (message.type === "reaction") {
+      // The customer is one sender; the business (sent or echoed from its app) is the other.
+      const sender = message.direction === "in" ? "customer" : "business";
       const emoji = reactionEmojiOf(message);
-      if (emoji) target.reactions.push(emoji);
+      if (emoji) target.reactedBy.set(sender, emoji);
+      else target.reactedBy.delete(sender);
     } else {
       continue;
     }
     folded.add(message.id);
   }
-  return rows.filter((row) => !folded.has(row.message.id));
+  return rows
+    .filter((row) => !folded.has(row.message.id))
+    .map(({ reactedBy, ...row }) => ({ ...row, reactions: [...reactedBy.values()] }));
 }
 
 /** Drops repeats, keeping the first occurrence: a page that shifted under a live refresh can overlap the one before it. */

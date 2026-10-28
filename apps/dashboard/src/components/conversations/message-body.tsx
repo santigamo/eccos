@@ -36,9 +36,12 @@ export function MessageBody({ entry, wabaId }: { entry: ThreadEntry; wabaId?: st
       return (
         <>
           {src ? (
-            <a href={src} download={filename} className="underline underline-offset-4">
-              {filename}
-            </a>
+            <>
+              <a href={src} download={filename} className="underline underline-offset-4">
+                {filename}
+              </a>
+              <span className="block text-xs text-muted-foreground">May be unavailable: not downloaded yet, or expired.</span>
+            </>
           ) : (
             <MediaUnavailable />
           )}

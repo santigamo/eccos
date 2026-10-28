@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
@@ -38,13 +38,48 @@ export function ConversationThread({
   onLoadOlder,
 }: ConversationThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Opening a thread starts at its newest message. Later refreshes leave the
-  // scroll position alone, so a live update never yanks an operator who is
-  // reading older history.
-  useEffect(() => {
+  const contentRef = useRef<HTMLDivElement>(null);
+  // A reader at the bottom is followed as the content settles (images arrive
+  // after the first paint); one who scrolled up into history is left alone.
+  const pinned = useRef(true);
+  // The reader's distance from the bottom when "load older" was pressed. Older
+  // messages land above, so the same distance from the bottom keeps their place.
+  const distance = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content || typeof ResizeObserver === "undefined") return;
+    const follow = new ResizeObserver(() => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    });
+    follow.observe(content);
+    return () => follow.disconnect();
+  }, []);
+
+  // Runs when the load ends: the older messages are in by then, so the place is kept against the new height.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || distance.current === null || loadingOlder) return;
+    el.scrollTop = el.scrollHeight - distance.current;
+    distance.current = null;
+  }, [loadingOlder]);
+
+  const loadOlderHere = () => {
+    const el = scrollRef.current;
+    if (el) distance.current = el.scrollHeight - el.scrollTop;
+    onLoadOlder();
+  };
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+  };
 
   return (
     <section aria-label={`Conversation with ${title}`} className="flex min-h-0 flex-1 flex-col">
@@ -54,39 +89,41 @@ export function ConversationThread({
         </Link>
         <h2 className="truncate text-base font-medium text-foreground">{title}</h2>
       </header>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {entries.length === 0 ? (
-          <GridEmptyState
-            label="NO MESSAGES"
-            description="Nothing in this conversation is in the retained history."
-          />
-        ) : (
-          <>
-            <div className="mb-4 flex justify-center">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-none"
-                disabled={!canLoadOlder || loadingOlder}
-                aria-busy={loadingOlder}
-                onClick={onLoadOlder}
-              >
-                ← Load older
-              </Button>
-              {olderFailed ? (
-                <p role="alert" className="ml-3 self-center text-sm text-destructive-foreground">
-                  Older messages did not load. Try again.
-                </p>
-              ) : null}
-            </div>
-            <ol aria-label="Messages" className="m-0 flex list-none flex-col gap-3 p-0">
-              {entries.map((entry) => (
-                <MessageBubble key={entry.message.id} entry={entry} wabaId={wabaId} />
-              ))}
-            </ol>
-          </>
-        )}
+      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div ref={contentRef}>
+          {entries.length === 0 ? (
+            <GridEmptyState
+              label="NO MESSAGES"
+              description="Nothing in this conversation is in the retained history."
+            />
+          ) : (
+            <>
+              <div className="mb-4 flex justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-none"
+                  disabled={!canLoadOlder || loadingOlder}
+                  aria-busy={loadingOlder}
+                  onClick={loadOlderHere}
+                >
+                  ← Load older
+                </Button>
+                {olderFailed ? (
+                  <p role="alert" className="ml-3 self-center text-sm text-destructive-foreground">
+                    Messages did not load. Try again.
+                  </p>
+                ) : null}
+              </div>
+              <ol aria-label="Messages" className="m-0 flex list-none flex-col gap-3 p-0">
+                {entries.map((entry) => (
+                  <MessageBubble key={entry.message.id} entry={entry} wabaId={wabaId} />
+                ))}
+              </ol>
+            </>
+          )}
+        </div>
       </div>
     </section>
   );
