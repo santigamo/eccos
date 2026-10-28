@@ -68,7 +68,7 @@ export function getMembershipsOnce(auth: Auth, headers: Headers): Promise<Member
  */
 export function roleAllows(role: string, action: GatewayAction): boolean {
   return role.split(",").some((name) => {
-    const known = (roles as Record<string, (typeof roles)[keyof typeof roles] | undefined>)[name];
-    return known?.authorize({ gateway: [action] }).success === true;
+    if (!Object.hasOwn(roles, name)) return false;
+    return roles[name as keyof typeof roles].authorize({ gateway: [action] }).success === true;
   });
 }
