@@ -82,7 +82,7 @@ function subscribeCalls(graph: MockInstance<typeof fetch>): unknown[] {
 
 /** The cron reconciler, driven exactly as the every-5-minutes trigger does. */
 function runScheduled(): Promise<void> {
-  return worker.scheduled(createScheduledController({ scheduledTime: new Date() }), env);
+  return worker.scheduled!(createScheduledController({ scheduledTime: new Date() }), env, createExecutionContext());
 }
 
 let accountId = "";

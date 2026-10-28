@@ -22,6 +22,8 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@eccos/gateway-contract": "workspace:*",
+    "@sentry/cloudflare": "11.10.0",
+    "@sentry/react": "11.10.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-router": "^1.170.16",
     "@tanstack/react-start": "^1.168.26",
