@@ -32,6 +32,8 @@ import {
 } from "./conversations";
 import type { EccosControlPlane } from "./control-plane";
 import { getControlPlaneStub } from "./control-plane-stub";
+import { type HistoryMessage, type SyncItem, mapSyncItem, syncItems } from "./history";
+import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
 
@@ -65,6 +67,9 @@ interface DeliveryRow {
 type ForwardOutcome = { ok: true } | { ok: false; reason: string };
 
 const FORWARD_FETCH_TIMEOUT_MS = 5_000;
+/** Sync items (history messages, contacts) applied per alarm wake. Bounds the CPU and
+ * memory one invocation spends on a huge history; a backlog keeps the alarm running. */
+const SYNC_BATCH_UNITS = 200;
 const ALARM_BATCH = 40;
 const ALARM_MAX_CONCURRENCY = 6;
 const DEFAULT_CONTENT_RETENTION_DAYS = 30;
@@ -369,6 +374,18 @@ export class EccosGateway extends DurableObject<Env> {
         chunk      BLOB NOT NULL,
         PRIMARY KEY (payload_id, ordinal)
       );`);
+      // Processing state of each raw payload (processSyncBatch). `cursor` counts the
+      // items already applied, so a payload spread over several alarm wakes resumes.
+      // A payload captured before these columns existed is NULL here, i.e. pending.
+      ensureColumn("sync_payloads", "cursor", "INTEGER NOT NULL DEFAULT 0");
+      ensureColumn("sync_payloads", "processed_at", "INTEGER");
+      ensureColumn("sync_payloads", "error", "TEXT");
+      // Numbers erased by eraseByPhone. Raw payloads keep them, so processing consults
+      // this table to keep an erased number from coming back on reprocess.
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS erased_numbers (
+        digits    TEXT PRIMARY KEY,
+        erased_at INTEGER NOT NULL
+      );`);
       // The conversation store (eccos-yqbz.2). Outside the content sweep on purpose:
       // these rows are the conversations themselves, so per-workspace retention
       // will own their lifetime, not CONTENT_RETENTION_DAYS.
@@ -441,6 +458,7 @@ export class EccosGateway extends DurableObject<Env> {
         );
       }
     });
+    if (!duplicate) this.ctx.storage.setAlarm(Date.now());
     return { duplicate, bytes: bytes.length, parts };
   }
 
@@ -1088,6 +1106,9 @@ export class EccosGateway extends DurableObject<Env> {
       contactsDeleted: 0,
     };
     this.ctx.storage.transactionSync(() => {
+      // Recorded first: a reprocess of the raw sync payloads must not bring this number back.
+      this.sql.exec(`INSERT OR IGNORE INTO erased_numbers (digits, erased_at) VALUES (?, ?)`, digits, Date.now());
+
       // 1. Outbound messages to that number: collect wamids, then delete the rows.
       //    `recipient` is caller-supplied and may be formatted ("+34 600-00-00-00"),
       //    so no SQL prefilter is safe here — every row is normalized in JS. Fine at
@@ -1237,12 +1258,18 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /** Inserts a message once (a duplicate webhook or a re-run backfill is ignored)
-   * and upserts its contact. The contact keeps any name it already has. */
+   * and upserts its contact. The contact keeps any name it already has. A live message
+   * replaces a history row with the same id (history never replaces a live row). */
   private storeMessage(message: NewMessage, createdAt: number): void {
     this.sql.exec(
-      `INSERT OR IGNORE INTO messages
+      `INSERT INTO messages
          (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         wa_id = excluded.wa_id, direction = excluded.direction, origin = excluded.origin,
+         type = excluded.type, text = excluded.text, content = excluded.content, at = excluded.at,
+         status = excluded.status, target_id = excluded.target_id, phone_number_id = excluded.phone_number_id
+       WHERE messages.origin = 'history'`,
       message.id,
       message.waId,
       message.direction,
@@ -1379,6 +1406,8 @@ export class EccosGateway extends DurableObject<Env> {
       nextSweepAt = now + SWEEP_INTERVAL_MS;
     }
 
+    const syncPending = this.processSyncBatch(now);
+
     // Only reschedule against `next_attempt_at` when there is somewhere to send.
     // Held rows are due now, so an unconditional reschedule would set an alarm
     // in the past and re-enter this method forever without ever forwarding.
@@ -1410,7 +1439,177 @@ export class EccosGateway extends DurableObject<Env> {
        */
       this.ctx.storage.setAlarm(nextSweepAt);
     }
+    // Last, so the backlog's wake overrides the delivery and sweep times above. A short
+    // delay, so the next batch does not run in the same instant as this one.
+    if (syncPending) this.ctx.storage.setAlarm(Date.now() + 100);
     if (hasWorkerError) throw workerError;
+  }
+
+  /**
+   * Applies the raw sync payloads (history and contacts) to the conversation store,
+   * oldest first, at most SYNC_BATCH_UNITS items per call. Each payload records how
+   * far it got (`cursor`), so the next wake resumes it; the payload is re-parsed from
+   * its raw parts each time, which keeps this method free of any staged state.
+   * Returns true while work is left.
+   */
+  private processSyncBatch(now: number): boolean {
+    const erased = new Set(
+      this.sql.exec(`SELECT digits FROM erased_numbers`).toArray().map((row) => row.digits as string),
+    );
+    const waba = this.wabaIdForOps();
+    let budget = SYNC_BATCH_UNITS;
+    for (const row of this.sql
+      .exec(`SELECT id, cursor FROM sync_payloads WHERE processed_at IS NULL ORDER BY id`)
+      .toArray()) {
+      if (budget <= 0) return true;
+      const id = row.id as number;
+      let items: SyncItem[];
+      try {
+        items = syncItems(JSON.parse(this.syncPayloadBody(id)), waba);
+      } catch (error) {
+        this.sql.exec(
+          `UPDATE sync_payloads SET processed_at = ?, error = ? WHERE id = ?`,
+          now,
+          `unreadable payload: ${String(error).slice(0, 200)}`,
+          id,
+        );
+        continue;
+      }
+      const cursor = Number(row.cursor);
+      const end = Math.min(items.length, cursor + budget);
+      this.ctx.storage.transactionSync(() => {
+        for (const item of items.slice(cursor, end)) {
+          try {
+            this.applySyncItem(id, item, erased, now, waba);
+          } catch (error) {
+            console.warn(
+              JSON.stringify({ level: "warn", area: "history", event: "item-skipped", waba, error: String(error).slice(0, 200) }),
+            );
+          }
+        }
+        this.sql.exec(
+          `UPDATE sync_payloads SET cursor = ?, processed_at = ? WHERE id = ?`,
+          end,
+          end === items.length ? now : null,
+          id,
+        );
+      });
+      budget -= end - cursor;
+      if (end < items.length) return true;
+    }
+    return false;
+  }
+
+  /** Applies one sync item. Runs inside processSyncBatch's transaction. */
+  private applySyncItem(payloadId: number, item: SyncItem, erased: Set<string>, now: number, waba: string): void {
+    const unit = mapSyncItem(item, waba);
+    if (!unit) return;
+    if (unit.kind === "error") {
+      this.sql.exec(`UPDATE sync_payloads SET error = ? WHERE id = ?`, `Meta error ${unit.code}`, payloadId);
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          area: "history",
+          event: unit.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE ? "history-sharing-off" : "history-error",
+          waba,
+          code: unit.code,
+        }),
+      );
+      return;
+    }
+    if (unit.kind === "contact") {
+      if (erased.has(unit.waId)) return;
+      if (unit.action === "remove") {
+        // The contact stays (its messages stay); only the name Meta gave goes.
+        this.sql.exec(`UPDATE contacts SET name = NULL, updated_at = ? WHERE wa_id = ?`, now, unit.waId);
+        return;
+      }
+      this.sql.exec(
+        `INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, ?, 'app_state', ?)
+         ON CONFLICT(wa_id) DO UPDATE SET name = excluded.name, source = 'app_state', updated_at = excluded.updated_at`,
+        unit.waId,
+        unit.name,
+        now,
+      );
+      return;
+    }
+    this.storeHistoryMessage(unit.message, erased, now);
+  }
+
+  /** Stores one history message. A row already stored keeps its content, except that a
+   * media placeholder takes the media reference of the message with the same id, so the
+   * placeholder and the separate media webhook agree whichever arrives first. */
+  private storeHistoryMessage(message: HistoryMessage, erased: Set<string>, now: number): void {
+    if (message.waId === null) {
+      this.sql.exec(
+        `UPDATE messages SET type = ?, text = ?, content = ?
+         WHERE id = ? AND origin = 'history' AND type = 'media_placeholder' AND ? IS NOT NULL`,
+        message.type,
+        message.text,
+        message.content,
+        message.id,
+        message.content,
+      );
+      return;
+    }
+    if (erased.has(message.waId)) return;
+    this.sql.exec(
+      `INSERT INTO messages
+         (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET type = excluded.type, text = excluded.text, content = excluded.content
+       WHERE messages.origin = 'history' AND messages.type = 'media_placeholder' AND excluded.content IS NOT NULL`,
+      message.id,
+      message.waId,
+      message.direction,
+      message.origin,
+      message.type,
+      message.text,
+      message.content,
+      message.at,
+      message.status,
+      message.targetId,
+      message.phoneNumberId,
+      now,
+    );
+    this.sql.exec(
+      `INSERT OR IGNORE INTO contacts (wa_id, name, source, updated_at) VALUES (?, NULL, 'history', ?)`,
+      message.waId,
+      now,
+    );
+  }
+
+  /** The raw body of a sync payload, joined from its parts. */
+  private syncPayloadBody(id: number): string {
+    const chunks = this.sql
+      .exec(`SELECT chunk FROM sync_payload_parts WHERE payload_id = ? ORDER BY ordinal`, id)
+      .toArray()
+      .map((row) => new Uint8Array(row.chunk as ArrayBuffer));
+    const bytes = new Uint8Array(chunks.reduce((n, chunk) => n + chunk.byteLength, 0));
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(bytes);
+  }
+
+  /**
+   * Rebuilds the history and contact rows from the raw payloads: drops the history
+   * messages and app-state names processing wrote, and clears every payload's progress,
+   * so the alarm applies them all again. Live rows are untouched, and the rebuild yields
+   * what the first pass did. Exposed as a method only; there is no public route.
+   */
+  reprocessSyncPayloads(): { payloads: number } {
+    let payloads = 0;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`DELETE FROM messages WHERE origin = 'history'`);
+      this.sql.exec(`UPDATE contacts SET name = NULL WHERE source = 'app_state'`);
+      this.sql.exec(`UPDATE sync_payloads SET cursor = 0, processed_at = NULL, error = NULL`);
+      payloads = Number(this.sql.exec(`SELECT COUNT(*) AS n FROM sync_payloads`).one().n);
+    });
+    this.ctx.storage.setAlarm(Date.now());
+    return { payloads };
   }
 
   /** Cheap existence check — `LIMIT 1`, not a COUNT: the hold only needs to know

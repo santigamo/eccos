@@ -140,7 +140,10 @@ what error) should outlive the content itself:
 
 Coexistence sync payloads (`sync_payloads` + `sync_payload_parts`: the raw `history` and
 `smb_app_state_sync` webhooks, split into parts under 1 MB) are **outside both windows** and are
-not expired for now — Meta sends them once per number and they cannot be fetched again.
+not expired for now — Meta sends them once per number and they cannot be fetched again. Each is
+applied to the conversation store once by the alarm, a bounded batch per wake, and keeps its
+progress (`cursor`, `processed_at`, `error`). Reprocessing rebuilds the history rows from these raw
+payloads; numbers erased with `eraseByPhone` are listed in `erased_numbers` and never come back that way.
 
 The conversation store (`messages` + `contacts`, written from the same events and sends) is **outside both
 windows**: it is the conversation record itself, not a relay buffer. Its retention is the workspace's
