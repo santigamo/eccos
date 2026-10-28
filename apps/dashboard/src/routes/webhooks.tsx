@@ -55,7 +55,10 @@ function WebhooksPending() {
     <Page title="Webhooks" kicker="Integration">
       <div aria-busy="true">
         <Skeleton className="h-24 w-full" />
-        <Skeleton className="mt-6 h-40 max-w-xl" />
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
+        </div>
       </div>
     </Page>
   );
