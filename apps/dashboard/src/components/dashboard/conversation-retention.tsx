@@ -40,6 +40,28 @@ function labelOf(value: string): string {
   return RETENTION_CHOICES.find((item) => item.value === value)?.label ?? value;
 }
 
+export type SaveOutcome = { ok: true } | { ok: false; error: string };
+
+/**
+ * Runs one save and reports how it ended. A call that never reaches the server
+ * (a dropped connection) rejects rather than returning a Result, and is reported
+ * here the same way, so the form always leaves its saving state with a message.
+ */
+export async function saveRetentionChoice(
+  choice: string,
+  save: (days: number | null) => Promise<Result<number | null>>,
+): Promise<SaveOutcome> {
+  try {
+    const res = await save(choice === KEEP_FOREVER ? null : Number(choice));
+    return res.ok ? { ok: true } : { ok: false, error: failureCopy(res).detail };
+  } catch (error) {
+    return {
+      ok: false,
+      error: failureCopy({ ok: false, kind: "unreachable", error: String(error) }).detail,
+    };
+  }
+}
+
 /**
  * Conversation history retention for the workspace (eccos-yqbz.4).
  *
@@ -64,10 +86,11 @@ export function ConversationRetentionPanel({
     setSaving(true);
     setError(null);
     try {
-      const days = choice === KEEP_FOREVER ? null : Number(choice);
-      const res = await setConversationRetention({ data: { days } });
-      if (!res.ok) {
-        setError(failureCopy(res).detail);
+      const outcome = await saveRetentionChoice(choice, (days) =>
+        setConversationRetention({ data: { days } }),
+      );
+      if (!outcome.ok) {
+        setError(outcome.error);
         return;
       }
       onChanged?.();

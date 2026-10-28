@@ -11,10 +11,6 @@ import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
 import { sendMessage } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
-import {
-  CONVERSATION_RETENTION_CONFIG_KEY,
-  conversationRetentionConfigValue,
-} from "./conversation-retention";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import type {
   AccountKeyResource,
@@ -738,21 +734,10 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).getConversationRetentionDays(account);
   }
 
-  /** Stores the retention, then writes it into every WABA's gateway config.
-   * The control plane goes first so a WABA provisioned meanwhile reads the new
-   * value; a failed fan-out is repaired by calling this again. */
+  /** Stores the account's conversation retention. The control plane is the only copy. */
   async setConversationRetention(accountId: string, days: number | null): Promise<number | null> {
     const account = requireAccountId(accountId, "accountId is required");
-    const control = getControlPlaneStub(this.env);
-    const stored = await control.setConversationRetentionDays(account, days);
-    const { wabas } = await control.listAccountResources(account);
-    const value = conversationRetentionConfigValue(stored);
-    await Promise.all(
-      wabas.map((waba) =>
-        this.stubFor(waba.wabaId).saveConfig({ [CONVERSATION_RETENTION_CONFIG_KEY]: value }),
-      ),
-    );
-    return stored;
+    return getControlPlaneStub(this.env).setConversationRetentionDays(account, days);
   }
 
   /** Idempotent organization→account provisioning (contract §2). Creates no API

@@ -182,8 +182,6 @@ export interface WabaProvisioningClaim {
   /** Coexistence obligations carried into the claim so the saga step needs no
    * extra control-plane round trip to know what is owed and by when. */
   coexistence: CoexistenceState;
-  /** The account's retention, so a WABA provisioned after it was set starts with it. */
-  conversationRetentionDays: number | null;
 }
 
 /** Which of the two coexistence syncs a call refers to. */
@@ -884,8 +882,21 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.conversationRetentionOf(this.requireAccount(accountId));
   }
 
-  /** Stores the retention and returns it. Propagating it to the WABAs' gateway
-   * configs is the RPC layer's job; provisioning reads it from the claim. */
+  /** The retention of the account that owns a WABA, asked by the WABA's gateway on
+   * its retention tick. Throws for an unknown WABA, so the caller deletes nothing. */
+  getConversationRetentionDaysForWaba(wabaId: string): number | null {
+    const id = validateWabaId(wabaId, "wabaId");
+    const row = this.sql
+      .exec(
+        "SELECT a.conversation_retention_days AS days FROM wabas w JOIN accounts a ON a.account_id = w.account_id WHERE w.waba_id = ?",
+        id,
+      )
+      .toArray()[0];
+    if (!row) throw new Error(`WABA ${id} does not exist`);
+    return (row.days as number | null) ?? null;
+  }
+
+  /** Stores the retention and returns it. */
   setConversationRetentionDays(accountId: string, days: number | null): number | null {
     const id = this.requireAccount(accountId);
     const value = validateConversationRetentionDays(days);
@@ -895,6 +906,13 @@ export class EccosControlPlane extends DurableObject<Env> {
       id,
     );
     return value;
+  }
+
+  private conversationRetentionOf(accountId: string): number | null {
+    const row = this.sql
+      .exec("SELECT conversation_retention_days AS days FROM accounts WHERE account_id = ?", accountId)
+      .toArray()[0];
+    return (row?.days as number | null) ?? null;
   }
 
   /** Key metadata of one account; the hash never leaves this method. */
@@ -1408,15 +1426,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       // Derived against the claim's own clock, so the saga step sees the window
       // as it stands at the moment it is about to act.
       coexistence: coexistenceOf(claimed, now),
-      conversationRetentionDays: this.conversationRetentionOf(claimed.account_id as string),
     };
-  }
-
-  private conversationRetentionOf(accountId: string): number | null {
-    const row = this.sql
-      .exec("SELECT conversation_retention_days AS days FROM accounts WHERE account_id = ?", accountId)
-      .toArray()[0];
-    return (row?.days as number | null) ?? null;
   }
 
   /**

@@ -971,8 +971,7 @@ export interface GatewayApi {
   /** Conversation retention in days for the account; null keeps them forever. */
   getConversationRetention(accountId: string): Promise<number | null>;
   /** Sets the account's conversation retention (null = keep forever, otherwise
-   * 30 to 3650 days) and applies it to every WABA the account owns. Returns the
-   * stored value. Only the conversation history follows this setting; the
-   * short relay buffer keeps its own windows. */
+   * 30 to 3650 days). Returns the stored value. Only the conversation history
+   * follows this setting; the short relay buffer keeps its own windows. */
   setConversationRetention(accountId: string, days: number | null): Promise<number | null>;
 }

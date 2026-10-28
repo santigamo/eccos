@@ -77,8 +77,8 @@
   <section>
     <h2>Retention</h2>
     <ul>
-      <li><strong>Conversation history</strong> — messages and contacts — is kept until you delete it, erase a number, or your configured window passes. It is kept forever by default; each client can set a window between 30 and 3650 days.</li>
-      <li><strong>Forwarding buffer</strong> — inbound events, outbound messages, and the payload stored in the delivery queue — keeps message content for <strong>30 days</strong> by default. Each client can configure this between 7 and 90 days.</li>
+      <li><strong>Conversation history</strong> — messages and contacts — is kept until a number is erased or the window set for the workspace passes. It is kept forever by default; each client can set a window between 30 and 3650 days.</li>
+      <li><strong>Forwarding buffer</strong> — inbound events, outbound messages, and the payload stored in the delivery queue — keeps message content for <strong>30 days</strong> by default. The operator configures this between 7 and 90 days.</li>
       <li><strong>Delivery records</strong> are then redacted: the message payload is removed and only delivery metadata (such as timestamps and delivery outcome) remains, for up to <strong>90 days</strong>.</li>
       <li><strong>Point-in-time recovery.</strong> The Cloudflare Durable Objects underlying the service keep a 30-day restorable history of their storage. The effective worst-case retention is therefore the configured retention <em>plus up to 30 days</em>. This is a backup mechanism operated by our infrastructure subprocessor; we prefer to declare it rather than round it away.</li>
       <li><strong>Correspondence</strong> with us is kept as ordinary business correspondence, for as long as the matter it concerns and any legal obligations require.</li>

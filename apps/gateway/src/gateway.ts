@@ -30,6 +30,8 @@ import {
   statusFromEvent,
   waIdOf,
 } from "./conversations";
+import type { EccosControlPlane } from "./control-plane";
+import { getControlPlaneStub } from "./control-plane-stub";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
 
@@ -45,6 +47,9 @@ interface Env extends OpsAlertEnv {
   /** Delivery-audit retention window (days): past it, terminal `deliveries` rows are
    * deleted entirely. Optional wrangler var; default 90. */
   DELIVERY_RETENTION_DAYS?: string;
+  /** Reads the account's conversation retention window on the sweep. */
+  CONTROL_PLANE: DurableObjectNamespace<EccosControlPlane>;
+  DO_JURISDICTION?: string;
 }
 
 interface DeliveryRow {
@@ -70,9 +75,6 @@ const OPERATOR_MAX_PAGE = 200;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Well under the 2 MB DO SQLite row limit; history webhooks can be many MB. */
 export const SYNC_PART_BYTES = 512 * 1024;
-/** Conversation retention lives in `conversation-retention.ts`, free of the Workers runtime
- * so the Bun unit tests and the control plane can import it without this module. */
-export { conversationRetentionDays } from "./conversation-retention";
 /** At most one failed-delivery alert per Durable Object (one WABA) per window. */
 export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 /** Retention only needs to run periodically, not on every alarm. alarm() fires
@@ -1372,6 +1374,7 @@ export class EccosGateway extends DurableObject<Env> {
     let nextSweepAt = Number(this.getConfigValue(LAST_SWEEP_KEY) ?? 0) + SWEEP_INTERVAL_MS;
     if (now >= nextSweepAt) {
       this.pruneExpired(now, contentDays, deliveryDays);
+      await this.pruneConversations(now);
       this.saveConfig({ [LAST_SWEEP_KEY]: String(now) });
       nextSweepAt = now + SWEEP_INTERVAL_MS;
     }
@@ -1414,6 +1417,37 @@ export class EccosGateway extends DurableObject<Env> {
    * whether anything is waiting, and a target-less WABA can hold a lot of rows. */
   private hasPendingDeliveries(): boolean {
     return this.sql.exec(`SELECT 1 FROM deliveries WHERE status='pending' LIMIT 1`).toArray().length > 0;
+  }
+
+  /**
+   * Deletes conversation history past the workspace's window. The window lives in
+   * the control plane only, so it is read once per sweep here. NULL keeps everything,
+   * and a failed lookup deletes nothing: an unknown window is never guessed.
+   *
+   * A contact left with no message is deleted as well, so a window does not keep
+   * the names of conversations it has removed.
+   */
+  async pruneConversations(now: number): Promise<void> {
+    let days: number | null;
+    try {
+      days = await getControlPlaneStub(this.env).getConversationRetentionDaysForWaba(
+        this.wabaIdForOps(),
+      );
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          area: "retention",
+          event: "lookup-failed",
+          waba: this.wabaIdForOps(),
+          error: String(error).slice(0, 200),
+        }),
+      );
+      return;
+    }
+    if (days === null) return;
+    this.sql.exec(`DELETE FROM messages WHERE at < ?`, now - days * DAY_MS);
+    this.sql.exec(`DELETE FROM contacts WHERE wa_id NOT IN (SELECT wa_id FROM messages)`);
   }
 
   /** Applies both retention windows — content (delete/redact by kind of row) and

@@ -529,22 +529,6 @@ describe("WABA provisioning saga", () => {
     });
   });
 
-  it("writes the account's conversation retention into the gateway config on provisioning", async () => {
-    const accountId = "acc-provision-retention";
-    const wabaId = "WABA_PROVISION_RETENTION";
-    await createAccount(accountId);
-    await cp((instance) => instance.setConversationRetentionDays(accountId, 30));
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ success: true }), { status: 200 }),
-    );
-    await begin(accountId, wabaId);
-    await provisionWaba(env, accountId, wabaId);
-
-    await runInDurableObject(getGatewayStubForWaba(env, wabaId), (instance: EccosGateway) => {
-      expect(instance.getConfigValue("conversation_retention_days")).toBe("30");
-    });
-  });
-
   // --- Happy-path config completeness ---------------------------------------
   it("writes the full connection config to the gateway DO on success", async () => {
     const accountId = "acc-provision-config";
@@ -562,7 +546,6 @@ describe("WABA provisioning saga", () => {
       expect(instance.getConfigValue("DISPLAY_PHONE_NUMBER")).toBe("+34 600 000 001");
       expect(instance.getConfigValue("META_WEBHOOK_CALLBACK_URL")).toBe(CALLBACK_URL);
       expect(instance.getConfigValue("CONNECTED_AT")).toEqual(expect.any(String));
-      expect(instance.getConfigValue("conversation_retention_days")).toBe("forever");
     });
   });
 });

@@ -20,7 +20,7 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { SettingsView } = await import("../src/routes/settings");
 const { IssuedKeyNotice } = await import("../src/components/dashboard/api-keys");
-const { ConversationRetentionPanel, RETENTION_CHOICES } = await import(
+const { ConversationRetentionPanel, RETENTION_CHOICES, saveRetentionChoice } = await import(
   "../src/components/dashboard/conversation-retention"
 );
 
@@ -177,5 +177,40 @@ describe("Conversation history control (Settings)", () => {
     );
     expect(html).not.toContain("\u2014");
     expect(html).not.toContain("\u2013");
+  });
+});
+
+describe("saveRetentionChoice (the Save outcome)", () => {
+  test("sends keep-forever as null and a window as its day count", async () => {
+    const sent: Array<number | null> = [];
+    const save = async (days: number | null) => {
+      sent.push(days);
+      return { ok: true as const, data: days };
+    };
+    expect(await saveRetentionChoice("forever", save)).toEqual({ ok: true });
+    expect(await saveRetentionChoice("90", save)).toEqual({ ok: true });
+    expect(sent).toEqual([null, 90]);
+  });
+
+  test("reports a failed Result with its copy, and does not throw", async () => {
+    const outcome = await saveRetentionChoice("30", async () => ({
+      ok: false,
+      kind: "unreachable",
+      error: "fetch failed: ECONNREFUSED",
+    }));
+    expect(outcome).toEqual({ ok: false, error: "fetch failed: ECONNREFUSED" });
+  });
+
+  test("a save that never reaches the server is reported, not left unhandled, and a retry can succeed", async () => {
+    let attempts = 0;
+    const save = async (days: number | null) => {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError("Failed to fetch");
+      return { ok: true as const, data: days };
+    };
+    const first = await saveRetentionChoice("365", save);
+    expect(first.ok).toBe(false);
+    expect(first.ok ? "" : first.error).toContain("Failed to fetch");
+    expect(await saveRetentionChoice("365", save)).toEqual({ ok: true });
   });
 });
