@@ -110,7 +110,9 @@ describe("singleFlight", () => {
     const refresh = singleFlight(
       () => {
         calls++;
-        return new Promise<void>((resolve) => (finish = resolve));
+        return new Promise<void>((resolve) => {
+          finish = resolve;
+        });
       },
       (next) => busy.push(next),
     );
