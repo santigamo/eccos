@@ -351,6 +351,9 @@ export type WabaOnboardingType = "standard" | "coexistence";
  * - `initiated` — contacts and message history have both been requested.
  * - `unconfirmed` — a request was issued and Meta never confirmed it. Terminal:
  *   each sync is allowed once, so it cannot be safely retried.
+ * - `unavailable` — every sync is settled and Meta refused at least one as
+ *   already performed or with history sharing off. Terminal, and not a failure;
+ *   `error` says which sync and why.
  * - `not_coexistence` — Eccos recorded a coexistence onboarding and Meta reports
  *   the number is not one, so nothing was issued. Terminal, and not a failure.
  * - `expired` — the 24-hour window closed with the history sync not initiated.
@@ -361,6 +364,7 @@ export type CoexistenceSyncStatus =
   | "pending"
   | "initiated"
   | "unconfirmed"
+  | "unavailable"
   | "not_coexistence"
   | "expired";
 
@@ -380,8 +384,13 @@ export interface CoexistenceResource {
   /** Epoch ms by which message history must have been initiated; null when nothing is owed. */
   deadlineAt: number | null;
   contactsStartedAt: number | null;
+  /**
+   * Meta's request id for the sync, or a placeholder: `accepted` when Meta
+   * confirmed without one, `unavailable:<reason>` when it refused the sync.
+   */
   contactsRequestId: string | null;
   historyStartedAt: number | null;
+  /** Same shape as `contactsRequestId`. */
   historyRequestId: string | null;
   /** Why the sync step did not complete, in words meant for an operator. */
   error: string | null;

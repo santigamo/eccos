@@ -15,12 +15,15 @@ export class MetaGraphError extends Error {
    * `message` keeps the operation prefix for logs; this is the sentence a
    * console may show an operator on its own. */
   readonly graphMessage: string | null;
+  /** Meta's numeric `error.code`, or null when the body carried none. */
+  readonly code: number | null;
 
-  constructor(operation: string, status: number, message: string | null) {
+  constructor(operation: string, status: number, message: string | null, code: number | null = null) {
     super(`${operation} failed: ${status}${message ? `: ${message}` : ""}`);
     this.name = "MetaGraphError";
     this.status = status;
     this.graphMessage = message;
+    this.code = code;
   }
 }
 

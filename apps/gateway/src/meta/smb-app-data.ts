@@ -28,17 +28,21 @@
  * *before* making it, and must never re-issue one it has already sent — even
  * after a timeout, and especially after a 5xx. A lost `200` costs nothing if
  * left alone and costs the customer their onboarding if retried.
- * `src/provisioning.ts` is what enforces that; this module only sends.
+ * `src/provisioning.ts` is what enforces that; this module only sends, and
+ * hands Meta's `error.code` back on the thrown `MetaGraphError` so a documented
+ * refusal can be told apart from a lost answer.
  *
  * Two more documented facts the caller depends on:
  *   - `2593108` — "Synchronization request can only be made within 24 hours of
  *     onboarding". The machine-readable form of the deadline in `coexistence.ts`.
  *   - A 200 on the history call means the request was *accepted*, not that
  *     history will arrive: Meta says so explicitly, and a business that turned
- *     history sharing off surfaces later as `2593109` on the `history` webhook.
+ *     history sharing off surfaces as `2593109` on the `history` webhook. Meta
+ *     does not document it as a refusal of the call; it is handled defensively
+ *     in case Meta ever returns it on the history call.
  *
- * NO CONTACT IS EVER STORED. These functions ask Meta to start synchronising and
- * read nothing back but an acceptance and a support reference id.
+ * These functions only ask Meta to start synchronising; the contacts and
+ * history themselves arrive as webhooks.
  */
 
 import { graphBaseUrl, type CoreConfig } from "@eccos/core/config-schema";
@@ -65,10 +69,18 @@ export const SMB_APP_DATA_SYNC_TYPE: Record<SmbAppDataSyncType, string> = {
 export const SMB_APP_DATA_ALREADY_SYNCED_CODE = 2593107;
 /** Meta error code: the request came more than 24 hours after onboarding. */
 export const SMB_APP_DATA_WINDOW_CLOSED_CODE = 2593108;
+/** Meta error code: the business has turned history sharing off. */
+export const SMB_APP_DATA_HISTORY_SHARING_OFF_CODE = 2593109;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+/** Meta's `error.code`, also when it arrives as an integer string. */
+function metaErrorCode(value: unknown): number | null {
+  const code = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof code === "number" && Number.isInteger(code) ? code : null;
 }
 
 /**
@@ -87,7 +99,8 @@ export interface SmbAppDataSyncAccepted {
 /**
  * The single call. Every coexistence sync goes through here.
  *
- * Throws `MetaGraphError` on a non-2xx, carrying the HTTP status. The caller
+ * Throws `MetaGraphError` on a non-2xx, carrying the HTTP status and Meta's
+ * error code. The caller
  * must treat *any* throw as "this sync is spent": a rejected promise does not
  * prove Meta never processed the request.
  */
@@ -120,7 +133,8 @@ async function postSmbAppDataSync(
   if (!res.ok) {
     const error = asRecord(asRecord(json)?.error);
     const message = typeof error?.message === "string" ? error.message : null;
-    throw new MetaGraphError(`${SMB_APP_DATA_EDGE} ${syncType}`, res.status, message);
+    const code = metaErrorCode(error?.code);
+    throw new MetaGraphError(`${SMB_APP_DATA_EDGE} ${syncType}`, res.status, message, code);
   }
   const requestId = asRecord(json)?.request_id;
   return { requestId: typeof requestId === "string" && requestId !== "" ? requestId : null };
@@ -129,8 +143,8 @@ async function postSmbAppDataSync(
 /**
  * Initiate contacts synchronisation for a coexistence number.
  *
- * Eccos initiates it because Meta's onboarding requires it, and does nothing
- * else with it: no contact reaches Eccos storage, now or later.
+ * Required by Meta's coexistence onboarding; the contacts arrive as
+ * `smb_app_state_sync` webhooks.
  */
 export function initiateContactsSync(
   cfg: MetaGraphConfig,
