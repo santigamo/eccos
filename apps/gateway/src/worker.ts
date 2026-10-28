@@ -107,8 +107,9 @@ function logEvent(event: string, cid: string, status: number, meta: LogMeta = {}
   );
 }
 
-/** Names only — the `field` of each change and the keys of its value — so an
- * ignored webhook says what Meta sent without logging any content. */
+/** Names only — each change's `field` and value keys, each message's `type`
+ * and Meta error codes — so an ignored webhook says what Meta sent without
+ * logging any content. */
 function webhookShape(payload: unknown): string {
   const parts = new Set<string>();
   const entries = (payload as { entry?: unknown })?.entry;
@@ -118,6 +119,14 @@ function webhookShape(payload: unknown): string {
       const { field, value } = (change ?? {}) as { field?: unknown; value?: unknown };
       const keys = value && typeof value === "object" ? Object.keys(value).sort().join("+") : "";
       parts.add(`${typeof field === "string" ? field : "?"}:${keys}`);
+      const messages = (value as { messages?: unknown } | undefined)?.messages;
+      for (const message of Array.isArray(messages) ? messages : []) {
+        const { type, errors } = (message ?? {}) as { type?: unknown; errors?: unknown };
+        parts.add(`type:${typeof type === "string" ? type : "?"}`);
+        for (const error of Array.isArray(errors) ? errors : []) {
+          parts.add(`error:${(error as { code?: unknown })?.code ?? "?"}`);
+        }
+      }
     }
   }
   return [...parts].join(",").slice(0, 300);
