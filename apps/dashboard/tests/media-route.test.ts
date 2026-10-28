@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { GatewayApi, MediaObject } from "@eccos/gateway-contract";
+import type { GatewayApi, MediaObject, MediaRange } from "@eccos/gateway-contract";
 import { UnauthorizedError } from "../src/auth/session";
 import { ForbiddenError } from "../src/auth/tenant";
 import { dispositionFor, MEDIA_ROUTE, serveMedia, type MediaRouteDeps } from "../src/server/media";
@@ -45,10 +45,22 @@ function fakeGateway(world: FakeWorld) {
       const wabas = (world.wabas[accountId] ?? []).map((wabaId) => ({ wabaId }));
       return { account: { accountId }, keys: [], wabas, phones: [] };
     },
-    async getMedia(input: { wabaId: string; mediaId: string }, accountId: string) {
+    async getMedia(input: { wabaId: string; mediaId: string; range?: MediaRange }, accountId: string) {
       calls.push({ method: "getMedia", args: [input, accountId] });
       if (world.failure) throw world.failure;
-      return world.media[`${input.wabaId}/${input.mediaId}`] ?? null;
+      const object = world.media[`${input.wabaId}/${input.mediaId}`];
+      if (!object || !input.range) return object ?? null;
+      // What the gateway does: slice the bytes, and say which range they are.
+      const bytes = await new Response(object.body).text();
+      const range = "suffix" in input.range
+        ? { offset: object.size - Math.min(input.range.suffix, object.size), length: Math.min(input.range.suffix, object.size) }
+        : { offset: input.range.offset, length: input.range.length ?? object.size - input.range.offset };
+      return {
+        body: new Response(bytes.slice(range.offset, range.offset + range.length)).body!,
+        contentType: object.contentType,
+        size: object.size,
+        range,
+      } satisfies MediaObject;
     },
   };
   return { gateway: gateway as unknown as GatewayApi, calls };
@@ -61,8 +73,9 @@ function deps(organizationFor: MediaRouteDeps["organizationFor"], world: FakeWor
 
 const member = async () => "org-a";
 
-function request(method = "GET"): Request {
-  return new Request(`https://app.eccos.chat/media/${WABA_A}/${MEDIA_ID}`, { method });
+function request(method = "GET", range?: string): Request {
+  const headers = range ? { range } : undefined;
+  return new Request(`https://app.eccos.chat/media/${WABA_A}/${MEDIA_ID}`, { method, headers });
 }
 
 const ownWorld = (): FakeWorld => ({
@@ -121,9 +134,65 @@ describe("media route: session and workspace checks", () => {
     expect((await serveMedia(request(), deps(member, world), WABA_A, MEDIA_ID)).status).toBe(503);
   });
 
-  test("only GET is served", async () => {
+  test("only GET and HEAD are served", async () => {
     const response = await serveMedia(request("POST"), deps(member, ownWorld()), WABA_A, MEDIA_ID);
     expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET, HEAD");
+  });
+});
+
+describe("media route: byte ranges and HEAD (Safari plays video only through these)", () => {
+  test("a bounded Range is answered 206 with Content-Range and only those bytes", async () => {
+    const d = deps(member, ownWorld());
+
+    const response = await serveMedia(request("GET", "bytes=2-5"), d, WABA_A, MEDIA_ID);
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-range")).toBe(`bytes 2-5/${BYTES.length}`);
+    expect(response.headers.get("content-length")).toBe("4");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(await response.text()).toBe(BYTES.slice(2, 6));
+    expect(d.calls.find((call) => call.method === "getMedia")?.args[0]).toEqual({
+      wabaId: WABA_A,
+      mediaId: MEDIA_ID,
+      range: { offset: 2, length: 4 },
+    });
+  });
+
+  test("an open-ended and a suffix Range are passed to the gateway as ranges", async () => {
+    const open = await serveMedia(request("GET", "bytes=10-"), deps(member, ownWorld()), WABA_A, MEDIA_ID);
+    expect(open.status).toBe(206);
+    expect(open.headers.get("content-range")).toBe(`bytes 10-${BYTES.length - 1}/${BYTES.length}`);
+    expect(await open.text()).toBe(BYTES.slice(10));
+
+    const suffix = await serveMedia(request("GET", "bytes=-3"), deps(member, ownWorld()), WABA_A, MEDIA_ID);
+    expect(suffix.status).toBe(206);
+    expect(await suffix.text()).toBe(BYTES.slice(-3));
+  });
+
+  test("a Range this route does not read is ignored, and the whole object is sent", async () => {
+    const d = deps(member, ownWorld());
+
+    const response = await serveMedia(request("GET", "bytes=5-2"), d, WABA_A, MEDIA_ID);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(d.calls.find((call) => call.method === "getMedia")?.args[0]).toEqual({
+      wabaId: WABA_A,
+      mediaId: MEDIA_ID,
+      range: undefined,
+    });
+    expect(await response.text()).toBe(BYTES);
+  });
+
+  test("HEAD returns the headers of the whole object with no body", async () => {
+    const response = await serveMedia(request("HEAD"), deps(member, ownWorld()), WABA_A, MEDIA_ID);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("content-length")).toBe(String(BYTES.length));
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(response.body).toBeNull();
   });
 });
 
@@ -153,6 +222,11 @@ describe("media route: streaming headers", () => {
     expect(dispositionFor("image/webp")).toBe("inline");
     expect(dispositionFor("application/pdf")).toBe("attachment");
     expect(dispositionFor("text/html")).toBe("attachment");
+  });
+
+  test("an SVG downloads, because it can carry script", () => {
+    expect(dispositionFor("image/svg+xml")).toBe("attachment");
+    expect(dispositionFor("image/svg+xml; charset=utf-8")).toBe("attachment");
   });
 });
 

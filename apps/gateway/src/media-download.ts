@@ -6,10 +6,18 @@ const GRAPH_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 /** Graph subcode for "object does not exist", which is what an expired media id returns. */
 const GRAPH_SUBCODE_NONEXISTENT = 33;
+/** Graph code for an OAuth failure: the token is expired, revoked, or lacks the permission. */
+const GRAPH_CODE_OAUTH = 190;
 
 /** Retrying cannot succeed: Meta no longer has the id, or the file is over the limit. */
 export class MediaPermanentError extends Error {
   override name = "MediaPermanentError";
+}
+
+/** Meta rejected the WABA's token. Nothing is wrong with the media, so no attempt is counted:
+ * the caller waits and retries once the token is fixed. */
+export class MediaTokenError extends Error {
+  override name = "MediaTokenError";
 }
 
 export interface DownloadMetaMediaInput {
@@ -41,8 +49,9 @@ interface MetaMediaInfo {
  * and Meta's SHA-256, so R2 itself rejects a truncated or altered file and the
  * bytes never sit in Worker memory.
  *
- * Throws {@link MediaPermanentError} when retrying cannot help; any other error
- * is transient and the caller retries with backoff.
+ * Throws {@link MediaPermanentError} when retrying cannot help, and
+ * {@link MediaTokenError} when the token is rejected; any other error is transient
+ * and the caller retries with backoff.
  */
 export async function downloadMetaMedia(input: DownloadMetaMediaInput): Promise<DownloadedMedia> {
   const { bucket, wabaId, mediaId, token, graphVersion } = input;
@@ -54,8 +63,12 @@ export async function downloadMetaMedia(input: DownloadMetaMediaInput): Promise<
     signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
   });
   if (!lookup.ok) {
-    if (lookup.status === 404 || (await graphSubcode(lookup)) === GRAPH_SUBCODE_NONEXISTENT) {
+    const { code, subcode } = await graphError(lookup);
+    if (lookup.status === 404 || subcode === GRAPH_SUBCODE_NONEXISTENT) {
       throw new MediaPermanentError(`Meta no longer has media ${mediaId}`);
+    }
+    if (lookup.status === 401 || code === GRAPH_CODE_OAUTH) {
+      throw new MediaTokenError(`Meta rejected the token for media ${mediaId}`);
     }
     throw new Error(`media lookup failed with ${lookup.status}`);
   }
@@ -81,14 +94,21 @@ export async function downloadMetaMedia(input: DownloadMetaMediaInput): Promise<
   return { size: info.size, contentType: info.mimeType, sha256: info.sha256 ?? null };
 }
 
-async function graphSubcode(response: Response): Promise<number | null> {
+async function graphError(response: Response): Promise<{ code: number | null; subcode: number | null }> {
   try {
-    const body = (await response.json()) as { error?: { error_subcode?: unknown } };
-    const subcode = body.error?.error_subcode;
-    return typeof subcode === "number" ? subcode : null;
+    const body = (await response.json()) as { error?: { code?: unknown; error_subcode?: unknown } };
+    return {
+      code: typeof body.error?.code === "number" ? body.error.code : null,
+      subcode: typeof body.error?.error_subcode === "number" ? body.error.error_subcode : null,
+    };
   } catch {
-    return null;
+    return { code: null, subcode: null };
   }
+}
+
+/** R2 refuses a write whose bytes do not match the SHA-256 it was given. */
+export function isChecksumMismatch(error: unknown): boolean {
+  return error instanceof Error && /checksum/i.test(error.message);
 }
 
 function parseMediaInfo(value: unknown): MetaMediaInfo {

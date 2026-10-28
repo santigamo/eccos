@@ -33,7 +33,12 @@ import {
 import type { EccosControlPlane } from "./control-plane";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { type HistoryMessage, type SyncItem, mapSyncItem, syncItems } from "./history";
-import { downloadMetaMedia, MediaPermanentError } from "./media-download";
+import {
+  downloadMetaMedia,
+  isChecksumMismatch,
+  MediaPermanentError,
+  MediaTokenError,
+} from "./media-download";
 import { deleteMediaObjects } from "./media-store";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
@@ -95,6 +100,7 @@ const MEDIA_CONCURRENCY = 2;
 const MEDIA_MAX_ATTEMPTS = 5;
 /** How long a failed token lookup or R2 purge waits before the alarm tries again. */
 const MEDIA_RETRY_MS = 60_000;
+const MEDIA_RETRY_MESSAGE = "messages erased, but their media could not be deleted yet; retry the erasure";
 const MEDIA_PURGE_BATCH = 100;
 const DEFAULT_CONTENT_RETENTION_DAYS = 30;
 const MIN_CONTENT_RETENTION_DAYS = 7;
@@ -1278,7 +1284,7 @@ export class EccosGateway extends DurableObject<Env> {
     // retries it, and an operator's retry of this call finishes it at once.
     if (!(await this.purgeErasedMedia())) {
       this.ctx.storage.setAlarm(Date.now() + MEDIA_RETRY_MS);
-      throw new Error("messages erased, but their media could not be deleted yet; retry the erasure");
+      return { ok: false, error: MEDIA_RETRY_MESSAGE, retryable: true };
     }
     return { ok: true, phone: digits, counts };
   }
@@ -1805,6 +1811,12 @@ export class EccosGateway extends DurableObject<Env> {
     return { payloads };
   }
 
+  /** Whether a media id is settled as stored. The R2 object alone is not enough: an erased id
+   * keeps its object until the next purge. */
+  isMediaStored(mediaId: string): boolean {
+    return this.sql.exec(`SELECT 1 FROM media WHERE media_id = ? AND state = 'stored'`, mediaId).toArray().length > 0;
+  }
+
   /** Cheap existence check — `LIMIT 1`, not a COUNT: the hold only needs to know
    * whether anything is waiting, and a target-less WABA can hold a lot of rows. */
   private hasPendingDeliveries(): boolean {
@@ -1824,13 +1836,21 @@ export class EccosGateway extends DurableObject<Env> {
     const due = this.dueMediaIds(now);
     if (due.length > 0) {
       const token = await this.metaToken();
-      if (token === null) {
+      if (token === "unavailable") {
         wakes.push(now + MEDIA_RETRY_MS);
-      } else {
-        await runBoundedPool(due, MEDIA_CONCURRENCY, (mediaId) => this.downloadOneMedia(mediaId, token));
-        // A full batch may hide more due work: come back now rather than at the next retry.
-        if (due.length === MEDIA_BATCH) wakes.push(now);
+      } else if (token !== "missing") {
+        try {
+          await runBoundedPool(due, MEDIA_CONCURRENCY, (mediaId) => this.downloadOneMedia(mediaId, token));
+          // Ids that arrived while this batch ran are due now. A webhook arms the alarm, but the
+          // setAlarm at the end of this run would overwrite that, so come back at once.
+          if (this.dueMediaIds(Date.now()).length > 0) wakes.push(now);
+        } catch (error) {
+          if (!(error instanceof MediaTokenError)) throw error;
+          wakes.push(now + MEDIA_RETRY_MS);
+        }
       }
+      // "missing" is not retried on a timer: the WABA is not in the control plane, so no
+      // retry can succeed. The next webhook or sync arms the alarm and this step runs again.
     }
     // Last, so an object the batch above wrote for a message erased meanwhile is deleted in this alarm.
     if (!(await this.purgeErasedMedia())) wakes.push(now + MEDIA_RETRY_MS);
@@ -1863,23 +1883,31 @@ export class EccosGateway extends DurableObject<Env> {
       .map((row) => String(row.media_id));
   }
 
-  /** The WABA's Meta token for the media downloads, or null when the lookup fails. Logged, and
-   * the caller waits and retries: a missing token is never an attempt against a media id. */
-  private async metaToken(): Promise<string | null> {
+  /** The WABA's Meta token for the media downloads. `unavailable` when the lookup failed and
+   * `missing` when the control plane does not know the WABA. Both are logged, and neither is
+   * an attempt against a media id. */
+  private async metaToken(): Promise<string | "missing" | "unavailable"> {
     try {
-      return await getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps());
+      const token = await getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps());
+      if (token !== null) return token;
+      this.logMedia("token-waba-missing");
+      return "missing";
     } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          area: "media",
-          event: "token-lookup-failed",
-          waba: this.wabaIdForOps(),
-          error: String(error).slice(0, 200),
-        }),
-      );
-      return null;
+      this.logMedia("token-lookup-failed", error);
+      return "unavailable";
     }
+  }
+
+  private logMedia(event: string, error?: unknown): void {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        area: "media",
+        event,
+        waba: this.wabaIdForOps(),
+        ...(error === undefined ? {} : { error: String(error).slice(0, 200) }),
+      }),
+    );
   }
 
   /** Downloads one media id into R2 and records the outcome. Never throws: a failure
@@ -1906,6 +1934,9 @@ export class EccosGateway extends DurableObject<Env> {
         graphVersion: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
       });
     } catch (error) {
+      // A rejected token is the WABA's fault, not the media's: nothing is recorded and no attempt counted.
+      if (error instanceof MediaTokenError) throw error;
+      if (isChecksumMismatch(error)) this.logMedia("checksum-mismatch");
       state = error instanceof MediaPermanentError || attempts >= MEDIA_MAX_ATTEMPTS ? "gone" : "failed";
       lastError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
       nextAttemptAt = state === "failed" ? now + withJitter(backoffMs(attempts)) : null;

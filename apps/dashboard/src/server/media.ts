@@ -1,4 +1,4 @@
-import type { GatewayApi, MediaObject } from "@eccos/gateway-contract";
+import type { GatewayApi, MediaObject, MediaRange } from "@eccos/gateway-contract";
 import { UnauthorizedError } from "../auth/session";
 import { ForbiddenError } from "../auth/tenant";
 
@@ -31,6 +31,9 @@ export interface MediaRouteDeps {
  * Streams one stored media object to a member of the workspace that owns its WABA.
  * Anything the caller may not see is a 404, including a WABA of another workspace,
  * so the route never confirms that another workspace's media id exists.
+ *
+ * Safari plays video only from a server that answers `Range`, so a ranged GET is
+ * a 206 and HEAD returns the headers alone.
  */
 export async function serveMedia(
   request: Request,
@@ -38,15 +41,16 @@ export async function serveMedia(
   wabaId: string,
   mediaId: string,
 ): Promise<Response> {
-  if (request.method !== "GET") return plain(405, { allow: "GET" });
+  if (request.method !== "GET" && request.method !== "HEAD") return plain(405, { allow: "GET, HEAD" });
   try {
     const organizationId = await deps.organizationFor(request);
     const link = await deps.gateway.getOrganizationAccountLink(organizationId);
     if (!link || link.status !== "active") return plain(404);
     const resources = await deps.gateway.listAccountResources(link.accountId);
     if (!resources.wabas.some((waba) => waba.wabaId === wabaId)) return plain(404);
-    const media = await deps.gateway.getMedia({ wabaId, mediaId }, link.accountId);
-    return media ? mediaResponse(media) : plain(404);
+    const range = parseRange(request.headers.get("range"));
+    const media = await deps.gateway.getMedia({ wabaId, mediaId, range }, link.accountId);
+    return media ? mediaResponse(media, request.method) : plain(404);
   } catch (error) {
     if (error instanceof UnauthorizedError) return plain(401);
     if (error instanceof ForbiddenError) return plain(403);
@@ -55,26 +59,52 @@ export async function serveMedia(
 }
 
 /**
+ * The one byte range a `Range` header asks for, as R2 takes it. A header this route
+ * does not read (another unit, several ranges, a malformed value) is ignored, which
+ * sends the whole object.
+ */
+export function parseRange(header: string | null): MediaRange | undefined {
+  const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null;
+  if (!match) return undefined;
+  const [, start = "", end = ""] = match;
+  if (start === "") return end === "" ? undefined : { suffix: Number(end) };
+  const offset = Number(start);
+  if (end === "") return { offset };
+  const last = Number(end);
+  return last < offset ? undefined : { offset, length: last - offset + 1 };
+}
+
+/**
  * Images, audio and video play or show in place. Anything else (a PDF, a
- * spreadsheet) downloads: a document opened inline is a document the browser may
- * render as a page on this origin.
+ * spreadsheet, an SVG, which can carry script) downloads: a document opened inline
+ * is a document the browser may render as a page on this origin.
  */
 export function dispositionFor(contentType: string): "inline" | "attachment" {
+  if (/^image\/svg\+xml(\s|;|$)/i.test(contentType)) return "attachment";
   return /^(image|audio|video)\//i.test(contentType) ? "inline" : "attachment";
 }
 
-function mediaResponse(media: MediaObject): Response {
-  return new Response(media.body, {
-    headers: {
-      "content-type": media.contentType,
-      "content-length": String(media.size),
-      "content-disposition": dispositionFor(media.contentType),
-      "cache-control": CACHE_CONTROL,
-      "x-content-type-options": "nosniff",
-      // A document rendered inline must not run script on this origin.
-      "content-security-policy": "default-src 'none'; sandbox",
-    },
-  });
+function mediaResponse(media: MediaObject, method: string): Response {
+  const partial = media.range;
+  const length = partial ? partial.length : media.size;
+  const headers: Record<string, string> = {
+    "content-type": media.contentType,
+    "content-length": String(length),
+    "content-disposition": dispositionFor(media.contentType),
+    "accept-ranges": "bytes",
+    "cache-control": CACHE_CONTROL,
+    "x-content-type-options": "nosniff",
+    // A document rendered inline must not run script on this origin.
+    "content-security-policy": "default-src 'none'; sandbox",
+  };
+  if (partial) {
+    headers["content-range"] = `bytes ${partial.offset}-${partial.offset + partial.length - 1}/${media.size}`;
+  }
+  if (method === "HEAD") {
+    void media.body.cancel();
+    return new Response(null, { status: partial ? 206 : 200, headers });
+  }
+  return new Response(media.body, { status: partial ? 206 : 200, headers });
 }
 
 const STATUS_TEXT: Record<number, string> = {

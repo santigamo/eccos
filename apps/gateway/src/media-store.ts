@@ -1,3 +1,5 @@
+import type { MediaRange } from "@eccos/gateway-contract";
+
 const WABA_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MEDIA_ID = /^\d{1,32}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/i;
@@ -18,6 +20,7 @@ export interface StoredMedia {
   contentType: string | undefined;
   sha256: string | undefined;
   size: number;
+  range?: { offset: number; length: number };
 }
 
 function wabaPrefix(wabaId: string): string {
@@ -52,14 +55,17 @@ export async function getMedia(
   bucket: R2Bucket,
   wabaId: string,
   mediaId: string,
+  range?: MediaRange,
 ): Promise<StoredMedia | null> {
-  const object = await bucket.get(mediaKey(wabaId, mediaId));
+  const object = await bucket.get(mediaKey(wabaId, mediaId), range ? { range } : undefined);
   if (!object) return null;
+  const resolved = range ? (object.range as { offset?: number; length?: number } | undefined) : undefined;
   return {
     body: object.body,
     contentType: object.httpMetadata?.contentType,
     sha256: object.customMetadata?.sha256,
     size: object.size,
+    range: resolved?.length === undefined ? undefined : { offset: resolved.offset ?? 0, length: resolved.length },
   };
 }
 

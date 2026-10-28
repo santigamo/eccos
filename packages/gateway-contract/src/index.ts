@@ -373,7 +373,8 @@ export interface ErasureCounts {
 /** `phone` echoes the normalized (digits-only) number the match ran against. */
 export type EraseByPhoneResult =
   | { ok: true; phone: string; counts: ErasureCounts }
-  | { ok: false; error: string };
+  /** `retryable`: the erasure is safe to repeat and finishes the work left (media R2 refused). */
+  | { ok: false; error: string; retryable?: true };
 
 // --- Account resources (account-scoped operator surface) --------------------
 
@@ -821,17 +822,23 @@ export interface GatewayExport {
   config: Record<string, string>;
 }
 
-/** Names one stored media object: the WABA it belongs to and its Meta media id. */
+/** A byte range of a stored object: `offset` (and `length`, else to the end), or the last `suffix` bytes. */
+export type MediaRange = { offset: number; length?: number } | { suffix: number };
+
+/** Names one stored media object: the WABA it belongs to, its Meta media id, and an optional byte range. */
 export interface MediaRequest {
   wabaId: string;
   mediaId: string;
+  range?: MediaRange;
 }
 
-/** A stored media object, streamed. The body is a read-once stream: the caller owns it. */
+/** A stored media object, streamed. The body is a read-once stream: the caller owns it.
+ * `size` is the whole object; `range` is set when the body is only that part of it. */
 export interface MediaObject {
   body: ReadableStream<Uint8Array>;
   contentType: string;
   size: number;
+  range?: { offset: number; length: number };
 }
 
 export interface GatewayApi {

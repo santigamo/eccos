@@ -900,13 +900,13 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   /** The plaintext Meta token of a WABA, for its gateway's media downloads on the alarm.
    * Asked by the WABA's own Durable Object by name, so no account id is needed.
-   * Throws for an unknown WABA. The token is never stored in the gateway object. */
-  async getMetaAccessTokenForWaba(wabaId: string): Promise<string> {
+   * Null for a WABA the control plane does not know. The token is never stored in the gateway object. */
+  async getMetaAccessTokenForWaba(wabaId: string): Promise<string | null> {
     const id = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec("SELECT account_id, meta_access_token FROM wabas WHERE waba_id = ?", id)
       .toArray()[0];
-    if (!row) throw new Error(`WABA ${id} does not exist`);
+    if (!row) return null;
     return this.decryptStoredToken(row.account_id as string, id, row.meta_access_token);
   }
 

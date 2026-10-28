@@ -203,15 +203,19 @@ only code that touches them.
   and downloads up to five per alarm (`src/media-download.ts`). Meta's media ids expire (about 30
   days for live messages, 14 for history), so a download is attempted on the next alarm, not on a
   schedule. A transient failure retries with backoff up to five attempts. An id that Meta no longer
-  has, or a file over 100 MB, is given up at once. The bytes stream from Meta into R2 with Meta's
+  has, or a file over 100 MB, is given up at once. A rejected token (401, or Graph code 190) counts no
+  attempt: the media waits, and is retried once the token is fixed. A WABA the control plane does not
+  know gets no timed retry: the next webhook or sync wakes the alarm, and the download is tried again. The bytes stream from Meta into R2 with Meta's
   length and SHA-256, and R2 rejects a write whose bytes do not match.
 - **State.** The `media` table in the Durable Object records each id as `failed` (retry at a
   time), `stored`, `gone` (given up), or `erased` (the object is due to be deleted). It holds no
   content, only the id and the attempt bookkeeping.
 - **Follows the message.** Media is not on its own clock. When retention prunes the last message
   that references an id, or an erasure removes it, the id is marked `erased` in the same transaction,
-  and the object is deleted from R2 on that alarm. An erasure deletes its objects before it returns.
-  A failed R2 delete keeps the mark, so the alarm retries it.
+  and the object is deleted from R2 on that alarm. An erasure deletes the objects that exist when it
+  runs. A download still in flight then is tombstoned by the alarm that wrote it, and deleted before
+  that alarm ends. A failed R2 delete keeps the mark, so the alarm retries it; the erasure answers
+  503 and can be repeated.
 - **Serving.** Read only through the `getMedia` RPC, scoped to the owning account, and streamed by
   the dashboard's `/media/<wabaId>/<mediaId>` route to a signed-in member of the workspace.
 - **Not yet wired.** `deleteMediaForWaba` purges a whole WABA's prefix, but no WABA-deletion path
