@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,8 @@ export interface ConversationThreadProps {
   loadingOlder: boolean;
   olderFailed: boolean;
   onLoadOlder: () => void;
+  /** The reply box, pinned under the messages. Absent for a viewer. */
+  composer?: ReactNode;
 }
 
 /**
@@ -30,6 +32,7 @@ export function ConversationThread({
   loadingOlder,
   olderFailed,
   onLoadOlder,
+  composer,
 }: ConversationThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -121,6 +124,7 @@ export function ConversationThread({
           )}
         </div>
       </div>
+      {composer}
     </section>
   );
 }

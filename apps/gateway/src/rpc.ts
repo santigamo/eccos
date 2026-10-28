@@ -52,6 +52,9 @@ import type {
   TemplateHeaderMediaFormat,
   SendTemplateTestResult,
   SendTestFailureCode,
+  SendTextFailureCode,
+  SendTextInput,
+  SendTextResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
   TemplatesResult,
@@ -93,6 +96,8 @@ const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 const MAX_BODY_PARAMS = 30;
 const MAX_BODY_PARAM_LENGTH = 1024;
+/** Meta's ceiling for a free-text message body. */
+const MAX_TEXT_LENGTH = 4096;
 /** A BUTTONS component carries at most 3 URL buttons — the same cap the
  * create validator applies, so a later-created template can always be sent. */
 const MAX_BUTTON_PARAMS = 3;
@@ -147,6 +152,12 @@ const GRAPH_ERROR_CODES: Record<number, SendTestFailureCode> = {
   131030: "recipient_not_allowlisted",
   132000: "parameter_mismatch",
   132001: "template_not_found",
+};
+
+/** The free-text send vocabulary: the window refusal is the one a composer must name. */
+const TEXT_GRAPH_ERROR_CODES: Record<number, SendTextFailureCode> = {
+  131030: "recipient_not_allowlisted",
+  131047: "window_closed",
 };
 
 /** Pull Meta's `{ error: { code, error_subcode, message } }` out of a parsed
@@ -710,6 +721,81 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         code: mapped ?? "graph",
         detail: mapped ? message : (message ?? `HTTP ${result.status}`),
       };
+    }
+
+    await stub.logOutbound(
+      result.id,
+      input.to,
+      JSON.stringify(metaBody),
+      "sent",
+      null,
+      input.phoneNumberId,
+      result.waId,
+    );
+    return { ok: true, messageId: result.id };
+  }
+
+  /**
+   * Send one free-text message from the conversation composer.
+   *
+   * Mirrors `sendTemplateTest` on every rule that matters: the same `getWaba`
+   * ownership read (a non-active WABA fails closed), the same `accountId:wabaId`
+   * limiter key, the same outbound row. Free-form bodies are only deliverable
+   * inside Meta's 24-hour customer service window, so 131047 is an expected
+   * answer the console turns into "send a template", not a fault to chase.
+   */
+  async sendText(input: SendTextInput, accountId: string): Promise<SendTextResult> {
+    const account = requireAccountId(accountId, "accountId is required");
+    const waba = await getControlPlaneStub(this.env).getWaba(account, input.wabaId);
+    if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
+
+    if (!waba.phones.some((phone) => phone.phoneNumberId === input.phoneNumberId)) {
+      return {
+        ok: false,
+        code: "no_phone",
+        detail: `phone "${input.phoneNumberId}" is not registered on this WhatsApp Business account`,
+      };
+    }
+
+    // Defense in depth, as in `sendTemplateTest`: the dashboard validator is the
+    // strict one, so a failure here is a regressed caller, not a UI state.
+    if (!TO_PATTERN.test(input.to)) throw new Error("to must be 5-15 digits");
+    if (typeof input.text !== "string" || input.text.length === 0 || input.text.length > MAX_TEXT_LENGTH) {
+      throw new Error("text must be 1-4096 characters");
+    }
+
+    if (this.env.SEND_RATE_LIMITER) {
+      const { success } = await this.env.SEND_RATE_LIMITER.limit({
+        key: `${account}:${waba.wabaId}`,
+      });
+      if (!success) return { ok: false, code: "rate_limited", detail: null };
+    }
+
+    const metaBody = {
+      to: input.to,
+      type: "text",
+      text: { body: input.text, preview_url: false },
+    };
+    const cfg = tenantConfig(getAppConfig(this.env), {
+      wabaId: waba.wabaId,
+      phoneNumberId: input.phoneNumberId,
+      metaAccessToken: waba.metaAccessToken,
+    });
+    const result = await sendMessage(cfg, metaBody);
+    const stub = this.stubFor(waba.wabaId);
+
+    if (!result.ok) {
+      await stub.logOutbound(
+        null,
+        input.to,
+        JSON.stringify(metaBody),
+        "failed",
+        JSON.stringify(result.error),
+        input.phoneNumberId,
+      );
+      const { code, message } = graphError(result.error);
+      const mapped = code === null ? undefined : TEXT_GRAPH_ERROR_CODES[code];
+      return { ok: false, code: mapped ?? "graph", detail: message ?? `HTTP ${result.status}` };
     }
 
     await stub.logOutbound(

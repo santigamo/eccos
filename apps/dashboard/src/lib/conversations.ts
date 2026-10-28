@@ -1,4 +1,4 @@
-import type { ConversationSummary, MessageRecord } from "../server/gateway";
+import type { ConversationSummary, CursorPage, MessageRecord } from "../server/gateway";
 import { normalizeSearchWabaId } from "./search";
 
 /**
@@ -253,4 +253,71 @@ export function relativeTime(at: number, now: number): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days} d ago`;
   return new Date(at).toISOString().slice(0, 10);
+}
+
+/** Meta's customer service window: free text only within this long after the customer's last message. */
+export const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** How many older pages a thread is read back through to find the customer's newest message. */
+export const INBOUND_LOOKUP_PAGES = 4;
+
+export interface ServiceWindow {
+  open: boolean;
+  /** The window's state in a few words, as the composer shows it. */
+  label: string;
+}
+
+/**
+ * Whether free text may still be sent, and how long it has. `lastInboundAt` is
+ * the customer's newest inbound message, or null when none was found: with no
+ * such message there is no window to be open.
+ */
+export function serviceWindowOf(lastInboundAt: number | null, now: number): ServiceWindow {
+  if (lastInboundAt === null || now - lastInboundAt >= SERVICE_WINDOW_MS) {
+    return { open: false, label: "Window closed: templates only" };
+  }
+  const left = SERVICE_WINDOW_MS - (now - lastInboundAt);
+  const hours = Math.floor(left / 3_600_000);
+  const remaining = hours >= 1 ? `${hours} h` : `${Math.max(1, Math.ceil(left / 60_000))} min`;
+  return { open: true, label: `Window open, ${remaining} left` };
+}
+
+/**
+ * The `at` of the customer's newest inbound message. The thread's newest page
+ * is read first, then older ones, until an inbound message turns up, the page
+ * reaches past the window (nothing older could be inside it), or the history
+ * runs out. Null means none was found inside the window.
+ */
+export async function lastInboundAt(
+  first: CursorPage<MessageRecord>,
+  fetchOlder: (cursor: string) => Promise<CursorPage<MessageRecord> | null>,
+  now: number,
+): Promise<number | null> {
+  let page = first;
+  for (let read = 1; ; read++) {
+    // Pages are oldest first, so the newest inbound is the last one.
+    const newest = [...page.items].reverse().find((message) => message.direction === "in");
+    if (newest) return newest.at;
+    const oldest = page.items[0];
+    if (read >= INBOUND_LOOKUP_PAGES || !page.nextCursor || !oldest || now - oldest.at >= SERVICE_WINDOW_MS) {
+      return null;
+    }
+    const older = await fetchOlder(page.nextCursor);
+    if (!older) return null;
+    page = older;
+  }
+}
+
+/** Enter sends, Shift+Enter is a newline, and an Enter that ends an IME composition is left to the input. */
+export function isSendKey(event: { key: string; shiftKey: boolean; isComposing: boolean }): boolean {
+  return event.key === "Enter" && !event.shiftKey && !event.isComposing;
+}
+
+/** The number a thread is on: the newest message that names one. Replies go out from it. */
+export function threadPhoneNumberId(items: MessageRecord[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const phoneNumberId = items[i]?.phoneNumberId;
+    if (phoneNumberId) return phoneNumberId;
+  }
+  return null;
 }

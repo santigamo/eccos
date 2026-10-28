@@ -380,3 +380,33 @@ describe("assemblePreviewButtonUrls", () => {
     ]);
   });
 });
+
+describe("the form, sent to one customer from a conversation", () => {
+  test("a fixed recipient is shown read-only, and no recipient field is asked for", () => {
+    const html = renderToStaticMarkup(
+      <SendTestForm
+        wabaId="waba-a"
+        templateName="hello"
+        languageCode="en"
+        sendability={ready("Hola")}
+        phones={[{ phoneNumberId: "phone-a", displayPhoneNumber: "+15550100000" }]}
+        recipient="34600111222"
+      />,
+    );
+    expect(html).toContain("+34600111222");
+    expect(html).not.toContain('id="send-test-recipient"');
+  });
+
+  test("without a fixed recipient the form still asks for one", () => {
+    const html = renderToStaticMarkup(
+      <SendTestForm
+        wabaId="waba-a"
+        templateName="hello"
+        languageCode="en"
+        sendability={ready("Hola")}
+        phones={[{ phoneNumberId: "phone-a", displayPhoneNumber: "+15550100000" }]}
+      />,
+    );
+    expect(html).toContain('id="send-test-recipient"');
+  });
+});

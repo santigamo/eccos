@@ -4,6 +4,7 @@ import type {
   Failure,
   ManualConnectFailureCode,
   SendTestFailureCode,
+  SendTextFailureCode,
 } from "../server/gateway";
 
 /**
@@ -138,6 +139,21 @@ export function sendTestFailureCopy(
         detail: detail ?? "Meta refused the message without saying why.",
       };
   }
+}
+
+/**
+ * What the console says about a refused free-text send. The window refusal is
+ * the only code of its own; every other one reads as the template send reads it.
+ */
+export function sendTextFailureCopy(code: SendTextFailureCode, detail: string | null): FailureCopy {
+  if (code === "window_closed") {
+    return {
+      title: "Outside the 24-hour window",
+      detail:
+        "WhatsApp only allows free text within 24 hours of the customer's last message. Send an approved template instead.",
+    };
+  }
+  return sendTestFailureCopy(code, detail);
 }
 
 /**

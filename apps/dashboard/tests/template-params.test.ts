@@ -8,6 +8,7 @@ import {
   draftWarnings,
   normalizeTemplateName,
   previewBody,
+  templateRowsOf,
 } from "../src/lib/template-params";
 
 /**
@@ -399,5 +400,15 @@ describe("normalizeTemplateName", () => {
 
   test("caps at Meta's 512-character name limit", () => {
     expect(normalizeTemplateName("a".repeat(600))).toHaveLength(512);
+  });
+});
+
+describe("templateRowsOf", () => {
+  test("reads the rows of a list payload, and any other shape has none", () => {
+    const rows = [{ name: "hello", language: "en_US", status: "APPROVED" }];
+    expect(templateRowsOf({ data: rows })).toEqual(rows);
+    expect(templateRowsOf({ data: "nope" })).toEqual([]);
+    expect(templateRowsOf(null)).toEqual([]);
+    expect(templateRowsOf(undefined)).toEqual([]);
   });
 });

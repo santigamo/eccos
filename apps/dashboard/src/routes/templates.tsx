@@ -23,8 +23,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { analyzeTemplate, canSendTemplate } from "../lib/template-params";
-import type { TemplateSendability } from "../lib/template-params";
+import {
+  analyzeTemplate,
+  canSendTemplate,
+  templateRowsOf,
+} from "../lib/template-params";
+import type { TemplateListRow, TemplateSendability } from "../lib/template-params";
 import {
   SendTestSheet,
   type SendTestPhone,
@@ -47,16 +51,6 @@ export const Route = createFileRoute("/templates")({
   ),
 });
 
-interface TemplateItem {
-  id?: string;
-  name?: string;
-  language?: string;
-  status?: string;
-  /** Read by `analyzeTemplate` to decide whether the console can send this row. */
-  category?: string;
-  parameter_format?: string;
-  components?: unknown;
-}
 
 /** The one template the sheet is open for. */
 interface SendTarget {
@@ -73,7 +67,7 @@ interface PreviewTarget {
   components?: unknown;
 }
 
-const columnHelper = createColumnHelper<DataGridFeatures, TemplateItem>();
+const columnHelper = createColumnHelper<DataGridFeatures, TemplateListRow>();
 
 /**
  * PROPORTIONAL COLUMN WIDTHS, and this table is the one that needs them.
@@ -111,7 +105,7 @@ const STATUS_WIDTH = "w-[24%]";
  * `onPreview` is optional because the same column also draws the pending
  * view's header, where there is no row to open.
  */
-function nameColumn(onPreview?: (row: TemplateItem) => void) {
+function nameColumn(onPreview?: (row: TemplateListRow) => void) {
   return columnHelper.accessor("name", {
     id: "name",
     header: "Name",
@@ -242,17 +236,10 @@ function TemplatesPage() {
     );
   }
 
-  const payload = templates.data;
-  const items =
-    typeof payload === "object" &&
-    payload !== null &&
-    "data" in payload &&
-    Array.isArray(payload.data)
-      ? (payload.data as TemplateItem[])
-      : [];
+  const items = templateRowsOf(templates.data);
 
   /** Opening the preview: the name cell, the row itself, and nothing else. */
-  const openPreview = (row: TemplateItem) => {
+  const openPreview = (row: TemplateListRow) => {
     if (!row.name) return;
     setPreviewTarget({
       templateName: row.name,

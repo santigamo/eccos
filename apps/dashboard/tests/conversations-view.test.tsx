@@ -468,3 +468,53 @@ describe("the conversations page", () => {
     expectDesignContract(html);
   });
 });
+
+describe("the reply box on a thread", () => {
+  /** A thread whose customer last wrote 20 h 30 min ago: 3 h 30 min of window left. */
+  const OPEN_AT = () => Date.now() - (20 * 3600 + 30 * 60) * 1000;
+  const DAY_AND_A_BIT_AGO = () => Date.now() - 25 * 3600 * 1000;
+
+  function renderThread(canSend: boolean | undefined, lastInboundAt: number | null) {
+    searchParams = { wabaId: WABA, waId: CUSTOMER };
+    loaderData = {
+      conversations: { ok: true, data: page([SUMMARY]) },
+      thread: { ok: true, data: { page: page(THREAD, "cursor-2"), name: null, lastInboundAt } },
+      canSend,
+    };
+    rootData = readyRoot;
+    return renderToStaticMarkup(<Route.component />);
+  }
+
+  test("inside the window, a member gets the window in words and a reply box, and Send", () => {
+    const html = renderThread(true, OPEN_AT());
+    expect(html).toContain("Window open, 3 h left");
+    expect(html).toContain("<textarea");
+    expect(html).toContain(">Send</button>");
+    expect(html).not.toContain("Send a template");
+    expectDesignContract(html);
+  });
+
+  test("outside the window the box gives way to the template path, and says why", () => {
+    const html = renderThread(true, DAY_AND_A_BIT_AGO());
+    expect(html).toContain("Window closed: templates only");
+    expect(html).toContain("Send a template");
+    expect(html).not.toContain("<textarea");
+    expectDesignContract(html);
+  });
+
+  test("a customer who never wrote is the same closed state, not an open one", () => {
+    const html = renderThread(true, null);
+    expect(html).toContain("Window closed: templates only");
+    expect(html).not.toContain("<textarea");
+  });
+
+  test("a viewer sees the thread and no composer at all, whatever the window", () => {
+    for (const canSend of [false, undefined]) {
+      const html = renderThread(canSend, OPEN_AT());
+      expect(html).toContain("Hola, ¿tenéis cita mañana?");
+      expect(html).not.toContain("<textarea");
+      expect(html).not.toContain("Window open");
+      expect(html).not.toContain("Window closed");
+    }
+  });
+});

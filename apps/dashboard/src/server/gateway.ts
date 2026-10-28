@@ -47,6 +47,8 @@ import type {
   RetryFailedResult,
   SendTemplateTestInput,
   SendTemplateTestResult,
+  SendTextInput,
+  SendTextResult,
   TemplateHeaderMedia,
   TemplateHeaderMediaFormat,
   SetSubscriberConfigInput,
@@ -89,6 +91,8 @@ export type {
   RetryFailedResult,
   SendTemplateTestResult,
   SendTestFailureCode,
+  SendTextFailureCode,
+  SendTextResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
   TokenWabaCandidate,
@@ -552,6 +556,33 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
     ...(buttons.length > 0 ? { buttonParams: buttons } : {}),
     ...(headerMedia ? { headerMedia } : {}),
   };
+}
+
+/** Meta's ceiling for a free-text body. */
+const MAX_TEXT_LENGTH = 4096;
+
+/**
+ * The composer's one free-text message. The body is trimmed, because a message
+ * of only whitespace is not a message; the recipient is normalized exactly as
+ * the template sheet normalizes it.
+ */
+export function validateSendTextInput(input: unknown): SendTextInput {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  if (typeof record.phoneNumberId !== "string" || !PHONE_NUMBER_ID_PATTERN.test(record.phoneNumberId.trim())) {
+    throw new Error("phoneNumberId is required");
+  }
+  if (typeof record.to !== "string") throw new Error("recipient is required");
+  const to = record.to.replace(/[\s\-().]/g, "").replace(/^\+/, "");
+  if (!RECIPIENT_PATTERN.test(to)) {
+    throw new Error("recipient must be 5 to 15 digits in international format");
+  }
+  if (typeof record.text !== "string") throw new Error("message text is required");
+  const text = record.text.trim();
+  if (!text) throw new Error("message text is required");
+  if (text.length > MAX_TEXT_LENGTH) throw new Error("message text is too long");
+  return { wabaId, phoneNumberId: record.phoneNumberId.trim(), to, text };
 }
 
 /**
@@ -1543,6 +1574,48 @@ export const sendTemplateTest = createServerFn({ method: "POST" })
             phoneNumberId: data.phoneNumberId,
             template: data.templateName,
             language: data.languageCode,
+            ...(result.ok ? { messageId: result.messageId } : {}),
+          },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
+        });
+        return result;
+      }),
+  );
+
+/**
+ * Whether the signed-in member may send from the console (`operate`). Only the
+ * composer's presence reads it: the send itself is refused by the server for a
+ * viewer whatever the page shows.
+ */
+export const canSendMessages = createServerFn({ method: "GET" }).handler(
+  async (): Promise<boolean> => (await withGateway(async () => true, "operate")).ok,
+);
+
+/**
+ * One free-text message from the conversation composer.
+ *
+ * `operate`, like the template send: it causes traffic. The 24-hour window is
+ * Meta's to enforce, so nothing here pre-checks it. A closed window comes back
+ * as the typed `window_closed` and the composer offers a template instead.
+ */
+export const sendText = createServerFn({ method: "POST" })
+  .validator(validateSendTextInput)
+  .handler(
+    ({ data }): Promise<Result<SendTextResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("operate");
+        const scope = await resolveScope(gateway, data.wabaId, true);
+        const result = await gateway.sendText({ ...data, wabaId: scope.wabaId }, scope.accountId);
+        // No recipient, no body. See `SensitiveAction`'s "text_send" doc comment.
+        auditEvent({
+          action: "text_send",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: {
+            wabaId: scope.wabaId,
+            phoneNumberId: data.phoneNumberId,
             ...(result.ok ? { messageId: result.messageId } : {}),
           },
           outcome: result.ok ? "success" : "failed",

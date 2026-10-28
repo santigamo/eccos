@@ -1,7 +1,8 @@
 import { createFileRoute, useLoaderData } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { ConversationComposer } from "../components/conversations/conversation-composer";
 import { ConversationList } from "../components/conversations/conversation-list";
 import { ConversationThread } from "../components/conversations/conversation-thread";
 import { FailureView } from "../components/dashboard/failure";
@@ -12,8 +13,14 @@ import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { useOlderPages } from "../hooks/use-older-pages";
 import { findInPages } from "../lib/history";
 import { failureCopy, loaderFailure } from "../lib/failure";
-import { conversationsSearch, conversationTitle, threadEntries } from "../lib/conversations";
-import { getConversation, listConversations } from "../server/gateway";
+import {
+  conversationsSearch,
+  conversationTitle,
+  lastInboundAt,
+  threadEntries,
+  threadPhoneNumberId,
+} from "../lib/conversations";
+import { canSendMessages, getConversation, listConversations } from "../server/gateway";
 import type { ConversationSummary, CursorPage, Failure, MessageRecord } from "../server/gateway";
 import { Page } from "../ui";
 
@@ -44,19 +51,34 @@ export const Route = createFileRoute("/conversations")({
   validateSearch: conversationsSearch,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, waId: search.waId }),
   loader: async ({ deps }) => {
-    const [conversations, messages] = await Promise.all([
+    const [conversations, messages, canSend] = await Promise.all([
       listConversations({ data: { wabaId: deps.wabaId, limit: PAGE_SIZE } }).catch(loaderFailure),
       deps.waId
         ? getConversation({ data: { wabaId: deps.wabaId, waId: deps.waId, limit: PAGE_SIZE } }).catch(loaderFailure)
         : null,
+      canSendMessages().catch(() => false),
     ]);
-    if (!messages?.ok) return { conversations, thread: messages };
-    const name = deps.waId && conversations.ok ? await nameOf(deps.wabaId, deps.waId, conversations.data) : null;
-    return { conversations, thread: { ok: true as const, data: { page: messages.data, name } } };
+    const waId = deps.waId;
+    if (!messages?.ok || !waId) return { conversations, thread: messages?.ok ? null : messages, canSend };
+    const name = conversations.ok ? await nameOf(deps.wabaId, waId, conversations.data) : null;
+    const newest = await lastInboundAt(messages.data, (cursor) => olderThread(deps.wabaId, waId, cursor), Date.now());
+    return {
+      conversations,
+      thread: { ok: true as const, data: { page: messages.data, name, lastInboundAt: newest } },
+      canSend,
+    };
   },
   component: ConversationsPage,
   pendingComponent: ConversationsPending,
 });
+
+/** One older page of a thread, for the walk back to the customer's newest message. A failed read ends the walk. */
+function olderThread(wabaId: string | undefined, waId: string, cursor: string) {
+  return getConversation({ data: { wabaId, waId, limit: PAGE_SIZE, cursor } }).then(
+    (read) => (read.ok ? read.data : null),
+    () => null,
+  );
+}
 
 /**
  * The name Meta gave a customer, read from the list. The list's first page may
@@ -92,6 +114,7 @@ function ConversationsPage() {
   const conversations = useLastGood(loaded.conversations, selectedWabaId ?? "");
   const thread = useLastGood(loaded.thread, `${selectedWabaId ?? ""}:${waId ?? ""}`);
   const now = Date.now();
+  const phones = ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
 
   if (!conversations.ok) {
     return (
@@ -139,6 +162,7 @@ function ConversationsPage() {
               wabaId={selectedWabaId}
               waId={waId}
               title={conversationTitle(waId, thread.data.name)}
+              composer={composerFor(loaded.canSend, selectedWabaId, waId, thread.data, phones, now)}
             />
           ) : (
             <div className="p-4">
@@ -195,6 +219,32 @@ function ConversationListPane({
 }
 
 /**
+ * The reply box for a thread, or nothing: a viewer gets no composer, and a
+ * thread with no number to reply from has nothing to send through.
+ */
+function composerFor(
+  canSend: boolean,
+  wabaId: string | undefined,
+  waId: string,
+  thread: { page: CursorPage<MessageRecord>; lastInboundAt: number | null },
+  phones: { phoneNumberId: string; displayPhoneNumber: string }[],
+  now: number,
+): ReactNode {
+  const phoneNumberId = threadPhoneNumberId(thread.page.items) ?? phones[0]?.phoneNumberId;
+  if (!canSend || !wabaId || !phoneNumberId) return null;
+  return (
+    <ConversationComposer
+      wabaId={wabaId}
+      waId={waId}
+      phoneNumberId={phoneNumberId}
+      phones={phones}
+      lastInboundAt={thread.lastInboundAt}
+      now={now}
+    />
+  );
+}
+
+/**
  * One thread with its older pages. The gateway returns each page oldest first
  * and walks older with the cursor, so the older pages are kept before the ones
  * already loaded (`oldestFirst`).
@@ -204,11 +254,13 @@ function ConversationThreadPane({
   wabaId,
   waId,
   title,
+  composer,
 }: {
   page: CursorPage<MessageRecord>;
   wabaId?: string;
   waId: string;
   title: string;
+  composer: ReactNode;
 }) {
   const older = useOlderPages(page, {
     key: (message) => message.id,
@@ -225,6 +277,7 @@ function ConversationThreadPane({
       loadingOlder={older.loading}
       olderFailed={older.failed}
       onLoadOlder={older.loadOlder}
+      composer={composer}
     />
   );
 }

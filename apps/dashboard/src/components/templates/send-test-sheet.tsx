@@ -36,6 +36,12 @@ interface SendTestFormProps {
   languageCode: string;
   sendability: TemplateSendability;
   phones: SendTestPhone[];
+  /** Preselects the sending number. Must be one of `phones`. */
+  initialPhoneNumberId?: string;
+  /** The customer this send is for. Fixed when given: shown instead of a field. */
+  recipient?: string;
+  /** Called once Meta has accepted the message, so the caller can refresh what it shows. */
+  onSent?: () => void;
 }
 
 type Notice =
@@ -120,10 +126,14 @@ export function SendTestForm({
   languageCode,
   sendability,
   phones,
+  initialPhoneNumberId,
+  recipient: fixedRecipient,
+  onSent,
 }: SendTestFormProps) {
   const paramCount = sendability.kind === "ready" ? sendability.paramCount : 0;
-  const [phoneNumberId, setPhoneNumberId] = useState(phones[0]?.phoneNumberId ?? "");
-  const [recipient, setRecipient] = useState("");
+  const [phoneNumberId, setPhoneNumberId] = useState(initialPhoneNumberId ?? phones[0]?.phoneNumberId ?? "");
+  const [typedRecipient, setTypedRecipient] = useState("");
+  const recipient = fixedRecipient ?? typedRecipient;
   const [params, setParams] = useState<string[]>(() => Array.from({ length: paramCount }, () => ""));
   const buttonSlots = sendability.kind === "ready" ? sendability.buttons : [];
   const [buttonParams, setButtonParams] = useState<ButtonUrlParam[]>(() =>
@@ -171,6 +181,7 @@ export function SendTestForm({
         return;
       }
       setNotice(noticeFor(result.data));
+      if (result.data.ok) onSent?.();
     } finally {
       setSending(false);
     }
@@ -220,24 +231,31 @@ export function SendTestForm({
         )}
       </div>
 
-      <div>
-        <label htmlFor="send-test-recipient" className={LABEL}>
-          Recipient
-        </label>
-        <Input
-          id="send-test-recipient"
-          type="tel"
-          required
-          inputMode="tel"
-          autoComplete="off"
-          value={recipient}
-          onChange={(event) => setRecipient(event.target.value)}
-          placeholder="+34 600 00 00 11"
-        />
-        <p className="mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground">
-          With a Cloud API test number, only recipients on its allowed list can receive messages.
-        </p>
-      </div>
+      {fixedRecipient ? (
+        <div>
+          <span className={LABEL}>To</span>
+          <p className="m-0 font-mono text-xs text-foreground">+{fixedRecipient}</p>
+        </div>
+      ) : (
+        <div>
+          <label htmlFor="send-test-recipient" className={LABEL}>
+            Recipient
+          </label>
+          <Input
+            id="send-test-recipient"
+            type="tel"
+            required
+            inputMode="tel"
+            autoComplete="off"
+            value={typedRecipient}
+            onChange={(event) => setTypedRecipient(event.target.value)}
+            placeholder="+34 600 00 00 11"
+          />
+          <p className="mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground">
+            With a Cloud API test number, only recipients on its allowed list can receive messages.
+          </p>
+        </div>
+      )}
 
       {params.map((value, index) => (
         // Positional parameters have no names, so the index IS the identity —
@@ -394,12 +412,8 @@ function NoticeBody({ notice, wabaId }: { notice: Notice; wabaId: string }) {
 export function SendTestSheet({
   open,
   onOpenChange,
-  templateName,
-  languageCode,
   status,
-  sendability,
-  phones,
-  wabaId,
+  ...form
 }: SendTestFormProps & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -410,7 +424,7 @@ export function SendTestSheet({
       <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-md">
         <SheetHeader className="gap-2">
           <SheetTitle className="font-mono text-sm break-all">
-            {templateName} {"·"} {languageCode}
+            {form.templateName} {"·"} {form.languageCode}
           </SheetTitle>
           {status ? (
             <span className="w-fit">
@@ -418,13 +432,7 @@ export function SendTestSheet({
             </span>
           ) : null}
         </SheetHeader>
-        <SendTestForm
-          wabaId={wabaId}
-          templateName={templateName}
-          languageCode={languageCode}
-          sendability={sendability}
-          phones={phones}
-        />
+        <SendTestForm {...form} />
       </SheetContent>
     </Sheet>
   );
