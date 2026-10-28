@@ -173,7 +173,7 @@ Two layers answer it, and the seam between them is a duration:
    main region with no focus move.
 2. **The route's own skeleton** (`pendingComponent`, via `GridPending`) — the
    destination's real title, kicker and column headers over skeleton rows. This is the
-   answer to the **wait**, not the click: past `defaultPendingMs` (150ms) the previous
+   answer to the **wait**, not the click: past `defaultPendingMs` (300ms) the previous
    page's rows have stopped being context and become a lie, so they are replaced by the
    structure of the page that was asked for.
 

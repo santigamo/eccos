@@ -29,11 +29,11 @@ describe("router pending options", () => {
   test("a route's skeleton waits for a load the rail alone can no longer carry", () => {
     // TanStack's own default is 1000ms, which leaves most gateway round trips
     // showing the PREVIOUS page's rows under the new sidebar highlight. Below
-    // ~150ms, though, swapping a table out and back reads as a flash — so the
-    // rail owns that window alone and the skeleton takes over past it.
-    expect(routerSource).toContain("defaultPendingMs: 150");
+    // ~300ms, though, a fresh read usually lands, and a skeleton armed sooner
+    // only adds its minimum on top — so the rail owns that window alone.
+    expect(routerSource).toContain("defaultPendingMs: 300");
     // And a skeleton that did reach the screen stays long enough to be read.
-    expect(routerSource).toContain("defaultPendingMinMs: 300");
+    expect(routerSource).toContain("defaultPendingMinMs: 200");
   });
 
   test("no default pending component — it would blank the whole app shell", () => {

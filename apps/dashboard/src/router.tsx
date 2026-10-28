@@ -15,19 +15,19 @@ export function getRouter() {
     // right answer only once the wait is long enough that stale rows under a
     // moving rail have become confusing.
     //
-    // Below ~150ms swapping a table out and back reads as a flash, so the rail
-    // owns that window alone (TanStack's own default is 1000ms, which leaves
-    // most gateway round trips showing the wrong page's rows). `pendingMinMs`
-    // then keeps a skeleton that did appear on screen long enough to be read
-    // rather than blinking.
+    // A fresh read takes ~100–250ms, so the rail owns that window alone: a
+    // skeleton armed earlier lands just before the data and `pendingMinMs`
+    // then holds it on screen, turning a 160ms read into a ~450ms one
+    // (measured in prod). Past 300ms the skeleton takes over, and the minimum
+    // keeps it from blinking.
     //
     // Deliberately NO `defaultPendingComponent`: the timeout that promotes a
     // match to its pending view is only armed for routes that HAVE one, and a
     // default would arm it for the ROOT match too — whose component is the
     // whole app chrome. A slow root load would blank the shell instead of
     // filling the page.
-    defaultPendingMs: 150,
-    defaultPendingMinMs: 300,
+    defaultPendingMs: 300,
+    defaultPendingMinMs: 200,
     // Hover or focus starts the route's load, so the click lands on data that
     // is already there or in flight. The delay skips a pointer merely crossing
     // the sidebar; `preloadStaleTime` lets a hover's result serve the click
