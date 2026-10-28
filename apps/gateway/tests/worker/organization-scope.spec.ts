@@ -81,27 +81,31 @@ describe("resolveOrganizationScope", () => {
   });
 });
 
-describe("read* fast path", () => {
-  it("serves status and lists from the resolved WABA with no control-plane lookup", async () => {
+describe("organization-scoped read*", () => {
+  const org = { organizationId: ORG_ID };
+
+  it("is one control-plane hop and one data read: no getWaba, no token decryption", async () => {
     await linkedAccount();
-    const { resources } = await rpc().resolveOrganizationScope(ORG_ID);
-    const waba = resources.wabas[0]!;
+    const resolve = vi.spyOn(EccosControlPlane.prototype, "resolveOrganizationContext");
     const getWaba = vi.spyOn(EccosControlPlane.prototype, "getWaba");
     const getRecord = vi.spyOn(EccosControlPlane.prototype, "getWabaRecord");
     const decrypt = vi.spyOn(EccosControlPlane.prototype as never, "decryptStoredToken");
 
-    const status = await rpc().readStatus(waba);
-    expect(status.connection).toMatchObject({
+    const { scope, data } = await rpc().readStatus(org);
+    expect(scope).toMatchObject({ wabaId: TEST_WABA_ID });
+    expect(scope.resources.wabas.map((w) => w.wabaId)).toEqual([TEST_WABA_ID]);
+    expect(data.connection).toMatchObject({
       wabaId: TEST_WABA_ID,
       phoneNumberId: "PNID1",
       displayPhone: "+34600000000",
     });
-    expect(await rpc().readInbound(waba, {})).toEqual([]);
-    expect(await rpc().readOutbound(waba, {})).toEqual([]);
-    expect(await rpc().readDeliveries(waba, {})).toEqual([]);
-    expect((await rpc().readConversations(waba, {})).items).toEqual([]);
-    expect(await rpc().readSubscriberConfig(waba)).toMatchObject({ url: null });
+    expect((await rpc().readInbound(org, {})).data).toEqual([]);
+    expect((await rpc().readOutbound(org, {})).data).toEqual([]);
+    expect((await rpc().readDeliveries(org, {})).data).toEqual([]);
+    expect((await rpc().readConversations(org, {})).data.items).toEqual([]);
+    expect((await rpc().readSubscriberConfig(org)).data).toMatchObject({ url: null });
 
+    expect(resolve).toHaveBeenCalledTimes(6);
     expect(getWaba).not.toHaveBeenCalled();
     expect(getRecord).not.toHaveBeenCalled();
     expect(decrypt).not.toHaveBeenCalled();
@@ -109,16 +113,53 @@ describe("read* fast path", () => {
 
   it("matches the account-scoped getStatus", async () => {
     const accountId = await linkedAccount();
-    const { resources } = await rpc().resolveOrganizationScope(ORG_ID);
-    expect(await rpc().readStatus(resources.wabas[0]!)).toEqual(await rpc().getStatus(TEST_WABA_ID, accountId));
+    expect((await rpc().readStatus(org)).data).toEqual(await rpc().getStatus(TEST_WABA_ID, accountId));
   });
 
-  it("requires an account and a WABA", async () => {
-    await expect(
-      rpc().readStatus({ accountId: "", wabaId: TEST_WABA_ID, provisionedAt: null, phones: [] }),
-    ).rejects.toThrow(/accountId is required/);
-    await expect(
-      rpc().readInbound({ accountId: "a", wabaId: " ", provisionedAt: null, phones: [] }, {}),
-    ).rejects.toThrow(/wabaId is required/);
+  it("enforces ownership in the gateway: a foreign WABA is never read", async () => {
+    await linkedAccount();
+    await bootstrapAccount("other-account", "WABA_OTHER", [{ phoneNumberId: "PNID2" }]);
+    const foreign = { ...org, wabaId: "WABA_OTHER" };
+    // Falls back to the caller's own WABA, like the shared selection does...
+    const { scope } = await rpc().readStatus(foreign);
+    expect(scope.wabaId).toBe(TEST_WABA_ID);
+    expect(scope.accountId).not.toBe("other-account");
+    // ...and is refused outright when the caller asked for rejectUnknown.
+    await expect(rpc().readConversations({ ...foreign, rejectUnknown: true }, {})).rejects.toThrow(
+      /WABA "WABA_OTHER" is not owned by account/,
+    );
+  });
+
+  it("keeps the active / any distinction for a pending WABA", async () => {
+    const accountId = await linkedAccount();
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      cp.sql.exec("UPDATE wabas SET status = 'pending' WHERE account_id = ?", accountId);
+    });
+    await expect(rpc().readStatus(org)).rejects.toThrow(`WABA "${TEST_WABA_ID}" is still provisioning`);
+    expect((await rpc().readSubscriberConfig({ ...org, mode: "any" })).scope.wabaId).toBe(TEST_WABA_ID);
+  });
+
+  it("keeps the link semantics: reconcile a missing link, refuse a disabled one", async () => {
+    await expect(rpc().readStatus(org)).rejects.toThrow("has no registered WABAs");
+    expect(await rpc().getOrganizationAccountLink(ORG_ID)).toMatchObject({ status: "active" });
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      cp.sql.exec("UPDATE organization_accounts SET status = 'disabled'");
+    });
+    await expect(rpc().readStatus(org)).rejects.toThrow("This organization is not linked to an Eccos account");
+  });
+
+  it("readDashboardState: null status without an active WABA, status with one", async () => {
+    const empty = await rpc().readDashboardState(org);
+    expect(empty.status).toBeNull();
+    expect(empty.resources.wabas).toEqual([]);
+    await reset();
+    await linkedAccount();
+    const ready = await rpc().readDashboardState(org);
+    expect(ready.status?.scope.wabaId).toBe(TEST_WABA_ID);
+    expect(ready.status?.data.connection.wabaId).toBe(TEST_WABA_ID);
+  });
+
+  it("requires an organization", async () => {
+    await expect(rpc().readStatus({ organizationId: " " })).rejects.toThrow(/organizationId is required/);
   });
 });
