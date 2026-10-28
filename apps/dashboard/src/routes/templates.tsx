@@ -39,8 +39,10 @@ import {
   DeleteTemplateDialog,
   type DeleteTarget,
 } from "../components/templates/delete-template-dialog";
+import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 export const Route = createFileRoute("/templates")({
+  staleTime: CONFIG_STALE_MS,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => listTemplates({ data: { wabaId: deps.wabaId } }),
   component: TemplatesPage,

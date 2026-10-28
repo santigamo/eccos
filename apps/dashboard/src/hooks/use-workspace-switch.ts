@@ -3,6 +3,7 @@
 import { useState } from "react"
 
 import { selectOrganization } from "../organizations"
+import { resetClientState } from "./client-state"
 
 /**
  * The one client path that changes which workspace this session is scoped to.
@@ -44,6 +45,7 @@ export function useWorkspaceSwitch(): WorkspaceSwitch {
           setPendingId(null)
           return
         }
+        resetClientState()
         // Full reload: the root loader re-resolves the tenant server-side.
         // Deliberately leaves `pendingId` set — the button stays busy until the
         // document goes away, instead of flashing back to idle.

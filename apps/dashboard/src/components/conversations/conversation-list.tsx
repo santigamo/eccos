@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { prefetchThread } from "../../hooks/use-thread";
 import {
   FileTextIcon,
   ImageIcon,
@@ -121,12 +122,15 @@ function ConversationRow({
 }) {
   const { waId, name, messageCount, lastMessage } = conversation;
   const Icon = TYPE_ICON[lastMessage.type] ?? MessageSquareTextIcon;
+  const prefetch = () => prefetchThread(wabaId, waId, { items: [conversation], nextCursor: null });
   return (
     <li>
       <Link
         to="/conversations"
         search={{ wabaId, waId }}
         aria-current={selected ? "true" : undefined}
+        onMouseEnter={prefetch}
+        onFocus={prefetch}
         className="block border-b border-(--line) px-4 py-3 outline-none transition-colors hover:bg-white/[.03] focus-visible:ring-1 focus-visible:ring-ring aria-[current=true]:bg-(--tag-live-bg) aria-[current=true]:shadow-[inset_2px_0_0_0_var(--color-glow)]"
       >
         <span className="flex items-baseline justify-between gap-3">

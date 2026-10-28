@@ -29,6 +29,7 @@ import {
 import { EMPTY_CELL } from "../lib/logs";
 import { normalizeSearchBefore, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { Page, StatusTag, fmtTs } from "../ui";
+import { LIVE_STALE_MS } from "../lib/route-stale";
 
 /**
  * ── THE FORWARDING QUEUE ────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ const STATUS_LABELS: Record<string, string> = {
 type DeliveriesSearch = { status?: string; before?: number; wabaId?: string };
 
 export const Route = createFileRoute("/deliveries")({
+  staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): DeliveriesSearch => {
     const status = normalizeSearchStatus(search.status);
     const before = normalizeSearchBefore(search.before);

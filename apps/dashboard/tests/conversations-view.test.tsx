@@ -61,7 +61,7 @@ mock.module("@tanstack/react-router", () => ({
   useLoaderData: () => rootData,
   useRouter: () => ({ invalidate: () => Promise.resolve() }),
 }));
-mock.module("../src/hooks/use-thread", () => ({ useThread: () => threadRead }));
+mock.module("../src/hooks/use-thread", () => ({ useThread: () => threadRead, prefetchThread: () => {} }));
 
 const { Route } = await import("../src/routes/conversations");
 const { ConversationList } = await import("../src/components/conversations/conversation-list");

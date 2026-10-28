@@ -35,6 +35,7 @@ import {
 import { normalizeSearchRowId, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { COUNT_LINK, Page, StatusTag, fmtTs } from "../ui";
 import { cn } from "@/lib/utils";
+import { LIVE_STALE_MS } from "../lib/route-stale";
 
 /**
  * ── EVENTS ──────────────────────────────────────────────────────────────────
@@ -80,6 +81,7 @@ type EventsSearch = {
 };
 
 export const Route = createFileRoute("/events")({
+  staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): EventsSearch => {
     const forward = normalizeSearchStatus(search.forward);
     return {

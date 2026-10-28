@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { LIVE_STALE_MS } from "../lib/route-stale";
 
 /**
  * ── MESSAGES ────────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ const META_STATUSES = ["sent", "failed"] as const;
 type MessagesSearch = { status?: string; before?: number; message?: number; wabaId?: string };
 
 export const Route = createFileRoute("/messages")({
+  staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): MessagesSearch => ({
     status: normalizeSearchStatus(search.status),
     before: normalizeSearchRowId(search.before),

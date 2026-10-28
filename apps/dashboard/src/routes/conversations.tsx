@@ -22,6 +22,7 @@ import {
 import { canSendMessages, getConversation, listConversations } from "../server/gateway";
 import type { ConversationSummary, CursorPage, Failure, MessageRecord } from "../server/gateway";
 import { Page } from "../ui";
+import { LIVE_STALE_MS } from "../lib/route-stale";
 
 /**
  * ── CONVERSATIONS ───────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ const PANES =
   "grid min-h-0 flex-1 grid-cols-1 border-y border-(--line) md:h-[min(72vh,46rem)] md:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]";
 
 export const Route = createFileRoute("/conversations")({
+  staleTime: LIVE_STALE_MS,
   validateSearch: conversationsSearch,
   // The open thread is not a dep: it is read by `useThread`, so opening one
   // leaves the list on screen and waits in the thread pane alone.

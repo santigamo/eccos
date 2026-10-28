@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { useLoaderData } from "@tanstack/react-router"
+import { resetClientState } from "@/hooks/client-state"
 import { ChevronsUpDownIcon, LogOutIcon } from "lucide-react"
 
 import { authClient } from "@/auth/auth-client"
@@ -36,6 +37,7 @@ export function NavUser() {
     try {
       await authClient.signOut()
     } finally {
+      resetClientState()
       // Full navigation, not a router push: the session cookie is gone, so the
       // whole loader tree has to re-run against an anonymous request.
       window.location.assign("/signin")

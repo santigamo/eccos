@@ -26,6 +26,7 @@ import {
   FramePanel,
   FrameTitle,
 } from "../components/reui/frame";
+import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
  * Webhooks — both legs of the plumbing, on one page.
@@ -43,6 +44,7 @@ import {
  * that case to /numbers). It therefore needs no "no number yet" note.
  */
 export const Route = createFileRoute("/webhooks")({
+  staleTime: CONFIG_STALE_MS,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => getSubscriberConfig({ data: { wabaId: deps.wabaId } }),
   component: WebhooksPage,

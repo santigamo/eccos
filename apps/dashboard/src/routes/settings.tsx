@@ -16,6 +16,7 @@ import {
   FramePanel,
   FrameTitle,
 } from "../components/reui/frame";
+import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
  * Settings — the workspace's own identifiers, its API keys and its conversation history window.
@@ -32,6 +33,7 @@ import {
  * not wait on a number. API keys are account-level too.
  */
 export const Route = createFileRoute("/settings")({
+  staleTime: CONFIG_STALE_MS,
   loader: () => Promise.all([listApiKeys(), getConversationRetention()]),
   component: SettingsPage,
   pendingComponent: () => (

@@ -46,6 +46,42 @@ describe("router pending options", () => {
   });
 });
 
+describe("router reuse policy", () => {
+  test("hover and focus preload, after a short delay, and a preload serves the click", () => {
+    expect(routerSource).toContain('defaultPreload: "intent"');
+    expect(routerSource).toContain("defaultPreloadDelay: 50");
+    expect(routerSource).toContain("defaultPreloadStaleTime: 30_000");
+  });
+
+  test("no global staleTime: each route says how long its data lives", () => {
+    expect(routerSource).not.toContain("defaultStaleTime");
+  });
+
+  test("live lists stay fresh 5s, configuration 30s", async () => {
+    const policy = await Bun.file(new URL("../src/lib/route-stale.ts", import.meta.url)).text();
+    expect(policy).toContain("LIVE_STALE_MS = 5_000");
+    expect(policy).toContain("CONFIG_STALE_MS = 30_000");
+    const expected = {
+      conversations: "LIVE",
+      messages: "LIVE",
+      events: "LIVE",
+      deliveries: "LIVE",
+      settings: "CONFIG",
+      templates: "CONFIG",
+      webhooks: "CONFIG",
+    };
+    for (const [route, kind] of Object.entries(expected)) {
+      const source = await Bun.file(new URL(`../src/routes/${route}.tsx`, import.meta.url)).text();
+      expect(source).toContain(`staleTime: ${kind}_STALE_MS`);
+    }
+  });
+
+  test("the root route is never given a staleTime: scope state is re-read on every navigation", async () => {
+    const source = await Bun.file(new URL("../src/routes/__root.tsx", import.meta.url)).text();
+    expect(source).not.toContain("staleTime");
+  });
+});
+
 describe("per-route pending views", () => {
   test("every log route can show its own structure while it loads", async () => {
     // Each of these crosses the RPC service binding to the gateway on entry,

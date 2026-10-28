@@ -28,6 +28,15 @@ export function getRouter() {
     // filling the page.
     defaultPendingMs: 150,
     defaultPendingMinMs: 300,
+    // Hover or focus starts the route's load, so the click lands on data that
+    // is already there or in flight. The delay skips a pointer merely crossing
+    // the sidebar; `preloadStaleTime` lets a hover's result serve the click
+    // that follows it. Staleness per route lives in `lib/route-stale.ts`; the
+    // root keeps the default (0), so scope state is re-read on every navigation
+    // while the shell stays mounted.
+    defaultPreload: "intent",
+    defaultPreloadDelay: 50,
+    defaultPreloadStaleTime: 30_000,
   });
 
   return router;
