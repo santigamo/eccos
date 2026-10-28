@@ -8,10 +8,11 @@ import { ConversationThread } from "../components/conversations/conversation-thr
 import { FailureView } from "../components/dashboard/failure";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { RefreshControls } from "../components/logs/refresh-controls";
+import { useWhenIdle } from "../hooks/use-idle-prefetch";
 import { useLastGood } from "../hooks/use-last-good";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { useOlderPages } from "../hooks/use-older-pages";
-import { useThread } from "../hooks/use-thread";
+import { prefetchThread, useThread } from "../hooks/use-thread";
 import { failureCopy, loaderFailure } from "../lib/failure";
 import {
   conversationsSearch,
@@ -39,6 +40,8 @@ import { LIVE_STALE_MS } from "../lib/route-stale";
  */
 
 const PAGE_SIZE = 50;
+
+const IDLE_THREADS = 3;
 
 /** One grid for the list and the thread, shared with the pending view so the two never disagree on shape. */
 const PANES =
@@ -174,6 +177,10 @@ function ConversationListPane({
   selectedWaId?: string;
   now: number;
 }) {
+  // The newest three are the likeliest clicks; same keys as a hover's prefetch.
+  useWhenIdle(() => {
+    for (const { waId } of page.items.slice(0, IDLE_THREADS)) prefetchThread(wabaId, waId);
+  }, [wabaId]);
   const older = useOlderPages(page, {
     key: (item) => item.waId,
     fetchOlder: (cursor) => listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor } }),
