@@ -1,4 +1,6 @@
 import { createRouter } from "@tanstack/react-router";
+import { getDashboardState } from "./server/gateway";
+import { createBootstrap } from "./lib/bootstrap";
 import { routeTree } from "./routeTree.gen";
 
 // TanStack Start picks up this `getRouter` factory to build a router instance
@@ -7,6 +9,9 @@ import { routeTree } from "./routeTree.gen";
 export function getRouter() {
   const router = createRouter({
     routeTree,
+    // One bootstrap read per navigation, shared by the root guard and loader.
+    // Per router instance, so request-local on the server.
+    context: { bootstrap: createBootstrap((wabaId) => getDashboardState({ data: { wabaId } })) },
     scrollRestoration: true,
     // TWO LAYERS OF PENDING FEEDBACK, and these numbers are the seam between
     // them. `RouteProgress` (mounted in __root) lights immediately on every
@@ -32,8 +37,8 @@ export function getRouter() {
     // is already there or in flight. The delay skips a pointer merely crossing
     // the sidebar; `preloadStaleTime` lets a hover's result serve the click
     // that follows it. Staleness per route lives in `lib/route-stale.ts`; the
-    // root keeps the default (0), so scope state is re-read on every navigation
-    // while the shell stays mounted.
+    // root sets its own 30s window in __root and is reloaded by scope changes,
+    // targeted invalidation and a refocused tab (`use-root-refresh.ts`).
     defaultPreload: "intent",
     defaultPreloadDelay: 50,
     defaultPreloadStaleTime: 30_000,

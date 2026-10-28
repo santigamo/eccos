@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "@tanstack/react-router"
+import { invalidatePage } from "../lib/invalidate"
 
 export const LIVE_INTERVAL_MS = 5000
 
@@ -70,7 +71,7 @@ export function singleFlight(invalidate: Invalidate, onBusy: (busy: boolean) => 
 
 /**
  * Refresh and live mode for a log page. Both re-run the current matches'
- * loaders through `router.invalidate()`, so filters and the selected number
+ * loaders through `invalidatePage` (never the root), so filters and the selected number
  * (search params) stay as they are and the rows keep their ids. The live
  * choice is remembered per page in localStorage, read after mount so the
  * server render and hydration agree on "off".
@@ -79,7 +80,7 @@ export function useLiveRefresh(page: string): LiveRefresh {
   const router = useRouter()
   const [live, setLiveState] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const refresh = useMemo(() => singleFlight(() => router.invalidate(), setRefreshing), [router])
+  const refresh = useMemo(() => singleFlight(() => invalidatePage(router), setRefreshing), [router])
 
   useEffect(() => {
     setLiveState(readLive(page))

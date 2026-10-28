@@ -1,4 +1,5 @@
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidatePage } from "../lib/invalidate";
 import { Page } from "../ui";
 import {
   getConversationRetention,
@@ -64,7 +65,7 @@ function SettingsPage() {
       keys={keys}
       retention={retention}
       wabaId={wabaId}
-      onKeysChanged={() => void router.invalidate()}
+      onKeysChanged={() => void invalidatePage(router)}
     />
   );
 }
