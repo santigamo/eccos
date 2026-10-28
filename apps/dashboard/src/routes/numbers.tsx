@@ -124,8 +124,8 @@ function NumbersPage() {
  * its own header action: the overlay rule in docs/DASHBOARD-DESIGN.md splits
  * them by register, and this one is a DECISION, not a task. It has no fields
  * and no submit — the two cards ARE the actions — it leaves the page either
- * way, and its consequence copy ("Removes the number from the WhatsApp
- * Business app") is the reason the fork exists as a screen at all. The house
+ * way, and its consequence copy ("A number on WhatsApp today stops working in
+ * the app") is the reason the fork exists as a screen at all. The house
  * sheets are all `sm:max-w-md`, a width that wraps that line. And the list
  * behind is no help here: the number being added is not in the table yet.
  *

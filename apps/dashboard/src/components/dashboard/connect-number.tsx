@@ -57,19 +57,18 @@ const CONNECT_PATHS: ReadonlyArray<{
     path: "business-app",
     icon: <SmartphoneIcon aria-hidden="true" className="size-4" />,
     tone: "muted",
-    title: "Keep the number on the WhatsApp Business app",
+    title: "I use this number in the WhatsApp Business app",
     detail:
-      "You keep answering from the app. Meta syncs contacts and message history across both.",
-    caution: "Syncs run once · 20 messages/second cap",
+      "Keep using the app on your phone. Eccos works alongside it, and Meta copies your contacts and recent chats once.",
+    caution: "Best if customers already message this number · Up to 20 messages per second",
   },
   {
     path: "new-number",
     icon: <CloudIcon aria-hidden="true" className="size-4" />,
     tone: "warning",
-    title: "Bring a number to the Cloud API",
-    detail:
-      "For a number that is not on WhatsApp today. Meta verifies it by SMS or call.",
-    caution: "Removes the number from the WhatsApp Business app",
+    title: "A new number, or one not on WhatsApp",
+    detail: "Meta confirms the number with a code by SMS or call.",
+    caution: "A number on WhatsApp today stops working in the app",
   },
 ];
 
@@ -93,7 +92,7 @@ const SDK_REQUIRED_MESSAGE =
  * cards, because "the choice locks" is the reason the fork is a screen at all.
  */
 export const CONNECT_FORK_DESCRIPTION =
-  "Pick the one that matches where the number lives today. The choice locks the moment Meta's window opens.";
+  "Is this number on WhatsApp today? You can't switch once Meta's window opens.";
 
 /**
  * Start Meta Embedded Signup: the fork itself, with no container of its own.

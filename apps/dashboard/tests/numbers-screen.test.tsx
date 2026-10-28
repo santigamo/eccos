@@ -36,8 +36,8 @@ describe("ConnectNumberPanel", () => {
     // fixed before the popup opens and has to be the customer's choice.
     const html = render();
     expect(html).toContain("Meta Embedded Signup");
-    expect(html).toContain("Keep the number on the WhatsApp Business app");
-    expect(html).toContain("Bring a number to the Cloud API");
+    expect(html).toContain("I use this number in the WhatsApp Business app");
+    expect(html).toContain("A new number, or one not on WhatsApp");
     expect(html).not.toContain("access token");
     expect(html).not.toContain('type="password"');
   });
@@ -48,8 +48,8 @@ describe("ConnectNumberPanel", () => {
     // Meta shows says so. Both consequences are on the cards, not in a doc, and
     // neither may quietly disappear in a copy edit.
     const html = render();
-    expect(html).toContain("Removes the number from the WhatsApp Business app");
-    expect(html).toContain("Syncs run once");
+    expect(html).toContain("A number on WhatsApp today stops working in the app");
+    expect(html).toContain("Up to 20 messages per second");
   });
 
   test("the heading is the caller's, so first run and add-another differ", () => {
@@ -182,9 +182,9 @@ describe("ConnectNumberChoices", () => {
 
   test("carries the paths and the consequence, and no frame of its own", () => {
     const html = bare();
-    expect(html).toContain("Keep the number on the WhatsApp Business app");
-    expect(html).toContain("Bring a number to the Cloud API");
-    expect(html).toContain("Removes the number from the WhatsApp Business app");
+    expect(html).toContain("I use this number in the WhatsApp Business app");
+    expect(html).toContain("A new number, or one not on WhatsApp");
+    expect(html).toContain("A number on WhatsApp today stops working in the app");
     // No Frame, no heading: the container supplies both. A bordered glass
     // panel inside a bordered glass dialog is the panel-in-panel this split
     // exists to prevent.
@@ -198,7 +198,7 @@ describe("ConnectNumberChoices", () => {
     // itself must NOT carry it, or first run would show it twice.
     // Compared on a fragment, not the whole constant: the apostrophe in
     // "Meta's" is entity-escaped in the markup.
-    const fragment = "The choice locks the moment Meta";
+    const fragment = "switch once Meta";
     expect(CONNECT_FORK_DESCRIPTION).toContain(fragment);
     expect(bare()).not.toContain(fragment);
     expect(render()).toContain(fragment);
