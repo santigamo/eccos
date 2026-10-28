@@ -1054,7 +1054,7 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
  * saga has finished. It must settle history on a coexistence WABA and nothing else.
  */
 describe("history sharing off learned after the saga", () => {
-  it("settles history as unavailable on a coexistence WABA, with the reason", async () => {
+  it("records the refusal with the reason, and leaves the status to the contacts sync while it is pending", async () => {
     const accountId = "acc-coex-late-off";
     const wabaId = "WABA_COEX_LATE_OFF";
     await createAccount(accountId);
@@ -1064,12 +1064,28 @@ describe("history sharing off learned after the saga", () => {
 
     await cp(async (instance) => {
       const record = row(instance, wabaId);
-      expect(record.coexistence_sync_status).toBe("unavailable");
+      expect(record.coexistence_sync_status).toBe("pending");
       expect(record.history_sync_request_id).toBe(syncUnavailableMarker("history_sharing_off"));
       expect(record.contacts_sync_request_id).toBeNull();
       expect(record.coexistence_sync_error).toBe(
         "message-history sync unavailable: the business has history sharing turned off. The number works as a Cloud API number without that data",
       );
+    });
+  });
+
+  it("settles history as unavailable once the contacts sync is answered too", async () => {
+    const accountId = "acc-coex-late-off-done";
+    const wabaId = "WABA_COEX_LATE_OFF_DONE";
+    await createAccount(accountId);
+    await begin(accountId, wabaId, "coexistence");
+    await cp((instance) =>
+      instance.sql.exec("UPDATE wabas SET contacts_sync_request_id = 'REQ_CONTACTS' WHERE waba_id = ?", wabaId),
+    );
+
+    await cp((instance) => instance.markHistorySharingOff(wabaId));
+
+    await cp((instance) => {
+      expect(row(instance, wabaId).coexistence_sync_status).toBe("unavailable");
     });
   });
 

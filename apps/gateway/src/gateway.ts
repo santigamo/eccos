@@ -70,6 +70,17 @@ const FORWARD_FETCH_TIMEOUT_MS = 5_000;
 /** Sync items (history messages, contacts) applied per alarm wake. Bounds the CPU and
  * memory one invocation spends on a huge history; a backlog keeps the alarm running. */
 const SYNC_BATCH_UNITS = 200;
+/** A payload above this is parked unread: it cannot be parsed inside one invocation's memory. */
+export const SYNC_MAX_BYTES = 20 * 1024 * 1024;
+/** Parsed items of a payload up to this size stay in memory between wakes, so it is parsed once. */
+const SYNC_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+/** Wakes that start a payload and never finish it (aborted or failed) before it is parked. */
+export const SYNC_MAX_ATTEMPTS = 5;
+/** Next wake while sync work is left, and after a control-plane lookup that failed. */
+const SYNC_CONTINUE_MS = 100;
+const SYNC_RETRY_MS = 60_000;
+/** Set while Meta's history-sharing-off refusal is not yet recorded on the control plane. */
+const SHARING_OFF_KEY = "__history_sharing_off__";
 const ALARM_BATCH = 40;
 const ALARM_MAX_CONCURRENCY = 6;
 const DEFAULT_CONTENT_RETENTION_DAYS = 30;
@@ -241,6 +252,8 @@ export function resolveRetentionDays(env: {
 
 export class EccosGateway extends DurableObject<Env> {
   sql: SqlStorage;
+  /** Parsed items of the payload being processed, kept between wakes (see syncItemsOf). */
+  private syncCache: { id: number; items: SyncItem[] } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -380,11 +393,22 @@ export class EccosGateway extends DurableObject<Env> {
       ensureColumn("sync_payloads", "cursor", "INTEGER NOT NULL DEFAULT 0");
       ensureColumn("sync_payloads", "processed_at", "INTEGER");
       ensureColumn("sync_payloads", "error", "TEXT");
+      // Failed or aborted wakes on this payload since it last made progress (processSyncBatch).
+      ensureColumn("sync_payloads", "attempts", "INTEGER NOT NULL DEFAULT 0");
       // Numbers erased by eraseByPhone. Raw payloads keep them, so processing consults
       // this table to keep an erased number from coming back on reprocess.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS erased_numbers (
         digits    TEXT PRIMARY KEY,
         erased_at INTEGER NOT NULL
+      );`);
+      // Outbound history media whose placeholder is not stored yet: a media webhook
+      // with no customer number cannot be filed until the placeholder names one.
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS history_media (
+        id      TEXT PRIMARY KEY,
+        at      INTEGER NOT NULL,
+        type    TEXT NOT NULL,
+        text    TEXT,
+        content TEXT
       );`);
       // The conversation store (eccos-yqbz.2). Outside the content sweep on purpose:
       // these rows are the conversations themselves, so per-workspace retention
@@ -1406,8 +1430,9 @@ export class EccosGateway extends DurableObject<Env> {
       nextSweepAt = now + SWEEP_INTERVAL_MS;
     }
 
-    const syncPending = await this.processSyncBatch(now);
-
+    // One alarm serves delivery, retention and sync: arm the earliest of their wakes, so
+    // a sync backlog or retry cannot push a due delivery back.
+    const wakes: number[] = [];
     // Only reschedule against `next_attempt_at` when there is somewhere to send.
     // Held rows are due now, so an unconditional reschedule would set an alarm
     // in the past and re-enter this method forever without ever forwarding.
@@ -1417,7 +1442,7 @@ export class EccosGateway extends DurableObject<Env> {
         .toArray();
       const nextRow = nextRows[0];
       const next = nextRow ? (nextRow.next as number | null) : null;
-      if (next != null) this.ctx.storage.setAlarm(next);
+      if (next != null) wakes.push(next);
     } else if (this.hasPendingDeliveries()) {
       /**
        * Held, but not forgotten: a slow tick so RETENTION still runs.
@@ -1437,42 +1462,70 @@ export class EccosGateway extends DurableObject<Env> {
        * here — either the sweep just ran (now + interval) or it was skipped
        * because its due time has not arrived.
        */
-      this.ctx.storage.setAlarm(nextSweepAt);
+      wakes.push(nextSweepAt);
     }
-    // Last, so the backlog's wake overrides the delivery and sweep times above. A short
-    // delay, so the next batch does not run in the same instant as this one.
-    if (syncPending) this.ctx.storage.setAlarm(Date.now() + 100);
+    // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
+    const syncWake = await this.runSyncBatch(now);
+    if (syncWake !== null) wakes.push(Date.now() + syncWake);
+    if (wakes.length > 0) this.ctx.storage.setAlarm(Math.min(...wakes));
     if (hasWorkerError) throw workerError;
+  }
+
+  /** processSyncBatch, but never thrown: the delivery re-arm in alarm() must run whatever
+   * happens here. The attempt was counted before the failure, so the payload still ends. */
+  private async runSyncBatch(now: number): Promise<number | null> {
+    try {
+      return await this.processSyncBatch(now);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({ level: "warn", area: "history", event: "sync-failed", waba: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
+      );
+      return SYNC_CONTINUE_MS;
+    }
   }
 
   /**
    * Applies the raw sync payloads (history and contacts) to the conversation store,
    * oldest first, at most SYNC_BATCH_UNITS items per call. Each payload records how
-   * far it got (`cursor`), so the next wake resumes it; the payload is re-parsed from
-   * its raw parts each time, which keeps this method free of any staged state.
-   * Returns true while work is left.
+   * far it got (`cursor`), so the next wake resumes it. A wake that starts a payload
+   * counts an attempt before any work, so a run the runtime aborts still counts; a
+   * payload that stops making progress is parked after SYNC_MAX_ATTEMPTS.
+   * Returns the delay until the next wake while work is left, or null when none is.
    */
-  private async processSyncBatch(now: number): Promise<boolean> {
+  private async processSyncBatch(now: number): Promise<number | null> {
+    const waba = this.wabaIdForOps();
+    const refused = this.getConfigValue(SHARING_OFF_KEY) !== null;
+    if (!refused && !this.hasPendingSyncPayloads()) return null;
+    // Every await comes before the reads below: an erase or reprocess can run during it.
+    if (refused && !(await this.recordHistorySharingOff(waba))) return SYNC_RETRY_MS;
+    const days = await this.conversationRetentionDays();
+    if (days === undefined) return SYNC_RETRY_MS;
+    const cutoff = days === null ? null : now - days * DAY_MS;
     const erased = new Set(
       this.sql.exec(`SELECT digits FROM erased_numbers`).toArray().map((row) => row.digits as string),
     );
-    const waba = this.wabaIdForOps();
     let budget = SYNC_BATCH_UNITS;
     for (const row of this.sql
-      .exec(`SELECT id, cursor FROM sync_payloads WHERE processed_at IS NULL ORDER BY id`)
+      .exec(`SELECT id, cursor, attempts, byte_size FROM sync_payloads WHERE processed_at IS NULL ORDER BY id`)
       .toArray()) {
-      if (budget <= 0) return true;
+      if (budget <= 0) return SYNC_CONTINUE_MS;
       const id = row.id as number;
+      const byteSize = Number(row.byte_size);
+      if (byteSize > SYNC_MAX_BYTES) {
+        this.parkSyncPayload(id, now, `payload too large: ${byteSize} bytes, the limit is ${SYNC_MAX_BYTES}`);
+        continue;
+      }
+      const attempts = Number(row.attempts) + 1;
+      if (attempts > SYNC_MAX_ATTEMPTS) {
+        this.parkSyncPayload(id, now, `gave up after ${SYNC_MAX_ATTEMPTS} failed runs`);
+        continue;
+      }
+      this.sql.exec(`UPDATE sync_payloads SET attempts = ? WHERE id = ?`, attempts, id);
       let items: SyncItem[];
       try {
-        items = syncItems(JSON.parse(this.syncPayloadBody(id)), waba);
+        items = this.syncItemsOf(id, byteSize, waba);
       } catch (error) {
-        this.sql.exec(
-          `UPDATE sync_payloads SET processed_at = ?, error = ? WHERE id = ?`,
-          now,
-          `unreadable payload: ${String(error).slice(0, 200)}`,
-          id,
-        );
+        this.parkSyncPayload(id, now, `unreadable payload: ${String(error).slice(0, 200)}`);
         continue;
       }
       const cursor = Number(row.cursor);
@@ -1481,41 +1534,90 @@ export class EccosGateway extends DurableObject<Env> {
       this.ctx.storage.transactionSync(() => {
         for (const item of items.slice(cursor, end)) {
           try {
-            sharingOff ||= this.applySyncItem(id, item, erased, now, waba);
+            sharingOff ||= this.applySyncItem(id, item, erased, now, waba, cutoff);
           } catch (error) {
             console.warn(
               JSON.stringify({ level: "warn", area: "history", event: "item-skipped", waba, error: String(error).slice(0, 200) }),
             );
           }
         }
+        // Progress clears the attempts: only a payload that stops advancing is parked.
         this.sql.exec(
-          `UPDATE sync_payloads SET cursor = ?, processed_at = ? WHERE id = ?`,
+          `UPDATE sync_payloads SET cursor = ?, processed_at = ?, attempts = 0 WHERE id = ?`,
           end,
           end === items.length ? now : null,
           id,
         );
+        if (sharingOff) {
+          this.sql.exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, '1')`, SHARING_OFF_KEY);
+        }
       });
-      // Once per refusal: the payload's cursor moved past this item in the transaction above.
-      if (sharingOff) await this.recordHistorySharingOff(waba);
+      if (end === items.length) this.syncCache = null;
       budget -= end - cursor;
-      if (end < items.length) return true;
+      // Nothing after this point reads state an await could have changed: the next wake starts fresh.
+      if (sharingOff) return (await this.recordHistorySharingOff(waba)) ? SYNC_CONTINUE_MS : SYNC_RETRY_MS;
+      if (end < items.length) return SYNC_CONTINUE_MS;
     }
-    return false;
+    return null;
   }
 
-  /** Tells the control plane that Meta refused history sharing. Best effort: a failure is logged and not retried. */
-  private async recordHistorySharingOff(waba: string): Promise<void> {
+  private hasPendingSyncPayloads(): boolean {
+    return this.sql.exec(`SELECT 1 FROM sync_payloads WHERE processed_at IS NULL LIMIT 1`).toArray().length > 0;
+  }
+
+  /** Ends a payload that cannot be applied, with the reason kept on the row for the operator. */
+  private parkSyncPayload(id: number, now: number, error: string): void {
+    this.sql.exec(`UPDATE sync_payloads SET processed_at = ?, error = ? WHERE id = ?`, now, error, id);
+    this.syncCache = null;
+    console.warn(JSON.stringify({ level: "warn", area: "history", event: "payload-parked", payload: id, error }));
+  }
+
+  /** The parsed items of a payload. The payload being worked on stays in memory between
+   * wakes (up to SYNC_CACHE_MAX_BYTES), so a large history is not parsed again on every wake. */
+  private syncItemsOf(id: number, byteSize: number, waba: string): SyncItem[] {
+    if (this.syncCache?.id === id) return this.syncCache.items;
+    const items = syncItems(JSON.parse(this.syncPayloadBody(id)), waba);
+    this.syncCache = byteSize <= SYNC_CACHE_MAX_BYTES ? { id, items } : null;
+    return items;
+  }
+
+  /** The workspace's retention window in days (null keeps everything). Undefined when the
+   * control plane cannot say, which is logged: an unknown window is never guessed. */
+  private async conversationRetentionDays(): Promise<number | null | undefined> {
+    try {
+      return await getControlPlaneStub(this.env).getConversationRetentionDaysForWaba(this.wabaIdForOps());
+    } catch (error) {
+      console.warn(
+        JSON.stringify({ level: "warn", area: "retention", event: "lookup-failed", waba: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
+      );
+      return undefined;
+    }
+  }
+
+  /** Tells the control plane that Meta refused history sharing. The flag stays set until the
+   * call succeeds, so a failed call is retried by the next wake. Returns true once recorded. */
+  private async recordHistorySharingOff(waba: string): Promise<boolean> {
     try {
       await getControlPlaneStub(this.env).markHistorySharingOff(waba);
     } catch (error) {
       console.warn(
         JSON.stringify({ level: "warn", area: "history", event: "sharing-off-not-recorded", waba, error: String(error).slice(0, 200) }),
       );
+      return false;
     }
+    this.sql.exec(`DELETE FROM config WHERE key = ?`, SHARING_OFF_KEY);
+    return true;
   }
 
   /** Applies one sync item. Runs inside processSyncBatch's transaction. Returns true for a history-sharing-off refusal. */
-  private applySyncItem(payloadId: number, item: SyncItem, erased: Set<string>, now: number, waba: string): boolean {
+  private applySyncItem(
+    payloadId: number,
+    item: SyncItem,
+    erased: Set<string>,
+    now: number,
+    waba: string,
+    cutoff: number | null,
+  ): boolean {
     const unit = mapSyncItem(item, waba);
     if (!unit) return false;
     if (unit.kind === "error") {
@@ -1547,49 +1649,81 @@ export class EccosGateway extends DurableObject<Env> {
       );
       return false;
     }
-    this.storeHistoryMessage(unit.message, erased, now);
+    this.storeHistoryMessage(unit.message, erased, now, cutoff);
     return false;
   }
 
   /** Stores one history message. A row already stored keeps its content, except that a
    * media placeholder takes the media reference of the message with the same id, so the
-   * placeholder and the separate media webhook agree whichever arrives first. */
-  private storeHistoryMessage(message: HistoryMessage, erased: Set<string>, now: number): void {
+   * placeholder and the separate media webhook agree whichever arrives first. A message
+   * older than `cutoff` (the workspace window) is not stored. */
+  private storeHistoryMessage(message: HistoryMessage, erased: Set<string>, now: number, cutoff: number | null): void {
+    if (cutoff !== null && message.at < cutoff) return;
     if (message.waId === null) {
+      // A media webhook naming no customer: it completes its placeholder if one is stored,
+      // and otherwise waits in history_media for the placeholder to arrive.
+      if (message.content === null) return;
+      const placeholder = this.sql
+        .exec(`SELECT 1 FROM messages WHERE id = ? AND origin = 'history' AND type = 'media_placeholder'`, message.id)
+        .toArray().length > 0;
+      if (!placeholder) {
+        this.sql.exec(
+          `INSERT OR REPLACE INTO history_media (id, at, type, text, content) VALUES (?, ?, ?, ?, ?)`,
+          message.id,
+          message.at,
+          message.type,
+          message.text,
+          message.content,
+        );
+        return;
+      }
       this.sql.exec(
-        `UPDATE messages SET type = ?, text = ?, content = ?
-         WHERE id = ? AND origin = 'history' AND type = 'media_placeholder' AND ? IS NOT NULL`,
+        `UPDATE messages SET type = ?, text = ?, content = ? WHERE id = ? AND origin = 'history' AND type = 'media_placeholder'`,
         message.type,
         message.text,
         message.content,
         message.id,
-        message.content,
       );
       return;
     }
     if (erased.has(message.waId)) return;
+    let stored = message;
+    if (message.type === "media_placeholder") {
+      const orphan = this.sql
+        .exec(`SELECT type, text, content FROM history_media WHERE id = ?`, message.id)
+        .toArray()[0];
+      if (orphan) {
+        this.sql.exec(`DELETE FROM history_media WHERE id = ?`, message.id);
+        stored = {
+          ...message,
+          type: orphan.type as string,
+          text: orphan.text as string | null,
+          content: orphan.content as string | null,
+        };
+      }
+    }
     this.sql.exec(
       `INSERT INTO messages
          (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET type = excluded.type, text = excluded.text, content = excluded.content
        WHERE messages.origin = 'history' AND messages.type = 'media_placeholder' AND excluded.content IS NOT NULL`,
-      message.id,
-      message.waId,
-      message.direction,
-      message.origin,
-      message.type,
-      message.text,
-      message.content,
-      message.at,
-      message.status,
-      message.targetId,
-      message.phoneNumberId,
+      stored.id,
+      stored.waId,
+      stored.direction,
+      stored.origin,
+      stored.type,
+      stored.text,
+      stored.content,
+      stored.at,
+      stored.status,
+      stored.targetId,
+      stored.phoneNumberId,
       now,
     );
     this.sql.exec(
       `INSERT OR IGNORE INTO contacts (wa_id, name, source, updated_at) VALUES (?, NULL, 'history', ?)`,
-      message.waId,
+      stored.waId,
       now,
     );
   }
@@ -1619,8 +1753,10 @@ export class EccosGateway extends DurableObject<Env> {
     let payloads = 0;
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(`DELETE FROM messages WHERE origin = 'history'`);
+      this.sql.exec(`DELETE FROM history_media`);
+      this.sql.exec(`DELETE FROM contacts WHERE source = 'history' AND wa_id NOT IN (SELECT wa_id FROM messages)`);
       this.sql.exec(`UPDATE contacts SET name = NULL WHERE source = 'app_state'`);
-      this.sql.exec(`UPDATE sync_payloads SET cursor = 0, processed_at = NULL, error = NULL`);
+      this.sql.exec(`UPDATE sync_payloads SET cursor = 0, processed_at = NULL, error = NULL, attempts = 0`);
       payloads = Number(this.sql.exec(`SELECT COUNT(*) AS n FROM sync_payloads`).one().n);
     });
     this.ctx.storage.setAlarm(Date.now());
@@ -1639,29 +1775,19 @@ export class EccosGateway extends DurableObject<Env> {
    * and a failed lookup deletes nothing: an unknown window is never guessed.
    *
    * A contact left with no message is deleted as well, so a window does not keep
-   * the names of conversations it has removed.
+   * the names of conversations it has removed. An app-state contact is the phone's
+   * address book, not a conversation, so it stays with or without messages.
    */
   async pruneConversations(now: number): Promise<void> {
-    let days: number | null;
-    try {
-      days = await getControlPlaneStub(this.env).getConversationRetentionDaysForWaba(
-        this.wabaIdForOps(),
+    const days = await this.conversationRetentionDays();
+    if (days != null) {
+      const cutoff = now - days * DAY_MS;
+      this.sql.exec(`DELETE FROM messages WHERE at < ?`, cutoff);
+      this.sql.exec(`DELETE FROM history_media WHERE at < ?`, cutoff);
+      this.sql.exec(
+        `DELETE FROM contacts WHERE source != 'app_state' AND wa_id NOT IN (SELECT wa_id FROM messages)`,
       );
-    } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          area: "retention",
-          event: "lookup-failed",
-          waba: this.wabaIdForOps(),
-          error: String(error).slice(0, 200),
-        }),
-      );
-      return;
     }
-    if (days === null) return;
-    this.sql.exec(`DELETE FROM messages WHERE at < ?`, now - days * DAY_MS);
-    this.sql.exec(`DELETE FROM contacts WHERE wa_id NOT IN (SELECT wa_id FROM messages)`);
   }
 
   /** Applies both retention windows — content (delete/redact by kind of row) and

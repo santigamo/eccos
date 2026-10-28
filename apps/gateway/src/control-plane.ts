@@ -1979,16 +1979,19 @@ export class EccosControlPlane extends DurableObject<Env> {
     const historyRequestId = syncUnavailableMarker("history_sharing_off");
     const row = this.sql
       .exec(
-        "SELECT contacts_sync_request_id FROM wabas WHERE waba_id = ? AND onboarding_type = 'coexistence'",
+        `SELECT ${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ? AND onboarding_type = 'coexistence'`,
         id,
       )
       .toArray()[0];
     if (!row) return;
+    // The status is what the sync state now is, not "unavailable": the contacts sync may still be pending.
+    const { status } = coexistenceOf({ ...row, history_sync_request_id: historyRequestId });
     this.sql.exec(
       `UPDATE wabas
-       SET history_sync_request_id = ?, coexistence_sync_status = 'unavailable', coexistence_sync_error = ?
+       SET history_sync_request_id = ?, coexistence_sync_status = ?, coexistence_sync_error = ?
        WHERE waba_id = ? AND onboarding_type = 'coexistence'`,
       historyRequestId,
+      status,
       syncUnavailableError({
         contactsRequestId: (row.contacts_sync_request_id as string | null) ?? null,
         historyRequestId,

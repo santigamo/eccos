@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import type { EccosControlPlane } from "../../src/control-plane";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
-import type { EccosGateway } from "../../src/gateway";
+import { type EccosGateway, SYNC_MAX_ATTEMPTS, SYNC_MAX_BYTES } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
-import { bootstrapAccount, gatewayStub, TEST_WABA_ID } from "./helpers";
+import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 /**
  * Processing of the raw coexistence sync payloads into `messages` and `contacts`.
@@ -83,14 +83,24 @@ async function query(sql: string, ...args: unknown[]): Promise<Record<string, un
   return runInDurableObject(gatewayStub(), (i: EccosGateway) => i.sql.exec(sql, ...args).toArray());
 }
 
-/** Runs alarms until every captured payload is processed; returns how many ran. */
+/** Runs alarms until every captured payload is processed; returns how many ran. The pause
+ * keeps each wake a millisecond later than the alarm it answers: the alarm harness does
+ * not fire an alarm scheduled for the same millisecond. */
 async function drain(maxRuns = 20): Promise<number> {
   let runs = 0;
   while (runs < maxRuns && (await query(`SELECT 1 FROM sync_payloads WHERE processed_at IS NULL`)).length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await runDurableObjectAlarm(gatewayStub());
     runs++;
   }
   return runs;
+}
+
+/** The workspace's retention window, as the control plane holds it (null keeps everything). */
+async function setRetention(days: number | null): Promise<void> {
+  await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
+    cp.setConversationRetentionDays(TEST_ACCOUNT_ID, days),
+  );
 }
 
 async function snapshot() {
@@ -188,6 +198,143 @@ describe("history payloads", () => {
   });
 });
 
+describe("direction and media order", () => {
+  function photoRow(id: string) {
+    return query(`SELECT wa_id, direction, type, text, content FROM messages WHERE id = ?`, id).then(([row]) => ({
+      ...row,
+      content: JSON.parse(row.content as string),
+    }));
+  }
+
+  const photo = {
+    wa_id: CUSTOMER,
+    direction: "out",
+    type: "image",
+    text: "Photo",
+    content: { media: { id: "MEDIA1", mimeType: "image/jpeg", sha256: "c2hhLWZpeHR1cmU=", caption: "Photo" } },
+  };
+
+  it("takes the direction from the thread, not from the display number", async () => {
+    await capture(
+      envelope("history", {
+        messaging_product: "whatsapp",
+        metadata: { display_phone_number: OTHER, phone_number_id: "PNID1" },
+        history: [
+          {
+            metadata: { phase: 0, chunk_order: 0, progress: 100 },
+            threads: [
+              thread(CUSTOMER, [
+                textMessage(BUSINESS, "wamid.D1", "1700000000", "sent by us"),
+                textMessage(CUSTOMER, "wamid.D2", "1700000060", "from them"),
+              ]),
+            ],
+          },
+        ],
+      }),
+      "history",
+    );
+    await drain();
+    expect(await query(`SELECT id, wa_id, direction FROM messages ORDER BY id`)).toEqual([
+      { id: "wamid.D1", wa_id: CUSTOMER, direction: "out" },
+      { id: "wamid.D2", wa_id: CUSTOMER, direction: "in" },
+    ]);
+  });
+
+  it("keeps an outbound media reference that arrives before its placeholder", async () => {
+    await capture(mediaWebhook(BUSINESS, "wamid.OM1", "1700000000", "Photo"), "history");
+    await capture(historyChunk([thread(CUSTOMER, [placeholder(BUSINESS, "wamid.OM1", "1700000000")])]), "history");
+    await drain();
+    expect(await photoRow("wamid.OM1")).toEqual(photo);
+    expect(await query(`SELECT id FROM history_media`)).toEqual([]);
+  });
+
+  it("completes an outbound placeholder that arrived before its media reference", async () => {
+    await capture(historyChunk([thread(CUSTOMER, [placeholder(BUSINESS, "wamid.OM2", "1700000000")])]), "history");
+    await drain();
+    await capture(mediaWebhook(BUSINESS, "wamid.OM2", "1700000000", "Photo"), "history");
+    await drain();
+    expect(await photoRow("wamid.OM2")).toEqual(photo);
+  });
+
+  it("keeps an inbound media reference that arrives before its placeholder", async () => {
+    await capture(mediaWebhook(CUSTOMER, "wamid.IM1", "1700000000", "Photo"), "history");
+    await capture(historyChunk([thread(CUSTOMER, [placeholder(CUSTOMER, "wamid.IM1", "1700000000")])]), "history");
+    await drain();
+    expect(await photoRow("wamid.IM1")).toEqual({ ...photo, direction: "in" });
+  });
+});
+
+describe("retention window", () => {
+  it("does not store a history message older than the workspace window", async () => {
+    await setRetention(30);
+    const recent = String(Math.floor(Date.now() / 1000) - 3600);
+    await capture(
+      historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.T1", "1700000000", "old"), textMessage(CUSTOMER, "wamid.T2", recent, "recent")])]),
+      "history",
+    );
+    await drain();
+    expect(await query(`SELECT id FROM messages ORDER BY id`)).toEqual([{ id: "wamid.T2" }]);
+    expect(await query(`SELECT wa_id FROM contacts`)).toEqual([{ wa_id: CUSTOMER }]);
+  });
+
+  it("keeps a synced contact through a sweep, and drops a history contact left with no message", async () => {
+    await capture(appState("add", CUSTOMER, "Synced Contact"), "smb_app_state_sync");
+    await drain();
+    await setRetention(30);
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.sql.exec(`INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, NULL, 'history', ?)`, OTHER, Date.now());
+    });
+
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.pruneConversations(Date.now()));
+
+    expect(await query(`SELECT wa_id, name, source FROM contacts ORDER BY wa_id`)).toEqual([
+      { wa_id: CUSTOMER, name: "Synced Contact", source: "app_state" },
+    ]);
+  });
+
+  it("drops a history contact that a reprocess leaves with no message", async () => {
+    await capture(historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.P1", "1700000000", "old")])]), "history");
+    await drain();
+    await setRetention(30);
+
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.reprocessSyncPayloads());
+    await drain();
+
+    expect(await query(`SELECT id FROM messages`)).toEqual([]);
+    expect(await query(`SELECT wa_id FROM contacts`)).toEqual([]);
+  });
+});
+
+describe("payload limits", () => {
+  it("parks a payload over the size cap without reading it", async () => {
+    await capture(historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.Z1", "1700000000", "hola")])]), "history");
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.sql.exec(`UPDATE sync_payloads SET byte_size = ?`, SYNC_MAX_BYTES + 1);
+    });
+
+    await drain();
+
+    const [payload] = await query(`SELECT error, processed_at FROM sync_payloads`);
+    expect(payload.error).toMatch(/payload too large/);
+    expect(payload.processed_at).not.toBeNull();
+    expect(await query(`SELECT id FROM messages`)).toEqual([]);
+  });
+
+  it("parks a payload whose runs keep aborting once its attempts are used up", async () => {
+    await capture(historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.Z2", "1700000000", "hola")])]), "history");
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.sql.exec(`UPDATE sync_payloads SET attempts = ?`, SYNC_MAX_ATTEMPTS);
+    });
+
+    await drain();
+
+    const [payload] = await query(`SELECT error, processed_at FROM sync_payloads`);
+    expect(payload.error).toBe(`gave up after ${SYNC_MAX_ATTEMPTS} failed runs`);
+    expect(payload.processed_at).not.toBeNull();
+    expect(await query(`SELECT id FROM messages`)).toEqual([]);
+  });
+});
+
 describe("app-state contacts", () => {
   it("adds a contact name on add and clears only the name on remove", async () => {
     await capture(historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.C1", "1700000000", "hola")])]), "history");
@@ -252,11 +399,11 @@ describe("reprocessing", () => {
     );
     const passes = await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       await i.captureSyncPayload(["history"], JSON.stringify(historyChunk([thread(CUSTOMER, messages)])));
-      const batch = i as unknown as { processSyncBatch(now: number): Promise<boolean> };
+      const batch = i as unknown as { processSyncBatch(now: number): Promise<number | null> };
       const out: Array<{ pending: boolean; cursor: number }> = [];
       for (let pass = 0; pass < 3; pass++) {
-        const pending = await batch.processSyncBatch(Date.now());
-        out.push({ pending, cursor: Number(i.sql.exec(`SELECT cursor FROM sync_payloads`).one().cursor) });
+        const delay = await batch.processSyncBatch(Date.now());
+        out.push({ pending: delay !== null, cursor: Number(i.sql.exec(`SELECT cursor FROM sync_payloads`).one().cursor) });
       }
       return out;
     });
@@ -274,9 +421,11 @@ describe("reprocessing", () => {
     );
     await capture(historyChunk([thread(CUSTOMER, messages)]), "history");
     await drain();
-    expect((await query(`SELECT processed_at, cursor FROM sync_payloads`))[0]).toEqual({
+    // Progress clears the attempts, so a long payload is never parked for taking many wakes.
+    expect((await query(`SELECT processed_at, cursor, attempts FROM sync_payloads`))[0]).toEqual({
       processed_at: expect.any(Number),
       cursor: 450,
+      attempts: 0,
     });
     expect((await query(`SELECT COUNT(*) AS n FROM messages`))[0].n).toBe(450);
   });
@@ -318,7 +467,7 @@ describe("history sharing off reaches the control plane", () => {
     );
   }
 
-  it("marks history unavailable on the coexistence WABA the payload belongs to, once", async () => {
+  it("records the refusal on the coexistence WABA the payload belongs to, once", async () => {
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
       await cp.createAccount({ accountId: COEX_ACCOUNT });
       await cp.beginWabaProvisioning({
@@ -339,10 +488,12 @@ describe("history sharing off reaches the control plane", () => {
       (i as unknown as { processSyncBatch(now: number): Promise<boolean> }).processSyncBatch(Date.now()),
     );
 
+    // The contacts sync is still pending, so the status is what that leaves, not "unavailable".
     expect(await controlPlaneWaba(COEX_WABA)).toEqual({
-      coexistence_sync_status: "unavailable",
+      coexistence_sync_status: "pending",
       history_sync_request_id: "unavailable:history_sharing_off",
     });
+    expect(await query(`SELECT value FROM config WHERE key = '__history_sharing_off__'`)).toEqual([]);
   });
 
   it("leaves a standard WABA's control-plane record alone", async () => {

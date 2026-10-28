@@ -142,12 +142,17 @@ Coexistence sync payloads (`sync_payloads` + `sync_payload_parts`: the raw `hist
 `smb_app_state_sync` webhooks, split into parts under 1 MB) are **outside both windows** and are
 not expired for now — Meta sends them once per number and they cannot be fetched again. Each is
 applied to the conversation store once by the alarm, a bounded batch per wake, and keeps its
-progress (`cursor`, `processed_at`, `error`). Reprocessing rebuilds the history rows from these raw
-payloads; numbers erased with `eraseByPhone` are listed in `erased_numbers` and never come back that way.
+progress (`cursor`, `processed_at`, `error`). A payload above 20 MB is parked unread, and one whose
+wakes keep failing or aborting is parked after 5 attempts, with the reason in `error`. Reprocessing
+rebuilds the history rows from these raw payloads; numbers erased with `eraseByPhone` are listed in
+`erased_numbers` and never come back that way.
 
 The conversation store (`messages` + `contacts`, written from the same events and sends) is **outside both
 windows**: it is the conversation record itself, not a relay buffer. Its retention is the workspace's
-own window described above, not `CONTENT_RETENTION_DAYS`.
+own window described above, not `CONTENT_RETENTION_DAYS`. The window is applied when history is stored
+too, so an older history message is never kept. A contact synced from the phone's address book
+(`smb_app_state_sync`) is kept whether or not it still has a message; a history or live contact left
+with no message is deleted.
 
 So after ~30 days no relay-buffer content (bodies, phone numbers) exists outside the sync payloads
 and conversation history, and the metadata-only delivery rows remain another ~60 days as

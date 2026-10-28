@@ -99,7 +99,9 @@ export function mapSyncItem(item: SyncItem, wabaId: string): SyncUnit | null {
   if (!parsed) return null;
   const from = digitsOf(item.raw.from);
   const to = digitsOf(item.raw.to);
-  const outbound = item.business !== null && from === item.business;
+  // Inside a thread the customer is the thread, so anything sent by someone else is ours.
+  // The display number only decides a message that names no thread.
+  const outbound = item.threadId !== null ? from !== item.threadId : item.business !== null && from === item.business;
   const waId = item.threadId ?? (outbound ? to : from);
   return {
     kind: "message",
