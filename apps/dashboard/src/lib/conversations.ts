@@ -258,9 +258,6 @@ export function relativeTime(at: number, now: number): string {
 /** Meta's customer service window: free text only within this long after the customer's last message. */
 export const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** How many older pages a thread is read back through to find the customer's newest message. */
-export const INBOUND_LOOKUP_PAGES = 4;
-
 export interface ServiceWindow {
   open: boolean;
   /** The window's state in a few words, as the composer shows it. */
@@ -301,39 +298,6 @@ export interface ReplyLine {
   phoneNumberId: string | null;
   /** The newest window-opening inbound on that number, or null when none is inside the window. */
   lastInboundAt: number | null;
-}
-
-/**
- * Where a reply goes out from, and whether its window is open. The window is
- * per (business number, customer), so the reply uses the number of the
- * customer's newest window-opening inbound, and that inbound is the only one
- * that can open the window on it. The thread's newest page is read first, then
- * older ones, until such a message turns up, the page reaches past the window
- * (nothing older could be inside it), or the history runs out. With none found
- * the reply uses the thread's newest number and no window is open.
- */
-export async function replyLineOf(
-  first: CursorPage<MessageRecord>,
-  fetchOlder: (cursor: string) => Promise<CursorPage<MessageRecord> | null>,
-  now: number,
-): Promise<ReplyLine> {
-  let page = first;
-  for (let read = 1; ; read++) {
-    // Pages are oldest first, so the newest inbound is the last one.
-    const newest = [...page.items].reverse().find(opensWindow);
-    if (newest) {
-      return newest.phoneNumberId
-        ? { phoneNumberId: newest.phoneNumberId, lastInboundAt: newest.at }
-        : { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
-    }
-    const oldest = page.items[0];
-    if (read >= INBOUND_LOOKUP_PAGES || !page.nextCursor || !oldest || now - oldest.at >= SERVICE_WINDOW_MS) {
-      return { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
-    }
-    const older = await fetchOlder(page.nextCursor);
-    if (!older) return { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
-    page = older;
-  }
 }
 
 /** Enter sends, Shift+Enter is a newline, and an Enter that ends an IME composition is left to the input. */
