@@ -28,6 +28,15 @@ export function watchRootFreshness(
   }
 }
 
+/** Status reads its counts from the root: entering it refreshes them in the background when older than `staleMs`. */
+export function useFreshRootOnMount(staleMs = 5_000): void {
+  const router = useRouter()
+  useEffect(() => {
+    const root = router.state.matches.find((m) => m.routeId === rootRouteId)
+    if (root && Date.now() - root.updatedAt > staleMs) void invalidateRoutes(router, rootRouteId)
+  }, [router, staleMs])
+}
+
 export function useRootRefresh(): void {
   const router = useRouter()
   const refresh = useMemo(() => singleFlight(() => invalidateRoutes(router, rootRouteId), () => {}), [router])

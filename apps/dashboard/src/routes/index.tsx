@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useLoaderData } from "@tanstack/react-router";
+import { useFreshRootOnMount } from "../hooks/use-root-refresh";
 import type { ReactNode } from "react";
 import {
   Frame,
@@ -30,6 +31,7 @@ export const Route = createFileRoute("/")({
 
 function StatusPage() {
   const result = useLoaderData({ from: "__root__" });
+  useFreshRootOnMount();
 
   if (!result.ok) {
     // Standalone main wrapper: the app shell only mounts for a ready gateway,
