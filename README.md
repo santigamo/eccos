@@ -90,7 +90,26 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 | { type: "failed"; transportMessageId; at; errorCode?; errorMessage? }
 | { type: "reply"; from; messageId; text; at }
 | { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
+// Additive: every other message type, inbound and echoed, instead of being dropped
+| { type: "message"; from; messageId; at } & MessageContent
+| { type: "message_echo"; to; messageId; at } & MessageContent
 ```
+
+`reply` / `echo` are unchanged and still carry text, button and interactive replies. Everything
+else arrives as `message` (inbound) or `message_echo` (coexistence), with Meta's raw type in
+`messageType` and only the fields that type uses (`MessageContent` in `packages/core/src/types.ts`):
+
+| `messageType` | Fields |
+|---|---|
+| `image` `audio` `video` `document` `sticker` | `media: { id; mimeType?; sha256?; caption?; filename? }` — a Meta media id, never downloaded |
+| `location` | `location: { latitude; longitude; name?; address?; url? }` |
+| `reaction` | `reaction: { messageId; emoji? }` (no `emoji` = reaction removed) |
+| `interactive` (e.g. `nfm_reply`) | `interactive: { type; body?; responseJson? }` |
+| `contacts` / `order` / `system` | Meta's object verbatim under the same key (`system` also sets `text`) |
+| `unsupported` | `errorCode?; errorMessage?` (e.g. `131060`) |
+| `edit` (echo) | `originalMessageId` plus the new content (`text` or `media`) |
+| `revoke` (echo) | `originalMessageId` |
+| anything else | `messageType` only — never dropped |
 
 ### Built entirely on Cloudflare
 

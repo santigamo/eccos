@@ -1,4 +1,4 @@
-import type { WhatsAppCallbackEvent } from "./types";
+import type { MediaRef, MessageContent, WhatsAppCallbackEvent } from "./types";
 
 export interface MetaWebhookBatch {
   wabaId: string;
@@ -35,6 +35,27 @@ function parseTimestampMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** Drops absent fields so an event never serializes `null` or `undefined`. */
+function compact<T>(record: Record<string, unknown>): T {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value != null)) as T;
+}
+
+function metaError(value: unknown): { errorCode?: string; errorMessage?: string } {
+  const firstError = Array.isArray(value) ? asRecord(value[0]) : null;
+  const rawCode = firstError?.code;
+  const errorCode =
+    typeof rawCode === "string" && rawCode.trim() !== ""
+      ? rawCode
+      : typeof rawCode === "number" && Number.isFinite(rawCode)
+        ? String(rawCode)
+        : null;
+  const errorMessage =
+    getString(asRecord(firstError?.error_data)?.details) ??
+    getString(firstError?.message) ??
+    getString(firstError?.title);
+  return compact({ errorCode, errorMessage });
+}
+
 function metaStatusToType(status: string): "delivered" | "read" | "failed" | null {
   if (status === "delivered") return "delivered";
   if (status === "read") return "read";
@@ -53,29 +74,7 @@ function parseMetaStatus(status: Record<string, unknown>): WhatsAppCallbackEvent
   if (!transportMessageId || !at) return null;
 
   if (type === "failed") {
-    const errors = Array.isArray(status.errors) ? status.errors : [];
-    const firstError = errors.length > 0 ? asRecord(errors[0]) : null;
-    const rawCode = firstError?.code;
-    const errorCode =
-      typeof rawCode === "string" && rawCode.trim() !== ""
-        ? rawCode
-        : typeof rawCode === "number" && Number.isFinite(rawCode)
-          ? String(rawCode)
-          : undefined;
-    const errorData = asRecord(firstError?.error_data);
-    const errorMessage =
-      getString(errorData?.details) ??
-      getString(firstError?.message) ??
-      getString(firstError?.title) ??
-      undefined;
-
-    return {
-      type: "failed",
-      transportMessageId,
-      at,
-      ...(errorCode !== undefined ? { errorCode } : {}),
-      ...(errorMessage !== undefined ? { errorMessage } : {}),
-    };
+    return { type: "failed", transportMessageId, at, ...metaError(status.errors) };
   }
 
   return { type, transportMessageId, at };
@@ -103,14 +102,88 @@ function metaMessageBody(message: Record<string, unknown>): string | null {
   return null;
 }
 
+const MEDIA_TYPES = new Set(["image", "audio", "video", "document", "sticker"]);
+
+function mediaRef(value: unknown): MediaRef | undefined {
+  const media = asRecord(value);
+  const id = getString(media?.id);
+  if (!media || !id) return undefined;
+  return compact({
+    id,
+    mimeType: getString(media.mime_type),
+    sha256: getString(media.sha256),
+    caption: getString(media.caption),
+    filename: getString(media.filename),
+  });
+}
+
+function finiteNumber(value: unknown): number | null {
+  const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+/** The type-specific part of a Meta message, inbound or echo alike. */
+function messageContent(message: Record<string, unknown>): MessageContent {
+  const messageType = getString(message.type) ?? "unknown";
+  const body = asRecord(message[messageType]);
+  const content: Record<string, unknown> = { messageType, ...metaError(message.errors) };
+
+  if (MEDIA_TYPES.has(messageType)) content.media = mediaRef(body);
+  else if (messageType === "text") content.text = getString(body?.body);
+  else if (messageType === "button") content.text = getString(body?.text);
+  else if (messageType === "location") {
+    const latitude = finiteNumber(body?.latitude);
+    const longitude = finiteNumber(body?.longitude);
+    if (latitude !== null && longitude !== null) {
+      content.location = compact({
+        latitude,
+        longitude,
+        name: getString(body?.name),
+        address: getString(body?.address),
+        url: getString(body?.url),
+      });
+    }
+  } else if (messageType === "contacts") {
+    if (Array.isArray(message.contacts)) content.contacts = message.contacts;
+  } else if (messageType === "reaction") {
+    const messageId = getString(body?.message_id);
+    if (messageId) content.reaction = compact({ messageId, emoji: getString(body?.emoji) });
+  } else if (messageType === "interactive") {
+    const kind = getString(body?.type);
+    const reply = kind ? asRecord(body?.[kind]) : null;
+    if (kind) {
+      content.interactive = compact({
+        type: kind,
+        body: getString(reply?.body) ?? getString(reply?.title),
+        responseJson: getString(reply?.response_json),
+      });
+    }
+  } else if (messageType === "order" || messageType === "system") {
+    content[messageType] = body ?? undefined;
+    if (messageType === "system") content.text = getString(body?.body);
+  } else if (messageType === "edit") {
+    const edited = asRecord(body?.message);
+    if (edited) {
+      const { messageType: _, ...editedContent } = messageContent(edited);
+      Object.assign(content, editedContent);
+    }
+    content.originalMessageId = getString(body?.original_message_id);
+  } else if (messageType === "revoke") {
+    content.originalMessageId = getString(body?.original_message_id);
+  }
+
+  return compact(content);
+}
+
 function parseMetaMessage(message: Record<string, unknown>): WhatsAppCallbackEvent | null {
   const from = getString(message.from);
   const messageId = getString(message.id);
-  const text = metaMessageBody(message);
   const at = parseTimestampMs(message.timestamp);
-  if (!from || !messageId || !text || !at) return null;
+  if (!from || !messageId || !at) return null;
 
-  return { type: "reply", from, messageId, text, at };
+  const text = metaMessageBody(message);
+  if (text) return { type: "reply", from, messageId, text, at };
+  return { type: "message", from, messageId, at, ...messageContent(message) };
 }
 
 function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent[] {
@@ -188,13 +261,14 @@ export function parseMetaWebhook(payload: unknown): WhatsAppCallbackEvent[] {
 }
 
 function parseEchoEntry(echo: Record<string, unknown>): WhatsAppCallbackEvent | null {
-  if (echo.type !== "text") return null;
   const to = getString(echo.to);
   const messageId = getString(echo.id);
-  const text = getString(asRecord(echo.text)?.body);
   const at = parseTimestampMs(echo.timestamp);
-  if (!to || !messageId || !text || !at) return null;
-  return { type: "echo", to, messageId, text, at };
+  if (!to || !messageId || !at) return null;
+
+  const text = echo.type === "text" ? getString(asRecord(echo.text)?.body) : null;
+  if (text) return { type: "echo", to, messageId, text, at };
+  return { type: "message_echo", to, messageId, at, ...messageContent(echo) };
 }
 
 export function parseMetaEchoesBatches(payload: unknown): MetaWebhookBatch[] {
@@ -226,7 +300,7 @@ export function parseMetaEchoesBatches(payload: unknown): MetaWebhookBatch[] {
   return [...batches.values()];
 }
 
-/** Parse smb_message_echoes changes into echo events (text only in v1). */
+/** Parse smb_message_echoes changes: text as `echo`, everything else as `message_echo`. */
 export function parseMetaEchoes(payload: unknown): WhatsAppCallbackEvent[] {
   return parseMetaEchoesBatches(payload).flatMap((batch) => batch.events);
 }

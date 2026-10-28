@@ -14,9 +14,9 @@ delivery of WhatsApp events, plus a short operator-visible history.
 
 | Data | Contains | Table / store | Where |
 |---|---|---|---|
-| Inbound events | Business phone number id, WhatsApp phone number (`from`), Meta message id (`messageId`), **message text** (for `reply` events), timestamps | `inbound_events` | DO SQLite (Workers) / `bun:sqlite` (Bun target) |
+| Inbound events | Business phone number id, WhatsApp phone number (`from`), Meta message id (`messageId`), **message text** (for `reply` events), and for other message types (`message`) the caption, location, contact cards, reaction or Meta media id they carry, timestamps | `inbound_events` | DO SQLite (Workers) / `bun:sqlite` (Bun target) |
 | Outbound (sent) messages | Business phone number id, recipient phone number (`to`), the full outbound request JSON (which includes message content you asked Eccos to send), Meta transport message id, send status/error | `outbound_messages` | DO SQLite / `bun:sqlite` |
-| Delivery/status/echo events | Business phone number id when Meta supplies it, Meta transport message id, delivery/read/failed status, error codes, or (for `echo`) staff-sent reply text from WhatsApp coexistence | `inbound_events` (statuses share the same table as replies) | DO SQLite / `bun:sqlite` |
+| Delivery/status/echo events | Business phone number id when Meta supplies it, Meta transport message id, delivery/read/failed status, error codes, or (for `echo` / `message_echo`) staff-sent reply text, captions and media ids from WhatsApp coexistence | `inbound_events` (statuses share the same table as replies) | DO SQLite / `bun:sqlite` |
 | Forwarding queue (`deliveries`) | Business phone number id and a JSON copy of the batch of normalized events (`{ events: [...] }`) queued to POST to your subscriber, plus attempt count / last error | `deliveries` | DO SQLite / `bun:sqlite` |
 | Onboarding/config metadata | Account/WABA/phone ownership, WABA callback URL, and Meta access token; plus `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable subscriber URL/secret | Control-plane `accounts`/`wabas`/`phones` tables plus the WABA `config` table | DO SQLite (`apps/gateway/src/control-plane.ts`, `apps/gateway/src/gateway.ts`) |
 
@@ -25,8 +25,8 @@ for the Workers target, `src/db/client.ts` for the Bun target — the two schema
 the same content, minus the Workers target's extra `config` table and message-id dedupe indexes.
 
 **No media/attachment bytes are stored.** The normalized event contract
-(`packages/core/src/types.ts`, `WhatsAppCallbackEvent`) only carries `text` for `reply`/`echo`
-events plus ids/timestamps/error codes — there is no code path that downloads or persists WhatsApp
+(`packages/core/src/types.ts`, `WhatsAppCallbackEvent`) carries text, captions, locations,
+contact cards and Meta media *ids* plus ids/timestamps/error codes — there is no code path that downloads or persists WhatsApp
 media (images/audio/documents) today.
 
 **The gateway sends no analytics or telemetry.** Its only network calls are to `graph.facebook.com`

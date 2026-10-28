@@ -229,6 +229,34 @@ describe("eventReading", () => {
     expect(reading.family).toBe("problem");
   });
 
+  test("a non-text message reads as its Meta type, caption or error", () => {
+    const image = JSON.stringify({
+      type: "message",
+      from: "34600000000",
+      messageId: "m",
+      at: 1,
+      messageType: "image",
+      media: { id: "MEDIA_1", caption: "Receipt" },
+    });
+    expect(eventReading("message", image)).toMatchObject({ family: "message", text: "Receipt", detail: "image · Receipt" });
+    const unsupported = JSON.stringify({
+      type: "message",
+      from: "34600000000",
+      messageId: "m",
+      at: 1,
+      messageType: "unsupported",
+      errorCode: "131060",
+      errorMessage: "Content unavailable",
+    });
+    expect(eventReading("message", unsupported).detail).toBe("unsupported · 131060 · Content unavailable");
+    const revoke = JSON.stringify({ type: "message_echo", to: "34600000001", messageId: "m", at: 1, messageType: "revoke" });
+    expect(eventReading("message_echo", revoke)).toMatchObject({
+      family: "message",
+      party: { direction: "to", phone: "34600000001" },
+      detail: "revoke",
+    });
+  });
+
   test("unparseable storage degrades to the kind alone", () => {
     expect(eventReading("reply", "{oops")).toEqual({
       kind: "reply",
