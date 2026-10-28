@@ -291,6 +291,8 @@ export interface EventReading {
 const EVENT_FAMILIES: Record<string, EventFamily> = {
   reply: "message",
   echo: "message",
+  message: "message",
+  message_echo: "message",
   delivered: "status",
   read: "status",
   failed: "problem",
@@ -320,7 +322,7 @@ export function eventReading(type: string, payload: string): EventReading {
   if (from) reading.party = { direction: "from", phone: from };
   else if (to) reading.party = { direction: "to", phone: to };
   if (typeof event.at === "number" && Number.isFinite(event.at)) reading.at = event.at;
-  reading.text = asText(event.text);
+  reading.text = asText(event.text) ?? asText(asRecord(event.media)?.caption);
   reading.errorCode = asText(event.errorCode);
   reading.errorMessage = asText(event.errorMessage);
   // `detail` is the ONE-LINE form the log grid shows, derived from the fields
@@ -332,6 +334,9 @@ export function eventReading(type: string, payload: string): EventReading {
       .filter((part): part is string => !!part)
       .join(" · ");
   }
+  // A non-text message leads with its Meta type: `image · Receipt`, `unsupported · 131060 · …`.
+  const messageType = asText(event.messageType);
+  if (messageType) reading.detail = reading.detail ? `${messageType} · ${reading.detail}` : messageType;
   return reading;
 }
 
@@ -371,7 +376,12 @@ export function prettyJson(raw: string): string {
  * message and never take one — "55 reads" is a different noun and "2
  * delivereds" is not a word.
  */
-const EVENT_PLURALS: Record<string, string> = { reply: "replies", echo: "echoes" };
+const EVENT_PLURALS: Record<string, string> = {
+  reply: "replies",
+  echo: "echoes",
+  message: "messages",
+  message_echo: "message echoes",
+};
 
 /** The noun for `n` events of one kind. One table, two callers: the count row
  * above the log and the queue's per-batch summary. */
@@ -406,11 +416,11 @@ export interface EventCountEntry {
  * be told that no read receipts have arrived — so it drops out, and the row
  * stays short on a young workspace.
  *
- * Order is fixed rather than by count: the two kinds that mean a human did
+ * Order is fixed rather than by count: the kinds that mean a human did
  * something lead, always, so an operator's eye lands in the same place on every
  * workspace.
  */
-const EVENT_COUNT_ORDER = ["reply", "echo", "delivered", "read", "failed"];
+const EVENT_COUNT_ORDER = ["reply", "echo", "message", "message_echo", "delivered", "read", "failed"];
 
 export function eventCountEntries(byType: Record<string, number>): EventCountEntry[] {
   const seen = new Set<string>();

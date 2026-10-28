@@ -8,6 +8,7 @@ import {
 } from "../components/reui/frame";
 import { cn } from "@/lib/utils";
 import { healthReading, type HealthBanner, type HealthReading } from "../lib/health";
+import { humanMessageCount } from "../lib/setup-checklist";
 import type { DashboardScope, GatewayStatus } from "../server/gateway";
 import {
   COUNT_LINK,
@@ -177,7 +178,7 @@ function FactsStripSection({ counts, selectedWabaId }: { counts: GatewayStatus["
   const outbound = countTotal(counts.outbound);
   const deliveries = countTotal(counts.deliveries);
   const byType = counts.inboundByType ?? {};
-  const humanEvents = (byType.reply ?? 0) + (byType.echo ?? 0);
+  const humanEvents = humanMessageCount(byType);
   return (
     <FactsStrip label="Traffic at a glance">
       <FactCell

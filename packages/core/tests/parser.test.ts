@@ -122,6 +122,51 @@ describe("parseMetaWebhook", () => {
     });
   });
 
+  it("serializes reply and echo byte-for-byte as the forwarding contract", () => {
+    const [reply] = parseMetaWebhook(
+      envelope({
+        metadata: { phone_number_id: "PHONE_ID" },
+        messages: [{ from: "34600000000", id: "wamid.M", timestamp: TS_SEC, type: "text", text: { body: "Hola" } }],
+      }),
+    );
+    expect(JSON.stringify(reply)).toBe(
+      '{"type":"reply","from":"34600000000","messageId":"wamid.M","text":"Hola","at":1700000000000,"phoneNumberId":"PHONE_ID"}',
+    );
+    const [echoed] = parseMetaEchoes({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA_ID",
+          changes: [
+            {
+              field: "smb_message_echoes",
+              value: {
+                metadata: { phone_number_id: "PHONE_ID" },
+                message_echoes: [
+                  { to: "16505551234", id: "wamid.E", timestamp: TS_SEC, type: "text", text: { body: "Hi" } },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(echoed)).toBe(
+      '{"type":"echo","to":"16505551234","messageId":"wamid.E","text":"Hi","at":1700000000000,"phoneNumberId":"PHONE_ID"}',
+    );
+  });
+
+  it("drops a text with an empty body and a button or reply with an empty title", () => {
+    const from = { from: "34600000000", id: "wamid.M", timestamp: TS_SEC };
+    const messages = [
+      { ...from, type: "text", text: { body: "   " } },
+      { ...from, type: "button", button: { text: "", payload: "P" } },
+      { ...from, type: "interactive", interactive: { type: "button_reply", button_reply: { id: "b", title: "" } } },
+      { ...from, type: "interactive", interactive: { type: "list_reply", list_reply: { id: "l", title: " " } } },
+    ];
+    expect(parseMetaWebhook(envelope({ messages }))).toHaveLength(0);
+  });
+
   it("parses a quick-reply button and an interactive button_reply", () => {
     const button = parseMetaWebhook(
       envelope({
@@ -232,32 +277,11 @@ describe("parseMetaEchoes", () => {
     });
   });
 
-  it("drops image echoes (D6)", () => {
-    const events = parseMetaEchoes({
-      object: "whatsapp_business_account",
-      entry: [
-        {
-          id: "WABA_ID",
-          changes: [
-            {
-              field: "smb_message_echoes",
-              value: {
-                message_echoes: [
-                  {
-                    to: "16505551234",
-                    id: "wamid.IMG",
-                    timestamp: "1520383574",
-                    type: "image",
-                    image: { id: "media-id" },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      ],
-    });
-    expect(events).toHaveLength(0);
+  it("forwards an image echo as message_echo instead of dropping it", () => {
+    const events = parseMetaEchoes(echoEnvelope({ type: "image", image: { id: "media-id" } }));
+    expect(events).toEqual([
+      { type: "message_echo", to: "16505551234", messageId: "wamid.E", at: 1_520_383_574_000, messageType: "image", media: { id: "media-id" } },
+    ]);
   });
 
   it("drops echoes missing required fields", () => {
@@ -282,5 +306,243 @@ describe("parseMetaEchoes", () => {
 
   it("does not parse echoes via parseMetaWebhook", () => {
     expect(parseMetaWebhook(ECHO_PAYLOAD)).toHaveLength(0);
+  });
+});
+
+function inbound(message: Record<string, unknown>) {
+  const events = parseMetaWebhook(
+    envelope({ messages: [{ from: "34600000000", id: "wamid.N", timestamp: TS_SEC, ...message }] }),
+  );
+  expect(events).toHaveLength(1);
+  return events[0];
+}
+
+function echoEnvelope(echo: Record<string, unknown>) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "WABA_ID",
+        changes: [
+          {
+            field: "smb_message_echoes",
+            value: { message_echoes: [{ to: "16505551234", id: "wamid.E", timestamp: "1520383574", ...echo }] },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function echo(message: Record<string, unknown>) {
+  const events = parseMetaEchoes(echoEnvelope(message));
+  expect(events).toHaveLength(1);
+  return events[0];
+}
+
+const IMAGE = {
+  id: "MEDIA_1",
+  mime_type: "image/jpeg",
+  sha256: "abc123",
+  caption: "Receipt",
+  url: "https://lookaside.example/ignored",
+};
+const MEDIA_REF = { id: "MEDIA_1", mimeType: "image/jpeg", sha256: "abc123", caption: "Receipt" };
+
+describe("non-text inbound messages", () => {
+  it("parses media into one media reference, never the download url", () => {
+    expect(inbound({ type: "image", image: IMAGE })).toEqual({
+      type: "message",
+      from: "34600000000",
+      messageId: "wamid.N",
+      at: TS_MS,
+      messageType: "image",
+      media: MEDIA_REF,
+    });
+    for (const type of ["audio", "video", "sticker"]) {
+      expect(inbound({ type, [type]: { id: "M", mime_type: "x/y" } })).toMatchObject({
+        type: "message",
+        messageType: type,
+        media: { id: "M", mimeType: "x/y" },
+      });
+    }
+    expect(
+      inbound({ type: "document", document: { id: "D", filename: "cita.pdf", mime_type: "application/pdf" } }),
+    ).toMatchObject({ messageType: "document", media: { id: "D", filename: "cita.pdf", mimeType: "application/pdf" } });
+  });
+
+  it("parses a location", () => {
+    expect(
+      inbound({ type: "location", location: { latitude: 40.4, longitude: -3.7, name: "Office", address: "Main St 1" } }),
+    ).toMatchObject({
+      type: "message",
+      messageType: "location",
+      location: { latitude: 40.4, longitude: -3.7, name: "Office", address: "Main St 1" },
+    });
+  });
+
+  it("parses a reaction and a removed reaction", () => {
+    expect(inbound({ type: "reaction", reaction: { message_id: "wamid.ORIG", emoji: "👍" } })).toMatchObject({
+      messageType: "reaction",
+      reaction: { messageId: "wamid.ORIG", emoji: "👍" },
+    });
+    expect(inbound({ type: "reaction", reaction: { message_id: "wamid.ORIG", emoji: "" } })).toMatchObject({
+      reaction: { messageId: "wamid.ORIG" },
+    });
+  });
+
+  it("passes contact cards, orders and system messages through verbatim", () => {
+    const contacts = [{ name: { formatted_name: "Ada" }, phones: [{ phone: "+34600000001" }] }];
+    expect(inbound({ type: "contacts", contacts })).toMatchObject({ messageType: "contacts", contacts });
+    const order = { catalog_id: "C", product_items: [{ product_retailer_id: "P", quantity: 1 }] };
+    expect(inbound({ type: "order", order })).toMatchObject({ messageType: "order", order });
+    const system = { body: "User changed number", type: "user_changed_number", wa_id: "34600000002" };
+    expect(inbound({ type: "system", system })).toMatchObject({ messageType: "system", system, text: system.body });
+  });
+
+  it("parses a flow (nfm_reply) response", () => {
+    expect(
+      inbound({
+        type: "interactive",
+        interactive: { type: "nfm_reply", nfm_reply: { name: "flow", body: "Sent", response_json: '{"a":1}' } },
+      }),
+    ).toMatchObject({
+      type: "message",
+      messageType: "interactive",
+      interactive: { type: "nfm_reply", body: "Sent", responseJson: '{"a":1}' },
+    });
+  });
+
+  it("surfaces an unsupported message with Meta's error code instead of dropping it", () => {
+    expect(
+      inbound({
+        type: "unsupported",
+        errors: [{ code: 131060, title: "Content unavailable", message: "Content unavailable" }],
+      }),
+    ).toEqual({
+      type: "message",
+      from: "34600000000",
+      messageId: "wamid.N",
+      at: TS_MS,
+      messageType: "unsupported",
+      errorCode: "131060",
+      errorMessage: "Content unavailable",
+    });
+  });
+
+  it("degrades an unknown future type to a generic message", () => {
+    expect(inbound({ type: "hologram", hologram: { id: "H" } })).toEqual({
+      type: "message",
+      from: "34600000000",
+      messageId: "wamid.N",
+      at: TS_MS,
+      messageType: "hologram",
+    });
+  });
+
+  it("still drops messages without sender, id or timestamp", () => {
+    expect(parseMetaWebhook(envelope({ messages: [{ id: "x", timestamp: TS_SEC, type: "image" }] }))).toHaveLength(0);
+  });
+});
+
+describe("non-text echoes", () => {
+  it("uses the same media reference as inbound", () => {
+    expect(echo({ type: "image", image: IMAGE })).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "image",
+      media: MEDIA_REF,
+    });
+    expect(echo({ type: "document", document: { id: "D", filename: "f.pdf" } })).toMatchObject({
+      messageType: "document",
+      media: { id: "D", filename: "f.pdf" },
+    });
+    expect(echo({ type: "audio", audio: { id: "A" } })).toMatchObject({ messageType: "audio", media: { id: "A" } });
+    expect(echo({ type: "video", video: { id: "V", caption: "Clip" } })).toMatchObject({
+      messageType: "video",
+      media: { id: "V", caption: "Clip" },
+    });
+  });
+
+  it("parses location and reaction echoes", () => {
+    expect(echo({ type: "location", location: { latitude: "40.4", longitude: "-3.7" } })).toMatchObject({
+      messageType: "location",
+      location: { latitude: 40.4, longitude: -3.7 },
+    });
+    expect(echo({ type: "reaction", reaction: { message_id: "wamid.C", emoji: "❤️" } })).toMatchObject({
+      messageType: "reaction",
+      reaction: { messageId: "wamid.C", emoji: "❤️" },
+    });
+  });
+
+  it("parses an edit with its new content and the original message id", () => {
+    expect(
+      echo({
+        type: "edit",
+        edit: { original_message_id: "wamid.ORIG", message: { type: "text", text: { body: "Fixed typo" } } },
+      }),
+    ).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "edit",
+      text: "Fixed typo",
+      originalMessageId: "wamid.ORIG",
+    });
+    expect(
+      echo({ type: "edit", edit: { original_message_id: "wamid.ORIG", message: { type: "image", image: IMAGE } } }),
+    ).toMatchObject({ messageType: "edit", media: MEDIA_REF, originalMessageId: "wamid.ORIG" });
+  });
+
+  it("parses an edit whose new content is empty as just the original message id", () => {
+    expect(
+      echo({ type: "edit", edit: { original_message_id: "wamid.ORIG", message: { type: "text", text: { body: "" } } } }),
+    ).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "edit",
+      originalMessageId: "wamid.ORIG",
+    });
+  });
+
+  it("drops a text echo with an empty body and a button echo with an empty title", () => {
+    for (const empty of [
+      { type: "text", text: { body: " " } },
+      { type: "button", button: { text: "" } },
+    ]) {
+      expect(parseMetaEchoes(echoEnvelope(empty))).toHaveLength(0);
+    }
+  });
+
+  it("parses a revoke", () => {
+    expect(echo({ type: "revoke", revoke: { original_message_id: "wamid.ORIG" } })).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "revoke",
+      originalMessageId: "wamid.ORIG",
+    });
+  });
+
+  it("surfaces unsupported and unknown echo types", () => {
+    expect(echo({ type: "unsupported", errors: [{ code: 131060, title: "Content unavailable" }] })).toMatchObject({
+      type: "message_echo",
+      messageType: "unsupported",
+      errorCode: "131060",
+      errorMessage: "Content unavailable",
+    });
+    expect(echo({ type: "hologram" })).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "hologram",
+    });
   });
 });
