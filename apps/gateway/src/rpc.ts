@@ -12,6 +12,7 @@ import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templ
 import { sendMessage } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
+import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
 import type {
   AccountKeyResource,
@@ -58,6 +59,10 @@ import type {
   SetSubscriberConfigInput,
   SubscriberConfig,
   TemplatesResult,
+  OrganizationAccountContext,
+  ScopedOrg,
+  ScopedRead,
+  AccountWabaResource,
 } from "@eccos/gateway-contract";
 
 /**
@@ -268,19 +273,110 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
   async getStatus(wabaId: string, accountId: string): Promise<GatewayStatus> {
     const { stub, wabaId: scopedWabaId, phoneNumberId, displayPhone, provisionedAt } = await this.scoped(wabaId, accountId);
+    return this.statusOf(stub, scopedWabaId, phoneNumberId, displayPhone, provisionedAt);
+  }
+
+  private async statusOf(
+    stub: ReturnType<GatewayRPC["stubFor"]>,
+    wabaId: string,
+    phoneNumberId: string | null,
+    displayPhone: string | null,
+    provisionedAt: number | null,
+  ): Promise<GatewayStatus> {
     const counts = await stub.getCounts();
     return {
       name: "eccos",
       version: "0.1.0",
       health: healthFromCounts(counts),
       connection: {
-        wabaId: scopedWabaId,
+        wabaId,
         phoneNumberId,
         displayPhone,
         connectedAt: provisionedAt === null ? null : new Date(provisionedAt).toISOString(),
       },
       counts,
     };
+  }
+
+  /**
+   * Organization-scoped read: one control-plane hop, then the WABA is selected
+   * and its ownership enforced HERE with the shared `selectWaba`. The
+   * `organizationId` is the one the console's auth layer validated — the same
+   * trust the other methods place in the console's `accountId`.
+   */
+  private async selected(org: ScopedOrg) {
+    const orgId = requireAccountId(org?.organizationId, "organizationId is required");
+    const { accountId, resources } = await getControlPlaneStub(this.env).resolveOrganizationContext(orgId);
+    const waba = selectWaba(accountId, resources.wabas, org.wabaId, org.rejectUnknown, org.mode);
+    const scope = { accountId, wabaId: waba.wabaId, resources };
+    return { waba, scope, stub: this.stubFor(waba.wabaId) };
+  }
+
+  async readStatus(org: ScopedOrg): Promise<ScopedRead<GatewayStatus>> {
+    const { waba, scope, stub } = await this.selected(org);
+    return { scope, data: await this.statusOfWaba(stub, waba) };
+  }
+
+  private statusOfWaba(stub: ReturnType<GatewayRPC["stubFor"]>, waba: AccountWabaResource) {
+    const first = [...waba.phones].sort((a, b) => a.phoneNumberId.localeCompare(b.phoneNumberId))[0];
+    return this.statusOf(
+      stub,
+      waba.wabaId,
+      first?.phoneNumberId || null,
+      first?.displayPhoneNumber || null,
+      waba.provisionedAt ?? null,
+    );
+  }
+
+  async readInbound(org: ScopedOrg, opts: Omit<InboundListOpts, "wabaId">): Promise<ScopedRead<InboundRow[]>> {
+    const { scope, stub } = await this.selected(org);
+    return { scope, data: await stub.listInbound(opts) };
+  }
+
+  async readOutbound(org: ScopedOrg, opts: Omit<OutboundListOpts, "wabaId">): Promise<ScopedRead<OutboundRow[]>> {
+    const { scope, stub } = await this.selected(org);
+    return { scope, data: await stub.listOutbound(opts) };
+  }
+
+  async readDeliveries(
+    org: ScopedOrg,
+    opts: Omit<DeliveryListOpts, "wabaId">,
+  ): Promise<ScopedRead<DeliveryRecord[]>> {
+    const { scope, stub } = await this.selected(org);
+    return { scope, data: await stub.listDeliveries(opts) };
+  }
+
+  async readConversations(
+    org: ScopedOrg,
+    opts: Omit<ConversationListOpts, "wabaId">,
+  ): Promise<ScopedRead<CursorPage<ConversationSummary>>> {
+    const { scope, stub } = await this.selected(org);
+    return { scope, data: await stub.listConversations(opts) };
+  }
+
+  async readConversation(
+    org: ScopedOrg,
+    opts: Omit<ConversationOpts, "wabaId">,
+  ): Promise<ScopedRead<CursorPage<MessageRecord>>> {
+    const { scope, stub } = await this.selected(org);
+    return { scope, data: await stub.getConversation(opts) };
+  }
+
+  async readSubscriberConfig(org: ScopedOrg): Promise<ScopedRead<SubscriberConfig>> {
+    const { scope, stub } = await this.selected(org);
+    return { scope, data: await stub.getSubscriberConfig() };
+  }
+
+  async readDashboardState(org: Pick<ScopedOrg, "organizationId" | "wabaId">) {
+    const orgId = requireAccountId(org?.organizationId, "organizationId is required");
+    const { accountId, resources } = await getControlPlaneStub(this.env).resolveOrganizationContext(orgId);
+    // No active WABA is "nothing to read yet", not a failure (see the console's root loader).
+    if (resources.wabas.every((waba) => waba.status !== "active")) {
+      return { accountId, resources, status: null };
+    }
+    const waba = selectWaba(accountId, resources.wabas, org.wabaId);
+    const scope = { accountId, wabaId: waba.wabaId, resources };
+    return { accountId, resources, status: { scope, data: await this.statusOfWaba(this.stubFor(waba.wabaId), waba) } };
   }
 
   async getConfig(wabaId: string, accountId: string): Promise<Record<string, string>> {
@@ -808,6 +904,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       result.waId,
     );
     return { ok: true, messageId: result.id };
+  }
+
+  /** One control-plane hop from organization to account + resources (see
+   * {@link GatewayApi.resolveOrganizationScope}). */
+  async resolveOrganizationScope(organizationId: string): Promise<OrganizationAccountContext> {
+    return getControlPlaneStub(this.env).resolveOrganizationContext(organizationId);
   }
 
   /** Enumerate the durable resources owned by one account (registry). */

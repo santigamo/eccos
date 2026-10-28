@@ -486,6 +486,31 @@ export interface AccountResources {
   phones: AccountPhoneResource[];
 }
 
+/** What the console needs to scope a request to an organization: the linked
+ * account and its credential-free resources, resolved in one control-plane hop. */
+export interface OrganizationAccountContext {
+  accountId: string;
+  resources: AccountResources;
+}
+
+/** Organization-scoped read selector. `organizationId` is the one the console's
+ * auth layer validated; the gateway resolves the account and enforces WABA
+ * ownership itself with `selectWaba` (`@eccos/gateway-contract/select-waba`). */
+export interface ScopedOrg {
+  organizationId: string;
+  wabaId?: string;
+  /** Refuse a WABA the account does not own instead of falling back. */
+  rejectUnknown?: boolean;
+  /** Defaults to `"active"`. */
+  mode?: "active" | "any";
+}
+
+/** A read result plus the scope the gateway resolved for it. */
+export interface ScopedRead<T> {
+  scope: { accountId: string; wabaId: string; resources: AccountResources };
+  data: T;
+}
+
 export interface ConnectStartResult {
   url: string;
   state: string;
@@ -952,6 +977,38 @@ export interface GatewayApi {
   /** One stored media object of the account's WABA, or null when it is not stored (yet,
    * or any more). The bytes are streamed from R2; nothing is buffered in the gateway. */
   getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null>;
+  /**
+   * Resolve an organization to its account in ONE control-plane hop: link
+   * (reconciling a missing one, contract §2), refusal of a pending/disabled link
+   * or an unconfigured account, and the account's resources.
+   */
+  resolveOrganizationScope(organizationId: string): Promise<OrganizationAccountContext>;
+  /**
+   * Organization-scoped reads: ONE control-plane hop resolves the context, the
+   * gateway selects and ownership-checks the WABA, then one data-DO read runs.
+   * No token is decrypted. Each returns the resolved scope with the data.
+   */
+  readStatus(org: ScopedOrg): Promise<ScopedRead<GatewayStatus>>;
+  readInbound(org: ScopedOrg, opts: Omit<InboundListOpts, "wabaId">): Promise<ScopedRead<InboundRow[]>>;
+  readOutbound(org: ScopedOrg, opts: Omit<OutboundListOpts, "wabaId">): Promise<ScopedRead<OutboundRow[]>>;
+  readDeliveries(org: ScopedOrg, opts: Omit<DeliveryListOpts, "wabaId">): Promise<ScopedRead<DeliveryRecord[]>>;
+  readConversations(
+    org: ScopedOrg,
+    opts: Omit<ConversationListOpts, "wabaId">,
+  ): Promise<ScopedRead<CursorPage<ConversationSummary>>>;
+  readConversation(
+    org: ScopedOrg,
+    opts: Omit<ConversationOpts, "wabaId">,
+  ): Promise<ScopedRead<CursorPage<MessageRecord>>>;
+  readSubscriberConfig(org: ScopedOrg): Promise<ScopedRead<SubscriberConfig>>;
+  /**
+   * The root loader's read: the account context, plus the status of the
+   * selected WABA when one is active (`status` is null while every WABA is
+   * still awaiting its phone number, or there is none).
+   */
+  readDashboardState(
+    org: Pick<ScopedOrg, "organizationId" | "wabaId">,
+  ): Promise<{ accountId: string; resources: AccountResources; status: ScopedRead<GatewayStatus> | null }>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
   /** The account's API keys, metadata only (never the secret or its hash). */
