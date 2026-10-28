@@ -12,6 +12,7 @@ import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templ
 import { sendMessage } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
+import { getMedia as getStoredMedia } from "./media-store";
 import type {
   AccountKeyResource,
   AccountResources,
@@ -37,6 +38,8 @@ import type {
   IssuedApiKey,
   InboundRow,
   ManualConnectResult,
+  MediaObject,
+  MediaRequest,
   MessageRecord,
   OperatorCounts,
   OutboundListOpts,
@@ -493,6 +496,22 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async exportData(wabaId: string, accountId: string): Promise<GatewayExport> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.exportData();
+  }
+
+  /** A stored WhatsApp media object, streamed from R2. Account-scoped like every data-plane
+   * read: a WABA the account does not own fails closed before R2 is touched. Only a media id
+   * whose state is `stored` is served; an erased one may still have its object until the purge. */
+  async getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null> {
+    const { stub, wabaId } = await this.scoped(input.wabaId, accountId);
+    if (!(await stub.isMediaStored(input.mediaId))) return null;
+    const stored = await getStoredMedia(this.env.MEDIA, wabaId, input.mediaId, input.range);
+    if (!stored) return null;
+    return {
+      body: stored.body,
+      contentType: stored.contentType ?? "application/octet-stream",
+      size: stored.size,
+      range: stored.range,
+    };
   }
 
   /**

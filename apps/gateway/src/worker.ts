@@ -14,6 +14,7 @@ import { getAppConfig, tenantConfig } from "./tenant-config";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { validateSubscriberUrl } from "./gateway";
+import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
 
@@ -685,6 +686,8 @@ async function sendMessageRoute(c: AppContext) {
 app.post("/v1/wabas/:wabaId/messages", sendMessageRoute);
 app.post("/v1/wabas/:wabaId/phones/:phoneNumberId/messages", sendMessageRoute);
 
+const ERASURE_RETRY_MESSAGE = "erasure did not finish; retry the same request, it is safe to repeat";
+
 // Right-to-erasure (GDPR Art. 17). The phone travels in the JSON body — never in
 // the URL — so it cannot leak into request logs. Gated by the /v1/* auth above.
 async function erasureRoute(c: AppContext) {
@@ -700,7 +703,18 @@ async function erasureRoute(c: AppContext) {
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
   const waba = await ownedWaba(c.env, account, wabaId);
   if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-  const result = await getGatewayStubForWaba(c.env, waba.wabaId).eraseByPhone(phone);
+  let result: EraseByPhoneResult;
+  try {
+    result = await getGatewayStubForWaba(c.env, waba.wabaId).eraseByPhone(phone);
+  } catch {
+    // Safe to repeat: the erasure is idempotent, and the work it left is queued.
+    logEvent("privacy_erasure", cid, 503, { reason: "unavailable" });
+    return c.json({ ok: false, error: ERASURE_RETRY_MESSAGE }, 503);
+  }
+  if (!result.ok && result.retryable) {
+    logEvent("privacy_erasure", cid, 503, { reason: "media_pending" });
+    return c.json({ ok: false, error: ERASURE_RETRY_MESSAGE }, 503);
+  }
   if (!result.ok) {
     logEvent("privacy_erasure", cid, 400, { reason: "invalid_phone" });
     return c.json(result, 400);

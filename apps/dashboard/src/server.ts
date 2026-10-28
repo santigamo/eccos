@@ -10,7 +10,9 @@ import {
   isBlockedAuthEndpoint,
 } from "./auth/blocked-endpoints";
 import { authConfigFromEnv } from "./auth/config";
+import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
+import { parseMediaPath, serveMedia } from "./server/media";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -74,6 +76,17 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
     return forbidden();
   }
   const { pathname } = url;
+  // Media answers 401 rather than redirecting: an <img> cannot follow a sign-in page.
+  const media = parseMediaPath(pathname);
+  if (media) {
+    const auth = createAuth(authConfigFromEnv(env));
+    return serveMedia(
+      request,
+      { organizationFor: (req) => requireGatewayPermission(auth, req, "view"), gateway: env.GATEWAY },
+      media.wabaId,
+      media.mediaId,
+    );
+  }
   if (pathname.startsWith("/api/auth/")) {
     // Refused BEFORE the auth instance is even built: these endpoints answer
     // questions about the globally-unique organization slug, and `create`

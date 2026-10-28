@@ -133,6 +133,26 @@ cd ../..
 bun run deploy     # == cd apps/gateway && wrangler deploy
 ```
 
+**Media bucket (once, before the first deploy that carries the `MEDIA` binding).** WhatsApp media
+files are stored in an R2 bucket pinned to the EU jurisdiction, the same as the Durable Objects.
+Create it before deploying: the binding names the bucket, and a deploy whose bucket does not exist
+is refused. Check the output of `wrangler deploy` if it is not:
+
+```bash
+cd apps/gateway
+wrangler r2 bucket create eccos-media --jurisdiction eu
+cd ../..
+```
+
+The bucket name and jurisdiction must match the `MEDIA` entry in `apps/gateway/wrangler.jsonc`.
+The bucket is private: nothing sets a public access domain or an `r2.dev` URL on it, and the
+dashboard serves media through its own authenticated route.
+
+**R2 token permission.** A deploy that runs from CI, or from an API token rather than your own
+`wrangler login`, needs the **Workers R2 Storage: Edit** permission on that token, in addition to
+the Workers Scripts permission it already has. Without it, the deploy cannot bind the bucket. The
+test runner uses a separate bucket (`eccos-media-test`, see `apps/gateway/wrangler.vitest.jsonc`).
+
 If you also run the operator console:
 
 ```bash

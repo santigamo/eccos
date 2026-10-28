@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { reset } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { deleteMediaForWaba, getMedia, putMedia } from "../../src/media-store";
+import { deleteMediaForWaba, deleteMediaObjects, getMedia, putMedia } from "../../src/media-store";
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -64,6 +64,24 @@ describe("media store (R2)", () => {
       await expect(deleteMediaForWaba(env.MEDIA, wabaId)).rejects.toThrow("Invalid WABA ID");
     }
     expect((await env.MEDIA.list()).objects).toHaveLength(0);
+  });
+
+  it("stores the digest in lowercase, whatever case the caller sent", async () => {
+    const body = "upper";
+    const sha256 = (await sha256Hex(body)).toUpperCase();
+    await putMedia(env.MEDIA, { wabaId: "WABA_A", mediaId: "9", body, contentType: "text/plain", sha256 });
+
+    expect((await getMedia(env.MEDIA, "WABA_A", "9"))!.sha256).toBe(sha256.toLowerCase());
+  });
+
+  it("deletes named media objects and leaves the rest of the WABA alone", async () => {
+    await putMedia(env.MEDIA, { wabaId: "WABA_A", mediaId: "11", body: "x", contentType: "text/plain" });
+    await putMedia(env.MEDIA, { wabaId: "WABA_A", mediaId: "12", body: "x", contentType: "text/plain" });
+
+    await deleteMediaObjects(env.MEDIA, "WABA_A", ["11", "13"]);
+
+    expect(await getMedia(env.MEDIA, "WABA_A", "11")).toBeNull();
+    expect(await getMedia(env.MEDIA, "WABA_A", "12")).not.toBeNull();
   });
 
   it("rejects a malformed sha256 digest", async () => {

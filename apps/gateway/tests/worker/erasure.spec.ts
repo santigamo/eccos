@@ -71,7 +71,7 @@ describe("EccosGateway.eraseByPhone", () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const ids = seed(i);
       // The formatted input must normalize to the stored digits.
-      const result = i.eraseByPhone("+34 600 000 001");
+      const result = await i.eraseByPhone("+34 600 000 001");
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.phone).toBe(PHONE_A);
@@ -118,8 +118,8 @@ describe("EccosGateway.eraseByPhone", () => {
   it("is idempotent — a second erasure affects nothing", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       seed(i);
-      i.eraseByPhone(PHONE_A);
-      const second = i.eraseByPhone(PHONE_A);
+      await i.eraseByPhone(PHONE_A);
+      const second = await i.eraseByPhone(PHONE_A);
       expect(second).toEqual({
         ok: true,
         phone: PHONE_A,
@@ -145,7 +145,7 @@ describe("EccosGateway.eraseByPhone", () => {
         JSON.stringify({ type: "reply", from: PHONE_B, messageId: "wamid.TEXT", text: `call ${PHONE_A}`, at: 9 }),
         Date.now(),
       );
-      const result = i.eraseByPhone(PHONE_A);
+      const result = await i.eraseByPhone(PHONE_A);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.counts.outboundMessagesDeleted).toBe(0);
@@ -155,7 +155,7 @@ describe("EccosGateway.eraseByPhone", () => {
 
   it("rejects inputs with fewer than 5 digits", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-      const result = i.eraseByPhone("+3-4");
+      const result = await i.eraseByPhone("+3-4");
       expect(result).toEqual({ ok: false, error: "invalid phone number: expected at least 5 digits" });
     });
   });
@@ -174,7 +174,7 @@ describe("EccosGateway.eraseByPhone", () => {
           Date.now(),
         )
         .toArray()[0]!.id as number;
-      i.eraseByPhone(PHONE_A);
+      await i.eraseByPhone(PHONE_A);
       expect(i.getDelivery(id)).toMatchObject({ phone_number_id: "PN_B", payload: JSON.stringify({ events: [eventB] }) });
     });
   });

@@ -373,7 +373,8 @@ export interface ErasureCounts {
 /** `phone` echoes the normalized (digits-only) number the match ran against. */
 export type EraseByPhoneResult =
   | { ok: true; phone: string; counts: ErasureCounts }
-  | { ok: false; error: string };
+  /** `retryable`: the erasure is safe to repeat and finishes the work left (media R2 refused). */
+  | { ok: false; error: string; retryable?: true };
 
 // --- Account resources (account-scoped operator surface) --------------------
 
@@ -821,6 +822,25 @@ export interface GatewayExport {
   config: Record<string, string>;
 }
 
+/** A byte range of a stored object: `offset` (and `length`, else to the end), or the last `suffix` bytes. */
+export type MediaRange = { offset: number; length?: number } | { suffix: number };
+
+/** Names one stored media object: the WABA it belongs to, its Meta media id, and an optional byte range. */
+export interface MediaRequest {
+  wabaId: string;
+  mediaId: string;
+  range?: MediaRange;
+}
+
+/** A stored media object, streamed. The body is a read-once stream: the caller owns it.
+ * `size` is the whole object; `range` is set when the body is only that part of it. */
+export interface MediaObject {
+  body: ReadableStream<Uint8Array>;
+  contentType: string;
+  size: number;
+  range?: { offset: number; length: number };
+}
+
 export interface GatewayApi {
   /** Every method requires the owning account's id: the gateway is unconditionally
    * account-scoped and fails closed when the WABA is not owned by the account. */
@@ -888,6 +908,9 @@ export interface GatewayApi {
    * number across inbound_events, outbound_messages, and deliveries. */
   eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult>;
   exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
+  /** One stored media object of the account's WABA, or null when it is not stored (yet,
+   * or any more). The bytes are streamed from R2; nothing is buffered in the gateway. */
+  getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
   /** The account's API keys, metadata only (never the secret or its hash). */
