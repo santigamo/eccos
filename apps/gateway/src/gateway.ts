@@ -1406,7 +1406,7 @@ export class EccosGateway extends DurableObject<Env> {
       nextSweepAt = now + SWEEP_INTERVAL_MS;
     }
 
-    const syncPending = this.processSyncBatch(now);
+    const syncPending = await this.processSyncBatch(now);
 
     // Only reschedule against `next_attempt_at` when there is somewhere to send.
     // Held rows are due now, so an unconditional reschedule would set an alarm
@@ -1452,7 +1452,7 @@ export class EccosGateway extends DurableObject<Env> {
    * its raw parts each time, which keeps this method free of any staged state.
    * Returns true while work is left.
    */
-  private processSyncBatch(now: number): boolean {
+  private async processSyncBatch(now: number): Promise<boolean> {
     const erased = new Set(
       this.sql.exec(`SELECT digits FROM erased_numbers`).toArray().map((row) => row.digits as string),
     );
@@ -1477,10 +1477,11 @@ export class EccosGateway extends DurableObject<Env> {
       }
       const cursor = Number(row.cursor);
       const end = Math.min(items.length, cursor + budget);
+      let sharingOff = false;
       this.ctx.storage.transactionSync(() => {
         for (const item of items.slice(cursor, end)) {
           try {
-            this.applySyncItem(id, item, erased, now, waba);
+            sharingOff ||= this.applySyncItem(id, item, erased, now, waba);
           } catch (error) {
             console.warn(
               JSON.stringify({ level: "warn", area: "history", event: "item-skipped", waba, error: String(error).slice(0, 200) }),
@@ -1494,16 +1495,29 @@ export class EccosGateway extends DurableObject<Env> {
           id,
         );
       });
+      // Once per refusal: the payload's cursor moved past this item in the transaction above.
+      if (sharingOff) await this.recordHistorySharingOff(waba);
       budget -= end - cursor;
       if (end < items.length) return true;
     }
     return false;
   }
 
-  /** Applies one sync item. Runs inside processSyncBatch's transaction. */
-  private applySyncItem(payloadId: number, item: SyncItem, erased: Set<string>, now: number, waba: string): void {
+  /** Tells the control plane that Meta refused history sharing. Best effort: a failure is logged and not retried. */
+  private async recordHistorySharingOff(waba: string): Promise<void> {
+    try {
+      await getControlPlaneStub(this.env).markHistorySharingOff(waba);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({ level: "warn", area: "history", event: "sharing-off-not-recorded", waba, error: String(error).slice(0, 200) }),
+      );
+    }
+  }
+
+  /** Applies one sync item. Runs inside processSyncBatch's transaction. Returns true for a history-sharing-off refusal. */
+  private applySyncItem(payloadId: number, item: SyncItem, erased: Set<string>, now: number, waba: string): boolean {
     const unit = mapSyncItem(item, waba);
-    if (!unit) return;
+    if (!unit) return false;
     if (unit.kind === "error") {
       this.sql.exec(`UPDATE sync_payloads SET error = ? WHERE id = ?`, `Meta error ${unit.code}`, payloadId);
       console.warn(
@@ -1515,14 +1529,14 @@ export class EccosGateway extends DurableObject<Env> {
           code: unit.code,
         }),
       );
-      return;
+      return unit.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE;
     }
     if (unit.kind === "contact") {
-      if (erased.has(unit.waId)) return;
+      if (erased.has(unit.waId)) return false;
       if (unit.action === "remove") {
         // The contact stays (its messages stay); only the name Meta gave goes.
         this.sql.exec(`UPDATE contacts SET name = NULL, updated_at = ? WHERE wa_id = ?`, now, unit.waId);
-        return;
+        return false;
       }
       this.sql.exec(
         `INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, ?, 'app_state', ?)
@@ -1531,9 +1545,10 @@ export class EccosGateway extends DurableObject<Env> {
         unit.name,
         now,
       );
-      return;
+      return false;
     }
     this.storeHistoryMessage(unit.message, erased, now);
+    return false;
   }
 
   /** Stores one history message. A row already stored keeps its content, except that a

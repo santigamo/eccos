@@ -6,6 +6,8 @@ import {
   coexistenceSyncStatus,
   historySyncDeadline,
   isWabaOnboardingType,
+  syncUnavailableError,
+  syncUnavailableMarker,
   HISTORY_SYNC_EXPIRED_ERROR,
   SYNC_UNCONFIRMED_ERROR,
   type CoexistenceState,
@@ -1964,5 +1966,34 @@ export class EccosControlPlane extends DurableObject<Env> {
       .toArray()[0];
     if (!row) throw new Error(`account "${id}" does not exist`);
     return id;
+  }
+
+  /**
+   * Records that Meta refused the message-history sync because history sharing is
+   * off (`2593109`), as the history webhook reports it after the handoff. Only a
+   * coexistence onboarding owes that sync, so any other WABA is left untouched.
+   * Idempotent: applying the same refusal again writes the same row.
+   */
+  markHistorySharingOff(wabaId: string): void {
+    const id = validateWabaId(wabaId, "wabaId");
+    const historyRequestId = syncUnavailableMarker("history_sharing_off");
+    const row = this.sql
+      .exec(
+        "SELECT contacts_sync_request_id FROM wabas WHERE waba_id = ? AND onboarding_type = 'coexistence'",
+        id,
+      )
+      .toArray()[0];
+    if (!row) return;
+    this.sql.exec(
+      `UPDATE wabas
+       SET history_sync_request_id = ?, coexistence_sync_status = 'unavailable', coexistence_sync_error = ?
+       WHERE waba_id = ? AND onboarding_type = 'coexistence'`,
+      historyRequestId,
+      syncUnavailableError({
+        contactsRequestId: (row.contacts_sync_request_id as string | null) ?? null,
+        historyRequestId,
+      }),
+      id,
+    );
   }
 }

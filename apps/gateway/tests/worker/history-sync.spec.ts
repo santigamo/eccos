@@ -2,7 +2,10 @@ import { env, exports } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { signPayload } from "@eccos/core/signature";
+import type { EccosControlPlane } from "../../src/control-plane";
+import { getControlPlaneStub } from "../../src/control-plane-stub";
 import type { EccosGateway } from "../../src/gateway";
+import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { bootstrapAccount, gatewayStub, TEST_WABA_ID } from "./helpers";
 
 /**
@@ -249,10 +252,10 @@ describe("reprocessing", () => {
     );
     const passes = await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       await i.captureSyncPayload(["history"], JSON.stringify(historyChunk([thread(CUSTOMER, messages)])));
-      const batch = i as unknown as { processSyncBatch(now: number): boolean };
+      const batch = i as unknown as { processSyncBatch(now: number): Promise<boolean> };
       const out: Array<{ pending: boolean; cursor: number }> = [];
       for (let pass = 0; pass < 3; pass++) {
-        const pending = batch.processSyncBatch(Date.now());
+        const pending = await batch.processSyncBatch(Date.now());
         out.push({ pending, cursor: Number(i.sql.exec(`SELECT cursor FROM sync_payloads`).one().cursor) });
       }
       return out;
@@ -290,5 +293,65 @@ describe("worker webhook", () => {
     expect(response.status).toBe(200);
     await drain();
     expect((await query(`SELECT id FROM messages`))).toEqual([{ id: "wamid.W1" }]);
+  });
+});
+
+describe("history sharing off reaches the control plane", () => {
+  const COEX_ACCOUNT = "acc-hist-coex";
+  const COEX_WABA = "WABA_HIST_COEX";
+
+  function sharingOff(wabaId: string) {
+    return envelope(
+      "history",
+      {
+        messaging_product: "whatsapp",
+        metadata: METADATA,
+        history: [{ errors: [{ code: 2593109, title: "History sharing is off", message: "Sharing is off" }] }],
+      },
+      wabaId,
+    );
+  }
+
+  async function controlPlaneWaba(wabaId: string): Promise<Record<string, unknown>> {
+    return runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
+      cp.sql.exec("SELECT coexistence_sync_status, history_sync_request_id FROM wabas WHERE waba_id = ?", wabaId).toArray()[0],
+    );
+  }
+
+  it("marks history unavailable on the coexistence WABA the payload belongs to, once", async () => {
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      await cp.createAccount({ accountId: COEX_ACCOUNT });
+      await cp.beginWabaProvisioning({
+        accountId: COEX_ACCOUNT,
+        wabaId: COEX_WABA,
+        metaAccessToken: "tenant-token",
+        callbackUrl: "https://gateway.example/webhooks/meta",
+        onboardingType: "coexistence",
+        phones: [{ phoneNumberId: "PNID_HIST", displayPhoneNumber: "+34600000003" }],
+      });
+    });
+    const coexStub = getGatewayStubForWaba(env, COEX_WABA);
+    await runInDurableObject(coexStub, (i: EccosGateway) =>
+      i.captureSyncPayload(["history"], JSON.stringify(sharingOff(COEX_WABA))),
+    );
+
+    await runInDurableObject(coexStub, (i: EccosGateway) =>
+      (i as unknown as { processSyncBatch(now: number): Promise<boolean> }).processSyncBatch(Date.now()),
+    );
+
+    expect(await controlPlaneWaba(COEX_WABA)).toEqual({
+      coexistence_sync_status: "unavailable",
+      history_sync_request_id: "unavailable:history_sharing_off",
+    });
+  });
+
+  it("leaves a standard WABA's control-plane record alone", async () => {
+    await capture(sharingOff(TEST_WABA_ID), "history");
+    await drain();
+
+    expect(await controlPlaneWaba(TEST_WABA_ID)).toEqual({
+      coexistence_sync_status: "not_applicable",
+      history_sync_request_id: null,
+    });
   });
 });
