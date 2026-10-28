@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { useRouterState } from "@tanstack/react-router"
+import { useRouterState, type RouterState } from "@tanstack/react-router"
 
 /**
  * The rail at the top edge that says a navigation is in flight.
@@ -15,13 +15,14 @@ import { useRouterState } from "@tanstack/react-router"
  * reads as slow even when the gateway is fast.
  *
  * `isLoading` is set by the router's own load cycle and excludes preloads, so
- * this only ever lights for a navigation the operator actually asked for.
+ * this only ever lights for a navigation the operator actually asked for — see
+ * `isNavigating` for why a reload of the current page does not count.
  *
  * The visual contract (the sweep, the reduced-motion fallback, why it is
  * indeterminate) lives with the `.route-progress` rule in `app.css`.
  */
 export function RouteProgress() {
-  const isLoading = useRouterState({ select: (state) => state.isLoading })
+  const isLoading = useRouterState({ select: isNavigating })
   const [visible, setVisible] = useState(false)
   const shownAt = useRef(0)
 
@@ -57,6 +58,18 @@ export function RouteProgress() {
       </output>
     </>
   )
+}
+
+/**
+ * `router.invalidate()` (Refresh, Live, a reload after a mutation) runs the
+ * same load cycle as a navigation, but the location never moves: the page
+ * under it stays put and the control that asked owns the busy state. Only a
+ * load headed somewhere else is a navigation.
+ */
+export function isNavigating(
+  state: Pick<RouterState, "isLoading" | "location" | "resolvedLocation">,
+): boolean {
+  return state.isLoading && state.location.href !== state.resolvedLocation?.href
 }
 
 /** Once up, the rail stays up this long — see the effect above. */
