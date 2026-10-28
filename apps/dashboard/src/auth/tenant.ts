@@ -14,6 +14,7 @@ import type { GatewayAction } from "./permissions";
 export type { GatewayAction };
 import { UnauthorizedError } from "./session";
 import { getSessionOnce } from "./request-memo";
+import { timed } from "../server/timing";
 
 /**
  * Why an authorization check refused, as a code callers can branch on.
@@ -71,7 +72,9 @@ export async function resolveMemberships(
   auth: Auth,
   headers: Headers,
 ): Promise<Membership[]> {
-  const orgs = (await auth.api.listOrganizations({ headers })) as OrganizationLike[];
+  const orgs = (await timed(headers, "auth-memberships", () =>
+    auth.api.listOrganizations({ headers }),
+  )) as OrganizationLike[];
   return orgs
     .filter((org) => typeof org?.id === "string")
     .map((org) => ({
@@ -145,10 +148,12 @@ export async function requirePermission(
     throw new ForbiddenError("not a member of the requested organization", "not-a-member");
   }
 
-  const result = (await auth.api.hasPermission({
-    body: { permissions: { gateway: [action] }, organizationId: orgId },
-    headers,
-  })) as { success?: boolean } | null;
+  const result = (await timed(headers, "auth-has-permission", () =>
+    auth.api.hasPermission({
+      body: { permissions: { gateway: [action] }, organizationId: orgId },
+      headers,
+    }),
+  )) as { success?: boolean } | null;
   if (result?.success !== true) {
     throw new ForbiddenError(
       `missing "${action}" permission in this organization`,

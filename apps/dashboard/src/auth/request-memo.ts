@@ -27,6 +27,7 @@
  */
 
 import type { Auth } from "./auth";
+import { timed } from "../server/timing";
 
 /** The raw Better Auth getSession result (shape is version-dependent). */
 export type SessionResult = {
@@ -56,7 +57,9 @@ export function getSessionOnce(auth: Auth, request: SessionKey): Promise<Session
 
   const resolution = (async () => {
     try {
-      return (await auth.api.getSession({ headers })) as SessionResult;
+      return (await timed(headers, "auth-session", () =>
+        auth.api.getSession({ headers }),
+      )) as SessionResult;
     } catch (err) {
       // Fail closed but do not cache the failure: a transient D1/network error
       // must not pin the request to "no session".
