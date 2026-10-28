@@ -11,6 +11,7 @@ import {
   HISTORY_SYNC_WINDOW_MS,
   NOT_COEXISTENCE_ERROR,
   SYNC_UNCONFIRMED_ERROR,
+  syncUnavailableReason,
 } from "../../src/coexistence";
 import { SMB_APP_DATA_EDGE, SMB_APP_DATA_SYNC_TYPE } from "../../src/meta/smb-app-data";
 
@@ -851,5 +852,109 @@ describe("the coexistence verdict survives the read the console makes", () => {
     const listed = await resourceWaba(accountId, wabaId);
     expect(listed?.coexistence).toEqual(direct?.coexistence);
     expect(listed?.coexistence.status).toBe("initiated");
+  });
+});
+
+/**
+ * A sync Meta refuses with a documented reason is settled, not failed
+ * (eccos-7lg): already spent (`2593107`, e.g. the number coexisted with another
+ * provider first) or history sharing off (`2593109`). The number works, so the
+ * WABA lands active and the refusal is recorded for the console.
+ */
+describe("a documented refusal settles a sync instead of failing the onboarding", () => {
+  function refused(code: number): Response {
+    return new Response(JSON.stringify({ error: { message: "refused", code } }), { status: 400 });
+  }
+
+  it("a spent contacts sync still lets history run, and the WABA goes active", async () => {
+    const accountId = "acc-coex-spent-contacts";
+    const wabaId = "WABA_COEX_SPENT_CONTACTS";
+    await createAccount(accountId);
+    const { syncCalls } = mockGraph((call) =>
+      call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts ? refused(2593107) : accepted("REQ_HIST"),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    const run = await provisionWaba(env, accountId, wabaId);
+
+    expect(run.error).toBeNull();
+    expect(syncCalls).toHaveLength(2);
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(waba?.provisioningError).toBeNull();
+      expect(waba?.coexistence.status).toBe("unavailable");
+      expect(syncUnavailableReason(waba!.coexistence.contactsRequestId)).toBe("already_synced");
+      expect(waba?.coexistence.historyRequestId).toBe("REQ_HIST");
+      expect(waba?.coexistence.error).toContain("contacts sync unavailable");
+      expect(waba?.coexistence.error).not.toContain("message-history");
+    });
+  });
+
+  it("history refused with sharing off is recorded, and the WABA goes active", async () => {
+    const accountId = "acc-coex-history-off";
+    const wabaId = "WABA_COEX_HISTORY_OFF";
+    await createAccount(accountId);
+    mockGraph((call) =>
+      call.syncType === SMB_APP_DATA_SYNC_TYPE.history ? refused(2593109) : accepted("REQ_CONT"),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(waba?.coexistence.status).toBe("unavailable");
+      expect(waba?.coexistence.contactsRequestId).toBe("REQ_CONT");
+      expect(syncUnavailableReason(waba!.coexistence.historyRequestId)).toBe("history_sharing_off");
+      expect(waba?.coexistence.error).toContain("history sharing turned off");
+    });
+  });
+
+  it("both syncs spent still lands active, and the verdict survives the console read", async () => {
+    const accountId = "acc-coex-both-spent";
+    const wabaId = "WABA_COEX_BOTH_SPENT";
+    await createAccount(accountId);
+    mockGraph(() => refused(2593107));
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    const ctx = createExecutionContext();
+    const rpc = new GatewayRPC(ctx, env);
+    const resources = await rpc.listAccountResources(accountId);
+    const waba = resources.wabas.find((item) => item.wabaId === wabaId);
+    expect(waba?.status).toBe("active");
+    expect(waba?.coexistence.status).toBe("unavailable");
+    expect(waba?.coexistence.error).toContain("contacts sync unavailable");
+    expect(waba?.coexistence.error).toContain("message-history sync unavailable");
+  });
+
+  it("an unknown Meta error after issue still fails terminally and is never retried", async () => {
+    const accountId = "acc-coex-unknown-code";
+    const wabaId = "WABA_COEX_UNKNOWN_CODE";
+    await createAccount(accountId);
+    const { syncCalls } = mockGraph((call) =>
+      call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts ? refused(2593107) : refused(100),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    await cp((instance) => {
+      const record = row(instance, wabaId);
+      expect(record.status).toBe("failed");
+      expect(record.provisioning_error).toBe(SYNC_UNCONFIRMED_ERROR);
+      expect(record.coexistence_sync_status).toBe("unconfirmed");
+      expect(record.history_sync_request_id).toBeNull();
+    });
+
+    await cp((instance) => instance.retryWabaProvisioning(accountId, wabaId));
+    await provisionWaba(env, accountId, wabaId);
+    expect(syncCalls).toHaveLength(2);
+    await cp(async (instance) => {
+      expect((await instance.getWabaRecord(accountId, wabaId))?.status).toBe("failed");
+    });
   });
 });

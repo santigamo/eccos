@@ -16,6 +16,8 @@ import {
   isWabaOnboardingType,
   COEXISTENCE_PLATFORM_TYPE,
   verifiedOnboardingTypeFrom,
+  syncUnavailableError,
+  syncUnavailableMarker,
 } from "../src/coexistence";
 
 const ONBOARDED_AT = 1_800_000_000_000;
@@ -127,6 +129,15 @@ describe("coexistence status derivation", () => {
     expect(coexistenceSyncOutstanding({ onboardingType: "coexistence", ...BOTH_ACCEPTED })).toBe(
       false,
     );
+  });
+
+  test("a sync Meta refused with a documented reason is settled as unavailable, never expired", () => {
+    const refused = { ...BOTH_ACCEPTED, historyRequestId: syncUnavailableMarker("history_sharing_off") };
+    expect(coexistenceSyncStatus({ ...base, ...refused })).toBe("unavailable");
+    expect(coexistenceSyncStatus({ ...base, ...refused, now: DEADLINE + 60_000 })).toBe("unavailable");
+    expect(coexistenceSyncSpentUnconfirmed({ onboardingType: "coexistence", ...refused })).toBe(false);
+    expect(syncUnavailableError(refused)).toContain("message-history sync unavailable");
+    expect(syncUnavailableError(BOTH_ACCEPTED)).toBeNull();
   });
 
   test("an unmet obligation past the deadline reads as expired, with no write needed", () => {

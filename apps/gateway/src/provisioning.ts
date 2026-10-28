@@ -5,7 +5,12 @@ import {
   listPhoneNumbers,
   subscribeApp,
 } from "./meta/connect-api";
-import { initiateContactsSync, initiateHistorySync } from "./meta/smb-app-data";
+import {
+  SMB_APP_DATA_ALREADY_SYNCED_CODE,
+  SMB_APP_DATA_HISTORY_SHARING_OFF_CODE,
+  initiateContactsSync,
+  initiateHistorySync,
+} from "./meta/smb-app-data";
 import {
   HISTORY_SYNC_EXPIRED_ERROR,
   NOT_COEXISTENCE_ERROR,
@@ -16,12 +21,14 @@ import {
   coexistenceSyncSpentUnconfirmed,
   historySyncWorthAttempting,
   historySyncWindowExpired,
+  syncUnavailableError,
+  syncUnavailableMarker,
   verifiedOnboardingTypeFrom,
 } from "./coexistence";
 import { getAppConfig } from "./tenant-config";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
-import type { WabaOnboardingType } from "./coexistence";
+import type { SyncUnavailableReason, WabaOnboardingType } from "./coexistence";
 import type {
   AccountWaba,
   CoexistenceSyncProgress,
@@ -56,6 +63,17 @@ class AwaitingPhoneNumberError extends Error {
  * missing id must not read as "issued and never answered" — which is terminal.
  */
 const SYNC_ACCEPTED_WITHOUT_REQUEST_ID = "accepted";
+
+/**
+ * Meta's documented refusals that settle a sync rather than leave it in doubt
+ * (eccos-7lg). Anything else after the request left stays unconfirmed.
+ */
+function syncRefusal(error: unknown): SyncUnavailableReason | null {
+  if (!(error instanceof MetaGraphError)) return null;
+  if (error.code === SMB_APP_DATA_ALREADY_SYNCED_CODE) return "already_synced";
+  if (error.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE) return "history_sharing_off";
+  return null;
+}
 
 export interface ProvisioningRun {
   waba: AccountWaba | null;
@@ -229,8 +247,9 @@ async function verifyOnboardingType(
  * 2026-09-01 to be ignored, so the requested type on its own is not evidence of
  * anything.
  *
- * Nothing here stores a contact. The calls ask Meta to start synchronising;
- * what comes back is somebody else's problem, and by design not a table.
+ * A sync Meta refuses as already spent or with history sharing off is settled,
+ * not failed: it is recorded as unavailable, the other sync still runs, and the
+ * WABA completes (eccos-7lg).
  */
 async function runCoexistenceSync(
   env: Env,
@@ -333,13 +352,23 @@ async function runCoexistenceSync(
     // Past this line the one allowed call is gone whatever happens next.
     spend.issued = true;
     let requestId: string | null = null;
+    let refusal: SyncUnavailableReason | null = null;
     for (const phoneNumberId of phoneNumberIds) {
-      const accepted = await step.initiate(appConfig, phoneNumberId, claim.metaAccessToken);
-      requestId ??= accepted.requestId;
+      try {
+        const accepted = await step.initiate(appConfig, phoneNumberId, claim.metaAccessToken);
+        requestId ??= accepted.requestId;
+      } catch (error) {
+        const reason = syncRefusal(error);
+        if (!reason) throw error;
+        // A refusal on any number wins: that number's data is not coming.
+        refusal ??= reason;
+      }
     }
     // Meta documents no request id for some responses; acceptance is the 2xx.
     // A placeholder keeps "confirmed" distinguishable from "issued, unanswered".
-    step.record(requestId ?? SYNC_ACCEPTED_WITHOUT_REQUEST_ID);
+    step.record(
+      refusal ? syncUnavailableMarker(refusal) : (requestId ?? SYNC_ACCEPTED_WITHOUT_REQUEST_ID),
+    );
   }
 }
 
@@ -391,6 +420,7 @@ export async function runClaim(
     });
     stage = "coexistence";
     await runCoexistenceSync(env, { ...claim, phones }, coexistence, spend);
+    coexistence.error ??= syncUnavailableError(coexistence);
     const waba = await controlPlane.completeWabaProvisioning({
       accountId: claim.accountId,
       wabaId: claim.wabaId,

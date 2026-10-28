@@ -23,17 +23,20 @@
  * giving up too early but trying again, so the states below distinguish "issued"
  * from "confirmed", and an issued-but-unanswered sync is terminal.
  *
+ * A sync Meta *refuses* with a documented reason is different: already spent
+ * (`2593107`, e.g. a number that coexisted with another provider first) or
+ * history sharing turned off (`2593109`). That is an answer, not a lost one, and
+ * the number works without the data, so it is recorded as unavailable and the
+ * onboarding completes (eccos-7lg).
+ *
+ * Eccos initiates both syncs because it keeps what they deliver: the history and
+ * contacts Meta sends back arrive as webhooks and are stored with the rest of
+ * the account's conversations. The state this module governs is only the
+ * provisioning side — what was initiated, when, by when it must be, and what
+ * Meta answered.
+ *
  * This module is pure (no I/O, no Meta, no storage) so the whole policy is
  * testable on its own; the HTTP shape lives in `src/meta/smb-app-data.ts`.
- *
- * **Contacts are never stored.** The step *initiates* the contacts sync because
- * Meta's onboarding requires it, and that is all it does: nothing here, and
- * nothing downstream of here, persists a contact name or number. Eccos's data
- * lifecycle is events that age out at 30/90 days, and a contact book has no
- * honest retention answer inside it — pruned it is useless, kept it falsifies
- * the privacy policy — while the data subjects in it never messaged the
- * business at all. The state this module governs is provisioning state about a
- * WABA (what was initiated, when, and by when it must be), never a phonebook.
  */
 
 /**
@@ -131,6 +134,11 @@ export const NOT_COEXISTENCE_ERROR =
  * - `not_applicable` — not a coexistence onboarding; nothing is owed.
  * - `pending` — owed, not yet initiated, and the window is still open.
  * - `initiated` — both contacts and message history have been initiated.
+ * - `unconfirmed` — a sync was issued and Meta never confirmed it. Terminal:
+ *   each sync is allowed once, so it cannot be safely retried.
+ * - `unavailable` — every sync is settled and Meta refused at least one with a
+ *   documented reason (see `SyncUnavailableReason`). Terminal, and not a
+ *   failure: the number works, the refused data is just not coming.
  * - `not_coexistence` — Eccos recorded a coexistence onboarding and Meta says
  *   the number is not one, so nothing was issued and nothing is owed. Terminal,
  *   but *not* a failure: the number is a working Cloud API number.
@@ -142,6 +150,7 @@ export type CoexistenceSyncStatus =
   | "pending"
   | "initiated"
   | "unconfirmed"
+  | "unavailable"
   | "not_coexistence"
   | "expired";
 
@@ -276,9 +285,10 @@ export class HistorySyncWindowExpiredError extends Error {
  * layer cannot disagree about what "done" means.
  *
  * The order of the checks is the policy:
- *  - both confirmed → `initiated`, permanently, even long past the deadline:
- *    the deadline is about *initiating* the sync, and having done it in time
- *    cannot be undone by the clock moving on;
+ *  - both answered → `initiated`, or `unavailable` if Meta refused either,
+ *    permanently, even long past the deadline: the deadline is about
+ *    *initiating* the sync, and having done it in time cannot be undone by the
+ *    clock moving on;
  *  - anything issued but unconfirmed → `unconfirmed`, terminal, because the
  *    once-only rule forbids trying again;
  *  - Meta says this is not a coexistence number → `not_coexistence`. This sits
@@ -301,7 +311,12 @@ export function coexistenceSyncStatus(input: {
   if (input.onboardingType !== "coexistence") return "not_applicable";
   const contactsDone = input.contactsRequestId !== null;
   const historyDone = input.historyRequestId !== null;
-  if (contactsDone && historyDone) return "initiated";
+  if (contactsDone && historyDone) {
+    return syncUnavailableReason(input.contactsRequestId) ||
+      syncUnavailableReason(input.historyRequestId)
+      ? "unavailable"
+      : "initiated";
+  }
   const spentUnconfirmed =
     (input.contactsStartedAt !== null && !contactsDone) ||
     (input.historyStartedAt !== null && !historyDone);
@@ -355,6 +370,56 @@ export function coexistenceSyncSpentUnconfirmed(state: {
     (state.contactsStartedAt !== null && state.contactsRequestId === null) ||
     (state.historyStartedAt !== null && state.historyRequestId === null)
   );
+}
+
+/**
+ * Why Meta refused a sync in a way that settles it: `already_synced` is
+ * `2593107` (the number's one sync was spent before, possibly by another
+ * provider), `history_sharing_off` is `2593109`.
+ */
+export type SyncUnavailableReason = "already_synced" | "history_sharing_off";
+
+/**
+ * A refusal is stored in the sync's request-id column under this prefix, so a
+ * settled-by-refusal sync reads as answered — never as issued-and-unanswered —
+ * with no extra column. Same precedent as the `accepted` placeholder.
+ */
+const SYNC_UNAVAILABLE_PREFIX = "unavailable:";
+
+export function syncUnavailableMarker(reason: SyncUnavailableReason): string {
+  return `${SYNC_UNAVAILABLE_PREFIX}${reason}`;
+}
+
+/** The refusal recorded in a request-id column, or null for a real acceptance. */
+export function syncUnavailableReason(requestId: string | null): SyncUnavailableReason | null {
+  if (requestId === syncUnavailableMarker("already_synced")) return "already_synced";
+  if (requestId === syncUnavailableMarker("history_sharing_off")) return "history_sharing_off";
+  return null;
+}
+
+const SYNC_LABEL = { contacts: "contacts", history: "message-history" } as const;
+
+const UNAVAILABLE_BECAUSE: Record<SyncUnavailableReason, string> = {
+  already_synced: "Meta reports it was already performed for this number",
+  history_sharing_off: "the business has history sharing turned off",
+};
+
+/**
+ * Operator-facing wording for the syncs Meta refused, or null when it refused
+ * none. Names each unavailable sync and why, so the console can say "history
+ * not available" rather than leave someone waiting for it.
+ */
+export function syncUnavailableError(requestIds: {
+  contactsRequestId: string | null;
+  historyRequestId: string | null;
+}): string | null {
+  const parts = (["contacts", "history"] as const).flatMap((kind) => {
+    const reason = syncUnavailableReason(requestIds[`${kind}RequestId`]);
+    return reason ? [`${SYNC_LABEL[kind]} sync unavailable: ${UNAVAILABLE_BECAUSE[reason]}`] : [];
+  });
+  return parts.length === 0
+    ? null
+    : `${parts.join("; ")}. The number works as a Cloud API number without that data`;
 }
 
 /**
