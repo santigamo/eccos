@@ -441,6 +441,9 @@ export function createAuth(config: AuthConfig) {
       }),
     ],
     advanced: {
+      // Native joins: one statement for session+user and for member+organization
+      // instead of fallback queries (each D1 round trip is ~55 ms).
+      database: { joins: true },
       // Explicit production posture: origin validation MUST run regardless of
       // NODE_ENV (Better Auth otherwise skips it in test environments).
       disableOriginCheck: false,

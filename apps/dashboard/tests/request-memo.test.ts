@@ -55,9 +55,12 @@ function countingAuth(session: SessionLike | null): { auth: Auth; getSessionCall
         calls += 1;
         return session;
       }),
-      listOrganizations: mock(async () => [{ id: "org-1", name: "Acme" }]),
-      hasPermission: mock(async () => ({ success: true })),
     },
+    $context: Promise.resolve({
+      adapter: {
+        findMany: mock(async () => [{ role: "owner", organization: { id: "org-1", name: "Acme" } }]),
+      },
+    }),
   } as unknown as Auth;
   return { auth, getSessionCalls: () => calls };
 }
