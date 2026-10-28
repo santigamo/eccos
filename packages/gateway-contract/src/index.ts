@@ -264,6 +264,21 @@ export type ConversationListOpts = Omit<ListOpts, "before"> & { cursor?: string 
 /** `waId` is the customer's number; digits or formatted, the gateway normalizes it. */
 export type ConversationOpts = ConversationListOpts & { waId: string };
 
+/** Where a reply to a thread goes out from, and the newest inbound that opens its window. */
+export interface ThreadReply {
+  /** The number the reply goes out from; null when the thread names none. */
+  phoneNumberId: string | null;
+  /** `at` of the newest window-opening inbound (customer, not system) on that number; null when there is none. */
+  lastInboundAt: number | null;
+}
+
+/** One local read to open a thread: a message page, the stored contact name and the reply line. */
+export interface ThreadView {
+  page: CursorPage<MessageRecord>;
+  contactName: string | null;
+  reply: ThreadReply;
+}
+
 /**
  * The newest forwarding attempt on a WABA — the answer to the only question the
  * Webhooks page really asks: "is my receiver getting events?".
@@ -1000,6 +1015,7 @@ export interface GatewayApi {
     org: ScopedOrg,
     opts: Omit<ConversationOpts, "wabaId">,
   ): Promise<ScopedRead<CursorPage<MessageRecord>>>;
+  readThreadView(org: ScopedOrg, opts: Omit<ConversationOpts, "wabaId">): Promise<ScopedRead<ThreadView>>;
   readSubscriberConfig(org: ScopedOrg): Promise<ScopedRead<SubscriberConfig>>;
   /**
    * The root loader's read: the account context, plus the status of the

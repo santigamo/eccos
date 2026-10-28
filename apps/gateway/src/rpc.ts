@@ -22,6 +22,7 @@ import type {
   ConversationListOpts,
   ConversationOpts,
   ConversationSummary,
+  ThreadView,
   CreateTemplateFailureCode,
   CreateTemplateInput,
   CreateTemplateResult,
@@ -360,6 +361,11 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   ): Promise<ScopedRead<CursorPage<MessageRecord>>> {
     const { scope, stub } = await this.selected(org);
     return { scope, data: await stub.getConversation(opts) };
+  }
+
+  async readThreadView(org: ScopedOrg, opts: Omit<ConversationOpts, "wabaId">): Promise<ScopedRead<ThreadView>> {
+    const { scope, stub } = await this.selected(org);
+    return { scope, data: await stub.getThreadView(opts) };
   }
 
   async readSubscriberConfig(org: ScopedOrg): Promise<ScopedRead<SubscriberConfig>> {

@@ -103,9 +103,14 @@ describe("organization-scoped read*", () => {
     expect((await rpc().readOutbound(org, {})).data).toEqual([]);
     expect((await rpc().readDeliveries(org, {})).data).toEqual([]);
     expect((await rpc().readConversations(org, {})).data.items).toEqual([]);
+    expect((await rpc().readThreadView(org, { waId: "34600000001" })).data).toEqual({
+      page: { items: [], nextCursor: null },
+      contactName: null,
+      reply: { phoneNumberId: null, lastInboundAt: null },
+    });
     expect((await rpc().readSubscriberConfig(org)).data).toMatchObject({ url: null });
 
-    expect(resolve).toHaveBeenCalledTimes(6);
+    expect(resolve).toHaveBeenCalledTimes(7);
     expect(getWaba).not.toHaveBeenCalled();
     expect(getRecord).not.toHaveBeenCalled();
     expect(decrypt).not.toHaveBeenCalled();

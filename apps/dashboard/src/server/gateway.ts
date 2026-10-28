@@ -42,6 +42,7 @@ import type {
   IssuedApiKey,
   ManualConnectResult,
   MessageRecord,
+  ThreadView,
   OutboundListOpts,
   OutboundRow,
   ReconcileWabaResult,
@@ -89,6 +90,7 @@ export type {
   OperatorCounts,
   OutboundRow,
   OutboundTrailEvent,
+  ThreadView,
   ProvisioningStatus,
   ReconcileWabaResult,
   ResubscribeResult,
@@ -1484,6 +1486,14 @@ export const getConversation = createServerFn({ method: "GET" })
   .handler(({ data }): Promise<Result<CursorPage<MessageRecord>>> =>
     withScopedData({ action: "view", wabaId: data.wabaId }, (gateway, org) =>
       gateway.readConversation(org, withoutWaba(data)),
+    ),
+  );
+
+export const getThreadView = createServerFn({ method: "GET" })
+  .validator(validateConversationInput)
+  .handler(({ data }): Promise<Result<ThreadView>> =>
+    withScopedData({ action: "view", wabaId: data.wabaId }, (gateway, org) =>
+      gateway.readThreadView(org, withoutWaba(data)),
     ),
   );
 

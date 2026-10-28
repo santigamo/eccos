@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
-import { findInPages } from "../lib/history";
-import { replyLineOf, type ReplyLine } from "../lib/conversations";
-import { getConversation, listConversations } from "../server/gateway";
+import type { ReplyLine } from "../lib/conversations";
+import { getThreadView } from "../server/gateway";
 import { onClientReset, resetClientState } from "./client-state";
 import { createReadCache } from "./read-cache";
 import { isDenial } from "./use-last-good";
 import type { ConversationSummary, CursorPage, MessageRecord, Result } from "../server/gateway";
 
 const PAGE_SIZE = 50;
-
-/** How many list pages a thread's name may be looked up across, when its number is not on the first. */
-const NAME_LOOKUP_PAGES = 5;
 
 /** Long enough that a hover and the click it leads to share one read. */
 const THREAD_TTL_MS = 10_000;
@@ -24,52 +20,23 @@ export interface Thread {
   reply: ReplyLine;
 }
 
-/** One older page of a thread, for the walk back to the customer's newest message. A failed read ends the walk. */
-function olderThread(wabaId: string | undefined, waId: string, cursor: string) {
-  return getConversation({ data: { wabaId, waId, limit: PAGE_SIZE, cursor } }).then(
-    (read) => (read.ok ? read.data : null),
-    () => null,
-  );
-}
-
-/**
- * The name Meta gave a customer, read from the list. The list's first page may
- * not carry the number, so older pages are read, a few at most. A number that
- * is not found has no name, and its title falls back to the number.
- */
-async function nameOf(wabaId: string | undefined, waId: string, first: CursorPage<ConversationSummary>) {
-  const found = await findInPages(
-    first,
-    (item) => item.waId === waId,
-    (cursor) => listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor } }),
-    NAME_LOOKUP_PAGES,
-  );
-  return found?.name ?? null;
-}
-
-async function readThread(
-  wabaId: string | undefined,
-  waId: string,
-  list: CursorPage<ConversationSummary> | null,
-): Promise<Result<Thread>> {
-  const messages = await getConversation({ data: { wabaId, waId, limit: PAGE_SIZE } });
-  if (!messages.ok) return messages;
-  const [name, reply] = await Promise.all([
-    list ? nameOf(wabaId, waId, list) : null,
-    replyLineOf(messages.data, (cursor) => olderThread(wabaId, waId, cursor), Date.now()),
-  ]);
-  return { ok: true, data: { page: messages.data, name, reply } };
+/** One server request: the gateway returns the page, the contact's name and the reply line together. */
+async function readThread(wabaId: string | undefined, waId: string): Promise<Result<Thread>> {
+  const view = await getThreadView({ data: { wabaId, waId, limit: PAGE_SIZE } });
+  if (!view.ok) return view;
+  const { page, contactName, reply } = view.data;
+  return { ok: true, data: { page, name: contactName, reply } };
 }
 
 const threads = createReadCache<Thread>(THREAD_TTL_MS);
 onClientReset(threads.clear);
 
-const loadThread = (wabaId: string | undefined, waId: string, list: CursorPage<ConversationSummary> | null, force = false) =>
-  threads.read(threadKey(wabaId, waId), () => readThread(wabaId, waId, list), force);
+const loadThread = (wabaId: string | undefined, waId: string, force = false) =>
+  threads.read(threadKey(wabaId, waId), () => readThread(wabaId, waId), force);
 
 /** Starts the read for a thread the operator is about to open; the click joins it. */
-export function prefetchThread(wabaId: string | undefined, waId: string, list: CursorPage<ConversationSummary> | null): void {
-  loadThread(wabaId, waId, list).catch(() => {});
+export function prefetchThread(wabaId: string | undefined, waId: string, _list?: CursorPage<ConversationSummary> | null): void {
+  loadThread(wabaId, waId).catch(() => {});
 }
 
 /**
@@ -82,20 +49,20 @@ export function prefetchThread(wabaId: string | undefined, waId: string, list: C
 export function useThread(
   wabaId: string | undefined,
   waId: string | undefined,
-  list: CursorPage<ConversationSummary> | null,
+  _list: CursorPage<ConversationSummary> | null,
   refreshed: unknown,
 ): Result<Thread> | null {
   const scope = threadKey(wabaId, waId ?? "");
   const [read, setRead] = useState<{ scope: string; result: Result<Thread> } | null>(null);
   const seen = useRef(refreshed);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `list` only feeds the name lookup; `refreshed` is the trigger
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshed` is the trigger
   useEffect(() => {
     if (!waId) return;
     const force = seen.current !== refreshed;
     seen.current = refreshed;
     let current = true;
-    loadThread(wabaId, waId, list, force)
+    loadThread(wabaId, waId, force)
       .catch((err): Result<Thread> => ({ ok: false, kind: "unreachable", error: err instanceof Error ? err.message : String(err) }))
       .then((result) => {
         if (!result.ok && isDenial(result)) resetClientState();

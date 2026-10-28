@@ -106,6 +106,7 @@ function bridgeLegacyMocks(binding: typeof gatewayBinding): typeof gatewayBindin
     readDeliveries: read("listDeliveries"),
     readConversations: read("listConversations"),
     readConversation: read("getConversation"),
+    readThreadView: read("getThreadView"),
     readDashboardState: async (org: Org) => {
       const { accountId, resources } = await context(org.organizationId);
       if (resources.wabas.every((waba) => waba.status !== "active")) {
@@ -257,6 +258,7 @@ const {
   validateRetentionInput,
   listConversations,
   getConversation,
+  getThreadView,
   validateConversationListInput,
   validateConversationInput,
 } = await import("../src/server/gateway");
@@ -2257,6 +2259,40 @@ describe("listConversations / getConversation (Conversations view)", () => {
     const thread = await getConversation({ data: { waId: "15550100001", limit: 50 } });
     expect(thread.ok).toBe(true);
     expect(threadArgs).toEqual([{ waId: "15550100001", limit: 50, wabaId: "waba-a" }, "account-a"]);
+  });
+
+  test("opening a thread is one gateway read that carries the page, the name and the reply line", async () => {
+    const calls: string[] = [];
+    const view = {
+      page: { items: [], nextCursor: null },
+      contactName: "Ana",
+      reply: { phoneNumberId: "PN1", lastInboundAt: 1000 },
+    };
+    withResources({
+      getThreadView: async (opts: unknown, account: unknown) => {
+        calls.push(JSON.stringify([opts, account]));
+        return view;
+      },
+      getConversation: async () => {
+        calls.push("getConversation");
+        return { items: [], nextCursor: null };
+      },
+      listConversations: async () => {
+        calls.push("listConversations");
+        return { items: [], nextCursor: null };
+      },
+    });
+
+    const { prefetchThread, useThread } = await import("../src/hooks/use-thread?real-module");
+    expect(typeof useThread).toBe("function");
+    prefetchThread("waba-a", "15550100001");
+    prefetchThread("waba-a", "15550100001");
+    for (let n = 0; n < 50 && calls.length === 0; n++) await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toEqual([JSON.stringify([{ waId: "15550100001", limit: 50, wabaId: "waba-a" }, "account-a"])]);
+
+    const direct = await getThreadView({ data: { waId: "15550100001", limit: 50 } });
+    expect(direct).toMatchObject({ ok: true, data: view });
   });
 
   test("a WABA the account does not own reads the account's own, never another's", async () => {
