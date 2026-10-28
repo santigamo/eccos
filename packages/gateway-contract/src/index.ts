@@ -115,6 +115,63 @@ export interface OutboundRow {
   trail?: OutboundTrailEvent[];
 }
 
+// --- Conversation store (eccos-yqbz.2): every message in and out, per customer number ---
+
+export type MessageDirection = "in" | "out" | "echo";
+export type MessageOrigin = "live" | "history";
+export type MessageStatus = "sent" | "delivered" | "read" | "failed";
+
+/**
+ * One message of a conversation, normalized. `direction` is from the business's
+ * point of view: `in` is the customer writing, `out` a send through Eccos, and
+ * `echo` a message the staff sent from the WhatsApp Business app. `status` moves
+ * forward only (sent → delivered → read) and `failed` is terminal.
+ *
+ * Edits and revokes come back as their own rows: `targetId` names the message
+ * they act on, and the reader resolves it.
+ */
+export interface MessageRecord {
+  id: string;
+  waId: string;
+  direction: MessageDirection;
+  origin: MessageOrigin;
+  type: string;
+  text: string | null;
+  /** The remaining normalized fields (media ref, location, reaction, ...) as JSON text,
+   * carried raw like `InboundRow.payload`; the reader parses it. */
+  content: string | null;
+  /** Meta's timestamp in epoch ms. */
+  at: number;
+  /** Null for `in` messages; for `out` and `echo` the latest status Meta reported. */
+  status: MessageStatus | null;
+  error: string | null;
+  targetId: string | null;
+  phoneNumberId: string | null;
+}
+
+export interface ContactRecord {
+  waId: string;
+  /** Null until a name arrives from history or app-state sync. */
+  name: string | null;
+  source: string;
+  updatedAt: number;
+}
+
+/** One conversation: a customer number, its latest message and its size. */
+export interface ConversationSummary {
+  waId: string;
+  name: string | null;
+  messageCount: number;
+  lastMessage: { type: string; text: string | null; direction: MessageDirection; at: number };
+}
+
+/** One page of a conversation read. Pass `nextCursor` back as `cursor` for the next
+ * page; null means there is no further page. The cursor is opaque. */
+export interface CursorPage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
 /**
  * Which failed deliveries a bulk retry re-enqueues: those ENQUEUED inside
  * [from, to] (epoch ms, both inclusive). The window is always explicit because
@@ -200,6 +257,12 @@ export type InboundListOpts = ListOpts & { type?: string; deliveryStatus?: strin
 /** `status` is an `outbound_messages.status` value (`sent` / `failed`) — what
  * META answered, never a forward state. */
 export type OutboundListOpts = ListOpts & { status?: string };
+
+/** `cursor` is the `nextCursor` of the previous page; omit it for the first page. */
+export type ConversationListOpts = Omit<ListOpts, "before"> & { cursor?: string };
+
+/** `waId` is the customer's number; digits or formatted, the gateway normalizes it. */
+export type ConversationOpts = ConversationListOpts & { waId: string };
 
 /**
  * The newest forwarding attempt on a WABA — the answer to the only question the
@@ -302,6 +365,9 @@ export interface ErasureCounts {
   deliveriesRedacted: number;
   /** Pending delivery rows deleted because no events remained to forward. */
   deliveriesDeleted: number;
+  /** Conversation messages to or from the number. */
+  messagesDeleted: number;
+  contactsDeleted: number;
 }
 
 /** `phone` echoes the normalized (digits-only) number the match ran against. */
@@ -750,6 +816,8 @@ export interface GatewayExport {
   inbound: InboundRow[];
   outbound: OutboundRow[];
   deliveries: DeliveryRecord[];
+  messages: MessageRecord[];
+  contacts: ContactRecord[];
   config: Record<string, string>;
 }
 
@@ -760,6 +828,11 @@ export interface GatewayApi {
   getConfig(wabaId: string, accountId: string): Promise<Record<string, string>>;
   listInbound(opts: InboundListOpts, accountId: string): Promise<InboundRow[]>;
   listOutbound(opts: OutboundListOpts, accountId: string): Promise<OutboundRow[]>;
+  // Conversation store (eccos-yqbz.2): read models over `messages`, account-scoped.
+  /** Conversations of one WABA, most recent first. */
+  listConversations(opts: ConversationListOpts, accountId: string): Promise<CursorPage<ConversationSummary>>;
+  /** Messages with one customer number, oldest first within a page; `nextCursor` leads to older messages. */
+  getConversation(opts: ConversationOpts, accountId: string): Promise<CursorPage<MessageRecord>>;
   listDeliveries(opts: DeliveryListOpts, accountId: string): Promise<DeliveryRecord[]>;
   getDelivery(id: number, wabaId: string, accountId: string): Promise<DeliveryRecord | null>;
   retryDelivery(

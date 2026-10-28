@@ -1,7 +1,8 @@
 import { graphBaseUrl, type MetaAppConfig } from "./config-schema";
 
 export type SendResult =
-  | { ok: true; id: string }
+  /** `waId` is the number Meta resolved the recipient to; null if the response omits it. */
+  | { ok: true; id: string; waId: string | null }
   | { ok: false; status: number; error: unknown };
 
 /**
@@ -35,7 +36,7 @@ export async function sendMessage(
   }
 
   const json = (await res.json().catch(() => null)) as
-    | { messages?: Array<{ id?: string }> }
+    | { contacts?: Array<{ wa_id?: string }>; messages?: Array<{ id?: string }> }
     | null;
 
   if (!res.ok) return { ok: false, status: res.status, error: json };
@@ -43,5 +44,5 @@ export async function sendMessage(
   const id = json?.messages?.[0]?.id;
   if (!id) return { ok: false, status: res.status, error: json };
 
-  return { ok: true, id };
+  return { ok: true, id, waId: json?.contacts?.[0]?.wa_id ?? null };
 }

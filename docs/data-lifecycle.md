@@ -135,7 +135,13 @@ Coexistence sync payloads (`sync_payloads` + `sync_payload_parts`: the raw `hist
 `smb_app_state_sync` webhooks, split into parts under 1 MB) are **outside both windows** and are
 not expired for now — Meta sends them once per number and they cannot be fetched again.
 
-So after ~30 days no message content (bodies, phone numbers) exists outside the sync payloads, but the
+The conversation store (`messages` + `contacts`, written from the same events and sends) is **outside both
+windows**: it is the conversation record itself, not a relay buffer, so it is not expired by
+`CONTENT_RETENTION_DAYS`. Its retention is per workspace and is not configurable yet; until then it is
+removed only by per-number erasure (`eraseByPhone`).
+
+So after ~30 days no message content (bodies, phone numbers) exists in `inbound_events`, `outbound_messages`
+or `deliveries`, but the conversation store and the sync payloads keep theirs, and the
 metadata-only delivery rows remain another ~60 days as operational/audit evidence. A redacted
 delivery row (`payload = ''`) can no longer be replayed — `retryDelivery` refuses it — and the
 dashboard shows it with an empty payload.
