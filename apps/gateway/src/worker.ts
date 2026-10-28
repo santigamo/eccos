@@ -669,7 +669,15 @@ async function sendMessageRoute(c: AppContext) {
     logEvent("outbound_send", cid, 502, { messageType, ok: false });
     return c.json({ ok: false, error: result.error }, 502);
   }
-  await stub.logOutbound(result.id, recipient, JSON.stringify(target.metaBody), "sent", null, target.phoneNumberId);
+  await stub.logOutbound(
+    result.id,
+    recipient,
+    JSON.stringify(target.metaBody),
+    "sent",
+    null,
+    target.phoneNumberId,
+    result.waId,
+  );
   logEvent("outbound_send", cid, 200, { messageType, messageId: result.id, ok: true });
   return c.json({ ok: true, messages: [{ id: result.id }] });
 }

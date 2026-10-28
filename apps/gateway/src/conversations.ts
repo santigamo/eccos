@@ -64,10 +64,11 @@ export function messageFromEvent(ev: WhatsAppCallbackEvent): NewMessage | null {
   };
 }
 
-/** The message a successful send adds, read back from the Meta request body Eccos sent. */
+/** The message a successful send adds, read back from the Meta request body Eccos sent.
+ * `waId` is the number Meta answered with, which may differ from the typed recipient. */
 export function messageFromOutbound(input: {
   id: string;
-  to: string;
+  waId: string;
   request: string;
   phoneNumberId: string | null;
   at: number;
@@ -77,7 +78,7 @@ export function messageFromOutbound(input: {
   const typed = asRecord(body[type]);
   return {
     id: input.id,
-    waId: waIdOf(input.to),
+    waId: waIdOf(input.waId),
     direction: "out",
     origin: "live",
     type,
@@ -98,6 +99,28 @@ export function statusFromEvent(ev: WhatsAppCallbackEvent): StatusUpdate | null 
     status: ev.type,
     error: ev.type === "failed" ? (ev.errorCode ?? ev.errorMessage ?? null) : null,
   };
+}
+
+/** Position of a row in the `(at, rowid)` order every conversation read uses. */
+export interface Position {
+  at: number;
+  seq: number;
+}
+
+/** The first page starts after every row: `at` and `rowid` are both well below this. */
+export const FIRST_POSITION: Position = { at: Number.MAX_SAFE_INTEGER, seq: Number.MAX_SAFE_INTEGER };
+
+/** Opaque cursor: the position of the last row a page returned. `at` ties are common
+ * (Meta timestamps are whole seconds), so the rowid breaks them. */
+export function encodeCursor(position: Position): string {
+  return btoa(`${position.at}:${position.seq}`);
+}
+
+export function decodeCursor(cursor: string | undefined): Position {
+  if (cursor === undefined) return FIRST_POSITION;
+  const match = /^(\d+):(\d+)$/.exec(atob(cursor));
+  if (!match) throw new Error("invalid cursor");
+  return { at: Number(match[1]), seq: Number(match[2]) };
 }
 
 function contentJson(fields: MessageContent): string | null {

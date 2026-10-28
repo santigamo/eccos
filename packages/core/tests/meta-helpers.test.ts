@@ -38,7 +38,7 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
     };
     const { requests } = stubFetch();
     const result = await sendMessage(cfg, { to: "12345" });
-    expect(result).toEqual({ ok: true, id: "wamid.test" });
+    expect(result).toEqual({ ok: true, id: "wamid.test", waId: null });
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/phone/messages");
     expect(requests[0]?.init?.headers).toMatchObject({ authorization: "Bearer token" });
@@ -65,6 +65,23 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
     expect(result).toMatchObject({ ok: false, status: 0 });
     expect(String(result.error)).toContain("META_PHONE_NUMBER_ID is not configured");
     expect(requests).toHaveLength(0);
+  });
+
+  it("sendMessage returns the wa_id Meta resolved the recipient to", async () => {
+    const cfg: MetaAppConfig = { META_ACCESS_TOKEN: "token", META_PHONE_NUMBER_ID: "phone" };
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          contacts: [{ input: "5511900000001", wa_id: "551100000001" }],
+          messages: [{ id: "wamid.test" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    expect(await sendMessage(cfg, { to: "5511900000001" })).toEqual({
+      ok: true,
+      id: "wamid.test",
+      waId: "551100000001",
+    });
   });
 
   it("listTemplates accepts a full CoreConfig and reads only Meta fields", async () => {

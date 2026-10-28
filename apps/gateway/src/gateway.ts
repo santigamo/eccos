@@ -4,6 +4,7 @@ import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   ContactRecord,
   ConversationSummary,
+  CursorPage,
   DeliveryRecord,
   EraseByPhoneResult,
   ErasureCounts,
@@ -21,6 +22,9 @@ import type {
 } from "@eccos/gateway-contract";
 import {
   type NewMessage,
+  type Position,
+  decodeCursor,
+  encodeCursor,
   messageFromEvent,
   messageFromOutbound,
   statusFromEvent,
@@ -505,6 +509,9 @@ export class EccosGateway extends DurableObject<Env> {
     return { received: events.length };
   }
 
+  /** `waId` is the number Meta answered the send with (`contacts[0].wa_id`). It is the
+   * key inbound messages use, so the send lands in the same conversation; the typed
+   * `recipient` is the fallback when Meta omits it. */
   logOutbound(
     transportMessageId: string | null,
     recipient: string,
@@ -512,6 +519,7 @@ export class EccosGateway extends DurableObject<Env> {
     status: "sent" | "failed",
     errorJson: string | null,
     phoneNumberId?: string | null,
+    waId?: string | null,
   ): void {
     const now = Date.now();
     const phoneId = phoneNumberId?.trim() || null;
@@ -531,7 +539,7 @@ export class EccosGateway extends DurableObject<Env> {
       if (status !== "sent" || !transportMessageId) return;
       const message = messageFromOutbound({
         id: transportMessageId,
-        to: recipient,
+        waId: waId || recipient,
         request: requestJson,
         phoneNumberId: phoneId,
         at: now,
@@ -539,10 +547,11 @@ export class EccosGateway extends DurableObject<Env> {
       this.storeMessage(message, now);
       // A status callback can overtake the send's own response. It was stored
       // with no message to move, so replay it now that the message exists.
-      for (const row of this.sql
-        .exec(`SELECT payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
-        .toArray()) {
-        this.writeConversation(JSON.parse(row.payload as string), now);
+      for (const row of this.sql.exec(
+        `SELECT payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`,
+        transportMessageId,
+      )) {
+        this.applyStoredEvent(row.payload as string, now);
       }
     });
   }
@@ -720,31 +729,37 @@ export class EccosGateway extends DurableObject<Env> {
 
   /**
    * One row per customer number: its latest message, its size and its contact
-   * name. Newest conversation first, paged by the latest message's timestamp.
+   * name. Newest conversation first. The page cursor is the latest message's
+   * `(at, rowid)`, so conversations whose latest messages share a second still
+   * page without gaps or repeats.
    *
    * Aggregates over the whole `messages` table, because "latest per number"
    * cannot be answered from an index alone. That is fine at single-WABA volumes;
    * a per-conversation summary table is the fix if it stops being fine.
    */
-  listConversations(opts: { limit?: number; before?: number } = {}): ConversationSummary[] {
+  listConversations(opts: { limit?: number; cursor?: string } = {}): CursorPage<ConversationSummary> {
+    const limit = clampPage(opts.limit);
+    const after = decodeCursor(opts.cursor);
     const rows = this.sql
       .exec(
-        `SELECT t.wa_id, t.type, t.text, t.direction, t.at, t.message_count, c.name
+        `SELECT t.wa_id, t.type, t.text, t.direction, t.at, t.seq, t.message_count, c.name
          FROM (
-           SELECT wa_id, type, text, direction, at,
+           SELECT wa_id, type, text, direction, at, rowid AS seq,
                   ROW_NUMBER() OVER (PARTITION BY wa_id ORDER BY at DESC, rowid DESC) AS rn,
                   COUNT(*) OVER (PARTITION BY wa_id) AS message_count
            FROM messages
          ) t
          LEFT JOIN contacts c ON c.wa_id = t.wa_id
-         WHERE t.rn = 1 AND t.at < ?
-         ORDER BY t.at DESC
+         WHERE t.rn = 1 AND (t.at < ? OR (t.at = ? AND t.seq < ?))
+         ORDER BY t.at DESC, t.seq DESC
          LIMIT ?`,
-        opts.before ?? Number.MAX_SAFE_INTEGER,
-        clampPage(opts.limit),
+        after.at,
+        after.at,
+        after.seq,
+        limit + 1,
       )
       .toArray();
-    return rows.map((row) => ({
+    const items = rows.slice(0, limit).map((row) => ({
       waId: row.wa_id as string,
       name: (row.name as string | null) ?? null,
       messageCount: Number(row.message_count),
@@ -755,22 +770,29 @@ export class EccosGateway extends DurableObject<Env> {
         at: Number(row.at),
       },
     }));
+    return { items, nextCursor: rows.length > limit ? encodeCursor(lastPosition(rows, limit)) : null };
   }
 
-  /** One page of a conversation, newest-first in the query and oldest-first in the
-   * result. `before` pages backwards: pass the oldest `at` of the page you have.
-   * `rowid` breaks same-millisecond ties in arrival order. */
-  getConversation(opts: { waId: string; limit?: number; before?: number }): MessageRecord[] {
+  /** One page of a conversation. The query runs newest-first so the cursor walks
+   * backwards; the page is returned oldest-first. `(at, rowid)` orders the page, and
+   * the cursor carries both, so messages sharing a second are never skipped. */
+  getConversation(opts: { waId: string; limit?: number; cursor?: string }): CursorPage<MessageRecord> {
+    const limit = clampPage(opts.limit);
+    const after = decodeCursor(opts.cursor);
     const rows = this.sql
       .exec(
-        `SELECT ${MESSAGE_COLUMNS} FROM messages
-         WHERE wa_id = ? AND at < ? ORDER BY at DESC, rowid DESC LIMIT ?`,
+        `SELECT rowid AS seq, ${MESSAGE_COLUMNS} FROM messages
+         WHERE wa_id = ? AND (at < ? OR (at = ? AND rowid < ?))
+         ORDER BY at DESC, rowid DESC LIMIT ?`,
         waIdOf(opts.waId),
-        opts.before ?? Number.MAX_SAFE_INTEGER,
-        clampPage(opts.limit),
+        after.at,
+        after.at,
+        after.seq,
+        limit + 1,
       )
       .toArray();
-    return rows.map(toMessageRecord).reverse();
+    const items = rows.slice(0, limit).map(toMessageRecord).reverse();
+    return { items, nextCursor: rows.length > limit ? encodeCursor(lastPosition(rows, limit)) : null };
   }
 
   /**
@@ -905,13 +927,13 @@ export class EccosGateway extends DurableObject<Env> {
 
   /**
    * Tenant-scoped data-plane export: every stored inbound event, outbound
-   * message, delivery and conversation message (existing row shapes, newest
-   * first), contact, plus the non-secret connection metadata/config (secrets and internal keys are
-    * filtered — see isPublicConfigKey). Deterministic and JSON-serializable:
-   * fixed key order, tables ordered inbound → outbound → deliveries → config,
-   * rows ordered by id within each table, and no runtime values (timestamps,
-   * ids) beyond what is already stored. Single snapshot: no limit/pagination —
-   * a tenants' full retained history at single-tenant v1 volumes.
+   * message, delivery and conversation message (existing row shapes), contact,
+   * plus the non-secret connection metadata/config (secrets and internal keys
+   * are filtered — see isPublicConfigKey). JSON-serializable, with a fixed key
+   * order: inbound, outbound, deliveries, messages, contacts, config. Inbound,
+   * outbound and deliveries are newest first by id; messages newest first by
+   * `(at, rowid)`; contacts by `wa_id`. Single snapshot: no limit/pagination —
+   * a tenant's full retained history at single-tenant v1 volumes.
    */
   exportData(): GatewayExport {
     return {
@@ -1155,11 +1177,19 @@ export class EccosGateway extends DurableObject<Env> {
       }
 
       // 5. The conversation store: every message to or from the number, and its contact.
+      //    A send is stored under the wa_id Meta answered with, which can differ from
+      //    the typed number, so the collected wamids also name those wa_ids.
+      const waIds = new Set([digits]);
+      for (const wamid of wamids) {
+        const row = this.sql.exec(`SELECT wa_id FROM messages WHERE id = ?`, wamid).toArray()[0];
+        if (row) waIds.add(row.wa_id as string);
+      }
+      const placeholders = [...waIds].map(() => "?").join(", ");
       counts.messagesDeleted = this.sql
-        .exec(`DELETE FROM messages WHERE wa_id = ? RETURNING id`, digits)
+        .exec(`DELETE FROM messages WHERE wa_id IN (${placeholders}) RETURNING id`, ...waIds)
         .toArray().length;
       counts.contactsDeleted = this.sql
-        .exec(`DELETE FROM contacts WHERE wa_id = ? RETURNING wa_id`, digits)
+        .exec(`DELETE FROM contacts WHERE wa_id IN (${placeholders}) RETURNING wa_id`, ...waIds)
         .toArray().length;
     });
     return { ok: true, phone: digits, counts };
@@ -1188,6 +1218,17 @@ export class EccosGateway extends DurableObject<Env> {
       update.id,
       update.status,
     );
+  }
+
+  /** Applies one stored inbound payload to the conversation store. A payload that
+   * does not parse or write is skipped, so an old bad row cannot fail a DO start
+   * or roll back the send that replays it. */
+  private applyStoredEvent(payload: string, at: number): void {
+    try {
+      this.writeConversation(JSON.parse(payload), at);
+    } catch {
+      // Skipped, see above.
+    }
   }
 
   /** Inserts a message once (a duplicate webhook or a re-run backfill is ignored)
@@ -1221,28 +1262,31 @@ export class EccosGateway extends DurableObject<Env> {
   /** Builds the conversation store from the rows retention still holds (at most
    * the content window): outbound sends first, then inbound events in arrival
    * order, so every status lands on the message it names. Runs once, when the
-   * tables are created; exposed so tests can drive it directly. */
+   * tables are created; exposed so tests can drive it directly. Rows are streamed,
+   * and a row that cannot be applied is skipped, so one bad row never fails a start. */
   backfillConversations(): void {
-    for (const row of this.sql
-      .exec(
-        `SELECT transport_message_id, recipient, phone_number_id, request, created_at FROM outbound_messages
-         WHERE status = 'sent' AND transport_message_id IS NOT NULL ORDER BY id`,
-      )
-      .toArray()) {
-      const createdAt = Number(row.created_at);
-      this.storeMessage(
-        messageFromOutbound({
-          id: row.transport_message_id as string,
-          to: row.recipient as string,
-          request: row.request as string,
-          phoneNumberId: (row.phone_number_id as string | null) ?? null,
-          at: createdAt,
-        }),
-        createdAt,
-      );
+    for (const row of this.sql.exec(
+      `SELECT transport_message_id, recipient, phone_number_id, request, created_at FROM outbound_messages
+       WHERE status = 'sent' AND transport_message_id IS NOT NULL ORDER BY id`,
+    )) {
+      try {
+        const createdAt = Number(row.created_at);
+        this.storeMessage(
+          messageFromOutbound({
+            id: row.transport_message_id as string,
+            waId: row.recipient as string,
+            request: row.request as string,
+            phoneNumberId: (row.phone_number_id as string | null) ?? null,
+            at: createdAt,
+          }),
+          createdAt,
+        );
+      } catch {
+        // A row that cannot be stored is skipped, not fatal to the DO start.
+      }
     }
-    for (const row of this.sql.exec(`SELECT payload, received_at FROM inbound_events ORDER BY id`).toArray()) {
-      this.writeConversation(JSON.parse(row.payload as string), Number(row.received_at));
+    for (const row of this.sql.exec(`SELECT payload, received_at FROM inbound_events ORDER BY id`)) {
+      this.applyStoredEvent(row.payload as string, Number(row.received_at));
     }
   }
 
@@ -1664,6 +1708,12 @@ function readEventMoment(payload: string, receivedAt: number): { at: number; err
 
 const MESSAGE_COLUMNS =
   "id, wa_id, direction, origin, type, text, content, at, status, error, target_id, phone_number_id";
+
+/** The `(at, rowid)` of the last row a page keeps: the oldest one, in the newest-first query. */
+function lastPosition(rows: Record<string, unknown>[], limit: number): Position {
+  const row = rows[limit - 1];
+  return { at: Number(row?.at), seq: Number(row?.seq) };
+}
 
 function toMessageRecord(row: Record<string, unknown>): MessageRecord {
   return {

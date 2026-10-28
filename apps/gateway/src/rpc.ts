@@ -23,6 +23,7 @@ import type {
   CreateTemplateFailureCode,
   CreateTemplateInput,
   CreateTemplateResult,
+  CursorPage,
   DeleteTemplateInput,
   DeleteTemplateResult,
   DeliveryListOpts,
@@ -284,12 +285,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   }
 
   // Conversation store (eccos-yqbz.2): the per-number read model over `messages`.
-  async listConversations(opts: ConversationListOpts, accountId: string): Promise<ConversationSummary[]> {
+  async listConversations(opts: ConversationListOpts, accountId: string): Promise<CursorPage<ConversationSummary>> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.listConversations(opts);
   }
 
-  async getConversation(opts: ConversationOpts, accountId: string): Promise<MessageRecord[]> {
+  async getConversation(opts: ConversationOpts, accountId: string): Promise<CursorPage<MessageRecord>> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.getConversation(opts);
   }
@@ -699,6 +700,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       "sent",
       null,
       input.phoneNumberId,
+      result.waId,
     );
     return { ok: true, messageId: result.id };
   }

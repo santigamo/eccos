@@ -165,6 +165,13 @@ export interface ConversationSummary {
   lastMessage: { type: string; text: string | null; direction: MessageDirection; at: number };
 }
 
+/** One page of a conversation read. Pass `nextCursor` back as `cursor` for the next
+ * page; null means there is no further page. The cursor is opaque. */
+export interface CursorPage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
 /**
  * Which failed deliveries a bulk retry re-enqueues: those ENQUEUED inside
  * [from, to] (epoch ms, both inclusive). The window is always explicit because
@@ -251,11 +258,11 @@ export type InboundListOpts = ListOpts & { type?: string; deliveryStatus?: strin
  * META answered, never a forward state. */
 export type OutboundListOpts = ListOpts & { status?: string };
 
-/** `before` is an exclusive epoch-ms cursor on the last message's timestamp. */
-export type ConversationListOpts = ListOpts;
+/** `cursor` is the `nextCursor` of the previous page; omit it for the first page. */
+export type ConversationListOpts = Omit<ListOpts, "before"> & { cursor?: string };
 
 /** `waId` is the customer's number; digits or formatted, the gateway normalizes it. */
-export type ConversationOpts = ListOpts & { waId: string };
+export type ConversationOpts = ConversationListOpts & { waId: string };
 
 /**
  * The newest forwarding attempt on a WABA — the answer to the only question the
@@ -823,9 +830,9 @@ export interface GatewayApi {
   listOutbound(opts: OutboundListOpts, accountId: string): Promise<OutboundRow[]>;
   // Conversation store (eccos-yqbz.2): read models over `messages`, account-scoped.
   /** Conversations of one WABA, most recent first. */
-  listConversations(opts: ConversationListOpts, accountId: string): Promise<ConversationSummary[]>;
-  /** Messages with one customer number, oldest first within the page. */
-  getConversation(opts: ConversationOpts, accountId: string): Promise<MessageRecord[]>;
+  listConversations(opts: ConversationListOpts, accountId: string): Promise<CursorPage<ConversationSummary>>;
+  /** Messages with one customer number, oldest first within a page; `nextCursor` leads to older messages. */
+  getConversation(opts: ConversationOpts, accountId: string): Promise<CursorPage<MessageRecord>>;
   listDeliveries(opts: DeliveryListOpts, accountId: string): Promise<DeliveryRecord[]>;
   getDelivery(id: number, wabaId: string, accountId: string): Promise<DeliveryRecord | null>;
   retryDelivery(
