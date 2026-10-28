@@ -50,6 +50,16 @@ export type SensitiveAction =
    */
   | "template_test_send"
   /**
+   * One free-text message sent from the conversation composer.
+   *
+   * Same rule as `template_test_send`, and for the same reason: the body is
+   * message content and the recipient is a phone number, and neither reaches
+   * an audit line, because audit logs are not per-phone erasable. The record
+   * carries wabaId, phoneNumberId, the returned messageId, and the failure code
+   * as `detail`.
+   */
+  | "text_send"
+  /**
    * One message template authored from the console's "New template" sheet.
    *
    * NEVER carries the body text or any example value. Both are message

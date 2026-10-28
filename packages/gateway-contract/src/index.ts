@@ -730,6 +730,41 @@ export type SendTemplateTestResult =
   | { ok: false; code: SendTestFailureCode; detail: string | null };
 
 /**
+ * One free-text message from the console's conversation composer.
+ *
+ * Only ever sent inside the customer service window (24 h after their last
+ * inbound message); outside it Meta refuses with 131047 and the console offers
+ * a template instead. The gateway builds the Meta body itself, a plain `text`
+ * message and nothing else, so no caller can smuggle another message type
+ * through this door.
+ */
+export interface SendTextInput {
+  wabaId: string;
+  phoneNumberId: string;
+  /** Digits only; the console normalizes before it ever reaches the binding. */
+  to: string;
+  /** 1 to 4096 characters, Meta's own body ceiling. */
+  text: string;
+}
+
+/** Closed failure vocabulary for a free-text send. Same design as {@link SendTestFailureCode}. */
+export type SendTextFailureCode =
+  /** Eccos' own limiter refused; Meta was never called. */
+  | "rate_limited"
+  /** The requested phone is not registered on the WABA. */
+  | "no_phone"
+  /** Graph 131047 — the 24-hour customer service window is closed; only a template can be sent. */
+  | "window_closed"
+  /** Graph 131030 — the Cloud API test number's recipient allowlist. */
+  | "recipient_not_allowlisted"
+  /** Anything else; `detail` carries Meta's own message text. */
+  | "graph";
+
+export type SendTextResult =
+  | { ok: true; messageId: string }
+  | { ok: false; code: SendTextFailureCode; detail: string | null };
+
+/**
  * One console-authored message template (the "New template" sheet).
  *
  * Narrow for the same reason as {@link SendTemplateTestInput}: the gateway
@@ -885,6 +920,12 @@ export interface GatewayApi {
    * session must never hold a bigger send budget than a stolen API key.
    */
   sendTemplateTest(input: SendTemplateTestInput, accountId: string): Promise<SendTemplateTestResult>;
+  /**
+   * Send one free-text message from the conversation composer. Same ownership,
+   * fail-closed, rate-limit and audit-trail rules as {@link sendTemplateTest};
+   * the window itself is Meta's to enforce, surfaced as `window_closed`.
+   */
+  sendText(input: SendTextInput, accountId: string): Promise<SendTextResult>;
   /**
    * Create one message template on the WABA ("New template").
    *

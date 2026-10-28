@@ -363,7 +363,7 @@ describe("the conversations page", () => {
 
   test("with a number selected, the thread shows and the list steps aside on a phone", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: "Cliente de prueba" } });
+    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: "Cliente de prueba", reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     // The mobile contract: a selected thread hides the list below md, and the
     // thread takes the whole row. Desktop shows both.
@@ -376,7 +376,7 @@ describe("the conversations page", () => {
 
   test("the gateway's oldest-first page is read as it arrives: the first message on top, the newest at the bottom", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: null } });
+    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     const first = html.indexOf("Hola, ¿tenéis cita mañana?");
     const reply = html.indexOf("Sí, a las 10:30.");
@@ -388,14 +388,14 @@ describe("the conversations page", () => {
 
   test("a thread whose number is past the list's first page is titled by its name", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: "Cliente de prueba" } });
+    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: "Cliente de prueba", reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     expect(html).toContain('<h2 class="truncate text-base font-medium text-foreground">Cliente de prueba</h2>');
   });
 
   test("a number nobody named is titled with its digits, written as a number", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: null } });
+    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     expect(html).toContain(`>+${CUSTOMER}</h2>`);
     expect(html).not.toContain(`++${CUSTOMER}`);
@@ -466,5 +466,58 @@ describe("the conversations page", () => {
     expect(html).toContain("Conversations");
     expect(html).toContain('aria-busy="true"');
     expectDesignContract(html);
+  });
+});
+
+describe("the reply box on a thread", () => {
+  /** A thread whose customer last wrote 20 h 30 min ago: 3 h 30 min of window left. */
+  const OPEN_AT = () => Date.now() - (20 * 3600 + 30 * 60) * 1000;
+  const DAY_AND_A_BIT_AGO = () => Date.now() - 25 * 3600 * 1000;
+
+  function renderThread(canSend: boolean | undefined, lastInboundAt: number | null) {
+    searchParams = { wabaId: WABA, waId: CUSTOMER };
+    loaderData = {
+      conversations: { ok: true, data: page([SUMMARY]) },
+      thread: {
+        ok: true,
+        data: { page: page(THREAD, "cursor-2"), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt } },
+      },
+      canSend,
+    };
+    rootData = readyRoot;
+    return renderToStaticMarkup(<Route.component />);
+  }
+
+  test("inside the window, a member gets the window in words and a reply box, and Send", () => {
+    const html = renderThread(true, OPEN_AT());
+    expect(html).toContain("Window open, 3 h left");
+    expect(html).toContain("<textarea");
+    expect(html).toContain(">Send</button>");
+    expect(html).not.toContain("Send a template");
+    expectDesignContract(html);
+  });
+
+  test("outside the window the box gives way to the template path, and says why", () => {
+    const html = renderThread(true, DAY_AND_A_BIT_AGO());
+    expect(html).toContain("Window closed: templates only");
+    expect(html).toContain("Send a template");
+    expect(html).not.toContain("<textarea");
+    expectDesignContract(html);
+  });
+
+  test("a customer who never wrote is the same closed state, not an open one", () => {
+    const html = renderThread(true, null);
+    expect(html).toContain("Window closed: templates only");
+    expect(html).not.toContain("<textarea");
+  });
+
+  test("a viewer sees the thread and no composer at all, whatever the window", () => {
+    for (const canSend of [false, undefined]) {
+      const html = renderThread(canSend, OPEN_AT());
+      expect(html).toContain("Hola, ¿tenéis cita mañana?");
+      expect(html).not.toContain("<textarea");
+      expect(html).not.toContain("Window open");
+      expect(html).not.toContain("Window closed");
+    }
   });
 });

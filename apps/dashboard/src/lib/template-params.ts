@@ -47,6 +47,21 @@ export interface TemplateRow {
   components?: unknown;
 }
 
+/** One row of the templates list: what the list shows, plus what `analyzeTemplate` reads. */
+export interface TemplateListRow extends TemplateRow {
+  id?: string;
+  name?: string;
+  language?: string;
+  status?: string;
+}
+
+/** The rows of a `listTemplates` payload (`{ data: [...] }`); any other shape has none. */
+export function templateRowsOf(payload: unknown): TemplateListRow[] {
+  return typeof payload === "object" && payload !== null && "data" in payload && Array.isArray(payload.data)
+    ? (payload.data as TemplateListRow[])
+    : [];
+}
+
 interface Component {
   type?: string;
   format?: string;

@@ -1,4 +1,4 @@
-import type { ConversationSummary, MessageRecord } from "../server/gateway";
+import type { ConversationSummary, CursorPage, MessageRecord } from "../server/gateway";
 import { normalizeSearchWabaId } from "./search";
 
 /**
@@ -253,4 +253,99 @@ export function relativeTime(at: number, now: number): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days} d ago`;
   return new Date(at).toISOString().slice(0, 10);
+}
+
+/** Meta's customer service window: free text only within this long after the customer's last message. */
+export const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** How many older pages a thread is read back through to find the customer's newest message. */
+export const INBOUND_LOOKUP_PAGES = 4;
+
+export interface ServiceWindow {
+  open: boolean;
+  /** The window's state in a few words, as the composer shows it. */
+  label: string;
+}
+
+/**
+ * Whether free text may still be sent, and how long it has. `lastInboundAt` is
+ * the customer's newest inbound message, or null when none was found: with no
+ * such message there is no window to be open.
+ */
+export function serviceWindowOf(lastInboundAt: number | null, now: number): ServiceWindow {
+  if (lastInboundAt === null || now - lastInboundAt >= SERVICE_WINDOW_MS) {
+    return { open: false, label: "Window closed: templates only" };
+  }
+  const left = SERVICE_WINDOW_MS - (now - lastInboundAt);
+  const hours = Math.floor(left / 3_600_000);
+  const remaining = hours >= 1 ? `${hours} h` : `${Math.max(1, Math.ceil(left / 60_000))} min`;
+  return { open: true, label: `Window open, ${remaining} left` };
+}
+
+/**
+ * The window the composer shows. A free-text send Meta refused as closed shuts
+ * the window for the inbound it was refused on, until the customer writes again.
+ */
+export function composerWindowOf(lastInboundAt: number | null, refusedAt: number | null, now: number): ServiceWindow {
+  const refused = refusedAt !== null && refusedAt === lastInboundAt;
+  return serviceWindowOf(refused ? null : lastInboundAt, now);
+}
+
+/** Whether a stored message is one the customer sent that opens or resets their window. System notices (Meta's own, such as a number change) do not. */
+export function opensWindow(message: MessageRecord): boolean {
+  return message.direction === "in" && message.type !== "system";
+}
+
+export interface ReplyLine {
+  /** The number the reply goes out from; null when the thread names none. */
+  phoneNumberId: string | null;
+  /** The newest window-opening inbound on that number, or null when none is inside the window. */
+  lastInboundAt: number | null;
+}
+
+/**
+ * Where a reply goes out from, and whether its window is open. The window is
+ * per (business number, customer), so the reply uses the number of the
+ * customer's newest window-opening inbound, and that inbound is the only one
+ * that can open the window on it. The thread's newest page is read first, then
+ * older ones, until such a message turns up, the page reaches past the window
+ * (nothing older could be inside it), or the history runs out. With none found
+ * the reply uses the thread's newest number and no window is open.
+ */
+export async function replyLineOf(
+  first: CursorPage<MessageRecord>,
+  fetchOlder: (cursor: string) => Promise<CursorPage<MessageRecord> | null>,
+  now: number,
+): Promise<ReplyLine> {
+  let page = first;
+  for (let read = 1; ; read++) {
+    // Pages are oldest first, so the newest inbound is the last one.
+    const newest = [...page.items].reverse().find(opensWindow);
+    if (newest) {
+      return newest.phoneNumberId
+        ? { phoneNumberId: newest.phoneNumberId, lastInboundAt: newest.at }
+        : { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
+    }
+    const oldest = page.items[0];
+    if (read >= INBOUND_LOOKUP_PAGES || !page.nextCursor || !oldest || now - oldest.at >= SERVICE_WINDOW_MS) {
+      return { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
+    }
+    const older = await fetchOlder(page.nextCursor);
+    if (!older) return { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
+    page = older;
+  }
+}
+
+/** Enter sends, Shift+Enter is a newline, and an Enter that ends an IME composition is left to the input. */
+export function isSendKey(event: { key: string; shiftKey: boolean; isComposing: boolean }): boolean {
+  return event.key === "Enter" && !event.shiftKey && !event.isComposing;
+}
+
+/** The number a thread is on: the newest message that names one. Replies go out from it. */
+export function threadPhoneNumberId(items: MessageRecord[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const phoneNumberId = items[i]?.phoneNumberId;
+    if (phoneNumberId) return phoneNumberId;
+  }
+  return null;
 }
