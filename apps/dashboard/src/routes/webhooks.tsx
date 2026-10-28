@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { ReactNode } from "react";
 import { getSubscriberConfig } from "../server/gateway";
 import type { OperatorCounts, Result, SubscriberConfig } from "../server/gateway";
@@ -110,8 +111,9 @@ function WebhooksPage() {
             config={config}
             wabaId={selectedWabaId}
             // The route owns the data, so re-reading it after a write is the
-            // route's job — which is also what keeps the panel router-free.
-            onSaved={() => void router.invalidate()}
+            // route's job — which is also what keeps the panel router-free. The root
+            // is included: it carries the forwarding flag the setup checklist reads.
+            onSaved={() => void invalidateRoutes(router, "/webhooks", rootRouteId)}
           />
           {/* The model, stated plainly and in the functional register. It is
               the question every operator asks next ("per number, or per

@@ -76,9 +76,31 @@ describe("router reuse policy", () => {
     }
   });
 
-  test("the root route is never given a staleTime: scope state is re-read on every navigation", async () => {
+  test("the root is reused for 30s, keyed by wabaId, with no shouldReload", async () => {
     const source = await Bun.file(new URL("../src/routes/__root.tsx", import.meta.url)).text();
-    expect(source).not.toContain("staleTime");
+    expect(source).toContain("staleTime: 30_000");
+    expect(source).toContain("preloadStaleTime: 30_000");
+    expect(source).toContain("loaderDeps: ({ search }) => ({ wabaId: search.wabaId })");
+    expect(source).not.toContain("shouldReload");
+  });
+
+  test("the router carries the per-instance bootstrap in its context", () => {
+    expect(routerSource).toContain("context: { bootstrap: createBootstrap(");
+  });
+
+  test("no page invalidates the whole tree: they go through lib/invalidate", async () => {
+    for (const file of [
+      "hooks/use-live-refresh.ts",
+      "routes/settings.tsx",
+      "routes/webhooks.tsx",
+      "routes/numbers.tsx",
+      "routes/templates.tsx",
+      "routes/deliveries.tsx",
+      "components/conversations/conversation-composer.tsx",
+    ]) {
+      const source = await Bun.file(new URL(`../src/${file}`, import.meta.url)).text();
+      expect(source).not.toMatch(/router\.invalidate\(\)/);
+    }
   });
 });
 

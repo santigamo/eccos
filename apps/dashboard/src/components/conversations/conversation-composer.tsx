@@ -1,4 +1,5 @@
 import { useRouter } from "@tanstack/react-router";
+import { invalidatePage } from "../../lib/invalidate";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -72,10 +73,10 @@ export function ConversationComposer({ lastInboundAt, now, ...thread }: Conversa
   const [refusedAt, setRefusedAt] = useState<number | null>(null);
   const clock = useWindowClock(lastInboundAt, now);
   const service = composerWindowOf(lastInboundAt, refusedAt, clock);
-  const onSent = () => void router.invalidate();
+  const onSent = () => void invalidatePage(router);
   const onWindowClosed = () => {
     setRefusedAt(lastInboundAt);
-    void router.invalidate();
+    void invalidatePage(router);
   };
   if (!service.open) {
     return <TemplateOnlyReply label={service.label} onSent={onSent} {...thread} />;

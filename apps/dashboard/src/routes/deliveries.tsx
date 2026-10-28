@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { invalidatePage } from "../lib/invalidate";
 import { createColumnHelper } from "@tanstack/react-table";
 
 import { Button } from "@/components/ui/button";
@@ -266,7 +267,7 @@ function DeliveriesPage() {
         setRetryError(retry.error);
         return;
       }
-      await router.invalidate();
+      await invalidatePage(router);
     } catch (error) {
       // A THROW, not a `{ ok: false }`: the server function's own validator and
       // the network are the two things that raise here, and without this the
@@ -448,7 +449,7 @@ function DeliveriesPage() {
           open={retryWindowOpen}
           onOpenChange={setRetryWindowOpen}
           wabaId={selectedWabaId}
-          onRetried={() => router.invalidate()}
+          onRetried={() => invalidatePage(router)}
         />
       ) : null}
     </Page>
