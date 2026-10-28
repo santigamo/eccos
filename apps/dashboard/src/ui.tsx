@@ -279,7 +279,7 @@ export function FactCell({
  */
 export function Unreachable({ error }: { error: string }) {
   return (
-    <Frame variant="default" spacing="sm" className="max-w-2xl">
+    <Frame variant="default" spacing="sm">
       <FramePanel fit>
         <FrameHeader>
           <FrameTitle>Gateway unreachable</FrameTitle>

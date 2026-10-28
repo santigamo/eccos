@@ -118,7 +118,7 @@ export function ForwardingTargetPanel({
   const hasTarget = config.url !== null;
 
   return (
-    <Frame variant="default" spacing="lg" className="max-w-xl">
+    <Frame variant="default" spacing="lg">
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className={MACHINE_CLASS}>Forwarding target</FrameTitle>

@@ -39,7 +39,7 @@ export function FailureView({ failure }: { failure: Failure }) {
   }
   const { title, detail } = failureCopy(failure);
   return (
-    <Frame variant="default" spacing="lg" className="max-w-2xl">
+    <Frame variant="default" spacing="lg">
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-sm font-semibold">{title}</FrameTitle>

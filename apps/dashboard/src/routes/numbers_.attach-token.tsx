@@ -55,9 +55,7 @@ export const Route = createFileRoute("/numbers_/attach-token")({
 export function AttachTokenPage() {
   return (
     <Page title="Attach by token" kicker="Connection">
-      <div className="flex max-w-xl flex-col gap-4">
-        <TokenConnectPanel />
-      </div>
+      <TokenConnectPanel />
     </Page>
   );
 }

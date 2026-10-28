@@ -99,8 +99,8 @@ function WebhooksPage() {
         selectedWabaId={selectedWabaId}
       />
 
-      <div className="mt-6 flex flex-col gap-6">
-        <div className="flex max-w-xl flex-col gap-2">
+      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
+        <div className={`flex flex-col gap-2 ${ready ? "" : "lg:col-span-2"}`}>
           <ForwardingTargetPanel
             config={config}
             wabaId={selectedWabaId}
@@ -129,7 +129,9 @@ function WebhooksPage() {
           />
         ) : null}
 
-        <ReceiverReference />
+        <div className="lg:col-span-2">
+          <ReceiverReference />
+        </div>
       </div>
     </Page>
   );
@@ -264,7 +266,7 @@ export function FromMetaPanel({
   wabaId?: string;
 }) {
   return (
-    <Frame variant="default" spacing="lg" className="max-w-xl">
+    <Frame variant="default" spacing="lg">
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -310,7 +312,7 @@ export function FromMetaPanel({
  */
 export function ReceiverReference() {
   return (
-    <Frame variant="default" spacing="lg" className="max-w-xl">
+    <Frame variant="default" spacing="lg">
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
