@@ -363,7 +363,7 @@ describe("the conversations page", () => {
 
   test("with a number selected, the thread shows and the list steps aside on a phone", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: "Cliente de prueba" } });
+    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: "Cliente de prueba", reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     // The mobile contract: a selected thread hides the list below md, and the
     // thread takes the whole row. Desktop shows both.
@@ -376,7 +376,7 @@ describe("the conversations page", () => {
 
   test("the gateway's oldest-first page is read as it arrives: the first message on top, the newest at the bottom", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: null } });
+    ready({ ok: true, data: page([SUMMARY]) }, { ok: true, data: { page: page(THREAD, "cursor-2"), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     const first = html.indexOf("Hola, ¿tenéis cita mañana?");
     const reply = html.indexOf("Sí, a las 10:30.");
@@ -388,14 +388,14 @@ describe("the conversations page", () => {
 
   test("a thread whose number is past the list's first page is titled by its name", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: "Cliente de prueba" } });
+    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: "Cliente de prueba", reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     expect(html).toContain('<h2 class="truncate text-base font-medium text-foreground">Cliente de prueba</h2>');
   });
 
   test("a number nobody named is titled with its digits, written as a number", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: null } });
+    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
     const html = renderToStaticMarkup(<Route.component />);
     expect(html).toContain(`>+${CUSTOMER}</h2>`);
     expect(html).not.toContain(`++${CUSTOMER}`);
@@ -478,7 +478,10 @@ describe("the reply box on a thread", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
     loaderData = {
       conversations: { ok: true, data: page([SUMMARY]) },
-      thread: { ok: true, data: { page: page(THREAD, "cursor-2"), name: null, lastInboundAt } },
+      thread: {
+        ok: true,
+        data: { page: page(THREAD, "cursor-2"), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt } },
+      },
       canSend,
     };
     rootData = readyRoot;

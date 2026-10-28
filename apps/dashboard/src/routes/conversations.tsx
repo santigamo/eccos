@@ -16,9 +16,9 @@ import { failureCopy, loaderFailure } from "../lib/failure";
 import {
   conversationsSearch,
   conversationTitle,
-  lastInboundAt,
+  replyLineOf,
   threadEntries,
-  threadPhoneNumberId,
+  type ReplyLine,
 } from "../lib/conversations";
 import { canSendMessages, getConversation, listConversations } from "../server/gateway";
 import type { ConversationSummary, CursorPage, Failure, MessageRecord } from "../server/gateway";
@@ -61,10 +61,10 @@ export const Route = createFileRoute("/conversations")({
     const waId = deps.waId;
     if (!messages?.ok || !waId) return { conversations, thread: messages?.ok ? null : messages, canSend };
     const name = conversations.ok ? await nameOf(deps.wabaId, waId, conversations.data) : null;
-    const newest = await lastInboundAt(messages.data, (cursor) => olderThread(deps.wabaId, waId, cursor), Date.now());
+    const reply = await replyLineOf(messages.data, (cursor) => olderThread(deps.wabaId, waId, cursor), Date.now());
     return {
       conversations,
-      thread: { ok: true as const, data: { page: messages.data, name, lastInboundAt: newest } },
+      thread: { ok: true as const, data: { page: messages.data, name, reply } },
       canSend,
     };
   },
@@ -162,7 +162,7 @@ function ConversationsPage() {
               wabaId={selectedWabaId}
               waId={waId}
               title={conversationTitle(waId, thread.data.name)}
-              composer={composerFor(loaded.canSend, selectedWabaId, waId, thread.data, phones, now)}
+              composer={composerFor(loaded.canSend, selectedWabaId, waId, thread.data.reply, phones, now)}
             />
           ) : (
             <div className="p-4">
@@ -220,17 +220,18 @@ function ConversationListPane({
 
 /**
  * The reply box for a thread, or nothing: a viewer gets no composer, and a
- * thread with no number to reply from has nothing to send through.
+ * thread with no number to reply from has nothing to send through. The number
+ * is the one the window was read on; the selected number is the last resort.
  */
 function composerFor(
   canSend: boolean,
   wabaId: string | undefined,
   waId: string,
-  thread: { page: CursorPage<MessageRecord>; lastInboundAt: number | null },
+  reply: ReplyLine,
   phones: { phoneNumberId: string; displayPhoneNumber: string }[],
   now: number,
 ): ReactNode {
-  const phoneNumberId = threadPhoneNumberId(thread.page.items) ?? phones[0]?.phoneNumberId;
+  const phoneNumberId = reply.phoneNumberId ?? phones[0]?.phoneNumberId;
   if (!canSend || !wabaId || !phoneNumberId) return null;
   return (
     <ConversationComposer
@@ -238,7 +239,7 @@ function composerFor(
       waId={waId}
       phoneNumberId={phoneNumberId}
       phones={phones}
-      lastInboundAt={thread.lastInboundAt}
+      lastInboundAt={reply.lastInboundAt}
       now={now}
     />
   );

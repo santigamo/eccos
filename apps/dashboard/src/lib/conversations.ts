@@ -283,27 +283,55 @@ export function serviceWindowOf(lastInboundAt: number | null, now: number): Serv
 }
 
 /**
- * The `at` of the customer's newest inbound message. The thread's newest page
- * is read first, then older ones, until an inbound message turns up, the page
- * reaches past the window (nothing older could be inside it), or the history
- * runs out. Null means none was found inside the window.
+ * The window the composer shows. A free-text send Meta refused as closed shuts
+ * the window for the inbound it was refused on, until the customer writes again.
  */
-export async function lastInboundAt(
+export function composerWindowOf(lastInboundAt: number | null, refusedAt: number | null, now: number): ServiceWindow {
+  const refused = refusedAt !== null && refusedAt === lastInboundAt;
+  return serviceWindowOf(refused ? null : lastInboundAt, now);
+}
+
+/** Whether a stored message is one the customer sent that opens or resets their window. System notices (Meta's own, such as a number change) do not. */
+export function opensWindow(message: MessageRecord): boolean {
+  return message.direction === "in" && message.type !== "system";
+}
+
+export interface ReplyLine {
+  /** The number the reply goes out from; null when the thread names none. */
+  phoneNumberId: string | null;
+  /** The newest window-opening inbound on that number, or null when none is inside the window. */
+  lastInboundAt: number | null;
+}
+
+/**
+ * Where a reply goes out from, and whether its window is open. The window is
+ * per (business number, customer), so the reply uses the number of the
+ * customer's newest window-opening inbound, and that inbound is the only one
+ * that can open the window on it. The thread's newest page is read first, then
+ * older ones, until such a message turns up, the page reaches past the window
+ * (nothing older could be inside it), or the history runs out. With none found
+ * the reply uses the thread's newest number and no window is open.
+ */
+export async function replyLineOf(
   first: CursorPage<MessageRecord>,
   fetchOlder: (cursor: string) => Promise<CursorPage<MessageRecord> | null>,
   now: number,
-): Promise<number | null> {
+): Promise<ReplyLine> {
   let page = first;
   for (let read = 1; ; read++) {
     // Pages are oldest first, so the newest inbound is the last one.
-    const newest = [...page.items].reverse().find((message) => message.direction === "in");
-    if (newest) return newest.at;
+    const newest = [...page.items].reverse().find(opensWindow);
+    if (newest) {
+      return newest.phoneNumberId
+        ? { phoneNumberId: newest.phoneNumberId, lastInboundAt: newest.at }
+        : { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
+    }
     const oldest = page.items[0];
     if (read >= INBOUND_LOOKUP_PAGES || !page.nextCursor || !oldest || now - oldest.at >= SERVICE_WINDOW_MS) {
-      return null;
+      return { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
     }
     const older = await fetchOlder(page.nextCursor);
-    if (!older) return null;
+    if (!older) return { phoneNumberId: threadPhoneNumberId(first.items), lastInboundAt: null };
     page = older;
   }
 }

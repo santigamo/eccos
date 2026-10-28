@@ -150,7 +150,7 @@ function TemplateChoice({ wabaId, waId, phoneNumberId, phones, onSent }: SendTem
           <button
             type="button"
             onClick={() => setChosen(row)}
-            className="flex w-full items-center justify-between gap-3 border border-(--line-strong) bg-(--ghost-fill) px-3 py-2 text-left hover:border-(--ghost-edge-hover) cursor-pointer"
+            className="flex w-full items-center justify-between gap-3 border border-(--line-strong) bg-(--ghost-fill) px-3 py-2 text-left outline-none hover:border-(--ghost-edge-hover) focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 cursor-pointer"
           >
             <span className="font-mono text-xs break-all text-foreground">{row.name}</span>
             <span className="shrink-0 text-xs text-muted-foreground">{row.language}</span>

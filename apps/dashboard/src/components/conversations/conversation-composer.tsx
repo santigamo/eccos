@@ -1,9 +1,9 @@
 import { useRouter } from "@tanstack/react-router";
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { isSendKey, serviceWindowOf } from "../../lib/conversations";
+import { composerWindowOf, isSendKey, SERVICE_WINDOW_MS } from "../../lib/conversations";
 import { failureCopy, sendTextFailureCopy } from "../../lib/failure";
 import type { Result, SendTextResult } from "../../server/gateway";
 import { sendText } from "../../server/gateway";
@@ -17,7 +17,7 @@ type SendText = (input: {
 
 export type ReplyOutcome =
   | { sent: true }
-  | { sent: false; title: string; detail: string; secondary: string | null };
+  | { sent: false; title: string; detail: string; secondary: string | null; windowClosed: boolean };
 
 /**
  * One reply, sent through `send`. A boundary failure keeps its own copy; a
@@ -33,7 +33,7 @@ export async function submitReply(
   const result = await send({ data: { wabaId, phoneNumberId, to: waId, text } });
   if (!result.ok) {
     const copy = failureCopy(result);
-    return { sent: false, title: copy.title, detail: copy.detail, secondary: null };
+    return { sent: false, title: copy.title, detail: copy.detail, secondary: null, windowClosed: false };
   }
   if (result.data.ok) return { sent: true };
   const copy = sendTextFailureCopy(result.data.code, result.data.detail);
@@ -43,6 +43,7 @@ export async function submitReply(
     title: copy.title,
     detail: copy.detail,
     secondary: explained ? result.data.detail : null,
+    windowClosed: result.data.code === "window_closed",
   };
 }
 
@@ -68,12 +69,35 @@ export interface ConversationComposerProps {
  */
 export function ConversationComposer({ lastInboundAt, now, ...thread }: ConversationComposerProps) {
   const router = useRouter();
-  const service = serviceWindowOf(lastInboundAt, now);
+  const [refusedAt, setRefusedAt] = useState<number | null>(null);
+  const clock = useWindowClock(lastInboundAt, now);
+  const service = composerWindowOf(lastInboundAt, refusedAt, clock);
   const onSent = () => void router.invalidate();
+  const onWindowClosed = () => {
+    setRefusedAt(lastInboundAt);
+    void router.invalidate();
+  };
   if (!service.open) {
     return <TemplateOnlyReply label={service.label} onSent={onSent} {...thread} />;
   }
-  return <FreeTextReply label={service.label} onSent={onSent} {...thread} />;
+  return <FreeTextReply label={service.label} onSent={onSent} onWindowClosed={onWindowClosed} {...thread} />;
+}
+
+/**
+ * The time as the window clock reads it: `now` from the page, moved on by a
+ * timer at the window's end, so an open window closes while the page is open.
+ */
+function useWindowClock(lastInboundAt: number | null, now: number): number {
+  const [expired, setExpired] = useState(now);
+  useEffect(() => {
+    if (lastInboundAt === null) return;
+    const left = lastInboundAt + SERVICE_WINDOW_MS - Date.now();
+    if (left <= 0) return;
+    // A little slack, so the timer never fires just short of the window's end.
+    const timer = setTimeout(() => setExpired(Date.now()), left + 1000);
+    return () => clearTimeout(timer);
+  }, [lastInboundAt]);
+  return Math.max(now, expired);
 }
 
 function FreeTextReply({
@@ -82,10 +106,16 @@ function FreeTextReply({
   waId,
   phoneNumberId,
   onSent,
-}: Pick<ConversationComposerProps, "wabaId" | "waId" | "phoneNumberId"> & { label: string; onSent: () => void }) {
+  onWindowClosed,
+}: Pick<ConversationComposerProps, "wabaId" | "waId" | "phoneNumberId"> & {
+  label: string;
+  onSent: () => void;
+  onWindowClosed: () => void;
+}) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<Extract<ReplyOutcome, { sent: false }> | null>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
 
   async function send() {
     const body = text.trim();
@@ -97,11 +127,15 @@ function FreeTextReply({
       if (outcome.sent) {
         setText("");
         onSent();
+      } else if (outcome.windowClosed) {
+        onWindowClosed();
       } else {
         setNotice(outcome);
       }
     } finally {
       setSending(false);
+      // The button this send was made from is disabled while it runs, which drops focus; the reply box takes it back.
+      textarea.current?.focus();
     }
   }
 
@@ -129,8 +163,9 @@ function FreeTextReply({
       </label>
       <Textarea
         id="conversation-reply"
+        ref={textarea}
         value={text}
-        disabled={sending}
+        readOnly={sending}
         placeholder="Write a reply"
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}

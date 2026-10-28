@@ -16,8 +16,15 @@ import type { CursorPage, MessageRecord } from "../src/server/gateway";
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { submitReply } = await import("../src/components/conversations/conversation-composer");
-const { INBOUND_LOOKUP_PAGES, SERVICE_WINDOW_MS, isSendKey, lastInboundAt, serviceWindowOf, threadPhoneNumberId } =
-  await import("../src/lib/conversations");
+const {
+  INBOUND_LOOKUP_PAGES,
+  SERVICE_WINDOW_MS,
+  composerWindowOf,
+  isSendKey,
+  replyLineOf,
+  serviceWindowOf,
+  threadPhoneNumberId,
+} = await import("../src/lib/conversations");
 
 const HOUR = 3_600_000;
 const NOW = 1_700_000_000_000;
@@ -71,35 +78,83 @@ describe("serviceWindowOf", () => {
   });
 });
 
-describe("lastInboundAt", () => {
-  test("reads the newest page first: the customer's last inbound message is the one in it", async () => {
-    const newest = page([
-      message({ id: "in-old", at: NOW - 2 * HOUR }),
-      message({ id: "out", direction: "out", at: NOW - HOUR }),
-      message({ id: "in-new", at: NOW - 30 * 60_000 }),
-      message({ id: "out-new", direction: "out", at: NOW - 10 * 60_000 }),
-    ]);
-    const fetchOlder = async () => {
-      throw new Error("the newest page had an inbound message, so no older page is read");
-    };
-    expect(await lastInboundAt(newest, fetchOlder, NOW)).toBe(NOW - 30 * 60_000);
+describe("composerWindowOf", () => {
+  test("a refused free-text send closes the window for the inbound it was refused on", () => {
+    expect(composerWindowOf(NOW - HOUR, NOW - HOUR, NOW).open).toBe(false);
   });
 
-  test("walks back through older pages when the newest page is all outbound", async () => {
-    // Twenty replies since the customer last wrote: the window is open, and
-    // the page the thread opened on has no inbound message in it.
-    const newest = page(
-      Array.from({ length: 3 }, (_, i) => message({ id: `out-${i}`, direction: "out", at: NOW - (i + 1) * 60_000 })).reverse(),
-      "cursor-1",
-    );
-    const older = page([message({ id: "in-older", at: NOW - 5 * HOUR })]);
-    const cursors: string[] = [];
-    const fetchOlder = async (cursor: string) => {
-      cursors.push(cursor);
-      return older;
-    };
-    expect(await lastInboundAt(newest, fetchOlder, NOW)).toBe(NOW - 5 * HOUR);
-    expect(cursors).toEqual(["cursor-1"]);
+  test("the customer writing again reopens the window after a refusal", () => {
+    expect(composerWindowOf(NOW - HOUR, NOW - 2 * HOUR, NOW).open).toBe(true);
+  });
+
+  test("an open window closes once its 24 hours have passed, with no refusal at all", () => {
+    expect(composerWindowOf(NOW - SERVICE_WINDOW_MS, null, NOW).open).toBe(false);
+    expect(composerWindowOf(NOW - HOUR, null, NOW + SERVICE_WINDOW_MS).open).toBe(false);
+  });
+});
+
+describe("replyLineOf", () => {
+  test("replies from the number of the customer's newest inbound, not the number of the newest message", async () => {
+    // A staff reply echoed from the business app on the second number is newer than the customer's last message.
+    const newest = page([
+      message({ id: "in-a", phoneNumberId: "phone-a", at: NOW - 2 * HOUR }),
+      message({ id: "echo-b", direction: "out", origin: "history", phoneNumberId: "phone-b", at: NOW - HOUR }),
+    ]);
+    expect(await replyLineOf(newest, async () => null, NOW)).toEqual({
+      phoneNumberId: "phone-a",
+      lastInboundAt: NOW - 2 * HOUR,
+    });
+  });
+
+  test("walks back to the customer's newest inbound on whichever number it came in on", async () => {
+    // The newest page holds only the second number's staff reply; the customer's newest message is on the first.
+    const newest = page([message({ id: "echo-b", direction: "out", phoneNumberId: "phone-b", at: NOW - 5 * 60_000 })], "c1");
+    const older = page([
+      message({ id: "in-b-old", phoneNumberId: "phone-b", at: NOW - 20 * HOUR }),
+      message({ id: "in-a", phoneNumberId: "phone-a", at: NOW - 3 * HOUR }),
+    ]);
+    expect(await replyLineOf(newest, async () => older, NOW)).toEqual({
+      phoneNumberId: "phone-a",
+      lastInboundAt: NOW - 3 * HOUR,
+    });
+  });
+
+  test("the customer's newest inbound sets the number even when it is outside the window, which then reads closed", async () => {
+    // Number A's customer wrote 30 hours ago; number B's staff replied an hour ago. Replies go from A, and A's window is closed.
+    const newest = page([message({ id: "echo-b", direction: "out", phoneNumberId: "phone-b", at: NOW - HOUR })], "c1");
+    const older = page([message({ id: "in-a", phoneNumberId: "phone-a", at: NOW - 30 * HOUR })]);
+    const line = await replyLineOf(newest, async () => older, NOW);
+    expect(line).toEqual({ phoneNumberId: "phone-a", lastInboundAt: NOW - 30 * HOUR });
+    expect(serviceWindowOf(line.lastInboundAt, NOW).open).toBe(false);
+  });
+
+  test("with no inbound in the window, the reply uses the newest message's number and no window is open", async () => {
+    const newest = page([
+      message({ id: "out-b", direction: "out", phoneNumberId: "phone-b", at: NOW - HOUR }),
+    ]);
+    expect(await replyLineOf(newest, async () => null, NOW)).toEqual({ phoneNumberId: "phone-b", lastInboundAt: null });
+  });
+
+  test("a system notice from the customer's side does not open the window", async () => {
+    // Meta's own system notice is newer than the customer's last real message; the window is that message's.
+    const newest = page([
+      message({ id: "in-text", phoneNumberId: "phone-b", at: NOW - 3 * HOUR }),
+      message({ id: "in-system", type: "system", phoneNumberId: "phone-a", at: NOW - HOUR }),
+    ]);
+    expect(await replyLineOf(newest, async () => null, NOW)).toEqual({
+      phoneNumberId: "phone-b",
+      lastInboundAt: NOW - 3 * HOUR,
+    });
+  });
+
+  test("a thread whose only inbound is a system notice has no open window", async () => {
+    const newest = page([message({ id: "in-system", type: "system", at: NOW - HOUR })]);
+    expect(await replyLineOf(newest, async () => null, NOW)).toEqual({ phoneNumberId: "phone-a", lastInboundAt: null });
+  });
+
+  test("a customer reaction opens the window, like any other message the customer sends", async () => {
+    const newest = page([message({ id: "in-reaction", type: "reaction", at: NOW - HOUR })]);
+    expect(await replyLineOf(newest, async () => null, NOW)).toEqual({ phoneNumberId: "phone-a", lastInboundAt: NOW - HOUR });
   });
 
   test("stops at the window's edge: an older page cannot hold a message inside the window", async () => {
@@ -107,12 +162,11 @@ describe("lastInboundAt", () => {
     // further back can be inside the window and the walk does not read on.
     const old = page([message({ id: "out-old", direction: "out", at: NOW - 30 * HOUR })], "cursor-1");
     let reads = 0;
-    expect(
-      await lastInboundAt(old, async () => {
-        reads += 1;
-        return page([]);
-      }, NOW),
-    ).toBeNull();
+    const line = await replyLineOf(old, async () => {
+      reads += 1;
+      return page([]);
+    }, NOW);
+    expect(line.lastInboundAt).toBeNull();
     expect(reads).toBe(0);
   });
 
@@ -124,13 +178,14 @@ describe("lastInboundAt", () => {
       reads += 1;
       return endless(cursor);
     };
-    expect(await lastInboundAt(page([message({ id: "start", direction: "out", at: NOW - HOUR })], "c"), fetchOlder, NOW)).toBeNull();
+    const line = await replyLineOf(page([message({ id: "start", direction: "out", at: NOW - HOUR })], "c"), fetchOlder, NOW);
+    expect(line.lastInboundAt).toBeNull();
     expect(reads).toBe(INBOUND_LOOKUP_PAGES - 1);
   });
 
-  test("a failed older read ends the walk with no inbound message found", async () => {
+  test("a failed older read ends the walk with no inbound found", async () => {
     const newest = page([message({ id: "out", direction: "out", at: NOW - HOUR })], "cursor-1");
-    expect(await lastInboundAt(newest, async () => null, NOW)).toBeNull();
+    expect((await replyLineOf(newest, async () => null, NOW)).lastInboundAt).toBeNull();
   });
 });
 
@@ -189,6 +244,7 @@ describe("submitReply", () => {
     });
     expect(await submitReply(send, target, "Hola")).toEqual({
       sent: false,
+      windowClosed: true,
       title: "Outside the 24-hour window",
       detail:
         "WhatsApp only allows free text within 24 hours of the customer's last message. Send an approved template instead.",
@@ -202,7 +258,7 @@ describe("submitReply", () => {
       target,
       "Hola",
     );
-    expect(graph).toMatchObject({ sent: false, secondary: "Meta says no" });
+    expect(graph).toMatchObject({ sent: false, secondary: "Meta says no", windowClosed: false });
 
     const noPhone = await submitReply(
       fakeSend({ ok: true, data: { ok: false, code: "no_phone", detail: "phone is gone" } }).send,

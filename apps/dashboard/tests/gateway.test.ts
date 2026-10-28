@@ -169,6 +169,8 @@ const {
   resubscribe,
   recheckNumber,
   sendTemplateTest,
+  sendText,
+  canSendMessages,
   validateSendTestInput,
   createTemplate,
   deleteTemplate,
@@ -2222,5 +2224,36 @@ describe("listConversations / getConversation (Conversations view)", () => {
     expect(() => validateConversationInput({ waId: "15550100001", cursor: "../etc" })).toThrow(/cursor/);
     expect(() => validateConversationListInput({ limit: 0 })).toThrow(/limit/);
     expect(validateConversationListInput(undefined)).toBeUndefined();
+  });
+});
+
+describe("the conversation composer's server functions", () => {
+  const TEXT = { wabaId: "waba-a", phoneNumberId: "phone-a", to: "34600111222", text: "Hola" };
+
+  test("a viewer may not send free text: refused as forbidden, and the binding is never touched", async () => {
+    let called = false;
+    withResources({
+      sendText: async () => {
+        called = true;
+        return { ok: true, messageId: "wamid.SENT" };
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    const res = await sendText({ data: TEXT });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("a viewer is told the composer is not theirs: canSendMessages reads false", async () => {
+    fakeDeniedActions = new Set(["operate"]);
+    expect(await canSendMessages()).toBe(false);
+  });
+
+  test("an operator may send, and canSendMessages reads true", async () => {
+    withResources({
+      sendText: async () => ({ ok: true, messageId: "wamid.SENT" }),
+    });
+    expect(await canSendMessages()).toBe(true);
+    expect(await sendText({ data: TEXT })).toMatchObject({ ok: true, data: { ok: true, messageId: "wamid.SENT" } });
   });
 });
