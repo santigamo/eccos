@@ -56,6 +56,8 @@ export type WhatsAppCallbackEvent =
       text: string;
       at: number;
       phoneNumberId?: string;
+      /** The sender's WhatsApp profile name, when Meta sends one. */
+      profileName?: string;
     }
   | {
       type: "echo";
@@ -71,6 +73,8 @@ export type WhatsAppCallbackEvent =
       messageId: string;
       at: number;
       phoneNumberId?: string;
+      /** The sender's WhatsApp profile name, when Meta sends one. */
+      profileName?: string;
     } & MessageContent)
   | ({
       type: "message_echo";

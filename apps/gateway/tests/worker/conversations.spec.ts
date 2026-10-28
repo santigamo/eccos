@@ -142,6 +142,53 @@ describe("conversation store: live feed", () => {
   });
 });
 
+describe("conversation store: profile names", () => {
+  const reply = (messageId: string, profileName?: string) => ({
+    type: "reply" as const,
+    from: WA,
+    messageId,
+    text: messageId,
+    at: 1000,
+    ...(profileName ? { profileName } : {}),
+  });
+  const nameOf = (i: EccosGateway) => i.sql.exec(`SELECT name, source FROM contacts WHERE wa_id = ?`, WA).one();
+
+  it("fills a contact's name from the sender's profile, and a later profile name replaces it", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply("wamid.N1")]);
+      expect(nameOf(i)).toEqual({ name: null, source: "live" });
+      i.ingest([reply("wamid.N2", "Ana")]);
+      expect(nameOf(i)).toEqual({ name: "Ana", source: "live" });
+      i.ingest([reply("wamid.N3", "Ana B.")]);
+      expect(nameOf(i)).toEqual({ name: "Ana B.", source: "live" });
+    });
+  });
+
+  it("never replaces an address-book name from the business's app", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.sql.exec(`INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, 'Agenda', 'app_state', 1)`, WA);
+      i.ingest([reply("wamid.N4", "Ana")]);
+      expect(nameOf(i)).toEqual({ name: "Agenda", source: "app_state" });
+    });
+  });
+
+  it("fills an empty address-book contact, so the name is a live one from then on", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.sql.exec(`INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, NULL, 'app_state', 1)`, WA);
+      i.ingest([reply("wamid.N5", "Ana")]);
+      expect(nameOf(i)).toEqual({ name: "Ana", source: "live" });
+    });
+  });
+
+  it("keeps the name a contact already has when a later message names nobody", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply("wamid.N6", "Ana")]);
+      i.ingest([reply("wamid.N7")]);
+      expect(nameOf(i)).toEqual({ name: "Ana", source: "live" });
+    });
+  });
+});
+
 describe("conversation store: reads", () => {
   it("lists conversations newest first, with names and counts, paged by cursor", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {

@@ -273,6 +273,9 @@ export class EccosGateway extends DurableObject<Env> {
   sql: SqlStorage;
   /** Parsed items of the payload being processed, kept between wakes (see syncItemsOf). */
   private syncCache: { id: number; items: SyncItem[] } | null = null;
+  /** Set when a payload or webhook lands while alarm() runs. alarm()'s final setAlarm would
+   * overwrite that wake with a later one, so alarm() checks this and wakes again at once. */
+  private wakeArrived = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -517,7 +520,7 @@ export class EccosGateway extends DurableObject<Env> {
         );
       }
     });
-    if (!duplicate) this.ctx.storage.setAlarm(Date.now());
+    if (!duplicate) this.wakeNow();
     return { duplicate, bytes: bytes.length, parts };
   }
 
@@ -587,7 +590,7 @@ export class EccosGateway extends DurableObject<Env> {
         }
       }
     });
-    if (insertedIds.length > 0) this.ctx.storage.setAlarm(now);
+    if (insertedIds.length > 0) this.wakeNow();
     return { received: events.length };
   }
 
@@ -1289,13 +1292,19 @@ export class EccosGateway extends DurableObject<Env> {
     return { ok: true, phone: digits, counts };
   }
 
+  /** Arms the alarm for now. Safe to call during alarm(): see `wakeArrived`. */
+  private wakeNow(): void {
+    this.wakeArrived = true;
+    this.ctx.storage.setAlarm(Date.now());
+  }
+
   /** Writes one normalized event into the conversation store. An inbound or echo
    * event adds a message; a status moves the message it names. Runs inside the
    * caller's transaction. */
   private writeConversation(ev: WhatsAppCallbackEvent, now: number): void {
     const message = messageFromEvent(ev);
     if (message) {
-      this.storeMessage(message, now);
+      this.storeMessage(message, now, "profileName" in ev ? (ev.profileName ?? null) : null);
       return;
     }
     const update = statusFromEvent(ev);
@@ -1326,9 +1335,10 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /** Inserts a message once (a duplicate webhook or a re-run backfill is ignored)
-   * and upserts its contact. The contact keeps any name it already has. A live message
-   * replaces a history row with the same id (history never replaces a live row). */
-  private storeMessage(message: NewMessage, createdAt: number): void {
+   * and upserts its contact. A live profile name fills a contact with no name, or
+   * replaces an earlier live one; an address-book name (app_state) is never replaced.
+   * A live message replaces a history row with the same id (history never replaces a live row). */
+  private storeMessage(message: NewMessage, createdAt: number, profileName: string | null = null): void {
     this.sql.exec(
       `INSERT INTO messages
          (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
@@ -1352,9 +1362,15 @@ export class EccosGateway extends DurableObject<Env> {
       createdAt,
     );
     this.sql.exec(
-      `INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, NULL, 'live', ?)
-       ON CONFLICT(wa_id) DO UPDATE SET updated_at = excluded.updated_at`,
+      `INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, ?, 'live', ?)
+       ON CONFLICT(wa_id) DO UPDATE SET
+         name = CASE WHEN excluded.name IS NOT NULL AND (contacts.name IS NULL OR contacts.source = 'live')
+           THEN excluded.name ELSE contacts.name END,
+         source = CASE WHEN excluded.name IS NOT NULL AND (contacts.name IS NULL OR contacts.source = 'live')
+           THEN 'live' ELSE contacts.source END,
+         updated_at = excluded.updated_at`,
       message.waId,
+      profileName,
       createdAt,
     );
   }
@@ -1392,6 +1408,7 @@ export class EccosGateway extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     const now = Date.now();
+    this.wakeArrived = false;
     const maxAttempts = Number(this.env.FORWARD_MAX_ATTEMPTS) || 6;
     // Guarded + clamped (not just `||`) because misconfigured values here feed
     // destructive DELETE/UPDATE windows, unlike maxAttempts above.
@@ -1515,6 +1532,8 @@ export class EccosGateway extends DurableObject<Env> {
     // Last, after the sweep, so the media of the messages it just pruned is purged in this same alarm.
     const mediaWakeAt = await this.mediaStep(now);
     if (mediaWakeAt !== null) wakes.push(mediaWakeAt);
+    // Work that arrived during this run was armed for now, and the earlier wakes above would overwrite it.
+    if (this.wakeArrived) wakes.push(Date.now());
     if (wakes.length > 0) this.ctx.storage.setAlarm(Math.min(...wakes));
     if (hasWorkerError) throw workerError;
   }

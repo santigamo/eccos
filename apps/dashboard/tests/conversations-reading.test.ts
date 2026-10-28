@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   contactsOf,
+  conversationsSearch,
   locationOf,
   mediaIdOf,
   mediaSrc,
   normalizeWaId,
   previewOf,
   relativeTime,
+  senderLabelOf,
   threadEntries,
   uniqueBy,
 } from "../src/lib/conversations";
@@ -156,7 +158,14 @@ describe("previews and times", () => {
     expect(previewOf({ type: "text", text: "Hola", direction: "in", at: 1 })).toBe("Hola");
     expect(previewOf({ type: "text", text: "Te esperamos", direction: "out", at: 1 })).toBe("You: Te esperamos");
     expect(previewOf({ type: "revoke", text: null, direction: "in", at: 1 })).toBe("Message deleted");
-    expect(previewOf({ type: "image", text: null, direction: "echo", at: 1 })).toBe("You: image");
+    expect(previewOf({ type: "image", text: null, direction: "echo", at: 1 })).toBe("You: Photo");
+  });
+
+  test("a preview with text or a caption shows it, and one without names its kind the way the thread does", () => {
+    expect(previewOf({ type: "image", text: "Mira esto", direction: "in", at: 1 })).toBe("Mira esto");
+    expect(previewOf({ type: "unsupported", text: null, direction: "in", at: 1 })).toBe("Unsupported message");
+    expect(previewOf({ type: "location", text: null, direction: "in", at: 1 })).toBe("Location");
+    expect(previewOf({ type: "order", text: null, direction: "in", at: 1 })).toBe("order");
   });
 
   test("the list's time is a short read, and the same moment across each unit", () => {
@@ -170,6 +179,33 @@ describe("previews and times", () => {
 
   test("a timestamp in the future reads as just now, not as a negative age", () => {
     expect(relativeTime(2_000, 1_000)).toBe("just now");
+  });
+});
+
+describe("who sent a message", () => {
+  test("only a live send through Eccos is 'Sent via Eccos'; an echo or an imported business reply is not", () => {
+    expect(senderLabelOf({ direction: "in", origin: "live" })).toBe("Customer");
+    expect(senderLabelOf({ direction: "out", origin: "live" })).toBe("Sent via Eccos");
+    expect(senderLabelOf({ direction: "echo", origin: "live" })).toBe("Sent from the WhatsApp Business app");
+    expect(senderLabelOf({ direction: "echo", origin: "history" })).toBe("Sent from the WhatsApp Business app");
+    // A row an older build stored as an API send from history is still a business reply.
+    expect(senderLabelOf({ direction: "out", origin: "history" })).toBe("Sent from the WhatsApp Business app");
+  });
+});
+
+describe("conversations URL", () => {
+  test("a bare id typed into the URL selects the thread, as a quoted one does", () => {
+    // The router reads `?waId=34600111222` as a JSON number and `?waId="34600111222"` as text.
+    expect(conversationsSearch({ waId: 34600111222, wabaId: 102938475647382 })).toEqual({
+      waId: "34600111222",
+      wabaId: "102938475647382",
+    });
+    expect(conversationsSearch({ waId: "34600111222", wabaId: "102938475647382" })).toEqual({
+      waId: "34600111222",
+      wabaId: "102938475647382",
+    });
+    expect(conversationsSearch({ waId: "+34 600 111 222" })).toEqual({ waId: "34600111222", wabaId: undefined });
+    expect(conversationsSearch({ waId: "abc", wabaId: {} })).toEqual({ waId: undefined, wabaId: undefined });
   });
 });
 

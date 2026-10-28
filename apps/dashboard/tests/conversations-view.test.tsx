@@ -260,11 +260,14 @@ describe("ConversationThread: every message type reads", () => {
 });
 
 describe("ConversationThread: pagination and empty states", () => {
-  test("Load older is offered only while there is an older page", () => {
+  test("Load older is shown only while there is an older page, or one is loading", () => {
     const more = renderToStaticMarkup(<ConversationThread {...threadProps({ canLoadOlder: true })} />);
+    expect(more).toMatch(/<button[^>]*>← Load older/);
     expect(more).not.toMatch(/<button[^>]* disabled=""[^>]*>← Load older/);
+    const loading = renderToStaticMarkup(<ConversationThread {...threadProps({ canLoadOlder: false, loadingOlder: true })} />);
+    expect(loading).toMatch(/<button[^>]* disabled=""[^>]*>← Load older/);
     const done = renderToStaticMarkup(<ConversationThread {...threadProps({ canLoadOlder: false })} />);
-    expect(done).toMatch(/<button[^>]* disabled=""[^>]*>← Load older/);
+    expect(done).not.toContain("Load older");
   });
 
   test("a failed older page says so beside the control", () => {
@@ -309,7 +312,7 @@ describe("ConversationList", () => {
     const html = renderToStaticMarkup(
       <ConversationList {...listProps} items={[{ ...SUMMARY, lastMessage: { type: "image", text: null, direction: "out", at: NOW } }]} />,
     );
-    expect(html).toContain("You: image");
+    expect(html).toContain("You: Photo");
     expect(html).toContain("1 min ago");
     expect(html).toContain(`${THREAD.length}<span class="sr-only"> messages</span>`);
   });
@@ -320,11 +323,13 @@ describe("ConversationList", () => {
     expect(html).not.toContain("Load older");
   });
 
-  test("Load older is a real control that disables when there is no older page", () => {
+  test("Load older is shown only while there is an older page, or one is loading", () => {
     const more = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} />);
     expect(more).not.toMatch(/<button[^>]* disabled=""[^>]*>Load older →/);
+    const loading = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} canLoadOlder={false} loadingOlder />);
+    expect(loading).toMatch(/<button[^>]* disabled=""[^>]*>Load older →/);
     const done = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} canLoadOlder={false} />);
-    expect(done).toMatch(/<button[^>]* disabled=""[^>]*>Load older →/);
+    expect(done).not.toContain("Load older");
   });
 
   test("every state of the list honours the design contract", () => {

@@ -132,7 +132,7 @@ describe("history payloads", () => {
     const messages = await query(`SELECT id, wa_id, direction, origin, type, text, at, status FROM messages ORDER BY at`);
     expect(messages).toEqual([
       { id: "wamid.H1", wa_id: CUSTOMER, direction: "in", origin: "history", type: "text", text: "hola", at: 1700000000000, status: null },
-      { id: "wamid.H2", wa_id: CUSTOMER, direction: "out", origin: "history", type: "text", text: "hello", at: 1700000060000, status: "read" },
+      { id: "wamid.H2", wa_id: CUSTOMER, direction: "echo", origin: "history", type: "text", text: "hello", at: 1700000060000, status: "read" },
     ]);
     const contacts = await query(`SELECT wa_id, name, source FROM contacts`);
     expect(contacts).toEqual([{ wa_id: CUSTOMER, name: null, source: "history" }]);
@@ -208,11 +208,25 @@ describe("direction and media order", () => {
 
   const photo = {
     wa_id: CUSTOMER,
-    direction: "out",
+    direction: "echo",
     type: "image",
     text: "Photo",
     content: { media: { id: "MEDIA1", mimeType: "image/jpeg", sha256: "c2hhLWZpeHR1cmU=", caption: "Photo" } },
   };
+
+  it("reads a business-sent message as an echo, and a reprocess rewrites a row stored as an API send", async () => {
+    await capture(historyChunk([thread(CUSTOMER, [textMessage(BUSINESS, "wamid.L1", "1700000000", "desde la app")])]), "history");
+    await drain();
+    // The row a build before this change stored: business-sent history filed as an API send.
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.sql.exec(`UPDATE messages SET direction = 'out' WHERE origin = 'history'`);
+    });
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.reprocessSyncPayloads());
+    await drain();
+    expect(await query(`SELECT direction, origin FROM messages WHERE id = 'wamid.L1'`)).toEqual([
+      { direction: "echo", origin: "history" },
+    ]);
+  });
 
   it("takes the direction from the thread, not from the display number", async () => {
     await capture(
@@ -235,7 +249,7 @@ describe("direction and media order", () => {
     );
     await drain();
     expect(await query(`SELECT id, wa_id, direction FROM messages ORDER BY id`)).toEqual([
-      { id: "wamid.D1", wa_id: CUSTOMER, direction: "out" },
+      { id: "wamid.D1", wa_id: CUSTOMER, direction: "echo" },
       { id: "wamid.D2", wa_id: CUSTOMER, direction: "in" },
     ]);
   });
@@ -428,6 +442,25 @@ describe("reprocessing", () => {
       attempts: 0,
     });
     expect((await query(`SELECT COUNT(*) AS n FROM messages`))[0].n).toBe(450);
+  });
+});
+
+describe("alarm wake", () => {
+  it("wakes at once for a payload captured while the alarm runs, not at the backlog's later wake", async () => {
+    await capture(historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.W1", "1700000000", "uno")])]), "history");
+    const armedAt = await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      const sync = i as unknown as { runSyncBatch: (now: number) => Promise<number | null>; ctx: DurableObjectState };
+      const original = sync.runSyncBatch;
+      // Stands in for a sync pass that leaves a backlog a minute out, while a new payload lands mid-run.
+      sync.runSyncBatch = async () => {
+        sync.runSyncBatch = original;
+        await i.captureSyncPayload(["history"], JSON.stringify(historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.W2", "1700000060", "dos")])])));
+        return 60_000;
+      };
+      await i.alarm();
+      return sync.ctx.storage.getAlarm();
+    });
+    expect(armedAt).toBeLessThanOrEqual(Date.now());
   });
 });
 
