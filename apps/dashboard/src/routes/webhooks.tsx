@@ -14,6 +14,7 @@ import {
   fmtTsShort,
 } from "../ui";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import { FailureView } from "../components/dashboard/failure";
 import { ForwardingTargetPanel } from "../components/dashboard/forwarding-target";
 import { ResubscribeAction } from "../components/dashboard/resubscribe-action";
@@ -45,7 +46,20 @@ export const Route = createFileRoute("/webhooks")({
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => getSubscriberConfig({ data: { wabaId: deps.wabaId } }),
   component: WebhooksPage,
+  pendingComponent: WebhooksPending,
 });
+
+/** The page's own title over its facts strip and target panel, still to be read. */
+function WebhooksPending() {
+  return (
+    <Page title="Webhooks" kicker="Integration">
+      <div aria-busy="true">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="mt-6 h-40 max-w-xl" />
+      </div>
+    </Page>
+  );
+}
 
 function WebhooksPage() {
   const result = Route.useLoaderData();

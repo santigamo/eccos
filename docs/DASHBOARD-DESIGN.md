@@ -163,7 +163,7 @@ fast gateway still feels like a dead click.
 
 Two layers answer it, and the seam between them is a duration:
 
-1. **The rail** (`route-progress.tsx`, `.route-progress` in `app.css`) — a 2px sweep
+1. **The rail** (`route-progress.tsx`, `.route-progress` in `app.css`) — a 3px sweep
    across the top edge, above the masthead, driven by `router.state.isLoading`. It
    lights on **every** navigation with no delay and costs no layout, which is what makes
    it the answer to the click itself. It is **indeterminate on purpose**: the router
@@ -173,7 +173,7 @@ Two layers answer it, and the seam between them is a duration:
    main region with no focus move.
 2. **The route's own skeleton** (`pendingComponent`, via `GridPending`) — the
    destination's real title, kicker and column headers over skeleton rows. This is the
-   answer to the **wait**, not the click: past `defaultPendingMs` (350ms) the previous
+   answer to the **wait**, not the click: past `defaultPendingMs` (150ms) the previous
    page's rows have stopped being context and become a lie, so they are replaced by the
    structure of the page that was asked for.
 
@@ -187,6 +187,9 @@ The rules that follow from it:
 - **A skeleton row is never an empty row.** The vendored data grid takes its skeleton
   cell from `meta.skeleton`; `LogGrid` fills a default in so a loading grid never paints
   structure with nothing in it, which reads as broken rather than as loading.
+- **Selecting inside a page waits inside the page.** Opening a conversation does not
+  re-run the route: the thread is read on its own (`useThread`) and only the thread pane
+  is a skeleton, with the list left on screen.
 - **No `defaultPendingComponent`.** The timeout that promotes a match to its pending
   view is only armed for routes that have one, so a default arms it for the **root**
   match — whose component is the entire chrome. A slow root load would blank the shell

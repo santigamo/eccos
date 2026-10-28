@@ -15,7 +15,7 @@ export function getRouter() {
     // right answer only once the wait is long enough that stale rows under a
     // moving rail have become confusing.
     //
-    // Below ~350ms swapping a table out and back reads as a flash, so the rail
+    // Below ~150ms swapping a table out and back reads as a flash, so the rail
     // owns that window alone (TanStack's own default is 1000ms, which leaves
     // most gateway round trips showing the wrong page's rows). `pendingMinMs`
     // then keeps a skeleton that did appear on screen long enough to be read
@@ -26,8 +26,8 @@ export function getRouter() {
     // default would arm it for the ROOT match too — whose component is the
     // whole app chrome. A slow root load would blank the shell instead of
     // filling the page.
-    defaultPendingMs: 350,
-    defaultPendingMinMs: 400,
+    defaultPendingMs: 150,
+    defaultPendingMinMs: 300,
   });
 
   return router;

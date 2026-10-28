@@ -22,6 +22,8 @@ import type { ConversationSummary, MessageRecord } from "../src/server/gateway";
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 let loaderData: unknown;
+// What `useThread` reports: null while the open thread is being read.
+let threadRead: unknown = null;
 let searchParams: { wabaId?: string; waId?: string } = {};
 let rootData: unknown;
 
@@ -59,6 +61,7 @@ mock.module("@tanstack/react-router", () => ({
   useLoaderData: () => rootData,
   useRouter: () => ({ invalidate: () => Promise.resolve() }),
 }));
+mock.module("../src/hooks/use-thread", () => ({ useThread: () => threadRead }));
 
 const { Route } = await import("../src/routes/conversations");
 const { ConversationList } = await import("../src/components/conversations/conversation-list");
@@ -357,7 +360,8 @@ describe("the inbox's source", () => {
 
 describe("the conversations page", () => {
   const ready = (conversations: unknown, thread: unknown = null) => {
-    loaderData = { conversations, thread };
+    loaderData = { conversations };
+    threadRead = thread;
     rootData = readyRoot;
   };
 
@@ -444,6 +448,16 @@ describe("the conversations page", () => {
     expect(html).not.toContain('data-pane="list"');
   });
 
+  test("while a thread is read, the list stays and only the thread pane is a skeleton", () => {
+    searchParams = { wabaId: WABA, waId: CUSTOMER };
+    ready({ ok: true, data: page([SUMMARY]) }, null);
+    const html = renderToStaticMarkup(<Route.component />);
+    expect(html).toContain("Cliente de prueba");
+    expect(html).toMatch(/data-pane="thread"[^]*aria-busy="true"[^]*data-slot="skeleton"/);
+    expect(html).not.toContain("NO CONVERSATION OPEN");
+    expectDesignContract(html);
+  });
+
   test("a failure on one thread leaves the list and says what failed", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
     ready({ ok: true, data: page([SUMMARY]) }, { ok: false, kind: "unreachable", error: "thread boom" });
@@ -476,13 +490,10 @@ describe("the reply box on a thread", () => {
 
   function renderThread(canSend: boolean | undefined, lastInboundAt: number | null) {
     searchParams = { wabaId: WABA, waId: CUSTOMER };
-    loaderData = {
-      conversations: { ok: true, data: page([SUMMARY]) },
-      thread: {
-        ok: true,
-        data: { page: page(THREAD, "cursor-2"), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt } },
-      },
-      canSend,
+    loaderData = { conversations: { ok: true, data: page([SUMMARY]) }, canSend };
+    threadRead = {
+      ok: true,
+      data: { page: page(THREAD, "cursor-2"), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt } },
     };
     rootData = readyRoot;
     return renderToStaticMarkup(<Route.component />);

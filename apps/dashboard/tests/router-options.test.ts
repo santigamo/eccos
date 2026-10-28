@@ -29,11 +29,11 @@ describe("router pending options", () => {
   test("a route's skeleton waits for a load the rail alone can no longer carry", () => {
     // TanStack's own default is 1000ms, which leaves most gateway round trips
     // showing the PREVIOUS page's rows under the new sidebar highlight. Below
-    // ~350ms, though, swapping a table out and back reads as a flash — so the
+    // ~150ms, though, swapping a table out and back reads as a flash — so the
     // rail owns that window alone and the skeleton takes over past it.
-    expect(routerSource).toContain("defaultPendingMs: 350");
+    expect(routerSource).toContain("defaultPendingMs: 150");
     // And a skeleton that did reach the screen stays long enough to be read.
-    expect(routerSource).toContain("defaultPendingMinMs: 400");
+    expect(routerSource).toContain("defaultPendingMinMs: 300");
   });
 
   test("no default pending component — it would blank the whole app shell", () => {
@@ -56,6 +56,15 @@ describe("per-route pending views", () => {
       ).text();
       expect(source).toContain("pendingComponent:");
       expect(source).toContain("<GridPending");
+    }
+  });
+
+  test("every other route that loads its own data has one too", async () => {
+    for (const route of ["conversations", "settings", "webhooks"]) {
+      const source = await Bun.file(
+        new URL(`../src/routes/${route}.tsx`, import.meta.url),
+      ).text();
+      expect(source).toContain("pendingComponent:");
     }
   });
 

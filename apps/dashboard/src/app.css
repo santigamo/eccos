@@ -252,7 +252,7 @@
     position: fixed;
     top: 0;
     inset-inline: 0;
-    height: 2px;
+    height: 3px;
     z-index: 60;
     overflow: hidden;
     pointer-events: none;
