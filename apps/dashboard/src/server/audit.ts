@@ -67,6 +67,9 @@ export type SensitiveAction =
   | "template_delete"
   | "api_key_issue"
   | "api_key_revoke"
+  /** The workspace's conversation retention changed. Carries the stored window
+   * in days (null = keep forever); no conversation content. */
+  | "conversation_retention_set"
   | "export_data"
   | "erase_by_phone"
   | "member_invited"

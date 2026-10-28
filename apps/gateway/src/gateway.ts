@@ -70,6 +70,9 @@ const OPERATOR_MAX_PAGE = 200;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Well under the 2 MB DO SQLite row limit; history webhooks can be many MB. */
 export const SYNC_PART_BYTES = 512 * 1024;
+/** Conversation retention lives in `conversation-retention.ts`, free of the Workers runtime
+ * so the Bun unit tests and the control plane can import it without this module. */
+export { conversationRetentionDays } from "./conversation-retention";
 /** At most one failed-delivery alert per Durable Object (one WABA) per window. */
 export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 /** Retention only needs to run periodically, not on every alarm. alarm() fires

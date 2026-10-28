@@ -182,6 +182,8 @@ export interface WabaProvisioningClaim {
   /** Coexistence obligations carried into the claim so the saga step needs no
    * extra control-plane round trip to know what is owed and by when. */
   coexistence: CoexistenceState;
+  /** The account's retention, so a WABA provisioned after it was set starts with it. */
+  conversationRetentionDays: number | null;
 }
 
 /** Which of the two coexistence syncs a call refers to. */
@@ -269,6 +271,24 @@ function validateOrganizationId(organizationId: string): string {
     );
   }
   return v;
+}
+
+/** Null keeps conversations forever; a number is a retention window in days. */
+export const CONVERSATION_RETENTION_MIN_DAYS = 30;
+export const CONVERSATION_RETENTION_MAX_DAYS = 3650;
+
+function validateConversationRetentionDays(days: number | null): number | null {
+  if (days === null) return null;
+  if (
+    !Number.isInteger(days) ||
+    days < CONVERSATION_RETENTION_MIN_DAYS ||
+    days > CONVERSATION_RETENTION_MAX_DAYS
+  ) {
+    throw new Error(
+      `invalid conversation retention: expected null (keep forever) or an integer from ${CONVERSATION_RETENTION_MIN_DAYS} to ${CONVERSATION_RETENTION_MAX_DAYS} days`,
+    );
+  }
+  return days;
 }
 
 function validateLabel(
@@ -688,6 +708,11 @@ export class EccosControlPlane extends DurableObject<Env> {
         status          TEXT NOT NULL DEFAULT 'active',
         created_at      INTEGER NOT NULL
       );`);
+      // NULL is the default and means keep forever (see `setConversationRetentionDays`).
+      const accountColumns = this.sql.exec("PRAGMA table_info(accounts)").toArray();
+      if (!accountColumns.some((row) => row.name === "conversation_retention_days")) {
+        this.sql.exec("ALTER TABLE accounts ADD COLUMN conversation_retention_days INTEGER");
+      }
       const wabaColumns = this.sql.exec("PRAGMA table_info(wabas)").toArray();
       if (!wabaColumns.some((row) => row.name === "status")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
@@ -852,6 +877,24 @@ export class EccosControlPlane extends DurableObject<Env> {
       )
       .toArray();
     return revoked.length > 0;
+  }
+
+  /** The workspace's conversation retention in days; null keeps them forever. */
+  getConversationRetentionDays(accountId: string): number | null {
+    return this.conversationRetentionOf(this.requireAccount(accountId));
+  }
+
+  /** Stores the retention and returns it. Propagating it to the WABAs' gateway
+   * configs is the RPC layer's job; provisioning reads it from the claim. */
+  setConversationRetentionDays(accountId: string, days: number | null): number | null {
+    const id = this.requireAccount(accountId);
+    const value = validateConversationRetentionDays(days);
+    this.sql.exec(
+      "UPDATE accounts SET conversation_retention_days = ? WHERE account_id = ?",
+      value,
+      id,
+    );
+    return value;
   }
 
   /** Key metadata of one account; the hash never leaves this method. */
@@ -1365,7 +1408,15 @@ export class EccosControlPlane extends DurableObject<Env> {
       // Derived against the claim's own clock, so the saga step sees the window
       // as it stands at the moment it is about to act.
       coexistence: coexistenceOf(claimed, now),
+      conversationRetentionDays: this.conversationRetentionOf(claimed.account_id as string),
     };
+  }
+
+  private conversationRetentionOf(accountId: string): number | null {
+    const row = this.sql
+      .exec("SELECT conversation_retention_days AS days FROM accounts WHERE account_id = ?", accountId)
+      .toArray()[0];
+    return (row?.days as number | null) ?? null;
   }
 
   /**

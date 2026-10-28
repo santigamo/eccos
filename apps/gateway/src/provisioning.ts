@@ -1,5 +1,9 @@
 import { getGatewayStubForWaba } from "./gateway-stub";
 import {
+  CONVERSATION_RETENTION_CONFIG_KEY,
+  conversationRetentionConfigValue,
+} from "./conversation-retention";
+import {
   MetaGraphError,
   getPhoneNumberOnboarding,
   listPhoneNumbers,
@@ -420,6 +424,7 @@ export async function runClaim(
       DISPLAY_PHONE_NUMBER: primaryPhone.displayPhoneNumber,
       META_WEBHOOK_CALLBACK_URL: claim.callbackUrl,
       CONNECTED_AT: String(Date.now()),
+      [CONVERSATION_RETENTION_CONFIG_KEY]: conversationRetentionConfigValue(claim.conversationRetentionDays),
     });
     stage = "coexistence";
     await runCoexistenceSync(env, { ...claim, phones }, coexistence, spend);

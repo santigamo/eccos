@@ -20,6 +20,9 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { SettingsView } = await import("../src/routes/settings");
 const { IssuedKeyNotice } = await import("../src/components/dashboard/api-keys");
+const { ConversationRetentionPanel, RETENTION_CHOICES } = await import(
+  "../src/components/dashboard/conversation-retention"
+);
 
 describe("SettingsView", () => {
   const html = renderToStaticMarkup(<SettingsView accountId="account-a" />);
@@ -117,5 +120,62 @@ describe("API keys panel", () => {
     expect(html).toContain("ek_secret");
     expect(html).toContain("Copy");
     expect(html).toContain("You won&#x27;t see this key again");
+  });
+});
+
+describe("Conversation history control (Settings)", () => {
+  test("renders the control with keep-forever as the default and the three windows", () => {
+    const html = renderToStaticMarkup(
+      <SettingsView accountId="account-a" keys={{ ok: true, data: [] }} retention={{ ok: true, data: null }} />,
+    );
+    expect(html).toContain("Conversation history");
+    expect(html).toContain("The short buffer used for forwarding is separate");
+    expect(html).toContain("Keep conversations");
+    expect(html).toContain("Keep forever");
+    expect(RETENTION_CHOICES.map((choice) => choice.label)).toEqual([
+      "Keep forever",
+      "Delete after 30 days",
+      "Delete after 90 days",
+      "Delete after 365 days",
+    ]);
+  });
+
+  test("the control is quiet until a window is chosen, then says what it deletes", () => {
+    const forever = renderToStaticMarkup(
+      <ConversationRetentionPanel retention={{ ok: true, data: null }} />,
+    );
+    expect(forever).not.toContain("Older conversations and contacts are deleted");
+    expect(forever).toContain("disabled");
+
+    const windowed = renderToStaticMarkup(
+      <ConversationRetentionPanel retention={{ ok: true, data: 90 }} />,
+    );
+    expect(windowed).toContain("Delete after 90 days");
+    expect(windowed).toContain("Older conversations and contacts are deleted");
+  });
+
+  test("a role without administer sees the refusal copy, not the control", () => {
+    const html = renderToStaticMarkup(
+      <ConversationRetentionPanel
+        retention={{
+          ok: false,
+          kind: "forbidden",
+          reason: "missing-permission",
+          error: 'missing "administer" permission in this organization',
+        }}
+      />,
+    );
+    expect(html).toContain("Conversation history");
+    expect(html).toContain("Not available to your role");
+    expect(html).not.toContain("Save");
+    expect(html).not.toContain("Keep conversations");
+  });
+
+  test("the copy keeps to plain sentences and no em dash", () => {
+    const html = renderToStaticMarkup(
+      <ConversationRetentionPanel retention={{ ok: true, data: 30 }} />,
+    );
+    expect(html).not.toContain("\u2014");
+    expect(html).not.toContain("\u2013");
   });
 });
