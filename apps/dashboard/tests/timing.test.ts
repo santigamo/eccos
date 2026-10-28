@@ -33,4 +33,16 @@ describe("timing", () => {
     expect(api.tag).toBe("t");
     expect(Object.keys(finishTiming(request)!.stages)).toEqual(["rpc-ping"]);
   });
+
+  test("calls an RPC-stub-like target as a method, never through .apply/.call", async () => {
+    // A service-binding stub answers every property with a remote method,
+    // `apply` and `call` included.
+    const remote = (name: string): unknown =>
+      new Proxy(async (n: number) => `${name}:${n}`, { get: (_t, prop) => remote(String(prop)) });
+    const stub = new Proxy({}, { get: (_t, prop) => remote(String(prop)) }) as { ping: (n: number) => Promise<string> };
+    const request = new Request("https://example.test/");
+    beginTiming(request);
+    expect(await timedProxy(request.headers, stub, "rpc-").ping(1)).toBe("ping:1");
+    finishTiming(request);
+  });
 });

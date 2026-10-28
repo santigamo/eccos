@@ -97,7 +97,9 @@ export function timedProxy<T extends object>(key: unknown, target: T, prefix: st
       const value = Reflect.get(obj, prop, obj);
       if (typeof prop !== "string" || prop === "then" || typeof value !== "function") return value;
       return (...args: unknown[]) =>
-        timed(key, prefix + prop, async () => (value as (...a: unknown[]) => unknown).apply(obj, args));
+        // Call it as `obj[prop](...)`: on an RPC stub, `.apply`/`.call` would
+        // themselves be remote method names.
+        timed(key, prefix + prop, async () => (obj as Record<string, (...a: unknown[]) => unknown>)[prop]?.(...args));
     },
   });
 }
