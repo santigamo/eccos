@@ -28,6 +28,8 @@ import type { DataGridFeatures } from "../src/components/reui/data-grid/data-gri
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 let isLoading = false;
+// Where the load is headed; the page on screen is always /events.
+let destination = "/messages";
 
 // SPREAD, not replaced. `mock.module` swaps the module for the whole test
 // process, so a partial stub here breaks the NEXT file that imports a router
@@ -36,8 +38,8 @@ let isLoading = false;
 const routerModule = await import("@tanstack/react-router");
 mock.module("@tanstack/react-router", () => ({
   ...routerModule,
-  useRouterState: ({ select }: { select: (state: { isLoading: boolean }) => unknown }) =>
-    select({ isLoading }),
+  useRouterState: ({ select }: { select: (state: unknown) => unknown }) =>
+    select({ isLoading, location: { href: destination }, resolvedLocation: { href: "/events" } }),
 }));
 
 const { RouteProgress } = await import("../src/components/dashboard/route-progress");
@@ -64,6 +66,16 @@ describe("RouteProgress", () => {
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain("Loading page");
     isLoading = false;
+  });
+
+  test("a reload of the current page (Refresh, Live) neither sweeps nor speaks", () => {
+    isLoading = true;
+    destination = "/events";
+    const html = renderToStaticMarkup(<RouteProgress />);
+    expect(html).not.toContain("data-loading");
+    expect(html).not.toContain("Loading page");
+    isLoading = false;
+    destination = "/messages";
   });
 
   test("says nothing while nothing is loading", () => {

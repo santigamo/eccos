@@ -12,6 +12,7 @@ import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { MessageSheet } from "../components/logs/message-sheet";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
+import { loaderFailure } from "../lib/failure";
 import { listOutbound } from "../server/gateway";
 import type { OutboundRow, OutboundTrailEvent } from "../server/gateway";
 import { normalizeSearchRowId, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
@@ -67,7 +68,7 @@ export const Route = createFileRoute("/messages")({
     before: search.before,
     wabaId: search.wabaId,
   }),
-  loader: ({ deps }) => listOutbound({ data: deps }),
+  loader: ({ deps }) => listOutbound({ data: deps }).catch(loaderFailure),
   component: MessagesPage,
   pendingComponent: () => (
     <GridPending title="Messages" kicker="Logs" columns={messageColumns()} />

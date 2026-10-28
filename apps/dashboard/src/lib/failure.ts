@@ -1,3 +1,4 @@
+import { isNotFound, isRedirect } from "@tanstack/react-router";
 import type {
   CreateTemplateFailureCode,
   Failure,
@@ -22,6 +23,18 @@ export interface FailureCopy {
   title: string;
   /** One sentence: what it means, and what the operator can do next. */
   detail: string;
+}
+
+/**
+ * For a log page's `loader(...).catch(loaderFailure)`. A loader that throws
+ * hands the page to the error boundary, which drops Refresh with it and stops
+ * Live on a transient blip. A throw that got past the server function's own
+ * boundary is the network or the request, so it reads as unreachable;
+ * redirects and not-founds belong to the router and pass through.
+ */
+export function loaderFailure(err: unknown): Failure {
+  if (isRedirect(err) || isNotFound(err)) throw err;
+  return { ok: false, kind: "unreachable", error: err instanceof Error ? err.message : String(err) };
 }
 
 export function failureCopy(failure: Failure): FailureCopy {

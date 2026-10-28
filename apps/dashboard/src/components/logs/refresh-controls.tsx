@@ -28,7 +28,9 @@ export function RefreshControls({ live, setLive, refreshing, refresh }: LiveRefr
         aria-pressed={live}
         onClick={() => setLive(!live)}
         title={live ? "Updating every 5 seconds" : "Update every 5 seconds"}
-        className="aria-pressed:border-(--tag-live-edge) aria-pressed:bg-(--tag-live-bg) aria-pressed:text-(--tag-live-ink)"
+        // Stacked on `hover:` too, or the outline variant's hover would repaint
+        // the on state as off under the pointer.
+        className="aria-pressed:border-(--tag-live-edge) aria-pressed:bg-(--tag-live-bg) aria-pressed:text-(color:--tag-live-ink) aria-pressed:hover:border-(--tag-live-edge) aria-pressed:hover:bg-(--tag-live-bg) aria-pressed:hover:text-(color:--tag-live-ink)"
       >
         <span
           aria-hidden="true"

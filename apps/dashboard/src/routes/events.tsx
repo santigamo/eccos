@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
+import { Link, createFileRoute, useLoaderData } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { RefreshControls } from "../components/logs/refresh-controls";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
+import { loaderFailure } from "../lib/failure";
 import { listInbound, retryDelivery } from "../server/gateway";
 import type { InboundRow } from "../server/gateway";
 import { forwardReading } from "../lib/forwarding";
@@ -107,7 +108,7 @@ export const Route = createFileRoute("/events")({
         deliveryStatus: deps.forward ? FORWARD_FILTERS[deps.forward] : undefined,
         before: deps.before,
       },
-    }),
+    }).catch(loaderFailure),
   component: EventsPage,
   pendingComponent: () => <GridPending title="Events" kicker="Logs" columns={eventColumns()} />,
 });
@@ -304,7 +305,6 @@ function EventsPage() {
   const navigate = Route.useNavigate();
   const liveRefresh = useLiveRefresh("events");
   const refreshControls = <RefreshControls {...liveRefresh} />;
-  const router = useRouter();
   const [retrying, setRetrying] = useState<number | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const rows = useMemo(() => (result.ok ? result.data : []), [result]);
@@ -339,7 +339,7 @@ function EventsPage() {
         setRetryError(retry.error);
         return;
       }
-      await router.invalidate();
+      await liveRefresh.refresh();
     } catch (error) {
       // A THROW, not a `{ ok: false }`: the server function's own validator and
       // the network are the two things that raise here, and without this the

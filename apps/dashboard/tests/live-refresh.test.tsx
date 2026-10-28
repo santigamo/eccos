@@ -7,9 +7,10 @@ import type { ReactElement, ReactNode } from "react";
  * Refresh and live mode on /events and /messages (eccos-8dsv).
  *
  * No DOM here (see `tests/masthead-breadcrumb.test.tsx`), so the hook's effects
- * never run. What is pinned instead: the poller the hook mounts
- * (`pollWhileVisible`, driven by a fake document and real short timers), the
- * controls' two states and their toggle, and that both pages carry them.
+ * never run. What is pinned instead: the pieces the hook is built from (the
+ * poller, the single-flight reload, the stored choice), that a reload does not
+ * light the route rail, the controls' two states and their toggle, and that
+ * both pages carry them.
  */
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
@@ -36,7 +37,11 @@ mock.module("@tanstack/react-router", () => ({
   useRouter: () => ({ invalidate: () => Promise.resolve() }),
 }));
 
-const { pollWhileVisible } = await import("../src/hooks/use-live-refresh");
+const { pollWhileVisible, singleFlight, readLive, writeLive } = await import(
+  "../src/hooks/use-live-refresh"
+);
+const { isNavigating } = await import("../src/components/dashboard/route-progress");
+const { loaderFailure } = await import("../src/lib/failure");
 const { RefreshControls } = await import("../src/components/logs/refresh-controls");
 const { Route: EventsRoute } = await import("../src/routes/events");
 const { Route: MessagesRoute } = await import("../src/routes/messages");
@@ -97,7 +102,123 @@ describe("pollWhileVisible", () => {
   });
 });
 
-const idle = { live: false, setLive: () => {}, refreshing: false, refresh: () => {} };
+describe("singleFlight", () => {
+  test("a call while a reload is in flight joins it instead of stacking", async () => {
+    let calls = 0;
+    let finish!: () => void;
+    const busy: boolean[] = [];
+    const refresh = singleFlight(
+      () => {
+        calls++;
+        return new Promise<void>((resolve) => (finish = resolve));
+      },
+      (next) => busy.push(next),
+    );
+    const first = refresh();
+    expect(refresh()).toBe(first);
+    expect(calls).toBe(1);
+    finish();
+    await first;
+    expect(busy).toEqual([true, false]);
+
+    void refresh();
+    expect(calls).toBe(2);
+  });
+
+  test("a rejected reload resets busy and resolves", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    const busy: boolean[] = [];
+    const refresh = singleFlight(() => Promise.reject(new Error("down")), (next) => busy.push(next));
+    await expect(refresh()).resolves.toBeUndefined();
+    await wait(0);
+    process.off("unhandledRejection", onUnhandled);
+    expect(busy).toEqual([true, false]);
+    expect(unhandled).toEqual([]);
+  });
+});
+
+describe("live choice", () => {
+  function withStorage(storage: Partial<Storage>, run: () => void) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+    try {
+      run();
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "localStorage", previous);
+      else delete (globalThis as { localStorage?: Storage }).localStorage;
+    }
+  }
+
+  test("is remembered per page", () => {
+    const store = new Map<string, string>();
+    withStorage(
+      {
+        getItem: (key) => store.get(key) ?? null,
+        setItem: (key, value) => void store.set(key, value),
+      },
+      () => {
+        expect(readLive("events")).toBe(false);
+        writeLive("events", true);
+        expect(readLive("events")).toBe(true);
+        expect(readLive("messages")).toBe(false);
+        writeLive("events", false);
+        expect(readLive("events")).toBe(false);
+      },
+    );
+    expect(store.get("eccos.live.events")).toBe("0");
+  });
+
+  test("blocked storage reads as off and never throws", () => {
+    const blocked = () => {
+      throw new Error("SecurityError");
+    };
+    withStorage({ getItem: blocked, setItem: blocked }, () => {
+      expect(readLive("events")).toBe(false);
+      expect(() => writeLive("events", true)).not.toThrow();
+    });
+  });
+});
+
+describe("route rail", () => {
+  const at = (href: string) => ({ href }) as never;
+
+  test("a reload of the current page does not light it", () => {
+    expect(
+      isNavigating({ isLoading: true, location: at("/events"), resolvedLocation: at("/events") }),
+    ).toBe(false);
+  });
+
+  test("a navigation does", () => {
+    expect(
+      isNavigating({ isLoading: true, location: at("/messages"), resolvedLocation: at("/events") }),
+    ).toBe(true);
+    expect(isNavigating({ isLoading: true, location: at("/"), resolvedLocation: undefined })).toBe(
+      true,
+    );
+    expect(
+      isNavigating({ isLoading: false, location: at("/messages"), resolvedLocation: at("/events") }),
+    ).toBe(false);
+  });
+});
+
+describe("loaderFailure", () => {
+  test("a thrown loader becomes the in-page failure", () => {
+    expect(loaderFailure(new Error("fetch failed"))).toEqual({
+      ok: false,
+      kind: "unreachable",
+      error: "fetch failed",
+    });
+  });
+
+  test("router redirects pass through", () => {
+    const redirect = routerModule.redirect({ to: "/signin" });
+    expect(() => loaderFailure(redirect)).toThrow();
+  });
+});
+
+const idle = { live: false, setLive: () => {}, refreshing: false, refresh: async () => {} };
 
 describe("RefreshControls", () => {
   test("live is off by default and says so", () => {
