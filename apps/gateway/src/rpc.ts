@@ -17,6 +17,9 @@ import type {
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
+  ConversationListOpts,
+  ConversationOpts,
+  ConversationSummary,
   CreateTemplateFailureCode,
   CreateTemplateInput,
   CreateTemplateResult,
@@ -33,6 +36,7 @@ import type {
   IssuedApiKey,
   InboundRow,
   ManualConnectResult,
+  MessageRecord,
   OperatorCounts,
   OutboundListOpts,
   OutboundRow,
@@ -277,6 +281,17 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async listOutbound(opts: OutboundListOpts, accountId: string): Promise<OutboundRow[]> {
     const { stub } = await this.scoped(opts.wabaId, accountId);
     return stub.listOutbound(opts);
+  }
+
+  // Conversation store (eccos-yqbz.2): the per-number read model over `messages`.
+  async listConversations(opts: ConversationListOpts, accountId: string): Promise<ConversationSummary[]> {
+    const { stub } = await this.scoped(opts.wabaId, accountId);
+    return stub.listConversations(opts);
+  }
+
+  async getConversation(opts: ConversationOpts, accountId: string): Promise<MessageRecord[]> {
+    const { stub } = await this.scoped(opts.wabaId, accountId);
+    return stub.getConversation(opts);
   }
 
   async listDeliveries(opts: DeliveryListOpts, accountId: string): Promise<DeliveryRecord[]> {

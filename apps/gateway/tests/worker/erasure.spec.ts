@@ -83,6 +83,9 @@ describe("EccosGateway.eraseByPhone", () => {
         deliveriesRedacted: 3,
         // A-only pending batch had nothing left to forward
         deliveriesDeleted: 1,
+        // the send to A is also a conversation message, and A's contact row goes with it
+        messagesDeleted: 1,
+        contactsDeleted: 1,
       });
 
       // inbound: only B rows survive.
@@ -125,6 +128,8 @@ describe("EccosGateway.eraseByPhone", () => {
           outboundMessagesDeleted: 0,
           deliveriesRedacted: 0,
           deliveriesDeleted: 0,
+          messagesDeleted: 0,
+          contactsDeleted: 0,
         },
       });
     });
@@ -239,6 +244,8 @@ describe("POST /v1/wabas/WABA_TEST/privacy/erasure", () => {
         outboundMessagesDeleted: 1,
         deliveriesRedacted: 3,
         deliveriesDeleted: 1,
+        messagesDeleted: 1,
+        contactsDeleted: 1,
       },
     });
   });

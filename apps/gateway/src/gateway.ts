@@ -2,17 +2,30 @@ import { DurableObject } from "cloudflare:workers";
 import { signPayload } from "@eccos/core/signature";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
+  ContactRecord,
+  ConversationSummary,
   DeliveryRecord,
   EraseByPhoneResult,
   ErasureCounts,
   GatewayExport,
   InboundRow,
+  MessageDirection,
+  MessageOrigin,
+  MessageRecord,
+  MessageStatus,
   OperatorCounts,
   OutboundRow,
   OutboundTrailEvent,
   SetSubscriberConfigInput,
   SubscriberConfig,
 } from "@eccos/gateway-contract";
+import {
+  type NewMessage,
+  messageFromEvent,
+  messageFromOutbound,
+  statusFromEvent,
+  waIdOf,
+} from "./conversations";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
 
@@ -347,6 +360,40 @@ export class EccosGateway extends DurableObject<Env> {
         chunk      BLOB NOT NULL,
         PRIMARY KEY (payload_id, ordinal)
       );`);
+      // The conversation store (eccos-yqbz.2). Outside the content sweep on purpose:
+      // these rows are the conversations themselves, so per-workspace retention
+      // will own their lifetime, not CONTENT_RETENTION_DAYS.
+      const hasConversations =
+        this.sql.exec(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'`).toArray().length > 0;
+      this.ctx.storage.transactionSync(() => {
+        this.sql.exec(`CREATE TABLE IF NOT EXISTS contacts (
+          wa_id      TEXT PRIMARY KEY,
+          name       TEXT,
+          source     TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );`);
+        this.sql.exec(`CREATE TABLE IF NOT EXISTS messages (
+          id              TEXT PRIMARY KEY,
+          wa_id           TEXT NOT NULL,
+          direction       TEXT NOT NULL,
+          origin          TEXT NOT NULL,
+          type            TEXT NOT NULL,
+          text            TEXT,
+          content         TEXT,
+          at              INTEGER NOT NULL,
+          status          TEXT,
+          error           TEXT,
+          target_id       TEXT,
+          phone_number_id TEXT,
+          created_at      INTEGER NOT NULL
+        );`);
+        this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_at ON messages (wa_id, at);`);
+        this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_target ON messages (target_id);`);
+        // Same transaction as the CREATE TABLEs: a backfill that fails rolls the
+        // tables back too, so the next start retries instead of finding a
+        // half-filled store that looks complete.
+        if (!hasConversations) this.backfillConversations();
+      });
     });
   }
 
@@ -413,6 +460,7 @@ export class EccosGateway extends DurableObject<Env> {
           .toArray();
         const row = insertedRows[0];
         if (row) insertedIds.push(Number(row.id));
+        this.writeConversation(ev, now);
       }
       if (insertedIds.length > 0) {
         const phoneIds = new Set(events.map((event) => event.phoneNumberId?.trim() || null));
@@ -465,18 +513,38 @@ export class EccosGateway extends DurableObject<Env> {
     errorJson: string | null,
     phoneNumberId?: string | null,
   ): void {
-    this.sql.exec(
-      `INSERT INTO outbound_messages
-         (transport_message_id, recipient, phone_number_id, request, status, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      transportMessageId,
-      recipient,
-      phoneNumberId?.trim() || null,
-      requestJson,
-      status,
-      errorJson,
-      Date.now(),
-    );
+    const now = Date.now();
+    const phoneId = phoneNumberId?.trim() || null;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO outbound_messages
+           (transport_message_id, recipient, phone_number_id, request, status, error, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        transportMessageId,
+        recipient,
+        phoneId,
+        requestJson,
+        status,
+        errorJson,
+        now,
+      );
+      if (status !== "sent" || !transportMessageId) return;
+      const message = messageFromOutbound({
+        id: transportMessageId,
+        to: recipient,
+        request: requestJson,
+        phoneNumberId: phoneId,
+        at: now,
+      });
+      this.storeMessage(message, now);
+      // A status callback can overtake the send's own response. It was stored
+      // with no message to move, so replay it now that the message exists.
+      for (const row of this.sql
+        .exec(`SELECT payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
+        .toArray()) {
+        this.writeConversation(JSON.parse(row.payload as string), now);
+      }
+    });
   }
 
   saveConfig(entries: Record<string, string>): void {
@@ -651,6 +719,61 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /**
+   * One row per customer number: its latest message, its size and its contact
+   * name. Newest conversation first, paged by the latest message's timestamp.
+   *
+   * Aggregates over the whole `messages` table, because "latest per number"
+   * cannot be answered from an index alone. That is fine at single-WABA volumes;
+   * a per-conversation summary table is the fix if it stops being fine.
+   */
+  listConversations(opts: { limit?: number; before?: number } = {}): ConversationSummary[] {
+    const rows = this.sql
+      .exec(
+        `SELECT t.wa_id, t.type, t.text, t.direction, t.at, t.message_count, c.name
+         FROM (
+           SELECT wa_id, type, text, direction, at,
+                  ROW_NUMBER() OVER (PARTITION BY wa_id ORDER BY at DESC, rowid DESC) AS rn,
+                  COUNT(*) OVER (PARTITION BY wa_id) AS message_count
+           FROM messages
+         ) t
+         LEFT JOIN contacts c ON c.wa_id = t.wa_id
+         WHERE t.rn = 1 AND t.at < ?
+         ORDER BY t.at DESC
+         LIMIT ?`,
+        opts.before ?? Number.MAX_SAFE_INTEGER,
+        clampPage(opts.limit),
+      )
+      .toArray();
+    return rows.map((row) => ({
+      waId: row.wa_id as string,
+      name: (row.name as string | null) ?? null,
+      messageCount: Number(row.message_count),
+      lastMessage: {
+        type: row.type as string,
+        text: (row.text as string | null) ?? null,
+        direction: row.direction as MessageDirection,
+        at: Number(row.at),
+      },
+    }));
+  }
+
+  /** One page of a conversation, newest-first in the query and oldest-first in the
+   * result. `before` pages backwards: pass the oldest `at` of the page you have.
+   * `rowid` breaks same-millisecond ties in arrival order. */
+  getConversation(opts: { waId: string; limit?: number; before?: number }): MessageRecord[] {
+    const rows = this.sql
+      .exec(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages
+         WHERE wa_id = ? AND at < ? ORDER BY at DESC, rowid DESC LIMIT ?`,
+        waIdOf(opts.waId),
+        opts.before ?? Number.MAX_SAFE_INTEGER,
+        clampPage(opts.limit),
+      )
+      .toArray();
+    return rows.map(toMessageRecord).reverse();
+  }
+
+  /**
    * Hangs each message's status callbacks off it — the message's trail.
    *
    * ONE query for the whole page (`transport_message_id IN (…)`), against the
@@ -733,6 +856,25 @@ export class EccosGateway extends DurableObject<Env> {
       .toArray() as unknown as OutboundRow[];
   }
 
+  private listAllMessages(): MessageRecord[] {
+    return this.sql
+      .exec(`SELECT ${MESSAGE_COLUMNS} FROM messages ORDER BY at DESC, rowid DESC`)
+      .toArray()
+      .map(toMessageRecord);
+  }
+
+  private listAllContacts(): ContactRecord[] {
+    return this.sql
+      .exec(`SELECT wa_id, name, source, updated_at FROM contacts ORDER BY wa_id`)
+      .toArray()
+      .map((row) => ({
+        waId: row.wa_id as string,
+        name: (row.name as string | null) ?? null,
+        source: row.source as string,
+        updatedAt: Number(row.updated_at),
+      }));
+  }
+
   private listAllDeliveries(): DeliveryRecord[] {
     return this.sql
       .exec(
@@ -763,8 +905,8 @@ export class EccosGateway extends DurableObject<Env> {
 
   /**
    * Tenant-scoped data-plane export: every stored inbound event, outbound
-   * message, and delivery (existing row shapes, newest first), plus the
-    * non-secret connection metadata/config (secrets and internal keys are
+   * message, delivery and conversation message (existing row shapes, newest
+   * first), contact, plus the non-secret connection metadata/config (secrets and internal keys are
     * filtered — see isPublicConfigKey). Deterministic and JSON-serializable:
    * fixed key order, tables ordered inbound → outbound → deliveries → config,
    * rows ordered by id within each table, and no runtime values (timestamps,
@@ -776,6 +918,8 @@ export class EccosGateway extends DurableObject<Env> {
       inbound: this.listAllInbound(),
       outbound: this.listAllOutbound(),
       deliveries: this.listAllDeliveries(),
+      messages: this.listAllMessages(),
+      contacts: this.listAllContacts(),
       config: Object.fromEntries(
         Object.entries(this.getAllConfig()).filter(([key]) => isPublicConfigKey(key)),
       ),
@@ -899,7 +1043,9 @@ export class EccosGateway extends DurableObject<Env> {
    *    erasure/audit evidence) or deleted when still pending (nothing left to
    *    forward).
    *
-   * Returns per-table counts so the operator can evidence the erasure.
+   * `messages` and `contacts` are keyed on the normalized `wa_id` directly, so
+   * they need no wamid join. Returns per-table counts so the operator can
+   * evidence the erasure.
    */
   eraseByPhone(phone: string): EraseByPhoneResult {
     const digits = normalizePhoneNumber(phone);
@@ -911,6 +1057,8 @@ export class EccosGateway extends DurableObject<Env> {
       outboundMessagesDeleted: 0,
       deliveriesRedacted: 0,
       deliveriesDeleted: 0,
+      messagesDeleted: 0,
+      contactsDeleted: 0,
     };
     this.ctx.storage.transactionSync(() => {
       // 1. Outbound messages to that number: collect wamids, then delete the rows.
@@ -1005,8 +1153,97 @@ export class EccosGateway extends DurableObject<Env> {
           counts.deliveriesRedacted++;
         }
       }
+
+      // 5. The conversation store: every message to or from the number, and its contact.
+      counts.messagesDeleted = this.sql
+        .exec(`DELETE FROM messages WHERE wa_id = ? RETURNING id`, digits)
+        .toArray().length;
+      counts.contactsDeleted = this.sql
+        .exec(`DELETE FROM contacts WHERE wa_id = ? RETURNING wa_id`, digits)
+        .toArray().length;
     });
     return { ok: true, phone: digits, counts };
+  }
+
+  /** Writes one normalized event into the conversation store. An inbound or echo
+   * event adds a message; a status moves the message it names. Runs inside the
+   * caller's transaction. */
+  private writeConversation(ev: WhatsAppCallbackEvent, now: number): void {
+    const message = messageFromEvent(ev);
+    if (message) {
+      this.storeMessage(message, now);
+      return;
+    }
+    const update = statusFromEvent(ev);
+    if (!update) return;
+    // Statuses only move a message forward: sent → delivered → read. `failed` is
+    // terminal and only replaces a send Meta had not yet confirmed. A duplicate
+    // or an out-of-order callback matches no row and changes nothing.
+    this.sql.exec(
+      `UPDATE messages SET status = ?, error = COALESCE(?, error)
+       WHERE id = ? AND direction != 'in'
+         AND (status IS NULL OR status = 'sent' OR (status = 'delivered' AND ? = 'read'))`,
+      update.status,
+      update.error,
+      update.id,
+      update.status,
+    );
+  }
+
+  /** Inserts a message once (a duplicate webhook or a re-run backfill is ignored)
+   * and upserts its contact. The contact keeps any name it already has. */
+  private storeMessage(message: NewMessage, createdAt: number): void {
+    this.sql.exec(
+      `INSERT OR IGNORE INTO messages
+         (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      message.id,
+      message.waId,
+      message.direction,
+      message.origin,
+      message.type,
+      message.text,
+      message.content,
+      message.at,
+      message.status,
+      message.targetId,
+      message.phoneNumberId,
+      createdAt,
+    );
+    this.sql.exec(
+      `INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, NULL, 'live', ?)
+       ON CONFLICT(wa_id) DO UPDATE SET updated_at = excluded.updated_at`,
+      message.waId,
+      createdAt,
+    );
+  }
+
+  /** Builds the conversation store from the rows retention still holds (at most
+   * the content window): outbound sends first, then inbound events in arrival
+   * order, so every status lands on the message it names. Runs once, when the
+   * tables are created; exposed so tests can drive it directly. */
+  backfillConversations(): void {
+    for (const row of this.sql
+      .exec(
+        `SELECT transport_message_id, recipient, phone_number_id, request, created_at FROM outbound_messages
+         WHERE status = 'sent' AND transport_message_id IS NOT NULL ORDER BY id`,
+      )
+      .toArray()) {
+      const createdAt = Number(row.created_at);
+      this.storeMessage(
+        messageFromOutbound({
+          id: row.transport_message_id as string,
+          to: row.recipient as string,
+          request: row.request as string,
+          phoneNumberId: (row.phone_number_id as string | null) ?? null,
+          at: createdAt,
+        }),
+        createdAt,
+      );
+    }
+    for (const row of this.sql.exec(`SELECT payload, received_at FROM inbound_events ORDER BY id`).toArray()) {
+      this.writeConversation(JSON.parse(row.payload as string), Number(row.received_at));
+    }
   }
 
   async alarm(): Promise<void> {
@@ -1423,6 +1660,26 @@ function readEventMoment(payload: string, receivedAt: number): { at: number; err
   } catch {
     return { at: receivedAt, errorCode: null };
   }
+}
+
+const MESSAGE_COLUMNS =
+  "id, wa_id, direction, origin, type, text, content, at, status, error, target_id, phone_number_id";
+
+function toMessageRecord(row: Record<string, unknown>): MessageRecord {
+  return {
+    id: row.id as string,
+    waId: row.wa_id as string,
+    direction: row.direction as MessageDirection,
+    origin: row.origin as MessageOrigin,
+    type: row.type as string,
+    text: (row.text as string | null) ?? null,
+    content: (row.content as string | null) ?? null,
+    at: Number(row.at),
+    status: (row.status as MessageStatus | null) ?? null,
+    error: (row.error as string | null) ?? null,
+    targetId: (row.target_id as string | null) ?? null,
+    phoneNumberId: (row.phone_number_id as string | null) ?? null,
+  };
 }
 
 function clampPage(limit?: number): number {
