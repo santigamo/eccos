@@ -19,6 +19,11 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function sha256Base64(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return btoa(String.fromCharCode(...new Uint8Array(digest)));
+}
+
 function imageEvent(mediaId: string, at = Date.now(), from = WA): WhatsAppCallbackEvent {
   return {
     type: "message",
@@ -117,6 +122,19 @@ describe("media download (DO alarm)", () => {
     expect(stored!.contentType).toBe("image/jpeg");
     expect(stored!.sha256).toBe(await sha256Hex(BYTES));
     expect(await mediaRow("1001")).toMatchObject({ state: "stored", attempts: 1 });
+  });
+
+  it("reads a base64 SHA-256 from Meta and stores the digest in R2 as hex", async () => {
+    fakeMeta({
+      "1007": async () =>
+        Response.json({ url: `${LOOKASIDE}/1007`, mime_type: "image/jpeg", sha256: await sha256Base64(BYTES), file_size: BYTES.length, id: "1007" }),
+    });
+    await gatewayStub().ingest([imageEvent("1007")]);
+
+    await runAlarm();
+
+    expect(await mediaRow("1007")).toMatchObject({ state: "stored", attempts: 1 });
+    expect((await getMedia(env.MEDIA, TEST_WABA_ID, "1007"))!.sha256).toBe(await sha256Hex(BYTES));
   });
 
   it("refuses bytes whose SHA-256 is not Meta's, and retries that as a transient failure", async () => {
@@ -250,6 +268,54 @@ describe("media download (DO alarm)", () => {
 
     expect((await storedIds()).sort()).toEqual(["4002"]);
     expect(await mediaRow("4001")).toBeNull();
+  });
+});
+
+describe("history media (DO alarm)", () => {
+  it("downloads the media of a captured history webhook in the same alarm that imports it", async () => {
+    const meta = fakeMeta();
+    const body = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: TEST_WABA_ID,
+          changes: [
+            {
+              field: "history",
+              value: {
+                messaging_product: "whatsapp",
+                metadata: { display_phone_number: WA, phone_number_id: "PNID1" },
+                messages: [
+                  {
+                    from: OTHER,
+                    id: "wamid.H7001",
+                    timestamp: "1700000000",
+                    type: "image",
+                    image: { id: "7001", mime_type: "image/jpeg", sha256: "c2hhLWZpeHR1cmU=", caption: "Photo" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) =>
+      i.captureSyncPayload(["history"], JSON.stringify(body)),
+    );
+    expect(meta).not.toHaveBeenCalled();
+
+    await runAlarm();
+
+    const [row] = await runInDurableObject(gatewayStub(), (i: EccosGateway) =>
+      i.sql.exec(`SELECT origin, content FROM messages WHERE id = 'wamid.H7001'`).toArray(),
+    );
+    expect(row).toMatchObject({ origin: "history" });
+    expect(JSON.parse(row.content as string).media.id).toBe("7001");
+    const stored = await getMedia(env.MEDIA, TEST_WABA_ID, "7001");
+    expect(stored).not.toBeNull();
+    expect(await new Response(stored!.body).text()).toBe(BYTES);
+    expect(await mediaRow("7001")).toMatchObject({ state: "stored", attempts: 1 });
   });
 });
 

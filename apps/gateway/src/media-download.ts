@@ -78,7 +78,7 @@ export async function downloadMetaMedia(input: DownloadMetaMediaInput): Promise<
     }),
     download.body.pipeTo(writable),
   ]);
-  return { size: info.size, contentType: info.mimeType, sha256: info.sha256?.toLowerCase() ?? null };
+  return { size: info.size, contentType: info.mimeType, sha256: info.sha256 ?? null };
 }
 
 async function graphSubcode(response: Response): Promise<number | null> {
@@ -104,7 +104,19 @@ function parseMediaInfo(value: unknown): MetaMediaInfo {
   return {
     url: body.url,
     mimeType: body.mime_type,
-    sha256: typeof body.sha256 === "string" && body.sha256 !== "" ? body.sha256 : undefined,
+    sha256: hexDigest(body.sha256),
     size,
   };
+}
+
+/** Meta's `sha256` is documented without an encoding, so both forms are read: base64 of the
+ * 32-byte digest (44 characters) and hex (64). R2 takes lowercase hex. Anything else gives no
+ * digest, and the file is then checked by its size alone. */
+function hexDigest(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
+  if (/^[A-Za-z0-9+/]{43}=$/.test(value)) {
+    return [...atob(value)].map((char) => char.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+  }
+  return undefined;
 }
