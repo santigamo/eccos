@@ -40,15 +40,56 @@ import { UnauthorizedError } from "../src/auth/session";
  * run. The helper's header carries the full mechanism.
  */
 
+/** When set, every `getRequest()` returns this one Request (production behaviour). */
+let pinnedRequest: Request | null = null;
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
 const workerEnv: {
   BETTER_AUTH_URL?: string;
   readonly GATEWAY?: typeof gatewayBinding;
 } = {
   get GATEWAY() {
-    return gatewayBinding;
+    return bridgeLegacyMocks(gatewayBinding);
   },
 };
+
+type Binding = NonNullable<typeof gatewayBinding>;
+
+/**
+ * The server functions now talk to the gateway through `resolveOrganizationScope`
+ * and the `read*` fast path. Most fixtures below still describe the gateway with
+ * the account-scoped methods (link / resources / getStatus ...), so this derives
+ * the new surface from them; a fixture that defines a new method wins.
+ */
+function bridgeLegacyMocks(binding: typeof gatewayBinding): typeof gatewayBinding {
+  if (!binding) return binding;
+  const b = binding;
+  const read = (name: string) => (w: { wabaId: string; accountId: string }, opts?: object) =>
+    b[name]!({ ...opts, wabaId: w.wabaId }, w.accountId);
+  const derived: Binding = {
+    resolveOrganizationScope: async (organizationId: unknown) => {
+      let link = (await b.getOrganizationAccountLink!(organizationId)) as
+        | { accountId: string; status: string }
+        | null;
+      if (!link) {
+        const ensured = (await b.ensureOrganizationAccount!(organizationId)) as { accountId: string };
+        link = { accountId: ensured.accountId, status: "active" };
+      }
+      if (link.status !== "active") throw new Error("This organization is not linked to an Eccos account");
+      const resources = (await b.listAccountResources!(link.accountId)) as { account: unknown };
+      if (!resources.account) throw new Error(`Account "${link.accountId}" is not configured`);
+      return { accountId: link.accountId, resources };
+    },
+    readStatus: (w: { wabaId: string; accountId: string }) => b.getStatus!(w.wabaId, w.accountId),
+    readSubscriberConfig: (w: { wabaId: string; accountId: string }) =>
+      b.getSubscriberConfig!(w.wabaId, w.accountId),
+    readInbound: read("listInbound"),
+    readOutbound: read("listOutbound"),
+    readDeliveries: read("listDeliveries"),
+    readConversations: read("listConversations"),
+    readConversation: read("getConversation"),
+  };
+  return { ...derived, ...b };
+}
 
 workerEnv.BETTER_AUTH_URL = "http://localhost:3000";
 
@@ -143,6 +184,7 @@ installServerFnMocks({
   // The server-function request carries the current fake session's headers
   // (or none). Read at call time, so this stays correct per test.
   getRequest: () => {
+    if (pinnedRequest) return pinnedRequest;
     const headers = new Headers();
     if (fakeSessionHeaders) {
       for (const [k, v] of fakeSessionHeaders.entries()) headers.set(k, v);
@@ -194,6 +236,7 @@ const {
 
 afterEach(() => {
   gatewayBinding = undefined;
+  pinnedRequest = null;
   fakeSessionHeaders = null;
   fakeMemberships = [{ id: "org-fixture" }];
   fakeDeniedActions = new Set();
@@ -2255,5 +2298,92 @@ describe("the conversation composer's server functions", () => {
     });
     expect(await canSendMessages()).toBe(true);
     expect(await sendText({ data: TEXT })).toMatchObject({ ok: true, data: { ok: true, messageId: "wamid.SENT" } });
+  });
+});
+
+/**
+ * One control-plane trip + one data trip per scoped read (perf/cp-context).
+ * These bindings implement ONLY the new surface, so a regression to the old
+ * link -> resources -> account-scoped read choreography throws.
+ */
+describe("single control-plane context per scoped read", () => {
+  function contextBinding(overrides: Record<string, (...args: unknown[]) => unknown> = {}) {
+    const calls: string[] = [];
+    const record = (name: string, value: unknown) => async (...args: unknown[]) => {
+      calls.push(name);
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown)(...args) : value;
+    };
+    fakeSessionHeaders = new Headers({ cookie: "better-auth.session_token=fake" });
+    gatewayBinding = {
+      resolveOrganizationScope: record("resolveOrganizationScope", () => ({
+        accountId: "account-a",
+        resources: resourcesFor("account-a"),
+      })),
+      readConversations: record("readConversations", { items: [], nextCursor: null }),
+      readSubscriberConfig: record("readSubscriberConfig", { url: null }),
+      ...Object.fromEntries(Object.entries(overrides).map(([k, v]) => [k, record(k, v)])),
+    };
+    return calls;
+  }
+
+  test("a data read is exactly one resolve + one read, with the resolved WABA and no browser wabaId", async () => {
+    const calls = contextBinding();
+    const readArgs: unknown[][] = [];
+    gatewayBinding!.readConversations = async (...args: unknown[]) => {
+      calls.push("readConversations");
+      readArgs.push(args);
+      return { items: [], nextCursor: null };
+    };
+    const res = await listConversations({ data: { wabaId: "waba-a", limit: 5 } });
+    expect(res.ok).toBe(true);
+    expect(calls).toEqual(["resolveOrganizationScope", "readConversations"]);
+    const [waba, opts] = readArgs[0] as [{ accountId: string; wabaId: string }, object];
+    expect(waba).toMatchObject({ accountId: "account-a", wabaId: "waba-a" });
+    expect(opts).toEqual({ limit: 5 });
+  });
+
+  test("the context is shared inside one Request and never across Requests", async () => {
+    const calls = contextBinding();
+    pinnedRequest = new Request("http://localhost:3000/", {
+      headers: fakeSessionHeaders!,
+    });
+    await getSubscriberConfig();
+    await getSubscriberConfig();
+    expect(calls.filter((c) => c === "resolveOrganizationScope")).toHaveLength(1);
+    expect(calls.filter((c) => c === "readSubscriberConfig")).toHaveLength(2);
+
+    pinnedRequest = new Request("http://localhost:3000/", { headers: fakeSessionHeaders! });
+    await getSubscriberConfig();
+    expect(calls.filter((c) => c === "resolveOrganizationScope")).toHaveLength(2);
+  });
+
+  test("a failed resolution is not memoized and keeps its message", async () => {
+    let attempt = 0;
+    const calls = contextBinding({
+      resolveOrganizationScope: () => {
+        if (++attempt === 1) throw new Error("This organization is not linked to an Eccos account");
+        return { accountId: "account-a", resources: resourcesFor("account-a") };
+      },
+    });
+    pinnedRequest = new Request("http://localhost:3000/", { headers: fakeSessionHeaders! });
+    expect(await listConversations()).toEqual(
+      unreachable("This organization is not linked to an Eccos account"),
+    );
+    expect((await listConversations()).ok).toBe(true);
+    expect(calls.filter((c) => c === "resolveOrganizationScope")).toHaveLength(2);
+  });
+
+  test("an explicitly requested pending WABA is refused before any data read", async () => {
+    const calls = contextBinding({
+      resolveOrganizationScope: () => ({
+        accountId: "account-a",
+        resources: {
+          ...resourcesFor("account-a"),
+          wabas: [wabaFixture("account-a", "waba-a"), wabaFixture("account-a", "waba-p", { status: "pending" })],
+        },
+      }),
+    });
+    expect((await listConversations({ data: { wabaId: "waba-p" } })).ok).toBe(false);
+    expect(calls).toEqual(["resolveOrganizationScope"]);
   });
 });

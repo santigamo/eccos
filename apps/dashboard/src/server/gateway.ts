@@ -46,6 +46,7 @@ import type {
   ReconcileWabaResult,
   ResubscribeResult,
   RetryFailedResult,
+  ScopedWaba,
   SendTemplateTestInput,
   SendTemplateTestResult,
   SendTextInput,
@@ -855,6 +856,8 @@ type ResolvedScope = {
   wabaId: string;
   accountId: string;
   resources: AccountResources;
+  /** The selected WABA, as the gateway's `read*` fast path wants it. */
+  waba: ScopedWaba;
 };
 
 type ResolvedAccount = {
@@ -862,35 +865,33 @@ type ResolvedAccount = {
   resources: AccountResources;
 };
 
+const accountsByRequest = new WeakMap<Headers, { organizationId: string; account: Promise<ResolvedAccount> }>();
+
 /**
  * Resolve the Eccos account for the signed-in user's organization (contract §1):
  * session → membership → organization_accounts link → account. The link is the
  * server-owned mapping in the control plane; a pending/disabled/unknown link
- * fails closed. The org id is re-validated against membership inside
+ * fails closed, and a missing one is reconciled there (contract §2) — all in
+ * ONE gateway call. The org id is re-validated against membership inside
  * requirePermission before any RPC runs.
+ *
+ * Memoized per Request (never across requests, contract §5/§10): SSR consumers
+ * of one request share a single control-plane trip. A rejection is not cached.
  */
 async function resolveOrganizationAccount(
   gateway: GatewayApi,
 ): Promise<ResolvedAccount> {
   const organizationId = await requireGatewayPermission(requestAuth(), getRequest(), "view");
-  let link = await gateway.getOrganizationAccountLink(organizationId);
-  if (!link) {
-    // Self-healing reconcile (contract §2): the organization exists in the
-    // identity plane but predates its account link (e.g. created during the
-    // cutover). The idempotent saga converges to exactly one account + one
-    // active link and never issues an API key; verified callers only (a
-    // gateway:view permission was already required above).
-    // ensureOrganizationAccount always activates on create; "existing"
-    // cannot occur here because the link was just read as absent.
-    const ensured = await gateway.ensureOrganizationAccount(organizationId);
-    link = { accountId: ensured.accountId, status: "active" };
-  }
-  if (link.status !== "active") {
-    throw new Error("This organization is not linked to an Eccos account");
-  }
-  const resources = await gateway.listAccountResources(link.accountId);
-  if (!resources.account) throw new Error(`Account "${link.accountId}" is not configured`);
-  return { accountId: link.accountId, resources };
+  const headers = getRequest().headers;
+  const cached = accountsByRequest.get(headers);
+  if (cached?.organizationId === organizationId) return cached.account;
+  const account = gateway.resolveOrganizationScope(organizationId);
+  const entry = { organizationId, account };
+  accountsByRequest.set(headers, entry);
+  account.catch(() => {
+    if (accountsByRequest.get(headers) === entry) accountsByRequest.delete(headers);
+  });
+  return account;
 }
 
 /**
@@ -924,15 +925,16 @@ function resolveScopeFromAccount(
   // the all-pending account's error wording exactly as it was.
   const defaultWaba = wabas.find((waba) => waba.status === "active") ?? wabas[0];
   const selectedWaba = requestedIsOwned ? wabas.find((waba) => waba.wabaId === requested) : defaultWaba;
-  const wabaId = selectedWaba?.wabaId;
-  if (!wabaId) throw new Error(`Account "${accountId}" has no registered WABAs`);
-  if (mode === "any") return { wabaId, accountId, resources };
+  if (!selectedWaba) throw new Error(`Account "${accountId}" has no registered WABAs`);
+  const { wabaId } = selectedWaba;
+  const waba: ScopedWaba = selectedWaba;
+  if (mode === "any") return { wabaId, accountId, resources, waba };
   // An EXPLICITLY requested pending/failed WABA still throws. (The resulting
   // `unreachable` title is a known misclassification of an operator's own
   // choice; it is out of scope here and never reached by default selection.)
   if (selectedWaba?.status === "pending") throw new Error(`WABA "${wabaId}" is still provisioning`);
   if (selectedWaba?.status === "failed") throw new Error(`WABA "${wabaId}" provisioning failed`);
-  return { wabaId, accountId, resources };
+  return { wabaId, accountId, resources, waba };
 }
 
 async function resolveScope(
@@ -963,6 +965,12 @@ function dashboardScope(scope: ResolvedScope): DashboardScope {
       ),
     },
   };
+}
+
+/** The WABA comes from the resolved scope, never from the browser's options. */
+function withoutWaba<T extends { wabaId?: string }>(opts: T | undefined): Omit<T, "wabaId"> {
+  const { wabaId: _wabaId, ...rest } = opts ?? ({} as T);
+  return rest;
 }
 
 /** What a scoped server function needs from its caller. */
@@ -999,7 +1007,7 @@ export const getGatewayStatus = createServerFn({ method: "GET" })
     async ({ data }): Promise<GatewayStatusResult> => {
       const res = await withScopedGateway(
         { action: "view", wabaId: data?.wabaId },
-        (gateway, scope) => gateway.getStatus(scope.wabaId, scope.accountId),
+        (gateway, scope) => gateway.readStatus(scope.waba),
       );
       return res.ok ? { ok: true, status: res.data } : res;
     },
@@ -1046,7 +1054,7 @@ export const getDashboardState = createServerFn({ method: "GET" })
         const scope = resolveScopeFromAccount(account, data?.wabaId);
         return {
           stage: "ready",
-          status: await gateway.getStatus(scope.wabaId, scope.accountId),
+          status: await gateway.readStatus(scope.waba),
           scope: dashboardScope(scope),
         };
       }),
@@ -1057,7 +1065,7 @@ export const getDashboardOverview = createServerFn({ method: "GET" })
   .handler(
     ({ data }): Promise<DashboardOverviewResult> =>
       withScopedGateway({ action: "view", wabaId: data?.wabaId }, async (gateway, scope) => ({
-        status: await gateway.getStatus(scope.wabaId, scope.accountId),
+        status: await gateway.readStatus(scope.waba),
         scope: dashboardScope(scope),
       })),
   );
@@ -1452,7 +1460,7 @@ export const listDeliveries = createServerFn({ method: "GET" })
   .handler(
     ({ data }): Promise<Result<DeliveryRecord[]>> =>
       withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
-        gateway.listDeliveries({ ...data, wabaId: scope.wabaId }, scope.accountId),
+        gateway.readDeliveries(scope.waba, withoutWaba(data)),
       ),
   );
 
@@ -1460,7 +1468,7 @@ export const listInbound = createServerFn({ method: "GET" })
   .validator(validateInboundInput)
   .handler(({ data }): Promise<Result<InboundRow[]>> =>
     withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
-      gateway.listInbound({ ...data, wabaId: scope.wabaId }, scope.accountId),
+      gateway.readInbound(scope.waba, withoutWaba(data)),
     ),
   );
 
@@ -1468,7 +1476,7 @@ export const listOutbound = createServerFn({ method: "GET" })
   .validator(validateOutboundInput)
   .handler(({ data }): Promise<Result<OutboundRow[]>> =>
     withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
-      gateway.listOutbound({ ...data, wabaId: scope.wabaId }, scope.accountId),
+      gateway.readOutbound(scope.waba, withoutWaba(data)),
     ),
   );
 
@@ -1476,7 +1484,7 @@ export const listConversations = createServerFn({ method: "GET" })
   .validator(validateConversationListInput)
   .handler(({ data }): Promise<Result<CursorPage<ConversationSummary>>> =>
     withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
-      gateway.listConversations({ ...data, wabaId: scope.wabaId }, scope.accountId),
+      gateway.readConversations(scope.waba, withoutWaba(data)),
     ),
   );
 
@@ -1484,7 +1492,7 @@ export const getConversation = createServerFn({ method: "GET" })
   .validator(validateConversationInput)
   .handler(({ data }): Promise<Result<CursorPage<MessageRecord>>> =>
     withScopedGateway({ action: "view", wabaId: data.wabaId }, (gateway, scope) =>
-      gateway.getConversation({ ...data, wabaId: scope.wabaId }, scope.accountId),
+      gateway.readConversation(scope.waba, withoutWaba(data)),
     ),
   );
 
@@ -1766,7 +1774,7 @@ export const getSubscriberConfig = createServerFn({ method: "GET" })
     // any traffic arrives, so refusing to show it until a number exists gets
     // the order backwards.
     withScopedGateway({ action: "operate", wabaId: data?.wabaId, scope: "any" }, (gateway, scope) =>
-      gateway.getSubscriberConfig(scope.wabaId, scope.accountId),
+      gateway.readSubscriberConfig(scope.waba),
     ),
   );
 
@@ -1789,7 +1797,7 @@ export const hasForwardingTarget = createServerFn({ method: "GET" })
     const res = await withScopedGateway(
       { action: "view", wabaId: data?.wabaId, scope: "any" },
       async (gateway, scope) => {
-        const config = await gateway.getSubscriberConfig(scope.wabaId, scope.accountId);
+        const config = await gateway.readSubscriberConfig(scope.waba);
         return config.url !== null;
       },
     );

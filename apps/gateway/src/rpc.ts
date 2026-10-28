@@ -58,6 +58,8 @@ import type {
   SetSubscriberConfigInput,
   SubscriberConfig,
   TemplatesResult,
+  OrganizationAccountContext,
+  ScopedWaba,
 } from "@eccos/gateway-contract";
 
 /**
@@ -268,19 +270,74 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
   async getStatus(wabaId: string, accountId: string): Promise<GatewayStatus> {
     const { stub, wabaId: scopedWabaId, phoneNumberId, displayPhone, provisionedAt } = await this.scoped(wabaId, accountId);
+    return this.statusOf(stub, scopedWabaId, phoneNumberId, displayPhone, provisionedAt);
+  }
+
+  private async statusOf(
+    stub: ReturnType<GatewayRPC["stubFor"]>,
+    wabaId: string,
+    phoneNumberId: string | null,
+    displayPhone: string | null,
+    provisionedAt: number | null,
+  ): Promise<GatewayStatus> {
     const counts = await stub.getCounts();
     return {
       name: "eccos",
       version: "0.1.0",
       health: healthFromCounts(counts),
       connection: {
-        wabaId: scopedWabaId,
+        wabaId,
         phoneNumberId,
         displayPhone,
         connectedAt: provisionedAt === null ? null : new Date(provisionedAt).toISOString(),
       },
       counts,
     };
+  }
+
+  /** Data DO for a WABA the console already resolved (see {@link GatewayApi.readStatus}). */
+  private resolvedStub(scope: ScopedWaba) {
+    requireAccountId(scope?.accountId, "accountId is required");
+    return this.stubFor(requireAccountId(scope.wabaId, "wabaId is required"));
+  }
+
+  async readStatus(scope: ScopedWaba): Promise<GatewayStatus> {
+    const stub = this.resolvedStub(scope);
+    const first = [...scope.phones].sort((a, b) => a.phoneNumberId.localeCompare(b.phoneNumberId))[0];
+    return this.statusOf(
+      stub,
+      scope.wabaId,
+      first?.phoneNumberId || null,
+      first?.displayPhoneNumber || null,
+      scope.provisionedAt ?? null,
+    );
+  }
+
+  async readInbound(scope: ScopedWaba, opts: Omit<InboundListOpts, "wabaId">): Promise<InboundRow[]> {
+    return this.resolvedStub(scope).listInbound(opts);
+  }
+
+  async readOutbound(scope: ScopedWaba, opts: Omit<OutboundListOpts, "wabaId">): Promise<OutboundRow[]> {
+    return this.resolvedStub(scope).listOutbound(opts);
+  }
+
+  async readDeliveries(scope: ScopedWaba, opts: Omit<DeliveryListOpts, "wabaId">): Promise<DeliveryRecord[]> {
+    return this.resolvedStub(scope).listDeliveries(opts);
+  }
+
+  async readConversations(
+    scope: ScopedWaba,
+    opts: Omit<ConversationListOpts, "wabaId">,
+  ): Promise<CursorPage<ConversationSummary>> {
+    return this.resolvedStub(scope).listConversations(opts);
+  }
+
+  async readConversation(scope: ScopedWaba, opts: Omit<ConversationOpts, "wabaId">): Promise<CursorPage<MessageRecord>> {
+    return this.resolvedStub(scope).getConversation(opts);
+  }
+
+  async readSubscriberConfig(scope: ScopedWaba): Promise<SubscriberConfig> {
+    return this.resolvedStub(scope).getSubscriberConfig();
   }
 
   async getConfig(wabaId: string, accountId: string): Promise<Record<string, string>> {
@@ -808,6 +865,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       result.waId,
     );
     return { ok: true, messageId: result.id };
+  }
+
+  /** One control-plane hop from organization to account + resources (see
+   * {@link GatewayApi.resolveOrganizationScope}). */
+  async resolveOrganizationScope(organizationId: string): Promise<OrganizationAccountContext> {
+    return getControlPlaneStub(this.env).resolveOrganizationContext(organizationId);
   }
 
   /** Enumerate the durable resources owned by one account (registry). */

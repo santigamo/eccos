@@ -1828,6 +1828,23 @@ export class EccosControlPlane extends DurableObject<Env> {
     };
   }
 
+  /** Organization → active account → resources in one hop (contract §1, §2, §10).
+   * A missing link self-heals through the idempotent saga; a pending/disabled
+   * link or an unconfigured account fails closed. No credential is opened. */
+  async resolveOrganizationContext(organizationId: string): Promise<{ accountId: string; resources: AccountResources }> {
+    let link = this.getOrganizationAccountLink(organizationId);
+    if (!link) {
+      const ensured = await this.ensureOrganizationAccount(organizationId);
+      link = { accountId: ensured.accountId, status: "active" };
+    }
+    if (link.status !== "active") {
+      throw new Error("This organization is not linked to an Eccos account");
+    }
+    const resources = this.listAccountResources(link.accountId);
+    if (!resources.account) throw new Error(`Account "${link.accountId}" is not configured`);
+    return { accountId: link.accountId, resources };
+  }
+
   purgeExpiredConnectStates(now = Date.now()): void {
     if (!Number.isFinite(now)) throw new Error("invalid now: expected a finite timestamp");
     this.sql.exec("DELETE FROM connect_states WHERE expires_at <= ?", now);

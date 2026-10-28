@@ -486,6 +486,18 @@ export interface AccountResources {
   phones: AccountPhoneResource[];
 }
 
+/** What the console needs to scope a request to an organization: the linked
+ * account and its credential-free resources, resolved in one control-plane hop. */
+export interface OrganizationAccountContext {
+  accountId: string;
+  resources: AccountResources;
+}
+
+/** A WABA the console has already resolved for the account (see
+ * {@link OrganizationAccountContext}); carried by the `read*` fast path so the
+ * gateway does not look it up again. */
+export type ScopedWaba = Pick<AccountWabaResource, "accountId" | "wabaId" | "provisionedAt" | "phones">;
+
 export interface ConnectStartResult {
   url: string;
   state: string;
@@ -952,6 +964,30 @@ export interface GatewayApi {
   /** One stored media object of the account's WABA, or null when it is not stored (yet,
    * or any more). The bytes are streamed from R2; nothing is buffered in the gateway. */
   getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null>;
+  /**
+   * Resolve an organization to its account in ONE control-plane hop: link
+   * (reconciling a missing one, contract §2), refusal of a pending/disabled link
+   * or an unconfigured account, and the account's resources.
+   */
+  resolveOrganizationScope(organizationId: string): Promise<OrganizationAccountContext>;
+  /**
+   * Fast-path reads for a WABA already resolved by {@link resolveOrganizationScope}
+   * in the same request: they go straight to the data Durable Object with no
+   * control-plane ownership lookup and no token decryption. The `scope` is
+   * trusted exactly as the `accountId` of every other method is — this entrypoint
+   * is binding-only and its sole caller is the console, which derives it from the
+   * resources the gateway just returned.
+   */
+  readStatus(scope: ScopedWaba): Promise<GatewayStatus>;
+  readInbound(scope: ScopedWaba, opts: Omit<InboundListOpts, "wabaId">): Promise<InboundRow[]>;
+  readOutbound(scope: ScopedWaba, opts: Omit<OutboundListOpts, "wabaId">): Promise<OutboundRow[]>;
+  readDeliveries(scope: ScopedWaba, opts: Omit<DeliveryListOpts, "wabaId">): Promise<DeliveryRecord[]>;
+  readConversations(
+    scope: ScopedWaba,
+    opts: Omit<ConversationListOpts, "wabaId">,
+  ): Promise<CursorPage<ConversationSummary>>;
+  readConversation(scope: ScopedWaba, opts: Omit<ConversationOpts, "wabaId">): Promise<CursorPage<MessageRecord>>;
+  readSubscriberConfig(scope: ScopedWaba): Promise<SubscriberConfig>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
   /** The account's API keys, metadata only (never the secret or its hash). */
