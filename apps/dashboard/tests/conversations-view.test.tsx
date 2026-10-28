@@ -453,7 +453,7 @@ describe("the conversations page", () => {
     ready({ ok: true, data: page([SUMMARY]) }, null);
     const html = renderToStaticMarkup(<Route.component />);
     expect(html).toContain("Cliente de prueba");
-    expect(html).toMatch(/data-pane="thread"[^]*aria-busy="true"[^]*data-slot="skeleton"/);
+    expect(html).toMatch(/data-pane="thread"[\s\S]*aria-busy="true"[\s\S]*data-slot="skeleton"/);
     expect(html).not.toContain("NO CONVERSATION OPEN");
     expectDesignContract(html);
   });

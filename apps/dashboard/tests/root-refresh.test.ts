@@ -3,14 +3,18 @@ import { watchRootFreshness } from "../src/hooks/use-root-refresh";
 
 function target(visibility: DocumentVisibilityState) {
   const handlers: Record<string, Array<() => void>> = {};
-  const on = (type: string, fn: () => void) => (handlers[type] ??= []).push(fn);
+  const on = (type: string, fn: () => void) => {
+    handlers[type] = [...(handlers[type] ?? []), fn];
+  };
   const off = (type: string, fn: () => void) => {
     handlers[type] = (handlers[type] ?? []).filter((h) => h !== fn);
   };
   return {
     win: { addEventListener: on, removeEventListener: off } as unknown as Window,
     doc: { visibilityState: visibility, addEventListener: on, removeEventListener: off } as unknown as Document,
-    fire: (type: string) => handlers[type]?.forEach((h) => h()),
+    fire: (type: string) => {
+      for (const h of handlers[type] ?? []) h();
+    },
   };
 }
 

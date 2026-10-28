@@ -4,7 +4,11 @@ import { idleRoutes, resetIdlePrefetch, startIdlePrefetch, type IdleEnv } from "
 
 function fakeEnv(skip = () => false) {
   let queued: (() => void) | null = null;
-  const env: IdleEnv = { whenIdle: (run) => ((queued = run), () => {}), skip };
+  const env: IdleEnv = { whenIdle: (run) => {
+      queued = run;
+      return () => {};
+    },
+    skip };
   return { env, flush: async () => queued?.(), queued: () => queued !== null };
 }
 

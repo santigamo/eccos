@@ -981,14 +981,16 @@ async function withScopedRead<T>(
   options: ScopedOptions,
   read: (gateway: GatewayApi, org: ScopedOrg) => Promise<ScopedRead<T>>,
 ): Promise<Result<ScopedRead<T>>> {
-  return withGateway((gateway, organizationId) =>
-    read(gateway, {
-      organizationId: organizationId!,
+  return withGateway((gateway, organizationId) => {
+    // Always set: the permission check runs because `options.action` is passed.
+    if (!organizationId) throw new Error("organization was not resolved");
+    return read(gateway, {
+      organizationId,
       wabaId: options.wabaId,
       rejectUnknown: options.rejectUnknown,
       mode: options.scope,
-    }),
-  options.action);
+    });
+  }, options.action);
 }
 
 const dataOf = <T>(res: Result<ScopedRead<T>>): Result<T> => (res.ok ? { ok: true, data: res.data.data } : res);

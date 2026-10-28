@@ -51,7 +51,9 @@ describe("read cache", () => {
   test("force loads again and the older in-flight read cannot overwrite it", async () => {
     const cache = createReadCache<string>(10_000);
     let release!: () => void;
-    const slow = cache.read("k", () => new Promise((resolve) => (release = () => resolve(ok("old")))));
+    const slow = cache.read("k", () => new Promise((resolve) => {
+      release = () => resolve(ok("old"));
+    }));
     await cache.read("k", async () => ok("new"), true);
     release();
     await slow;
@@ -73,7 +75,9 @@ describe("read cache", () => {
     const cache = createReadCache<string>(10_000);
     await cache.read("k", loader("before").load);
     let release!: () => void;
-    const pending = cache.read("p", () => new Promise((resolve) => (release = () => resolve(ok("late")))));
+    const pending = cache.read("p", () => new Promise((resolve) => {
+      release = () => resolve(ok("late"));
+    }));
     cache.clear();
     expect(cache.peek("k")).toBeUndefined();
     release();

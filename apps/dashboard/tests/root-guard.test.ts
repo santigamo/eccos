@@ -76,7 +76,10 @@ describe("root beforeLoad", () => {
   test("a new scope or an invalidated root awaits exactly one read", async () => {
     for (const match of [rootMatch({ status: "pending" }), rootMatch({ loaderData: ready, invalid: true })]) {
       let reads = 0;
-      const result = run("/events", match, async () => (reads++, noOrg)) as Promise<void>;
+      const result = run("/events", match, async () => {
+        reads++;
+        return noOrg;
+      }) as Promise<void>;
       await result.then(
         () => {
           throw new Error("expected a redirect");
