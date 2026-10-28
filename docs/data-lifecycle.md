@@ -131,7 +131,11 @@ what error) should outlive the content itself:
 | `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, `created_at`, and `finished_at` survive; **`pending` `deliveries` rows are deleted** (by `created_at`) |
 | `DELIVERY_RETENTION_DAYS` | **90** | terminal `deliveries` rows are **deleted** entirely, by `created_at` |
 
-So after ~30 days no message content (bodies, phone numbers) exists anywhere, but the
+Coexistence sync payloads (`sync_payloads` + `sync_payload_parts`: the raw `history` and
+`smb_app_state_sync` webhooks, split into parts under 1 MB) are **outside both windows** and are
+not expired for now — Meta sends them once per number and they cannot be fetched again.
+
+So after ~30 days no message content (bodies, phone numbers) exists outside the sync payloads, but the
 metadata-only delivery rows remain another ~60 days as operational/audit evidence. A redacted
 delivery row (`payload = ''`) can no longer be replayed — `retryDelivery` refuses it — and the
 dashboard shows it with an empty payload.
