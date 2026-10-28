@@ -31,6 +31,11 @@ the same content, minus the Workers target's extra `config` table and message-id
 contact cards and Meta media *ids* plus ids/timestamps/error codes — there is no code path that downloads or persists WhatsApp
 media (images/audio/documents) today.
 
+**Media may be stored in R2, but nothing is written there yet.** The Workers target binds an
+EU-jurisdiction R2 bucket (`MEDIA`, `eccos-media`) for media files that later phases will download
+from Meta. Each object sits under its WABA's prefix (`waba/<wabaId>/media/<mediaId>`) with its content
+type and SHA-256 as metadata. No public URLs are issued. A WABA's prefix can be purged with `deleteMediaForWaba`, but nothing calls it yet.
+
 **The gateway sends no analytics or telemetry.** Its only network calls are to `graph.facebook.com`
 (Meta Cloud API) and to the operator's own `SUBSCRIBER_WEBHOOK_URL`.
 

@@ -177,6 +177,14 @@ re-armed once the queue is empty. The Bun target prunes once per delivery-loop t
 ... WHERE <timestamp> < cutoff` statements. Workers scans stay inside one WABA's object, and
 the Bun scan stays inside one self-hosted instance.
 
+## Media objects (R2, Workers target)
+
+The `MEDIA` R2 bucket (`eccos-media`, EU jurisdiction) is reserved for WhatsApp media files that
+later phases will download. Nothing writes to it yet, so it holds no data today. Objects live under
+`waba/<wabaId>/media/<mediaId>`, and `src/media-store.ts` is the only code that touches them. Media
+is outside the content-retention sweep above, so a later phase must add its own expiry or purge it
+with the WABA (`deleteMediaForWaba`).
+
 ## Right to erasure (`eraseByPhone`)
 
 Independent of retention, the Workers target can erase every stored trace of a single phone
