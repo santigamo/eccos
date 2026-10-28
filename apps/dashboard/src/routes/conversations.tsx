@@ -109,6 +109,7 @@ function ConversationsPage() {
             key={selectedWabaId ?? ""}
             page={conversations.data}
             wabaId={selectedWabaId}
+            linkWabaId={wabaId ?? null}
             selectedWaId={waId}
             now={now}
           />
@@ -163,11 +164,13 @@ function RefreshNotice({ failure }: { failure: Failure }) {
 function ConversationListPane({
   page,
   wabaId,
+  linkWabaId,
   selectedWaId,
   now,
 }: {
   page: CursorPage<ConversationSummary>;
   wabaId?: string;
+  linkWabaId: string | null;
   selectedWaId?: string;
   now: number;
 }) {
@@ -179,6 +182,7 @@ function ConversationListPane({
     <ConversationList
       items={older.items}
       wabaId={wabaId}
+      linkWabaId={linkWabaId}
       selectedWaId={selectedWaId}
       now={now}
       canLoadOlder={older.canLoadOlder}

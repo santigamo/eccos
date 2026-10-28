@@ -38,6 +38,12 @@ const TYPE_ICON: Record<string, LucideIcon> = {
 export interface ConversationListProps {
   items: ConversationSummary[];
   wabaId?: string;
+  /**
+   * The `wabaId` the row links carry: the URL's own, `null` when it has none
+   * (the default number). Writing the resolved id instead changes the root and
+   * list loaders' deps and reloads both. Defaults to `wabaId`.
+   */
+  linkWabaId?: string | null;
   selectedWaId?: string;
   now: number;
   canLoadOlder: boolean;
@@ -54,6 +60,7 @@ export interface ConversationListProps {
 export function ConversationList({
   items,
   wabaId,
+  linkWabaId,
   selectedWaId,
   now,
   canLoadOlder,
@@ -78,6 +85,7 @@ export function ConversationList({
                 key={conversation.waId}
                 conversation={conversation}
                 wabaId={wabaId}
+                linkWabaId={linkWabaId === undefined ? wabaId : (linkWabaId ?? undefined)}
                 selected={conversation.waId === selectedWaId}
                 now={now}
               />
@@ -112,11 +120,13 @@ export function ConversationList({
 function ConversationRow({
   conversation,
   wabaId,
+  linkWabaId,
   selected,
   now,
 }: {
   conversation: ConversationSummary;
   wabaId?: string;
+  linkWabaId?: string;
   selected: boolean;
   now: number;
 }) {
@@ -127,7 +137,7 @@ function ConversationRow({
     <li>
       <Link
         to="/conversations"
-        search={{ wabaId, waId }}
+        search={{ wabaId: linkWabaId, waId }}
         aria-current={selected ? "true" : undefined}
         onMouseEnter={prefetch}
         onFocus={prefetch}
