@@ -53,6 +53,7 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/deliveries": "number",
   "/events": "number",
   "/messages": "number",
+  "/conversations": "number",
 };
 
 const DEFAULT_REQUIREMENT: ScopeRequirement = "number";

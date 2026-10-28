@@ -10,6 +10,7 @@ import type { SessionEvent } from "../lib/embedded-signup";
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
 import { analyzeDraftBody } from "../lib/template-params";
+import { normalizeWaId } from "../lib/conversations";
 import {
   requireAuthContext,
   requireGatewayPermission,
@@ -22,8 +23,12 @@ import type {
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
+  ConversationListOpts,
+  ConversationOpts,
+  ConversationSummary,
   CreateTemplateInput,
   CreateTemplateResult,
+  CursorPage,
   DeleteTemplateInput,
   DeleteTemplateResult,
   DeliveryListOpts,
@@ -34,6 +39,7 @@ import type {
   InboundRow,
   IssuedApiKey,
   ManualConnectResult,
+  MessageRecord,
   OutboundListOpts,
   OutboundRow,
   ReconcileWabaResult,
@@ -50,6 +56,8 @@ import type {
 type DashboardListOpts = Omit<DeliveryListOpts, "wabaId">;
 type DashboardInboundOpts = Omit<InboundListOpts, "wabaId">;
 type DashboardOutboundOpts = Omit<OutboundListOpts, "wabaId">;
+type DashboardConversationListOpts = Omit<ConversationListOpts, "wabaId">;
+type DashboardConversationOpts = Omit<ConversationOpts, "wabaId">;
 
 // Re-export the shared contract types the routes render against, so the whole
 // dashboard reads the operator surface from a single source of truth
@@ -59,8 +67,10 @@ export type {
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
+  ConversationSummary,
   CreateTemplateFailureCode,
   CreateTemplateResult,
+  CursorPage,
   DeleteTemplateResult,
   DeliveryRecord,
   GatewayStatus,
@@ -69,6 +79,7 @@ export type {
   IssuedApiKey,
   ManualConnectFailureCode,
   ManualConnectResult,
+  MessageRecord,
   OperatorCounts,
   OutboundRow,
   OutboundTrailEvent,
@@ -301,6 +312,48 @@ function validateInboundInput(input: unknown): (DashboardInboundOpts & Dashboard
     ...(type !== undefined ? { type } : {}),
     ...(deliveryStatus !== undefined ? { deliveryStatus } : {}),
     ...(before !== undefined ? { before } : {}),
+  };
+}
+
+const CURSOR_TOKEN_PATTERN = /^[A-Za-z0-9+/=]{1,128}$/;
+
+/** A conversation page cursor is opaque to the console: it is only ever passed back as-is. */
+function optionalCursorToken(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !CURSOR_TOKEN_PATTERN.test(value)) {
+    throw new Error("cursor must be a page cursor from a previous page");
+  }
+  return value;
+}
+
+export function validateConversationListInput(
+  input: unknown,
+): (DashboardConversationListOpts & DashboardScopeInput) | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  const limit = optionalCursor(record.limit, "limit");
+  const cursor = optionalCursorToken(record.cursor);
+  return {
+    ...(wabaId ? { wabaId } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(cursor !== undefined ? { cursor } : {}),
+  };
+}
+
+/** A thread read needs the customer's number; digits or formatted, the gateway normalizes it. */
+export function validateConversationInput(input: unknown): DashboardConversationOpts & DashboardScopeInput {
+  const record = inputRecord(input);
+  const waId = normalizeWaId(record.waId);
+  if (!waId) throw new Error("waId must be a phone number");
+  const wabaId = optionalWabaId(record.wabaId);
+  const limit = optionalCursor(record.limit, "limit");
+  const cursor = optionalCursorToken(record.cursor);
+  return {
+    ...(wabaId ? { wabaId } : {}),
+    waId,
+    ...(limit !== undefined ? { limit } : {}),
+    ...(cursor !== undefined ? { cursor } : {}),
   };
 }
 
@@ -1384,6 +1437,22 @@ export const listOutbound = createServerFn({ method: "GET" })
   .handler(({ data }): Promise<Result<OutboundRow[]>> =>
     withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
       gateway.listOutbound({ ...data, wabaId: scope.wabaId }, scope.accountId),
+    ),
+  );
+
+export const listConversations = createServerFn({ method: "GET" })
+  .validator(validateConversationListInput)
+  .handler(({ data }): Promise<Result<CursorPage<ConversationSummary>>> =>
+    withScopedGateway({ action: "view", wabaId: data?.wabaId }, (gateway, scope) =>
+      gateway.listConversations({ ...data, wabaId: scope.wabaId }, scope.accountId),
+    ),
+  );
+
+export const getConversation = createServerFn({ method: "GET" })
+  .validator(validateConversationInput)
+  .handler(({ data }): Promise<Result<CursorPage<MessageRecord>>> =>
+    withScopedGateway({ action: "view", wabaId: data.wabaId }, (gateway, scope) =>
+      gateway.getConversation({ ...data, wabaId: scope.wabaId }, scope.accountId),
     ),
   );
 
