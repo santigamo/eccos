@@ -11,6 +11,7 @@ import {
   HISTORY_SYNC_WINDOW_MS,
   NOT_COEXISTENCE_ERROR,
   SYNC_UNCONFIRMED_ERROR,
+  syncUnavailableMarker,
   syncUnavailableReason,
 } from "../../src/coexistence";
 import { SMB_APP_DATA_EDGE, SMB_APP_DATA_SYNC_TYPE } from "../../src/meta/smb-app-data";
@@ -1044,6 +1045,96 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
         expect(record.coexistence_sync_status).toBe("unconfirmed");
         expect(record.contacts_sync_request_id).toBeNull();
       });
+    });
+  });
+});
+
+/**
+ * Sharing turned off (`2593109`) is learned from the history webhook, after the
+ * saga has finished. It must settle history on a coexistence WABA and nothing else.
+ */
+describe("history sharing off learned after the saga", () => {
+  it("records the refusal with the reason, and leaves the status to the contacts sync while it is pending", async () => {
+    const accountId = "acc-coex-late-off";
+    const wabaId = "WABA_COEX_LATE_OFF";
+    await createAccount(accountId);
+    await begin(accountId, wabaId, "coexistence");
+
+    await cp((instance) => instance.markHistorySharingOff(wabaId));
+
+    await cp(async (instance) => {
+      const record = row(instance, wabaId);
+      expect(record.coexistence_sync_status).toBe("pending");
+      expect(record.history_sync_request_id).toBe(syncUnavailableMarker("history_sharing_off"));
+      expect(record.contacts_sync_request_id).toBeNull();
+      expect(record.coexistence_sync_error).toBe(
+        "message-history sync unavailable: the business has history sharing turned off. The number works as a Cloud API number without that data",
+      );
+    });
+  });
+
+  it("settles history as unavailable once the contacts sync is answered too", async () => {
+    const accountId = "acc-coex-late-off-done";
+    const wabaId = "WABA_COEX_LATE_OFF_DONE";
+    await createAccount(accountId);
+    await begin(accountId, wabaId, "coexistence");
+    await cp((instance) =>
+      instance.sql.exec("UPDATE wabas SET contacts_sync_request_id = 'REQ_CONTACTS' WHERE waba_id = ?", wabaId),
+    );
+
+    await cp((instance) => instance.markHistorySharingOff(wabaId));
+
+    await cp((instance) => {
+      expect(row(instance, wabaId).coexistence_sync_status).toBe("unavailable");
+    });
+  });
+
+  it("keeps a contacts sync that Meta accepted and names only history as unavailable", async () => {
+    const accountId = "acc-coex-late-off-contacts";
+    const wabaId = "WABA_COEX_LATE_OFF_CONTACTS";
+    await createAccount(accountId);
+    await begin(accountId, wabaId, "coexistence");
+    await cp((instance) => {
+      instance.sql.exec("UPDATE wabas SET contacts_sync_request_id = 'REQ_CONT' WHERE waba_id = ?", wabaId);
+    });
+
+    await cp((instance) => instance.markHistorySharingOff(wabaId));
+
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.coexistence.contactsRequestId).toBe("REQ_CONT");
+      expect(waba?.coexistence.error).toContain("message-history sync unavailable");
+      expect(waba?.coexistence.error).not.toContain("contacts sync unavailable");
+    });
+  });
+
+  it("is idempotent: a repeated refusal leaves the same record", async () => {
+    const accountId = "acc-coex-late-off-twice";
+    const wabaId = "WABA_COEX_LATE_OFF_TWICE";
+    await createAccount(accountId);
+    await begin(accountId, wabaId, "coexistence");
+
+    await cp((instance) => instance.markHistorySharingOff(wabaId));
+    const first = await cp(async (instance) => (await instance.getWabaRecord(accountId, wabaId))?.coexistence);
+    await cp((instance) => instance.markHistorySharingOff(wabaId));
+    const second = await cp(async (instance) => (await instance.getWabaRecord(accountId, wabaId))?.coexistence);
+
+    expect(second).toEqual(first);
+  });
+
+  it("does nothing for a standard onboarding", async () => {
+    const accountId = "acc-coex-late-off-standard";
+    const wabaId = "WABA_COEX_LATE_OFF_STANDARD";
+    await createAccount(accountId);
+    await begin(accountId, wabaId, "standard");
+
+    await cp((instance) => instance.markHistorySharingOff(wabaId));
+
+    await cp((instance) => {
+      const record = row(instance, wabaId);
+      expect(record.coexistence_sync_status).toBe("not_applicable");
+      expect(record.history_sync_request_id).toBeNull();
+      expect(record.coexistence_sync_error).toBeNull();
     });
   });
 });

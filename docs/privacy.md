@@ -82,8 +82,10 @@ retention model so message content ages out before the operational audit trail d
     `deliveries` rows are deleted entirely.
   - **Coexistence sync payloads are not expired for now.** Meta sends them only once and they
     cannot be requested again, so `sync_payloads`/`sync_payload_parts` are outside the sweep and
-    kept indefinitely. They are not forwarded to the subscriber, not included
-    in the export, and not covered by per-number erasure yet.
+    kept indefinitely. They are not forwarded to the subscriber and not included
+    in the export. Per-number erasure removes the messages and contacts built from them, and
+    records the number in `erased_numbers` so a reprocess does not bring them back; the raw
+    payloads still contain the number until the whole object is reset.
 
   Both are plain (non-secret) `vars` entries in `apps/gateway/wrangler.jsonc`; the Workers target
   uses only the split vars and has no tenant-wide retention setting. All values are guard-railed
@@ -218,7 +220,9 @@ operator account).
     erased number's events; a batch left empty is redacted in place when terminal (the
     metadata row remains as erasure evidence) or deleted when still pending;
   - the conversation store's `messages` and `contacts` rows are keyed on the same normalized
-    number and deleted outright (reported as `messagesDeleted` / `contactsDeleted`).
+    number and deleted outright (reported as `messagesDeleted` / `contactsDeleted`);
+  - the number is recorded in `erased_numbers`, so history and app-state sync data that is
+    still held raw is not written back into the store on reprocess.
 
   Known limitations: (a) status events whose outbound/echo row already aged out of retention
   can no longer be linked to the number — by then they contain no phone number or content,
