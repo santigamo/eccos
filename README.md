@@ -86,16 +86,16 @@ your app  ◀──forward (HMAC)────   Eccos  ◀──  Meta webhook  
 Normalized event shape (`WhatsAppCallbackEvent`):
 
 ```ts
-| { type: "delivered" | "read"; transportMessageId; at }
+| { type: "sent" | "delivered" | "read"; transportMessageId; at }
 | { type: "failed"; transportMessageId; at; errorCode?; errorMessage? }
-| { type: "reply"; from; messageId; text; at; profileName? }
+| { type: "reply"; from; messageId; text; at; profileName?; payload? }
 | { type: "echo"; to; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 // Additive: every other message type, inbound and echoed, instead of being dropped
 | { type: "message"; from; messageId; at; profileName? } & MessageContent
 | { type: "message_echo"; to; messageId; at } & MessageContent
 ```
 
-`reply` / `echo` are unchanged and still carry text, button and interactive replies. `profileName` is
+`reply` / `echo` still carry text, button and interactive replies; `payload` (on `reply`) is the quick-reply button `payload` or the interactive `button_reply` / `list_reply` `id`, absent when there is none. `profileName` is
 the sender's WhatsApp profile name, present only when Meta sends one (`reply` and inbound `message` only). Everything
 else arrives as `message` (inbound) or `message_echo` (coexistence), with Meta's raw type in
 `messageType` and only the fields that type uses (`MessageContent` in `packages/core/src/types.ts`):

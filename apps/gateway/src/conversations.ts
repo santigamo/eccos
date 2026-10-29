@@ -19,7 +19,7 @@ export interface NewMessage {
 /** A status callback: the message it names and the status it moves that message to. */
 export interface StatusUpdate {
   id: string;
-  status: "delivered" | "read" | "failed";
+  status: "sent" | "delivered" | "read" | "failed";
   error: string | null;
 }
 
@@ -91,9 +91,9 @@ export function messageFromOutbound(input: {
   };
 }
 
-/** The status a delivered/read/failed callback applies; null for every other event. */
+/** The status a sent/delivered/read/failed callback applies; null for every other event. */
 export function statusFromEvent(ev: WhatsAppCallbackEvent): StatusUpdate | null {
-  if (ev.type !== "delivered" && ev.type !== "read" && ev.type !== "failed") return null;
+  if (ev.type !== "sent" && ev.type !== "delivered" && ev.type !== "read" && ev.type !== "failed") return null;
   return {
     id: ev.transportMessageId,
     status: ev.type,

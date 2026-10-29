@@ -80,7 +80,7 @@ export interface InboundRow {
  * {@link OutboundRow}, so a list read costs one extra query and not one per row.
  */
 export interface OutboundTrailEvent {
-  /** `delivered` · `read` · `failed`. Meta→phone vocabulary, never a forward. */
+  /** `sent` · `delivered` · `read` · `failed`. Meta→phone vocabulary, never a forward. */
   type: string;
   /** The event's OWN timestamp (Meta's `at`), falling back to when Eccos
    * received it. The two differ by the callback's flight time, and the first is

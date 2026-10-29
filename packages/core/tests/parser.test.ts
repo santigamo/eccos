@@ -54,6 +54,11 @@ describe("parseMetaWebhook", () => {
     expect(batches[1]?.events[0]).toMatchObject({ type: "delivered", transportMessageId: "wamid.B", phoneNumberId: "PHONE_B" });
   });
 
+  it("parses a sent status", () => {
+    const events = parseMetaWebhook(envelope({ statuses: [{ id: "wamid.S", status: "sent", timestamp: TS_SEC }] }));
+    expect(events).toEqual([{ type: "sent", transportMessageId: "wamid.S", at: TS_MS }]);
+  });
+
   it("parses a delivered status", () => {
     const events = parseMetaWebhook(
       envelope({ statuses: [{ id: "wamid.D", status: "delivered", timestamp: TS_SEC }] }),
@@ -96,13 +101,6 @@ describe("parseMetaWebhook", () => {
       errorCode: "131047",
       errorMessage: "More than 24 hours have passed...",
     });
-  });
-
-  it("drops a sent status", () => {
-    const events = parseMetaWebhook(
-      envelope({ statuses: [{ id: "wamid.S", status: "sent", timestamp: TS_SEC }] }),
-    );
-    expect(events).toHaveLength(0);
   });
 
   it("parses an inbound text message", () => {
@@ -171,11 +169,11 @@ describe("parseMetaWebhook", () => {
     const button = parseMetaWebhook(
       envelope({
         messages: [
-          { from: "34600000000", id: "b", timestamp: TS_SEC, type: "button", button: { text: "Confirmar visita" } },
+          { from: "34600000000", id: "b", timestamp: TS_SEC, type: "button", button: { text: "Confirmar visita", payload: "confirm_42" } },
         ],
       }),
     );
-    expect(button[0]).toMatchObject({ type: "reply", text: "Confirmar visita" });
+    expect(button[0]).toMatchObject({ type: "reply", text: "Confirmar visita", payload: "confirm_42" });
 
     const interactive = parseMetaWebhook(
       envelope({
@@ -190,7 +188,31 @@ describe("parseMetaWebhook", () => {
         ],
       }),
     );
-    expect(interactive[0]).toMatchObject({ type: "reply", text: "Cancelar visita" });
+    expect(interactive[0]).toMatchObject({ type: "reply", text: "Cancelar visita", payload: "x" });
+
+    const list = parseMetaWebhook(
+      envelope({
+        messages: [
+          {
+            from: "34600000000",
+            id: "l",
+            timestamp: TS_SEC,
+            type: "interactive",
+            interactive: { type: "list_reply", list_reply: { id: "row_1", title: "Lunes" } },
+          },
+        ],
+      }),
+    );
+    expect(list[0]).toMatchObject({ type: "reply", text: "Lunes", payload: "row_1" });
+  });
+
+  it("omits payload when a reply carries none", () => {
+    const events = parseMetaWebhook(
+      envelope({
+        messages: [{ from: "34600000000", id: "b", timestamp: TS_SEC, type: "button", button: { text: "Hola" } }],
+      }),
+    );
+    expect(events[0]).not.toHaveProperty("payload");
   });
 
   it("emits both statuses and messages from one change", () => {
