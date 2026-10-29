@@ -141,10 +141,7 @@ function messageContent(message: Record<string, unknown>): MessageContent {
 
   if (MEDIA_TYPES.has(messageType)) content.media = mediaRef(body);
   else if (messageType === "text") content.text = getString(body?.body);
-  else if (messageType === "button") {
-    content.text = getString(body?.text);
-    content.payload = getString(body?.payload);
-  }
+  else if (messageType === "button") content.text = getString(body?.text);
   else if (messageType === "location") {
     const latitude = finiteNumber(body?.latitude);
     const longitude = finiteNumber(body?.longitude);
@@ -166,7 +163,6 @@ function messageContent(message: Record<string, unknown>): MessageContent {
     const kind = getString(body?.type);
     const reply = kind ? asRecord(body?.[kind]) : null;
     if (kind) {
-      content.payload = getString(reply?.id);
       content.interactive = compact({
         type: kind,
         body: getString(reply?.body) ?? getString(reply?.title),

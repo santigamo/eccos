@@ -16,8 +16,6 @@ export interface MessageContent {
   /** Meta's raw `type`: image, reaction, unsupported, edit, revoke, ... */
   messageType: string;
   text?: string;
-  /** A quick-reply button's `payload`, or a button/list reply's `id`. */
-  payload?: string;
   media?: MediaRef;
   location?: { latitude: number; longitude: number; name?: string; address?: string; url?: string };
   contacts?: unknown[];
