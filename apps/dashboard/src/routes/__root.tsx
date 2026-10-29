@@ -17,7 +17,7 @@ import { getSessionUser } from "../organizations"
 import { useRootRefresh } from "../hooks/use-root-refresh"
 import type { AnalyticsConfig } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
-import { requirementSatisfied } from "../lib/scope-requirements"
+import { hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
 import type { Bootstrap } from "../lib/bootstrap"
 import appCss from "../app.css?url"
 
@@ -78,7 +78,8 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
     // data has no business deciding where an operator lands.
     const [user, forwardingTarget, analytics] = await Promise.all([
       getSessionUser(),
-      state.ok && state.data.stage !== "no-organization"
+      // No WABA yet means no forwarding target, without asking the gateway.
+      state.ok && hasWabaScope(state.data)
         ? hasForwardingTarget({ data: { wabaId: deps.wabaId } })
         : Promise.resolve(false),
       loadAnalyticsConfig(),

@@ -314,9 +314,19 @@ app.post("/webhooks/meta", async (c) => {
     });
     return c.json({ ok: true, received: 0 });
   }
+  // A failed ingest answers 5xx so Meta retries; ingest dedups, so a batch that
+  // did land is not stored twice.
   const results = await Promise.all(
     batches.map((batch) => getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events)),
-  );
+  ).catch((error: unknown) => {
+    Sentry.captureException(error);
+    logEvent("webhook_ingest_failed", cid, 503, {
+      bodyBytes: rawBody.length,
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+    return null;
+  });
+  if (!results) return c.json({ ok: false, error: "ingest failed" }, 503);
   const eventCount = batches.reduce((sum, batch) => sum + batch.events.length, 0);
   const received = results.reduce((sum, result) => sum + result.received, 0);
   logEvent("webhook_ingested", cid, 200, { eventCount, received, wabaCount: batches.length });
