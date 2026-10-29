@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signPayload } from "@eccos/core/signature";
-import type { EccosGateway } from "../../src/gateway";
+import { EccosGateway } from "../../src/gateway";
 import { bootstrapAccount, gatewayStub, SUBSCRIBER_SECRET, SUBSCRIBER_URL, TEST_WABA_ID } from "./helpers";
 
 afterEach(async () => {
@@ -79,5 +79,30 @@ describe("forwarded event contract", () => {
     expect(byId["wamid.BR"]).toMatchObject({ type: "reply", text: "Yes", payload: "poll_yes" });
     expect(byId["wamid.LR"]).toMatchObject({ type: "reply", text: "Nederlands", payload: "lang_nl" });
     expect(byId["wamid.TXT"]).toEqual({ type: "reply", from: "34600000000", messageId: "wamid.TXT", text: "STOP", at: 1_700_000_000_000, phoneNumberId: "PNID1", profileName: "Ana" });
+  });
+});
+
+describe("webhook ingest failure", () => {
+  it("answers 503 so Meta retries, and the retry is stored once", async () => {
+    const value = { metadata: { phone_number_id: "PNID1" }, messages: [{ from: "34600000000", id: "wamid.RETRY", timestamp: "1700000000", type: "text", text: { body: "hola" } }] };
+    const body = JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: TEST_WABA_ID, changes: [{ field: "messages", value }] }] });
+    const post = async () =>
+      exports.default.fetch("http://example.com/webhooks/meta", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-hub-signature-256": await signPayload(body, env.META_APP_SECRET) },
+        body,
+      });
+
+    const ingest = vi.spyOn(EccosGateway.prototype, "ingest").mockImplementationOnce(() => {
+      throw new Error("Durable Object storage operation exceeded timeout which caused object to be reset.");
+    });
+    expect((await post()).status).toBe(503);
+    ingest.mockRestore();
+
+    expect((await post()).status).toBe(200);
+    expect((await post()).status).toBe(200);
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      expect(instance.sql.exec("SELECT COUNT(*) AS c FROM inbound_events").toArray()[0]!.c).toBe(1);
+    });
   });
 });
