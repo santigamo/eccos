@@ -56,7 +56,8 @@ function metaError(value: unknown): { errorCode?: string; errorMessage?: string 
   return compact({ errorCode, errorMessage });
 }
 
-function metaStatusToType(status: string): "delivered" | "read" | "failed" | null {
+function metaStatusToType(status: string): "sent" | "delivered" | "read" | "failed" | null {
+  if (status === "sent") return "sent";
   if (status === "delivered") return "delivered";
   if (status === "read") return "read";
   if (status === "failed") return "failed";
@@ -78,6 +79,16 @@ function parseMetaStatus(status: Record<string, unknown>): WhatsAppCallbackEvent
   }
 
   return { type, transportMessageId, at };
+}
+
+/** The id a button or interactive reply carries: a quick-reply `payload`, or a button/list reply `id`. */
+function metaReplyPayload(message: Record<string, unknown>): string | null {
+  const interactive = asRecord(message.interactive);
+  return (
+    getString(asRecord(message.button)?.payload) ??
+    getString(asRecord(interactive?.button_reply)?.id) ??
+    getString(asRecord(interactive?.list_reply)?.id)
+  );
 }
 
 function metaMessageBody(message: Record<string, unknown>): string | null {
@@ -130,7 +141,10 @@ function messageContent(message: Record<string, unknown>): MessageContent {
 
   if (MEDIA_TYPES.has(messageType)) content.media = mediaRef(body);
   else if (messageType === "text") content.text = getString(body?.body);
-  else if (messageType === "button") content.text = getString(body?.text);
+  else if (messageType === "button") {
+    content.text = getString(body?.text);
+    content.payload = getString(body?.payload);
+  }
   else if (messageType === "location") {
     const latitude = finiteNumber(body?.latitude);
     const longitude = finiteNumber(body?.longitude);
@@ -152,6 +166,7 @@ function messageContent(message: Record<string, unknown>): MessageContent {
     const kind = getString(body?.type);
     const reply = kind ? asRecord(body?.[kind]) : null;
     if (kind) {
+      content.payload = getString(reply?.id);
       content.interactive = compact({
         type: kind,
         body: getString(reply?.body) ?? getString(reply?.title),
@@ -203,7 +218,10 @@ function parseMetaMessage(message: Record<string, unknown>, names: Map<string, s
 
   const profileName = names.get(from);
   const text = metaMessageBody(message);
-  if (text) return compact<WhatsAppCallbackEvent>({ type: "reply", from, messageId, text, at, profileName });
+  if (text) {
+    const payload = metaReplyPayload(message);
+    return compact<WhatsAppCallbackEvent>({ type: "reply", from, messageId, text, at, profileName, payload });
+  }
   const content = messageContent(message);
   return isEmptyReply(content)
     ? null

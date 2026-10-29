@@ -293,6 +293,7 @@ const EVENT_FAMILIES: Record<string, EventFamily> = {
   echo: "message",
   message: "message",
   message_echo: "message",
+  sent: "status",
   delivered: "status",
   read: "status",
   failed: "problem",
@@ -420,7 +421,7 @@ export interface EventCountEntry {
  * something lead, always, so an operator's eye lands in the same place on every
  * workspace.
  */
-const EVENT_COUNT_ORDER = ["reply", "echo", "message", "message_echo", "delivered", "read", "failed"];
+const EVENT_COUNT_ORDER = ["reply", "echo", "message", "message_echo", "sent", "delivered", "read", "failed"];
 
 export function eventCountEntries(byType: Record<string, number>): EventCountEntry[] {
   const seen = new Set<string>();

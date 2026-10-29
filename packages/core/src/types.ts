@@ -16,6 +16,8 @@ export interface MessageContent {
   /** Meta's raw `type`: image, reaction, unsupported, edit, revoke, ... */
   messageType: string;
   text?: string;
+  /** A quick-reply button's `payload`, or a button/list reply's `id`. */
+  payload?: string;
   media?: MediaRef;
   location?: { latitude: number; longitude: number; name?: string; address?: string; url?: string };
   contacts?: unknown[];
@@ -36,7 +38,7 @@ export interface MessageContent {
  */
 export type WhatsAppCallbackEvent =
   | {
-      type: "delivered" | "read";
+      type: "sent" | "delivered" | "read";
       transportMessageId: string;
       at: number;
       phoneNumberId?: string;
@@ -58,6 +60,8 @@ export type WhatsAppCallbackEvent =
       phoneNumberId?: string;
       /** The sender's WhatsApp profile name, when Meta sends one. */
       profileName?: string;
+      /** A quick-reply button's `payload`, or a button/list reply's `id`. */
+      payload?: string;
     }
   | {
       type: "echo";
