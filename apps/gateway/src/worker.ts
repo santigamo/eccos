@@ -127,6 +127,11 @@ function webhookShape(payload: unknown): string {
       const { field, value } = (change ?? {}) as { field?: unknown; value?: unknown };
       const keys = value && typeof value === "object" ? Object.keys(value).sort().join("+") : "";
       parts.add(`${typeof field === "string" ? field : "?"}:${keys}`);
+      const statuses = (value as { statuses?: unknown } | undefined)?.statuses;
+      for (const status of Array.isArray(statuses) ? statuses : []) {
+        const name = (status as { status?: unknown })?.status;
+        parts.add(`status:${typeof name === "string" ? name : "?"}`);
+      }
       const messages = (value as { messages?: unknown } | undefined)?.messages;
       for (const message of Array.isArray(messages) ? messages : []) {
         const { type, errors } = (message ?? {}) as { type?: unknown; errors?: unknown };
