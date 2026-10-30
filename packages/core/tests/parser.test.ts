@@ -74,6 +74,48 @@ describe("parseMetaWebhook", () => {
     expect(events[0]).toEqual({ type: "read", transportMessageId: "wamid.R", at: TS_MS });
   });
 
+  it("parses a played voice-message status, sent with BSUID contacts, as read", () => {
+    const events = parseMetaWebhook(
+      envelope({
+        messaging_product: "whatsapp",
+        metadata: { display_phone_number: "15550000000", phone_number_id: "PHONE_ID" },
+        contacts: [{ profile: { name: "Ana" }, wa_id: "34600000000", user_id: "US.1234567890" }],
+        statuses: [
+          {
+            id: "wamid.P",
+            status: "played",
+            timestamp: TS_SEC,
+            recipient_id: "34600000000",
+            recipient_user_id: "US.1234567890",
+          },
+        ],
+      }),
+    );
+    expect(events).toEqual([{ type: "read", transportMessageId: "wamid.P", at: TS_MS, phoneNumberId: "PHONE_ID" }]);
+  });
+
+  it("parses a status sent to a BSUID, without recipient_id", () => {
+    const events = parseMetaWebhook(
+      envelope({
+        messaging_product: "whatsapp",
+        metadata: { display_phone_number: "15550000000", phone_number_id: "PHONE_ID" },
+        contacts: [{ profile: { name: "Ana", username: "ana" }, user_id: "US.1234567890" }],
+        statuses: [
+          {
+            id: "wamid.U",
+            status: "delivered",
+            timestamp: TS_SEC,
+            recipient_user_id: "US.1234567890",
+            pricing: { billable: false, pricing_model: "PMP", category: "service", type: "free_customer_service" },
+          },
+        ],
+      }),
+    );
+    expect(events).toEqual([
+      { type: "delivered", transportMessageId: "wamid.U", at: TS_MS, phoneNumberId: "PHONE_ID" },
+    ]);
+  });
+
   it("parses a failed status, preferring error_data.details", () => {
     const events = parseMetaWebhook(
       envelope({

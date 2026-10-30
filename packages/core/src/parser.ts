@@ -59,7 +59,8 @@ function metaError(value: unknown): { errorCode?: string; errorMessage?: string 
 function metaStatusToType(status: string): "sent" | "delivered" | "read" | "failed" | null {
   if (status === "sent") return "sent";
   if (status === "delivered") return "delivered";
-  if (status === "read") return "read";
+  // A played voice message has been read, as history sync maps PLAYED.
+  if (status === "read" || status === "played") return "read";
   if (status === "failed") return "failed";
   return null;
 }
