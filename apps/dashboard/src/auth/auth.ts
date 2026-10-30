@@ -24,6 +24,7 @@ import {
   type SendOutcome,
 } from "./mail";
 import { ac, owner, admin, operator, viewer } from "./permissions";
+import { signupOrphanGuard } from "./signup-orphans";
 
 /**
  * Build the accept-invitation link for the dashboard UI.
@@ -384,6 +385,7 @@ export function createAuth(config: AuthConfig) {
       },
     },
     plugins: [
+      signupOrphanGuard(),
       // TOTP for owner/admin step-up before sensitive actions (contract §8);
       // enrollment UI ships with the eccos-0x0.7 dashboard pass.
       twoFactor(),
