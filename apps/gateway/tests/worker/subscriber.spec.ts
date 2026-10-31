@@ -7,7 +7,7 @@ import { validateSubscriberUrl } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
-import { bootstrapAccount, gatewayStub, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { alarmOf, bootstrapAccount, gatewayStub, holdAlarms, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -16,6 +16,7 @@ afterEach(async () => {
 
 beforeEach(async () => {
   await bootstrapAccount();
+  await holdAlarms();
 });
 
 function makeRpc() {
@@ -73,7 +74,7 @@ describe("subscriber config (feature A)", () => {
       return new Response("redirect", { status: 302, headers: { location: "http://127.0.0.1/hook" } });
     });
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-      await i.alarm();
+      await alarmOf(i);
       const call = fetchMock.mock.calls.find(([url]) => String(url) === "https://subscriber.example/hook");
       expect(call?.[1]?.redirect).toBe("manual");
       // Exactly one request: the Location was never followed.
@@ -185,7 +186,7 @@ describe("subscriber config (feature A)", () => {
     ]);
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-      await i.alarm();
+      await alarmOf(i);
     });
 
     const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
@@ -200,7 +201,7 @@ describe("subscriber config (feature A)", () => {
       { type: "delivered", transportMessageId: "wamid.HELDREAD", at: 1_700_000_000_000 },
     ]);
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-      await i.alarm();
+      await alarmOf(i);
     });
 
     const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
@@ -230,7 +231,7 @@ describe("subscriber config (feature A)", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
 
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-      await i.alarm();
+      await alarmOf(i);
     });
 
     // Forwarded to the config URL.

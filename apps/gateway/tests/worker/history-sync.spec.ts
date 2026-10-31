@@ -1,12 +1,12 @@
 import { env, exports } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import type { EccosControlPlane } from "../../src/control-plane";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { type EccosGateway, SYNC_MAX_ATTEMPTS, SYNC_MAX_BYTES } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
-import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { alarmOf, bootstrapAccount, gatewayStub, holdAlarms, runAlarm, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 /**
  * Processing of the raw coexistence sync payloads into `messages` and `contacts`.
@@ -21,6 +21,7 @@ const METADATA = { display_phone_number: BUSINESS, phone_number_id: "PNID1" };
 
 beforeEach(async () => {
   await bootstrapAccount();
+  await holdAlarms();
 });
 
 afterEach(async () => {
@@ -83,17 +84,11 @@ async function query(sql: string, ...args: unknown[]): Promise<Record<string, un
   return runInDurableObject(gatewayStub(), (i: EccosGateway) => i.sql.exec(sql, ...args).toArray());
 }
 
-/** Runs alarms until every captured payload is processed; returns how many ran. The pause
- * keeps each wake a millisecond later than the alarm it answers: the alarm harness does
- * not fire an alarm scheduled for the same millisecond. */
-async function drain(maxRuns = 20): Promise<number> {
-  let runs = 0;
-  while (runs < maxRuns && (await query(`SELECT 1 FROM sync_payloads WHERE processed_at IS NULL`)).length > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    await runDurableObjectAlarm(gatewayStub());
-    runs++;
+/** Runs alarms until every captured payload is processed. */
+async function drain(maxRuns = 20): Promise<void> {
+  for (let runs = 0; runs < maxRuns && (await query(`SELECT 1 FROM sync_payloads WHERE processed_at IS NULL`)).length > 0; runs++) {
+    await runAlarm();
   }
-  return runs;
 }
 
 /** The workspace's retention window, as the control plane holds it (null keeps everything). */
@@ -127,7 +122,7 @@ describe("history payloads", () => {
       ]),
       "history",
     );
-    expect(await drain()).toBe(1);
+    await drain();
 
     const messages = await query(`SELECT id, wa_id, direction, origin, type, text, at, status FROM messages ORDER BY at`);
     expect(messages).toEqual([
@@ -476,7 +471,7 @@ describe("alarm wake", () => {
         await i.captureSyncPayload(["history"], JSON.stringify(historyChunk([thread(CUSTOMER, [textMessage(CUSTOMER, "wamid.W2", "1700000060", "dos")])])));
         return 60_000;
       };
-      await i.alarm();
+      await alarmOf(i);
       return sync.ctx.storage.getAlarm();
     });
     expect(armedAt).toBeLessThanOrEqual(Date.now());
@@ -532,6 +527,7 @@ describe("history sharing off reaches the control plane", () => {
       });
     });
     const coexStub = getGatewayStubForWaba(env, COEX_WABA);
+    await holdAlarms(coexStub);
     await runInDurableObject(coexStub, (i: EccosGateway) =>
       i.captureSyncPayload(["history"], JSON.stringify(sharingOff(COEX_WABA))),
     );

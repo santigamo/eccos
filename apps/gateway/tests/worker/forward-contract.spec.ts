@@ -3,7 +3,7 @@ import { runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import { EccosGateway } from "../../src/gateway";
-import { bootstrapAccount, gatewayStub, SUBSCRIBER_SECRET, SUBSCRIBER_URL, TEST_WABA_ID } from "./helpers";
+import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, SUBSCRIBER_SECRET, SUBSCRIBER_URL, TEST_WABA_ID } from "./helpers";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -14,7 +14,6 @@ let forwardedBodies: string[] = [];
 
 beforeEach(async () => {
   forwardedBodies = [];
-  // Installed before any webhook: an arriving event wakes the forwarding alarm right away.
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (String(input) !== SUBSCRIBER_URL) return new Response("not found", { status: 404 });
     const body = String(init?.body);
@@ -23,6 +22,7 @@ beforeEach(async () => {
     return new Response("ok", { status: 200 });
   });
   await bootstrapAccount();
+  await holdAlarms();
   await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL, SUBSCRIBER_SECRET: SUBSCRIBER_SECRET });
 });
 
@@ -41,7 +41,7 @@ async function postMetaWebhook(value: Record<string, unknown>) {
 
 /** Drains the delivery queue and returns every event the subscriber received, signature-checked. */
 async function forwardedEvents(): Promise<Record<string, unknown>[]> {
-  await runInDurableObject(gatewayStub(), (instance: EccosGateway) => instance.alarm());
+  await runAlarm();
   return forwardedBodies.flatMap((body) => JSON.parse(body).events);
 }
 

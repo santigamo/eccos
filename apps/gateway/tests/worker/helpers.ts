@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
+import type { EccosGateway } from "../../src/gateway";
 
 export const TEST_WABA_ID = "WABA_TEST";
 export const TEST_ACCOUNT_ID = "test-account";
@@ -46,4 +47,36 @@ export async function bootstrapAccount(
     return null;
   });
   return { accountId, wabaId, apiKey: result ?? "ek-account-key" };
+}
+
+/**
+ * Leaves the gateway's alarm to the test. The pool fires a due alarm on its own, at a moment
+ * the test does not control, and that run can overlap one the test starts by hand: something
+ * the runtime never does, as it runs one alarm at a time. Held, the pool's firing is a no-op
+ * and alarm() only runs through runAlarm() or alarmOf(). Call before anything arms the alarm.
+ */
+export async function holdAlarms(stub = gatewayStub()): Promise<void> {
+  await runInDurableObject(stub, (instance: EccosGateway) => {
+    instance.alarm = async () => {};
+  });
+}
+
+/** Undoes holdAlarms, for a test about the pool firing the alarm itself. */
+export async function releaseAlarms(): Promise<void> {
+  await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+    delete (instance as { alarm?: unknown }).alarm;
+  });
+}
+
+/** The gateway's real alarm(), whether or not it is held. */
+export function alarmOf(instance: EccosGateway): Promise<void> {
+  return Object.getPrototypeOf(instance).alarm.call(instance);
+}
+
+/** Runs the gateway's alarm once, clearing the scheduled one first as the runtime does. */
+export async function runAlarm(): Promise<void> {
+  await runInDurableObject(gatewayStub(), async (instance: EccosGateway, state: DurableObjectState) => {
+    await state.storage.deleteAlarm();
+    await alarmOf(instance);
+  });
 }

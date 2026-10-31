@@ -6,7 +6,7 @@ import type { EccosGateway } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { provisionWaba } from "../../src/provisioning";
-import { bootstrapAccount, metaEnvelope, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { bootstrapAccount, metaEnvelope, gatewayStub, holdAlarms, runAlarm, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 let API_KEY = "ek-test";
 
@@ -35,6 +35,7 @@ function mockGraphFetch(): MockInstance<typeof fetch> {
 beforeEach(async () => {
   const boot = await bootstrapAccount();
   API_KEY = boot.apiKey;
+  await holdAlarms();
 });
 
 afterEach(async () => {
@@ -363,9 +364,7 @@ describe("routes", () => {
     });
     expect(webhookRes.status).toBe(200);
 
-    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-      await instance.alarm();
-    });
+    await runAlarm();
 
     const forwardCall = fetchMock.mock.calls.find(([, init]) => {
       const body = String(init?.body ?? "");
