@@ -9,7 +9,13 @@ conventions without coupling to Eccos's gateway or data.
 - **Config conventions** (`src/config.ts`): request-scoped Better Auth factory,
   fail-closed secret handling, canonical-origin allowlist, cookie posture
   (HttpOnly / SameSite=Lax / Secure-on-https), 15-minute session freshness for
-  step-up, database-backed rate limiting.
+  step-up.
+- **Rate limiting** (`src/rate-limit.ts`): database-backed counters keyed on
+  `cf-connecting-ip` + path. The edge sets that header and overwrites any
+  client value; `X-Forwarded-For` is never read, because a caller can spoof it.
+  Without the header (local dev, tests) requests share one localhost or
+  `no-trusted-ip` bucket per path. Off Cloudflare, set the header your proxy
+  controls instead.
 - **Capability model** (`src/permissions.ts`): an access controller with a
   product `resource` (`gateway` here) and five actions — rename the resource,
   keep the shape.
