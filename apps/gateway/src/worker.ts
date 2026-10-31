@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import * as Sentry from "@sentry/cloudflare";
 import { getGatewayStubForWaba } from "./gateway-stub";
+import { releaseHeldBatches } from "./held-webhooks";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
 import {
@@ -47,6 +48,12 @@ function accountIdParam(c: { req: { param(name: string): string } }): string {
   const accountId = c.req.param("accountId") ?? "";
   if (!accountId) throw new Error("account route is required");
   return accountId;
+}
+
+/** Ownership only, whatever the WABA's status: erasure and export must reach the content
+ * held while it is not active. */
+async function ownsWaba(env: Bindings, account: RequestAccount, wabaId: string): Promise<boolean> {
+  return getControlPlane(env).ownsWaba(account.accountId, wabaId);
 }
 
 async function ownedWaba(
@@ -328,8 +335,16 @@ app.post("/webhooks/meta", async (c) => {
   try {
     for (const batch of pending) {
       const { held, heldEvents } = await getGatewayStubForWaba(c.env, batch.wabaId).hold(batch.phoneNumberId, batch.events);
-      if (!held) ignoreBatch(cid, batch, "hold_full");
-      else logEvent("webhook_held", cid, 200, { wabaId: batch.wabaId, phoneNumberId: batch.phoneNumberId, eventCount: batch.events.length, heldEvents });
+      if (!held) {
+        ignoreBatch(cid, batch, "hold_full");
+        continue;
+      }
+      logEvent("webhook_held", cid, 200, { wabaId: batch.wabaId, phoneNumberId: batch.phoneNumberId, eventCount: batch.events.length, heldEvents });
+      // Activation may have run its release before this hold landed: nothing else would release it.
+      const waba = await cp.getWabaById(batch.wabaId).catch(() => null);
+      if (waba?.status === "active") {
+        c.executionCtx.waitUntil(releaseHeldBatches(c.env, batch.wabaId, waba.phones.map((p) => p.phoneNumberId)));
+      }
     }
   } catch (error) {
     Sentry.captureException(error);
@@ -360,11 +375,7 @@ app.post("/webhooks/meta", async (c) => {
     if (!entry) return;
     const { batch } = entry;
     // Activation raced a hold: release what provisioning's own release missed.
-    if (heldPending) {
-      c.executionCtx.waitUntil(
-        Promise.resolve(getGatewayStubForWaba(c.env, batch.wabaId).releaseHeld(entry.phoneNumberIds)).catch(() => undefined),
-      );
-    }
+    if (heldPending) c.executionCtx.waitUntil(releaseHeldBatches(c.env, batch.wabaId, entry.phoneNumberIds));
     logEvent("webhook_ingested", cid, 200, {
       wabaId: batch.wabaId,
       phoneNumberId: batch.phoneNumberId,
@@ -776,11 +787,10 @@ async function erasureRoute(c: AppContext) {
     return c.json({ ok: false, error: "invalid body: expected { phone: string } (a phone number or a BSUID)" }, 400);
   }
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-  const waba = await ownedWaba(c.env, account, wabaId);
-  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
   let result: EraseByPhoneResult;
   try {
-    result = await getGatewayStubForWaba(c.env, waba.wabaId).eraseByPhone(phone);
+    result = await getGatewayStubForWaba(c.env, wabaId).eraseByPhone(phone);
   } catch {
     // Safe to repeat: the erasure is idempotent, and the work it left is queued.
     logEvent("privacy_erasure", cid, 503, { reason: "unavailable" });
@@ -835,10 +845,8 @@ app.get("/v1/wabas/:wabaId/export", async (c) => {
   const account = c.get("account") ?? null;
   const wabaId = requestedWabaId(c);
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-  const waba = await ownedWaba(c.env, account, wabaId);
-  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-  const stub = getGatewayStubForWaba(c.env, waba.wabaId);
-  const exported = await stub.exportData();
+  if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  const exported = await getGatewayStubForWaba(c.env, wabaId).exportData();
   logEvent("export", cid, 200, {
     inbound: exported.inbound.length,
     outbound: exported.outbound.length,

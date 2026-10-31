@@ -1,4 +1,6 @@
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
+import type { HeldWebhookRow } from "@eccos/gateway-contract";
+import { getGatewayStubForWaba } from "./gateway-stub";
 
 /**
  * Webhook batches of a registered WABA that is still `pending` (first provisioning or a
@@ -56,6 +58,12 @@ export function heldBatches(sql: SqlStorage): HeldBatch[] {
     }));
 }
 
+export function heldRows(sql: SqlStorage): HeldWebhookRow[] {
+  return sql
+    .exec("SELECT id, phone_number_id, events, event_count, held_at FROM held_webhooks ORDER BY id")
+    .toArray() as unknown as HeldWebhookRow[];
+}
+
 export function hasHeld(sql: SqlStorage): boolean {
   return sql.exec("SELECT 1 FROM held_webhooks LIMIT 1").toArray().length > 0;
 }
@@ -72,4 +80,22 @@ export function expireHeld(sql: SqlStorage, now: number): number {
 export function replaceHeld(sql: SqlStorage, id: number, events: WhatsAppCallbackEvent[]): void {
   if (events.length === 0) sql.exec("DELETE FROM held_webhooks WHERE id = ?", id);
   else sql.exec("UPDATE held_webhooks SET events = ?, event_count = ? WHERE id = ?", JSON.stringify(events), events.length, id);
+}
+
+/** Releases the WABA's held batches. A failure leaves them held, for the next webhook's
+ * ingest (`heldPending`) to retry, or for the sweep to expire. */
+export async function releaseHeldBatches(env: Env, wabaId: string, phoneNumberIds: string[]): Promise<void> {
+  try {
+    await getGatewayStubForWaba(env, wabaId).releaseHeld(phoneNumberIds);
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        area: "ingest",
+        event: "held_release_failed",
+        wabaId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      }),
+    );
+  }
 }

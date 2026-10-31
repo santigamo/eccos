@@ -1,4 +1,5 @@
 import { getGatewayStubForWaba } from "./gateway-stub";
+import { releaseHeldBatches } from "./held-webhooks";
 import {
   MetaGraphError,
   getPhoneNumberOnboarding,
@@ -433,10 +434,7 @@ export async function runClaim(
       coexistence,
     });
     if (waba?.status === "active") {
-      // A failed release is retried by the next webhook's ingest (see `heldPending`).
-      await Promise.resolve(
-        getGatewayStubForWaba(env, claim.wabaId).releaseHeld(waba.phones.map((p) => p.phoneNumberId)),
-      ).catch(() => undefined);
+      await releaseHeldBatches(env, claim.wabaId, waba.phones.map((p) => p.phoneNumberId));
     }
     return { waba, attempted: true, error: null };
   } catch (error) {

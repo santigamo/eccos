@@ -43,7 +43,8 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `delivered` | `forward` | `wabaId`, `phoneNumberId`, `deliveryId`, `attempt`, `httpStatus`, `durationMs` (subscriber response time), `lagMs` (time since the webhook was stored) |
 | `attempt-failed` / `delivery-failed` | `forward` | Same as `delivered`, plus `error`. `delivery-failed` means it exhausted every retry |
 | `held_released` | `ingest` | `wabaId`, `released`, `discarded` (events of a phone the active WABA does not register). Runs when provisioning activates the WABA, or on its next webhook if activation raced a hold |
-| `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep |
+| `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
+| `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
 | `rpc_scope` | `rpc` | `accountId`, `wabaId` of a console RPC call (Workers Logs adds the RPC method) |
 | `sync-failed`, `item-skipped`, `history-error`, ... | `history` / `retention` / `media` | `wabaId`, `error` |
 
@@ -56,6 +57,8 @@ reported in the next alert.
 - **Inbound messages are being dropped:** an active WABA's messages lack a field the parser needs,
   so Meta changed a shape and that customer's messages are neither stored nor forwarded. Matching
   logs: `webhook_dropped`.
+- **Held webhooks expired:** events held for a WABA that never became active (e.g. a failed
+  provisioning) were deleted after 3 days, never forwarded. Matching logs: `held_expired`.
 
 ## Queries
 

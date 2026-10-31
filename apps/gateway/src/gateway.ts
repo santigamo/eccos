@@ -43,7 +43,7 @@ import {
   MediaTokenError,
 } from "./media-download";
 import { deleteMediaObjects } from "./media-store";
-import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, holdBatch, replaceHeld } from "./held-webhooks";
+import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -1108,9 +1108,10 @@ export class EccosGateway extends DurableObject<Env> {
   /**
    * Tenant-scoped data-plane export: every stored inbound event, outbound
    * message, delivery and conversation message (existing row shapes), contact,
-   * phone/BSUID pair, plus the non-secret connection metadata/config (secrets and internal keys
-   * are filtered — see isPublicConfigKey). JSON-serializable, with a fixed key
-   * order: inbound, outbound, deliveries, messages, contacts, customerIds, config. Inbound,
+   * phone/BSUID pair, webhook batch held while the WABA was not active, plus the
+   * non-secret connection metadata/config (secrets and internal keys are filtered —
+   * see isPublicConfigKey). JSON-serializable, with a fixed key
+   * order: inbound, outbound, deliveries, messages, contacts, held, customerIds, config. Inbound,
    * outbound and deliveries are newest first by id; messages newest first by
    * `(at, rowid)`; contacts by `wa_id`; pairs by `user_id`. Single snapshot: no limit/pagination —
    * a tenant's full retained history at single-tenant v1 volumes.
@@ -1122,6 +1123,7 @@ export class EccosGateway extends DurableObject<Env> {
       deliveries: this.listAllDeliveries(),
       messages: this.listAllMessages(),
       contacts: this.listAllContacts(),
+      held: heldRows(this.sql),
       customerIds: this.sql
         .exec(`SELECT user_id, wa_id FROM customer_ids ORDER BY user_id`)
         .toArray()
@@ -1287,6 +1289,7 @@ export class EccosGateway extends DurableObject<Env> {
       //    retention sweep drops it with the contact), so the phone/BSUID pairs
       //    these events carry join the key set until it stops growing.
       const wamids = new Set<string>();
+      const held = heldBatches(this.sql);
       const inboundIds = new Set<number>();
       for (let size = 0; size !== keys.size; ) {
         size = keys.size;
@@ -1305,6 +1308,13 @@ export class EccosGateway extends DurableObject<Env> {
           inboundIds.add(row.id as number);
           if (typeof ev.messageId === "string") wamids.add(ev.messageId);
           const pair = customerPairOf(ev as unknown as WhatsAppCallbackEvent);
+          if (pair) keys.add(pair.waId).add(pair.userId);
+        }
+        // Held batches (held-webhooks.ts) carry phone/BSUID pairs too.
+        for (const ev of held.flatMap((batch) => batch.events)) {
+          if (!eventNamesCustomer(ev as unknown as Record<string, unknown>, keys)) continue;
+          if ("messageId" in ev && ev.messageId) wamids.add(ev.messageId);
+          const pair = customerPairOf(ev);
           if (pair) keys.add(pair.waId).add(pair.userId);
         }
       }
@@ -1386,12 +1396,6 @@ export class EccosGateway extends DurableObject<Env> {
       }
 
       // 4b. Held batches (held-webhooks.ts): a release would bring the customer back.
-      const held = heldBatches(this.sql);
-      for (const ev of held.flatMap((batch) => batch.events)) {
-        if ("messageId" in ev && ev.messageId && eventNamesCustomer(ev as unknown as Record<string, unknown>, keys)) {
-          wamids.add(ev.messageId);
-        }
-      }
       for (const batch of held) {
         const kept = batch.events.filter((ev) => !erasureTargetsEvent(ev, keys, wamids));
         if (kept.length === batch.events.length) continue;
@@ -1670,6 +1674,7 @@ export class EccosGateway extends DurableObject<Env> {
         console.log(
           JSON.stringify({ level: "warn", area: "ingest", event: "held_expired", wabaId: this.wabaIdForOps(), eventCount: expired }),
         );
+        await this.alertHeldExpired(expired);
       }
       await this.pruneConversations(now);
       this.saveConfig({ [LAST_SWEEP_KEY]: String(now) });
@@ -2439,7 +2444,7 @@ export class EccosGateway extends DurableObject<Env> {
    * concurrent forwards of one alarm run in this same object, and two of them
    * must not both decide to send.
    */
-  recordOpsAlert(kind: "failure" | "drop", now: number, added = 1): { send: boolean; count: number } {
+  recordOpsAlert(kind: "failure" | "drop" | "held_expiry", now: number, added = 1): { send: boolean; count: number } {
     const read = (key: string): number =>
       Number(this.sql.exec("SELECT value FROM ops_state WHERE key = ?", key).toArray()[0]?.value ?? 0);
     const write = (key: string, value: number): void => {
@@ -2472,6 +2477,20 @@ export class EccosGateway extends DurableObject<Env> {
         `${count} ${count === 1 ? "message" : "messages"} since the last alert, neither stored nor forwarded`,
         `Latest: ${types} without ${missing}`,
         "Logs: event webhook_dropped",
+      ].join("\n"),
+    );
+  }
+
+  private async alertHeldExpired(expired: number): Promise<void> {
+    const { send, count } = this.recordOpsAlert("held_expiry", Date.now(), expired);
+    if (!send) return;
+    await sendOpsAlert(
+      this.env,
+      [
+        "Eccos: held webhooks expired",
+        `WABA ${this.wabaIdForOps()}`,
+        `${count} ${count === 1 ? "event" : "events"} held over 3 days since the last alert were deleted, never forwarded`,
+        "Logs: event held_expired",
       ].join("\n"),
     );
   }

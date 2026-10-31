@@ -87,9 +87,11 @@ describe("account-scoped operator RPC", () => {
       url: "https://subscriber.test/hook",
     });
 
-    // Data plane, same WABA, same account: still refused.
+    // Data plane, same WABA, same account: still refused, except export and erasure, which
+    // must reach what was held while it is not active (held-webhooks.ts).
     await expect(rpc.getStatus("WABA_AWAITING_PHONE", TEST_ACCOUNT_ID)).rejects.toThrow(/not owned/);
-    await expect(rpc.exportData("WABA_AWAITING_PHONE", TEST_ACCOUNT_ID)).rejects.toThrow(/not owned/);
+    expect(await rpc.exportData("WABA_AWAITING_PHONE", TEST_ACCOUNT_ID)).toMatchObject({ held: [] });
+    await expect(rpc.exportData("WABA_AWAITING_PHONE", "someone-else")).rejects.toThrow(/not owned/);
 
     // And ownership still binds on the widened path.
     await expect(
