@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { createExecutionContext, runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   backoffMs,
@@ -9,8 +9,12 @@ import {
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import {
+  alarmOf,
   bootstrapAccount,
   gatewayStub,
+  holdAlarms,
+  releaseAlarms,
+  runAlarm,
   SUBSCRIBER_SECRET,
   SUBSCRIBER_URL,
   TEST_ACCOUNT_ID,
@@ -24,6 +28,7 @@ afterEach(async () => {
 
 beforeEach(async () => {
   await bootstrapAccount();
+  await holdAlarms();
 });
 
 async function seedPendingDelivery(event: WhatsAppCallbackEvent) {
@@ -42,12 +47,6 @@ async function seedPendingDeliveries(events: WhatsAppCallbackEvent[]) {
         now,
       );
     }
-  });
-}
-
-async function runGatewayAlarm() {
-  await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-    await instance.alarm();
   });
 }
 
@@ -76,9 +75,7 @@ describe("EccosGateway alarm", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-      await instance.alarm();
-    });
+    await runAlarm();
 
     expect(fetchMock).toHaveBeenCalled();
     expect(
@@ -109,12 +106,8 @@ describe("EccosGateway alarm", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-      await instance.alarm();
-    });
-    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-      await instance.alarm();
-    });
+    await runAlarm();
+    await runAlarm();
 
     const subscriberCalls = fetchMock.mock.calls.filter(([url]) => String(url) === SUBSCRIBER_URL);
     expect(subscriberCalls).toHaveLength(1);
@@ -141,7 +134,7 @@ describe("EccosGateway alarm", () => {
     await seedPendingDelivery(event);
 
     const before = Date.now();
-    await runDurableObjectAlarm(gatewayStub());
+    await runAlarm();
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
@@ -177,7 +170,7 @@ describe("EccosGateway alarm", () => {
       await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
         instance.sql.exec("UPDATE deliveries SET next_attempt_at = ? WHERE status = 'pending'", Date.now());
       });
-      await runDurableObjectAlarm(gatewayStub());
+      await runAlarm();
     }
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
@@ -201,7 +194,7 @@ describe("EccosGateway alarm", () => {
       at: 1_700_000_000_000,
     });
 
-    await runDurableObjectAlarm(gatewayStub());
+    await runAlarm();
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
@@ -225,9 +218,9 @@ describe("EccosGateway alarm", () => {
 
     // No DO config: the forwarding target is unset (there is no env fallback),
     // exercising the "operator has not configured a destination" path.
-    await runDurableObjectAlarm(gatewayStub());
+    await runAlarm();
     // ...and again, to prove the hold does not erode the row over time.
-    await runGatewayAlarm();
+    await runAlarm();
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
@@ -254,7 +247,7 @@ describe("EccosGateway alarm", () => {
       })),
     );
 
-    await runGatewayAlarm();
+    await runAlarm();
 
     const counts = await gatewayStub().getCounts();
     expect(counts.deliveries).toEqual({ pending: 12 });
@@ -278,7 +271,7 @@ describe("EccosGateway alarm", () => {
       async (instance: EccosGateway, state: DurableObjectState) => {
         // Start from no alarm so what we read back can only be this alarm().
         await state.storage.deleteAlarm();
-        await instance.alarm();
+        await alarmOf(instance);
         return state.storage.getAlarm();
       },
     );
@@ -299,7 +292,7 @@ describe("EccosGateway alarm", () => {
       gatewayStub(),
       async (instance: EccosGateway, state: DurableObjectState) => {
         await state.storage.deleteAlarm();
-        await instance.alarm();
+        await alarmOf(instance);
         return state.storage.getAlarm();
       },
     );
@@ -313,13 +306,14 @@ describe("EccosGateway alarm", () => {
       transportMessageId: "wamid.RELEASE",
       at: 1_700_000_000_000,
     });
-    await runGatewayAlarm();
+    await runAlarm();
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql.exec("SELECT status FROM deliveries ORDER BY id DESC LIMIT 1").toArray()[0];
       expect(row?.status).toBe("pending");
     });
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
+    await releaseAlarms();
     await new GatewayRPC(createExecutionContext(), env).setSubscriberConfig(
       { url: SUBSCRIBER_URL },
       TEST_WABA_ID,
@@ -352,7 +346,7 @@ describe("EccosGateway alarm", () => {
       at: 1_700_000_000_000,
     });
 
-    await runDurableObjectAlarm(gatewayStub());
+    await runAlarm();
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const row = instance.sql
         .exec("SELECT status, finished_at FROM deliveries ORDER BY id DESC LIMIT 1")
@@ -367,7 +361,7 @@ describe("EccosGateway alarm", () => {
       await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
         instance.sql.exec("UPDATE deliveries SET next_attempt_at = ? WHERE status = 'pending'", Date.now());
       });
-      await runDurableObjectAlarm(gatewayStub());
+      await runAlarm();
     }
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
@@ -407,7 +401,7 @@ describe("EccosGateway alarm concurrency", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
 
-    await runGatewayAlarm();
+    await runAlarm();
 
     expect(timeout).toHaveBeenCalledWith(5_000);
   });
@@ -424,7 +418,7 @@ describe("EccosGateway alarm concurrency", () => {
     const cancel = vi.spyOn(body, "cancel");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
 
-    await runGatewayAlarm();
+    await runAlarm();
 
     expect(cancel).toHaveBeenCalledOnce();
   });
@@ -451,7 +445,7 @@ describe("EccosGateway alarm concurrency", () => {
       return new Response("ok", { status: 200 });
     });
 
-    await runGatewayAlarm();
+    await runAlarm();
 
     expect(calls).toBe(events.length);
     expect(peak).toBe(6);
@@ -476,7 +470,7 @@ describe("EccosGateway alarm concurrency", () => {
       return new Response("ok", { status: 200 });
     });
 
-    await runGatewayAlarm();
+    await runAlarm();
 
     expect(calls).toBe(events.length);
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
@@ -505,7 +499,7 @@ describe("EccosGateway alarm concurrency", () => {
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("fail", { status: 500 }));
 
-    await runGatewayAlarm();
+    await runAlarm();
     vi.mocked(Date.now).mockRestore();
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {

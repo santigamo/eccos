@@ -6,7 +6,7 @@ import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { getMedia } from "../../src/media-store";
-import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { alarmOf, bootstrapAccount, gatewayStub, holdAlarms, runAlarm, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 const WA = "34600000001";
 const OTHER = "34600000002";
@@ -68,16 +68,6 @@ function graphCalls(spy: ReturnType<typeof fakeMeta>): string[] {
   return spy.mock.calls.map(([input]) => String(input)).filter((url) => url.includes("graph.facebook.com"));
 }
 
-/** Runs the alarm directly, as alarm.spec.ts does: an alarm due "now" is not reliably
- * fired by the harness right after an ingest. Deleting it first keeps the harness from
- * also firing it, which would download the media twice. */
-async function runAlarm(): Promise<void> {
-  await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
-    await instance.ctx.storage.deleteAlarm();
-    await instance.alarm();
-  });
-}
-
 async function mediaRow(mediaId: string) {
   return runInDurableObject(gatewayStub(), (instance: EccosGateway) =>
     instance.sql.exec(`SELECT state, attempts, last_error, next_attempt_at FROM media WHERE media_id = ?`, mediaId).toArray()[0] ?? null,
@@ -105,6 +95,7 @@ let apiKey = "ek-test";
 
 beforeEach(async () => {
   apiKey = (await bootstrapAccount()).apiKey;
+  await holdAlarms();
 });
 
 afterEach(async () => {
@@ -307,7 +298,7 @@ describe("media download (DO alarm) under a rejected token and a mid-alarm webho
 
     const armedAt = await runInDurableObject(gatewayStub(), async (instance: EccosGateway, state: DurableObjectState) => {
       await state.storage.deleteAlarm();
-      await instance.alarm();
+      await alarmOf(instance);
       return state.storage.getAlarm();
     });
 
@@ -330,7 +321,7 @@ describe("media download (DO alarm) under a rejected token and a mid-alarm webho
         return serve(input, init);
       });
       await state.storage.deleteAlarm();
-      await instance.alarm();
+      await alarmOf(instance);
       return state.storage.getAlarm();
     });
 
