@@ -18,7 +18,9 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `webhook_ingested` | One per stored batch (WABA + phone) | `wabaId`, `phoneNumberId`, `eventCount`, `received`, one `n_<type>` count per event type: `n_reply`, `n_echo`, `n_status_sent` / `_delivered` / `_read` / `_failed`, `n_message_<messageType>`, `n_message_echo_<messageType>` |
 | `webhook_ignored` | A batch was parsed but not stored, or the webhook parsed to no event | `reason`, plus `wabaId`, `phoneNumberId`, `eventCount` for a batch, or `wabaIds`, `bodyBytes`, `shape` for `no_events` |
 | `webhook_dropped` | Messages or echoes of a WABA parsed to no event | `wabaId`, `dropped` (count), `missing` (required fields absent, e.g. `from`; empty when they only carried nothing), `types` (`text+reaction`, `echo_text`), `keys` (their top-level key names) |
+| `webhook_held` | A batch of a `pending` WABA (provisioning or a re-run Embedded Signup) was held in its Durable Object, to be ingested once it is active | `wabaId`, `phoneNumberId`, `eventCount`, `heldEvents` (total now held for the WABA) |
 | `webhook_ingest_failed` | The Durable Object write failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
+| `webhook_hold_failed` | Holding a pending WABA's batch failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
 | `webhook_sync_captured` | A coexistence sync payload was stored | `wabaId`, `fields`, and what was stored |
 
 `webhook_ignored.reason`:
@@ -27,7 +29,8 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 |---|---|
 | `no_events` | Nothing in the webhook maps to an event (a field Eccos does not forward, or every message dropped: see `webhook_dropped` and `shape`) |
 | `unknown_waba` | The WABA is not registered in the control plane |
-| `inactive_waba` | Registered but not `active` (still provisioning, or disconnected) |
+| `inactive_waba` | Registered but `failed` (a `pending` WABA's batches are held instead: `webhook_held`) |
+| `hold_full` | The WABA is `pending` and already holds 5000 events |
 | `phone_not_registered` | The WABA is active but the phone number id is not registered under it |
 | `invalid_waba_id` | The entry id is not a WABA id |
 | `lookup_failed` | The control plane lookup threw |
@@ -39,6 +42,9 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `ingested` | `ingest` | `wabaId`, `eventCount`, `inserted` (new rows; the rest were duplicates). Ties a `$workers.durableObjectId` to its WABA |
 | `delivered` | `forward` | `wabaId`, `phoneNumberId`, `deliveryId`, `attempt`, `httpStatus`, `durationMs` (subscriber response time), `lagMs` (time since the webhook was stored) |
 | `attempt-failed` / `delivery-failed` | `forward` | Same as `delivered`, plus `error`. `delivery-failed` means it exhausted every retry |
+| `held_released` | `ingest` | `wabaId`, `released`, `discarded` (events of a phone the active WABA does not register). Runs when provisioning activates the WABA, or on its next webhook if activation raced a hold |
+| `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
+| `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
 | `rpc_scope` | `rpc` | `accountId`, `wabaId` of a console RPC call (Workers Logs adds the RPC method) |
 | `sync-failed`, `item-skipped`, `history-error`, ... | `history` / `retention` / `media` | `wabaId`, `error` |
 
@@ -51,6 +57,8 @@ reported in the next alert.
 - **Inbound messages are being dropped:** an active WABA's messages lack a field the parser needs,
   so Meta changed a shape and that customer's messages are neither stored nor forwarded. Matching
   logs: `webhook_dropped`.
+- **Held webhooks expired:** events held for a WABA that never became active (e.g. a failed
+  provisioning) were deleted after 3 days, never forwarded. Matching logs: `held_expired`.
 
 ## Queries
 

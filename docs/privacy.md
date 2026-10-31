@@ -201,7 +201,10 @@ operator account).
 
 **Export (Workers target):**
 - `GET /v1/wabas/<WABA_ID>/export` returns the full retained snapshot of inbound, outbound, delivery,
-  conversation (messages, contacts, phone ↔ BSUID pairs) and non-secret config rows. It requires the owning account key. The RPC surface also exposes
+  conversation (messages, contacts, phone ↔ BSUID pairs), held webhook batches (`held`, see
+  [data-lifecycle.md](./data-lifecycle.md)) and non-secret config rows. It requires the owning
+  account key. Export and erasure only check ownership, so they also work on a WABA that is not
+  active (pending or failed provisioning). The RPC surface also exposes
   `exportData()` for the private dashboard binding.
 - The paginated `listInbound`, `listOutbound`, and `listDeliveries` methods remain available for
   cursor-based reads. Export rows include the business `phone_number_id` when the event or send had

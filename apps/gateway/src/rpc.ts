@@ -241,9 +241,9 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * WABA-LEVEL resources — the template list, the subscriber config — need only
    * the WABA id and its stored Meta token, and are exactly what an operator
    * prepares on an account still waiting for its phone number. The DATA PLANE
-   * is not safe that way and stays active-only: sends, logs, status, erasure and
-   * export all keep `getWaba`. Ownership is enforced either way —
-   * `getWabaRecord` is account-scoped too. */
+   * is not safe that way and stays active-only: sends, logs and status keep
+   * `getWaba`; erasure and export check ownership only (`ownedStub`). Ownership
+   * is enforced either way — `getWabaRecord` is account-scoped too. */
   private async scoped(
     wabaId: string,
     accountId?: string,
@@ -613,13 +613,22 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a customer,
    * named by phone number or by BSUID. Returns per-table counts as erasure evidence. */
   async eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult> {
-    const { stub } = await this.scoped(wabaId, accountId);
-    return stub.eraseByPhone(phone);
+    return (await this.ownedStub(wabaId, accountId)).eraseByPhone(phone);
   }
 
   async exportData(wabaId: string, accountId: string): Promise<GatewayExport> {
-    const { stub } = await this.scoped(wabaId, accountId);
-    return stub.exportData();
+    return (await this.ownedStub(wabaId, accountId)).exportData();
+  }
+
+  /** Ownership only, whatever the WABA's status: erasure and export must reach the content
+   * held while it is not active (held-webhooks.ts). */
+  private async ownedStub(wabaId: string, accountId: string) {
+    const account = requireAccountId(accountId, "accountId is required");
+    if (!(await getControlPlaneStub(this.env).ownsWaba(account, wabaId))) {
+      throw new Error(`WABA "${wabaId}" is not owned by account "${account}"`);
+    }
+    logScope(account, wabaId);
+    return this.stubFor(wabaId);
   }
 
   /** A stored WhatsApp media object, streamed from R2. Account-scoped like every data-plane

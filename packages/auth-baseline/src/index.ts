@@ -11,6 +11,7 @@ export {
   createOrgAuthConfig,
   type OrgAuthConfig,
 } from "./config";
+export { authIpAddress, authRateLimit } from "./rate-limit";
 export {
   ac,
   owner,

@@ -896,12 +896,22 @@ export type DeleteTemplateResult =
   | { ok: true }
   | { ok: false; code: "graph"; detail: string | null };
 
+/** A webhook batch held while its WABA was not active yet; `events` is the raw JSON array. */
+export interface HeldWebhookRow {
+  id: number;
+  phone_number_id: string | null;
+  events: string;
+  event_count: number;
+  held_at: number;
+}
+
 export interface GatewayExport {
   inbound: InboundRow[];
   outbound: OutboundRow[];
   deliveries: DeliveryRecord[];
   messages: MessageRecord[];
   contacts: ContactRecord[];
+  held: HeldWebhookRow[];
   customerIds: CustomerIdRecord[];
   config: Record<string, string>;
 }

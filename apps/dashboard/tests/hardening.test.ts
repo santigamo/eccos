@@ -65,53 +65,73 @@ describe("two-factor (TOTP)", () => {
   });
 });
 
+const REAL_IP = "203.0.113.7";
+const SPOOFED_XFF = "198.51.100.99";
+
+function authPost(auth: ReturnType<typeof createAuth>, path: string, headers: Record<string, string> = {}) {
+  return auth.handler(
+    new Request(`${BASE_URL}/api/auth${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: BASE_URL, ...headers },
+      body: JSON.stringify({
+        email: "nobody@corp.test",
+        password: "wrong-password-1",
+        name: "Nobody",
+        callbackURL: "/",
+      }),
+    }),
+  );
+}
+
+function bucketKeys(db: Database): string[] {
+  return (db.query('SELECT "key" FROM "rateLimit"').all() as { key: string }[]).map((r) => r.key).sort();
+}
+
 describe("distributed rate limiting", () => {
-  test("rate limit counters are stored in the database (shared across isolates)", async () => {
-    const { auth, db } = await createTestAuth();
+  test("counters live in the database and every custom rule names a real endpoint", async () => {
+    const { auth } = await createTestAuth();
     const config = auth.options.rateLimit;
     expect(config?.enabled).toBe(true);
     expect(config?.storage).toBe("database");
-    // Auth-critical paths have tighter windows than the default.
-    expect(config?.customRules?.["/sign-in/email"]).toBeDefined();
-    expect(config?.customRules?.["/forgot-password"]).toBeDefined();
-
-    // A blocked request leaves a rate-limit row in the auth D1 (observable).
-    const signIn = async () =>
-      auth.handler(
-        new Request(`${BASE_URL}/api/auth/sign-in/email`, {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: BASE_URL },
-          body: JSON.stringify({ email: "nobody@corp.test", password: "wrong-password-1" }),
-        }),
-      );
-    // Exhaust the sign-in rule window (10 attempts / 300s).
-    for (let i = 0; i < 10; i++) await signIn();
-    const blocked = await signIn();
-    expect(blocked.status).toBe(429);
+    // Better Auth matches rules by exact path; a misspelled key is silently dead.
+    const endpoints = new Set(Object.values(auth.api).map((e) => (e as { path?: string }).path));
+    for (const path of Object.keys(config?.customRules ?? {})) {
+      expect(endpoints.has(path)).toBe(true);
+    }
   });
 
-  test("counters key on cf-connecting-ip, not on a caller-chosen header (eccos-fzgx)", async () => {
+  test("/sign-in/email allows 10 per window, then refuses", async () => {
     const { auth } = await createTestAuth();
-    const signIn = (clientIp: string, forwardedFor?: string) =>
-      auth.handler(
-        new Request(`${BASE_URL}/api/auth/sign-in/email`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            origin: BASE_URL,
-            "cf-connecting-ip": clientIp,
-            ...(forwardedFor ? { "x-forwarded-for": forwardedFor } : {}),
-          },
-          body: JSON.stringify({ email: "nobody@corp.test", password: "wrong-password-1" }),
-        }),
-      );
-    for (let i = 0; i < 10; i++) await signIn("203.0.113.7");
-    // The same visitor stays blocked even when it invents a forwarding header...
-    expect((await signIn("203.0.113.7", "198.51.100.99")).status).toBe(429);
-    // ...while a different visitor still has its own budget. Without an IP
-    // header Better Auth falls back to one shared per-path bucket, so one
-    // caller exhausting it locked every other visitor out.
-    expect((await signIn("203.0.113.8")).status).not.toBe(429);
+    // The framework default for /sign-in is 10 s / 3, so calls 4-10 passing is
+    // what proves the custom rule is the one in force.
+    for (let i = 0; i < 10; i++) {
+      expect((await authPost(auth, "/sign-in/email", { "cf-connecting-ip": REAL_IP })).status).not.toBe(429);
+    }
+    expect((await authPost(auth, "/sign-in/email", { "cf-connecting-ip": REAL_IP })).status).toBe(429);
+  });
+
+  test("every auth route buckets on cf-connecting-ip, never on X-Forwarded-For (eccos-g5h)", async () => {
+    const { auth, db } = await createTestAuth();
+    // Cloudflare appends to a caller-supplied XFF, so production sees a chain.
+    const paths = [...Object.keys(auth.options.rateLimit?.customRules ?? {}), "/sign-out"];
+    for (const path of paths) {
+      await authPost(auth, path, { "cf-connecting-ip": REAL_IP, "x-forwarded-for": `${SPOOFED_XFF}, ${REAL_IP}` });
+    }
+    expect(bucketKeys(db)).toEqual(paths.map((p) => `${REAL_IP}|${p}`).sort());
+
+    // Without the edge header an XFF is still ignored: no caller-chosen key.
+    await authPost(auth, "/sign-in/email", { "x-forwarded-for": SPOOFED_XFF });
+    expect(bucketKeys(db).some((k) => k.includes(SPOOFED_XFF))).toBe(false);
+  });
+
+  test("a spoofed X-Forwarded-For neither dodges the limit nor shares a bucket", async () => {
+    const { auth } = await createTestAuth();
+    const signIn = (ip: string, xff: string) =>
+      authPost(auth, "/sign-in/email", { "cf-connecting-ip": ip, "x-forwarded-for": xff });
+    for (let i = 0; i < 10; i++) await signIn(REAL_IP, `198.51.100.${i}`);
+    expect((await signIn(REAL_IP, "198.51.100.200")).status).toBe(429);
+    // A different real visitor sending the same spoofed chain keeps its own budget.
+    expect((await signIn("203.0.113.8", "198.51.100.200")).status).not.toBe(429);
   });
 
   test("the resend endpoint carries its own rule (eccos-hk5)", async () => {

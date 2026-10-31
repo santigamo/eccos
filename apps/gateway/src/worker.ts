@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import * as Sentry from "@sentry/cloudflare";
 import { getGatewayStubForWaba } from "./gateway-stub";
+import { releaseHeldBatches } from "./held-webhooks";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
 import {
@@ -47,6 +48,12 @@ function accountIdParam(c: { req: { param(name: string): string } }): string {
   const accountId = c.req.param("accountId") ?? "";
   if (!accountId) throw new Error("account route is required");
   return accountId;
+}
+
+/** Ownership only, whatever the WABA's status: erasure and export must reach the content
+ * held while it is not active. */
+async function ownsWaba(env: Bindings, account: RequestAccount, wabaId: string): Promise<boolean> {
+  return getControlPlane(env).ownsWaba(account.accountId, wabaId);
 }
 
 async function ownedWaba(
@@ -209,22 +216,24 @@ app.get("/webhooks/meta", (c) => {
   return c.text("Forbidden", 403);
 });
 
-/** Why a parsed batch is not ingested, or null when its WABA and phone are registered and active. */
-async function ignoreReason(
-  cp: ReturnType<typeof getControlPlane>,
-  batch: MetaWebhookBatch,
-): Promise<string | null> {
-  if (!WABA_ID_PATTERN.test(batch.wabaId)) return "invalid_waba_id";
+type BatchRoute = { action: "ingest"; phoneNumberIds: string[] } | { action: "hold" } | { action: "ignore"; reason: string };
+
+/** Ingest when the WABA and phone are registered and active; hold while the WABA is
+ * pending (provisioning or re-provisioning), so its messages are not lost; else ignore. */
+async function routeBatch(cp: ReturnType<typeof getControlPlane>, batch: MetaWebhookBatch): Promise<BatchRoute> {
+  if (!WABA_ID_PATTERN.test(batch.wabaId)) return { action: "ignore", reason: "invalid_waba_id" };
   try {
     const waba = await cp.getWabaById(batch.wabaId);
-    if (!waba) return "unknown_waba";
-    if (waba.status !== "active") return "inactive_waba";
-    if (batch.phoneNumberId !== null && !waba.phones.some((p) => p.phoneNumberId === batch.phoneNumberId)) {
-      return "phone_not_registered";
+    if (!waba) return { action: "ignore", reason: "unknown_waba" };
+    if (waba.status === "pending") return { action: "hold" };
+    if (waba.status !== "active") return { action: "ignore", reason: "inactive_waba" };
+    const phoneNumberIds = waba.phones.map((p) => p.phoneNumberId);
+    if (batch.phoneNumberId !== null && !phoneNumberIds.includes(batch.phoneNumberId)) {
+      return { action: "ignore", reason: "phone_not_registered" };
     }
-    return null;
+    return { action: "ingest", phoneNumberIds };
   } catch {
-    return "lookup_failed";
+    return { action: "ignore", reason: "lookup_failed" };
   }
 }
 
@@ -240,6 +249,15 @@ function alertDrops(c: AppContext, drops: MessageDrops[]): void {
       })().catch(() => undefined),
     );
   }
+}
+
+function ignoreBatch(cid: string, batch: MetaWebhookBatch, reason: string): void {
+  logEvent("webhook_ignored", cid, 200, {
+    reason,
+    wabaId: WABA_ID_PATTERN.test(batch.wabaId) ? batch.wabaId : null,
+    phoneNumberId: batch.phoneNumberId,
+    eventCount: batch.events.length,
+  });
 }
 
 app.post("/webhooks/meta", async (c) => {
@@ -305,38 +323,59 @@ app.post("/webhooks/meta", async (c) => {
   }
   // Only ingest WABAs AND phone numbers registered in the control plane;
   // unregistered batches are ignored while the webhook still answers 200.
-  const known: MetaWebhookBatch[] = [];
+  const known: Array<{ batch: MetaWebhookBatch; phoneNumberIds: string[] }> = [];
+  const pending: MetaWebhookBatch[] = [];
   for (const batch of batches) {
-    const reason = await ignoreReason(cp, batch);
-    if (!reason) {
-      known.push(batch);
-      continue;
+    const route = await routeBatch(cp, batch);
+    if (route.action === "ingest") known.push({ batch, phoneNumberIds: route.phoneNumberIds });
+    else if (route.action === "hold") pending.push(batch);
+    else ignoreBatch(cid, batch, route.reason);
+  }
+  // Holding is storing: a failed hold answers 5xx so Meta retries, like a failed ingest.
+  try {
+    for (const batch of pending) {
+      const { held, heldEvents } = await getGatewayStubForWaba(c.env, batch.wabaId).hold(batch.phoneNumberId, batch.events);
+      if (!held) {
+        ignoreBatch(cid, batch, "hold_full");
+        continue;
+      }
+      logEvent("webhook_held", cid, 200, { wabaId: batch.wabaId, phoneNumberId: batch.phoneNumberId, eventCount: batch.events.length, heldEvents });
+      // Activation may have run its release before this hold landed: nothing else would release it.
+      const waba = await cp.getWabaById(batch.wabaId).catch(() => null);
+      if (waba?.status === "active") {
+        c.executionCtx.waitUntil(releaseHeldBatches(c.env, batch.wabaId, waba.phones.map((p) => p.phoneNumberId)));
+      }
     }
-    logEvent("webhook_ignored", cid, 200, {
-      reason,
-      wabaId: WABA_ID_PATTERN.test(batch.wabaId) ? batch.wabaId : null,
-      phoneNumberId: batch.phoneNumberId,
-      eventCount: batch.events.length,
+  } catch (error) {
+    Sentry.captureException(error);
+    logEvent("webhook_hold_failed", cid, 503, {
+      bodyBytes: rawBody.length,
+      wabaIds: pending.map((batch) => batch.wabaId).join(","),
+      errorType: error instanceof Error ? error.name : "unknown",
     });
+    return c.json({ ok: false, error: "hold failed" }, 503);
   }
   if (known.length === 0) return c.json({ ok: true, received: 0 });
   // A failed ingest answers 5xx so Meta retries; ingest dedups, so a batch that
   // did land is not stored twice.
   const results = await Promise.all(
-    known.map((batch) => getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events)),
+    known.map(({ batch }) => getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events)),
   ).catch((error: unknown) => {
     Sentry.captureException(error);
     logEvent("webhook_ingest_failed", cid, 503, {
       bodyBytes: rawBody.length,
-      wabaIds: known.map((batch) => batch.wabaId).join(","),
+      wabaIds: known.map(({ batch }) => batch.wabaId).join(","),
       errorType: error instanceof Error ? error.name : "unknown",
     });
     return null;
   });
   if (!results) return c.json({ ok: false, error: "ingest failed" }, 503);
-  results.forEach(({ received }, i) => {
-    const batch = known[i];
-    if (!batch) return;
+  results.forEach(({ received, heldPending }, i) => {
+    const entry = known[i];
+    if (!entry) return;
+    const { batch } = entry;
+    // Activation raced a hold: release what provisioning's own release missed.
+    if (heldPending) c.executionCtx.waitUntil(releaseHeldBatches(c.env, batch.wabaId, entry.phoneNumberIds));
     logEvent("webhook_ingested", cid, 200, {
       wabaId: batch.wabaId,
       phoneNumberId: batch.phoneNumberId,
@@ -748,11 +787,10 @@ async function erasureRoute(c: AppContext) {
     return c.json({ ok: false, error: "invalid body: expected { phone: string } (a phone number or a BSUID)" }, 400);
   }
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-  const waba = await ownedWaba(c.env, account, wabaId);
-  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
   let result: EraseByPhoneResult;
   try {
-    result = await getGatewayStubForWaba(c.env, waba.wabaId).eraseByPhone(phone);
+    result = await getGatewayStubForWaba(c.env, wabaId).eraseByPhone(phone);
   } catch {
     // Safe to repeat: the erasure is idempotent, and the work it left is queued.
     logEvent("privacy_erasure", cid, 503, { reason: "unavailable" });
@@ -807,10 +845,8 @@ app.get("/v1/wabas/:wabaId/export", async (c) => {
   const account = c.get("account") ?? null;
   const wabaId = requestedWabaId(c);
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
-  const waba = await ownedWaba(c.env, account, wabaId);
-  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-  const stub = getGatewayStubForWaba(c.env, waba.wabaId);
-  const exported = await stub.exportData();
+  if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  const exported = await getGatewayStubForWaba(c.env, wabaId).exportData();
   logEvent("export", cid, 200, {
     inbound: exported.inbound.length,
     outbound: exported.outbound.length,

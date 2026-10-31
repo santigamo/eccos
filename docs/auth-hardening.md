@@ -10,16 +10,18 @@ doc records the concrete implementation and the operator responsibilities.
 
 Better Auth rate limiting stores counters in the **auth D1 database**
 (`rateLimit.storage: "database"`) — shared across all Worker isolates, never
-per-isolate memory. Configured windows (`src/auth/auth.ts`):
+per-isolate memory. Configured windows (`packages/auth-baseline/src/rate-limit.ts`,
+shared by the dashboard and the baseline; a test asserts every path is a real
+endpoint, since Better Auth silently ignores a misspelled rule):
 
 | Path | Window | Max |
 |---|---|---|
 | default (any auth endpoint) | 60 s | 100 |
 | `/sign-in/email` | 300 s | 10 |
 | `/sign-up/email` | 3600 s | 20 |
-| `/forgot-password` | 3600 s | 10 |
+| `/request-password-reset` | 3600 s | 10 |
 | `/send-verification-email` | 300 s | 5 |
-| `/organization/invite` | 3600 s | 50 |
+| `/organization/invite-member` | 3600 s | 50 |
 
 **What a bucket keys on.** Better Auth builds the key as `${callerIP}|${path}`
 (`createRateLimitKey`, `@better-auth/core/utils/ip`) — the caller's address and
@@ -30,9 +32,15 @@ call puts real mail in a third party's inbox off our sending domain; 5 per
 300 s caps one caller at 60 mails/hour against a chosen address (`eccos-hk5`).
 An attacker with many source addresses is still only bounded per address —
 per-recipient send budgets, if we ever need them, belong to the mail layer.
-The IP itself comes from `x-forwarded-for` (Better Auth's default header list);
-if no trustworthy client IP can be resolved, every caller shares one bucket per
-path, which fails safe for abuse but degrades availability.
+The IP comes from `cf-connecting-ip` only (`advanced.ipAddress`, eccos-g5h),
+which Cloudflare's edge sets on every request and overwrites if a client sends
+it. `x-forwarded-for` is never read: Cloudflare appends to a caller-supplied
+XFF, the resulting chain resolves to no IP, and every such caller would share
+one bucket per path, so one spoofer could lock everyone out. Requests without
+the header (local dev, tests) fall back to one `127.0.0.1` bucket under
+`NODE_ENV=test|development`, else one `no-trusted-ip` bucket per path; that
+fallback is never keyed on a caller-chosen value and is unreachable from the
+internet behind Cloudflare.
 
 Auth server-side calls made inside dashboard server functions do NOT pass
 through the HTTP middleware — mutation rate limiting for those lives in the
