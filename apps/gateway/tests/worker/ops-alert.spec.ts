@@ -9,7 +9,7 @@ import { createExecutionContext, reset, runInDurableObject } from "cloudflare:te
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type EccosGateway, OPS_ALERT_INTERVAL_MS } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
-import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { alarmOf, bootstrapAccount, gatewayStub, holdAlarms, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -18,6 +18,7 @@ afterEach(async () => {
 
 beforeEach(async () => {
   await bootstrapAccount();
+  await holdAlarms();
 });
 
 describe("failed-delivery alert throttle", () => {
@@ -58,7 +59,7 @@ describe("a delivery that exhausts its attempts", () => {
       // FORWARD_MAX_ATTEMPTS is 3 in the test bindings; make each retry due now.
       for (let attempt = 0; attempt < 3; attempt++) {
         i.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE status = 'pending'");
-        await i.alarm();
+        await alarmOf(i);
       }
       expect(i.getDelivery(1)).toMatchObject({ status: "failed", last_error: "subscriber returned 503" });
       // The terminal failure was counted, so the next one inside the window is held.
