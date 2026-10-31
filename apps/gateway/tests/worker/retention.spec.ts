@@ -1,7 +1,7 @@
-import { runInDurableObject, runDurableObjectAlarm, reset } from "cloudflare:test";
+import { runInDurableObject, reset } from "cloudflare:test";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { REDACTED_PAYLOAD, resolveRetentionDays, type EccosGateway } from "../../src/gateway";
-import { bootstrapAccount, gatewayStub, SUBSCRIBER_URL } from "./helpers";
+import { bootstrapAccount, gatewayStub, runAlarm, SUBSCRIBER_URL } from "./helpers";
 
 afterEach(async () => {
   await reset();
@@ -197,7 +197,7 @@ describe("resolveRetentionDays", () => {
       insertDelivery(instance, { ageDays: 200, status: "delivered" });
     });
 
-    await runDurableObjectAlarm(gatewayStub());
+    await runAlarm();
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const rows = instance.sql.exec("SELECT COUNT(*) AS c FROM deliveries").toArray();
