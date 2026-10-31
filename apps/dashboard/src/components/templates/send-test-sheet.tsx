@@ -50,6 +50,11 @@ type Notice =
   | { ok: true; messageId: string }
   | { ok: false; title: string; detail: string; secondary?: string };
 
+const SEND_THREW = {
+  title: "Send failed",
+  detail: "The console could not complete the send. Check Messages before trying again.",
+};
+
 const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 
 /**
@@ -187,6 +192,9 @@ export function SendTestForm({
         if (result.data.ok) onSent?.();
         return result.data.ok;
       });
+    } catch {
+      // A thrown send never reached Meta's answer: say so, and stay retryable.
+      setNotice({ ok: false, title: SEND_THREW.title, detail: SEND_THREW.detail });
     } finally {
       setPhase(gate.current.phase);
     }
@@ -198,6 +206,9 @@ export function SendTestForm({
     setPhase("idle");
     setNotice(null);
     setTypedRecipient("");
+    setParams((current) => current.map(() => ""));
+    setButtonParams((current) => current.map((entry) => ({ ...entry, text: "" })));
+    setHeaderLink("");
   }
 
   if (sendability.kind === "unsupported") {
@@ -375,20 +386,26 @@ export function SendTestForm({
   );
 }
 
-/** The form's one act: send, the in-flight state, or — once sent — a fresh start. */
+/**
+ * The form's one act. The submit button is always mounted and, once the
+ * payload is sent, stays disabled as "Sent": swapping it for "Send another" in
+ * place let React reuse the same DOM button, so the second click of a double
+ * click landed on a re-enabled submit. "Send another" sits on its own row
+ * below, and unmounts on click, so no click lands on the submit after it.
+ */
 export function SendTestAction({ phase, onSendAnother }: { phase: SendPhase; onSendAnother: () => void }) {
-  if (phase === "sent") {
-    return (
-      <Button type="button" variant="outline" className="w-fit self-start rounded-none" onClick={onSendAnother}>
-        Send another
-      </Button>
-    );
-  }
   const sending = phase === "sending";
   return (
-    <Button type="submit" className="w-fit self-start" aria-busy={sending} disabled={sending}>
-      {sending ? "Sending…" : "Send test message"}
-    </Button>
+    <div className="flex flex-col items-start gap-2">
+      <Button type="submit" aria-busy={sending} disabled={phase !== "idle"}>
+        {phase === "sent" ? "Sent" : sending ? "Sending…" : "Send test message"}
+      </Button>
+      {phase === "sent" ? (
+        <Button type="button" variant="outline" onClick={onSendAnother}>
+          Send another
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

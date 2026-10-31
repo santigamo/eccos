@@ -143,8 +143,6 @@ function FreeTextReply({
         textarea.current?.focus();
       }
     });
-    // The sent text was cleared, so the next reply is a new payload.
-    if (gate.current.phase === "sent") gate.current.phase = "idle";
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -175,7 +173,11 @@ function FreeTextReply({
         value={text}
         readOnly={sending}
         placeholder="Write a reply"
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          // New text is a new payload: only typing reopens the gate after a send.
+          if (gate.current.phase === "sent") gate.current.phase = "idle";
+          setText(event.target.value);
+        }}
         onKeyDown={onKeyDown}
       />
       <div className="flex flex-wrap items-start justify-between gap-3">

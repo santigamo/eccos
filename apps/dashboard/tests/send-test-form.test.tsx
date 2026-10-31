@@ -451,11 +451,10 @@ describe("a real send is never repeated without an explicit act", () => {
     expect(gate.phase).toBe("idle");
   });
 
-  test("once sent, the submit gives way to an explicit Send another", () => {
+  test("once sent, the submit stays disabled as Sent beside an explicit Send another", () => {
     const sent = renderToStaticMarkup(<SendTestAction phase="sent" onSendAnother={() => {}} />);
     expect(sent).toContain("Send another");
-    expect(sent).toContain('type="button"');
-    expect(sent).not.toContain('type="submit"');
+    expect(sent).toMatch(/type="submit"[^>]* disabled=""[^>]*>Sent</);
 
     const sending = renderToStaticMarkup(<SendTestAction phase="sending" onSendAnother={() => {}} />);
     expect(sending).toContain('type="submit"');
