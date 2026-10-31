@@ -222,6 +222,30 @@ describe("one customer, one conversation (phone and BSUID)", () => {
     expect(erased).toEqual([{ digits: PHONE }, { digits: BSUID }]);
   });
 
+  it("erasing the phone still finds the BSUID once the conversation sweep dropped the pair", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([withPhone as never]);
+      // The conversation-retention sweep: the old message, its contact and the pair go,
+      // while the event itself stays inside the longer content window.
+      i.sql.exec(`DELETE FROM messages`);
+      i.sql.exec(`DELETE FROM contacts`);
+      i.sql.exec(`DELETE FROM customer_ids`);
+      i.ingest([bsuidOnly as never]);
+    });
+    expect((await store()).messages).toEqual([{ id: "wamid.U", wa_id: BSUID }]);
+    const result = await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.eraseByPhone(PHONE));
+    expect(result).toMatchObject({ ok: true, counts: { inboundEventsDeleted: 2, messagesDeleted: 1, contactsDeleted: 1 } });
+    expect(await store()).toEqual({ messages: [], contacts: [], pairs: [] });
+  });
+
+  it("exports the phone/BSUID pairs", async () => {
+    const exported = await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([withPhone as never]);
+      return i.exportData();
+    });
+    expect(exported.customerIds).toEqual([{ userId: BSUID, waId: PHONE }]);
+  });
+
   it("erasing the BSUID erases the phone's conversation too", async () => {
     await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.ingest([withPhone as never]));
     const result = await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.eraseByPhone(BSUID));

@@ -157,6 +157,12 @@ export interface ContactRecord {
   updatedAt: number;
 }
 
+/** A BSUID Meta has paired with a customer's phone number (`waId`, digits). */
+export interface CustomerIdRecord {
+  userId: string;
+  waId: string;
+}
+
 /** One conversation: a customer number, its latest message and its size. */
 export interface ConversationSummary {
   waId: string;
@@ -896,6 +902,7 @@ export interface GatewayExport {
   deliveries: DeliveryRecord[];
   messages: MessageRecord[];
   contacts: ContactRecord[];
+  customerIds: CustomerIdRecord[];
   config: Record<string, string>;
 }
 

@@ -201,7 +201,7 @@ operator account).
 
 **Export (Workers target):**
 - `GET /v1/wabas/<WABA_ID>/export` returns the full retained snapshot of inbound, outbound, delivery,
-  and non-secret config rows. It requires the owning account key. The RPC surface also exposes
+  conversation (messages, contacts, phone ↔ BSUID pairs) and non-secret config rows. It requires the owning account key. The RPC surface also exposes
   `exportData()` for the private dashboard binding.
 - The paginated `listInbound`, `listOutbound`, and `listDeliveries` methods remain available for
   cursor-based reads. Export rows include the business `phone_number_id` when the event or send had
@@ -222,8 +222,8 @@ operator account).
     pass the full international number (`+34 600 00 00 00`, `34600000000`, … all match the same
     stored contact; a national short form does not); a BSUID is compared whole, and an event
     matches on its `fromUserId`/`toUserId` as well as `from`/`to`. A phone number and the BSUIDs
-    Meta has paired with it (`customer_ids`) are one customer: erasing either erases all of them
-    and forgets the pairing;
+    Meta has paired with it (`customer_ids`, or a retained event that names both) are one
+    customer: erasing either erases all of them and forgets the pairing;
   - `outbound_messages` rows are matched on `recipient` and deleted; `inbound_events` rows are
     matched on the `from`/`to` inside the normalized event JSON (replies/echoes) and deleted;
   - status events (`delivered`/`read`/`failed`) carry only a Meta message id, no phone — they are

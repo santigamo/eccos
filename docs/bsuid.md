@@ -31,7 +31,7 @@ Every place that assumed a customer id is a phone number. **OK** — already han
 | Erasure: digits-only `normalizePhoneNumber` | `apps/gateway/src/gateway.ts` `eraseByPhone`, erasure route | fixed — BSUID accepted, matches `fromUserId`/`toUserId` |
 | History sync: app-state contact with `user_id` only | `apps/gateway/src/history.ts` `mapSyncItem` | fixed |
 | History sync: threads/messages keyed by BSUID | `history.ts` `digitsOf` | OK (PR #30) |
-| One customer split into a phone and a BSUID conversation | `gateway.ts` store paths | filed — eccos-yx0v (PR #34) |
+| One customer split into a phone and a BSUID conversation | `gateway.ts` store paths | fixed (eccos-yx0v) |
 | Retention sweeps | `gateway.ts` | OK — time-based, id-agnostic |
 | Media | `media-store.ts` (`MEDIA_ID` digits) | OK — Meta media ids, not customers |
 | Templates (list/create/delete) | `rpc.ts`, `packages/core/src/templates.ts` | OK — no customer id |
@@ -41,4 +41,4 @@ Every place that assumed a customer id is a phone number. **OK** — already han
 | Bun target storage / forwarding | `src/db`, `src/delivery` | OK — stores and forwards events verbatim |
 | Console username / BSUID display | `apps/dashboard` | out of scope — eccos-lqmy, dashboard worker |
 
-Counts: 9 OK, 5 fixed, 3 filed (+1 out of scope, already tracked).
+Counts: 9 OK, 6 fixed, 2 filed (+1 out of scope, already tracked).

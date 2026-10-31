@@ -1071,11 +1071,11 @@ export class EccosGateway extends DurableObject<Env> {
   /**
    * Tenant-scoped data-plane export: every stored inbound event, outbound
    * message, delivery and conversation message (existing row shapes), contact,
-   * plus the non-secret connection metadata/config (secrets and internal keys
+   * phone/BSUID pair, plus the non-secret connection metadata/config (secrets and internal keys
    * are filtered — see isPublicConfigKey). JSON-serializable, with a fixed key
-   * order: inbound, outbound, deliveries, messages, contacts, config. Inbound,
+   * order: inbound, outbound, deliveries, messages, contacts, customerIds, config. Inbound,
    * outbound and deliveries are newest first by id; messages newest first by
-   * `(at, rowid)`; contacts by `wa_id`. Single snapshot: no limit/pagination —
+   * `(at, rowid)`; contacts by `wa_id`; pairs by `user_id`. Single snapshot: no limit/pagination —
    * a tenant's full retained history at single-tenant v1 volumes.
    */
   exportData(): GatewayExport {
@@ -1085,6 +1085,10 @@ export class EccosGateway extends DurableObject<Env> {
       deliveries: this.listAllDeliveries(),
       messages: this.listAllMessages(),
       contacts: this.listAllContacts(),
+      customerIds: this.sql
+        .exec(`SELECT user_id, wa_id FROM customer_ids ORDER BY user_id`)
+        .toArray()
+        .map((row) => ({ userId: row.user_id as string, waId: row.wa_id as string })),
       config: Object.fromEntries(
         Object.entries(this.getAllConfig()).filter(([key]) => isPublicConfigKey(key)),
       ),
@@ -1204,7 +1208,8 @@ export class EccosGateway extends DurableObject<Env> {
    *  - `inbound_events` rows are matched on `from`/`to`/`fromUserId`/`toUserId`
    *    inside the event JSON and deleted; their `messageId`s join the wamid set,
    *    and status rows (`delivered`/`read`/`failed` — which carry only a wamid)
-   *    are deleted via that set;
+   *    are deleted via that set; the phone/BSUID pairs they carry widen the
+   *    customer's keys, since content outlives the `customer_ids` pair;
    *  - `deliveries` batches are rewritten without the matching events; a batch
    *    left empty is redacted in place when terminal (metadata survives as
    *    erasure/audit evidence) or deleted when still pending (nothing left to
@@ -1232,20 +1237,50 @@ export class EccosGateway extends DurableObject<Env> {
       const phone = this.customerKey(key);
       const keys = new Set([key, phone]);
       for (const row of this.sql
-        .exec(`DELETE FROM customer_ids WHERE wa_id = ? OR user_id = ? RETURNING user_id`, phone, key)
+        .exec(`SELECT user_id FROM customer_ids WHERE wa_id = ? OR user_id = ?`, phone, key)
         .toArray()) {
         keys.add(row.user_id as string);
       }
+
+      // 1. Inbound events whose event JSON names the customer. Meta emits phone
+      //    numbers digits-only and BSUIDs whole, so LIKE on the key is a safe
+      //    prefilter; the exact comparison in JS then rules out substring false
+      //    positives. Their message ids join the wamid set so related status
+      //    events are erased too. Content outlives the customer_ids pair (the
+      //    retention sweep drops it with the contact), so the phone/BSUID pairs
+      //    these events carry join the key set until it stops growing.
+      const wamids = new Set<string>();
+      const inboundIds = new Set<number>();
+      for (let size = 0; size !== keys.size; ) {
+        size = keys.size;
+        const likes = [...keys].map(() => "payload LIKE ?").join(" OR ");
+        for (const row of this.sql
+          .exec(`SELECT id, payload FROM inbound_events WHERE ${likes}`, ...[...keys].map((k) => `%${k}%`))
+          .toArray()) {
+          if (inboundIds.has(row.id as number)) continue;
+          let ev: Record<string, unknown>;
+          try {
+            ev = JSON.parse(row.payload as string) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          if (!eventNamesCustomer(ev, keys)) continue;
+          inboundIds.add(row.id as number);
+          if (typeof ev.messageId === "string") wamids.add(ev.messageId);
+          const pair = customerPairOf(ev as unknown as WhatsAppCallbackEvent);
+          if (pair) keys.add(pair.waId).add(pair.userId);
+        }
+      }
       // Recorded first: a reprocess of the raw sync payloads must not bring this customer back.
       for (const k of keys) {
+        this.sql.exec(`DELETE FROM customer_ids WHERE wa_id = ? OR user_id = ?`, k, k);
         this.sql.exec(`INSERT OR IGNORE INTO erased_numbers (digits, erased_at) VALUES (?, ?)`, k, Date.now());
       }
 
-      // 1. Outbound messages to that customer: collect wamids, then delete the rows.
+      // 2. Outbound messages to that customer: collect wamids, then delete the rows.
       //    `recipient` is caller-supplied and may be formatted ("+34 600-00-00-00"),
       //    so no SQL prefilter is safe here — every row is normalized in JS. Fine at
       //    single-tenant volumes bounded by the retention window.
-      const wamids = new Set<string>();
       const outboundIds: number[] = [];
       for (const row of this.sql
         .exec(`SELECT id, recipient, transport_message_id FROM outbound_messages`)
@@ -1255,26 +1290,6 @@ export class EccosGateway extends DurableObject<Env> {
         if (row.transport_message_id) wamids.add(row.transport_message_id as string);
       }
 
-      // 2. Inbound events whose event JSON names the customer. Meta emits phone
-      //    numbers digits-only and BSUIDs whole, so LIKE on the key is a safe
-      //    prefilter; the exact comparison in JS then rules out substring false
-      //    positives. Their message ids join the wamid set so related status
-      //    events are erased too.
-      const inboundIds = new Set<number>();
-      const likes = [...keys].map(() => "payload LIKE ?").join(" OR ");
-      for (const row of this.sql
-        .exec(`SELECT id, payload FROM inbound_events WHERE ${likes}`, ...[...keys].map((k) => `%${k}%`))
-        .toArray()) {
-        let ev: Record<string, unknown>;
-        try {
-          ev = JSON.parse(row.payload as string) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (!eventNamesCustomer(ev, keys)) continue;
-        inboundIds.add(row.id as number);
-        if (typeof ev.messageId === "string") wamids.add(ev.messageId);
-      }
       for (const id of inboundIds) {
         this.sql.exec(`DELETE FROM inbound_events WHERE id = ?`, id);
         counts.inboundEventsDeleted++;
