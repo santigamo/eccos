@@ -8,12 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
-import { bootstrapAccount, gatewayStub, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 let log: ReturnType<typeof vi.spyOn>;
 
 beforeEach(async () => {
   await bootstrapAccount();
+  await holdAlarms();
   log = vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
@@ -124,7 +125,7 @@ describe("forward log lines", () => {
     await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200 }));
     await gatewayStub().ingest([{ type: "reply", from: "34600000000", messageId: "wamid.F", text: "hello", at: 1, phoneNumberId: "PNID1" }]);
-    await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.alarm());
+    await runAlarm();
 
     const [line] = lines("delivered");
     expect(line).toMatchObject({ area: "forward", wabaId: TEST_WABA_ID, phoneNumberId: "PNID1", deliveryId: 1, attempt: 1, httpStatus: 200 });
