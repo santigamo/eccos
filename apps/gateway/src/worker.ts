@@ -4,7 +4,6 @@ import { getGatewayStubForWaba } from "./gateway-stub";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
 import {
-  messageDropReason,
   parseMetaEchoesBatches,
   parseMetaWebhookBatches,
   type MetaWebhookBatch,
@@ -15,6 +14,7 @@ import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenan
 import { getAppConfig, tenantConfig } from "./tenant-config";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
+import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
 import { validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
@@ -116,55 +116,6 @@ function logEvent(event: string, cid: string, status: number, meta: LogMeta = {}
   );
 }
 
-/** Names only — each change's `field` and value keys, each message's `type`
- * and Meta error codes, and for a message or echo that parses to no event its
- * keys and what it lacks — so an ignored webhook says what Meta sent without
- * logging any content. */
-function webhookShape(payload: unknown): string {
-  const parts = new Set<string>();
-  const entries = (payload as { entry?: unknown })?.entry;
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    const changes = (entry as { changes?: unknown })?.changes;
-    for (const change of Array.isArray(changes) ? changes : []) {
-      const { field, value } = (change ?? {}) as { field?: unknown; value?: unknown };
-      const keys = value && typeof value === "object" ? Object.keys(value).sort().join("+") : "";
-      parts.add(`${typeof field === "string" ? field : "?"}:${keys}`);
-      const statuses = (value as { statuses?: unknown } | undefined)?.statuses;
-      for (const status of Array.isArray(statuses) ? statuses : []) {
-        const name = (status as { status?: unknown })?.status;
-        parts.add(`status:${typeof name === "string" ? name : "?"}`);
-      }
-      const messages = (value as { messages?: unknown } | undefined)?.messages;
-      for (const message of Array.isArray(messages) ? messages : []) {
-        const { type, errors } = (message ?? {}) as { type?: unknown; errors?: unknown };
-        parts.add(`type:${typeof type === "string" ? type : "?"}`);
-        for (const error of Array.isArray(errors) ? errors : []) {
-          parts.add(`error:${(error as { code?: unknown })?.code ?? "?"}`);
-        }
-        addDropped(parts, message, false);
-      }
-      const echoes = (value as { message_echoes?: unknown } | undefined)?.message_echoes;
-      for (const echo of Array.isArray(echoes) ? echoes : []) addDropped(parts, echo, true);
-    }
-  }
-  return [...parts].join(",").slice(0, 600);
-}
-
-function addDropped(parts: Set<string>, message: unknown, echo: boolean): void {
-  const reason = messageDropReason(message, echo);
-  if (!reason) return;
-  const { type } = (message ?? {}) as { type?: unknown };
-  const keys = message && typeof message === "object" ? Object.keys(message).sort().join("+") : "";
-  parts.add(`dropped:${typeof type === "string" ? type : "?"}:${reason};keys=${keys}`);
-}
-
-/** The entry ids (WABA ids) a webhook names, so an ignored one can be traced to its account. */
-function webhookWabaIds(payload: unknown): string {
-  const entries = (payload as { entry?: unknown })?.entry;
-  const ids = (Array.isArray(entries) ? entries : []).map((entry) => (entry as { id?: unknown })?.id);
-  return [...new Set(ids.filter((id): id is string => typeof id === "string" && WABA_ID_PATTERN.test(id)))].join(",");
-}
-
 function noStore(c: { header(name: string, value: string): void }): void {
   c.header("Cache-Control", "no-store");
 }
@@ -257,6 +208,39 @@ app.get("/webhooks/meta", (c) => {
   return c.text("Forbidden", 403);
 });
 
+/** Why a parsed batch is not ingested, or null when its WABA and phone are registered and active. */
+async function ignoreReason(
+  cp: ReturnType<typeof getControlPlane>,
+  batch: MetaWebhookBatch,
+): Promise<string | null> {
+  if (!WABA_ID_PATTERN.test(batch.wabaId)) return "invalid_waba_id";
+  try {
+    const waba = await cp.getWabaById(batch.wabaId);
+    if (!waba) return "unknown_waba";
+    if (waba.status !== "active") return "inactive_waba";
+    if (batch.phoneNumberId !== null && !waba.phones.some((p) => p.phoneNumberId === batch.phoneNumberId)) {
+      return "phone_not_registered";
+    }
+    return null;
+  } catch {
+    return "lookup_failed";
+  }
+}
+
+/** Alerts the operator, off the response path, when an active WABA's messages lack a
+ * field the parser needs: Meta changed a shape and that customer's messages are lost. */
+function alertDrops(c: AppContext, drops: MessageDrops[]): void {
+  for (const drop of drops.filter((d) => d.missing !== "")) {
+    c.executionCtx.waitUntil(
+      (async () => {
+        const waba = await getControlPlane(c.env).getWabaById(drop.wabaId);
+        if (waba?.status !== "active") return;
+        await getGatewayStubForWaba(c.env, drop.wabaId).alertDroppedMessages(drop.dropped, drop.missing, drop.types);
+      })().catch(() => undefined),
+    );
+  }
+}
+
 app.post("/webhooks/meta", async (c) => {
   // Note: logging happens right before each early return so the handler keeps
   // returning quickly — no extra I/O or awaits are added on this path.
@@ -305,57 +289,62 @@ app.post("/webhooks/meta", async (c) => {
     });
     return c.json({ ok: false, error: "sync capture failed" }, 503);
   }
-  let batches = mergeBatches([...parseMetaWebhookBatches(payload), ...parseMetaEchoesBatches(payload)]);
-  // Only ingest WABAs AND phone numbers registered in the control plane;
-  // unregistered batches are ignored while the webhook still answers 200.
-  const known: MetaWebhookBatch[] = [];
-  let ignoredEventCount = 0;
-  for (const batch of batches) {
-    if (!WABA_ID_PATTERN.test(batch.wabaId)) {
-      ignoredEventCount += batch.events.length;
-      continue;
-    }
-    try {
-      const waba = await cp.getWabaById(batch.wabaId);
-      if (!waba || waba.status !== "active") {
-        ignoredEventCount += batch.events.length;
-        continue;
-      }
-      if (batch.phoneNumberId !== null && !waba.phones.some((p) => p.phoneNumberId === batch.phoneNumberId)) {
-        ignoredEventCount += batch.events.length;
-        continue;
-      }
-      known.push(batch);
-    } catch {
-      ignoredEventCount += batch.events.length;
-    }
-  }
-  batches = known;
+  const batches = mergeBatches([...parseMetaWebhookBatches(payload), ...parseMetaEchoesBatches(payload)]);
+  const drops = messageDrops(payload);
+  for (const drop of drops) logEvent("webhook_dropped", cid, 200, { ...drop });
+  alertDrops(c, drops);
   if (batches.length === 0) {
     logEvent("webhook_ignored", cid, 200, {
-      bodyBytes: rawBody.length,
-      ignoredEventCount,
+      reason: "no_events",
       wabaIds: webhookWabaIds(payload),
+      bodyBytes: rawBody.length,
       shape: webhookShape(payload),
     });
     return c.json({ ok: true, received: 0 });
   }
+  // Only ingest WABAs AND phone numbers registered in the control plane;
+  // unregistered batches are ignored while the webhook still answers 200.
+  const known: MetaWebhookBatch[] = [];
+  for (const batch of batches) {
+    const reason = await ignoreReason(cp, batch);
+    if (!reason) {
+      known.push(batch);
+      continue;
+    }
+    logEvent("webhook_ignored", cid, 200, {
+      reason,
+      wabaId: WABA_ID_PATTERN.test(batch.wabaId) ? batch.wabaId : null,
+      phoneNumberId: batch.phoneNumberId,
+      eventCount: batch.events.length,
+    });
+  }
+  if (known.length === 0) return c.json({ ok: true, received: 0 });
   // A failed ingest answers 5xx so Meta retries; ingest dedups, so a batch that
   // did land is not stored twice.
   const results = await Promise.all(
-    batches.map((batch) => getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events)),
+    known.map((batch) => getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events)),
   ).catch((error: unknown) => {
     Sentry.captureException(error);
     logEvent("webhook_ingest_failed", cid, 503, {
       bodyBytes: rawBody.length,
+      wabaIds: known.map((batch) => batch.wabaId).join(","),
       errorType: error instanceof Error ? error.name : "unknown",
     });
     return null;
   });
   if (!results) return c.json({ ok: false, error: "ingest failed" }, 503);
-  const eventCount = batches.reduce((sum, batch) => sum + batch.events.length, 0);
+  results.forEach(({ received }, i) => {
+    const batch = known[i];
+    if (!batch) return;
+    logEvent("webhook_ingested", cid, 200, {
+      wabaId: batch.wabaId,
+      phoneNumberId: batch.phoneNumberId,
+      eventCount: batch.events.length,
+      received,
+      ...eventCounts(batch.events),
+    });
+  });
   const received = results.reduce((sum, result) => sum + result.received, 0);
-  logEvent("webhook_ingested", cid, 200, { eventCount, received, wabaCount: batches.length });
   return c.json({ ok: true, received });
 });
 

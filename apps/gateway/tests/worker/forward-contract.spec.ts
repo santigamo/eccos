@@ -115,7 +115,7 @@ describe("business-scoped user ids (BSUID)", () => {
     });
 
     const line = log.mock.calls.map(([arg]) => JSON.parse(String(arg))).find((entry) => entry.event === "webhook_ignored");
-    expect(line).toMatchObject({ ignoredEventCount: 0, wabaIds: TEST_WABA_ID });
+    expect(line).toMatchObject({ reason: "no_events", wabaIds: TEST_WABA_ID });
     expect(line.shape).toContain("dropped:text:missing=from;keys=id+text+timestamp+type");
     expect(JSON.stringify(line)).not.toContain("secret text");
   });

@@ -101,8 +101,9 @@ Every line has the same envelope:
    | `webhook_signature_invalid` | `POST /webhooks/meta` | `X-Hub-Signature-256` failed to verify (401) |
    | `webhook_invalid_json` | `POST /webhooks/meta` | Body didn't parse as JSON (400) |
    | `webhook_misconfigured` | `POST /webhooks/meta` | Required webhook configuration was unavailable; payload acknowledged without ingestion (200) |
-   | `webhook_ignored` | `POST /webhooks/meta` | Valid payload contained no registered active WABA/phone event (200) |
-   | `webhook_ingested` | `POST /webhooks/meta` | Payload parsed and written to the DO (200) |
+   | `webhook_ignored` | `POST /webhooks/meta` | A batch not stored, or a payload with no event, with its `reason` (200) |
+   | `webhook_dropped` | `POST /webhooks/meta` | Messages or echoes of a WABA that parsed to no event (200) |
+   | `webhook_ingested` | `POST /webhooks/meta` | One per batch parsed and written to the DO, with `wabaId` and counts by type (200) |
    | `unhandled_error` | Any route | Unexpected route failure; webhook requests are acknowledged (200), other requests fail (500) |
    | `v1_unauthorized` | `/v1/*` | Missing/invalid account or admin key (401) |
    | `v1_rate_limited` | `POST /v1/wabas/<WABA_ID>/messages` | Cloudflare Rate Limiting rejected the request (429) |
@@ -122,6 +123,9 @@ Every line has the same envelope:
   (`messageType`, `path`, key names in `missingConfig`). Message bodies, full phone numbers,
   tokens, API keys, and signatures are never logged — see CLAUDE.md's "never log or write
   secrets" rule.
+
+The webhook pipeline's events, fields, alerts, and ready-made Observability queries are in
+[observability.md](observability.md).
 
 ### Viewing logs
 

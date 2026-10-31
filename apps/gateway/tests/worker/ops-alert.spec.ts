@@ -24,17 +24,17 @@ describe("failed-delivery alert throttle", () => {
   it("sends the first alert, then counts quietly until the window has passed", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const t0 = 1_800_000_000_000;
-      expect(i.recordTerminalFailure(t0)).toEqual({ send: true, count: 1 });
-      expect(i.recordTerminalFailure(t0 + 1_000)).toEqual({ send: false, count: 1 });
-      expect(i.recordTerminalFailure(t0 + 2_000)).toEqual({ send: false, count: 2 });
+      expect(i.recordOpsAlert("failure", t0)).toEqual({ send: true, count: 1 });
+      expect(i.recordOpsAlert("failure", t0 + 1_000)).toEqual({ send: false, count: 1 });
+      expect(i.recordOpsAlert("failure", t0 + 2_000)).toEqual({ send: false, count: 2 });
       // The next alert reports the two it held back plus its own.
-      expect(i.recordTerminalFailure(t0 + OPS_ALERT_INTERVAL_MS)).toEqual({ send: true, count: 3 });
+      expect(i.recordOpsAlert("failure", t0 + OPS_ALERT_INTERVAL_MS)).toEqual({ send: true, count: 3 });
     });
   });
 
   it("keeps its bookkeeping out of the config the console reads", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-      i.recordTerminalFailure(1_800_000_000_000);
+      i.recordOpsAlert("failure", 1_800_000_000_000);
     });
     const config = await new GatewayRPC(createExecutionContext(), env).getConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
     expect(Object.keys(config).some((key) => key.includes("alert") || key.includes("failures"))).toBe(false);
@@ -62,7 +62,7 @@ describe("a delivery that exhausts its attempts", () => {
       }
       expect(i.getDelivery(1)).toMatchObject({ status: "failed", last_error: "subscriber returned 503" });
       // The terminal failure was counted, so the next one inside the window is held.
-      expect(i.recordTerminalFailure(Date.now())).toEqual({ send: false, count: 1 });
+      expect(i.recordOpsAlert("failure", Date.now())).toEqual({ send: false, count: 1 });
     });
 
     const lines = warn.mock.calls
@@ -71,7 +71,9 @@ describe("a delivery that exhausts its attempts", () => {
     expect(lines.map((line) => line.event)).toEqual(["attempt-failed", "attempt-failed", "delivery-failed"]);
     expect(lines[2]).toMatchObject({ deliveryId: 1, attempt: 3, error: "subscriber returned 503" });
     // The object knows which WABA it serves (its idFromName name), so the line is actionable.
-    expect(lines[2].waba).toContain(TEST_WABA_ID);
+    expect(lines[2].wabaId).toContain(TEST_WABA_ID);
+    expect(lines[2]).toMatchObject({ httpStatus: 503, phoneNumberId: null });
+    expect(lines[2].durationMs).toBeTypeOf("number");
     // Identifiers only: the forwarded text never reaches the log.
     expect(JSON.stringify(lines)).not.toContain("hello");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("api.telegram.org"))).toBe(false);

@@ -88,6 +88,12 @@ function publicConfig(config: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(config).filter(([key]) => isPublicConfigKey(key)));
 }
 
+/** Names the account and WABA an RPC call acts on. Workers Logs adds the RPC method to
+ * the line, so console traffic can be attributed to a customer. Ids only. */
+function logScope(accountId: string, wabaId: string): void {
+  console.log(JSON.stringify({ level: "info", area: "rpc", event: "rpc_scope", accountId, wabaId }));
+}
+
 function requireAccountId(accountId: string | undefined, message: string): string {
   const id = accountId?.trim();
   if (!id) throw new Error(message);
@@ -255,6 +261,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       ? await controlPlane.getWabaRecord(account, wabaId)
       : await controlPlane.getWaba(account, wabaId);
     if (!waba) throw new Error(`WABA "${wabaId}" is not owned by account "${account}"`);
+    logScope(account, waba.wabaId);
     const phoneNumberId = waba.phones[0]?.phoneNumberId ?? "";
     const config = tenantConfig(getAppConfig(this.env), {
       wabaId: waba.wabaId,
@@ -309,6 +316,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     const orgId = requireAccountId(org?.organizationId, "organizationId is required");
     const { accountId, resources } = await getControlPlaneStub(this.env).resolveOrganizationContext(orgId);
     const waba = selectWaba(accountId, resources.wabas, org.wabaId, org.rejectUnknown, org.mode);
+    logScope(accountId, waba.wabaId);
     const scope = { accountId, wabaId: waba.wabaId, resources };
     return { waba, scope, stub: this.stubFor(waba.wabaId) };
   }
@@ -381,6 +389,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       return { accountId, resources, status: null };
     }
     const waba = selectWaba(accountId, resources.wabas, org.wabaId);
+    logScope(accountId, waba.wabaId);
     const scope = { accountId, wabaId: waba.wabaId, resources };
     return { accountId, resources, status: { scope, data: await this.statusOfWaba(this.stubFor(waba.wabaId), waba) } };
   }
