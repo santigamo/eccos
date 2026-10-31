@@ -8,6 +8,7 @@ import { Database } from "bun:sqlite";
 import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { createOrgAuthConfig, type MailSender } from "../src/config";
+import { authIpAddress, authRateLimit } from "../src/rate-limit";
 import { requirePermission, verifyMembership, ForbiddenError } from "../src/tenant";
 import { UnauthorizedError } from "../src/session";
 
@@ -208,5 +209,41 @@ describe("implicit organization resolution", () => {
     expect(await reasonOf(requirePermission(auth, headers, "org_guessed", "view"))).toBe(
       "not-a-member",
     );
+  });
+});
+
+describe("rate limiting (eccos-g5h)", () => {
+  test("uses the shared rules and keys on cf-connecting-ip only", () => {
+    const { auth } = createBaselineAuth();
+    expect(auth.options.rateLimit).toEqual(authRateLimit);
+    expect(auth.options.advanced?.ipAddress).toEqual(authIpAddress);
+    // Better Auth matches rules by exact path; a misspelled key is silently dead.
+    const endpoints = new Set(Object.values(auth.api).map((e) => (e as { path?: string }).path));
+    for (const path of Object.keys(authRateLimit.customRules)) {
+      expect(endpoints.has(path)).toBe(true);
+    }
+  });
+
+  test("a spoofed X-Forwarded-For is bucketed by the real address", async () => {
+    const { auth, db, migrations } = createBaselineAuth();
+    await (await migrations).runMigrations();
+    const signIn = (ip: string, xff: string) =>
+      auth.handler(
+        new Request(`${BASE_URL}/api/auth/sign-in/email`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: BASE_URL,
+            "cf-connecting-ip": ip,
+            "x-forwarded-for": xff,
+          },
+          body: JSON.stringify({ email: "nobody@t.test", password: "wrong-password-1" }),
+        }),
+      );
+    for (let i = 0; i < 10; i++) await signIn("203.0.113.7", `198.51.100.${i}`);
+    expect((await signIn("203.0.113.7", "198.51.100.200")).status).toBe(429);
+    expect((await signIn("203.0.113.8", "198.51.100.200")).status).not.toBe(429);
+    const keys = (db.query('SELECT "key" FROM "rateLimit"').all() as { key: string }[]).map((r) => r.key);
+    expect(keys.sort()).toEqual(["203.0.113.7|/sign-in/email", "203.0.113.8|/sign-in/email"]);
   });
 });
