@@ -122,7 +122,8 @@ the existing file and skip table creation for anything that already exists.
 Both targets prune their relay buffer on an ongoing basis rather than growing the database
 forever. Conversation history is the exception: it is the workspace's record, not a buffer.
 
-**Conversation history (Workers target, `apps/gateway`)** — messages and contacts are kept
+**Conversation history (Workers target, `apps/gateway`)** — messages and contacts (and the
+phone ↔ BSUID pairs in `customer_ids`, dropped with their contact) are kept
 until a number is erased (`eraseByPhone`) or the workspace's own window passes. The default is
 **forever**. The window is set per workspace in Settings (30 to 3650 days) and stored once, on
 the account's control-plane row as `conversation_retention_days` (NULL = forever). The windows
