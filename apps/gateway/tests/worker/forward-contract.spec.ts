@@ -82,6 +82,45 @@ describe("forwarded event contract", () => {
   });
 });
 
+describe("business-scoped user ids (BSUID)", () => {
+  it("forwards and stores a message from a username user Meta sends without a phone number", async () => {
+    await postMetaWebhook({
+      messaging_product: "whatsapp",
+      contacts: [{ profile: { name: "Ana", username: "@ana" }, user_id: "US.13491208655302741918" }],
+      messages: [{ from_user_id: "US.13491208655302741918", id: "wamid.BSUID", timestamp: "1700000000", type: "text", text: { body: "hola" } }],
+    });
+
+    const [event] = await forwardedEvents();
+    expect(event).toEqual({
+      type: "reply",
+      from: "US.13491208655302741918",
+      fromUserId: "US.13491208655302741918",
+      messageId: "wamid.BSUID",
+      text: "hola",
+      at: 1_700_000_000_000,
+      phoneNumberId: "PNID1",
+      profileName: "Ana",
+    });
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      const row = instance.sql.exec("SELECT wa_id FROM messages WHERE id = 'wamid.BSUID'").toArray()[0];
+      expect(row?.wa_id).toBe("US.13491208655302741918");
+    });
+  });
+
+  it("logs the WABA, keys and missing fields of a message that yields no event, never its values", async () => {
+    const log = vi.spyOn(console, "log");
+    await postMetaWebhook({
+      messaging_product: "whatsapp",
+      messages: [{ id: "wamid.NOFROM", timestamp: "1700000000", type: "text", text: { body: "secret text" } }],
+    });
+
+    const line = log.mock.calls.map(([arg]) => JSON.parse(String(arg))).find((entry) => entry.event === "webhook_ignored");
+    expect(line).toMatchObject({ ignoredEventCount: 0, wabaIds: TEST_WABA_ID });
+    expect(line.shape).toContain("dropped:text:missing=from;keys=id+text+timestamp+type");
+    expect(JSON.stringify(line)).not.toContain("secret text");
+  });
+});
+
 describe("webhook ingest failure", () => {
   it("answers 503 so Meta retries, and the retry is stored once", async () => {
     const value = { metadata: { phone_number_id: "PNID1" }, messages: [{ from: "34600000000", id: "wamid.RETRY", timestamp: "1700000000", type: "text", text: { body: "hola" } }] };

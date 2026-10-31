@@ -194,35 +194,45 @@ function isEmptyReply(content: MessageContent): boolean {
   return (kind === "button_reply" || kind === "list_reply") && !content.interactive?.body;
 }
 
-/** Meta's `contacts[]` of a change value: the profile name each sender set, keyed by wa_id. */
+/** Meta's `contacts[]` of a change value: the profile name each sender set, keyed by wa_id and by BSUID. */
 function profileNames(value: Record<string, unknown>): Map<string, string> {
   const names = new Map<string, string>();
   const contacts = Array.isArray(value.contacts) ? value.contacts : [];
   for (const contact of contacts) {
     const record = asRecord(contact);
-    const waId = getString(record?.wa_id);
     const name = getString(asRecord(record?.profile)?.name);
-    if (waId && name) names.set(waId, name);
+    if (!name) continue;
+    for (const id of [getString(record?.wa_id), getString(record?.user_id)]) if (id) names.set(id, name);
   }
   return names;
 }
 
+/**
+ * The customer a message names: the phone number, else the business-scoped user id
+ * (BSUID) Meta sends alone for a username user whose number it withholds. The BSUID
+ * comes in `from_user_id` on messages and `to_user_id` on echoes.
+ */
+function party(message: Record<string, unknown>, key: "from" | "to"): { id: string | null; userId: string | null } {
+  const userId = getString(message[`${key}_user_id`]);
+  return { id: getString(message[key]) ?? userId, userId };
+}
+
 function parseMetaMessage(message: Record<string, unknown>, names: Map<string, string>): WhatsAppCallbackEvent | null {
-  const from = getString(message.from);
+  const { id: from, userId: fromUserId } = party(message, "from");
   const messageId = getString(message.id);
   const at = parseTimestampMs(message.timestamp);
   if (!from || !messageId || !at) return null;
 
-  const profileName = names.get(from);
+  const profileName = names.get(from) ?? (fromUserId ? names.get(fromUserId) : undefined);
   const text = metaMessageBody(message);
   if (text) {
     const payload = metaReplyPayload(message);
-    return compact<WhatsAppCallbackEvent>({ type: "reply", from, messageId, text, at, profileName, payload });
+    return compact<WhatsAppCallbackEvent>({ type: "reply", from, fromUserId, messageId, text, at, profileName, payload });
   }
   const content = messageContent(message);
   return isEmptyReply(content)
     ? null
-    : compact<WhatsAppCallbackEvent>({ type: "message", from, messageId, at, profileName, ...content });
+    : compact<WhatsAppCallbackEvent>({ type: "message", from, fromUserId, messageId, at, profileName, ...content });
 }
 
 function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent[] {
@@ -301,15 +311,35 @@ export function parseMetaWebhook(payload: unknown): WhatsAppCallbackEvent[] {
 }
 
 function parseEchoEntry(echo: Record<string, unknown>): WhatsAppCallbackEvent | null {
-  const to = getString(echo.to);
+  const { id: to, userId: toUserId } = party(echo, "to");
   const messageId = getString(echo.id);
   const at = parseTimestampMs(echo.timestamp);
   if (!to || !messageId || !at) return null;
 
   const text = echo.type === "text" ? getString(asRecord(echo.text)?.body) : null;
-  if (text) return { type: "echo", to, messageId, text, at };
+  if (text) return compact<WhatsAppCallbackEvent>({ type: "echo", to, toUserId, messageId, text, at });
   const content = messageContent(echo);
-  return isEmptyReply(content) ? null : { type: "message_echo", to, messageId, at, ...content };
+  return isEmptyReply(content)
+    ? null
+    : compact<WhatsAppCallbackEvent>({ type: "message_echo", to, toUserId, messageId, at, ...content });
+}
+
+/**
+ * Why a Meta message (or echo) yields no event, for logs: the required fields it
+ * lacks (`missing=from+id`), `empty` for a reply with nothing in it, or null when it
+ * parses. Names only, never values.
+ */
+export function messageDropReason(message: unknown, echo = false): string | null {
+  const record = asRecord(message);
+  if (!record) return "not-object";
+  if (echo ? parseEchoEntry(record) : parseMetaMessage(record, new Map())) return null;
+  const peer = echo ? "to" : "from";
+  const missing = [
+    party(record, peer).id ? null : peer,
+    getString(record.id) ? null : "id",
+    parseTimestampMs(record.timestamp) ? null : "timestamp",
+  ].filter(Boolean);
+  return missing.length > 0 ? `missing=${missing.join("+")}` : "empty";
 }
 
 export function parseMetaEchoesBatches(payload: unknown): MetaWebhookBatch[] {
