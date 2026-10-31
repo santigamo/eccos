@@ -26,9 +26,14 @@ mock.module("@tanstack/react-router", () => ({
 
 // SPREAD, delegating: every other export stays real, and the two sends fall back
 // to the real ones after this file, for whichever file imports the module next.
+// The real sends are captured BEFORE mock.module: it retro-patches `gateway`'s
+// live bindings, so reading `gateway.sendText` afterwards returns the wrapper
+// below, and a wrapper delegating to itself is a tail call JSC loops on forever.
 const gateway = await import("../src/server/gateway");
-let sendTemplateTest: (input: unknown) => Promise<unknown> = gateway.sendTemplateTest as never;
-let sendText: (input: unknown) => Promise<unknown> = gateway.sendText as never;
+const realSendTemplateTest = gateway.sendTemplateTest as (input: unknown) => Promise<unknown>;
+const realSendText = gateway.sendText as (input: unknown) => Promise<unknown>;
+let sendTemplateTest = realSendTemplateTest;
+let sendText = realSendText;
 mock.module("../src/server/gateway", () => ({
   ...gateway,
   sendTemplateTest: (input: unknown) => sendTemplateTest(input),
@@ -50,11 +55,12 @@ afterEach(() => {
   act(() => unmount?.());
   unmount = null;
   document.body.innerHTML = "";
-  sendTemplateTest = gateway.sendTemplateTest as never;
-  sendText = gateway.sendText as never;
+  sendTemplateTest = realSendTemplateTest;
+  sendText = realSendText;
 });
 
 afterAll(async () => {
+  delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   await GlobalRegistrator.unregister();
 });
 
