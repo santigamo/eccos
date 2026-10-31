@@ -13,7 +13,8 @@ import type { SessionEvent } from "../lib/embedded-signup";
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
 import { analyzeDraftBody } from "../lib/template-params";
-import { isBsuid, normalizeCustomerId } from "../lib/customer-id";
+import { isBsuid } from "@eccos/core/bsuid";
+import { normalizeCustomerId } from "../lib/customer-id";
 import {
   requireAuthContext,
   requireGatewayPermission,

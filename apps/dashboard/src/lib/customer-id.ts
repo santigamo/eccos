@@ -1,16 +1,12 @@
+import { isBsuid } from "@eccos/core/bsuid";
+
 /**
  * A customer's id is their phone number, or the business-scoped user id (BSUID,
  * `US.1349…`, `CC.ENT.…`) Meta sends alone for a username user whose number it
  * withholds. The gateway accepts either wherever it takes a customer.
  */
 
-/** Mirrors the gateway's `BSUID_PATTERN` (apps/gateway/src/conversations.ts). */
-const BSUID_PATTERN = /^[A-Z]{2}\.(ENT\.)?[A-Za-z0-9]{1,128}$/;
 const PHONE_PATTERN = /^\+?[0-9][0-9 ()-]{3,31}$/;
-
-export function isBsuid(id: string): boolean {
-  return BSUID_PATTERN.test(id);
-}
 
 /**
  * A customer id as the URL and the server both take it: a BSUID verbatim, a
