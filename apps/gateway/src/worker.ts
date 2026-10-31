@@ -333,15 +333,17 @@ app.post("/webhooks/meta", async (c) => {
     return null;
   });
   if (!results) return c.json({ ok: false, error: "ingest failed" }, 503);
-  known.forEach((batch, i) =>
+  results.forEach(({ received }, i) => {
+    const batch = known[i];
+    if (!batch) return;
     logEvent("webhook_ingested", cid, 200, {
       wabaId: batch.wabaId,
       phoneNumberId: batch.phoneNumberId,
       eventCount: batch.events.length,
-      received: results[i]!.received,
+      received,
       ...eventCounts(batch.events),
-    }),
-  );
+    });
+  });
   const received = results.reduce((sum, result) => sum + result.received, 0);
   return c.json({ ok: true, received });
 });
