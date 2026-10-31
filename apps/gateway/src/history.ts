@@ -1,6 +1,6 @@
 import { parseMetaWebhook } from "@eccos/core/parser";
 import type { MessageStatus } from "@eccos/gateway-contract";
-import { type NewMessage, messageFromEvent, waIdOf } from "./conversations";
+import { type NewMessage, messageFromEvent, pairOf, waIdOf } from "./conversations";
 
 type Json = Record<string, unknown>;
 
@@ -16,9 +16,12 @@ export interface HistoryMessage extends Omit<NewMessage, "waId"> {
   waId: string | null;
 }
 
+/** `pair` is the customer's phone number and BSUID, when the item names both. */
+type CustomerPair = { waId: string; userId: string } | null;
+
 export type SyncUnit =
-  | { kind: "message"; message: HistoryMessage }
-  | { kind: "contact"; waId: string; name: string | null; action: "add" | "remove" }
+  | { kind: "message"; message: HistoryMessage; pair: CustomerPair }
+  | { kind: "contact"; waId: string; name: string | null; action: "add" | "remove"; pair: CustomerPair }
   | { kind: "error"; code: number };
 
 /** Meta's `history_context.status`, mapped onto the statuses an outbound message can carry. */
@@ -89,7 +92,8 @@ export function mapSyncItem(item: SyncItem, wabaId: string): SyncUnit | null {
     const waId = digitsOf(item.contact.phone_number) ?? digitsOf(item.contact.user_id);
     if (!waId) return null;
     const name = str(item.contact.full_name) ?? str(item.contact.first_name);
-    return { kind: "contact", waId, name: item.action === "add" ? name : null, action: item.action };
+    const pair = pairOf(item.contact.phone_number, item.contact.user_id);
+    return { kind: "contact", waId, name: item.action === "add" ? name : null, action: item.action, pair };
   }
   // The live parser maps the message; a one-message webhook body keeps its rules (text, media, reactions).
   const event = parseMetaWebhook({
@@ -104,8 +108,10 @@ export function mapSyncItem(item: SyncItem, wabaId: string): SyncUnit | null {
   // The display number only decides a message that names no thread.
   const outbound = item.threadId !== null ? from !== item.threadId : item.business !== null && from === item.business;
   const waId = item.threadId ?? (outbound ? to : from);
+  const side = outbound ? "to" : "from";
   return {
     kind: "message",
+    pair: pairOf(item.raw[side], item.raw[`${side}_user_id`]),
     message: {
       ...parsed,
       waId,

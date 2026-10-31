@@ -221,7 +221,9 @@ operator account).
   - the input and stored numbers are normalized to digits-only and compared for exact equality —
     pass the full international number (`+34 600 00 00 00`, `34600000000`, … all match the same
     stored contact; a national short form does not); a BSUID is compared whole, and an event
-    matches on its `fromUserId`/`toUserId` as well as `from`/`to`;
+    matches on its `fromUserId`/`toUserId` as well as `from`/`to`. A phone number and the BSUIDs
+    Meta has paired with it (`customer_ids`) are one customer: erasing either erases all of them
+    and forgets the pairing;
   - `outbound_messages` rows are matched on `recipient` and deleted; `inbound_events` rows are
     matched on the `from`/`to` inside the normalized event JSON (replies/echoes) and deleted;
   - status events (`delivered`/`read`/`failed`) carry only a Meta message id, no phone — they are

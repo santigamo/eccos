@@ -365,6 +365,25 @@ describe("app-state contacts", () => {
     expect((await query(`SELECT name FROM contacts WHERE wa_id = ?`, CUSTOMER))[0]).toEqual({ name: null });
     expect(await query(`SELECT id FROM messages WHERE wa_id = ?`, CUSTOMER)).toHaveLength(1);
   });
+
+  it("stores a BSUID-only contact, and merges it into the phone once a contact names both", async () => {
+    const bsuid = "US.13491208655302741918";
+    const contact = (fields: Record<string, unknown>) =>
+      envelope("smb_app_state_sync", {
+        messaging_product: "whatsapp",
+        metadata: METADATA,
+        state_sync: [{ type: "contact", contact: { full_name: "Ana", ...fields }, action: "add", metadata: { timestamp: "1700000000" } }],
+      });
+    await capture(historyChunk([thread(bsuid, [{ ...textMessage(CUSTOMER, "wamid.C1", "1700000000", "hola"), from: undefined, from_user_id: bsuid }])]), "history");
+    await capture(contact({ user_id: bsuid }), "smb_app_state_sync");
+    await drain();
+    expect(await query(`SELECT wa_id, name FROM contacts`)).toEqual([{ wa_id: bsuid, name: "Ana" }]);
+
+    await capture(contact({ user_id: bsuid, phone_number: CUSTOMER }), "smb_app_state_sync");
+    await drain();
+    expect(await query(`SELECT wa_id, name, source FROM contacts`)).toEqual([{ wa_id: CUSTOMER, name: "Ana", source: "app_state" }]);
+    expect(await query(`SELECT id, wa_id FROM messages`)).toEqual([{ id: "wamid.C1", wa_id: CUSTOMER }]);
+  });
 });
 
 describe("reprocessing", () => {

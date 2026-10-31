@@ -22,14 +22,17 @@ describe("conversation keys for business-scoped user ids", () => {
       },
       "WABA_ID",
     );
-    expect(unit).toMatchObject({ kind: "message", message: { waId: BSUID, direction: "in", origin: "history" } });
+    expect(unit).toMatchObject({ kind: "message", pair: null, message: { waId: BSUID, direction: "in", origin: "history" } });
   });
 
   test("an app-state contact Meta sends without a phone number is keyed by its BSUID", () => {
     const contact = (fields: Record<string, unknown>) =>
       mapSyncItem({ kind: "contact", action: "add", contact: { full_name: "Ana", ...fields } }, "WABA_ID");
-    expect(contact({ user_id: BSUID })).toEqual({ kind: "contact", waId: BSUID, name: "Ana", action: "add" });
-    expect(contact({ phone_number: "+34 600 000 001", user_id: BSUID })).toMatchObject({ waId: "34600000001" });
+    expect(contact({ user_id: BSUID })).toEqual({ kind: "contact", waId: BSUID, name: "Ana", action: "add", pair: null });
+    expect(contact({ phone_number: "+34 600 000 001", user_id: BSUID })).toMatchObject({
+      waId: "34600000001",
+      pair: { waId: "34600000001", userId: BSUID },
+    });
     expect(contact({})).toBeNull();
   });
 });

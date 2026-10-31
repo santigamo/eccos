@@ -136,3 +136,84 @@ describe("erasing a BSUID customer", () => {
     expect(await res.json()).toMatchObject({ ok: true, phone: BSUID });
   });
 });
+
+describe("one customer, one conversation (phone and BSUID)", () => {
+  const PHONE = "34600000001";
+  const withPhone = { type: "reply", from: PHONE, fromUserId: BSUID, messageId: "wamid.P", text: "hi", at: 1_000 };
+  const bsuidOnly = { type: "reply", from: BSUID, fromUserId: BSUID, messageId: "wamid.U", text: "again", at: 2_000 };
+
+  async function store() {
+    return runInDurableObject(gatewayStub(), (i: EccosGateway) => ({
+      messages: i.sql.exec(`SELECT id, wa_id FROM messages ORDER BY at`).toArray(),
+      contacts: i.sql.exec(`SELECT wa_id, name FROM contacts`).toArray(),
+      pairs: i.sql.exec(`SELECT user_id, wa_id FROM customer_ids`).toArray(),
+    }));
+  }
+
+  it("files a later BSUID-only message under the phone the BSUID is known to belong to", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([withPhone as never]);
+      i.ingest([bsuidOnly as never]);
+    });
+    expect(await store()).toEqual({
+      messages: [
+        { id: "wamid.P", wa_id: PHONE },
+        { id: "wamid.U", wa_id: PHONE },
+      ],
+      contacts: [{ wa_id: PHONE, name: null }],
+      pairs: [{ user_id: BSUID, wa_id: PHONE }],
+    });
+    const thread = await rpc().getConversation({ wabaId: TEST_WABA_ID, waId: BSUID }, TEST_ACCOUNT_ID);
+    expect(thread.items.map((m) => m.id)).toEqual(["wamid.P", "wamid.U"]);
+  });
+
+  it("merges a conversation stored under the BSUID once the phone is learned", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([{ ...bsuidOnly, profileName: "Ana" } as never]);
+      i.ingest([withPhone as never]);
+    });
+    expect(await store()).toEqual({
+      messages: [
+        { id: "wamid.P", wa_id: PHONE },
+        { id: "wamid.U", wa_id: PHONE },
+      ],
+      contacts: [{ wa_id: PHONE, name: "Ana" }],
+      pairs: [{ user_id: BSUID, wa_id: PHONE }],
+    });
+  });
+
+  it("learns the pairs retained events already name when an existing store first gets the table", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([bsuidOnly as never]);
+      // An event stored before the pair table existed: in inbound_events, never paired.
+      i.sql.exec(
+        `INSERT INTO inbound_events (type, message_id, payload, received_at) VALUES ('reply', 'wamid.P', ?, 0)`,
+        JSON.stringify(withPhone),
+      );
+      i.sql.exec(`DELETE FROM customer_ids`);
+      i.backfillCustomerIds();
+    });
+    expect((await store()).messages).toEqual([{ id: "wamid.U", wa_id: PHONE }]);
+  });
+
+  it("erasing the phone erases the BSUID-only events too, and forgets the pair", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([withPhone as never]);
+      i.ingest([bsuidOnly as never]);
+    });
+    const result = await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.eraseByPhone(PHONE));
+    expect(result).toMatchObject({ ok: true, counts: { inboundEventsDeleted: 2, messagesDeleted: 2, contactsDeleted: 1 } });
+    expect(await store()).toEqual({ messages: [], contacts: [], pairs: [] });
+    const erased = await runInDurableObject(gatewayStub(), (i: EccosGateway) =>
+      i.sql.exec(`SELECT digits FROM erased_numbers ORDER BY digits`).toArray(),
+    );
+    expect(erased).toEqual([{ digits: PHONE }, { digits: BSUID }]);
+  });
+
+  it("erasing the BSUID erases the phone's conversation too", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.ingest([withPhone as never]));
+    const result = await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.eraseByPhone(BSUID));
+    expect(result).toMatchObject({ ok: true, counts: { inboundEventsDeleted: 1, messagesDeleted: 1 } });
+    expect(await store()).toEqual({ messages: [], contacts: [], pairs: [] });
+  });
+});
