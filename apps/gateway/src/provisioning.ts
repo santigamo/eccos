@@ -432,6 +432,12 @@ export async function runClaim(
       success: true,
       coexistence,
     });
+    if (waba?.status === "active") {
+      // A failed release is retried by the next webhook's ingest (see `heldPending`).
+      await Promise.resolve(
+        getGatewayStubForWaba(env, claim.wabaId).releaseHeld(waba.phones.map((p) => p.phoneNumberId)),
+      ).catch(() => undefined);
+    }
     return { waba, attempted: true, error: null };
   } catch (error) {
     const failure = failureFor(stage, error, spend.issued);

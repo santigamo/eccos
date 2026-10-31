@@ -380,7 +380,7 @@ describe("routes", () => {
     });
   });
 
-  it("ingests the same phone's webhook event only after the WABA becomes active", async () => {
+  it("holds a pending WABA's webhook event and ingests it once the WABA becomes active", async () => {
     await runInDurableObject(getControlPlaneStub(env), async (instance) => {
       await instance.registerWaba({
         accountId: TEST_ACCOUNT_ID,
@@ -415,7 +415,7 @@ describe("routes", () => {
         body,
       });
 
-    // While pending the event is ignored (fail closed)...
+    // While pending the event is held, not ingested...
     const whilePending = await postWebhook(webhookBody("wamid.TRANSITION_BEFORE"));
     expect(whilePending.status).toBe(200);
     expect(await whilePending.json()).toEqual({ ok: true, received: 0 });
@@ -431,12 +431,15 @@ describe("routes", () => {
       expect((await instance.getWabaRecord(TEST_ACCOUNT_ID, "WABA_TRANSITION"))?.status).toBe("active");
     });
 
-    // ...and the same phone's event is now ingested.
+    // ...which releases the held event, and the next one is ingested directly.
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA_TRANSITION"), async (instance: EccosGateway) => {
+      expect(instance.getCounts().inbound).toBe(1);
+    });
     const afterActive = await postWebhook(webhookBody("wamid.TRANSITION_AFTER"));
     expect(afterActive.status).toBe(200);
     expect(await afterActive.json()).toEqual({ ok: true, received: 1 });
     await runInDurableObject(getGatewayStubForWaba(env, "WABA_TRANSITION"), async (instance: EccosGateway) => {
-      expect(instance.getCounts().inbound).toBe(1);
+      expect(instance.getCounts().inbound).toBe(2);
     });
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the subscribed_apps provisioning call
   });

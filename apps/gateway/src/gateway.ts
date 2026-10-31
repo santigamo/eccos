@@ -43,6 +43,7 @@ import {
   MediaTokenError,
 } from "./media-download";
 import { deleteMediaObjects } from "./media-store";
+import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -399,6 +400,7 @@ export class EccosGateway extends DurableObject<Env> {
       // Raw coexistence sync webhooks (history, contacts). Meta sends them once
       // per number, so they are kept verbatim for reprocessing and are outside
       // the retention sweep.
+      this.sql.exec(HELD_WEBHOOKS_TABLE);
       this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_payloads (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         fields      TEXT NOT NULL,
@@ -541,8 +543,10 @@ export class EccosGateway extends DurableObject<Env> {
     return { duplicate, bytes: bytes.length, parts };
   }
 
-  ingest(events: WhatsAppCallbackEvent[]): { received: number } {
-    if (events.length === 0) return { received: 0 };
+  /** `heldPending` tells the worker that batches held while the WABA was pending still
+   * wait for `releaseHeld` (activation raced the hold). */
+  ingest(events: WhatsAppCallbackEvent[]): { received: number; heldPending: boolean } {
+    if (events.length === 0) return { received: 0, heldPending: hasHeld(this.sql) };
     const now = Date.now();
     const insertedIds: number[] = [];
     this.ctx.storage.transactionSync(() => {
@@ -619,7 +623,40 @@ export class EccosGateway extends DurableObject<Env> {
       }),
     );
     if (insertedIds.length > 0) this.wakeNow();
-    return { received: events.length };
+    return { received: events.length, heldPending: hasHeld(this.sql) };
+  }
+
+  /** Holds a batch of a WABA that is not active yet (see held-webhooks.ts). */
+  async hold(phoneNumberId: string | null, events: WhatsAppCallbackEvent[]): Promise<{ held: boolean; heldEvents: number }> {
+    const result = holdBatch(this.sql, phoneNumberId, events, Date.now());
+    // The sweep expires held batches; make sure an alarm comes even if nothing else arms one.
+    if (result.held && (await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(Date.now() + SWEEP_INTERVAL_MS);
+    }
+    return result;
+  }
+
+  /** Ingests the held batches of the WABA's registered phones, now that it is active, and
+   * discards the rest. */
+  releaseHeld(phoneNumberIds: string[]): { released: number; discarded: number } {
+    const registered = new Set(phoneNumberIds);
+    let released = 0;
+    let discarded = 0;
+    for (const batch of heldBatches(this.sql)) {
+      if (batch.phoneNumberId === null || registered.has(batch.phoneNumberId)) {
+        this.ingest(batch.events);
+        released += batch.events.length;
+      } else {
+        discarded += batch.events.length;
+      }
+      this.sql.exec("DELETE FROM held_webhooks WHERE id = ?", batch.id);
+    }
+    if (released + discarded > 0) {
+      console.log(
+        JSON.stringify({ level: "info", area: "ingest", event: "held_released", wabaId: this.wabaIdForOps(), released, discarded }),
+      );
+    }
+    return { released, discarded };
   }
 
   /** `waId` is the number Meta answered the send with (`contacts[0].wa_id`). It is the
@@ -1348,6 +1385,20 @@ export class EccosGateway extends DurableObject<Env> {
         }
       }
 
+      // 4b. Held batches (held-webhooks.ts): a release would bring the customer back.
+      const held = heldBatches(this.sql);
+      for (const ev of held.flatMap((batch) => batch.events)) {
+        if ("messageId" in ev && ev.messageId && eventNamesCustomer(ev as unknown as Record<string, unknown>, keys)) {
+          wamids.add(ev.messageId);
+        }
+      }
+      for (const batch of held) {
+        const kept = batch.events.filter((ev) => !erasureTargetsEvent(ev, keys, wamids));
+        if (kept.length === batch.events.length) continue;
+        counts.inboundEventsDeleted += batch.events.length - kept.length;
+        replaceHeld(this.sql, batch.id, kept);
+      }
+
       // 5. The conversation store: every message to or from the customer, and its contact.
       //    A send is stored under the wa_id Meta answered with, which can differ from
       //    the typed number, so the collected wamids also name those wa_ids.
@@ -1614,6 +1665,12 @@ export class EccosGateway extends DurableObject<Env> {
     let nextSweepAt = Number(this.getConfigValue(LAST_SWEEP_KEY) ?? 0) + SWEEP_INTERVAL_MS;
     if (now >= nextSweepAt) {
       this.pruneExpired(now, contentDays, deliveryDays);
+      const expired = expireHeld(this.sql, now);
+      if (expired > 0) {
+        console.log(
+          JSON.stringify({ level: "warn", area: "ingest", event: "held_expired", wabaId: this.wabaIdForOps(), eventCount: expired }),
+        );
+      }
       await this.pruneConversations(now);
       this.saveConfig({ [LAST_SWEEP_KEY]: String(now) });
       nextSweepAt = now + SWEEP_INTERVAL_MS;
@@ -1653,6 +1710,8 @@ export class EccosGateway extends DurableObject<Env> {
        */
       wakes.push(nextSweepAt);
     }
+
+    if (hasHeld(this.sql)) wakes.push(nextSweepAt);
 
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
