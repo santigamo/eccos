@@ -27,11 +27,11 @@ Every place that assumed a customer id is a phone number. **OK** — already han
 | Conversation key `waIdOf` (digits, or BSUID whole) | `apps/gateway/src/conversations.ts` | OK — pattern moved to `@eccos/core/bsuid` |
 | Core send: BSUID `to` sent as `recipient`; `user_id` read back | `packages/core/src/send.ts` | fixed |
 | RPC sends `TO_PATTERN` (digits only) | `apps/gateway/src/rpc.ts` `sendText`, `sendTemplateTest` | fixed — digits or BSUID |
-| Public send route (`to.length >= 5`) | `apps/gateway/src/worker.ts` `tenantSendTarget` | fixed — phone or BSUID, else `400` |
+| Public send route (`to.length >= 5`) | `apps/gateway/src/worker.ts` `tenantSendTarget` | fixed — `to` phone or BSUID, or a BSUID `recipient`, else `400` |
 | Erasure: digits-only `normalizePhoneNumber` | `apps/gateway/src/gateway.ts` `eraseByPhone`, erasure route | fixed — BSUID accepted, matches `fromUserId`/`toUserId` |
 | History sync: app-state contact with `user_id` only | `apps/gateway/src/history.ts` `mapSyncItem` | fixed |
 | History sync: threads/messages keyed by BSUID | `history.ts` `digitsOf` | OK (PR #30) |
-| One customer split into a phone and a BSUID conversation | `gateway.ts` store paths | fixed (eccos-yx0v) |
+| One customer split into a phone and a BSUID conversation | `gateway.ts` store paths | filed — eccos-yx0v (PR #34) |
 | Retention sweeps | `gateway.ts` | OK — time-based, id-agnostic |
 | Media | `media-store.ts` (`MEDIA_ID` digits) | OK — Meta media ids, not customers |
 | Templates (list/create/delete) | `rpc.ts`, `packages/core/src/templates.ts` | OK — no customer id |
@@ -41,4 +41,4 @@ Every place that assumed a customer id is a phone number. **OK** — already han
 | Bun target storage / forwarding | `src/db`, `src/delivery` | OK — stores and forwards events verbatim |
 | Console username / BSUID display | `apps/dashboard` | out of scope — eccos-lqmy, dashboard worker |
 
-Counts: 9 OK, 6 fixed, 2 filed (+1 out of scope, already tracked).
+Counts: 9 OK, 5 fixed, 3 filed (+1 out of scope, already tracked).

@@ -81,6 +81,18 @@ describe("sending to a BSUID", () => {
     expect(sent).not.toHaveProperty("to");
   });
 
+  it("the public send route accepts Meta's recipient when to is absent, and to wins when both are sent", async () => {
+    const fetchSpy = mockBsuidSend();
+    expect((await postMessage({ recipient: BSUID, type: "text", text: { body: "hi" } })).status).toBe(200);
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body))).toMatchObject({ recipient: BSUID });
+    const thread = await rpc().getConversation({ wabaId: TEST_WABA_ID, waId: BSUID }, TEST_ACCOUNT_ID);
+    expect(thread.items.map((m) => m.id)).toEqual(["wamid.B"]);
+
+    expect((await postMessage({ recipient: "34600000001", type: "text", text: { body: "hi" } })).status).toBe(400);
+    expect((await postMessage({ to: "hello", recipient: BSUID, type: "text", text: { body: "hi" } })).status).toBe(400);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("the public send route refuses a to that is neither a phone number nor a BSUID", async () => {
     const fetchSpy = mockBsuidSend();
     for (const to of ["hello", "us.1349", "US.", "1234", "+34 600 000 000 000 000", 34600000000]) {

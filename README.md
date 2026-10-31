@@ -328,8 +328,9 @@ curl -X POST http://localhost:3000/v1/messages \
 
 The body is a Meta message object minus `messaging_product` (Eccos injects it). Returns
 `{ "ok": true, "messages": [{ "id": "wamid..." }] }`. On the Workers target `to` is a phone number
-(5-15 digits) or a BSUID such as `US.13491208655302741918`, which Eccos sends to Meta as `recipient`;
-anything else is a `400`. Meta does not deliver one-tap, zero-tap or copy-code authentication
+(5-15 digits) or a BSUID such as `US.13491208655302741918`, which Eccos sends to Meta as `recipient`.
+Meta's own `recipient` field (a BSUID) is accepted when `to` is absent; if both are sent, `to` wins.
+Anything else is a `400`. Meta does not deliver one-tap, zero-tap or copy-code authentication
 templates to a BSUID (error `131062`).
 
 ## ⚙️ Configuration
