@@ -85,7 +85,8 @@ export function mapSyncItem(item: SyncItem, wabaId: string): SyncUnit | null {
   if (item.kind === "error") return item;
   if (item.kind === "contact") {
     if (item.action !== "add" && item.action !== "remove") return null;
-    const waId = digitsOf(item.contact.phone_number);
+    // Meta omits phone_number for a user who has adopted a username; the BSUID keys them then.
+    const waId = digitsOf(item.contact.phone_number) ?? digitsOf(item.contact.user_id);
     if (!waId) return null;
     const name = str(item.contact.full_name) ?? str(item.contact.first_name);
     return { kind: "contact", waId, name: item.action === "add" ? name : null, action: item.action };
@@ -121,7 +122,7 @@ function historyStatus(context: unknown): MessageStatus {
   return HISTORY_STATUS[status] ?? "sent";
 }
 
-/** A phone number reduced to digits, or null when none is given. */
+/** A customer id as stored: a phone number reduced to digits, a BSUID whole; null when none is given. */
 function digitsOf(value: unknown): string | null {
   const text = str(value);
   if (text === null) return null;

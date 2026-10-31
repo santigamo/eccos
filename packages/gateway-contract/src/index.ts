@@ -385,7 +385,7 @@ export interface ErasureCounts {
   contactsDeleted: number;
 }
 
-/** `phone` echoes the normalized (digits-only) number the match ran against. */
+/** `phone` echoes the key the match ran against: a number as digits only, or the BSUID. */
 export type EraseByPhoneResult =
   | { ok: true; phone: string; counts: ErasureCounts }
   /** `retryable`: the erasure is safe to repeat and finishes the work left (media R2 refused). */
@@ -708,7 +708,8 @@ export interface ButtonUrlParam {
 export interface SendTemplateTestInput {
   wabaId: string;
   phoneNumberId: string;
-  /** Digits only; the console normalizes before it ever reaches the binding. */
+  /** A phone number as digits only (the console normalizes before it ever reaches
+   * the binding), or a BSUID (`US.1349…`), which the gateway sends as Meta's `recipient`. */
   to: string;
   templateName: string;
   languageCode: string;
@@ -781,7 +782,8 @@ export type SendTemplateTestResult =
 export interface SendTextInput {
   wabaId: string;
   phoneNumberId: string;
-  /** Digits only; the console normalizes before it ever reaches the binding. */
+  /** A phone number as digits only (the console normalizes before it ever reaches
+   * the binding), or a BSUID (`US.1349…`), which the gateway sends as Meta's `recipient`. */
   to: string;
   /** 1 to 4096 characters, Meta's own body ceiling. */
   text: string;
@@ -985,8 +987,8 @@ export interface GatewayApi {
    * the one operator method that does not require an already-active WABA).
    * Idempotent and lease-guarded: it never provisions alongside the cron. */
   reconcileWaba(wabaId: string, accountId: string): Promise<ReconcileWabaResult>;
-  /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
-   * number across inbound_events, outbound_messages, and deliveries. */
+  /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a customer,
+   * named by phone number or by BSUID, across the gateway tables. */
   eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult>;
   exportData(wabaId: string, accountId: string): Promise<GatewayExport>;
   /** One stored media object of the account's WABA, or null when it is not stored (yet,

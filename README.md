@@ -99,7 +99,8 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 the sender's WhatsApp profile name, present only when Meta sends one (`reply` and inbound `message` only).
 `fromUserId` / `toUserId` is the customer's business-scoped user id (BSUID, e.g. `US.13491208655302741918`)
 when Meta sends one. For a username user whose phone number Meta withholds, `from` / `to` carries that BSUID
-instead of a number; otherwise `from` / `to` is the phone number as before. Everything
+instead of a number; otherwise `from` / `to` is the phone number as before. A subscriber that
+validates `from` / `to` as E.164 must also accept a BSUID (see [CHANGELOG](CHANGELOG.md)). Everything
 else arrives as `message` (inbound) or `message_echo` (coexistence), with Meta's raw type in
 `messageType` and only the fields that type uses (`MessageContent` in `packages/core/src/types.ts`):
 
@@ -326,7 +327,10 @@ curl -X POST http://localhost:3000/v1/messages \
 ```
 
 The body is a Meta message object minus `messaging_product` (Eccos injects it). Returns
-`{ "ok": true, "messages": [{ "id": "wamid..." }] }`.
+`{ "ok": true, "messages": [{ "id": "wamid..." }] }`. On the Workers target `to` is a phone number
+(5-15 digits) or a BSUID such as `US.13491208655302741918`, which Eccos sends to Meta as `recipient`;
+anything else is a `400`. Meta does not deliver one-tap, zero-tap or copy-code authentication
+templates to a BSUID (error `131062`).
 
 ## ⚙️ Configuration
 

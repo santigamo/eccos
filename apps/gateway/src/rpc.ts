@@ -9,6 +9,7 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
+import { isBsuid } from "@eccos/core/bsuid";
 import { sendMessage } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
@@ -102,6 +103,7 @@ function requireAccountId(accountId: string | undefined, message: string): strin
 
 /** Digits only, E.164's 15-digit ceiling. The console normalizes; this re-checks. */
 const TO_PATTERN = /^[0-9]{5,15}$/;
+const TO_ERROR = "to must be 5-15 digits or a BSUID";
 /** Meta's own template-name charset. */
 const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 /** `en` / `es` / `en_US` / `pt_BR`. */
@@ -608,8 +610,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return { ok: true };
   }
 
-  /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a phone
-   * number across the gateway tables. Returns per-table counts as erasure evidence. */
+  /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a customer,
+   * named by phone number or by BSUID. Returns per-table counts as erasure evidence. */
   async eraseByPhone(phone: string, wabaId: string, accountId: string): Promise<EraseByPhoneResult> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.eraseByPhone(phone);
@@ -712,7 +714,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     // failure code.
     const bodyParams = input.bodyParams ?? [];
     const buttonParams = input.buttonParams ?? [];
-    if (!TO_PATTERN.test(input.to)) throw new Error("to must be 5-15 digits");
+    if (!TO_PATTERN.test(input.to) && !isBsuid(input.to)) throw new Error(TO_ERROR);
     if (!TEMPLATE_NAME_PATTERN.test(input.templateName)) throw new Error("invalid templateName");
     if (!LANGUAGE_PATTERN.test(input.languageCode)) throw new Error("invalid languageCode");
     if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many body parameters");
@@ -870,7 +872,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
     // Defense in depth, as in `sendTemplateTest`: the dashboard validator is the
     // strict one, so a failure here is a regressed caller, not a UI state.
-    if (!TO_PATTERN.test(input.to)) throw new Error("to must be 5-15 digits");
+    if (!TO_PATTERN.test(input.to) && !isBsuid(input.to)) throw new Error(TO_ERROR);
     if (typeof input.text !== "string" || input.text.length === 0 || input.text.length > MAX_TEXT_LENGTH) {
       throw new Error("text must be 1-4096 characters");
     }

@@ -1,3 +1,4 @@
+import { isBsuid } from "@eccos/core/bsuid";
 import type { MessageContent, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type { MessageDirection, MessageOrigin, MessageStatus } from "@eccos/gateway-contract";
 
@@ -37,12 +38,10 @@ const CONTENT_KEYS = [
   "errorMessage",
 ] as const satisfies readonly (keyof MessageContent)[];
 
-const BSUID_PATTERN = /^[A-Z]{2}\.(ENT\.)?[A-Za-z0-9]{1,128}$/;
-
 /** Every `wa_id` is stored as the digits-only number Meta uses, or whole as the
  * BSUID (`US.1349…`) Meta sends for a customer whose number it withholds. */
 export function waIdOf(id: string): string {
-  return BSUID_PATTERN.test(id) ? id : id.replace(/\D/g, "");
+  return isBsuid(id) ? id : id.replace(/\D/g, "");
 }
 
 /** The message an inbound (`reply`, `message`) or echo event adds; null for statuses. */

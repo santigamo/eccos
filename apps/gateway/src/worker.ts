@@ -8,6 +8,7 @@ import {
   parseMetaWebhookBatches,
   type MetaWebhookBatch,
 } from "@eccos/core/parser";
+import { isBsuid } from "@eccos/core/bsuid";
 import { sendMessage } from "@eccos/core/send";
 import { listTemplates } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
@@ -636,13 +637,9 @@ async function tenantSendTarget(
   const waba = await ownedWaba(c.env, account, wabaId);
   if (!waba) return { ok: false, status: 404, error: "WABA is not configured" };
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  if (
-    !body ||
-    typeof body !== "object" ||
-    typeof body.to !== "string" ||
-    body.to.length < 5
-  ) {
-    return { ok: false, status: 400, error: "invalid body" };
+  if (!body || typeof body !== "object") return { ok: false, status: 400, error: "invalid body" };
+  if (typeof body.to !== "string" || !isSendRecipient(body.to)) {
+    return { ok: false, status: 400, error: "invalid to: expected a phone number (5-15 digits) or a BSUID" };
   }
   let selector: { phoneNumberId: string | null };
   try {
@@ -670,6 +667,13 @@ async function tenantSendTarget(
   }
   const metaBody = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "phone_number_id"));
   return { ok: true, waba, phoneNumberId, metaAccessToken: waba.metaAccessToken, metaBody };
+}
+
+/** A phone number as Meta accepts it (digits, optionally `+` and separators) or a BSUID. */
+function isSendRecipient(to: string): boolean {
+  if (isBsuid(to)) return true;
+  const digits = to.replace(/\D/g, "").length;
+  return /^\+?[0-9][0-9 ().-]*$/.test(to) && digits >= 5 && digits <= 15;
 }
 
 async function sendMessageRoute(c: AppContext) {
@@ -720,8 +724,8 @@ app.post("/v1/wabas/:wabaId/phones/:phoneNumberId/messages", sendMessageRoute);
 
 const ERASURE_RETRY_MESSAGE = "erasure did not finish; retry the same request, it is safe to repeat";
 
-// Right-to-erasure (GDPR Art. 17). The phone travels in the JSON body — never in
-// the URL — so it cannot leak into request logs. Gated by the /v1/* auth above.
+// Right-to-erasure (GDPR Art. 17). `phone` (a phone number or a BSUID) travels in the
+// JSON body — never in the URL — so it cannot leak into request logs. Gated by the /v1/* auth above.
 async function erasureRoute(c: AppContext) {
   const cid = correlationId(c);
   const account = c.get("account") ?? null;
@@ -730,7 +734,7 @@ async function erasureRoute(c: AppContext) {
   const phone = json && typeof json === "object" ? (json as Record<string, unknown>).phone : undefined;
   if (typeof phone !== "string" || phone.trim().length === 0) {
     logEvent("privacy_erasure", cid, 400, { reason: "invalid_body" });
-    return c.json({ ok: false, error: "invalid body: expected { phone: string }" }, 400);
+    return c.json({ ok: false, error: "invalid body: expected { phone: string } (a phone number or a BSUID)" }, 400);
   }
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
   const waba = await ownedWaba(c.env, account, wabaId);
