@@ -304,6 +304,15 @@ describe("ConversationList", () => {
     expect(html).toContain("Cliente de prueba");
   });
 
+  test("a BSUID row links to its thread with the id URL-encoded as written", () => {
+    const html = renderToStaticMarkup(
+      <ConversationList {...listProps} items={[{ ...SUMMARY, waId: "US.13491208655302741918", name: null }]} />,
+    );
+    expect(html).toContain('href="/conversations?wabaId=waba-a&amp;waId=US.13491208655302741918"');
+    expect(html).toContain("US.…741918");
+    expect(html).not.toContain("+US.");
+  });
+
   test("a number with no name is shown as the number", () => {
     const html = renderToStaticMarkup(
       <ConversationList {...listProps} items={[{ ...SUMMARY, name: null }]} />,
@@ -403,6 +412,14 @@ describe("the conversations page", () => {
     const html = renderToStaticMarkup(<Route.component />);
     expect(html).toContain(`>+${CUSTOMER}</h2>`);
     expect(html).not.toContain(`++${CUSTOMER}`);
+  });
+
+  test("a BSUID customer nobody named opens, titled by a short id without a +", () => {
+    searchParams = { wabaId: WABA, waId: "US.13491208655302741918" };
+    ready({ ok: true, data: page([]) }, { ok: true, data: { page: page(THREAD), name: null, reply: { phoneNumberId: "phone-a", lastInboundAt: null } } });
+    const html = renderToStaticMarkup(<Route.component />);
+    expect(html).toContain(">US.…741918</h2>");
+    expect(html).not.toContain("+US.");
   });
 
   test("the page's kicker is the nav group the page sits in", () => {

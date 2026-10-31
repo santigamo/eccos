@@ -23,6 +23,7 @@ import { FailureView } from "../components/dashboard/failure";
 import { loaderFailure } from "../lib/failure";
 import { listInbound, retryDelivery } from "../server/gateway";
 import type { InboundRow } from "../server/gateway";
+import { formatCustomerId } from "../lib/customer-id";
 import { forwardReading } from "../lib/forwarding";
 import {
   EMPTY_CELL,
@@ -185,7 +186,7 @@ function partyColumn(wabaId?: string) {
         return (
           <span className="whitespace-nowrap">
             <span className="text-muted-foreground">{reading.party.direction} </span>
-            <span className="font-mono text-xs">+{reading.party.phone}</span>
+            <span className="font-mono text-xs">{formatCustomerId(reading.party.id)}</span>
           </span>
         );
       }

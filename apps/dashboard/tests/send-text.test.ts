@@ -26,6 +26,12 @@ describe("validateSendTextInput", () => {
     expect(validateSendTextInput(valid)).toEqual(valid);
   });
 
+  test("passes a BSUID recipient through verbatim, for the gateway to address", () => {
+    const bsuid = { ...valid, to: "US.13491208655302741918" };
+    expect(validateSendTextInput(bsuid)).toEqual(bsuid);
+    expect(validateSendTextInput({ ...valid, to: " CC.ENT.a1B2c3 " }).to).toBe("CC.ENT.a1B2c3");
+  });
+
   test("normalizes the recipient the way the template sheet does, and trims the body", () => {
     expect(validateSendTextInput({ ...valid, to: "+34 600-111 222", text: "  Hola  " })).toEqual({
       ...valid,
@@ -46,6 +52,7 @@ describe("validateSendTextInput", () => {
 
   test("refuses a recipient that is not a phone number", () => {
     expect(() => validateSendTextInput({ ...valid, to: "not-a-number" })).toThrow(/international format/);
+    expect(() => validateSendTextInput({ ...valid, to: "us.1349" })).toThrow(/international format/);
     expect(() => validateSendTextInput({ ...valid, to: 34600111222 })).toThrow(/recipient is required/);
   });
 

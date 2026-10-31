@@ -13,7 +13,7 @@ import type { SessionEvent } from "../lib/embedded-signup";
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
 import { analyzeDraftBody } from "../lib/template-params";
-import { normalizeWaId } from "../lib/conversations";
+import { isBsuid, normalizeCustomerId } from "../lib/customer-id";
 import {
   requireAuthContext,
   requireGatewayPermission,
@@ -352,11 +352,11 @@ export function validateConversationListInput(
   };
 }
 
-/** A thread read needs the customer's number; digits or formatted, the gateway normalizes it. */
+/** A thread read needs the customer's number (digits or formatted) or BSUID. */
 export function validateConversationInput(input: unknown): DashboardConversationOpts & DashboardScopeInput {
   const record = inputRecord(input);
-  const waId = normalizeWaId(record.waId);
-  if (!waId) throw new Error("waId must be a phone number");
+  const waId = normalizeCustomerId(record.waId);
+  if (!waId) throw new Error("waId must be a phone number or a BSUID");
   const wabaId = optionalWabaId(record.wabaId);
   const limit = optionalCursor(record.limit, "limit");
   const cursor = optionalCursorToken(record.cursor);
@@ -471,6 +471,21 @@ function validateSubscriberInput(input: unknown): SetSubscriberConfigInput & Das
 }
 
 /**
+ * A send's `to`: a BSUID verbatim (the gateway maps it to Meta's `recipient`),
+ * or a number as operators paste it — "+34 600-00 00 11", "(600) 000 011" —
+ * stripped to the digits the Cloud API accepts.
+ */
+function validateRecipient(value: unknown): string {
+  if (typeof value !== "string") throw new Error("recipient is required");
+  if (isBsuid(value.trim())) return value.trim();
+  const to = value.replace(/[\s\-().]/g, "").replace(/^\+/, "");
+  if (!RECIPIENT_PATTERN.test(to)) {
+    throw new Error("recipient must be 5 to 15 digits in international format, or a BSUID");
+  }
+  return to;
+}
+
+/**
  * The console's send validator — the strict one (the gateway re-checks the same
  * shapes as defense in depth, but this is where an operator's typing is turned
  * into a Meta-shaped request).
@@ -498,14 +513,7 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
   if (typeof record.phoneNumberId !== "string" || !PHONE_NUMBER_ID_PATTERN.test(record.phoneNumberId.trim())) {
     throw new Error("phoneNumberId is required");
   }
-  if (typeof record.to !== "string") throw new Error("recipient is required");
-  // Operators paste numbers the way people write them: "+34 600-00 00 11",
-  // "(600) 000 011". Strip the punctuation and the leading + and keep digits —
-  // which is the only form the Cloud API accepts.
-  const to = record.to.replace(/[\s\-().]/g, "").replace(/^\+/, "");
-  if (!RECIPIENT_PATTERN.test(to)) {
-    throw new Error("recipient must be 5 to 15 digits in international format");
-  }
+  const to = validateRecipient(record.to);
   if (typeof record.templateName !== "string" || !TEMPLATE_NAME_PATTERN.test(record.templateName.trim())) {
     throw new Error("invalid template name");
   }
@@ -580,11 +588,7 @@ export function validateSendTextInput(input: unknown): SendTextInput {
   if (typeof record.phoneNumberId !== "string" || !PHONE_NUMBER_ID_PATTERN.test(record.phoneNumberId.trim())) {
     throw new Error("phoneNumberId is required");
   }
-  if (typeof record.to !== "string") throw new Error("recipient is required");
-  const to = record.to.replace(/[\s\-().]/g, "").replace(/^\+/, "");
-  if (!RECIPIENT_PATTERN.test(to)) {
-    throw new Error("recipient must be 5 to 15 digits in international format");
-  }
+  const to = validateRecipient(record.to);
   if (typeof record.text !== "string") throw new Error("message text is required");
   const text = record.text.trim();
   if (!text) throw new Error("message text is required");

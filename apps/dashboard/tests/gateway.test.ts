@@ -2325,8 +2325,9 @@ describe("listConversations / getConversation (Conversations view)", () => {
 
   test("the validators refuse a malformed number, cursor or limit before any RPC", () => {
     expect(validateConversationInput({ waId: "+1 (555) 010-0001" })).toEqual({ waId: "15550100001" });
-    expect(() => validateConversationInput({})).toThrow(/waId must be a phone number/);
-    expect(() => validateConversationInput({ waId: "abc" })).toThrow(/waId must be a phone number/);
+    expect(validateConversationInput({ waId: "US.13491208655302741918" })).toEqual({ waId: "US.13491208655302741918" });
+    expect(() => validateConversationInput({})).toThrow(/waId must be a phone number or a BSUID/);
+    expect(() => validateConversationInput({ waId: "abc" })).toThrow(/waId must be a phone number or a BSUID/);
     expect(() => validateConversationInput({ waId: "15550100001", cursor: "../etc" })).toThrow(/cursor/);
     expect(() => validateConversationListInput({ limit: 0 })).toThrow(/limit/);
     expect(validateConversationListInput(undefined)).toBeUndefined();

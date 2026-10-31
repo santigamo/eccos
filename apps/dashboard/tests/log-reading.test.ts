@@ -190,7 +190,7 @@ describe("eventReading", () => {
     expect(eventReading("reply", payload)).toEqual({
       kind: "reply",
       family: "message",
-      party: { direction: "from", phone: "34600000000" },
+      party: { direction: "from", id: "34600000000" },
       text: "hola",
       errorCode: null,
       errorMessage: null,
@@ -201,7 +201,14 @@ describe("eventReading", () => {
 
   test("an echo names the recipient, because the business is the sender", () => {
     const payload = JSON.stringify({ type: "echo", to: "34600000001", messageId: "m", text: "ok", at: 1 });
-    expect(eventReading("echo", payload).party).toEqual({ direction: "to", phone: "34600000001" });
+    expect(eventReading("echo", payload).party).toEqual({ direction: "to", id: "34600000001" });
+  });
+
+  test("a BSUID beside a number rides along; one that IS the id is not repeated", () => {
+    const both = JSON.stringify({ type: "reply", from: "34600000000", fromUserId: "US.1349", messageId: "m", text: "a", at: 1 });
+    expect(eventReading("reply", both).party).toEqual({ direction: "from", id: "34600000000", userId: "US.1349" });
+    const only = JSON.stringify({ type: "echo", to: "US.1349", toUserId: "US.1349", messageId: "m", text: "a", at: 1 });
+    expect(eventReading("echo", only).party).toEqual({ direction: "to", id: "US.1349" });
   });
 
   test("a status callback has NO detail — and never a wamid as one", () => {
@@ -252,7 +259,7 @@ describe("eventReading", () => {
     const revoke = JSON.stringify({ type: "message_echo", to: "34600000001", messageId: "m", at: 1, messageType: "revoke" });
     expect(eventReading("message_echo", revoke)).toMatchObject({
       family: "message",
-      party: { direction: "to", phone: "34600000001" },
+      party: { direction: "to", id: "34600000001" },
       detail: "revoke",
     });
   });
