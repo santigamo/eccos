@@ -215,11 +215,13 @@ operator account).
   exposed as `GatewayRPC.eraseByPhone()` (operator RPC, service binding only) and as
   `POST /v1/wabas/<WABA_ID>/privacy/erasure` with body `{"phone": "+34..."}` behind the account
   API-key gate (the number travels in the body, never the URL, so it can't leak into request logs).
-  It removes every stored trace of one phone number and returns per-table counts as evidence of the
-  erasure. How it matches:
+  It removes every stored trace of one customer and returns per-table counts as evidence of the
+  erasure. `phone` may also be the customer's BSUID (`US.1349…`), for a customer Meta names by
+  business-scoped user id. How it matches:
   - the input and stored numbers are normalized to digits-only and compared for exact equality —
     pass the full international number (`+34 600 00 00 00`, `34600000000`, … all match the same
-    stored contact; a national short form does not);
+    stored contact; a national short form does not); a BSUID is compared whole, and an event
+    matches on its `fromUserId`/`toUserId` as well as `from`/`to`;
   - `outbound_messages` rows are matched on `recipient` and deleted; `inbound_events` rows are
     matched on the `from`/`to` inside the normalized event JSON (replies/echoes) and deleted;
   - status events (`delivered`/`read`/`failed`) carry only a Meta message id, no phone — they are

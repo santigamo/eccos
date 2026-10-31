@@ -156,7 +156,7 @@ describe("EccosGateway.eraseByPhone", () => {
   it("rejects inputs with fewer than 5 digits", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const result = await i.eraseByPhone("+3-4");
-      expect(result).toEqual({ ok: false, error: "invalid phone number: expected at least 5 digits" });
+      expect(result).toEqual({ ok: false, error: "invalid phone number: expected at least 5 digits or a BSUID" });
     });
   });
 
@@ -227,7 +227,7 @@ describe("POST /v1/wabas/WABA_TEST/privacy/erasure", () => {
   it("rejects a phone with fewer than 5 digits", async () => {
     const res = await authed({ phone: "12" });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ ok: false, error: "invalid phone number: expected at least 5 digits" });
+    expect(await res.json()).toEqual({ ok: false, error: "invalid phone number: expected at least 5 digits or a BSUID" });
   });
 
   it("erases and returns the per-table counts", async () => {
