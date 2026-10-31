@@ -12,6 +12,7 @@
  */
 
 import { betterAuth } from "better-auth";
+import { authIpAddress, authRateLimit } from "@eccos/auth-baseline/rate-limit";
 import { organization, twoFactor } from "better-auth/plugins";
 import {
   AUTH_LINK_EXPIRY_SECONDS,
@@ -280,41 +281,10 @@ export function createAuth(config: AuthConfig) {
       updateAge: 60 * 60 * 24,
       freshAge: 60 * 15,
     },
-    // Distributed rate limiting (contract §8): counters live in the auth D1
-    // (storage: "database"), shared across all isolates — never per-isolate
-    // memory. Tighter windows for auth-critical paths.
-    //
-    // WHAT THE COUNTER KEYS ON: Better Auth builds the bucket key as
-    // `${ip}|${path}` (createRateLimitKey in @better-auth/core/utils/ip) — the
-    // CALLER's address and the route, never the request body. There is no way
-    // to key a rule on the target email, so none of these rules is a
-    // per-recipient guarantee: they cap what one caller can do, and a caller
-    // with many addresses is still only bounded per address. Recipient-side
-    // protection (per-address send budgets) belongs to the mail layer.
-    rateLimit: {
-      enabled: true,
-      window: 60,
-      max: 100,
-      storage: "database" as const,
-      customRules: {
-        "/sign-in/email": { window: 300, max: 10 },
-        "/sign-up/email": { window: 3600, max: 20 },
-        "/forgot-password": { window: 3600, max: 10 },
-        // The "Resend" button on the check-your-inbox screen (eccos-hk5). The
-        // address is caller-supplied and unauthenticated, so every call sends
-        // real mail to a third party's inbox off our sending domain — the cost
-        // of a loose limit lands on them and on our domain reputation, not on
-        // us. 5 per 300 s: the 300 s window is the one already used by
-        // /sign-in/email rather than a third arbitrary duration, and 5 leaves a
-        // person who genuinely did not receive the mail room to double-click,
-        // check spam, and ask twice more before waiting. It caps one caller at
-        // 60 mails/hour against a chosen address, against the ~180/hour the
-        // framework's own default for this path allows (60 s / 3) and the
-        // 6000/hour the global 60 s / 100 rule would.
-        "/send-verification-email": { window: 300, max: 5 },
-        "/organization/invite": { window: 3600, max: 50 },
-      },
-    },
+    // Distributed rate limiting (contract §8), shared with
+    // @eccos/auth-baseline. Counters key on caller IP + path, never on the
+    // target email: recipient-side budgets belong to the mail layer.
+    rateLimit: authRateLimit,
     emailVerification: {
       // A verified email is required before any organization or membership use
       // (contract §7).
@@ -459,18 +429,8 @@ export function createAuth(config: AuthConfig) {
         sameSite: "lax" as const,
         secure: secureCookies,
       },
-      // The rate-limit key is `${ip}|${path}` (see rateLimit above), so the IP
-      // source decides who shares a counter (eccos-fzgx). Better Auth defaults to
-      // `x-forwarded-for`, which a Worker does not reliably receive: with no IP
-      // it falls back to ONE shared bucket per path, and a single caller could
-      // exhaust sign-up or resend for every visitor. When the header does
-      // arrive, the client wrote it, so it is also a way to dodge the limit.
-      // `cf-connecting-ip` is set by Cloudflare's edge on every request to the
-      // custom domain and overwrites any client-supplied value; it is the only
-      // header read.
-      ipAddress: {
-        ipAddressHeaders: ["cf-connecting-ip"],
-      },
+      // Keys every auth route's bucket on cf-connecting-ip (eccos-g5h).
+      ipAddress: authIpAddress,
     },
   };
 
