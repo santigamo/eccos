@@ -27,6 +27,7 @@ import {
   type Position,
   decodeCursor,
   encodeCursor,
+  customerPairOf,
   messageFromEvent,
   messageFromOutbound,
   statusFromEvent,
@@ -438,8 +439,10 @@ export class EccosGateway extends DurableObject<Env> {
       // The conversation store (eccos-yqbz.2). Outside the content sweep on purpose:
       // these rows are the conversations themselves, so per-workspace retention
       // will own their lifetime, not CONTENT_RETENTION_DAYS.
-      const hasConversations =
-        this.sql.exec(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'`).toArray().length > 0;
+      const hasTable = (name: string) =>
+        this.sql.exec(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`, name).toArray().length > 0;
+      const hasConversations = hasTable("messages");
+      const hasCustomerIds = hasTable("customer_ids");
       this.ctx.storage.transactionSync(() => {
         this.sql.exec(`CREATE TABLE IF NOT EXISTS contacts (
           wa_id      TEXT PRIMARY KEY,
@@ -463,6 +466,13 @@ export class EccosGateway extends DurableObject<Env> {
           created_at      INTEGER NOT NULL
         );`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_at ON messages (wa_id, at);`);
+        // The phone number each known BSUID belongs to (eccos-yx0v): Meta withholds the
+        // number for a while, and the BSUID alone must still find the phone's conversation.
+        this.sql.exec(`CREATE TABLE IF NOT EXISTS customer_ids (
+          user_id TEXT PRIMARY KEY,
+          wa_id   TEXT NOT NULL
+        );`);
+        this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_customer_ids_wa ON customer_ids (wa_id);`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_target ON messages (target_id);`);
         // Partial: the newest window-opening inbound of a thread reads at most one index entry.
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_inbound ON messages (wa_id, at)
@@ -487,6 +497,7 @@ export class EccosGateway extends DurableObject<Env> {
         // tables back too, so the next start retries instead of finding a
         // half-filled store that looks complete.
         if (!hasConversations) this.backfillConversations();
+        else if (!hasCustomerIds) this.backfillCustomerIds();
       });
     });
   }
@@ -886,7 +897,7 @@ export class EccosGateway extends DurableObject<Env> {
         `SELECT rowid AS seq, ${MESSAGE_COLUMNS} FROM messages
          WHERE wa_id = ? AND (at < ? OR (at = ? AND rowid < ?))
          ORDER BY at DESC, rowid DESC LIMIT ?`,
-        waIdOf(opts.waId),
+        this.customerKey(waIdOf(opts.waId)),
         after.at,
         after.at,
         after.seq,
@@ -906,7 +917,7 @@ export class EccosGateway extends DurableObject<Env> {
    */
   getThreadView(opts: { waId: string; limit?: number; cursor?: string }): ThreadView {
     const page = this.getConversation(opts);
-    const waId = waIdOf(opts.waId);
+    const waId = this.customerKey(waIdOf(opts.waId));
     const name = this.sql.exec(`SELECT name FROM contacts WHERE wa_id = ?`, waId).toArray()[0]?.name;
     const inbound = this.sql
       .exec(
@@ -1060,11 +1071,11 @@ export class EccosGateway extends DurableObject<Env> {
   /**
    * Tenant-scoped data-plane export: every stored inbound event, outbound
    * message, delivery and conversation message (existing row shapes), contact,
-   * plus the non-secret connection metadata/config (secrets and internal keys
+   * phone/BSUID pair, plus the non-secret connection metadata/config (secrets and internal keys
    * are filtered — see isPublicConfigKey). JSON-serializable, with a fixed key
-   * order: inbound, outbound, deliveries, messages, contacts, config. Inbound,
+   * order: inbound, outbound, deliveries, messages, contacts, customerIds, config. Inbound,
    * outbound and deliveries are newest first by id; messages newest first by
-   * `(at, rowid)`; contacts by `wa_id`. Single snapshot: no limit/pagination —
+   * `(at, rowid)`; contacts by `wa_id`; pairs by `user_id`. Single snapshot: no limit/pagination —
    * a tenant's full retained history at single-tenant v1 volumes.
    */
   exportData(): GatewayExport {
@@ -1074,6 +1085,10 @@ export class EccosGateway extends DurableObject<Env> {
       deliveries: this.listAllDeliveries(),
       messages: this.listAllMessages(),
       contacts: this.listAllContacts(),
+      customerIds: this.sql
+        .exec(`SELECT user_id, wa_id FROM customer_ids ORDER BY user_id`)
+        .toArray()
+        .map((row) => ({ userId: row.user_id as string, waId: row.wa_id as string })),
       config: Object.fromEntries(
         Object.entries(this.getAllConfig()).filter(([key]) => isPublicConfigKey(key)),
       ),
@@ -1193,7 +1208,8 @@ export class EccosGateway extends DurableObject<Env> {
    *  - `inbound_events` rows are matched on `from`/`to`/`fromUserId`/`toUserId`
    *    inside the event JSON and deleted; their `messageId`s join the wamid set,
    *    and status rows (`delivered`/`read`/`failed` — which carry only a wamid)
-   *    are deleted via that set;
+   *    are deleted via that set; the phone/BSUID pairs they carry widen the
+   *    customer's keys, since content outlives the `customer_ids` pair;
    *  - `deliveries` batches are rewritten without the matching events; a batch
    *    left empty is redacted in place when terminal (metadata survives as
    *    erasure/audit evidence) or deleted when still pending (nothing left to
@@ -1208,7 +1224,6 @@ export class EccosGateway extends DurableObject<Env> {
     if (!key) {
       return { ok: false, error: "invalid phone number: expected at least 5 digits or a BSUID" };
     }
-    const keys = new Set([key]);
     const counts: ErasureCounts = {
       inboundEventsDeleted: 0,
       outboundMessagesDeleted: 0,
@@ -1218,16 +1233,54 @@ export class EccosGateway extends DurableObject<Env> {
       contactsDeleted: 0,
     };
     this.ctx.storage.transactionSync(() => {
+      // One customer may be known by a phone number and by BSUIDs: erase them all.
+      const phone = this.customerKey(key);
+      const keys = new Set([key, phone]);
+      for (const row of this.sql
+        .exec(`SELECT user_id FROM customer_ids WHERE wa_id = ? OR user_id = ?`, phone, key)
+        .toArray()) {
+        keys.add(row.user_id as string);
+      }
+
+      // 1. Inbound events whose event JSON names the customer. Meta emits phone
+      //    numbers digits-only and BSUIDs whole, so LIKE on the key is a safe
+      //    prefilter; the exact comparison in JS then rules out substring false
+      //    positives. Their message ids join the wamid set so related status
+      //    events are erased too. Content outlives the customer_ids pair (the
+      //    retention sweep drops it with the contact), so the phone/BSUID pairs
+      //    these events carry join the key set until it stops growing.
+      const wamids = new Set<string>();
+      const inboundIds = new Set<number>();
+      for (let size = 0; size !== keys.size; ) {
+        size = keys.size;
+        const likes = [...keys].map(() => "payload LIKE ?").join(" OR ");
+        for (const row of this.sql
+          .exec(`SELECT id, payload FROM inbound_events WHERE ${likes}`, ...[...keys].map((k) => `%${k}%`))
+          .toArray()) {
+          if (inboundIds.has(row.id as number)) continue;
+          let ev: Record<string, unknown>;
+          try {
+            ev = JSON.parse(row.payload as string) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          if (!eventNamesCustomer(ev, keys)) continue;
+          inboundIds.add(row.id as number);
+          if (typeof ev.messageId === "string") wamids.add(ev.messageId);
+          const pair = customerPairOf(ev as unknown as WhatsAppCallbackEvent);
+          if (pair) keys.add(pair.waId).add(pair.userId);
+        }
+      }
       // Recorded first: a reprocess of the raw sync payloads must not bring this customer back.
       for (const k of keys) {
+        this.sql.exec(`DELETE FROM customer_ids WHERE wa_id = ? OR user_id = ?`, k, k);
         this.sql.exec(`INSERT OR IGNORE INTO erased_numbers (digits, erased_at) VALUES (?, ?)`, k, Date.now());
       }
 
-      // 1. Outbound messages to that customer: collect wamids, then delete the rows.
+      // 2. Outbound messages to that customer: collect wamids, then delete the rows.
       //    `recipient` is caller-supplied and may be formatted ("+34 600-00-00-00"),
       //    so no SQL prefilter is safe here — every row is normalized in JS. Fine at
       //    single-tenant volumes bounded by the retention window.
-      const wamids = new Set<string>();
       const outboundIds: number[] = [];
       for (const row of this.sql
         .exec(`SELECT id, recipient, transport_message_id FROM outbound_messages`)
@@ -1237,26 +1290,6 @@ export class EccosGateway extends DurableObject<Env> {
         if (row.transport_message_id) wamids.add(row.transport_message_id as string);
       }
 
-      // 2. Inbound events whose event JSON names the customer. Meta emits phone
-      //    numbers digits-only and BSUIDs whole, so LIKE on the key is a safe
-      //    prefilter; the exact comparison in JS then rules out substring false
-      //    positives. Their message ids join the wamid set so related status
-      //    events are erased too.
-      const inboundIds = new Set<number>();
-      const likes = [...keys].map(() => "payload LIKE ?").join(" OR ");
-      for (const row of this.sql
-        .exec(`SELECT id, payload FROM inbound_events WHERE ${likes}`, ...[...keys].map((k) => `%${k}%`))
-        .toArray()) {
-        let ev: Record<string, unknown>;
-        try {
-          ev = JSON.parse(row.payload as string) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (!eventNamesCustomer(ev, keys)) continue;
-        inboundIds.add(row.id as number);
-        if (typeof ev.messageId === "string") wamids.add(ev.messageId);
-      }
       for (const id of inboundIds) {
         this.sql.exec(`DELETE FROM inbound_events WHERE id = ?`, id);
         counts.inboundEventsDeleted++;
@@ -1353,6 +1386,7 @@ export class EccosGateway extends DurableObject<Env> {
    * event adds a message; a status moves the message it names. Runs inside the
    * caller's transaction. */
   private writeConversation(ev: WhatsAppCallbackEvent, now: number): void {
+    this.learnCustomerPair(customerPairOf(ev));
     const message = messageFromEvent(ev);
     if (message) {
       this.storeMessage(message, now, "profileName" in ev ? (ev.profileName ?? null) : null);
@@ -1390,6 +1424,7 @@ export class EccosGateway extends DurableObject<Env> {
    * replaces an earlier live one; an address-book name (app_state) is never replaced.
    * A live message replaces a history row with the same id (history never replaces a live row). */
   private storeMessage(message: NewMessage, createdAt: number, profileName: string | null = null): void {
+    const waId = this.customerKey(message.waId);
     this.sql.exec(
       `INSERT INTO messages
          (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
@@ -1400,7 +1435,7 @@ export class EccosGateway extends DurableObject<Env> {
          status = excluded.status, target_id = excluded.target_id, phone_number_id = excluded.phone_number_id
        WHERE messages.origin = 'history'`,
       message.id,
-      message.waId,
+      waId,
       message.direction,
       message.origin,
       message.type,
@@ -1420,7 +1455,7 @@ export class EccosGateway extends DurableObject<Env> {
          source = CASE WHEN excluded.name IS NOT NULL AND (contacts.name IS NULL OR contacts.source = 'live')
            THEN 'live' ELSE contacts.source END,
          updated_at = excluded.updated_at`,
-      message.waId,
+      waId,
       profileName,
       createdAt,
     );
@@ -1455,6 +1490,48 @@ export class EccosGateway extends DurableObject<Env> {
     for (const row of this.sql.exec(`SELECT payload, received_at FROM inbound_events ORDER BY id`)) {
       this.applyStoredEvent(row.payload as string, Number(row.received_at));
     }
+  }
+
+  /** Learns the phone/BSUID pairs the retained inbound events name, merging any conversation
+   * already split between the two. Runs once, on the first start with the pair table. */
+  backfillCustomerIds(): void {
+    for (const row of this.sql.exec(`SELECT payload FROM inbound_events WHERE payload LIKE '%UserId%' ORDER BY id`)) {
+      try {
+        this.learnCustomerPair(customerPairOf(JSON.parse(row.payload as string)));
+      } catch {
+        // A row that does not parse names no pair.
+      }
+    }
+  }
+
+  /** The key a customer's conversation is stored under: the phone number a BSUID is
+   * known to belong to, else the id as given. */
+  private customerKey(waId: string): string {
+    if (!isBsuid(waId)) return waId;
+    const row = this.sql.exec(`SELECT wa_id FROM customer_ids WHERE user_id = ?`, waId).toArray()[0];
+    return row ? (row.wa_id as string) : waId;
+  }
+
+  /** Records that a BSUID belongs to a phone number, and moves a conversation already
+   * stored under the BSUID into the phone's, so one customer is one conversation. */
+  private learnCustomerPair(pair: { waId: string; userId: string } | null): void {
+    if (!pair) return;
+    const known = this.sql.exec(`SELECT wa_id FROM customer_ids WHERE user_id = ?`, pair.userId).toArray()[0];
+    if (known?.wa_id === pair.waId) return;
+    this.sql.exec(`INSERT OR REPLACE INTO customer_ids (user_id, wa_id) VALUES (?, ?)`, pair.userId, pair.waId);
+    this.sql.exec(`UPDATE messages SET wa_id = ? WHERE wa_id = ?`, pair.waId, pair.userId);
+    // The phone's contact keeps its name; the BSUID's fills it only when it has none.
+    this.sql.exec(
+      `INSERT INTO contacts (wa_id, name, source, updated_at)
+       SELECT ?, name, source, updated_at FROM contacts WHERE wa_id = ?
+       ON CONFLICT(wa_id) DO UPDATE SET
+         source = CASE WHEN contacts.name IS NULL AND excluded.name IS NOT NULL THEN excluded.source ELSE contacts.source END,
+         name = COALESCE(contacts.name, excluded.name),
+         updated_at = MAX(contacts.updated_at, excluded.updated_at)`,
+      pair.waId,
+      pair.userId,
+    );
+    this.sql.exec(`DELETE FROM contacts WHERE wa_id = ?`, pair.userId);
   }
 
   async alarm(): Promise<void> {
@@ -1751,17 +1828,21 @@ export class EccosGateway extends DurableObject<Env> {
       );
       return unit.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE;
     }
+    if (unit.pair && (erased.has(unit.pair.waId) || erased.has(unit.pair.userId))) return false;
+    if (unit.kind === "message") this.learnCustomerPair(unit.pair);
     if (unit.kind === "contact") {
       if (erased.has(unit.waId)) return false;
+      this.learnCustomerPair(unit.pair);
+      const waId = this.customerKey(unit.waId);
       if (unit.action === "remove") {
         // The contact stays (its messages stay); only the name Meta gave goes.
-        this.sql.exec(`UPDATE contacts SET name = NULL, updated_at = ? WHERE wa_id = ?`, now, unit.waId);
+        this.sql.exec(`UPDATE contacts SET name = NULL, updated_at = ? WHERE wa_id = ?`, now, waId);
         return false;
       }
       this.sql.exec(
         `INSERT INTO contacts (wa_id, name, source, updated_at) VALUES (?, ?, 'app_state', ?)
          ON CONFLICT(wa_id) DO UPDATE SET name = excluded.name, source = 'app_state', updated_at = excluded.updated_at`,
-        unit.waId,
+        waId,
         unit.name,
         now,
       );
@@ -1805,7 +1886,7 @@ export class EccosGateway extends DurableObject<Env> {
       return;
     }
     if (erased.has(message.waId)) return;
-    let stored = message;
+    let stored = { ...message, waId: this.customerKey(message.waId) };
     if (message.type === "media_placeholder") {
       const orphan = this.sql
         .exec(`SELECT type, text, content FROM history_media WHERE id = ?`, message.id)
@@ -1813,7 +1894,7 @@ export class EccosGateway extends DurableObject<Env> {
       if (orphan) {
         this.sql.exec(`DELETE FROM history_media WHERE id = ?`, message.id);
         stored = {
-          ...message,
+          ...stored,
           type: orphan.type as string,
           text: orphan.text as string | null,
           content: orphan.content as string | null,
@@ -2052,6 +2133,7 @@ export class EccosGateway extends DurableObject<Env> {
       this.sql.exec(
         `DELETE FROM contacts WHERE source != 'app_state' AND wa_id NOT IN (SELECT wa_id FROM messages)`,
       );
+      this.sql.exec(`DELETE FROM customer_ids WHERE wa_id NOT IN (SELECT wa_id FROM contacts)`);
       this.tombstoneUnreferencedMedia(mediaIds);
     });
   }

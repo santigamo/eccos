@@ -44,6 +44,24 @@ export function waIdOf(id: string): string {
   return isBsuid(id) ? id : id.replace(/\D/g, "");
 }
 
+/** The phone number and BSUID one event names for the same customer; null unless it names both. */
+export function customerPairOf(ev: WhatsAppCallbackEvent): { waId: string; userId: string } | null {
+  const [id, userId] =
+    ev.type === "reply" || ev.type === "message"
+      ? [ev.from, ev.fromUserId]
+      : ev.type === "echo" || ev.type === "message_echo"
+        ? [ev.to, ev.toUserId]
+        : [undefined, undefined];
+  return pairOf(id, userId);
+}
+
+/** A phone/BSUID pair, when `id` is a phone number and `userId` a BSUID. */
+export function pairOf(id: unknown, userId: unknown): { waId: string; userId: string } | null {
+  if (typeof id !== "string" || typeof userId !== "string" || isBsuid(id) || !isBsuid(userId)) return null;
+  const waId = waIdOf(id);
+  return waId === "" ? null : { waId, userId };
+}
+
 /** The message an inbound (`reply`, `message`) or echo event adds; null for statuses. */
 export function messageFromEvent(ev: WhatsAppCallbackEvent): NewMessage | null {
   if (ev.type !== "reply" && ev.type !== "echo" && ev.type !== "message" && ev.type !== "message_echo") return null;
