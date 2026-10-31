@@ -71,11 +71,12 @@ interface DeliveryRow {
   attempts: number;
   next_attempt_at: number;
   phone_number_id: string | null;
+  created_at: number;
 }
 
 /** Result of one forward attempt. The failure branch carries why, so the reason
  * can be stored in `deliveries.last_error` and read back by an operator. */
-type ForwardOutcome = { ok: true } | { ok: false; reason: string };
+type ForwardOutcome = { ok: true; httpStatus: number } | { ok: false; reason: string; httpStatus?: number };
 
 const FORWARD_FETCH_TIMEOUT_MS = 5_000;
 /** Sync items (history messages, contacts) applied per alarm wake. Bounds the CPU and
@@ -594,6 +595,17 @@ export class EccosGateway extends DurableObject<Env> {
         }
       }
     });
+    // Ties this object's id to its WABA in Workers Logs; duplicates are events minus inserted.
+    console.log(
+      JSON.stringify({
+        level: "info",
+        area: "ingest",
+        event: "ingested",
+        wabaId: this.wabaIdForOps(),
+        eventCount: events.length,
+        inserted: insertedIds.length,
+      }),
+    );
     if (insertedIds.length > 0) this.wakeNow();
     return { received: events.length };
   }
@@ -1491,7 +1503,7 @@ export class EccosGateway extends DurableObject<Env> {
     const rows = hasTarget
       ? (this.sql
           .exec(
-            `SELECT id, payload, attempts, next_attempt_at, phone_number_id FROM deliveries
+            `SELECT id, payload, attempts, next_attempt_at, phone_number_id, created_at FROM deliveries
        WHERE status = 'pending' AND next_attempt_at <= ?
        ORDER BY id LIMIT ?`,
             now,
@@ -1579,7 +1591,7 @@ export class EccosGateway extends DurableObject<Env> {
       return await this.processSyncBatch(now);
     } catch (error) {
       console.warn(
-        JSON.stringify({ level: "warn", area: "history", event: "sync-failed", waba: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
+        JSON.stringify({ level: "warn", area: "history", event: "sync-failed", wabaId: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
       );
       return SYNC_CONTINUE_MS;
     }
@@ -1638,7 +1650,7 @@ export class EccosGateway extends DurableObject<Env> {
             sharingOff ||= this.applySyncItem(id, item, erased, now, waba, cutoff);
           } catch (error) {
             console.warn(
-              JSON.stringify({ level: "warn", area: "history", event: "item-skipped", waba, error: String(error).slice(0, 200) }),
+              JSON.stringify({ level: "warn", area: "history", event: "item-skipped", wabaId: waba, error: String(error).slice(0, 200) }),
             );
           }
         }
@@ -1670,7 +1682,7 @@ export class EccosGateway extends DurableObject<Env> {
   private parkSyncPayload(id: number, now: number, error: string): void {
     this.sql.exec(`UPDATE sync_payloads SET processed_at = ?, error = ? WHERE id = ?`, now, error, id);
     this.syncCache = null;
-    console.warn(JSON.stringify({ level: "warn", area: "history", event: "payload-parked", payload: id, error }));
+    console.warn(JSON.stringify({ level: "warn", area: "history", event: "payload-parked", wabaId: this.wabaIdForOps(), payload: id, error }));
   }
 
   /** The parsed items of a payload. The payload being worked on stays in memory between
@@ -1689,7 +1701,7 @@ export class EccosGateway extends DurableObject<Env> {
       return await getControlPlaneStub(this.env).getConversationRetentionDaysForWaba(this.wabaIdForOps());
     } catch (error) {
       console.warn(
-        JSON.stringify({ level: "warn", area: "retention", event: "lookup-failed", waba: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
+        JSON.stringify({ level: "warn", area: "retention", event: "lookup-failed", wabaId: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
       );
       return undefined;
     }
@@ -1702,7 +1714,7 @@ export class EccosGateway extends DurableObject<Env> {
       await getControlPlaneStub(this.env).markHistorySharingOff(waba);
     } catch (error) {
       console.warn(
-        JSON.stringify({ level: "warn", area: "history", event: "sharing-off-not-recorded", waba, error: String(error).slice(0, 200) }),
+        JSON.stringify({ level: "warn", area: "history", event: "sharing-off-not-recorded", wabaId: waba, error: String(error).slice(0, 200) }),
       );
       return false;
     }
@@ -1728,7 +1740,7 @@ export class EccosGateway extends DurableObject<Env> {
           level: "warn",
           area: "history",
           event: unit.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE ? "history-sharing-off" : "history-error",
-          waba,
+          wabaId: waba,
           code: unit.code,
         }),
       );
@@ -1957,7 +1969,7 @@ export class EccosGateway extends DurableObject<Env> {
         level: "warn",
         area: "media",
         event,
-        waba: this.wabaIdForOps(),
+        wabaId: this.wabaIdForOps(),
         ...(error === undefined ? {} : { error: String(error).slice(0, 200) }),
       }),
     );
@@ -2097,7 +2109,7 @@ export class EccosGateway extends DurableObject<Env> {
             level: "warn",
             area: "media",
             event: "purge-failed",
-            waba: this.wabaIdForOps(),
+            wabaId: this.wabaIdForOps(),
             error: String(error).slice(0, 200),
           }),
         );
@@ -2192,25 +2204,41 @@ export class EccosGateway extends DurableObject<Env> {
     });
     const ok = res.ok;
     if (res.body) await res.body.cancel().catch(() => undefined);
-    if (ok) return { ok: true };
+    if (ok) return { ok: true, httpStatus: res.status };
     const redirected = res.status >= 300 && res.status < 400;
     return {
       ok: false,
       reason: `subscriber returned ${res.status}${redirected ? " (redirects are not followed)" : ""}`,
+      httpStatus: res.status,
     };
   }
 
   private async processDelivery(row: DeliveryRow, maxAttempts: number): Promise<void> {
     let ok = false;
     let error: string | null = null;
+    let httpStatus: number | null = null;
+    const startedAt = Date.now();
     try {
       const outcome = await this.forwardOne(row.payload);
       ok = outcome.ok;
+      httpStatus = outcome.httpStatus ?? null;
       if (!outcome.ok) error = outcome.reason;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
     const attempts = row.attempts + 1;
+    // One line per attempt, never the payload: per-WABA volume, success rate and latency.
+    // `durationMs` is the subscriber's answer time, `lagMs` the time since the webhook was stored.
+    const attempt = {
+      area: "forward",
+      wabaId: this.wabaIdForOps(),
+      phoneNumberId: row.phone_number_id,
+      deliveryId: row.id,
+      attempt: attempts,
+      httpStatus,
+      durationMs: Date.now() - startedAt,
+      lagMs: Date.now() - row.created_at,
+    };
     // `finished_at` is written on BOTH terminal transitions and on neither retry:
     // a row that is going to be tried again has not finished, and stamping it
     // would make "last delivery" mean "last attempt".
@@ -2238,21 +2266,16 @@ export class EccosGateway extends DurableObject<Env> {
         row.id,
       );
     }
-    if (ok) return;
-
-    // Until eccos-r8x0 a failed forward wrote only `last_error`, so a fault that
-    // failed every account was invisible to the operator. One structured line
-    // per failed attempt (Workers Logs), never the payload.
+    if (ok) {
+      console.log(JSON.stringify({ level: "info", event: "delivered", ...attempt }));
+      return;
+    }
     const terminal = attempts >= maxAttempts;
     console.warn(
       JSON.stringify({
         level: "warn",
-        area: "forward",
         event: terminal ? "delivery-failed" : "attempt-failed",
-        waba: this.wabaIdForOps(),
-        phoneNumberId: row.phone_number_id,
-        deliveryId: row.id,
-        attempt: attempts,
+        ...attempt,
         error: error?.slice(0, 200) ?? null,
       }),
     );
@@ -2260,16 +2283,17 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /**
-   * Counts one delivery that exhausted its attempts and decides whether it
-   * earns an alert. At most one alert per OPS_ALERT_INTERVAL_MS; the failures
-   * in between are counted and reported by the next alert, so a subscriber that
-   * is down all day costs 24 messages, not one per event.
+   * Counts `added` occurrences of an alert `kind` (a delivery that exhausted its
+   * attempts, an inbound message dropped) and decides whether they earn an alert.
+   * At most one alert per kind per OPS_ALERT_INTERVAL_MS; the occurrences in
+   * between are counted and reported by the next alert, so a fault that lasts
+   * all day costs 24 messages, not one per event.
    *
    * Synchronous SQL with no await between the read and the write: the six
    * concurrent forwards of one alarm run in this same object, and two of them
    * must not both decide to send.
    */
-  recordTerminalFailure(now: number): { send: boolean; count: number } {
+  recordOpsAlert(kind: "failure" | "drop", now: number, added = 1): { send: boolean; count: number } {
     const read = (key: string): number =>
       Number(this.sql.exec("SELECT value FROM ops_state WHERE key = ?", key).toArray()[0]?.value ?? 0);
     const write = (key: string, value: number): void => {
@@ -2279,18 +2303,34 @@ export class EccosGateway extends DurableObject<Env> {
         String(value),
       );
     };
-    const count = read("failures_since_alert") + 1;
-    if (now - read("failure_alert_at") < OPS_ALERT_INTERVAL_MS) {
-      write("failures_since_alert", count);
+    const count = read(`${kind}s_since_alert`) + added;
+    if (now - read(`${kind}_alert_at`) < OPS_ALERT_INTERVAL_MS) {
+      write(`${kind}s_since_alert`, count);
       return { send: false, count };
     }
-    write("failure_alert_at", now);
-    write("failures_since_alert", 0);
+    write(`${kind}_alert_at`, now);
+    write(`${kind}s_since_alert`, 0);
     return { send: true, count };
   }
 
+  /** Alerts the operator that inbound messages for this WABA parse to no event:
+   * they lack `missing` (field names), so they are neither stored nor forwarded. */
+  async alertDroppedMessages(dropped: number, missing: string, types: string): Promise<void> {
+    const { send, count } = this.recordOpsAlert("drop", Date.now(), dropped);
+    if (!send) return;
+    await sendOpsAlert(
+      this.env,
+      [
+        "Eccos: inbound messages are being dropped",
+        `WABA ${this.wabaIdForOps()}`,
+        `${count} ${count === 1 ? "message" : "messages"} without ${missing} (${types}) since the last alert, neither stored nor forwarded`,
+        "Logs: event webhook_dropped",
+      ].join("\n"),
+    );
+  }
+
   private async alertTerminalFailure(phoneNumberId: string | null, error: string | null): Promise<void> {
-    const { send, count } = this.recordTerminalFailure(Date.now());
+    const { send, count } = this.recordOpsAlert("failure", Date.now());
     if (!send) return;
     await sendOpsAlert(
       this.env,
