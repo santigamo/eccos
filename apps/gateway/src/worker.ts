@@ -629,7 +629,14 @@ app.post("/v1/accounts/:accountId/wabas/:wabaId/reconcile", reconcileWabaRoute);
 async function tenantSendTarget(
   c: AppContext,
 ): Promise<
-  | { ok: true; waba: AccountWaba; phoneNumberId: string; metaAccessToken: string; metaBody: Record<string, unknown> }
+  | {
+      ok: true;
+      waba: AccountWaba;
+      phoneNumberId: string;
+      metaAccessToken: string;
+      recipient: string;
+      metaBody: Record<string, unknown>;
+    }
   | { ok: false; status: 400 | 404; error: string }
 > {
   const account = c.get("account");
@@ -638,7 +645,11 @@ async function tenantSendTarget(
   if (!waba) return { ok: false, status: 404, error: "WABA is not configured" };
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body || typeof body !== "object") return { ok: false, status: 400, error: "invalid body" };
-  if (typeof body.to !== "string" || !isSendRecipient(body.to)) {
+  // Meta's rule: `to` wins over `recipient`, which only addresses a BSUID.
+  const recipient = body.to === undefined && typeof body.recipient === "string" && isBsuid(body.recipient)
+    ? body.recipient
+    : body.to;
+  if (typeof recipient !== "string" || !isSendRecipient(recipient)) {
     return { ok: false, status: 400, error: "invalid to: expected a phone number (5-15 digits) or a BSUID" };
   }
   let selector: { phoneNumberId: string | null };
@@ -666,7 +677,7 @@ async function tenantSendTarget(
     return { ok: false, status: 404, error: "phone number is not registered to this WABA" };
   }
   const metaBody = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "phone_number_id"));
-  return { ok: true, waba, phoneNumberId, metaAccessToken: waba.metaAccessToken, metaBody };
+  return { ok: true, waba, phoneNumberId, metaAccessToken: waba.metaAccessToken, recipient, metaBody };
 }
 
 /** A phone number as Meta accepts it (digits, optionally `+` and separators) or a BSUID. */
@@ -690,7 +701,7 @@ async function sendMessageRoute(c: AppContext) {
     phoneNumberId: target.phoneNumberId,
     metaAccessToken: target.metaAccessToken,
   });
-  const recipient = target.metaBody.to as string;
+  const { recipient } = target;
   const messageType = typeof target.metaBody.type === "string" ? target.metaBody.type : "unknown";
   const result = await sendMessage(cfg, target.metaBody);
   const stub = getGatewayStubForWaba(c.env, target.waba.wabaId);
