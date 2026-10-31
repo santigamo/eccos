@@ -1267,6 +1267,11 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.hydrateWaba(row);
   }
 
+  /** Whether the account owns the WABA, whatever its status; credentials stay sealed. */
+  ownsWaba(accountId: string, wabaId: string): boolean {
+    return this.readWabaRow(accountId, wabaId) !== null;
+  }
+
   async getWabaRecord(accountId: string, wabaId: string): Promise<AccountWaba | null> {
     const row = this.readWabaRow(accountId, wabaId);
     return row ? this.hydrateWaba(row) : null;

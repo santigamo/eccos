@@ -1,4 +1,5 @@
 import { getGatewayStubForWaba } from "./gateway-stub";
+import { releaseHeldBatches } from "./held-webhooks";
 import {
   MetaGraphError,
   getPhoneNumberOnboarding,
@@ -432,6 +433,9 @@ export async function runClaim(
       success: true,
       coexistence,
     });
+    if (waba?.status === "active") {
+      await releaseHeldBatches(env, claim.wabaId, waba.phones.map((p) => p.phoneNumberId));
+    }
     return { waba, attempted: true, error: null };
   } catch (error) {
     const failure = failureFor(stage, error, spend.issued);
