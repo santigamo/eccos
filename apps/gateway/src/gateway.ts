@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
@@ -1179,32 +1180,35 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /**
-   * Right-to-erasure (GDPR Art. 17): removes every trace of a phone number from
-   * the three data tables, within whatever is still inside the retention window.
+   * Right-to-erasure (GDPR Art. 17): removes every trace of a customer — named by
+   * phone number or by BSUID — from the data tables, within whatever is still
+   * inside the retention window.
    *
    * Matching strategy (`docs/privacy.md` §"Erasure"):
-   *  - the input and every stored number are normalized to digits-only, then
-   *    compared for exact equality — pass the full international number;
+   *  - the input and every stored id are normalized to a customer key (digits-only
+   *    for a phone number, the BSUID whole) and compared for exact equality —
+   *    pass the full international number;
    *  - `outbound_messages` rows are matched on `recipient` and deleted; their
    *    `transport_message_id`s (wamids) are collected first;
-   *  - `inbound_events` rows are matched on the normalized `from`/`to` inside the
-   *    event JSON (reply/echo) and deleted; their `messageId`s join the wamid set,
-   *    and status rows (`delivered`/`read`/`failed` — which carry only a wamid, no
-   *    phone) are deleted via that set;
+   *  - `inbound_events` rows are matched on `from`/`to`/`fromUserId`/`toUserId`
+   *    inside the event JSON and deleted; their `messageId`s join the wamid set,
+   *    and status rows (`delivered`/`read`/`failed` — which carry only a wamid)
+   *    are deleted via that set;
    *  - `deliveries` batches are rewritten without the matching events; a batch
    *    left empty is redacted in place when terminal (metadata survives as
    *    erasure/audit evidence) or deleted when still pending (nothing left to
    *    forward).
    *
-   * `messages` and `contacts` are keyed on the normalized `wa_id` directly, so
-   * they need no wamid join. Returns per-table counts so the operator can
-   * evidence the erasure.
+   * `messages` and `contacts` are keyed on the customer key directly, so they
+   * need no wamid join. Returns per-table counts so the operator can evidence
+   * the erasure.
    */
   async eraseByPhone(phone: string): Promise<EraseByPhoneResult> {
-    const digits = normalizePhoneNumber(phone);
-    if (!digits) {
-      return { ok: false, error: "invalid phone number: expected at least 5 digits" };
+    const key = customerKeyOf(phone);
+    if (!key) {
+      return { ok: false, error: "invalid phone number: expected at least 5 digits or a BSUID" };
     }
+    const keys = new Set([key]);
     const counts: ErasureCounts = {
       inboundEventsDeleted: 0,
       outboundMessagesDeleted: 0,
@@ -1214,10 +1218,12 @@ export class EccosGateway extends DurableObject<Env> {
       contactsDeleted: 0,
     };
     this.ctx.storage.transactionSync(() => {
-      // Recorded first: a reprocess of the raw sync payloads must not bring this number back.
-      this.sql.exec(`INSERT OR IGNORE INTO erased_numbers (digits, erased_at) VALUES (?, ?)`, digits, Date.now());
+      // Recorded first: a reprocess of the raw sync payloads must not bring this customer back.
+      for (const k of keys) {
+        this.sql.exec(`INSERT OR IGNORE INTO erased_numbers (digits, erased_at) VALUES (?, ?)`, k, Date.now());
+      }
 
-      // 1. Outbound messages to that number: collect wamids, then delete the rows.
+      // 1. Outbound messages to that customer: collect wamids, then delete the rows.
       //    `recipient` is caller-supplied and may be formatted ("+34 600-00-00-00"),
       //    so no SQL prefilter is safe here — every row is normalized in JS. Fine at
       //    single-tenant volumes bounded by the retention window.
@@ -1226,20 +1232,20 @@ export class EccosGateway extends DurableObject<Env> {
       for (const row of this.sql
         .exec(`SELECT id, recipient, transport_message_id FROM outbound_messages`)
         .toArray()) {
-        if (normalizePhoneNumber(row.recipient as string) !== digits) continue;
+        if (!keys.has(customerKeyOf(row.recipient as string) ?? "")) continue;
         outboundIds.push(row.id as number);
         if (row.transport_message_id) wamids.add(row.transport_message_id as string);
       }
 
-      // 2. Inbound events whose normalized event JSON references the number
-      //    (`from` on replies, `to` on echoes). Meta always emits these digits-only,
-      //    so LIKE on the contiguous digit run is a safe prefilter; the exact
-      //    normalized comparison in JS then rules out substring false positives.
-      //    Their message ids join the wamid set so related status events are
-      //    erased too.
+      // 2. Inbound events whose event JSON names the customer. Meta emits phone
+      //    numbers digits-only and BSUIDs whole, so LIKE on the key is a safe
+      //    prefilter; the exact comparison in JS then rules out substring false
+      //    positives. Their message ids join the wamid set so related status
+      //    events are erased too.
       const inboundIds = new Set<number>();
+      const likes = [...keys].map(() => "payload LIKE ?").join(" OR ");
       for (const row of this.sql
-        .exec(`SELECT id, payload FROM inbound_events WHERE payload LIKE ?`, `%${digits}%`)
+        .exec(`SELECT id, payload FROM inbound_events WHERE ${likes}`, ...[...keys].map((k) => `%${k}%`))
         .toArray()) {
         let ev: Record<string, unknown>;
         try {
@@ -1247,8 +1253,7 @@ export class EccosGateway extends DurableObject<Env> {
         } catch {
           continue;
         }
-        const evPhone = typeof ev.from === "string" ? ev.from : typeof ev.to === "string" ? ev.to : null;
-        if (evPhone === null || normalizePhoneNumber(evPhone) !== digits) continue;
+        if (!eventNamesCustomer(ev, keys)) continue;
         inboundIds.add(row.id as number);
         if (typeof ev.messageId === "string") wamids.add(ev.messageId);
       }
@@ -1283,7 +1288,7 @@ export class EccosGateway extends DurableObject<Env> {
           continue;
         }
         if (!Array.isArray(batch.events)) continue;
-        const kept = batch.events.filter((ev) => !erasureTargetsEvent(ev, digits, wamids));
+        const kept = batch.events.filter((ev) => !erasureTargetsEvent(ev, keys, wamids));
         if (kept.length === batch.events.length) continue;
         if (kept.length > 0) {
           const keptPhoneIds = new Set(
@@ -1310,10 +1315,10 @@ export class EccosGateway extends DurableObject<Env> {
         }
       }
 
-      // 5. The conversation store: every message to or from the number, and its contact.
+      // 5. The conversation store: every message to or from the customer, and its contact.
       //    A send is stored under the wa_id Meta answered with, which can differ from
       //    the typed number, so the collected wamids also name those wa_ids.
-      const waIds = new Set([digits]);
+      const waIds = new Set(keys);
       for (const wamid of wamids) {
         const row = this.sql.exec(`SELECT wa_id FROM messages WHERE id = ?`, wamid).toArray()[0];
         if (row) waIds.add(row.wa_id as string);
@@ -1335,7 +1340,7 @@ export class EccosGateway extends DurableObject<Env> {
       this.ctx.storage.setAlarm(Date.now() + MEDIA_RETRY_MS);
       return { ok: false, error: MEDIA_RETRY_MESSAGE, retryable: true };
     }
-    return { ok: true, phone: digits, counts };
+    return { ok: true, phone: key, counts };
   }
 
   /** Arms the alarm for now. Safe to call during alarm(): see `wakeArrived`. */
@@ -2404,18 +2409,29 @@ export function normalizePhoneNumber(input: string): string | null {
   return digits.length >= 5 ? digits : null;
 }
 
-/** True when a normalized event in a delivery batch belongs to the erased number,
- * either directly (`from`/`to`) or through a collected message id (statuses). */
-function erasureTargetsEvent(ev: unknown, digits: string, wamids: Set<string>): boolean {
+/** The key a customer is stored under: a BSUID whole, a phone number as its digits
+ * (null below 5 digits, the send API's minimum). */
+function customerKeyOf(id: string): string | null {
+  const trimmed = id.trim();
+  return isBsuid(trimmed) ? trimmed : normalizePhoneNumber(trimmed);
+}
+
+/** True when a normalized event names one of the erased customer's keys. */
+function eventNamesCustomer(e: Record<string, unknown>, keys: Set<string>): boolean {
+  return (["from", "to", "fromUserId", "toUserId"] as const).some(
+    (field) => typeof e[field] === "string" && keys.has(customerKeyOf(e[field] as string) ?? ""),
+  );
+}
+
+/** True when a normalized event in a delivery batch belongs to the erased customer,
+ * either directly or through a collected message id (statuses). */
+function erasureTargetsEvent(ev: unknown, keys: Set<string>, wamids: Set<string>): boolean {
   if (!ev || typeof ev !== "object") return false;
   const e = ev as Record<string, unknown>;
-  for (const key of ["from", "to"] as const) {
-    if (typeof e[key] === "string" && normalizePhoneNumber(e[key] as string) === digits) return true;
-  }
-  for (const key of ["transportMessageId", "messageId"] as const) {
-    if (typeof e[key] === "string" && wamids.has(e[key] as string)) return true;
-  }
-  return false;
+  if (eventNamesCustomer(e, keys)) return true;
+  return (["transportMessageId", "messageId"] as const).some(
+    (field) => typeof e[field] === "string" && wamids.has(e[field] as string),
+  );
 }
 
 /**

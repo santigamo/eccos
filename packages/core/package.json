@@ -4,6 +4,7 @@
   "description": "Eccos shared core — pure Meta Cloud API + parsing (no HTTP/DB). Runtime-agnostic (WebCrypto + Zod).",
   "type": "module",
   "exports": {
+    "./bsuid": "./src/bsuid.ts",
     "./config-schema": "./src/config-schema.ts",
     "./parser": "./src/parser.ts",
     "./send": "./src/send.ts",
