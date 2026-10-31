@@ -2323,7 +2323,8 @@ export class EccosGateway extends DurableObject<Env> {
       [
         "Eccos: inbound messages are being dropped",
         `WABA ${this.wabaIdForOps()}`,
-        `${count} ${count === 1 ? "message" : "messages"} without ${missing} (${types}) since the last alert, neither stored nor forwarded`,
+        `${count} ${count === 1 ? "message" : "messages"} since the last alert, neither stored nor forwarded`,
+        `Latest: ${types} without ${missing}`,
         "Logs: event webhook_dropped",
       ].join("\n"),
     );
