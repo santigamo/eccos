@@ -69,9 +69,13 @@ function graphCalls(spy: ReturnType<typeof fakeMeta>): string[] {
 }
 
 /** Runs the alarm directly, as alarm.spec.ts does: an alarm due "now" is not reliably
- * fired by the harness right after an ingest. */
+ * fired by the harness right after an ingest. Deleting it first keeps the harness from
+ * also firing it, which would download the media twice. */
 async function runAlarm(): Promise<void> {
-  await runInDurableObject(gatewayStub(), (instance: EccosGateway) => instance.alarm());
+  await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+    await instance.ctx.storage.deleteAlarm();
+    await instance.alarm();
+  });
 }
 
 async function mediaRow(mediaId: string) {
