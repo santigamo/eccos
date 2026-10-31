@@ -260,8 +260,11 @@ export interface EventReading {
    *
    * The column this fills did not exist. The old Inbound log showed
    * `phone_number_id`, the workspace's OWN number, identical on every row.
+   *
+   * `id` is the customer's number, or their BSUID when Meta withholds it;
+   * `userId` is the BSUID Meta sent beside a number, when it sent one.
    */
-  party: { direction: "from" | "to"; phone: string } | null;
+  party: { direction: "from" | "to"; id: string; userId?: string } | null;
   /** What the customer wrote (a `reply`) or what Eccos' own send said (an
    * `echo`). Null on a status callback, which carries no text at all. */
   text: string | null;
@@ -318,10 +321,12 @@ export function eventReading(type: string, payload: string): EventReading {
     }
   })();
   if (!event) return reading;
-  const from = asText(event.from);
-  const to = asText(event.to);
-  if (from) reading.party = { direction: "from", phone: from };
-  else if (to) reading.party = { direction: "to", phone: to };
+  const direction = asText(event.from) ? "from" : asText(event.to) ? "to" : null;
+  if (direction) {
+    const id = asText(event[direction]) as string;
+    const userId = asText(event[`${direction}UserId`]);
+    reading.party = { direction, id, ...(userId && userId !== id ? { userId } : {}) };
+  }
   if (typeof event.at === "number" && Number.isFinite(event.at)) reading.at = event.at;
   reading.text = asText(event.text) ?? asText(asRecord(event.media)?.caption);
   reading.errorCode = asText(event.errorCode);

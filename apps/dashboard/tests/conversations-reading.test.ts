@@ -1,17 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import {
   contactsOf,
+  conversationTitle,
   conversationsSearch,
   locationOf,
   mediaIdOf,
   mediaSrc,
-  normalizeWaId,
   previewOf,
   relativeTime,
   senderLabelOf,
   threadEntries,
   uniqueBy,
 } from "../src/lib/conversations";
+import { formatCustomerId, normalizeCustomerId, shortCustomerId } from "../src/lib/customer-id";
 import { keepLastGood } from "../src/hooks/use-last-good";
 import { absorbNewest, appendOlder, bridgeTo, findInPages, startWalk } from "../src/lib/history";
 import type { CursorPage, MessageRecord, Result } from "../src/server/gateway";
@@ -207,15 +208,41 @@ describe("conversations URL", () => {
     expect(conversationsSearch({ waId: "+34 600 111 222" })).toEqual({ waId: "34600111222", wabaId: undefined });
     expect(conversationsSearch({ waId: "abc", wabaId: {} })).toEqual({ waId: undefined, wabaId: undefined });
   });
+
+  test("a BSUID in the URL selects its thread as written", () => {
+    expect(conversationsSearch({ waId: "US.13491208655302741918" })).toEqual({
+      waId: "US.13491208655302741918",
+      wabaId: undefined,
+    });
+  });
 });
 
-describe("numbers and dedupe", () => {
+describe("customer ids and dedupe", () => {
   test("a typed number is normalized to digits, so a pasted +34 number reads the same as the bare one", () => {
-    expect(normalizeWaId("  15550100001 ")).toBe("15550100001");
-    expect(normalizeWaId("+1 (555) 010-0001")).toBe("15550100001");
-    expect(normalizeWaId("+34 600 000 001")).toBe("34600000001");
-    expect(normalizeWaId("abc")).toBeUndefined();
-    expect(normalizeWaId(undefined)).toBeUndefined();
+    expect(normalizeCustomerId("  15550100001 ")).toBe("15550100001");
+    expect(normalizeCustomerId("+1 (555) 010-0001")).toBe("15550100001");
+    expect(normalizeCustomerId("+34 600 000 001")).toBe("34600000001");
+    expect(normalizeCustomerId("abc")).toBeUndefined();
+    expect(normalizeCustomerId(undefined)).toBeUndefined();
+  });
+
+  test("a BSUID is kept verbatim, never stripped to its digits", () => {
+    expect(normalizeCustomerId(" US.13491208655302741918 ")).toBe("US.13491208655302741918");
+    expect(normalizeCustomerId("CC.ENT.a1B2c3")).toBe("CC.ENT.a1B2c3");
+    expect(normalizeCustomerId("us.1349")).toBeUndefined();
+    expect(normalizeCustomerId("US.13/49")).toBeUndefined();
+  });
+
+  test("a BSUID is never written with a +, and a title shortens it", () => {
+    expect(formatCustomerId("34600000001")).toBe("+34600000001");
+    expect(formatCustomerId("US.13491208655302741918")).toBe("US.13491208655302741918");
+    expect(shortCustomerId("34600000001")).toBe("+34600000001");
+    expect(shortCustomerId("US.13491208655302741918")).toBe("US.…741918");
+    expect(shortCustomerId("CC.ENT.abcdefghijk")).toBe("CC.ENT.…fghijk");
+    expect(shortCustomerId("US.1234")).toBe("US.1234");
+    expect(conversationTitle("US.13491208655302741918", null)).toBe("US.…741918");
+    expect(conversationTitle("US.13491208655302741918", "Ana")).toBe("Ana");
+    expect(conversationTitle("34600000001", null)).toBe("+34600000001");
   });
 
   test("a page that overlaps the one before keeps the first copy", () => {

@@ -1,4 +1,5 @@
 import type { ConversationSummary, CursorPage, MessageRecord } from "../server/gateway";
+import { normalizeCustomerId, shortCustomerId } from "./customer-id";
 import { normalizeSearchWabaId } from "./search";
 
 /**
@@ -10,27 +11,15 @@ import { normalizeSearchWabaId } from "./search";
  */
 
 const MEDIA_TYPES = new Set(["image", "sticker", "audio", "video", "document"]);
-const WA_ID_PATTERN = /^\+?[0-9][0-9 ()-]{3,31}$/;
-
-/**
- * A customer's number as the URL and the server both take it: digits only, so
- * a pasted "+34 600 ..." reads the same as "34600...", or undefined. The URL
- * normalizes first, so a bad `?waId=` never reaches the gateway as a refusal
- * that would read as an outage.
- */
-export function normalizeWaId(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return WA_ID_PATTERN.test(trimmed) ? trimmed.replace(/\D/g, "") : undefined;
-}
 
 /**
  * The `?wabaId=` and `?waId=` a conversations URL carries. A bare id is read as the
  * JSON number the router makes of it (`?waId=34600111222`), so both forms select the same thread.
+ * The id normalizes first, so a bad `?waId=` never reaches the gateway as a refusal that would read as an outage.
  */
 export function conversationsSearch(search: Record<string, unknown>): { wabaId?: string; waId?: string } {
   const asText = (value: unknown) => (typeof value === "number" ? String(value) : value);
-  return { wabaId: normalizeSearchWabaId(asText(search.wabaId)), waId: normalizeWaId(asText(search.waId)) };
+  return { wabaId: normalizeSearchWabaId(asText(search.wabaId)), waId: normalizeCustomerId(asText(search.waId)) };
 }
 
 type Json = Record<string, unknown>;
@@ -201,9 +190,9 @@ export function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
   });
 }
 
-/** `name` when Meta gave one, the number otherwise. The number is written the way a person would dial it. */
+/** `name` when Meta gave one, the customer id otherwise: a number the way a person would dial it, a BSUID shortened. */
 export function conversationTitle(waId: string, name: string | null): string {
-  return name ?? `+${waId}`;
+  return name ?? shortCustomerId(waId);
 }
 
 /**

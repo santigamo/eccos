@@ -23,6 +23,7 @@ import type {
   ButtonUrlParam,
   TemplateHeaderMediaFormat,
 } from "@eccos/gateway-contract";
+import { formatCustomerId } from "../../lib/customer-id";
 import { StatusTag } from "../../ui";
 
 export interface SendTestPhone {
@@ -234,7 +235,7 @@ export function SendTestForm({
       {fixedRecipient ? (
         <div>
           <span className={LABEL}>To</span>
-          <p className="m-0 font-mono text-xs text-foreground">+{fixedRecipient}</p>
+          <p className="m-0 font-mono text-xs text-foreground">{formatCustomerId(fixedRecipient)}</p>
         </div>
       ) : (
         <div>

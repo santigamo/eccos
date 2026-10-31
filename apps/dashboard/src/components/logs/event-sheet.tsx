@@ -5,6 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { GridEmptyState } from "../grid/empty-state";
 import { FactRow, MessagePanel, RawDisclosure, SheetSection } from "./sheet-parts";
 import type { InboundRow } from "../../server/gateway";
+import { formatCustomerId } from "../../lib/customer-id";
 import { FORWARD_MAX_ATTEMPTS, deliveryMoment, forwardReading } from "../../lib/forwarding";
 import {
   EMPTY_CELL,
@@ -106,10 +107,11 @@ export function EventDetail({ row, hasForwardingTarget, wabaId, onRetry, retryin
           {reading.party ? (
             <FactRow
               label={reading.party.direction === "from" ? "From" : "To"}
-              value={`+${reading.party.phone}`}
+              value={formatCustomerId(reading.party.id)}
               mono
             />
           ) : null}
+          {reading.party?.userId ? <FactRow label="BSUID" value={reading.party.userId} mono /> : null}
           <FactRow label="Number" value={row.phone_number_id ?? EMPTY_CELL} mono />
           {/* A status event names a wamid; a reply or an echo names its own
               message id. Both are shown in full and both are labelled for what

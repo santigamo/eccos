@@ -315,6 +315,23 @@ describe("EventDetail", () => {
     // And what they wrote, as a message rather than as a JSON field.
     expect(html).toContain(">hola<");
   });
+
+  test("a phone-less customer is named by their BSUID, never as +US.", () => {
+    const reply: InboundRow = {
+      ...statusEvent,
+      id: 79,
+      type: "reply",
+      transport_message_id: null,
+      message_id: "wamid.M2",
+      payload: JSON.stringify({ type: "reply", from: "US.13491208655302741918", fromUserId: "US.13491208655302741918", messageId: "wamid.M2", text: "hi", at: 1 }),
+      outbound_id: null,
+      outbound_request: null,
+    };
+    const html = renderToStaticMarkup(<EventDetail row={reply} hasForwardingTarget={true} />);
+    expect(html).toContain("US.13491208655302741918");
+    expect(html).not.toContain("+US.");
+    expect(html).not.toContain(">BSUID<");
+  });
 });
 
 describe("HeldNotice (the third register in which the console says `held`)", () => {

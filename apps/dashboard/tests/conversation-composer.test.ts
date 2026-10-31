@@ -139,6 +139,14 @@ describe("submitReply", () => {
     expect(calls).toEqual([{ data: { wabaId: WABA, phoneNumberId: "phone-a", to: CUSTOMER, text: "Hola" } }]);
   });
 
+  test("a reply to a BSUID customer goes to the BSUID as-is", async () => {
+    const { calls, send } = fakeSend({ ok: true, data: { ok: true, messageId: "wamid.2" } });
+    expect(await submitReply(send, { ...target, waId: "US.13491208655302741918" }, "Hola")).toEqual({ sent: true });
+    expect(calls).toEqual([
+      { data: { wabaId: WABA, phoneNumberId: "phone-a", to: "US.13491208655302741918", text: "Hola" } },
+    ]);
+  });
+
   test("a closed window names itself, and Meta's sentence rides along as the secondary line", async () => {
     const { send } = fakeSend({
       ok: true,

@@ -21,6 +21,7 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@eccos/core": "workspace:*",
     "@eccos/gateway-contract": "workspace:*",
     "@sentry/cloudflare": "11.10.0",
     "@sentry/react": "11.10.0",
