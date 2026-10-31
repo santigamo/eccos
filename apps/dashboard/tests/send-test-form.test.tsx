@@ -26,7 +26,9 @@ const {
   SendTestSheet,
   assembleSendTestPayload,
   assemblePreviewButtonUrls,
+  SendTestAction,
 } = await import("../src/components/templates/send-test-sheet");
+const { runSend } = await import("../src/lib/send-gate");
 const { analyzeTemplate } = await import("../src/lib/template-params");
 
 const PHONES = [{ phoneNumberId: "PNID1", displayPhoneNumber: "+34600000000" }];
@@ -408,5 +410,59 @@ describe("the form, sent to one customer from a conversation", () => {
       />,
     );
     expect(html).toContain('id="send-test-recipient"');
+  });
+});
+
+describe("a real send is never repeated without an explicit act", () => {
+  test("a second submit after a successful send does not send again", async () => {
+    const gate = { phase: "idle" } as { phase: "idle" | "sending" | "sent" };
+    const send = mock(async () => true);
+    expect(await runSend(gate, send)).toBe(true);
+    expect(await runSend(gate, send)).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(gate.phase).toBe("sent");
+  });
+
+  test("a double submit while the first is in flight sends once", async () => {
+    const gate = { phase: "idle" } as { phase: "idle" | "sending" | "sent" };
+    let release = (_: boolean) => {};
+    const send = mock(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const first = runSend(gate, send);
+    expect(await runSend(gate, send)).toBe(false);
+    release(true);
+    await first;
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed send stays retryable, including one that throws", async () => {
+    const gate = { phase: "idle" } as { phase: "idle" | "sending" | "sent" };
+    const refused = mock(async () => false);
+    await runSend(gate, refused);
+    await runSend(gate, refused);
+    expect(refused).toHaveBeenCalledTimes(2);
+    expect(gate.phase).toBe("idle");
+
+    await expect(runSend(gate, async () => Promise.reject(new Error("network")))).rejects.toThrow("network");
+    expect(gate.phase).toBe("idle");
+  });
+
+  test("once sent, the submit gives way to an explicit Send another", () => {
+    const sent = renderToStaticMarkup(<SendTestAction phase="sent" onSendAnother={() => {}} />);
+    expect(sent).toContain("Send another");
+    expect(sent).toContain('type="button"');
+    expect(sent).not.toContain('type="submit"');
+
+    const sending = renderToStaticMarkup(<SendTestAction phase="sending" onSendAnother={() => {}} />);
+    expect(sending).toContain('type="submit"');
+    expect(sending).toMatch(/ disabled=""/);
+
+    const idle = renderToStaticMarkup(<SendTestAction phase="idle" onSendAnother={() => {}} />);
+    expect(idle).toContain("Send test message");
+    expect(idle).not.toMatch(/ disabled=""/);
   });
 });

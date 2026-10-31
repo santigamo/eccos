@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,7 @@ import type {
   TemplateHeaderMediaFormat,
 } from "@eccos/gateway-contract";
 import { formatCustomerId } from "../../lib/customer-id";
+import { runSend, type SendGate, type SendPhase } from "../../lib/send-gate";
 import { StatusTag } from "../../ui";
 
 export interface SendTestPhone {
@@ -142,9 +143,9 @@ export function SendTestForm({
   );
   const headerMedia = sendability.kind === "ready" ? sendability.headerMedia : null;
   const [headerLink, setHeaderLink] = useState("");
-  const [sending, setSending] = useState(false);
+  const gate = useRef<SendGate>({ phase: "idle" });
+  const [phase, setPhase] = useState<SendPhase>("idle");
   const [notice, setNotice] = useState<Notice | null>(null);
-
 
   function setParam(index: number, value: string) {
     setParams((current) => current.map((entry, i) => (i === index ? value : entry)));
@@ -158,34 +159,45 @@ export function SendTestForm({
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSending(true);
-    setNotice(null);
     try {
-            const result = await sendTemplateTest({
-            data: assembleSendTestPayload({
-              wabaId,
-              phoneNumberId,
-              recipient,
-              templateName,
-              languageCode,
-              params,
-              buttonParams,
-              headerMedia,
-              headerLink,
-            }),
-          });
-      if (!result.ok) {
-        // A boundary failure (unreachable / unauthenticated / forbidden) is a
-        // different class from a refused send, and keeps its own mapping.
-        const copy = failureCopy(result);
-        setNotice({ ok: false, title: copy.title, detail: copy.detail });
-        return;
-      }
-      setNotice(noticeFor(result.data));
-      if (result.data.ok) onSent?.();
+      await runSend(gate.current, async () => {
+        setPhase("sending");
+        setNotice(null);
+        const result = await sendTemplateTest({
+          data: assembleSendTestPayload({
+            wabaId,
+            phoneNumberId,
+            recipient,
+            templateName,
+            languageCode,
+            params,
+            buttonParams,
+            headerMedia,
+            headerLink,
+          }),
+        });
+        if (!result.ok) {
+          // A boundary failure (unreachable / unauthenticated / forbidden) is a
+          // different class from a refused send, and keeps its own mapping.
+          const copy = failureCopy(result);
+          setNotice({ ok: false, title: copy.title, detail: copy.detail });
+          return false;
+        }
+        setNotice(noticeFor(result.data));
+        if (result.data.ok) onSent?.();
+        return result.data.ok;
+      });
     } finally {
-      setSending(false);
+      setPhase(gate.current.phase);
     }
+  }
+
+  // Success is terminal for the composed payload: another send is an explicit act.
+  function sendAnother() {
+    gate.current.phase = "idle";
+    setPhase("idle");
+    setNotice(null);
+    setTypedRecipient("");
   }
 
   if (sendability.kind === "unsupported") {
@@ -208,146 +220,147 @@ export function SendTestForm({
     buttonSlots.length > 0 ? assemblePreviewButtonUrls(buttonSlots, buttonParams) : [];
 
   return (
-    <form onSubmit={onSubmit} aria-busy={sending} className="flex flex-col gap-4 px-4 pb-4">
-      <div>
-        <span className={LABEL}>From</span>
-        {phones.length === 1 ? (
-          <p className="m-0 font-mono text-xs text-foreground">
-            {phones[0]?.displayPhoneNumber || "—"}
-            <span className="text-muted-foreground"> {"·"} {phones[0]?.phoneNumberId}</span>
-          </p>
+    <form onSubmit={onSubmit} aria-busy={phase === "sending"} className="flex flex-col gap-4 px-4 pb-4">
+      <fieldset disabled={phase !== "idle"} className="contents">
+        <div>
+          <span className={LABEL}>From</span>
+          {phones.length === 1 ? (
+            <p className="m-0 font-mono text-xs text-foreground">
+              {phones[0]?.displayPhoneNumber || "—"}
+              <span className="text-muted-foreground"> {"·"} {phones[0]?.phoneNumberId}</span>
+            </p>
+          ) : (
+            <Select value={phoneNumberId} onValueChange={(value) => setPhoneNumberId(value ?? "")}>
+              <SelectTrigger id="send-test-from" size="sm" className="w-full rounded-none">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start">
+                {phones.map((phone) => (
+                  <SelectItem key={phone.phoneNumberId} value={phone.phoneNumberId}>
+                    {phone.displayPhoneNumber || phone.phoneNumberId}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {fixedRecipient ? (
+          <div>
+            <span className={LABEL}>To</span>
+            <p className="m-0 font-mono text-xs text-foreground">{formatCustomerId(fixedRecipient)}</p>
+          </div>
         ) : (
-          <Select value={phoneNumberId} onValueChange={(value) => setPhoneNumberId(value ?? "")}>
-            <SelectTrigger id="send-test-from" size="sm" className="w-full rounded-none">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="start">
-              {phones.map((phone) => (
-                <SelectItem key={phone.phoneNumberId} value={phone.phoneNumberId}>
-                  {phone.displayPhoneNumber || phone.phoneNumberId}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div>
+            <label htmlFor="send-test-recipient" className={LABEL}>
+              Recipient
+            </label>
+            <Input
+              id="send-test-recipient"
+              type="tel"
+              required
+              inputMode="tel"
+              autoComplete="off"
+              value={typedRecipient}
+              onChange={(event) => setTypedRecipient(event.target.value)}
+              placeholder="+34 600 00 00 11"
+            />
+            <p className="mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground">
+              With a Cloud API test number, only recipients on its allowed list can receive messages.
+            </p>
+          </div>
         )}
-      </div>
 
-      {fixedRecipient ? (
-        <div>
-          <span className={LABEL}>To</span>
-          <p className="m-0 font-mono text-xs text-foreground">{formatCustomerId(fixedRecipient)}</p>
-        </div>
-      ) : (
-        <div>
-          <label htmlFor="send-test-recipient" className={LABEL}>
-            Recipient
-          </label>
-          <Input
-            id="send-test-recipient"
-            type="tel"
-            required
-            inputMode="tel"
-            autoComplete="off"
-            value={typedRecipient}
-            onChange={(event) => setTypedRecipient(event.target.value)}
-            placeholder="+34 600 00 00 11"
-          />
-          <p className="mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground">
-            With a Cloud API test number, only recipients on its allowed list can receive messages.
-          </p>
-        </div>
-      )}
+        {params.map((value, index) => (
+          // Positional parameters have no names, so the index IS the identity —
+          // the list never reorders and its length is fixed by the template.
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
+          <div key={index}>
+            <label htmlFor={`send-test-param-${index + 1}`} className={LABEL}>
+              {`{{${index + 1}}}`}
+            </label>
+            <Input
+              id={`send-test-param-${index + 1}`}
+              required
+              autoComplete="off"
+              value={value}
+              onChange={(event) => setParam(index, event.target.value)}
+            />
+          </div>
+        ))}
 
-      {params.map((value, index) => (
-        // Positional parameters have no names, so the index IS the identity —
-        // the list never reorders and its length is fixed by the template.
-        // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
-        <div key={index}>
-          <label htmlFor={`send-test-param-${index + 1}`} className={LABEL}>
-            {`{{${index + 1}}}`}
-          </label>
-          <Input
-            id={`send-test-param-${index + 1}`}
-            required
-            autoComplete="off"
-            value={value}
-            onChange={(event) => setParam(index, event.target.value)}
-          />
-        </div>
-      ))}
+        {headerMedia ? (
+          <div>
+            <label htmlFor="send-test-header-media" className={LABEL}>
+              {`${headerMedia} header`}
+            </label>
+            <Input
+              id="send-test-header-media"
+              required
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              value={headerLink}
+              onChange={(event) => setHeaderLink(event.target.value)}
+              placeholder="https://…"
+            />
+            {/* Says who fetches it, because that is the surprising part and the
+                reason no upload is asked for. */}
+            <p className="mt-1 mb-0 max-w-prose text-xs text-pretty text-muted-foreground">
+              A public link to the {headerMedia}. Meta fetches it when the message
+              is sent.
+            </p>
+          </div>
+        ) : null}
 
-      {headerMedia ? (
-        <div>
-          <label htmlFor="send-test-header-media" className={LABEL}>
-            {`${headerMedia} header`}
-          </label>
-          <Input
-            id="send-test-header-media"
-            required
-            type="url"
-            inputMode="url"
-            autoComplete="off"
-            value={headerLink}
-            onChange={(event) => setHeaderLink(event.target.value)}
-            placeholder="https://…"
-          />
-          {/* Says who fetches it, because that is the surprising part and the
-              reason no upload is asked for. */}
-          <p className="mt-1 mb-0 max-w-prose text-xs text-pretty text-muted-foreground">
-            A public link to the {headerMedia}. Meta fetches it when the message
-            is sent.
-          </p>
-        </div>
-      ) : null}
+        {buttonSlots.length > 0 ? (
+          <div className="flex flex-col gap-3">
+            <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">Button links</p>
+            {buttonSlots.map((slot, index) => (
+              <div key={slot.index}>
+                <label htmlFor={`send-test-button-${slot.index}`} className={LABEL}>
+                  Button {slot.index + 1}
+                </label>
+                <Input
+                  id={`send-test-button-${slot.index}`}
+                  required
+                  autoComplete="off"
+                  value={buttonParams[index]?.text ?? ""}
+                  onChange={(event) => setButtonParam(index, event.target.value)}
+                  placeholder={slot.urlPrefix}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
 
-      {buttonSlots.length > 0 ? (
-        <div className="flex flex-col gap-3">
-          <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">Button links</p>
-          {buttonSlots.map((slot, index) => (
-            <div key={slot.index}>
-              <label htmlFor={`send-test-button-${slot.index}`} className={LABEL}>
-                Button {slot.index + 1}
-              </label>
-              <Input
-                id={`send-test-button-${slot.index}`}
-                required
-                autoComplete="off"
-                value={buttonParams[index]?.text ?? ""}
-                onChange={(event) => setButtonParam(index, event.target.value)}
-                placeholder={slot.urlPrefix}
-              />
-            </div>
-          ))}
-        </div>
-      ) : null}
+        {preview ? (
+          <div>
+            <span className={LABEL}>Preview</span>
+            {/* Quiet and inert: `--ghost-fill` is the ghost CONTROL body, and a
+                preview that wore it would read as something to click. */}
+            <p className="m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
+              {preview}
+            </p>
+            {previewButtonLines.length > 0 ? (
+              // The button URLs are the second thing the operator confirms before
+              // sending: the typed fill shows next to the body the same way it will
+              // be assembled for Meta. An empty slot keeps its `{{n}}` so the
+              // preview shows what is still missing.
+              <div className="mt-1 flex flex-col gap-1">
+                {previewButtonLines.map((entry) => (
+                  <p key={entry.label} className="m-0 font-mono text-xs break-all text-muted-foreground">
+                    {entry.label} {"→"} {entry.url}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
-      {preview ? (
-        <div>
-          <span className={LABEL}>Preview</span>
-          {/* Quiet and inert: `--ghost-fill` is the ghost CONTROL body, and a
-              preview that wore it would read as something to click. */}
-          <p className="m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
-            {preview}
-          </p>
-          {previewButtonLines.length > 0 ? (
-            // The button URLs are the second thing the operator confirms before
-            // sending: the typed fill shows next to the body the same way it will
-            // be assembled for Meta. An empty slot keeps its `{{n}}` so the
-            // preview shows what is still missing.
-            <div className="mt-1 flex flex-col gap-1">
-              {previewButtonLines.map((entry) => (
-                <p key={entry.label} className="m-0 font-mono text-xs break-all text-muted-foreground">
-                  {entry.label} {"→"} {entry.url}
-                </p>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      </fieldset>
 
-      <Button type="submit" className="w-fit self-start" aria-busy={sending} disabled={sending}>
-        {sending ? "Sending…" : "Send test message"}
-      </Button>
+      <SendTestAction phase={phase} onSendAnother={sendAnother} />
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -359,6 +372,23 @@ export function SendTestForm({
         {notice ? <NoticeBody notice={notice} wabaId={wabaId} /> : null}
       </output>
     </form>
+  );
+}
+
+/** The form's one act: send, the in-flight state, or — once sent — a fresh start. */
+export function SendTestAction({ phase, onSendAnother }: { phase: SendPhase; onSendAnother: () => void }) {
+  if (phase === "sent") {
+    return (
+      <Button type="button" variant="outline" className="w-fit self-start rounded-none" onClick={onSendAnother}>
+        Send another
+      </Button>
+    );
+  }
+  const sending = phase === "sending";
+  return (
+    <Button type="submit" className="w-fit self-start" aria-busy={sending} disabled={sending}>
+      {sending ? "Sending…" : "Send test message"}
+    </Button>
   );
 }
 

@@ -8,6 +8,7 @@ import { composerWindowOf, isSendKey, SERVICE_WINDOW_MS } from "../../lib/conver
 import { failureCopy, sendTextFailureCopy } from "../../lib/failure";
 import type { Result, SendTextResult } from "../../server/gateway";
 import { sendText } from "../../server/gateway";
+import { runSend, type SendGate } from "../../lib/send-gate";
 import type { SendTestPhone } from "../templates/send-test-sheet";
 import { SendTemplateSheet } from "./send-template-sheet";
 
@@ -117,27 +118,33 @@ function FreeTextReply({
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<Extract<ReplyOutcome, { sent: false }> | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const gate = useRef<SendGate>({ phase: "idle" });
 
   async function send() {
     const body = text.trim();
-    if (!body || sending) return;
-    setSending(true);
-    setNotice(null);
-    try {
-      const outcome = await submitReply(sendText, { wabaId, phoneNumberId, waId }, body);
-      if (outcome.sent) {
-        setText("");
-        onSent();
-      } else if (outcome.windowClosed) {
-        onWindowClosed();
-      } else {
-        setNotice(outcome);
+    if (!body) return;
+    await runSend(gate.current, async () => {
+      setSending(true);
+      setNotice(null);
+      try {
+        const outcome = await submitReply(sendText, { wabaId, phoneNumberId, waId }, body);
+        if (outcome.sent) {
+          setText("");
+          onSent();
+        } else if (outcome.windowClosed) {
+          onWindowClosed();
+        } else {
+          setNotice(outcome);
+        }
+        return outcome.sent;
+      } finally {
+        setSending(false);
+        // The button this send was made from is disabled while it runs, which drops focus; the reply box takes it back.
+        textarea.current?.focus();
       }
-    } finally {
-      setSending(false);
-      // The button this send was made from is disabled while it runs, which drops focus; the reply box takes it back.
-      textarea.current?.focus();
-    }
+    });
+    // The sent text was cleared, so the next reply is a new payload.
+    if (gate.current.phase === "sent") gate.current.phase = "idle";
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
