@@ -51,7 +51,10 @@ export type WhatsAppCallbackEvent =
     }
   | {
       type: "reply";
+      /** The sender's phone number, or their BSUID when Meta withholds the number. */
       from: string;
+      /** The sender's business-scoped user id (BSUID), when Meta sends one. */
+      fromUserId?: string;
       messageId: string;
       text: string;
       at: number;
@@ -63,7 +66,10 @@ export type WhatsAppCallbackEvent =
     }
   | {
       type: "echo";
+      /** The recipient's phone number, or their BSUID when Meta withholds the number. */
       to: string;
+      /** The recipient's business-scoped user id (BSUID), when Meta sends one. */
+      toUserId?: string;
       messageId: string;
       text: string;
       at: number;
@@ -71,7 +77,10 @@ export type WhatsAppCallbackEvent =
     }
   | ({
       type: "message";
+      /** The sender's phone number, or their BSUID when Meta withholds the number. */
       from: string;
+      /** The sender's business-scoped user id (BSUID), when Meta sends one. */
+      fromUserId?: string;
       messageId: string;
       at: number;
       phoneNumberId?: string;
@@ -80,7 +89,10 @@ export type WhatsAppCallbackEvent =
     } & MessageContent)
   | ({
       type: "message_echo";
+      /** The recipient's phone number, or their BSUID when Meta withholds the number. */
       to: string;
+      /** The recipient's business-scoped user id (BSUID), when Meta sends one. */
+      toUserId?: string;
       messageId: string;
       at: number;
       phoneNumberId?: string;

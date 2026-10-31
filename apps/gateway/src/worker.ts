@@ -4,6 +4,7 @@ import { getGatewayStubForWaba } from "./gateway-stub";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
 import {
+  messageDropReason,
   parseMetaEchoesBatches,
   parseMetaWebhookBatches,
   type MetaWebhookBatch,
@@ -116,7 +117,8 @@ function logEvent(event: string, cid: string, status: number, meta: LogMeta = {}
 }
 
 /** Names only — each change's `field` and value keys, each message's `type`
- * and Meta error codes — so an ignored webhook says what Meta sent without
+ * and Meta error codes, and for a message or echo that parses to no event its
+ * keys and what it lacks — so an ignored webhook says what Meta sent without
  * logging any content. */
 function webhookShape(payload: unknown): string {
   const parts = new Set<string>();
@@ -139,10 +141,28 @@ function webhookShape(payload: unknown): string {
         for (const error of Array.isArray(errors) ? errors : []) {
           parts.add(`error:${(error as { code?: unknown })?.code ?? "?"}`);
         }
+        addDropped(parts, message, false);
       }
+      const echoes = (value as { message_echoes?: unknown } | undefined)?.message_echoes;
+      for (const echo of Array.isArray(echoes) ? echoes : []) addDropped(parts, echo, true);
     }
   }
-  return [...parts].join(",").slice(0, 300);
+  return [...parts].join(",").slice(0, 600);
+}
+
+function addDropped(parts: Set<string>, message: unknown, echo: boolean): void {
+  const reason = messageDropReason(message, echo);
+  if (!reason) return;
+  const { type } = (message ?? {}) as { type?: unknown };
+  const keys = message && typeof message === "object" ? Object.keys(message).sort().join("+") : "";
+  parts.add(`dropped:${typeof type === "string" ? type : "?"}:${reason};keys=${keys}`);
+}
+
+/** The entry ids (WABA ids) a webhook names, so an ignored one can be traced to its account. */
+function webhookWabaIds(payload: unknown): string {
+  const entries = (payload as { entry?: unknown })?.entry;
+  const ids = (Array.isArray(entries) ? entries : []).map((entry) => (entry as { id?: unknown })?.id);
+  return [...new Set(ids.filter((id): id is string => typeof id === "string" && WABA_ID_PATTERN.test(id)))].join(",");
 }
 
 function noStore(c: { header(name: string, value: string): void }): void {
@@ -315,6 +335,7 @@ app.post("/webhooks/meta", async (c) => {
     logEvent("webhook_ignored", cid, 200, {
       bodyBytes: rawBody.length,
       ignoredEventCount,
+      wabaIds: webhookWabaIds(payload),
       shape: webhookShape(payload),
     });
     return c.json({ ok: true, received: 0 });

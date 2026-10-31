@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import {
+  messageDropReason,
   parseMetaEchoes,
   parseMetaEchoesBatches,
   parseMetaWebhook,
@@ -665,5 +666,96 @@ describe("profile names", () => {
       ],
     });
     expect(echo).not.toHaveProperty("profileName");
+  });
+});
+
+// Shapes from Meta's "Business-scoped user IDs" guide: a username user whose number
+// Meta withholds has no `from`/`to`/`wa_id`, only the BSUID.
+describe("business-scoped user ids (BSUID)", () => {
+  const BSUID = "US.13491208655302741918";
+  const METADATA = { display_phone_number: "15550783881", phone_number_id: "PHONE_ID" };
+  const CONTACTS = [{ profile: { name: "Sheena Nelson", username: "@realsheenanelson" }, user_id: BSUID }];
+
+  it("parses a text from a phone-less sender, with the BSUID as `from` and `fromUserId`", () => {
+    const events = parseMetaWebhook(
+      envelope({
+        messaging_product: "whatsapp",
+        metadata: METADATA,
+        contacts: CONTACTS,
+        messages: [{ from_user_id: BSUID, id: "wamid.T", timestamp: TS_SEC, type: "text", text: { body: "Hi" } }],
+      }),
+    );
+    expect(events).toEqual([
+      { type: "reply", from: BSUID, fromUserId: BSUID, messageId: "wamid.T", text: "Hi", at: TS_MS, phoneNumberId: "PHONE_ID", profileName: "Sheena Nelson" },
+    ]);
+  });
+
+  it("keeps the phone number as `from` and adds `fromUserId` when Meta sends both", () => {
+    const [event] = parseMetaWebhook(
+      envelope({
+        contacts: [{ profile: { name: "Ana" }, wa_id: "34600000000", user_id: BSUID }],
+        messages: [{ from: "34600000000", from_user_id: BSUID, id: "wamid.B", timestamp: TS_SEC, type: "text", text: { body: "Hi" } }],
+      }),
+    );
+    expect(event).toMatchObject({ from: "34600000000", fromUserId: BSUID, profileName: "Ana" });
+  });
+
+  it("parses a reaction and an unsupported message from a phone-less sender", () => {
+    const events = parseMetaWebhook(
+      envelope({
+        contacts: CONTACTS,
+        messages: [
+          { from_user_id: BSUID, id: "wamid.R", timestamp: TS_SEC, type: "reaction", reaction: { message_id: "wamid.O", emoji: "👍" } },
+          { from_user_id: BSUID, id: "wamid.U", timestamp: TS_SEC, type: "unsupported", errors: [{ code: 131051, title: "Message type unknown" }] },
+        ],
+      }),
+    );
+    expect(events).toEqual([
+      { type: "message", from: BSUID, fromUserId: BSUID, messageId: "wamid.R", at: TS_MS, profileName: "Sheena Nelson", messageType: "reaction", reaction: { messageId: "wamid.O", emoji: "👍" } },
+      { type: "message", from: BSUID, fromUserId: BSUID, messageId: "wamid.U", at: TS_MS, profileName: "Sheena Nelson", messageType: "unsupported", errorCode: "131051", errorMessage: "Message type unknown" },
+    ]);
+  });
+
+  it("parses an echo to a phone-less recipient, with the BSUID as `to` and `toUserId`", () => {
+    const events = parseMetaEchoes({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA_ID",
+          changes: [
+            {
+              field: "smb_message_echoes",
+              value: {
+                messaging_product: "whatsapp",
+                metadata: METADATA,
+                contacts: CONTACTS,
+                message_echoes: [
+                  { from: "15550783881", to_user_id: BSUID, id: "wamid.E", timestamp: TS_SEC, type: "text", text: { body: "Hello" } },
+                  { from: "15550783881", to_user_id: BSUID, id: "wamid.ER", timestamp: TS_SEC, type: "reaction", reaction: { message_id: "wamid.T", emoji: "❤️" } },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(events).toEqual([
+      { type: "echo", to: BSUID, toUserId: BSUID, messageId: "wamid.E", text: "Hello", at: TS_MS, phoneNumberId: "PHONE_ID" },
+      { type: "message_echo", to: BSUID, toUserId: BSUID, messageId: "wamid.ER", at: TS_MS, phoneNumberId: "PHONE_ID", messageType: "reaction", reaction: { messageId: "wamid.T", emoji: "❤️" } },
+    ]);
+  });
+});
+
+describe("messageDropReason", () => {
+  it("names the required fields a message or echo lacks, never their values", () => {
+    expect(messageDropReason({ id: "wamid.X", type: "text", text: { body: "Hi" } })).toBe("missing=from+timestamp");
+    expect(messageDropReason({ from: "1", timestamp: TS_SEC, type: "text" }, true)).toBe("missing=to+id");
+    expect(messageDropReason({ from: "1", id: "wamid.X", timestamp: TS_SEC, type: "text", text: { body: "" } })).toBe("empty");
+    expect(messageDropReason("x")).toBe("not-object");
+  });
+
+  it("is null for a message that parses", () => {
+    expect(messageDropReason({ from_user_id: "US.1", id: "wamid.X", timestamp: TS_SEC, type: "text", text: { body: "Hi" } })).toBeNull();
+    expect(messageDropReason({ to_user_id: "US.1", id: "wamid.X", timestamp: TS_SEC, type: "text", text: { body: "Hi" } }, true)).toBeNull();
   });
 });
