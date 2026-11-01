@@ -42,14 +42,13 @@ window or when the number is erased (see the sections below).
 (Meta Cloud API) and to the operator's own `SUBSCRIBER_WEBHOOK_URL`.
 
 **The operator console has one opt-in analytics integration (Umami).** It is on only when
-`ANALYTICS_SCRIPT_URL` and `ANALYTICS_WEBSITE_ID` are set (`apps/dashboard/wrangler.jsonc`; see
+`ANALYTICS_SCRIPT_URL` and `ANALYTICS_WEBSITE_ID` are set (dashboard `vars`; see
 [`docs/deployment.md`](deployment.md)). When on, the browser loads that Umami tracker and sends
 pageviews and funnel events whose properties are enums and Meta error codes, plus a pseudonymous
 user id (first 16 hex chars of SHA-256 of `eccos:` + the account id). Every query parameter except
 `utm_*` is stripped from the URL and referrer before sending. Users listed in
-`ANALYTICS_EXCLUDE_USER_IDS` never load the tracker. The checked-in `wrangler.jsonc` carries Eccos
-Cloud's own values; a self-hosted deployment should blank them, and with either one empty nothing is
-rendered.
+`ANALYTICS_EXCLUDE_USER_IDS` never load the tracker. Both are empty in the checked-in
+`wrangler.jsonc`, and with either one empty nothing is rendered.
 
 ## 2. Retention
 

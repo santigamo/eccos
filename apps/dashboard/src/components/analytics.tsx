@@ -18,7 +18,7 @@ export function AnalyticsScripts({ analytics }: { analytics: AnalyticsConfig | n
         defer
         src={analytics.scriptUrl}
         data-website-id={analytics.websiteId}
-        data-domains={analytics.domains}
+        data-domains={analytics.domains ?? undefined}
         data-do-not-track="true"
         data-before-send={BEFORE_SEND_HOOK}
       />

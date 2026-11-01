@@ -32,7 +32,7 @@ export const getAnalyticsConfig = createServerFn({ method: "GET" }).handler(
     return {
       scriptUrl,
       websiteId,
-      domains: vars.ANALYTICS_DOMAINS?.trim() || "app.eccos.chat",
+      domains: vars.ANALYTICS_DOMAINS?.trim() || null,
       userId: session ? await hashUserId(session.userId) : null,
     };
   },

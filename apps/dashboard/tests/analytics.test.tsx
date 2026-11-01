@@ -34,9 +34,11 @@ describe("server config (opt-in)", () => {
     expect(await getAnalyticsConfig()).toBeNull();
   });
 
-  test("an anonymous visitor gets the tracker, no identity, the default domain", async () => {
+  test("an anonymous visitor gets the tracker, no identity, no domain filter by default", async () => {
     env.ANALYTICS_SCRIPT_URL = ` ${CONFIG.scriptUrl} `;
     env.ANALYTICS_WEBSITE_ID = CONFIG.websiteId;
+    expect(await getAnalyticsConfig()).toEqual({ ...CONFIG, domains: null, userId: null });
+    env.ANALYTICS_DOMAINS = ` ${CONFIG.domains} `;
     expect(await getAnalyticsConfig()).toEqual({ ...CONFIG, userId: null });
   });
 
@@ -61,6 +63,11 @@ describe("document tags", () => {
     expect(html).toContain('data-do-not-track="true"');
     expect(html).toContain(`data-before-send="${BEFORE_SEND_HOOK}"`);
     expect(html.indexOf(BEFORE_SEND_HOOK)).toBeLessThan(html.indexOf("defer"));
+  });
+
+  test("no domain filter omits data-domains", () => {
+    const html = renderToStaticMarkup(<AnalyticsScripts analytics={{ ...CONFIG, domains: null }} />);
+    expect(html).not.toContain("data-domains");
   });
 });
 
