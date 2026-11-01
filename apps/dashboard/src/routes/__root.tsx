@@ -93,7 +93,7 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
       { title: "Eccos — Operator Console" },
       { name: "theme-color", content: "#070c0f" },
       // Everything below is for LINK UNFURLS — what Slack, iMessage, WhatsApp
-      // and the like render when someone pastes an app.eccos.chat URL. Without
+      // and the like render when someone pastes a console URL. Without
       // a description and an og:image the unfurl is a bare hostname, which
       // reads as a broken or untrusted link precisely where an operator is
       // sharing the console with a colleague.
@@ -117,12 +117,13 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
         content:
           "Connect WhatsApp numbers, follow deliveries, and manage templates and keys for your Eccos gateway.",
       },
-      { property: "og:url", content: "https://app.eccos.chat/" },
-      // Absolute, and served from THIS origin rather than pointing at the
-      // landing's copy: an unfurler resolves og:image on its own, and a
+      { property: "og:url", content: "/" },
+      // Served from THIS origin rather than pointing at the landing's copy, and
+      // made absolute per request in src/server/unfurl.ts: an unfurler
+      // resolves og:image on its own, and a
       // cross-host reference would make the console's preview break silently
       // whenever the site reorganises its assets.
-      { property: "og:image", content: "https://app.eccos.chat/assets/banner.jpg" },
+      { property: "og:image", content: "/assets/banner.jpg" },
       { property: "og:image:alt", content: "Eccos" },
       { name: "twitter:card", content: "summary_large_image" },
     ],

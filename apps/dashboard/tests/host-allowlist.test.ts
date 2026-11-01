@@ -1,31 +1,31 @@
 /**
  * Canonical-host allowlist tests (eccos-0x0.4, contract §6): the raw Workers
- * origin must not be an alternate customer path, and localhost is allowed only
- * in a development configuration.
+ * origin must not be an alternate customer path, the allowed host comes from
+ * BETTER_AUTH_URL, and localhost is allowed only in a development configuration.
  */
 
 import { describe, expect, test } from "bun:test";
 
-// The server entry imports TanStack Start + cloudflare:workers, which are not
-// available under bun test. Test the allowlist logic through a tiny extracted
-// mirror: keep this in sync with src/server.ts (single source there).
-function makeAllowlist(configuredBaseURL: string | undefined) {
-  const CANONICAL_HOSTS = new Set(["app.eccos.chat"]);
-  const DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  return function isAllowedHost(hostname: string): boolean {
-    const host = hostname.toLowerCase().replace(/\.$/, "");
-    if (CANONICAL_HOSTS.has(host)) return true;
-    const configured = configuredBaseURL?.trim() || "";
-    const isDevConfig = !configured.startsWith("https://");
-    return isDevConfig && DEV_HOSTS.has(host);
-  };
-}
+import { isAllowedHost } from "../src/auth/config";
+
+const makeAllowlist = (configuredBaseURL: string | undefined) => (hostname: string) =>
+  isAllowedHost(hostname, configuredBaseURL);
 
 describe("canonical host allowlist", () => {
   test("accepts the canonical customer origin", () => {
     const isAllowed = makeAllowlist("https://app.eccos.chat");
     expect(isAllowed("app.eccos.chat")).toBe(true);
     expect(isAllowed("APP.ECCOS.CHAT.")).toBe(true);
+  });
+
+  test("follows BETTER_AUTH_URL, so a self-hosted console works on its own domain", () => {
+    const isAllowed = makeAllowlist("https://console.example.com");
+    expect(isAllowed("console.example.com")).toBe(true);
+    expect(isAllowed("app.eccos.chat")).toBe(false);
+  });
+
+  test("rejects public hosts when BETTER_AUTH_URL is unset (fail closed)", () => {
+    expect(makeAllowlist(undefined)("app.eccos.chat")).toBe(false);
   });
 
   test("rejects workers.dev and preview origins (fail closed)", () => {

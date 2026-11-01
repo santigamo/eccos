@@ -75,7 +75,12 @@ describe("API keys panel", () => {
 
   test("an administrator gets the create form, the list, and the send snippet", () => {
     const html = renderToStaticMarkup(
-      <SettingsView accountId="account-a" keys={keys} wabaId="1234567890" />,
+      <SettingsView
+        accountId="account-a"
+        keys={keys}
+        wabaId="1234567890"
+        gatewayOrigin="https://api.eccos.chat"
+      />,
     );
     expect(html).toContain("API keys");
     expect(html).toContain("Create key");
@@ -84,6 +89,11 @@ describe("API keys panel", () => {
     expect(html).toContain("Revoked");
     expect(html).toContain("https://api.eccos.chat/v1/wabas/1234567890/messages");
     expect(html).toContain("Authorization: Bearer &lt;API_KEY&gt;");
+  });
+
+  test("the send snippet keeps a placeholder when the gateway has no public URL", () => {
+    const html = renderToStaticMarkup(<SettingsView accountId="account-a" keys={keys} />);
+    expect(html).toContain("&lt;GATEWAY_URL&gt;/v1/wabas/&lt;WABA_ID&gt;/messages");
   });
 
   test("a role without administer sees the refusal, and no control to act with", () => {

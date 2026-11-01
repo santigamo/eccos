@@ -944,6 +944,10 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).listAccountResources(account);
   }
 
+  async getPublicOrigin(): Promise<string | null> {
+    return this.env.GATEWAY_PUBLIC_URL?.trim() || null;
+  }
+
   /** Account-key management for the console (eccos-bm92): the same control-plane
    * methods the admin HTTP routes use, scoped to the dashboard-resolved account. */
   async listApiKeys(accountId: string): Promise<AccountKeyResource[]> {

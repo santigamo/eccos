@@ -11,9 +11,8 @@ import { TokenConnectPanel } from "../components/dashboard/connect-token";
  * own Meta app: `debug_token` cannot introspect anyone else's, so a customer
  * who finds this form gets an honest `foreign_app` refusal pointing at Embedded
  * Signup — and a form you can never use is still a form you had to be refused
- * by. One deployment serves every customer (`server.ts` hard-codes
- * `CANONICAL_HOSTS = {"app.eccos.chat"}`), so the surface exists for exactly one
- * operator and is advertised to everyone.
+ * by. One deployment serves every customer (one `BETTER_AUTH_URL` host), so
+ * the surface exists for exactly one operator and is advertised to everyone.
  *
  * Three alternatives were considered and rejected:
  *  - a per-organization `isOperator` flag — rejected by Santi;

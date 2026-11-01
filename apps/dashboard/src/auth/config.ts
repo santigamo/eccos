@@ -1,17 +1,14 @@
 /**
  * Request-scoped auth configuration derived from Worker bindings (contract §3/§6).
  *
- * The canonical customer origin is https://app.eccos.chat; localhost is trusted
- * only for development (non-https base URL). Production-like configuration
+ * The canonical customer origin is `BETTER_AUTH_URL`; unset or non-https means
+ * development, where only localhost is trusted. Production-like configuration
  * (https origin) fails closed without a configured secret.
  */
 
 import type { AuthConfig } from "./auth";
 import { ConsoleMailSender, type MailEnv, type MailSender } from "./mail";
 import { ReccadoMailSender } from "./mail-reccado";
-
-/** Canonical customer origin — the only production-trusted host (contract §6). */
-export const CANONICAL_ORIGIN = "https://app.eccos.chat";
 
 /** Local development origin (vite dev). */
 export const LOCAL_ORIGIN = "http://localhost:3000";
@@ -25,6 +22,17 @@ export const LOCAL_ORIGIN = "http://localhost:3000";
  */
 export const VITE_DEV_ORIGIN = "http://localhost:5173";
 export const VITE_DEV_ORIGIN_LOOPBACK = "http://127.0.0.1:5173";
+
+/** Development-only hosts (workers.dev-style bypasses are NOT in this list). */
+const DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Only the `BETTER_AUTH_URL` host reaches the app; localhost only in development (contract §6). */
+export function isAllowedHost(hostname: string, configuredBaseURL: string | undefined): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  const configured = configuredBaseURL?.trim() || "";
+  if (!configured.startsWith("https://")) return DEV_HOSTS.has(host);
+  return host === new URL(configured).hostname;
+}
 
 export interface AuthEnv {
   DB: unknown;
@@ -53,7 +61,7 @@ export function createMailSenderFromEnv(env: MailEnv): MailSender {
 }
 
 export function authConfigFromEnv(env: AuthEnv): AuthConfig {
-  const baseURL = env.BETTER_AUTH_URL?.trim() || CANONICAL_ORIGIN;
+  const baseURL = env.BETTER_AUTH_URL?.trim() || LOCAL_ORIGIN;
   const isDev = !baseURL.startsWith("https://");
 
   const secret = env.BETTER_AUTH_SECRET?.trim() ?? "";
@@ -64,7 +72,7 @@ export function authConfigFromEnv(env: AuthEnv): AuthConfig {
 
   const trustedOrigins = isDev
     ? [LOCAL_ORIGIN, "http://127.0.0.1:3000", VITE_DEV_ORIGIN, VITE_DEV_ORIGIN_LOOPBACK]
-    : [CANONICAL_ORIGIN];
+    : [new URL(baseURL).origin];
 
   return {
     database: env.DB,
