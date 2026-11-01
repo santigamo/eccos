@@ -1,3 +1,4 @@
+import { followSignIn } from "../../lib/follow-sign-in";
 import { useState, type FormEvent } from "react";
 import { CONNECT_RETURN_PATH, connectWithToken } from "../../server/gateway";
 import type { TokenWabaCandidate } from "../../server/gateway";
@@ -139,6 +140,7 @@ export function TokenConnectPanel() {
       setCandidates(null);
       window.location.assign(CONNECT_RETURN_PATH);
     } catch (err) {
+      if (followSignIn(err)) return;
       // The validator's own refusals land here, and they are written as
       // sentences for this panel. None of them can carry the pasted value:
       // every message names the SHAPE that was wrong, never what was typed.

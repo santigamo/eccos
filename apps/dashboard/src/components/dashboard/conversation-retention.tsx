@@ -1,3 +1,4 @@
+import { isRedirect } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { setConversationRetention, type Result } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
@@ -46,6 +47,7 @@ export type SaveOutcome = { ok: true } | { ok: false; error: string };
  * Runs one save and reports how it ended. A call that never reaches the server
  * (a dropped connection) rejects rather than returning a Result, and is reported
  * here the same way, so the form always leaves its saving state with a message.
+ * A sign-in redirect is rethrown for the root's net to follow.
  */
 export async function saveRetentionChoice(
   choice: string,
@@ -55,6 +57,7 @@ export async function saveRetentionChoice(
     const res = await save(choice === KEEP_FOREVER ? null : Number(choice));
     return res.ok ? { ok: true } : { ok: false, error: failureCopy(res).detail };
   } catch (error) {
+    if (isRedirect(error)) throw error;
     return {
       ok: false,
       error: failureCopy({ ok: false, kind: "unreachable", error: String(error) }).detail,

@@ -1,3 +1,4 @@
+import { followSignIn } from "../lib/follow-sign-in";
 import { useMemo, useState } from "react";
 import { Link, createFileRoute, useLoaderData } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
@@ -345,6 +346,7 @@ function EventsPage() {
       }
       await liveRefresh.refresh();
     } catch (error) {
+      if (followSignIn(error)) return;
       // A THROW, not a `{ ok: false }`: the server function's own validator and
       // the network are the two things that raise here, and without this the
       // spinner would reset with nothing said and the rejection would go

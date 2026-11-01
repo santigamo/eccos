@@ -1,3 +1,4 @@
+import { isRedirect } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import type { ReplyLine } from "../lib/conversations";
@@ -63,7 +64,11 @@ export function useThread(
     seen.current = refreshed;
     let current = true;
     loadThread(wabaId, waId, force)
-      .catch((err): Result<Thread> => ({ ok: false, kind: "unreachable", error: err instanceof Error ? err.message : String(err) }))
+      .catch((err): Result<Thread> => {
+        // The root's unhandled-rejection net follows a sign-in redirect.
+        if (isRedirect(err)) throw err;
+        return { ok: false, kind: "unreachable", error: err instanceof Error ? err.message : String(err) };
+      })
       .then((result) => {
         if (!result.ok && isDenial(result)) resetClientState();
         if (current) setRead({ scope, result });
