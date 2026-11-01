@@ -484,8 +484,17 @@ describe("blocked slug-bearing organization endpoints", () => {
 describe("authConfigFromEnv", () => {
   test("throws when no secret is configured for an https (production-like) origin", () => {
     expect(() =>
-      authConfigFromEnv({ DB: {} as D1Database, BETTER_AUTH_SECRET: "" }),
+      authConfigFromEnv({ DB: {} as D1Database, BETTER_AUTH_SECRET: "", BETTER_AUTH_URL: "https://console.example.com" }),
     ).toThrow(/BETTER_AUTH_SECRET/);
+  });
+
+  test("a public deployment trusts only its own BETTER_AUTH_URL origin", () => {
+    const config = authConfigFromEnv({
+      DB: {} as D1Database,
+      BETTER_AUTH_SECRET: "x".repeat(32),
+      BETTER_AUTH_URL: "https://console.example.com/",
+    });
+    expect(config.trustedOrigins).toEqual(["https://console.example.com"]);
   });
 
   test("localhost development trusts only the local origins", () => {

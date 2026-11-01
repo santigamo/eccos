@@ -1046,6 +1046,8 @@ export interface GatewayApi {
   ): Promise<{ accountId: string; resources: AccountResources; status: ScopedRead<GatewayStatus> | null }>;
   /** Enumerate the durable resources owned by one account. */
   listAccountResources(accountId: string): Promise<AccountResources>;
+  /** The gateway's public HTTPS origin (`GATEWAY_PUBLIC_URL`), null when unset. */
+  getPublicOrigin(): Promise<string | null>;
   /** The account's API keys, metadata only (never the secret or its hash). */
   listApiKeys(accountId: string): Promise<AccountKeyResource[]>;
   /** Issue an `ek_` key for the account; the raw key is returned once, here. */

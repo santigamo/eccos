@@ -5,6 +5,7 @@ import {
 import { createServerEntry, type ServerEntry } from "@tanstack/react-start/server-entry";
 import * as Sentry from "@sentry/cloudflare";
 import { env } from "cloudflare:workers";
+import { isAllowedHost } from "./auth/config";
 import { getAuthForRequest } from "./auth/request-auth";
 import {
   blockedAuthEndpointResponse,
@@ -20,6 +21,7 @@ import {
 import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
+import { absolutizeUnfurlTags } from "./server/unfurl";
 import { beginTiming, finishTiming, logPerf } from "./server/timing";
 import { sentryOptions } from "./lib/sentry";
 
@@ -28,7 +30,7 @@ import { sentryOptions } from "./lib/sentry";
  * and pointed at by `wrangler.jsonc` `main`).
  *
  * Responsibilities, in order:
- * 1. Canonical-host allowlist (contract §6): only the customer origin (and
+ * 1. Canonical-host allowlist (contract §6): only the `BETTER_AUTH_URL` host (and
  *    localhost in development) reaches the app. Raw `*.workers.dev`/preview
  *    origins fail closed with 403 — they are not alternate customer paths.
  * 2. Better Auth handler at `/api/auth/*` (identity plane: sessions, sign-up/
@@ -45,11 +47,6 @@ import { sentryOptions } from "./lib/sentry";
 
 const startHandler = createStartHandler(defaultStreamHandler);
 
-/** Hosts allowed to reach the app. `app.eccos.chat` is the only customer origin. */
-const CANONICAL_HOSTS = new Set(["app.eccos.chat"]);
-/** Development-only hosts (workers.dev-style bypasses are NOT in this list). */
-const DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
 /** Paths reachable without a Better Auth session (contract §10). */
 const PUBLIC_PATHS = new Set([
   "/signin",
@@ -58,21 +55,13 @@ const PUBLIC_PATHS = new Set([
   "/reset-password",
 ]);
 
-export function isAllowedHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, "");
-  if (CANONICAL_HOSTS.has(host)) return true;
-  // Dev hosts only count when running without a production binding (BETTER_AUTH_URL unset or local).
-  const configured = env.BETTER_AUTH_URL?.trim() || "";
-  const isDevConfig = !configured.startsWith("https://");
-  return isDevConfig && DEV_HOSTS.has(host);
-}
 
 const forbidden = (): Response =>
   new Response("Forbidden", { status: 403, headers: { "cache-control": "private, no-store" } });
 
 const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   const url = new URL(request.url);
-  if (!isAllowedHost(url.hostname)) {
+  if (!isAllowedHost(url.hostname, env.BETTER_AUTH_URL)) {
     return forbidden();
   }
   const { pathname } = url;
@@ -129,11 +118,10 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
       headers.set("Server-Timing", report.header);
       if (pathname.startsWith("/_serverFn/")) logPerf(pathname, response.status, report);
     }
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
+    return absolutizeUnfurlTags(
+      new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
+      url.origin,
+    );
   }
   return response;
 };
