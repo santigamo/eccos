@@ -3,6 +3,7 @@ import { invalidatePage } from "../lib/invalidate";
 import { Page } from "../ui";
 import {
   getConversationRetention,
+  getGatewayOrigin,
   listApiKeys,
   type AccountKeyResource,
   type Result,
@@ -35,7 +36,7 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
  */
 export const Route = createFileRoute("/settings")({
   staleTime: CONFIG_STALE_MS,
-  loader: () => Promise.all([listApiKeys(), getConversationRetention()]),
+  loader: () => Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin()]),
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
@@ -50,7 +51,7 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
-  const [keys, retention] = Route.useLoaderData();
+  const [keys, retention, gatewayOrigin] = Route.useLoaderData();
   const router = useRouter();
   // Both post-organization stages carry the account, in two shapes. Reachable
   // before any WABA exists, which is exactly why nothing here may need one.
@@ -65,6 +66,7 @@ function SettingsPage() {
       keys={keys}
       retention={retention}
       wabaId={wabaId}
+      gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
       onKeysChanged={() => void invalidatePage(router)}
     />
   );
@@ -79,12 +81,14 @@ export function SettingsView({
   keys,
   retention,
   wabaId,
+  gatewayOrigin,
   onKeysChanged,
 }: {
   accountId?: string;
   keys?: Result<AccountKeyResource[]>;
   retention?: Result<number | null>;
   wabaId?: string;
+  gatewayOrigin?: string | null;
   onKeysChanged?: () => void;
 }) {
   return (
@@ -96,7 +100,7 @@ export function SettingsView({
         ) : null}
         {accountId && keys ? (
           <div className="lg:col-span-2">
-            <ApiKeysPanel keys={keys} wabaId={wabaId} onChanged={onKeysChanged} />
+            <ApiKeysPanel keys={keys} wabaId={wabaId} gatewayOrigin={gatewayOrigin} onChanged={onKeysChanged} />
           </div>
         ) : null}
       </div>

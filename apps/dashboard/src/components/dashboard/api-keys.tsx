@@ -28,9 +28,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-/** The hosted gateway's public origin, the one `api.eccos.chat` route. */
-export const GATEWAY_ORIGIN = "https://api.eccos.chat";
-
 const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 const ERROR_CLASS =
   "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs";
@@ -45,10 +42,12 @@ const ERROR_CLASS =
 export function ApiKeysPanel({
   keys,
   wabaId,
+  gatewayOrigin,
   onChanged,
 }: {
   keys: Result<AccountKeyResource[]>;
   wabaId?: string;
+  gatewayOrigin?: string | null;
   onChanged?: () => void;
 }) {
   const [label, setLabel] = useState("");
@@ -114,7 +113,7 @@ export function ApiKeysPanel({
             ) : null}
 
             <KeyList keys={keys.data} onRevoke={setRevoking} />
-            <SendSnippet wabaId={wabaId} />
+            <SendSnippet wabaId={wabaId} gatewayOrigin={gatewayOrigin} />
           </>
         ) : (
           <KeysUnavailable keys={keys} />
@@ -286,8 +285,8 @@ function RevokeKeyDialog({
 }
 
 /** How a key is used: the send endpoint, with this workspace's WABA when known. */
-export function SendSnippet({ wabaId }: { wabaId?: string }) {
-  const snippet = `curl -X POST ${GATEWAY_ORIGIN}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
+export function SendSnippet({ wabaId, gatewayOrigin }: { wabaId?: string; gatewayOrigin?: string | null }) {
+  const snippet = `curl -X POST ${gatewayOrigin ?? "<GATEWAY_URL>"}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
   -H "Authorization: Bearer <API_KEY>" \\
   -H "Content-Type: application/json" \\
   -d '{"to": "<PHONE>", "type": "text", "text": {"body": "Hello"}}'`;

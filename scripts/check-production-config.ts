@@ -29,6 +29,8 @@ if (gateway) {
 }
 
 if (dashboard) {
+  const authUrl = String(dashboard.vars.BETTER_AUTH_URL ?? "");
+  if (!authUrl.startsWith("https://")) errors.push(`dashboard BETTER_AUTH_URL must be an https origin, got "${authUrl}"`);
   const id = dashboard.d1_databases.find((db) => db.binding === "DB")?.database_id ?? "";
   if (!id || /^[0-]+$/.test(id)) errors.push("dashboard DB database_id is missing or the template placeholder");
 }

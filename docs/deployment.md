@@ -64,6 +64,12 @@ routes, D1 id, bindings, migrations, jurisdiction and vars, and add `"keep_vars"
 require those files; they never fall back to the template. Existing direct Wrangler workflows
 can continue using their populated templates, with `keep_vars: true` added.
 
+The console no longer hard-codes `app.eccos.chat`: it answers only the host in `BETTER_AUTH_URL`.
+**Set `BETTER_AUTH_URL` to your console's HTTPS origin before deploying this version**, or every
+request gets `403 Forbidden`. If you patched the host allowlist in `src/server.ts` or
+`src/auth/config.ts`, drop that patch. The API-key snippet in Settings now shows the gateway's own
+`GATEWAY_PUBLIC_URL`, so deploy the gateway first.
+
 Production files are ignored and local to each checkout. Before retiring a worktree, transfer
 its populated files to the checkout used for deployment with `cp -n`, then verify the values
 there. Copying blank templates does not recover a production configuration.
@@ -145,7 +151,7 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 |---|---|---|
 | `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty allow localhost development only; public requests fail closed |
 | `ACCESS_AUD` | `""` | Cloudflare Access application Audience (AUD) tag |
-| `BETTER_AUTH_URL` | canonical origin | Optional explicit base URL; defaults to `https://app.eccos.chat` |
+| `BETTER_AUTH_URL` | unset | The console's public HTTPS origin, e.g. `https://console.example.com`. **Required on a public host:** it is the only hostname the console answers (anything else, `workers.dev` included, gets `403`) and the only origin Better Auth trusts. Unset or non-https means development: localhost only |
 | `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
 | `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
 | `META_GRAPH_VERSION` | `v25.0` | Passed to `FB.init`. Keep equal to the gateway's — see [Meta Graph API version](#meta-graph-api-version) |

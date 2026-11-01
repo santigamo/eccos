@@ -1416,6 +1416,11 @@ export const listApiKeys = createServerFn({ method: "GET" }).handler(
     }),
 );
 
+/** The gateway origin the API-key snippet points at; null when unconfigured. */
+export const getGatewayOrigin = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<string | null>> => withGateway((gateway) => gateway.getPublicOrigin(), "view"),
+);
+
 /** Issue an `ek_` key. The raw key crosses this boundary once, in the return
  * value, and never reaches a log or audit line. */
 export const issueApiKey = createServerFn({ method: "POST" })
