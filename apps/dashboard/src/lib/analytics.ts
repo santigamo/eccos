@@ -10,7 +10,8 @@ import { isFinishEvent, type ConnectPath, type SessionEvent } from "./embedded-s
 export interface AnalyticsConfig {
   scriptUrl: string;
   websiteId: string;
-  domains: string;
+  /** Umami `data-domains`; null counts every hostname. */
+  domains: string | null;
   userId: string | null;
 }
 

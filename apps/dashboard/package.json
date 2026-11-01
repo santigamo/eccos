@@ -9,8 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "../../scripts/deploy-dashboard.sh",
-    "cf-typegen": "wrangler types",
-    "typecheck": "wrangler types && tsc --noEmit",
+    "cf-typegen": "wrangler types --strict-vars=false",
+    "typecheck": "wrangler types --strict-vars=false && tsc --noEmit",
     "test": "bun test tests/",
     "db:generate": "auth generate --config scripts/auth-schema.config.ts -y",
     "db:migrate:local": "wrangler d1 migrations apply eccos-auth --local"

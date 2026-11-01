@@ -27,3 +27,6 @@ worker-configuration.d.ts
 .beads/
 # Local Pi runtime state
 .atl/
+
+# Real deploy config (routes, ids, vars) — docs/deployment.md#production-config
+wrangler.production.jsonc

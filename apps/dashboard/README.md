@@ -123,9 +123,13 @@ Production secrets (Worker secrets, set with `wrangler secret put`):
   `https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`. One value rather than a
   host plus a mailbox id, because the key already binds to exactly one mailbox and a second,
   disagreeing id surfaces as `403 invalid_api_key` — blaming the key rather than the pairing.
-  A secret rather than a var because it carries the provider host and `wrangler.jsonc` is in a
-  public repo. The adapter validates it and fails closed on boot once the key is set
+  A secret rather than a var because it carries the provider host and the repo is
+  public. The adapter validates it and fails closed on boot once the key is set
 
 Apply the auth schema before serving traffic: `bun run db:migrate:local` for
-local development; `wrangler d1 migrations apply eccos-auth --remote` for
-production (eccos-0x0.9 covers the full cutover checklist).
+local development; `wrangler d1 migrations apply eccos-auth --remote -c wrangler.production.jsonc`
+for production. `wrangler.jsonc` is a self-host template; deploys build against the gitignored
+`wrangler.production.jsonc` ([docs/deployment.md](../../docs/deployment.md#production-config)).
+Existing installations keep their Worker names, D1 id and gateway binding. Preserve your
+populated config when adopting the helper; `keep_vars: true` preserves omitted Meta/analytics
+vars on direct template deploys. See the [upgrade note](../../docs/deployment.md#upgrade-note--existing-self-hosters).

@@ -7,7 +7,7 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "cf-types": "wrangler types",
+    "cf-types": "wrangler types --strict-vars=false",
     "test:workers": "vitest run"
   },
   "dependencies": {

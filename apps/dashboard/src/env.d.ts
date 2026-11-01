@@ -12,6 +12,8 @@ import type { GatewayApi } from "@eccos/gateway-contract";
 declare global {
   namespace Cloudflare {
     interface Env {
+      META_APP_ID?: string;
+      META_ES_CONFIG_ID?: string;
       GATEWAY: Service<GatewayApi & Rpc.WorkerEntrypointBranded>;
     }
   }

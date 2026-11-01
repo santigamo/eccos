@@ -232,7 +232,10 @@ wrangler secret put ECCOS_ADMIN_API_KEY
 wrangler secret put META_APP_ID
 wrangler secret put META_ES_CONFIG_ID
 
-bun run deploy                   # wrangler deploy
+# Your real config (domains, GATEWAY_PUBLIC_URL) stays out of git:
+cp -n apps/gateway/wrangler.jsonc apps/gateway/wrangler.production.jsonc
+# Edit that file: add vars.GATEWAY_PUBLIC_URL and your routes before deploying.
+bun run deploy                   # wrangler deploy -c wrangler.production.jsonc
 ```
 
 The Workers target is **account-scoped by default** — there are no global `META_ACCESS_TOKEN` /
@@ -262,9 +265,17 @@ same flow. Create accounts and register WABAs through the
 The `bun install → wrangler secret put → bun run deploy` steps above are the reliable path; see
 [`docs/deployment.md`](./docs/deployment.md) for the full env matrix, smoke test, and rollback.
 
-Non-secret vars (`META_GRAPH_VERSION`, `FORWARD_MAX_ATTEMPTS`, `CONTENT_RETENTION_DAYS`,
-`DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in
-`wrangler.jsonc`.
+Non-secret vars (`META_GRAPH_VERSION`, `GATEWAY_PUBLIC_URL`, `FORWARD_MAX_ATTEMPTS`,
+`CONTENT_RETENTION_DAYS`, `DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in
+`wrangler.production.jsonc` (add `GATEWAY_PUBLIC_URL` there before connecting numbers).
+The root `bun run deploy` reads your own gitignored
+`apps/gateway/wrangler.production.jsonc` (see
+[`docs/deployment.md`](./docs/deployment.md#production-config)).
+Existing self-hosters keep the same Worker names and Durable Object data. Templates use
+`keep_vars: true` and omit installation-specific values, so plain Wrangler deploys preserve
+those deployed vars. Preserve your populated config when adopting the production-file helpers;
+see the [upgrade note](./docs/deployment.md#upgrade-note--existing-self-hosters).
+
 Point Meta's webhook at `https://<worker>.workers.dev/webhooks/meta` — or, once you put the Worker
 on a custom domain under your Meta app's declared application domain, at
 `https://<your-gateway-host>/webhooks/meta`; the ordered cutover between the two is in

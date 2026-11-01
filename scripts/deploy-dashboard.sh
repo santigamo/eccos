@@ -13,13 +13,14 @@ set -euo pipefail
 #                        disagree — and a disagreement reads as
 #                        `403 invalid_api_key`, blaming the key, not the pairing.
 #                        A secret, not a --var: it carries the provider host and
-#                        wrangler.jsonc is in a public repo. The adapter
+#                        the repo is public. The adapter
 #                        validates it and fails closed on boot.
 #
+# Routes, the D1 id and the vars come from the gitignored
+# apps/dashboard/wrangler.production.jsonc (docs/deployment.md#production-config).
+#
 # The auth D1 schema must exist before traffic is served:
-#   cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote
-# The canonical-host allowlist (app.eccos.chat) is enforced in src/server.ts;
-# there are no Access variables anymore and workers.dev is disabled.
+#   cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote -c wrangler.production.jsonc
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -32,6 +33,8 @@ fi
 
 cd "$ROOT/apps/dashboard"
 
+bun "$ROOT/scripts/check-production-config.ts"
+
 # BUILD FIRST, ALWAYS (eccos-e92). `wrangler deploy` ships whatever is sitting
 # in dist/, and this script used to go straight there — so a deploy silently
 # shipped the last build instead of the working tree.
@@ -41,9 +44,10 @@ cd "$ROOT/apps/dashboard"
 # new, and production served the previous UI. Nothing about that is visible from
 # the deploy output, which is what makes it worth a rebuild every time rather
 # than a note in a runbook. The build is a few hundred milliseconds.
-bun run build
+CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.production.jsonc bun run build
 
 # No --var plumbing: every mail setting is a Worker secret now, set once with
 # `wrangler secret put` (see the header). Nothing about the provider belongs in
-# the public wrangler.jsonc or in a deploy command line.
+# a config file or a deploy command line. No -c either: the build already
+# redirects wrangler to the config it generated from the production file.
 wrangler deploy "$@"

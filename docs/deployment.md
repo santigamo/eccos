@@ -6,10 +6,67 @@ Cloudflare Workers. For the Bun self-host target (Docker), see the root [README]
 
 ## Environment matrix
 
-Everything below is set with `wrangler secret put <NAME>` (secrets) or lives in
-`wrangler.jsonc` under `vars` (non-secret config) — never in a committed `.env` file. Secrets
+Everything below is set with `wrangler secret put <NAME>` (secrets) or lives in the Worker's
+config under `vars` (non-secret config) — never in a committed `.env` file. Secrets
 are per-Worker: run `wrangler secret put` from inside the Worker's directory (`apps/gateway` or
 `apps/dashboard`).
+
+### Production config
+
+The committed `apps/gateway/wrangler.jsonc` and `apps/dashboard/wrangler.jsonc` are self-host
+templates: no custom domains and a placeholder dashboard D1 id. Installation-specific vars
+(`GATEWAY_PUBLIC_URL`, dashboard Meta identifiers and analytics) are omitted. Both templates
+use `keep_vars: true`: omitted vars retain their deployed values, while explicit vars still
+override them. To disable an existing optional setting, explicitly set its var to `""` in your
+production config or Cloudflare dashboard; removing it from a file does not clear it. Secrets
+are preserved separately by Wrangler. Keep real values out of the public repository.
+
+The root `bun run deploy` and dashboard `bun run deploy` / `scripts/deploy-dashboard.sh` select
+a gitignored `wrangler.production.jsonc` and first run `scripts/check-production-config.ts`, which
+stops the deploy if either production file is missing, `GATEWAY_PUBLIC_URL` is not an HTTPS
+origin, the dashboard D1 id is still the placeholder, the gateway and dashboard
+`META_GRAPH_VERSION` differ, or the gateway's Durable Object bindings, migrations or R2 buckets
+drift from the template. It only reads local files.
+
+Raw `wrangler deploy` and the gateway package's `bun run deploy` skip that check: they still
+deploy the template, for self-hosting and the Deploy to Cloudflare button. The template keeps the
+default Worker names, so it is not isolated from an installation that uses them; `keep_vars` only
+guarantees it does not clear the omitted installation vars. Raw dashboard deployment uses the last
+generated build config; always rebuild with the intended config before deploying the dashboard.
+
+For a **new installation**, copy without overwriting an existing config:
+
+```bash
+cp -n apps/gateway/wrangler.jsonc apps/gateway/wrangler.production.jsonc
+cp -n apps/dashboard/wrangler.jsonc apps/dashboard/wrangler.production.jsonc
+```
+
+**Edit the copies before deploying:** set `routes` (your custom domains), add
+`vars.GATEWAY_PUBLIC_URL` (your gateway's public HTTPS origin), replace the dashboard's
+`database_id` (from `wrangler d1 create eccos-auth --jurisdiction eu`), and add optional vars
+from the tables below as needed. Keep bindings and migrations in step with the template when
+they change. Commands targeting production resources should select `-c wrangler.production.jsonc`
+(for example `wrangler d1 migrations apply eccos-auth --remote -c wrangler.production.jsonc`).
+
+### Upgrade note — existing self-hosters
+
+Worker names remain `eccos` / `eccos-dashboard`, the dashboard service still targets `eccos`,
+and Durable Object classes, migration history and jurisdiction are unchanged. **Do not rename
+an existing gateway or change its jurisdiction:** that points at new, empty Durable Objects.
+No secrets conversion or data migration is needed. Plain template deploys preserve the deployed
+public URL, dashboard Meta identifiers and analytics via `keep_vars: true`, including values
+previously deployed as vars. Fresh installations must supply those values when needed.
+
+If your templates contain local settings, preserve them when resolving pull conflicts. To use
+the root/dashboard deploy helpers, first copy your **existing populated configs** to the sibling
+`wrangler.production.jsonc` files (without overwriting populated copies), retaining Worker names,
+routes, D1 id, bindings, migrations, jurisdiction and vars, and add `"keep_vars": true`. The helpers
+require those files; they never fall back to the template. Existing direct Wrangler workflows
+can continue using their populated templates, with `keep_vars: true` added.
+
+Production files are ignored and local to each checkout. Before retiring a worktree, transfer
+its populated files to the checkout used for deployment with `cp -n`, then verify the values
+there. Copying blank templates does not recover a production configuration.
 
 The Workers target is **account-scoped by default**: there are no global tenant credentials.
 Per-WABA Meta credentials (tokens, phone ids), account API keys, and subscriber settings are
@@ -33,7 +90,7 @@ subscriber targets per WABA.
 | `META_APP_ID` | Needed only for the Embedded Signup `/connect` flow |
 | `META_ES_CONFIG_ID` | Needed only for the Embedded Signup `/connect` flow |
 
-### `apps/gateway` — non-secret vars (`apps/gateway/wrangler.jsonc` → `vars`)
+### `apps/gateway` — non-secret vars (`vars` in your production config or Cloudflare dashboard)
 
 | Var | Default | Purpose |
 |---|---|---|
@@ -42,7 +99,7 @@ subscriber targets per WABA.
 | `FORWARD_MAX_ATTEMPTS` | `6` | Max delivery attempts before a forwarded event is marked failed |
 | `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted, terminal `deliveries` rows are redacted to metadata-only, and `pending` `deliveries` rows — including events held for want of a forwarding target — are deleted outright |
 | `DELIVERY_RETENTION_DAYS` | `90` | Delivery-audit window: past it, terminal (`delivered`/`failed`) `deliveries` rows are deleted entirely. See [docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows) |
-| `DO_JURISDICTION` | `eu` in this repo; unset = no jurisdiction | Optional Durable Object jurisdiction: `eu`, `fedramp`, or `fedramp-high` (Cloudflare has no `us` jurisdiction). Unset/empty = no jurisdiction, i.e. the DO is created wherever the first request lands. An invalid value makes every DO-touching request fail with a clear error instead of being silently ignored |
+| `DO_JURISDICTION` | `eu` in the template; unset = no jurisdiction | Optional Durable Object jurisdiction: `eu`, `fedramp`, or `fedramp-high` (Cloudflare has no `us` jurisdiction). Unset/empty = no jurisdiction, i.e. the DO is created wherever the first request lands. An invalid value makes every DO-touching request fail with a clear error instead of being silently ignored |
 
 > **CRITICAL — set `DO_JURISDICTION` before you have production data, and never change it
 > afterwards.** A jurisdiction produces a *different* `DurableObjectId` for the same WABA routing
@@ -51,7 +108,7 @@ subscriber targets per WABA.
 > state (inbound/outbound history, the delivery queue, and the `config` table with the connected
 > WABA/phone and subscriber settings) stays behind in the old object, invisible to the running
 > gateway, and the number must be re-onboarded. If you need EU data residency, set
-> `DO_JURISDICTION = "eu"` in `wrangler.jsonc` → `vars` as part of the *first* deploy.
+> `DO_JURISDICTION = "eu"` in `wrangler.production.jsonc` → `vars` as part of the *first* deploy.
 
 > **WABA routing is mandatory.** The object name is
 > `v1:<jurisdiction-or-auto>:waba:<WABA_ID>`. Changing the WABA, jurisdiction, routing version, or
@@ -80,7 +137,7 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 |---|---|
 | `BETTER_AUTH_SECRET` | Better Auth signing secret (at least 32 characters). A public (https) deployment refuses to boot without it |
 | `RECCADO_API_KEY` | Transactional email provider key (reccado). Absent = the development console sender, which logs instead of sending — never set that way in production. See [docs/auth-email-delivery.md](./auth-email-delivery.md) |
-| `RECCADO_ENDPOINT` | Full transactional message endpoint, `https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`. A secret rather than a var because it carries the provider host and `apps/dashboard/wrangler.jsonc` is in a public repo — the Cloudflare account subdomain deliberately stays out of it. Required whenever `RECCADO_API_KEY` is set; the adapter validates it and fails closed on boot without it |
+| `RECCADO_ENDPOINT` | Full transactional message endpoint, `https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`. A secret rather than a var because it carries the provider host and the repo is public — the Cloudflare account subdomain deliberately stays out of it. Required whenever `RECCADO_API_KEY` is set; the adapter validates it and fails closed on boot without it |
 
 ### `apps/dashboard` — non-secret vars (`apps/dashboard/wrangler.jsonc` → `vars`)
 
@@ -92,9 +149,9 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 | `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
 | `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
 | `META_GRAPH_VERSION` | `v25.0` | Passed to `FB.init`. Keep equal to the gateway's — see [Meta Graph API version](#meta-graph-api-version) |
-| `ANALYTICS_SCRIPT_URL` | `""` | Umami tracker script URL. The checked-in `wrangler.jsonc` carries the hosted service's values — **blank this and `ANALYTICS_WEBSITE_ID` on a self-hosted deployment**: either one empty renders no tracker at all |
+| `ANALYTICS_SCRIPT_URL` | `""` | Umami tracker script URL. Either this or `ANALYTICS_WEBSITE_ID` empty renders no tracker at all |
 | `ANALYTICS_WEBSITE_ID` | `""` | Umami website id |
-| `ANALYTICS_DOMAINS` | `app.eccos.chat` | Umami `data-domains`: exact hostnames the tracker counts on (no subdomain wildcard) |
+| `ANALYTICS_DOMAINS` | `""` | Umami `data-domains`: exact hostnames the tracker counts on (no subdomain wildcard). Empty counts every hostname |
 
 `ANALYTICS_EXCLUDE_USER_IDS` (optional, `wrangler secret put`) is a comma-separated list of Better
 Auth user ids whose browsers get no tracker at all — a secret rather than a var so no personal id is
@@ -132,10 +189,10 @@ wrangler secret put ECCOS_TOKEN_ENCRYPTION_KEY
 wrangler secret put META_APP_ID     # optional: Embedded Signup /connect
 wrangler secret put META_ES_CONFIG_ID # optional: Embedded Signup /connect
 wrangler secret put SENTRY_DSN      # optional: error reporting to Sentry; unset disables it
-# Set GATEWAY_PUBLIC_URL in wrangler.jsonc (or pass --var) for dashboard-initiated Embedded Signup.
+# Set GATEWAY_PUBLIC_URL in wrangler.production.jsonc for dashboard-initiated Embedded Signup.
 cd ../..
 
-bun run deploy     # == cd apps/gateway && wrangler deploy
+bun run deploy     # == check-production-config.ts, then cd apps/gateway && wrangler deploy -c wrangler.production.jsonc
 ```
 
 **Media bucket (once, before the first deploy that carries the `MEDIA` binding).** WhatsApp media
@@ -171,12 +228,13 @@ wrangler secret put RECCADO_API_KEY
 wrangler secret put RECCADO_ENDPOINT
 cd ../..
 
-cd apps/dashboard && bun run deploy   # == the validated helper
+cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote -c wrangler.production.jsonc
+bun run deploy   # == scripts/deploy-dashboard.sh: checks, builds against wrangler.production.jsonc, then deploys
 ```
 
 Configure `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `apps/dashboard/wrangler.jsonc` before the
 production deploy, then open `/setup` once behind the Access policy to create the account.
-Set `GATEWAY_PUBLIC_URL` in `apps/gateway/wrangler.jsonc` to the gateway's public HTTPS origin
+Set `GATEWAY_PUBLIC_URL` in `apps/gateway/wrangler.production.jsonc` to the gateway's public HTTPS origin
 before using the dashboard's **Connect WhatsApp** action. The button starts the same account-bound
 Embedded Signup flow as `POST /connect/start` without exposing an account API key to the browser.
 
@@ -208,10 +266,12 @@ sitting on the panel default — they carry no traffic.)
 
 ### How to bump it
 
-Change all six, in this order, and treat it as one change:
+Update these together, in this order, and treat it as one change:
 
-1. `apps/gateway/wrangler.jsonc` → `vars.META_GRAPH_VERSION` — **the value that wins in
-   production**; the code defaults below only apply where this var is absent.
+1. `apps/gateway/wrangler.jsonc` **and** `apps/dashboard/wrangler.jsonc` →
+   `vars.META_GRAPH_VERSION` (template defaults), plus **both** ignored
+   `apps/{gateway,dashboard}/wrangler.production.jsonc` files used for production. The selected
+   config's explicit var wins over preserved remote vars; code defaults apply only when absent.
 2. `packages/core/src/config-schema.ts` → the `META_GRAPH_VERSION` zod `.default(...)`.
 3. `packages/core/src/config-schema.ts` → the `metaGraphVersion()` fallback that feeds
    `graphBaseUrl()`.
@@ -219,6 +279,10 @@ Change all six, in this order, and treat it as one change:
 5. `apps/gateway/src/routes/connect.ts` → the Embedded Signup OAuth dialog URL fallback.
 6. **The Meta app panel** — WhatsApp > Configuration > Webhooks: set the new version on *every*
    subscribed field, not just `messages`. This is the step no test can catch.
+
+Before deploying, verify the effective gateway and dashboard configs select the same new
+`META_GRAPH_VERSION`, then deploy both Workers using those configs. Updating templates alone
+does not update independent production files.
 
 `.env.example`, `apps/gateway/wrangler.vitest.jsonc` and the version pinned in the unit tests
 follow along. Before bumping, read the Graph changelog for breaking changes between the current
@@ -440,12 +504,12 @@ can be abandoned without breaking a live webhook.
 no DNS record already exists for `api`. A pre-existing record makes the custom-domain attach fail;
 Cloudflare creates and manages the record itself for a `custom_domain` route.
 
-**2 — Deploy the custom domain (additive).** The route is already declared in
-`apps/gateway/wrangler.jsonc` alongside `"workers_dev": true`, so one deploy adds the new origin
+**2 — Deploy the custom domain (additive).** Declare the route in
+`apps/gateway/wrangler.production.jsonc` alongside `"workers_dev": true`, so one deploy adds the new origin
 and changes nothing about the old one:
 
 ```bash
-bun run deploy     # == cd apps/gateway && wrangler deploy
+bun run deploy     # == check-production-config.ts, then cd apps/gateway && wrangler deploy -c wrangler.production.jsonc
 ```
 
 Wait for the certificate to be issued (usually a minute or two; the Workers dashboard shows the
@@ -484,7 +548,7 @@ either origin, which is what makes the next two steps reversible.
 `https://api.eccos.chat/connect` a registered redirect URI:
 
 ```jsonc
-// apps/gateway/wrangler.jsonc → vars
+// apps/gateway/wrangler.production.jsonc → vars
 "GATEWAY_PUBLIC_URL": "https://api.eccos.chat",
 ```
 
@@ -541,7 +605,7 @@ enough for any customer integration still calling the `workers.dev` `/v1` host t
 > WABA, and Meta retries a dead endpoint until it disables the subscription — the exact failure the
 > "always answer 200 quickly" rule exists to prevent. Check every account's WABA records, not just
 > the one you reconnected. When it is
-confirmed unused, drop `"workers_dev": true` from `apps/gateway/wrangler.jsonc`, deploy, and remove
+confirmed unused, drop `"workers_dev": true` from `apps/gateway/wrangler.production.jsonc`, deploy, and remove
 the `workers.dev` entries from the Valid OAuth Redirect URIs and the JavaScript SDK domains.
 Retiring the old origin is never part of the same deploy that adds the new one.
 
@@ -557,7 +621,7 @@ no message history, delivery queue or WABA config is at risk.
 | Webhooks stop arriving after step 6 | In the Meta panel, set the Callback URL back to `https://eccos.santi-gamo.workers.dev/webhooks/meta` and **Verify and save**. The old origin is still live because step 8 has not run |
 | Bad Worker code, unrelated to the domain | `wrangler rollback` (below) — the custom domain and the Meta panel entries are unaffected |
 
-If the whole cutover is abandoned, remove the `routes` entry from `apps/gateway/wrangler.jsonc`,
+If the whole cutover is abandoned, remove the `routes` entry from `apps/gateway/wrangler.production.jsonc`,
 deploy, and delete the `api.eccos.chat` entries from the Meta panel. Leaving the custom domain
 attached while Meta points elsewhere is harmless.
 
