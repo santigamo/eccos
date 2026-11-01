@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { isRedirect, redirect } from "@tanstack/react-router";
 import {
   acceptsHtml,
+  authGate,
   isServerFnPath,
   notAcceptable,
   serverFnSignIn,
@@ -86,4 +87,43 @@ describe("serverFnSignIn", () => {
 
 test("notAcceptable answers 406, not 500", () => {
   expect(notAcceptable().status).toBe(406);
+});
+
+describe("authGate order", () => {
+  const anonymous = async () => false;
+  const signedIn = async () => true;
+  const never = async (): Promise<boolean> => {
+    throw new Error("the session must not be read");
+  };
+  const req = (path: string, headers: Record<string, string> = {}) =>
+    new Request(`${ORIGIN}${path}`, { headers });
+
+  test("static assets pass before anything else, even for a non-HTML Accept", async () => {
+    expect(await authGate(req("/assets/app.js", { accept: "text/plain" }), never)).toBeUndefined();
+  });
+
+  test("a non-HTML page request gets a 406 before the session is read", async () => {
+    const res = await authGate(req("/numbers", { accept: "text/plain" }), never);
+    expect(res?.status).toBe(406);
+    expect((await authGate(req("/signin", { accept: "application/json" }), never))?.status).toBe(406);
+  });
+
+  test("an anonymous server-function call gets the serialized 401, not the 406 or the 302", async () => {
+    const res = await authGate(req("/_serverFn/abc", { accept: SERVER_FN_ACCEPT }), anonymous);
+    expect(res?.status).toBe(401);
+  });
+
+  test("an anonymous page load gets the 302; a public page passes", async () => {
+    const res = await authGate(req("/numbers"), anonymous);
+    expect(res?.status).toBe(302);
+    expect(res?.headers.get("location")).toBe("/signin?redirect=%2Fnumbers");
+    expect(await authGate(req("/reset-password?token=t"), anonymous)).toBeUndefined();
+  });
+
+  test("a signed-in user passes, and is bounced off the auth pages except /reset-password", async () => {
+    expect(await authGate(req("/_serverFn/abc", { accept: SERVER_FN_ACCEPT }), signedIn)).toBeUndefined();
+    expect(await authGate(req("/numbers"), signedIn)).toBeUndefined();
+    expect((await authGate(req("/signin"), signedIn))?.headers.get("location")).toBe("/");
+    expect(await authGate(req("/reset-password?token=t"), signedIn)).toBeUndefined();
+  });
 });

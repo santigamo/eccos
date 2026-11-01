@@ -6,6 +6,7 @@ import {
   redactError,
 } from "../src/components/auth/auth-page";
 import {
+  PUBLIC_PATHS,
   REDIRECTABLE_PAGES,
   safeRedirectTarget,
   signInHref,
@@ -43,6 +44,14 @@ describe("safeRedirectTarget", () => {
     expect(safeRedirectTarget("/signin")).toBeUndefined();
   });
 
+  test("drops a trailing slash, keeping query and hash", () => {
+    expect(safeRedirectTarget("/numbers/")).toBe("/numbers");
+    expect(safeRedirectTarget("/numbers/attach-token/?wabaId=1")).toBe("/numbers/attach-token?wabaId=1");
+    expect(safeRedirectTarget("/templates/#top")).toBe("/templates#top");
+    expect(safeRedirectTarget("/")).toBe("/");
+    expect(safeRedirectTarget("/numbers//")).toBeUndefined();
+  });
+
   test("accepts every app page, with query and hash", () => {
     expect(safeRedirectTarget("/numbers/attach-token?wabaId=1")).toBe("/numbers/attach-token?wabaId=1");
     expect(safeRedirectTarget("/invitations?id=abc")).toBe("/invitations?id=abc");
@@ -53,9 +62,8 @@ describe("safeRedirectTarget", () => {
     const tree = readFileSync(new URL("../src/routeTree.gen.ts", import.meta.url), "utf8");
     const union = tree.match(/fullPaths:([\s\S]*?)\n\s+fileRoutesByTo/)?.[1] ?? "";
     const routes = [...union.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    const auth = new Set(["/signin", "/signup", "/forgot-password", "/reset-password"]);
     expect(routes.length).toBeGreaterThan(0);
-    expect([...REDIRECTABLE_PAGES].sort()).toEqual(routes.filter((r) => !auth.has(r)).sort());
+    expect([...REDIRECTABLE_PAGES].sort()).toEqual(routes.filter((r) => !PUBLIC_PATHS.has(r)).sort());
   });
 });
 

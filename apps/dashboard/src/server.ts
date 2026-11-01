@@ -11,13 +11,7 @@ import {
   blockedAuthEndpointResponse,
   isBlockedAuthEndpoint,
 } from "./auth/blocked-endpoints";
-import {
-  acceptsHtml,
-  isServerFnPath,
-  notAcceptable,
-  serverFnSignIn,
-  signInRedirect,
-} from "./auth/page-gate";
+import { authGate } from "./auth/page-gate";
 import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
@@ -46,15 +40,6 @@ import { sentryOptions } from "./lib/sentry";
  */
 
 const startHandler = createStartHandler(defaultStreamHandler);
-
-/** Paths reachable without a Better Auth session (contract §10). */
-const PUBLIC_PATHS = new Set([
-  "/signin",
-  "/signup",
-  "/forgot-password",
-  "/reset-password",
-]);
-
 
 const forbidden = (): Response =>
   new Response("Forbidden", { status: 403, headers: { "cache-control": "private, no-store" } });
@@ -89,25 +74,13 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
     return auth.handler(request);
   }
 
-  // Page-level auth gate: every non-public page load requires a session, and
-  // signed-in users skip the auth pages (contract §10). Static assets stay
-  // public; requests that cannot take HTML never reach the page router.
-  if (!pathname.startsWith("/assets/")) {
-    const serverFn = isServerFnPath(pathname);
-    if (!serverFn && !acceptsHtml(request.headers.get("accept"))) return notAcceptable();
-    const isPublic = PUBLIC_PATHS.has(pathname);
+  // Page-level auth gate (contract §10); the order of its checks lives in
+  // auth/page-gate.ts.
+  const gated = await authGate(request, async () => {
     const auth = getAuthForRequest(request, env);
-    const session = await resolveSession(auth, request);
-    if (!session && !isPublic) {
-      return serverFn ? serverFnSignIn(request) : signInRedirect(request);
-    }
-    if (session && isPublic && pathname !== "/reset-password") {
-      return new Response(null, {
-        status: 302,
-        headers: { location: "/", "cache-control": "private, no-store" },
-      });
-    }
-  }
+    return (await resolveSession(auth, request)) !== null;
+  });
+  if (gated) return gated;
 
   const response = await startHandler(request, opts);
   const report = finishTiming(request);

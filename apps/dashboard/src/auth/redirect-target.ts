@@ -7,6 +7,14 @@
  * dropped and the caller falls back to "/".
  */
 
+/** Pages reachable without a session (contract §10). */
+export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
+  "/signin",
+  "/signup",
+  "/forgot-password",
+  "/reset-password",
+]);
+
 /**
  * The app pages a sign-in may return to — every route in `routeTree.gen.ts`
  * except the public auth pages, which a signed-in user is bounced off anyway.
@@ -38,8 +46,10 @@ export function safeRedirectTarget(value: string | undefined): string | undefine
     if (code <= 0x1f || code === 0x7f) return undefined;
   }
   const end = value.search(/[?#]/);
-  const pathname = end === -1 ? value : value.slice(0, end);
-  return REDIRECTABLE_PAGES.has(pathname) ? value : undefined;
+  const path = end === -1 ? value : value.slice(0, end);
+  const pathname = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+  if (!REDIRECTABLE_PAGES.has(pathname)) return undefined;
+  return end === -1 ? pathname : pathname + value.slice(end);
 }
 
 /** The sign-in page, carrying `target` as its bounce-back only when it is safe. */
