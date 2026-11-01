@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   authErrorMessage,
   isDuplicateEmailError,
   redactError,
-  safeRedirectTarget,
 } from "../src/components/auth/auth-page";
+import {
+  PUBLIC_PATHS,
+  REDIRECTABLE_PAGES,
+  safeRedirectTarget,
+  signInHref,
+} from "../src/auth/redirect-target";
 
 describe("safeRedirectTarget", () => {
   test("accepts same-origin absolute paths, preserving query strings", () => {
@@ -26,6 +32,47 @@ describe("safeRedirectTarget", () => {
     expect(safeRedirectTarget("")).toBeUndefined();
     expect(safeRedirectTarget("/a\u0000b")).toBeUndefined();
     expect(safeRedirectTarget("/a\nb")).toBeUndefined();
+  });
+
+  test("rejects server functions, API paths, static files and unknown paths", () => {
+    expect(safeRedirectTarget("/_serverFn/abc123?payload=%7B%7D")).toBeUndefined();
+    expect(safeRedirectTarget("/api/auth/get-session")).toBeUndefined();
+    expect(safeRedirectTarget("/assets/index-abc.js")).toBeUndefined();
+    expect(safeRedirectTarget("/robots.txt")).toBeUndefined();
+    expect(safeRedirectTarget("/favicon.ico")).toBeUndefined();
+    expect(safeRedirectTarget("/numbers/../_serverFn/x")).toBeUndefined();
+    expect(safeRedirectTarget("/signin")).toBeUndefined();
+  });
+
+  test("drops a trailing slash, keeping query and hash", () => {
+    expect(safeRedirectTarget("/numbers/")).toBe("/numbers");
+    expect(safeRedirectTarget("/numbers/attach-token/?wabaId=1")).toBe("/numbers/attach-token?wabaId=1");
+    expect(safeRedirectTarget("/templates/#top")).toBe("/templates#top");
+    expect(safeRedirectTarget("/")).toBe("/");
+    expect(safeRedirectTarget("/numbers//")).toBeUndefined();
+  });
+
+  test("accepts every app page, with query and hash", () => {
+    expect(safeRedirectTarget("/numbers/attach-token?wabaId=1")).toBe("/numbers/attach-token?wabaId=1");
+    expect(safeRedirectTarget("/invitations?id=abc")).toBe("/invitations?id=abc");
+    expect(safeRedirectTarget("/templates#top")).toBe("/templates#top");
+  });
+
+  test("covers exactly the route tree's pages minus the public auth pages", () => {
+    const tree = readFileSync(new URL("../src/routeTree.gen.ts", import.meta.url), "utf8");
+    const union = tree.match(/fullPaths:([\s\S]*?)\n\s+fileRoutesByTo/)?.[1] ?? "";
+    const routes = [...union.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(routes.length).toBeGreaterThan(0);
+    expect([...REDIRECTABLE_PAGES].sort()).toEqual(routes.filter((r) => !PUBLIC_PATHS.has(r)).sort());
+  });
+});
+
+describe("signInHref", () => {
+  test("carries a safe page and drops anything else", () => {
+    expect(signInHref("/events?wabaId=abc")).toBe("/signin?redirect=%2Fevents%3FwabaId%3Dabc");
+    expect(signInHref("/_serverFn/abc?payload=x")).toBe("/signin");
+    expect(signInHref("/robots.txt")).toBe("/signin");
+    expect(signInHref(undefined)).toBe("/signin");
   });
 });
 

@@ -1,3 +1,4 @@
+import { isRedirect } from "@tanstack/react-router";
 import type { RetryFailedResult, RetryFailedWindow } from "@eccos/gateway-contract";
 import type { Result } from "../server/gateway";
 import { failureCopy } from "./failure";
@@ -97,8 +98,9 @@ export type RetryFailedSender = (arg: {
 /**
  * Read the window, send it, and say what happened. The sender is a parameter so
  * the request a click builds can be asserted without a browser, which is the
- * gap a static render leaves open. It never throws: a refusal, a dead gateway
- * and a rejected validator all come back as a notice.
+ * gap a static render leaves open. It only throws a sign-in redirect (followed
+ * by the root's net): a refusal, a dead gateway and a rejected validator all
+ * come back as a notice.
  */
 export async function submitRetryFailed(
   input: { wabaId: string; fromInput: string; toInput: string },
@@ -116,6 +118,7 @@ export async function submitRetryFailed(
     }
     return { ok: true, ...result.data };
   } catch (error) {
+    if (isRedirect(error)) throw error;
     // A THROW rather than a `{ ok: false }`: the validator and the network are
     // what raise here, and the message is the only thing known about either.
     return {

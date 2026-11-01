@@ -1,5 +1,6 @@
 "use client"
 
+import { followSignIn } from "../lib/follow-sign-in"
 import { useState } from "react"
 
 import { selectOrganization } from "../organizations"
@@ -51,6 +52,7 @@ export function useWorkspaceSwitch(): WorkspaceSwitch {
         // document goes away, instead of flashing back to idle.
         window.location.reload()
       } catch (err) {
+        if (followSignIn(err)) return
         setError(err instanceof Error ? err.message : String(err))
         setPendingId(null)
       }

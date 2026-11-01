@@ -1,3 +1,4 @@
+import { followSignIn } from "../../lib/follow-sign-in";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CloudIcon, LoaderCircleIcon, SmartphoneIcon } from "lucide-react";
 import {
@@ -260,6 +261,7 @@ export function ConnectNumberChoices({
       // The popup owns the flow now; `starting` is cleared by the callback.
       return;
     } catch (err) {
+      if (followSignIn(err)) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       // Only the SDK path returns early with the popup still open.

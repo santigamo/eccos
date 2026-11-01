@@ -1,3 +1,4 @@
+import { followSignIn } from "../lib/follow-sign-in";
 import { useMemo, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { invalidatePage } from "../lib/invalidate";
@@ -269,6 +270,7 @@ function DeliveriesPage() {
       }
       await invalidatePage(router);
     } catch (error) {
+      if (followSignIn(error)) return;
       // A THROW, not a `{ ok: false }`: the server function's own validator and
       // the network are the two things that raise here, and without this the
       // spinner would reset with nothing said and the rejection would go

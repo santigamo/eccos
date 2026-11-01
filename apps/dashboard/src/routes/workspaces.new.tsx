@@ -1,3 +1,4 @@
+import { followSignIn } from "../lib/follow-sign-in";
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -51,7 +52,8 @@ function NewWorkspacePage() {
     let result: Awaited<ReturnType<typeof createOrganization>>;
     try {
       result = await createOrganization({ data: { name: name.trim() } });
-    } catch {
+    } catch (error) {
+      if (followSignIn(error)) return;
       // Thrown client failure (network, non-JSON 5xx): reset pending and show
       // a generic error instead of a stuck button.
       setPending(false);

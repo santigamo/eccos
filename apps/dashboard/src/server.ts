@@ -11,6 +11,7 @@ import {
   blockedAuthEndpointResponse,
   isBlockedAuthEndpoint,
 } from "./auth/blocked-endpoints";
+import { authGate } from "./auth/page-gate";
 import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
@@ -33,33 +34,15 @@ import { sentryOptions } from "./lib/sentry";
  *    request from the request-scoped bindings — no module-global auth state.
  * 3. Page-level auth gate (contract §10): anonymous page loads are redirected
  *    to `/signin` (with a bounce-back target) except the public auth pages.
- *    Server functions additionally fail closed per-call in
+ *    Anonymous server-function calls get a serialized redirect instead
+ *    (auth/page-gate.ts) and additionally fail closed per-call in
  *    `src/auth/server-auth.ts`; `/assets/*` are public static files.
  */
 
 const startHandler = createStartHandler(defaultStreamHandler);
 
-/** Paths reachable without a Better Auth session (contract §10). */
-const PUBLIC_PATHS = new Set([
-  "/signin",
-  "/signup",
-  "/forgot-password",
-  "/reset-password",
-]);
-
-
 const forbidden = (): Response =>
   new Response("Forbidden", { status: 403, headers: { "cache-control": "private, no-store" } });
-
-function signInRedirect(requestUrl: string): Response {
-  const url = new URL(requestUrl);
-  const target = `${url.pathname}${url.search}`;
-  const location = `/signin?redirect=${encodeURIComponent(target)}`;
-  return new Response(null, {
-    status: 302,
-    headers: { location, "cache-control": "private, no-store" },
-  });
-}
 
 const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   const url = new URL(request.url);
@@ -91,23 +74,13 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
     return auth.handler(request);
   }
 
-  // Page-level auth gate: every non-public page load requires a session, and
-  // signed-in users skip the auth pages (contract §10). Static assets stay
-  // public; server functions fail closed per-call in src/auth/server-auth.ts.
-  if (!pathname.startsWith("/assets/")) {
-    const isPublic = PUBLIC_PATHS.has(pathname);
+  // Page-level auth gate (contract §10); the order of its checks lives in
+  // auth/page-gate.ts.
+  const gated = await authGate(request, async () => {
     const auth = getAuthForRequest(request, env);
-    const session = await resolveSession(auth, request);
-    if (!session && !isPublic) {
-      return signInRedirect(request.url);
-    }
-    if (session && isPublic && pathname !== "/reset-password") {
-      return new Response(null, {
-        status: 302,
-        headers: { location: "/", "cache-control": "private, no-store" },
-      });
-    }
-  }
+    return (await resolveSession(auth, request)) !== null;
+  });
+  if (gated) return gated;
 
   const response = await startHandler(request, opts);
   const report = finishTiming(request);

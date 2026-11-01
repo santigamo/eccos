@@ -15,6 +15,8 @@ import { getAnalyticsConfig } from "../server/analytics"
 import { type getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { useRootRefresh } from "../hooks/use-root-refresh"
+import { watchUnhandledSignIn } from "../lib/follow-sign-in"
+import { PUBLIC_PATHS } from "../auth/redirect-target"
 import type { AnalyticsConfig } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
 import { hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
@@ -212,6 +214,7 @@ function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
   useRootRefresh()
+  useEffect(() => watchUnhandledSignIn(window), [])
   return (
     <RootDocument
       lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}
@@ -266,13 +269,7 @@ function RootDocument({
 }
 
 /** Pre-auth brand surfaces — the silk owns the spectacle there. */
-const LANTERN_EXEMPT_PATHS = new Set([
-  "/signin",
-  "/signup",
-  "/forgot-password",
-  "/reset-password",
-  "/invitations",
-])
+const LANTERN_EXEMPT_PATHS = new Set([...PUBLIC_PATHS, "/invitations"])
 
 /**
  * The lantern (see #cursor-light in app.css). The trailing lerp is what makes
