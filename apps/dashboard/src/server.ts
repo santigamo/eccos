@@ -10,6 +10,13 @@ import {
   blockedAuthEndpointResponse,
   isBlockedAuthEndpoint,
 } from "./auth/blocked-endpoints";
+import {
+  acceptsHtml,
+  isServerFnPath,
+  notAcceptable,
+  serverFnSignIn,
+  signInRedirect,
+} from "./auth/page-gate";
 import { requireGatewayPermission } from "./auth/server-auth";
 import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
@@ -31,7 +38,8 @@ import { sentryOptions } from "./lib/sentry";
  *    request from the request-scoped bindings — no module-global auth state.
  * 3. Page-level auth gate (contract §10): anonymous page loads are redirected
  *    to `/signin` (with a bounce-back target) except the public auth pages.
- *    Server functions additionally fail closed per-call in
+ *    Anonymous server-function calls get a serialized redirect instead
+ *    (auth/page-gate.ts) and additionally fail closed per-call in
  *    `src/auth/server-auth.ts`; `/assets/*` are public static files.
  */
 
@@ -61,16 +69,6 @@ export function isAllowedHost(hostname: string): boolean {
 
 const forbidden = (): Response =>
   new Response("Forbidden", { status: 403, headers: { "cache-control": "private, no-store" } });
-
-function signInRedirect(requestUrl: string): Response {
-  const url = new URL(requestUrl);
-  const target = `${url.pathname}${url.search}`;
-  const location = `/signin?redirect=${encodeURIComponent(target)}`;
-  return new Response(null, {
-    status: 302,
-    headers: { location, "cache-control": "private, no-store" },
-  });
-}
 
 const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
   const url = new URL(request.url);
@@ -104,13 +102,15 @@ const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
 
   // Page-level auth gate: every non-public page load requires a session, and
   // signed-in users skip the auth pages (contract §10). Static assets stay
-  // public; server functions fail closed per-call in src/auth/server-auth.ts.
+  // public; requests that cannot take HTML never reach the page router.
   if (!pathname.startsWith("/assets/")) {
+    const serverFn = isServerFnPath(pathname);
+    if (!serverFn && !acceptsHtml(request.headers.get("accept"))) return notAcceptable();
     const isPublic = PUBLIC_PATHS.has(pathname);
     const auth = getAuthForRequest(request, env);
     const session = await resolveSession(auth, request);
     if (!session && !isPublic) {
-      return signInRedirect(request.url);
+      return serverFn ? serverFnSignIn(request) : signInRedirect(request);
     }
     if (session && isPublic && pathname !== "/reset-password") {
       return new Response(null, {

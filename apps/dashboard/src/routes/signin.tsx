@@ -1,6 +1,6 @@
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { SignInView } from "../components/blocks/auth-13/signin-view";
-import { safeRedirectTarget } from "../components/auth/auth-page";
+import { safeRedirectTarget } from "../auth/redirect-target";
 
 type SigninSearch = { redirect?: string; error?: string };
 

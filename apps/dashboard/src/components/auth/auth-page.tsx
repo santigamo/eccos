@@ -4,8 +4,8 @@
  * The four public auth routes (signin, signup, forgot-password, reset-password)
  * plus the invitation screen render the same card skeleton and the same error
  * banner; this module owns both so the pages cannot drift. It also hosts the
- * pure helpers shared by route tests: redirect-target validation and the
- * auth-error -> user-facing-message mapping.
+ * pure helpers shared by route tests: the auth-error -> user-facing-message
+ * mapping.
  */
 
 import type { ReactNode } from "react";
@@ -19,29 +19,6 @@ import {
   FramePanel,
 } from "../reui/frame";
 import { Page } from "../../ui";
-
-/**
- * Validate a post-signin redirect target coming from the ?redirect= search
- * param. Accepts only same-origin absolute paths; rejects protocol-relative
- * URLs ("//host"), backslash variants ("\\host" and "/\\host"), and control
- * characters — all open-redirect vectors. Returns undefined for anything that
- * is not a safe path, so callers fall back to "/".
- */
-export function safeRedirectTarget(value: string | undefined): string | undefined {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return undefined;
-  if (value.includes("\\")) return undefined;
-  // Same set the old character class matched (the C0 controls U+0000-U+001F
-  // plus DEL U+007F), scanned by code unit instead of by regex: a pattern
-  // whose whole purpose is to *match* control characters is exactly what
-  // Biome's noControlCharactersInRegex forbids, and the scan states the intent
-  // without fighting the rule. Surrogates (U+D800-U+DFFF) fall outside the
-  // range, so comparing UTF-16 code units cannot produce a false reject.
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code <= 0x1f || code === 0x7f) return undefined;
-  }
-  return value;
-}
 
 /** Error codes Better Auth surfaces for account-existence-sensitive flows. */
 export type AuthErrorCode =
