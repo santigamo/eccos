@@ -24,7 +24,7 @@ import type {
   TemplateHeaderMediaFormat,
 } from "@eccos/gateway-contract";
 import { formatCustomerId } from "../../lib/customer-id";
-import { runSend, type SendGate, type SendPhase } from "../../lib/send-gate";
+import { runSend, sendKeyed, type SendGate, type SendPhase } from "../../lib/send-gate";
 import { StatusTag } from "../../ui";
 
 export interface SendTestPhone {
@@ -168,19 +168,18 @@ export function SendTestForm({
       await runSend(gate.current, async () => {
         setPhase("sending");
         setNotice(null);
-        const result = await sendTemplateTest({
-          data: assembleSendTestPayload({
-            wabaId,
-            phoneNumberId,
-            recipient,
-            templateName,
-            languageCode,
-            params,
-            buttonParams,
-            headerMedia,
-            headerLink,
-          }),
+        const payload = assembleSendTestPayload({
+          wabaId,
+          phoneNumberId,
+          recipient,
+          templateName,
+          languageCode,
+          params,
+          buttonParams,
+          headerMedia,
+          headerLink,
         });
+        const result = await sendKeyed(gate.current, payload, (data) => sendTemplateTest({ data }));
         if (!result.ok) {
           // A boundary failure (unreachable / unauthenticated / forbidden) is a
           // different class from a refused send, and keeps its own mapping.

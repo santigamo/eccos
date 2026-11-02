@@ -122,6 +122,15 @@ export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
  * same zero rows. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const LAST_SWEEP_KEY = "__last_sweep_at__";
+/** How long a send's idempotency key dedupes a retry. */
+export const SEND_KEY_TTL_MS = DAY_MS;
+
+/** An `Idempotency-Key`: printable ASCII, no spaces. A UUID fits, and so does any sane client key. */
+export function isIdempotencyKey(key: unknown): key is string {
+  return typeof key === "string" && /^[\x21-\x7e]{1,255}$/.test(key);
+}
+
+export type SendKeyClaim = { state: "new" } | { state: "pending" } | { state: "done"; result: string };
 
 function parseIpv4Address(hostname: string): number[] | null {
   const octets = hostname.split(".");
@@ -355,6 +364,16 @@ export class EccosGateway extends DurableObject<Env> {
       // handful of real replies inside thousands of status callbacks.
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_type
         ON inbound_events (type, id);`);
+      // Idempotency keys for sends (send-idempotency.ts). `result` is NULL while
+      // the send is in flight; it holds the stored answer once it settles.
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS send_keys (
+        account_id TEXT NOT NULL,
+        key        TEXT NOT NULL,
+        result     TEXT,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (account_id, key)
+      );`);
+      this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_send_keys_created ON send_keys (created_at);`);
       // Additive migration for objects created before a column existed. `type`
       // matters: SQLite applies column affinity on write, so an epoch-ms
       // timestamp landing in a TEXT column would come back out as a string and
@@ -704,6 +723,23 @@ export class EccosGateway extends DurableObject<Env> {
         this.applyStoredEvent(row.payload as string, now);
       }
     });
+  }
+
+  /** Claims `key` for one send. Synchronous, so two concurrent claims cannot both see "new". */
+  claimSendKey(accountId: string, key: string, now = Date.now()): SendKeyClaim {
+    this.sql.exec(`DELETE FROM send_keys WHERE account_id = ? AND key = ? AND created_at < ?`, accountId, key, now - SEND_KEY_TTL_MS);
+    const row = this.sql
+      .exec(`SELECT result FROM send_keys WHERE account_id = ? AND key = ?`, accountId, key)
+      .toArray()[0];
+    if (!row) {
+      this.sql.exec(`INSERT INTO send_keys (account_id, key, result, created_at) VALUES (?, ?, NULL, ?)`, accountId, key, now);
+      return { state: "new" };
+    }
+    return row.result === null ? { state: "pending" } : { state: "done", result: row.result as string };
+  }
+
+  settleSendKey(accountId: string, key: string, result: string): void {
+    this.sql.exec(`UPDATE send_keys SET result = ? WHERE account_id = ? AND key = ?`, result, accountId, key);
   }
 
   saveConfig(entries: Record<string, string>): void {
@@ -2305,6 +2341,7 @@ export class EccosGateway extends DurableObject<Env> {
     this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, deliveryCutoff);
+    this.sql.exec(`DELETE FROM send_keys WHERE created_at < ?`, now - SEND_KEY_TTL_MS);
   }
 
   /**

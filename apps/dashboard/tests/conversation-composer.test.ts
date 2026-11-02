@@ -136,14 +136,32 @@ describe("submitReply", () => {
   test("a sent reply is sent to the customer's number, from the thread's number, with the typed text", async () => {
     const { calls, send } = fakeSend({ ok: true, data: { ok: true, messageId: "wamid.1" } });
     expect(await submitReply(send, target, "Hola")).toEqual({ sent: true });
-    expect(calls).toEqual([{ data: { wabaId: WABA, phoneNumberId: "phone-a", to: CUSTOMER, text: "Hola" } }]);
+    expect(calls).toEqual([
+      {
+        data: {
+          wabaId: WABA,
+          phoneNumberId: "phone-a",
+          to: CUSTOMER,
+          text: "Hola",
+          idempotencyKey: expect.any(String),
+        },
+      },
+    ]);
   });
 
   test("a reply to a BSUID customer goes to the BSUID as-is", async () => {
     const { calls, send } = fakeSend({ ok: true, data: { ok: true, messageId: "wamid.2" } });
     expect(await submitReply(send, { ...target, waId: "US.13491208655302741918" }, "Hola")).toEqual({ sent: true });
     expect(calls).toEqual([
-      { data: { wabaId: WABA, phoneNumberId: "phone-a", to: "US.13491208655302741918", text: "Hola" } },
+      {
+        data: {
+          wabaId: WABA,
+          phoneNumberId: "phone-a",
+          to: "US.13491208655302741918",
+          text: "Hola",
+          idempotencyKey: expect.any(String),
+        },
+      },
     ]);
   });
 

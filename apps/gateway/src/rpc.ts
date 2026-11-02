@@ -15,6 +15,7 @@ import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
+import { isIdempotencyKey } from "./gateway";
 import type {
   AccountKeyResource,
   AccountResources,
@@ -821,40 +822,42 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
     });
-    const result = await sendMessage(cfg, metaBody);
     const stub = this.stubFor(waba.wabaId);
+    return this.sendOnce(stub, account, waba.wabaId, input.idempotencyKey, async (): Promise<SendTemplateTestResult> => {
+      const result = await sendMessage(cfg, metaBody);
 
-    if (!result.ok) {
-      // The data-plane log carries the full body, parameters included — it is
-      // retention- and erasure-governed exactly like an API send. The AUDIT log
-      // is the one that must stay content-free.
+      if (!result.ok) {
+        // The data-plane log carries the full body, parameters included — it is
+        // retention- and erasure-governed exactly like an API send. The AUDIT log
+        // is the one that must stay content-free.
+        await stub.logOutbound(
+          null,
+          input.to,
+          JSON.stringify(metaBody),
+          "failed",
+          JSON.stringify(result.error),
+          input.phoneNumberId,
+        );
+        const { code, message } = graphError(result.error);
+        const mapped = code === null ? undefined : GRAPH_ERROR_CODES[code];
+        return {
+          ok: false,
+          code: mapped ?? "graph",
+          detail: mapped ? message : (message ?? `HTTP ${result.status}`),
+        };
+      }
+
       await stub.logOutbound(
-        null,
+        result.id,
         input.to,
         JSON.stringify(metaBody),
-        "failed",
-        JSON.stringify(result.error),
+        "sent",
+        null,
         input.phoneNumberId,
+        result.waId,
       );
-      const { code, message } = graphError(result.error);
-      const mapped = code === null ? undefined : GRAPH_ERROR_CODES[code];
-      return {
-        ok: false,
-        code: mapped ?? "graph",
-        detail: mapped ? message : (message ?? `HTTP ${result.status}`),
-      };
-    }
-
-    await stub.logOutbound(
-      result.id,
-      input.to,
-      JSON.stringify(metaBody),
-      "sent",
-      null,
-      input.phoneNumberId,
-      result.waId,
-    );
-    return { ok: true, messageId: result.id };
+      return { ok: true, messageId: result.id };
+    });
   }
 
   /**
@@ -903,33 +906,62 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
     });
-    const result = await sendMessage(cfg, metaBody);
     const stub = this.stubFor(waba.wabaId);
+    return this.sendOnce(stub, account, waba.wabaId, input.idempotencyKey, async (): Promise<SendTextResult> => {
+      const result = await sendMessage(cfg, metaBody);
 
-    if (!result.ok) {
+      if (!result.ok) {
+        await stub.logOutbound(
+          null,
+          input.to,
+          JSON.stringify(metaBody),
+          "failed",
+          JSON.stringify(result.error),
+          input.phoneNumberId,
+        );
+        const { code, message } = graphError(result.error);
+        const mapped = code === null ? undefined : TEXT_GRAPH_ERROR_CODES[code];
+        return { ok: false, code: mapped ?? "graph", detail: message ?? `HTTP ${result.status}` };
+      }
+
       await stub.logOutbound(
-        null,
+        result.id,
         input.to,
         JSON.stringify(metaBody),
-        "failed",
-        JSON.stringify(result.error),
+        "sent",
+        null,
         input.phoneNumberId,
+        result.waId,
       );
-      const { code, message } = graphError(result.error);
-      const mapped = code === null ? undefined : TEXT_GRAPH_ERROR_CODES[code];
-      return { ok: false, code: mapped ?? "graph", detail: message ?? `HTTP ${result.status}` };
-    }
+      return { ok: true, messageId: result.id };
+    });
+  }
 
-    await stub.logOutbound(
-      result.id,
-      input.to,
-      JSON.stringify(metaBody),
-      "sent",
-      null,
-      input.phoneNumberId,
-      result.waId,
-    );
-    return { ok: true, messageId: result.id };
+  /**
+   * Runs `send` at most once per (account, key) on the WABA's Durable Object.
+   * The claim is stored before `send` runs, so a concurrent duplicate gets
+   * `in_progress` and sends nothing; a later one gets the stored result back.
+   * Every answer is stored, a Meta refusal included: a retry with the same key
+   * never resends, and sending again is a new key. No key: `send` just runs.
+   */
+  private async sendOnce<T extends SendTemplateTestResult | SendTextResult>(
+    stub: ReturnType<GatewayRPC["stubFor"]>,
+    accountId: string,
+    wabaId: string,
+    key: string | undefined,
+    send: () => Promise<T>,
+  ): Promise<T | { ok: false; code: "in_progress"; detail: null }> {
+    if (key === undefined) return send();
+    if (!isIdempotencyKey(key)) throw new Error("invalid idempotencyKey");
+    const claim = await stub.claimSendKey(accountId, key);
+    if (claim.state === "pending") return { ok: false, code: "in_progress", detail: null };
+    if (claim.state === "done") {
+      console.log(JSON.stringify({ level: "info", area: "rpc", event: "outbound_send", wabaId, deduped: true }));
+      return JSON.parse(claim.result) as T;
+    }
+    const result = await send();
+    await stub.settleSendKey(accountId, key, JSON.stringify(result));
+    return result;
   }
 
   /** One control-plane hop from organization to account + resources (see

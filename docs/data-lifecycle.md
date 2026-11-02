@@ -139,6 +139,9 @@ what error) should outlive the content itself:
 | `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, `created_at`, and `finished_at` survive; **`pending` `deliveries` rows are deleted** (by `created_at`) |
 | `DELIVERY_RETENTION_DAYS` | **90** | terminal `deliveries` rows are **deleted** entirely, by `created_at` |
 
+Send idempotency keys (`send_keys`: account, key, the stored answer, no content) are deleted 24 h
+after their first use by the same sweep, and ignored past that age even before it runs.
+
 Webhooks of a registered WABA that is `pending` (provisioning, or a re-run Embedded Signup) are
 held in `held_webhooks` until it is active, then ingested like any other webhook. The hold is
 capped at 5000 events per WABA (beyond it a batch is ignored as `hold_full`); a batch Meta

@@ -8,13 +8,13 @@ import { composerWindowOf, isSendKey, SERVICE_WINDOW_MS } from "../../lib/conver
 import { failureCopy, sendTextFailureCopy } from "../../lib/failure";
 import type { Result, SendTextResult } from "../../server/gateway";
 import { sendText } from "../../server/gateway";
-import { runSend, type SendGate } from "../../lib/send-gate";
+import { runSend, sendKeyed, type SendGate } from "../../lib/send-gate";
 import type { SendTestPhone } from "../templates/send-test-sheet";
 import { SendTemplateSheet } from "./send-template-sheet";
 
 /** The server function the composer sends through, typed as the composer calls it. */
 type SendText = (input: {
-  data: { wabaId: string; phoneNumberId: string; to: string; text: string };
+  data: { wabaId: string; phoneNumberId: string; to: string; text: string; idempotencyKey: string };
 }) => Promise<Result<SendTextResult>>;
 
 export type ReplyOutcome =
@@ -30,9 +30,10 @@ export async function submitReply(
   send: SendText,
   target: { wabaId: string; phoneNumberId: string; waId: string },
   text: string,
+  gate: SendGate = { phase: "idle" },
 ): Promise<ReplyOutcome> {
   const { wabaId, phoneNumberId, waId } = target;
-  const result = await send({ data: { wabaId, phoneNumberId, to: waId, text } });
+  const result = await sendKeyed(gate, { wabaId, phoneNumberId, to: waId, text }, (data) => send({ data }));
   if (!result.ok) {
     const copy = failureCopy(result);
     return { sent: false, title: copy.title, detail: copy.detail, secondary: null, windowClosed: false };
@@ -127,7 +128,7 @@ function FreeTextReply({
       setSending(true);
       setNotice(null);
       try {
-        const outcome = await submitReply(sendText, { wabaId, phoneNumberId, waId }, body);
+        const outcome = await submitReply(sendText, { wabaId, phoneNumberId, waId }, body, gate.current);
         if (outcome.sent) {
           setText("");
           onSent();

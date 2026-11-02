@@ -127,6 +127,11 @@ export function sendTestFailureCopy(
         detail:
           "Meta has no approved translation of this template for the language selected. Check its status in WhatsApp Manager.",
       };
+    case "in_progress":
+      return {
+        title: "Send still in progress",
+        detail: "An earlier attempt of this send has not finished. Wait a moment, then try again: it will not send twice.",
+      };
     case "parameter_mismatch":
       return {
         title: "Parameters do not match",
