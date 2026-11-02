@@ -10,14 +10,14 @@ import {
   type MetaWebhookBatch,
 } from "@eccos/core/parser";
 import { isBsuid } from "@eccos/core/bsuid";
-import { metaErrorCodes, sendMessage } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
 import { listTemplates } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
-import { isIdempotencyKey, validateSubscriberUrl } from "./gateway";
+import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
@@ -752,10 +752,23 @@ async function sendMessageRoute(c: AppContext) {
   const ids = { wabaId: target.waba.wabaId, phoneNumberId: target.phoneNumberId };
   const messageType = typeof target.metaBody.type === "string" ? target.metaBody.type : "unknown";
   const stub = getGatewayStubForWaba(c.env, target.waba.wabaId);
-  const claim = key === undefined ? null : await stub.claimSendKey(account.accountId, key);
+  const claim =
+    key === undefined
+      ? null
+      : await stub.claimSendKey(account.accountId, key, await sendBodyHash(target.phoneNumberId, target.metaBody));
+  if (claim?.state === "reused") {
+    logEvent("outbound_send", cid, 422, { reason: "idempotency_key_reused" });
+    return c.json({ ok: false, error: "idempotency_key_reused" }, 422);
+  }
   if (claim?.state === "pending") {
     logEvent("outbound_send", cid, 409, { reason: "idempotency_key_in_progress" });
-    return c.json({ ok: false, error: "a request with this Idempotency-Key is still in progress" }, 409);
+    return c.json(
+      {
+        ok: false,
+        error: "a request with this Idempotency-Key is in progress or its outcome is unknown; check the conversation before sending again",
+      },
+      409,
+    );
   }
   if (claim?.state === "done") {
     const stored = JSON.parse(claim.result) as { status: 200 | 502; body: Record<string, unknown> };
@@ -784,6 +797,8 @@ async function sendMessageRoute(c: AppContext) {
       JSON.stringify(result.error),
       target.phoneNumberId,
     );
+    // Meta may have accepted it: the key stays pending so a retry cannot send it twice.
+    if (sendOutcomeUnknown(result)) return c.json({ ok: false, outcome: "unknown", error: result.error }, 502);
     return respond(502, { ok: false, error: result.error });
   }
   logEvent("outbound_send", cid, 200, { ...ids, messageType, messageId: result.id, ok: true });

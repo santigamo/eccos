@@ -78,7 +78,9 @@ your app  ◀──forward (HMAC)────   Eccos  ◀──  Meta webhook  
 
 - **Outbound:** Workers use `POST /v1/wabas/<WABA_ID>/messages` with an account API key → Meta `/{phone}/messages`.
   An optional `Idempotency-Key` header makes a retry safe: within 24 h a repeated key gets the
-  first response back (Meta refusals included) without sending again, or `409` while it is in flight.
+  first response back (Meta refusals included) without sending again, or `409` while it is in flight
+  or its outcome is unknown (a `502` with `"outcome": "unknown"`: no answer or a 5xx from Meta, so it
+  may have been sent). The same key with a different body gets `422 idempotency_key_reused`.
 - **Inbound:** Meta calls `POST /webhooks/meta`; Eccos verifies `X-Hub-Signature-256`,
   normalizes the payload, and forwards `{ events: [...] }` to the subscriber URL configured for
   that WABA, signed `X-Eccos-Signature: sha256=<hex>` when a subscriber secret is configured.

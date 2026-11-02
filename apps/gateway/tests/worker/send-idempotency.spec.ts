@@ -21,9 +21,9 @@ afterEach(async () => {
 
 const rpc = () => new GatewayRPC(createExecutionContext(), env);
 
-function sendText(idempotencyKey?: string) {
+function sendText(idempotencyKey?: string, text = "Hola") {
   return rpc().sendText(
-    { wabaId: TEST_WABA_ID, phoneNumberId: "PNID1", to: "34600000011", text: "Hola", idempotencyKey },
+    { wabaId: TEST_WABA_ID, phoneNumberId: "PNID1", to: "34600000011", text, idempotencyKey },
     TEST_ACCOUNT_ID,
   );
 }
@@ -36,6 +36,11 @@ function mockMeta(gate: Promise<void> = Promise.resolve()) {
     return new Response(JSON.stringify({ messages: [{ id }] }), { status: 200 });
   });
 }
+
+/** Meta never answers (network error, timeout) or answers 5xx. */
+const noAnswer = () => vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("The operation was aborted due to timeout"));
+const serverError = () =>
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: { code: 1 } }), { status: 503 }));
 
 const outboundRows = () => rpc().listOutbound({ wabaId: TEST_WABA_ID }, TEST_ACCOUNT_ID);
 
@@ -88,6 +93,23 @@ describe("console send idempotency", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["no answer", noAnswer],
+    ["a 5xx", serverError],
+  ])("%s is an unknown outcome: the key stays pending and a retry does not resend", async (_, meta) => {
+    const fetchSpy = meta();
+    expect(await sendText("key-1")).toEqual({ ok: false, code: "unknown", detail: null });
+    expect(await sendText("key-1")).toEqual({ ok: false, code: "in_progress", detail: null });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a key reused for another message is refused without sending", async () => {
+    const fetchSpy = mockMeta();
+    await sendText("key-1");
+    expect(await sendText("key-1", "Adiós")).toEqual({ ok: false, code: "key_reused", detail: null });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("dedupes a template test send the same way", async () => {
     const fetchSpy = mockMeta();
     const send = () =>
@@ -118,8 +140,9 @@ describe("console send idempotency", () => {
     await sendText("key-1");
     await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
       const later = Date.now() + SEND_KEY_TTL_MS + 1;
-      expect(instance.claimSendKey(TEST_ACCOUNT_ID, "key-1")).toMatchObject({ state: "done" });
-      expect(instance.claimSendKey(TEST_ACCOUNT_ID, "key-1", later)).toEqual({ state: "new" });
+      const hash = instance.sql.exec("SELECT body_hash FROM send_keys").one().body_hash as string;
+      expect(instance.claimSendKey(TEST_ACCOUNT_ID, "key-1", hash)).toMatchObject({ state: "done" });
+      expect(instance.claimSendKey(TEST_ACCOUNT_ID, "key-1", hash, later)).toEqual({ state: "new" });
     });
 
     await sendText("key-2");
@@ -134,11 +157,11 @@ describe("console send idempotency", () => {
 });
 
 describe("POST /v1/wabas/:wabaId/messages with Idempotency-Key", () => {
-  const post = (headers: Record<string, string> = {}) =>
+  const post = (headers: Record<string, string> = {}, body = "hi") =>
     exports.default.fetch(`http://example.com/v1/wabas/${TEST_WABA_ID}/messages`, {
       method: "POST",
       headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json", ...headers },
-      body: JSON.stringify({ to: "34600000011", type: "text", text: { body: "hi" } }),
+      body: JSON.stringify({ to: "34600000011", type: "text", text: { body } }),
     });
 
   it("returns the stored response for a repeated key and sends once", async () => {
@@ -163,6 +186,39 @@ describe("POST /v1/wabas/:wabaId/messages with Idempotency-Key", () => {
     expect((await post({ "idempotency-key": "api-1" })).status).toBe(409);
     release();
     expect((await first).status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays a stored Meta refusal as the same 502", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ error: { code: 131047, message: "window" } }), { status: 400 }));
+    const first = await post({ "idempotency-key": "api-1" });
+    const second = await post({ "idempotency-key": "api-1" });
+    expect(first.status).toBe(502);
+    expect(second.status).toBe(502);
+    expect(await second.json()).toEqual(await first.json());
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["no answer", noAnswer],
+    ["a 5xx", serverError],
+  ])("%s is an unknown outcome: 502 unknown, then 409 without resending", async (_, meta) => {
+    const fetchSpy = meta();
+    const first = await post({ "idempotency-key": "api-1" });
+    expect(first.status).toBe(502);
+    expect(await first.json()).toMatchObject({ ok: false, outcome: "unknown" });
+    expect((await post({ "idempotency-key": "api-1" })).status).toBe(409);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers 422 for a key reused with a different body", async () => {
+    const fetchSpy = mockMeta();
+    expect((await post({ "idempotency-key": "api-1" })).status).toBe(200);
+    const reused = await post({ "idempotency-key": "api-1" }, "bye");
+    expect(reused.status).toBe(422);
+    expect(await reused.json()).toEqual({ ok: false, error: "idempotency_key_reused" });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 

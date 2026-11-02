@@ -10,12 +10,12 @@ import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./met
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
-import { metaErrorCodes, sendMessage, type SendResult } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
-import { isIdempotencyKey } from "./gateway";
+import { isIdempotencyKey, sendBodyHash } from "./gateway";
 import type {
   AccountKeyResource,
   AccountResources,
@@ -833,7 +833,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       metaAccessToken: waba.metaAccessToken,
     });
     const stub = this.stubFor(waba.wabaId);
-    return this.sendOnce(stub, account, waba.wabaId, input.idempotencyKey, async (): Promise<SendTemplateTestResult> => {
+    const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
+    return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTemplateTestResult> => {
       const result = await sendMessage(cfg, metaBody);
       logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
 
@@ -849,6 +850,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
           JSON.stringify(result.error),
           input.phoneNumberId,
         );
+        if (sendOutcomeUnknown(result)) return { ok: false, code: "unknown", detail: null };
         const { code, message } = graphError(result.error);
         const mapped = code === null ? undefined : GRAPH_ERROR_CODES[code];
         return {
@@ -918,7 +920,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       metaAccessToken: waba.metaAccessToken,
     });
     const stub = this.stubFor(waba.wabaId);
-    return this.sendOnce(stub, account, waba.wabaId, input.idempotencyKey, async (): Promise<SendTextResult> => {
+    const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
+    return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTextResult> => {
       const result = await sendMessage(cfg, metaBody);
       logSend("send_text", waba.wabaId, input.phoneNumberId, "text", result);
 
@@ -931,6 +934,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
           JSON.stringify(result.error),
           input.phoneNumberId,
         );
+        if (sendOutcomeUnknown(result)) return { ok: false, code: "unknown", detail: null };
         const { code, message } = graphError(result.error);
         const mapped = code === null ? undefined : TEXT_GRAPH_ERROR_CODES[code];
         return { ok: false, code: mapped ?? "graph", detail: message ?? `HTTP ${result.status}` };
@@ -954,25 +958,28 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * The claim is stored before `send` runs, so a concurrent duplicate gets
    * `in_progress` and sends nothing; a later one gets the stored result back.
    * Every answer is stored, a Meta refusal included: a retry with the same key
-   * never resends, and sending again is a new key. No key: `send` just runs.
+   * never resends, and sending again is a new key. An `unknown` outcome is not
+   * stored, so the key stays pending and a retry gets `in_progress`. A key reused
+   * for another body gets `key_reused`. No key: `send` just runs.
    */
   private async sendOnce<T extends SendTemplateTestResult | SendTextResult>(
     stub: ReturnType<GatewayRPC["stubFor"]>,
     accountId: string,
     wabaId: string,
-    key: string | undefined,
+    { key, bodyHash }: { key: string | undefined; bodyHash: string },
     send: () => Promise<T>,
-  ): Promise<T | { ok: false; code: "in_progress"; detail: null }> {
+  ): Promise<T | { ok: false; code: "in_progress" | "key_reused"; detail: null }> {
     if (key === undefined) return send();
     if (!isIdempotencyKey(key)) throw new Error("invalid idempotencyKey");
-    const claim = await stub.claimSendKey(accountId, key);
+    const claim = await stub.claimSendKey(accountId, key, bodyHash);
     if (claim.state === "pending") return { ok: false, code: "in_progress", detail: null };
+    if (claim.state === "reused") return { ok: false, code: "key_reused", detail: null };
     if (claim.state === "done") {
       console.log(JSON.stringify({ level: "info", area: "rpc", event: "outbound_send", wabaId, deduped: true }));
       return JSON.parse(claim.result) as T;
     }
     const result = await send();
-    await stub.settleSendKey(accountId, key, JSON.stringify(result));
+    if (result.ok || result.code !== "unknown") await stub.settleSendKey(accountId, key, JSON.stringify(result));
     return result;
   }
 

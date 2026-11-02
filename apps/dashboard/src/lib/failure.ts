@@ -129,8 +129,20 @@ export function sendTestFailureCopy(
       };
     case "in_progress":
       return {
-        title: "Send still in progress",
-        detail: "An earlier attempt of this send has not finished. Wait a moment, then try again: it will not send twice.",
+        title: "Send not confirmed",
+        detail:
+          "An earlier attempt of this send has not been confirmed and may already have been sent. Check the conversation before sending again.",
+      };
+    case "unknown":
+      return {
+        title: "Send not confirmed",
+        detail:
+          "Meta did not confirm this send, so it may already have been sent. Check the conversation before sending again.",
+      };
+    case "key_reused":
+      return {
+        title: "Send not repeated",
+        detail: "This send was already used for a different message. Reload the page and try again.",
       };
     case "parameter_mismatch":
       return {

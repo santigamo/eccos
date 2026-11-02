@@ -4,10 +4,11 @@ import { sendKeyed, type SendGate } from "../src/lib/send-gate";
 const SENT = { ok: true as const, data: { ok: true, messageId: "wamid.1" } };
 const REFUSED = { ok: true as const, data: { ok: false, code: "graph" } };
 const IN_PROGRESS = { ok: true as const, data: { ok: false, code: "in_progress" } };
+const UNKNOWN = { ok: true as const, data: { ok: false, code: "unknown" } };
 const UNREACHABLE = { ok: false as const };
 
 /** A send that records the key of every call and answers with `answers` in turn. */
-function recorder(...answers: Array<typeof SENT | typeof REFUSED | typeof IN_PROGRESS | typeof UNREACHABLE | Error>) {
+function recorder(...answers: Array<typeof SENT | typeof REFUSED | typeof IN_PROGRESS | typeof UNKNOWN | typeof UNREACHABLE | Error>) {
   const keys: string[] = [];
   const send = async (data: { idempotencyKey: string }) => {
     keys.push(data.idempotencyKey);
@@ -19,10 +20,11 @@ function recorder(...answers: Array<typeof SENT | typeof REFUSED | typeof IN_PRO
 }
 
 describe("sendKeyed", () => {
-  test("a retry after a throw, a boundary failure or in_progress reuses the key", async () => {
+  test("a retry after a throw, a boundary failure, unknown or in_progress reuses the key", async () => {
     const gate: SendGate = { phase: "idle" };
-    const { keys, send } = recorder(new Error("timeout"), UNREACHABLE, IN_PROGRESS, SENT);
+    const { keys, send } = recorder(new Error("timeout"), UNREACHABLE, UNKNOWN, IN_PROGRESS, SENT);
     await expect(sendKeyed(gate, { text: "hola" }, send)).rejects.toThrow("timeout");
+    await sendKeyed(gate, { text: "hola" }, send);
     await sendKeyed(gate, { text: "hola" }, send);
     await sendKeyed(gate, { text: "hola" }, send);
     await sendKeyed(gate, { text: "hola" }, send);

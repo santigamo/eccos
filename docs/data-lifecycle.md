@@ -139,8 +139,12 @@ what error) should outlive the content itself:
 | `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, `created_at`, and `finished_at` survive; **`pending` `deliveries` rows are deleted** (by `created_at`) |
 | `DELIVERY_RETENTION_DAYS` | **90** | terminal `deliveries` rows are **deleted** entirely, by `created_at` |
 
-Send idempotency keys (`send_keys`: account, key, the stored answer, no content) are deleted 24 h
-after their first use by the same sweep, and ignored past that age even before it runs.
+Send idempotency keys (`send_keys`: account, key, a SHA-256 of the phone and Meta body, and the
+stored answer) live 24 h from their first use. The answer has no message content, but a refused
+send's answer holds Meta's error JSON, which can echo the recipient. The alarm's retention sweep
+deletes expired keys, and a claim deletes its own expired key first, so an expired key is never
+honoured even before the sweep runs. A send whose outcome is unknown (no answer, a Graph 5xx)
+keeps its key pending, with no answer stored, until it expires.
 
 Webhooks of a registered WABA that is `pending` (provisioning, or a re-run Embedded Signup) are
 held in `held_webhooks` until it is active, then ingested like any other webhook. The hold is

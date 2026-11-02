@@ -771,8 +771,12 @@ export type SendTestFailureCode =
   | "template_not_found"
   /** Graph 132000 — the template expects different parameters. */
   | "parameter_mismatch"
-  /** An earlier request with the same idempotency key has not settled; nothing was sent. */
+  /** An earlier request with the same idempotency key has not settled, or its outcome is unknown; nothing was sent now. */
   | "in_progress"
+  /** No answer from Meta (network, timeout, 5xx): the message may have been sent. The key stays pending. */
+  | "unknown"
+  /** The idempotency key was already used for a different message; nothing was sent. */
+  | "key_reused"
   /** Anything else; `detail` carries Meta's own message text. */
   | "graph";
 
@@ -809,8 +813,12 @@ export type SendTextFailureCode =
   | "no_phone"
   /** Graph 131047 — the 24-hour customer service window is closed; only a template can be sent. */
   | "window_closed"
-  /** An earlier request with the same idempotency key has not settled; nothing was sent. */
+  /** An earlier request with the same idempotency key has not settled, or its outcome is unknown; nothing was sent now. */
   | "in_progress"
+  /** No answer from Meta (network, timeout, 5xx): the message may have been sent. The key stays pending. */
+  | "unknown"
+  /** The idempotency key was already used for a different message; nothing was sent. */
+  | "key_reused"
   /** Graph 131030 — the Cloud API test number's recipient allowlist. */
   | "recipient_not_allowlisted"
   /** Anything else; `detail` carries Meta's own message text. */

@@ -130,7 +130,17 @@ export function isIdempotencyKey(key: unknown): key is string {
   return typeof key === "string" && /^[\x21-\x7e]{1,255}$/.test(key);
 }
 
-export type SendKeyClaim = { state: "new" } | { state: "pending" } | { state: "done"; result: string };
+/** What a send key is bound to: the phone and the exact Meta body. */
+export function sendBodyHash(phoneNumberId: string, metaBody: unknown): Promise<string> {
+  return sha256Hex(`${phoneNumberId}\n${JSON.stringify(metaBody)}`);
+}
+
+/** `pending` also covers a send whose outcome is unknown: it is never settled, so never resent. */
+export type SendKeyClaim =
+  | { state: "new" }
+  | { state: "pending" }
+  | { state: "reused" }
+  | { state: "done"; result: string };
 
 function parseIpv4Address(hostname: string): number[] | null {
   const octets = hostname.split(".");
@@ -364,11 +374,12 @@ export class EccosGateway extends DurableObject<Env> {
       // handful of real replies inside thousands of status callbacks.
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_type
         ON inbound_events (type, id);`);
-      // Idempotency keys for sends (send-idempotency.ts). `result` is NULL while
-      // the send is in flight; it holds the stored answer once it settles.
+      // Idempotency keys for sends (claimSendKey). `result` is NULL while the
+      // send is in flight or its outcome is unknown; it holds the stored answer once it settles.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS send_keys (
         account_id TEXT NOT NULL,
         key        TEXT NOT NULL,
+        body_hash  TEXT NOT NULL,
         result     TEXT,
         created_at INTEGER NOT NULL,
         PRIMARY KEY (account_id, key)
@@ -726,15 +737,22 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /** Claims `key` for one send. Synchronous, so two concurrent claims cannot both see "new". */
-  claimSendKey(accountId: string, key: string, now = Date.now()): SendKeyClaim {
+  claimSendKey(accountId: string, key: string, bodyHash: string, now = Date.now()): SendKeyClaim {
     this.sql.exec(`DELETE FROM send_keys WHERE account_id = ? AND key = ? AND created_at < ?`, accountId, key, now - SEND_KEY_TTL_MS);
     const row = this.sql
-      .exec(`SELECT result FROM send_keys WHERE account_id = ? AND key = ?`, accountId, key)
+      .exec(`SELECT body_hash, result FROM send_keys WHERE account_id = ? AND key = ?`, accountId, key)
       .toArray()[0];
     if (!row) {
-      this.sql.exec(`INSERT INTO send_keys (account_id, key, result, created_at) VALUES (?, ?, NULL, ?)`, accountId, key, now);
+      this.sql.exec(
+        `INSERT INTO send_keys (account_id, key, body_hash, result, created_at) VALUES (?, ?, ?, NULL, ?)`,
+        accountId,
+        key,
+        bodyHash,
+        now,
+      );
       return { state: "new" };
     }
+    if (row.body_hash !== bodyHash) return { state: "reused" };
     return row.result === null ? { state: "pending" } : { state: "done", result: row.result as string };
   }
 
