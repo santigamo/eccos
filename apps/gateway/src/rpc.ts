@@ -10,7 +10,7 @@ import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./met
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
-import { sendMessage } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
@@ -93,6 +93,16 @@ function publicConfig(config: Record<string, string>): Record<string, string> {
  * the line, so console traffic can be attributed to a customer. Ids only. */
 function logScope(accountId: string, wabaId: string): void {
   console.log(JSON.stringify({ level: "info", area: "rpc", event: "rpc_scope", accountId, wabaId }));
+}
+
+/** The `outbound_send` line of a console send, shaped like the HTTP route's. Ids and codes only. */
+function logSend(source: string, wabaId: string, phoneNumberId: string, messageType: string, result: SendResult): void {
+  const outcome = result.ok
+    ? { ok: true, messageId: result.id }
+    : { ok: false, httpStatus: result.status, ...metaErrorCodes(result.error) };
+  console.log(
+    JSON.stringify({ level: result.ok ? "info" : "error", area: "rpc", event: "outbound_send", source, wabaId, phoneNumberId, messageType, ...outcome }),
+  );
 }
 
 function requireAccountId(accountId: string | undefined, message: string): string {
@@ -822,6 +832,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       metaAccessToken: waba.metaAccessToken,
     });
     const result = await sendMessage(cfg, metaBody);
+    logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
     const stub = this.stubFor(waba.wabaId);
 
     if (!result.ok) {
@@ -904,6 +915,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       metaAccessToken: waba.metaAccessToken,
     });
     const result = await sendMessage(cfg, metaBody);
+    logSend("send_text", waba.wabaId, input.phoneNumberId, "text", result);
     const stub = this.stubFor(waba.wabaId);
 
     if (!result.ok) {

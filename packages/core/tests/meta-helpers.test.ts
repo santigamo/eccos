@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { sendMessage } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage } from "@eccos/core/send";
 import { listTemplates } from "@eccos/core/templates";
 import type { CoreConfig, MetaAppConfig } from "@eccos/core/config-schema";
 
@@ -116,5 +116,21 @@ describe("meta helpers narrow config to MetaAppConfig", () => {
     expect(result).toMatchObject({ ok: false, status: 0 });
     expect(String(result.error)).toContain("META_WABA_ID is not configured");
     expect(requests).toHaveLength(0);
+  });
+});
+
+describe("metaErrorCodes", () => {
+  it("reads code, subcode and type from a Graph error envelope, never the message", () => {
+    const codes = metaErrorCodes({
+      error: { code: 131047, error_subcode: 2494010, type: "OAuthException", message: "to 34600000000", error_data: { details: "x" } },
+    });
+    expect(codes).toEqual({ errorCode: 131047, errorSubcode: 2494010, errorType: "OAuthException" });
+  });
+
+  it("returns nulls for anything that is not a Graph error envelope", () => {
+    const none = { errorCode: null, errorSubcode: null, errorType: null };
+    expect(metaErrorCodes("META_PHONE_NUMBER_ID is not configured")).toEqual(none);
+    expect(metaErrorCodes(null)).toEqual(none);
+    expect(metaErrorCodes({ error: { code: "131047" } })).toEqual(none);
   });
 });

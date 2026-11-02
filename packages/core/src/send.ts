@@ -50,6 +50,18 @@ export async function sendMessage(
   return { ok: true, id, waId: contact?.wa_id ?? contact?.user_id ?? null };
 }
 
+export type MetaErrorCodes = { errorCode: number | null; errorSubcode: number | null; errorType: string | null };
+
+/** The codes of a failed send's Graph error envelope; never its free-text message, which can echo user data. */
+export function metaErrorCodes(error: unknown): MetaErrorCodes {
+  const inner = error && typeof error === "object" ? (error as { error?: Record<string, unknown> }).error : undefined;
+  return {
+    errorCode: typeof inner?.code === "number" ? inner.code : null,
+    errorSubcode: typeof inner?.error_subcode === "number" ? inner.error_subcode : null,
+    errorType: typeof inner?.type === "string" ? inner.type : null,
+  };
+}
+
 function addressed(body: Record<string, unknown>): Record<string, unknown> {
   if (typeof body.to !== "string" || !isBsuid(body.to)) return body;
   const { to, ...rest } = body;

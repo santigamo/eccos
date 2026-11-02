@@ -35,6 +35,14 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `invalid_waba_id` | The entry id is not a WABA id |
 | `lookup_failed` | The control plane lookup threw |
 
+### Worker: `POST /v1/wabas/:wabaId[/phones/:phoneNumberId]/messages`
+
+| `event` | When | Fields |
+|---|---|---|
+| `outbound_send` | One per send request | `wabaId`, `phoneNumberId`, `messageType`, `ok`; `messageId` on success. On a Meta failure (`status` 502): `httpStatus` (Graph's; `0` when the request never got an answer), `errorCode`, `errorSubcode`, `errorType` (Meta's `error.code` / `error_subcode` / `type`, null when absent). A request refused before Meta is called has `reason = invalid_target` and the requested `wabaId`, `phoneNumberId` |
+
+Meta's error `message` and `error_data` are never logged: they can echo the recipient or content.
+
 ### Durable Object `EccosGateway` and `GatewayRPC`
 
 | `event` | `area` | Fields |
@@ -45,6 +53,7 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `held_released` | `ingest` | `wabaId`, `released`, `discarded` (events of a phone the active WABA does not register). Runs when provisioning activates the WABA, or on its next webhook if activation raced a hold |
 | `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
 | `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
+| `outbound_send` | `rpc` | A console send: `source` (`send_test` for a template test, `send_text` for the composer), then the same fields as the worker's `outbound_send` (no `invalid_target`) |
 | `rpc_scope` | `rpc` | `accountId`, `wabaId` of a console RPC call (Workers Logs adds the RPC method) |
 | `sync-failed`, `item-skipped`, `history-error`, ... | `history` / `retention` / `media` | `wabaId`, `error` |
 
@@ -71,7 +80,10 @@ reported in the next alert.
 4. **Delivery success rate and latency per WABA.** Filter `area = forward`; group by `wabaId`,
    `event`; calculate `count`, `p95(durationMs)`, `p95(lagMs)`. Success rate is `delivered`
    over all attempts. Group by `httpStatus` to see how a subscriber fails.
-5. **What a customer's console did.** Filter `event = rpc_scope` and `accountId = <id>`; group by
+5. **Failed sends by Meta error per WABA.** Filter `event = outbound_send` and `ok = false`; group
+   by `wabaId`, `errorCode`, `errorSubcode`; calculate `count`. `131047` is a free-form message
+   outside the 24-hour window; a null `errorCode` with `httpStatus = 0` is a network failure.
+6. **What a customer's console did.** Filter `event = rpc_scope` and `accountId = <id>`; group by
    `$workers.event.rpcMethods`.
 
 To follow one webhook end to end, filter on its `correlationId` (the `cf-ray`) for the worker
