@@ -1,32 +1,132 @@
 ---
 title: Bulk sending
-description: "How to run a WhatsApp campaign through Eccos: one request per recipient, pacing, backoff, retries and Meta limits."
+description: "Send one approved WhatsApp template to up to 10,000 recipients in one request. Eccos paces the sends, retries throttling and reports progress."
 ---
 
-There is no bulk endpoint and no server-side send queue. A campaign is one request per
-recipient, driven by your code:
+A **broadcast** sends one approved template to many recipients. You make one request; Eccos
+sends at your account's rate, retries when Meta asks it to slow down, and reports the progress
+of every recipient.
 
-1. Send one request per recipient, each with its own [Idempotency-Key](/idempotency).
-2. Pace yourself under the rate limit (for example a small worker pool with a token bucket)
-   rather than relying on `429`s.
-3. On `429`, wait (exponential backoff with jitter) and retry with the **same** key. A `429`
-   happens before the send, so nothing was sent.
-   Meta's own throughput and pacing errors (for example codes 130429 and 131056) come back as a
-   Meta 4xx, which Eccos stores as a final `502` under the key. Retrying with the same key
-   replays that failure, so back off and retry these with a **new** key.
-4. Record each returned message `id`, then follow `sent` / `delivered` / `read` / `failed` through
-   [status events](/event-reference). A `200` only means Meta accepted the message.
-5. Skip customers who opted out (see [Opt-out](/event-reference#opt-out)).
+## Create a broadcast
 
-Meta applies its own limits on top of Eccos. Eccos neither enforces nor reports them, so read
-Meta's documentation:
+`POST /v1/wabas/{wabaId}/broadcasts`
+
+```json
+{
+  "phone_number_id": "1098765432",
+  "template": {
+    "name": "ramadan_appeal",
+    "language": { "code": "en_US" },
+    "components": [{ "type": "body", "parameters": [{ "type": "text", "text": "friend" }] }]
+  },
+  "recipients": [
+    { "to": "34600000001", "components": [{ "type": "body", "parameters": [{ "type": "text", "text": "Ana" }] }] },
+    { "to": "34600000002" }
+  ]
+}
+```
+
+- `template` is Meta's template object: `name`, `language` (`{ "code": "es" }` or `"es"`) and,
+  optionally, `components` used for every recipient that does not bring its own.
+- `recipients` holds 1 to 10,000 entries. `to` is a phone number or a BSUID. A recipient's
+  `components` replace the template's: it is where each person's values go, in the same shape
+  as a [single template send](/sending-messages).
+- `phone_number_id` (or `/v1/wabas/{wabaId}/phones/{phoneNumberId}/broadcasts`) is needed only
+  when the WhatsApp Business Account has more than one number.
+- Send an [Idempotency-Key](/idempotency) header: retrying with the same key returns the same
+  broadcast instead of creating a second one. Reusing it with a different body returns `422`.
+
+Eccos checks the request before queueing anything:
+
+| Response | Why |
+|---|---|
+| `202` | Queued. The body is the broadcast (below). |
+| `400` | A malformed request. When recipients are invalid, `invalid` lists them (`index`, `error`, up to 100) and nothing is queued. |
+| `422` | `template_not_found` or `template_not_approved` (with `templateStatus`) for that name and language, or `idempotency_key_reused`. |
+| `502` | Eccos could not read your templates from Meta. Nothing was queued. |
+
+A recipient that appears twice, however it is written (`+34 600 000 001` and `34600000001`), is
+sent once; `duplicatesSkipped` counts the extra entries.
+
+## How it is sent
+
+- **Pace.** One second at a time, at your account's rate (60 messages a minute by default). The
+  broadcast draws from the same budget as your [single sends](/errors-and-rate-limits), so
+  together they never go over it.
+- **Throttling.** When Meta answers that it is busy (HTTP 429, or codes 130429, 131056, 80007),
+  the message was not sent: Eccos queues it again and waits 5 seconds, then 10, 20… up to 5
+  minutes. After 8 throttled attempts the recipient is marked `failed`.
+- **Never twice.** When Meta does not answer, or answers with a 5xx, the message may have been
+  sent, so Eccos never retries it. The recipient ends as `unknown`: check the conversation.
+- **Errors for everyone stop it.** An invalid token, a locked or unpaid account, or a template
+  that no longer exists or does not match (codes 10, 190, 200, 131031, 131042, 132000, 132001,
+  132005, 132007, 132012, 132015, 132016, 133010) would fail every remaining recipient. The
+  broadcast stops as `halted`, with the reason in `haltReason`, and the recipients not yet
+  attempted are `cancelled`.
+- **Any other Meta error** fails that recipient only, with Meta's error stored on it.
+
+Every message is a normal send: it appears in your logs and conversations, and your webhook
+receives its `sent`, `delivered`, `read` and `failed` [status events](/event-reference). Use a
+recipient's `messageId` to match them.
+
+## Follow it
+
+`GET /v1/wabas/{wabaId}/broadcasts/{broadcastId}`
+
+```json
+{
+  "ok": true,
+  "broadcast": {
+    "id": "bc_6f1c0e1b0a3d4c51a7a39c8d8b0e2f44",
+    "status": "running",
+    "phoneNumberId": "1098765432",
+    "template": { "name": "ramadan_appeal", "language": "en_US" },
+    "total": 5000,
+    "duplicatesSkipped": 3,
+    "ratePerMinute": 600,
+    "counts": { "queued": 3800, "sending": 10, "sent": 1170, "failed": 20, "unknown": 0, "cancelled": 0 },
+    "delivery": { "delivered": 1102, "read": 640, "failed": 4 },
+    "haltReason": null,
+    "createdAt": 1767225600000,
+    "finishedAt": null
+  }
+}
+```
+
+- `status`: `running`, `completed` (every recipient settled), `cancelled` or `halted`.
+- `counts` is where each recipient stands on the send to Meta. `delivery` counts the receipts
+  Meta has sent back for the messages that went out, so it keeps growing after the broadcast
+  completes.
+
+`GET /v1/wabas/{wabaId}/broadcasts/{broadcastId}/recipients?status=failed&limit=500&after=...`
+lists recipients in order with `seq`, `to`, `status`, `messageId`, `attempts` and Meta's `error`.
+`status` filters by one status; when a page is full the response carries `next`, which you pass
+as `after` for the next page.
+
+`GET /v1/wabas/{wabaId}/broadcasts?limit=20` lists your latest broadcasts.
+
+## Cancel it
+
+`POST /v1/wabas/{wabaId}/broadcasts/{broadcastId}/cancel` stops a running broadcast: recipients
+not yet attempted become `cancelled`; messages already sent are not recalled.
+
+## Privacy
+
+Recipients and their values are message content. The values are deleted as soon as each
+message is attempted, and a broadcast's recipients are deleted with the rest of your content
+when the [retention window](/data-endpoints) passes. Erasing a customer removes them from your
+broadcasts too.
+
+## Meta's limits
+
+Meta applies its own limits on top of Eccos. Eccos neither enforces nor reports them:
 
 - Business portfolio messaging limits (how many unique customers you can message per 24 hours,
   by tier) and quality rating: [messaging limits](https://developers.facebook.com/docs/whatsapp/messaging-limits).
 - Per-number throughput. Numbers connected with coexistence ("I use this number in the WhatsApp
-  Business app") are capped lower than standard numbers: see the throughput section of the
-  [Cloud API overview](https://developers.facebook.com/docs/whatsapp/cloud-api/overview).
+  Business app") are capped at 20 messages per second.
 - Per-user marketing message limits: Meta may refuse a marketing template to a customer who has
-  recently received several marketing messages, whoever sent them (the failure arrives as a
-  `failed` event or a `502`).
+  recently received several marketing messages, whoever sent them.
 - Template quality, which can lower your limits or pause a template.
+
+Skip customers who opted out (see [Opt-out](/event-reference#opt-out)).

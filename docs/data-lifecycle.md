@@ -146,6 +146,12 @@ deletes expired keys, and a claim deletes its own expired key first, so an expir
 honoured even before the sweep runs. A send whose outcome is unknown (no answer, a Graph 5xx)
 keeps its key pending, with no answer stored, until it expires.
 
+Broadcasts (`broadcasts`, `broadcast_recipients`): each recipient's phone number and status,
+and Meta's error when its send failed. A recipient's template values are deleted as soon as its
+send is attempted. A finished broadcast and its recipients are deleted with the content window
+(by the broadcast's `created_at`); a running one is kept until it finishes. `eraseByPhone`
+removes the customer from every broadcast.
+
 Webhooks of a registered WABA that is `pending` (provisioning, or a re-run Embedded Signup) are
 held in `held_webhooks` until it is active, then ingested like any other webhook. The hold is
 capped at 5000 events per WABA (beyond it a batch is ignored as `hold_full`); a batch Meta

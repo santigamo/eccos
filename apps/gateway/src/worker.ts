@@ -24,7 +24,8 @@ import { syncFieldsByWaba } from "./sync-capture";
 import { EccosGateway as Gateway } from "./gateway";
 import { EccosControlPlane as ControlPlane } from "./control-plane";
 import { sentryOptions } from "./sentry";
-import { checkSendRate } from "./send-rate-limit";
+import { checkSendRate, sendRatePerMinute } from "./send-rate-limit";
+import { parseBroadcastRequest, parseStoredError, type RecipientStatus } from "./broadcasts";
 
 export const EccosGateway = Sentry.instrumentDurableObjectWithSentry(sentryOptions, Gateway);
 export type EccosGateway = Gateway;
@@ -679,6 +680,19 @@ async function tenantSendTarget(
   if (typeof recipient !== "string" || !isSendRecipient(recipient)) {
     return { ok: false, status: 400, error: "invalid to: expected a phone number (5-15 digits) or a BSUID" };
   }
+  const phone = resolvePhone(c, waba, body);
+  if (!phone.ok) return phone;
+  const { phoneNumberId } = phone;
+  const metaBody = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "phone_number_id"));
+  return { ok: true, waba, phoneNumberId, metaAccessToken: waba.metaAccessToken, recipient, metaBody };
+}
+
+/** The sending phone: the URL or body selector, or the WABA's only number. */
+function resolvePhone(
+  c: AppContext,
+  waba: AccountWaba,
+  body: Record<string, unknown>,
+): { ok: true; phoneNumberId: string } | { ok: false; status: 400 | 404; error: string } {
   let selector: { phoneNumberId: string | null };
   try {
     selector = phoneSelector(c, body);
@@ -703,8 +717,7 @@ async function tenantSendTarget(
   if (!waba.phones.some((p) => p.phoneNumberId === phoneNumberId)) {
     return { ok: false, status: 404, error: "phone number is not registered to this WABA" };
   }
-  const metaBody = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "phone_number_id"));
-  return { ok: true, waba, phoneNumberId, metaAccessToken: waba.metaAccessToken, recipient, metaBody };
+  return { ok: true, phoneNumberId };
 }
 
 /** A phone number as Meta accepts it (digits, optionally `+` and separators) or a BSUID. */
@@ -877,6 +890,133 @@ async function templatesRoute(c: AppContext) {
 }
 
 app.get("/v1/wabas/:wabaId/templates", templatesRoute);
+
+// --- Broadcasts (src/broadcasts.ts) -----------------------------------------
+
+async function createBroadcastRoute(c: AppContext) {
+  const cid = correlationId(c);
+  const account = c.get("account") ?? null;
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const key = c.req.header("idempotency-key");
+  if (key !== undefined && !isIdempotencyKey(key)) {
+    return c.json({ ok: false, error: "Idempotency-Key must be 1-255 printable ASCII characters" }, 400);
+  }
+  const waba = await ownedWaba(c.env, account, requestedWabaId(c));
+  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const parsed = parseBroadcastRequest(body);
+  if (!parsed.ok) {
+    logEvent("broadcast_create", cid, 400, { wabaId: waba.wabaId, reason: "invalid_request" });
+    return c.json({ ok: false, error: parsed.error, ...(parsed.invalid ? { invalid: parsed.invalid } : {}) }, 400);
+  }
+  const phone = resolvePhone(c, waba, body ?? {});
+  if (!phone.ok) return c.json({ ok: false, error: phone.error }, phone.status);
+  const { request } = parsed;
+
+  // Checked once here rather than failing every recipient at Meta.
+  const cfg = tenantConfig(getAppConfig(c.env), {
+    wabaId: waba.wabaId,
+    phoneNumberId: phone.phoneNumberId,
+    metaAccessToken: waba.metaAccessToken,
+  });
+  const templates = await listTemplates(cfg, 100, { fields: ["name", "language", "status"], name: request.templateName });
+  if (!templates.ok) {
+    logEvent("broadcast_create", cid, 502, { wabaId: waba.wabaId, reason: "template_lookup_failed" });
+    return c.json({ ok: false, error: templates.error }, 502);
+  }
+  const translation = ((templates.data as { data?: { name?: unknown; language?: unknown; status?: unknown }[] })?.data ?? []).find(
+    (row) => row.name === request.templateName && row.language === request.language,
+  );
+  if (!translation) {
+    return c.json({ ok: false, error: "template_not_found" }, 422);
+  }
+  if (translation.status !== "APPROVED") {
+    return c.json({ ok: false, error: "template_not_approved", templateStatus: translation.status }, 422);
+  }
+
+  const stub = getGatewayStubForWaba(c.env, waba.wabaId);
+  const created = await stub.createBroadcast({
+    accountId: account.accountId,
+    phoneNumberId: phone.phoneNumberId,
+    request,
+    duplicates: parsed.duplicates,
+    ratePerMinute: sendRatePerMinute(c.env, account.accountId),
+    ...(key !== undefined ? { idempotencyKey: key } : {}),
+    bodyHash: await sendBodyHash(phone.phoneNumberId, request),
+  });
+  if (created.state === "reused") {
+    return c.json({ ok: false, error: "idempotency_key_reused" }, 422);
+  }
+  logEvent("broadcast_create", cid, 202, {
+    wabaId: waba.wabaId,
+    broadcastId: created.broadcast?.id,
+    recipients: request.recipients.length,
+    replayed: created.state === "existing",
+  });
+  return c.json({ ok: true, broadcast: created.broadcast }, 202);
+}
+
+/** The account's WABA stub, or the response that ends the request. */
+async function broadcastStub(c: AppContext) {
+  const account = c.get("account") ?? null;
+  if (!account) return { error: c.json({ ok: false, error: "unauthorized" }, 401) } as const;
+  const wabaId = requestedWabaId(c);
+  if (!(await ownsWaba(c.env, account, wabaId))) {
+    return { error: c.json({ ok: false, error: "WABA is not configured" }, 404) } as const;
+  }
+  return { account, stub: getGatewayStubForWaba(c.env, wabaId) } as const;
+}
+
+const RECIPIENT_STATUSES = new Set(["queued", "sending", "sent", "failed", "unknown", "cancelled"]);
+
+app.post("/v1/wabas/:wabaId/broadcasts", createBroadcastRoute);
+app.post("/v1/wabas/:wabaId/phones/:phoneNumberId/broadcasts", createBroadcastRoute);
+
+app.get("/v1/wabas/:wabaId/broadcasts", async (c) => {
+  const scope = await broadcastStub(c);
+  if ("error" in scope) return scope.error;
+  const n = Number(c.req.query("limit") ?? 20);
+  const limit = Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 100) : 20;
+  return c.json({ ok: true, broadcasts: await scope.stub.listBroadcasts(scope.account.accountId, limit) });
+});
+
+app.get("/v1/wabas/:wabaId/broadcasts/:broadcastId", async (c) => {
+  const scope = await broadcastStub(c);
+  if ("error" in scope) return scope.error;
+  const broadcast = await scope.stub.getBroadcast(scope.account.accountId, c.req.param("broadcastId"));
+  return broadcast ? c.json({ ok: true, broadcast }) : c.json({ ok: false, error: "broadcast not found" }, 404);
+});
+
+app.get("/v1/wabas/:wabaId/broadcasts/:broadcastId/recipients", async (c) => {
+  const scope = await broadcastStub(c);
+  if ("error" in scope) return scope.error;
+  const status = c.req.query("status");
+  if (status !== undefined && !RECIPIENT_STATUSES.has(status)) {
+    return c.json({ ok: false, error: "invalid status" }, 400);
+  }
+  const after = Number(c.req.query("after") ?? -1);
+  const n = Number(c.req.query("limit") ?? 500);
+  const limit = Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 1000) : 500;
+  const recipients = await scope.stub.listBroadcastRecipients(scope.account.accountId, c.req.param("broadcastId"), {
+    ...(status ? { status: status as RecipientStatus } : {}),
+    ...(Number.isSafeInteger(after) && after >= 0 ? { after } : {}),
+    limit,
+  });
+  if (!recipients) return c.json({ ok: false, error: "broadcast not found" }, 404);
+  const last = recipients.at(-1);
+  return c.json({
+    ok: true,
+    recipients: recipients.map((row) => ({ ...row, error: parseStoredError(row.error) })),
+    ...(recipients.length === limit && last ? { next: last.seq } : {}),
+  });
+});
+
+app.post("/v1/wabas/:wabaId/broadcasts/:broadcastId/cancel", async (c) => {
+  const scope = await broadcastStub(c);
+  if ("error" in scope) return scope.error;
+  const broadcast = await scope.stub.cancelBroadcast(scope.account.accountId, c.req.param("broadcastId"));
+  return broadcast ? c.json({ ok: true, broadcast }) : c.json({ ok: false, error: "broadcast not found" }, 404);
+});
 
 app.get("/v1/wabas/:wabaId/export", async (c) => {
   const cid = correlationId(c);
