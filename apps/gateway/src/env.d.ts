@@ -16,6 +16,8 @@ interface Env {
    */
   ECCOS_TOKEN_ENCRYPTION_KEY?: string;
   SEND_RATE_LIMITER?: RateLimit;
+  SEND_RATE_LIMITER_HIGH?: RateLimit;
+  HIGH_THROUGHPUT_ACCOUNTS?: string;
   /**
    * Optional Durable Object jurisdiction ("eu", "fedramp", "fedramp-high").
    * Empty/absent = no jurisdiction (current behavior). Validated in

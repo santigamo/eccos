@@ -24,6 +24,7 @@ import { syncFieldsByWaba } from "./sync-capture";
 import { EccosGateway as Gateway } from "./gateway";
 import { EccosControlPlane as ControlPlane } from "./control-plane";
 import { sentryOptions } from "./sentry";
+import { checkSendRate } from "./send-rate-limit";
 
 export const EccosGateway = Sentry.instrumentDurableObjectWithSentry(sentryOptions, Gateway);
 export type EccosGateway = Gateway;
@@ -424,19 +425,6 @@ app.use("/v1/*", async (c, next) => {
   }
   c.set("account", account);
 
-  if (c.req.method === "POST" && /^\/v1\/wabas\/[^/]+(\/phones\/[^/]+)?\/messages$/.test(path)) {
-    if (c.env.SEND_RATE_LIMITER) {
-      // Cloudflare Rate Limiting is per-location and eventually consistent:
-      // good abuse/spike protection, not an exact global quota counter.
-      const sendWabaId = path.match(/^\/v1\/wabas\/([^/]+)/)?.[1] ?? "unknown";
-      const rateKey = `${account.accountId}:${sendWabaId}`;
-      const { success } = await c.env.SEND_RATE_LIMITER.limit({ key: rateKey });
-      if (!success) {
-        logEvent("v1_rate_limited", cid, 429, { path });
-        return c.json({ ok: false, error: "rate limited" }, 429);
-      }
-    }
-  }
   await next();
 });
 
@@ -742,6 +730,11 @@ async function sendMessageRoute(c: AppContext) {
       wabaId: requestedWabaId(c),
     });
     return c.json({ ok: false, error: target.error }, target.status);
+  }
+  // Per-location and eventually consistent: spike protection, not an exact quota.
+  if (!(await checkSendRate(c.env, account.accountId, target.waba.wabaId))) {
+    logEvent("v1_rate_limited", cid, 429, { path: c.req.path });
+    return c.json({ ok: false, error: "rate limited" }, 429);
   }
   const cfg = tenantConfig(getAppConfig(c.env), {
     wabaId: target.waba.wabaId,

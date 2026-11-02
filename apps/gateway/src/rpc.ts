@@ -16,6 +16,7 @@ import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
 import { isIdempotencyKey, sendBodyHash } from "./gateway";
+import { checkSendRate } from "./send-rate-limit";
 import type {
   AccountKeyResource,
   AccountResources,
@@ -775,15 +776,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       if (/[\s]/.test(link)) throw new Error("headerMedia link must not contain whitespace");
     }
 
-    if (this.env.SEND_RATE_LIMITER) {
-      // The SAME key as the HTTP middleware (`worker.ts`): console sends and
-      // API-key sends draw from one per-tenant budget. The budget protects the
-      // tenant's standing with Meta and caps blast radius — it does not
-      // authenticate the transport, so a session must not buy a bigger one.
-      const { success } = await this.env.SEND_RATE_LIMITER.limit({
-        key: `${account}:${waba.wabaId}`,
-      });
-      if (!success) return { ok: false, code: "rate_limited", detail: null };
+    if (!(await checkSendRate(this.env, account, waba.wabaId))) {
+      return { ok: false, code: "rate_limited", detail: null };
     }
 
     const components: Record<string, unknown>[] = [];
@@ -902,11 +896,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       throw new Error("text must be 1-4096 characters");
     }
 
-    if (this.env.SEND_RATE_LIMITER) {
-      const { success } = await this.env.SEND_RATE_LIMITER.limit({
-        key: `${account}:${waba.wabaId}`,
-      });
-      if (!success) return { ok: false, code: "rate_limited", detail: null };
+    if (!(await checkSendRate(this.env, account, waba.wabaId))) {
+      return { ok: false, code: "rate_limited", detail: null };
     }
 
     const metaBody = {

@@ -40,6 +40,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER;
+  delete (env as { SEND_RATE_LIMITER_HIGH?: RateLimit }).SEND_RATE_LIMITER_HIGH;
+  delete (env as { HIGH_THROUGHPUT_ACCOUNTS?: string }).HIGH_THROUGHPUT_ACCOUNTS;
   vi.restoreAllMocks();
   await reset();
 });
@@ -283,6 +285,48 @@ describe("routes", () => {
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ ok: false, error: "rate limited" });
     expect(limit).toHaveBeenCalledWith({ key: `${TEST_ACCOUNT_ID}:WABA_TEST` });
+    expect(graphFetch).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/wabas/WABA_TEST/messages uses the HIGH limiter for a listed account only", async () => {
+    const standard = vi.fn(async () => ({ success: false }));
+    const high = vi.fn(async () => ({ success: false }));
+    const e = env as { SEND_RATE_LIMITER?: RateLimit; SEND_RATE_LIMITER_HIGH?: RateLimit; HIGH_THROUGHPUT_ACCOUNTS?: string };
+    e.SEND_RATE_LIMITER = { limit: standard };
+    e.SEND_RATE_LIMITER_HIGH = { limit: high };
+    const post = () =>
+      exports.default.fetch("http://example.com/v1/wabas/WABA_TEST/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
+      });
+
+    e.HIGH_THROUGHPUT_ACCOUNTS = "someone-else";
+    expect((await post()).status).toBe(429);
+    expect(standard).toHaveBeenCalledTimes(1);
+    expect(high).not.toHaveBeenCalled();
+
+    e.HIGH_THROUGHPUT_ACCOUNTS = TEST_ACCOUNT_ID;
+    expect((await post()).status).toBe(429);
+    expect(high).toHaveBeenCalledWith({ key: `${TEST_ACCOUNT_ID}:WABA_TEST` });
+    expect(standard).toHaveBeenCalledTimes(1);
+  });
+
+  it("an encoded or padded WABA id shares the canonical rate-limit bucket", async () => {
+    const limit = vi.fn(async () => ({ success: false }));
+    (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER = { limit };
+    const graphFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unexpected", { status: 200 }));
+
+    for (const segment of ["%57ABA_TEST", "%20WABA_TEST", "WABA_TEST%20"]) {
+      const res = await exports.default.fetch(`http://example.com/v1/wabas/${segment}/messages`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
+      });
+      expect(res.status, segment).toBe(429);
+    }
+    expect(limit.mock.calls.every(([arg]) => arg.key === `${TEST_ACCOUNT_ID}:WABA_TEST`)).toBe(true);
+    expect(limit).toHaveBeenCalledTimes(3);
     expect(graphFetch).not.toHaveBeenCalled();
   });
 

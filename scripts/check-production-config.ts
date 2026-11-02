@@ -43,7 +43,7 @@ if (gateway && dashboard && gateway.vars.META_GRAPH_VERSION !== dashboard.vars.M
 
 // Durable Object state and media live behind these; template drift must be deliberate.
 if (gateway && gatewayTemplate) {
-  for (const key of ["durable_objects", "migrations", "r2_buckets"] as const) {
+  for (const key of ["durable_objects", "migrations", "r2_buckets", "ratelimits"] as const) {
     if (JSON.stringify(gateway[key]) !== JSON.stringify(gatewayTemplate[key])) {
       errors.push(`gateway ${key} differs between wrangler.jsonc and wrangler.production.jsonc`);
     }
