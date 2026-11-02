@@ -10,7 +10,7 @@ evidence), eccos-0x0.11 (email delivery).
 Terminology follows [multi-tenancy.md](./multi-tenancy.md); trust boundaries and mitigations follow
 [threat-model.md](./threat-model.md). Nothing here contradicts them: the account → WABA → phone
 ownership model is unchanged; the Access-derived *installation identity* is deleted, not migrated
-(§11). The docs that describe Access are updated by eccos-0x0.9.
+(§11).
 
 ## 1. Request-to-tenant flow
 
@@ -130,16 +130,18 @@ re-authentication before executing the action. Reads never require step-up.
 
 ## 6. Canonical host / origin policy
 
-- `https://app.eccos.chat` is the **only** customer origin.
-- `workers_dev: true` in `apps/dashboard/wrangler.jsonc` is **disabled**; preview URLs are
+- The origin in `BETTER_AUTH_URL` (`https://app.eccos.chat` on Eccos Cloud) is the **only**
+  customer origin. Unset or non-HTTPS means local development: only localhost is served.
+- `workers_dev` in `apps/dashboard/wrangler.jsonc` is **disabled** (`false`); preview URLs are
   disabled for the customer surface. Raw `*.workers.dev` and preview origins **fail closed** —
   they are not alternate customer paths.
 - The custom server entry replaces `enforceAccess` with a **host allowlist enforced before
-  routing**: requests whose host is not the canonical origin (or `localhost` in development)
+  routing** (`isAllowedHost` in `src/auth/config.ts`): requests whose host is not the
+  `BETTER_AUTH_URL` host (or `localhost` in development)
   get `403`. This preserves the old gate's key property — the raw Workers origin cannot bypass
   the app boundary — without Access.
-- Better Auth `trustedOrigins` is an allowlist of exactly the canonical origin (plus localhost for
-  development). **No credentials are accepted over cross-origin** requests; unexpected hosts are
+- Better Auth `trustedOrigins` is an allowlist of exactly the `BETTER_AUTH_URL` origin (plus
+  localhost for development). **No credentials are accepted over cross-origin** requests; unexpected hosts are
   rejected by both the host gate and the auth layer.
 - The staging hostname is an open decision (§12). Until decided, any non-canonical host fails
   closed, so staging cannot silently run on a workers.dev URL.

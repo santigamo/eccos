@@ -24,7 +24,7 @@ What an attacker would want, and where it lives:
 | `SUBSCRIBER_SECRET` | HMAC key Eccos uses to sign forwarded events (`X-Eccos-Signature`) so the subscriber can trust them | Workers: per-WABA DO config, rotatable via the dashboard's settings action. Bun: `.env`. |
 | Message content | Inbound reply/echo text, delivery/read/failed statuses, phone numbers (`from`/`to`), Meta message ids | DO SQLite (`inbound_events`, `outbound_messages`, `deliveries` in `apps/gateway/src/gateway.ts`) / `bun:sqlite` (Bun target, `src/db/client.ts`) |
 | The Embedded-Signup business token | 60-day token returned by `exchangeCodeForToken` during `/connect` | Stored only in the control-plane WABA row, encrypted with the envelope above and bound to `<accountId>:<wabaId>`, so later account-scoped sends and resubscriptions can use it; never written to the data-plane config or returned |
-| Cloudflare Access session (operator console) | Proves "this is the operator" to the dashboard | Cloudflare-managed; re-verified in-Worker (`apps/dashboard/src/access.ts`) |
+| Better Auth session (operator console) | Proves which user is signed in to the dashboard; organization membership decides what they can do | Session cookie resolved server-side on every request against the auth D1 (`apps/dashboard/src/auth/`) |
 
 ## 2. Trust boundaries
 
@@ -39,7 +39,7 @@ your backend / integrations
 
 Gateway Worker  ◀──(private RPC service binding, GatewayRPC)──  Dashboard Worker  ◀── operator's browser
                                                                        ▲
-                                                          Cloudflare Access (JWT)
+                                                  host allowlist + Better Auth session
 ```
 
 Four boundaries matter:
@@ -54,7 +54,8 @@ Four boundaries matter:
 4. **operator ↔ dashboard ↔ gateway** — the operator console is a separate Worker with **no public
    HTTP path into the gateway at all**: it only holds a Cloudflare service binding to the
    `GatewayRPC` entrypoint (`apps/gateway/src/rpc.ts`), which cannot be reached over the network —
-   only from a bound Worker. The dashboard itself sits behind Cloudflare Access.
+   only from a bound Worker. The dashboard itself requires a Better Auth session and resolves the
+   account from the user's organization, never from browser input.
 
 ## 3. Attack surfaces and existing mitigations
 
@@ -144,7 +145,7 @@ The console's **Connect WhatsApp** button prefers Meta's JavaScript SDK over the
 redirect, because Meta's coexistence requirements demand *session logging* — a `message` listener on
 the spawning page — which a redirect cannot provide.
 
-**This loads `https://connect.facebook.net/en_US/sdk.js` into `app.eccos.chat`.** It is the first
+**This loads `https://connect.facebook.net/en_US/sdk.js` into the console's origin.** It is the first
 and only third-party script in the console, it runs with full access to that origin, and **there is
 no Content-Security-Policy anywhere in this repository** to constrain it. That is a real, accepted
 exposure, not an oversight; a CSP is separate work with its own blast radius.
@@ -170,30 +171,28 @@ Residual risk: a compromise of `connect.facebook.net` would execute in the conso
 operator who clicks Connect, with access to their session cookie. Mitigating that properly needs a
 CSP with a pinned `script-src`, which is tracked separately.
 
-### 3.4 Dashboard behind Cloudflare Access + the RPC service binding
+### 3.4 Dashboard behind Better Auth + the RPC service binding
 
 - **Surface:** the operator console (`apps/dashboard/`) renders gateway status, the message and
   event logs and the forwarding queue, exposes operator actions (retry delivery, rotate subscriber
   config, resubscribe),
   and starts account-bound Embedded Signup through `GatewayRPC.startConnect()`.
-- **Mitigation, edge:** Cloudflare Access sits in front of the dashboard's custom domain
-  (account-level Zero Trust config, not code).
-- **Mitigation, in-Worker:** `enforceAccess` (`apps/dashboard/src/access.ts`) independently
-  re-verifies the `Cf-Access-Jwt-Assertion` JWT (falling back to the `CF_Authorization` cookie)
-  against the team's JWKS with `jose`, checking RS256 signature + `iss`/`aud`/`exp`/`nbf` — so
-  hitting the raw `*.workers.dev` origin directly cannot bypass Access. **Fails closed**: any
-  verification failure → `403`. Wired into a custom server entry (`src/server.ts`) so it runs
-  before SSR pages, server routes, and server-function calls alike.
-  This gate allows localhost development when both `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are empty.
-  Public requests and partial configuration **fail closed with `403`**, so a production dashboard
-  can never silently become public. The Access-derived installation identity is not a secret; the
-  private service binding is the boundary that lets the dashboard resolve account scope.
+- **Mitigation, host:** the custom server entry (`src/server.ts`) answers only the hostname in
+  `BETTER_AUTH_URL` (plus localhost in development) and returns `403` for anything else before
+  routing, so the raw `*.workers.dev` and preview origins are not alternate paths. With
+  `BETTER_AUTH_URL` unset or not HTTPS, every public host fails closed.
+- **Mitigation, session:** every page load, loader and server function resolves the Better Auth
+  session server-side; anonymous requests are redirected to `/signin` or refused. The tenant is
+  re-derived on each call from session → organization membership → `organization_accounts` →
+  account, and every operation checks an organization permission (`view`/`operate`/`configure`/
+  `administer`/`erase`). Browser-supplied organization, account or WABA ids are never
+  authorization evidence. The full contract is in [auth-tenancy-contract.md](./auth-tenancy-contract.md).
 - **Mitigation, transport:** the dashboard reaches the gateway only via a Cloudflare service
   binding to the `GatewayRPC` `WorkerEntrypoint` (`apps/gateway/src/rpc.ts`) — not HTTP. This
   binding is not addressable from the public Internet at all; there is no URL to leak or CORS
   policy to misconfigure, because there is no operator route. The one browser handoff exception is
   the returned, short-lived gateway `/connect?state=...` URL; the OAuth callback remains on the
-  gateway's public origin and the state is bound to the dashboard installation account.
+  gateway's public origin and the state is bound to the organization's account.
 - **What the operator API returns:** `GatewayRPC.getSubscriberConfig()` returns only
   `{ url, hasSecret, lastForward }` — never the `SUBSCRIBER_SECRET` value itself (`gateway.ts`
   comment: "Never exposes the secret"). `lastForward` is delivery-queue metadata (status,
@@ -214,19 +213,17 @@ CSP with a pinned `script-src`, which is tracked separately.
 | Forged forwarded event reaching the subscriber | `X-Eccos-Signature: sha256=<hex>` via `signPayload`, using `SUBSCRIBER_SECRET` | The subscriber's own verification is out of this repo's control — if a subscriber implementation skips verification, forgery is possible from anyone who can reach its webhook URL. Document this expectation clearly for integrators. |
 | Unauthorized WABA rebind via `/connect/exchange` | Account-key gate plus single-use account-bound OAuth state and ownership-conflict checks; valid Meta OAuth code required (see §3.3) | A failed external exchange after state consumption requires a new connect attempt. |
 | Subscriber URL SSRF | Rotated subscriber URLs require HTTPS, no credentials, and reject private/special IP literals; forwarding validates the stored value too and rejects redirects | DNS rebinding after save-time validation remains possible because Workers does not expose a general DNS-resolution API to application code. |
-| Dashboard reached directly on `*.workers.dev`, bypassing Access at the edge | In-Worker `enforceAccess` re-verification, fail-closed | A public dashboard deployment fails closed until `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` are configured. Only localhost development without Access remains intentionally open. |
-| Operator console leaking message content to the wrong person | Access JWT gate (edge + in-Worker) restricts *who* reaches the dashboard at all | The dashboard renders raw inbound message text (`apps/dashboard/src/routes/events.tsx` via `eventReading()` in `src/lib/logs.ts`) and, in the event inspection sheet, the whole stored event JSON verbatim, to anyone who passes the Access policy — so the Access policy *is* the access-control boundary for message content, not a separate per-page permission. |
+| Dashboard reached on a host other than its own (`*.workers.dev`, previews) | Host allowlist from `BETTER_AUTH_URL`, enforced before routing, fail-closed | A public dashboard deployment answers `403` until `BETTER_AUTH_URL` is set. Only localhost development remains intentionally open. |
+| Operator console leaking message content to the wrong person | Better Auth session plus organization membership, re-derived server-side on every request; data is scoped to the organization's account | The dashboard renders raw inbound message text (`apps/dashboard/src/routes/events.tsx` via `eventReading()` in `src/lib/logs.ts`) and, in the event inspection sheet, the whole stored event JSON verbatim, to any member with `view` — so organization membership *is* the access-control boundary for message content, not a separate per-field redaction. |
 | DoS via flooding `/webhooks/meta` with invalid signatures | Cloudflare edge DDoS protection (platform-level, outside this repo) | No application-level rate limiting on the two public unauthenticated routes (`GET`/`POST /webhooks/meta`), unlike `/v1/wabas/<WABA_ID>/messages`. Each invalid POST still costs one HMAC computation before rejection. |
 | Per-WABA Durable Object as an availability/scale boundary | N/A (architectural choice, not a security control) | Each WABA's reads/writes serialize through its own versioned DO; tenant state is not a global singleton, but there is no cross-region replica. |
 | Secrets/content in logs | The Workers target's `logEvent()` (`apps/gateway/src/worker.ts`) emits one structured JSON line per notable route outcome (event name, correlation id from `cf-ray`, HTTP status, and an explicit `LogMeta` allowlist typed as `string \| number \| boolean \| null \| undefined` — no nested objects). Every call site passes only ids, counts, booleans, or enum-like strings (`mode`, `path`, `bodyBytes`, `eventCount`, `messageType`, `messageId`, `limit`/`count`, `configOk`/`missingConfig` key names) — never a recipient number, message body, or secret value; the code carries an explicit "never pass message bodies, full phone numbers, tokens, API keys, or signatures" comment. The Bun target (`src/`) still has only two `console.*` calls total (`src/index.ts` boot message, `src/delivery/forward.ts` delivery-loop error), neither logging a secret or body. | Cloudflare Workers observability is enabled at `head_sampling_rate: 1` (`apps/gateway/wrangler.jsonc`) — captures whatever *is* logged. The `LogMeta` type prevents accidentally passing a whole object/body, but a developer could still pass a string field containing sensitive text at a future call site — this is a strong convention plus a type-level guard, not an automated content scan. See `docs/privacy.md`. |
 
 ## 5. Out of scope / explicitly not modeled
 
-- Shared-dashboard user-to-account authorization — the shipped dashboard maps one Access
-  application identity to one generated account. Deploy a separate dashboard and Access
-  application for each customer account; the browser's Access user identity is not itself used as
-  an account selector. The first-paid-customer gate in `PRODUCTION-READINESS.md` must clear before
-  third-party Cloud customers are charged.
+- Paid-customer isolation evidence — one dashboard serves many organizations, each linked to its
+  own account (§3.4), but the end-to-end isolation matrix is not complete. The first-paid-customer
+  gate in `PRODUCTION-READINESS.md` must clear before third-party Cloud customers are charged.
 - Multi-tenant support in the Bun target — the Bun deployment remains single-tenant and uses its
   existing environment-based credentials.
 - Physical/host security of a self-hosted Bun deployment (Docker image, VM, disk encryption) — the

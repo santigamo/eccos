@@ -199,7 +199,7 @@ export interface AuthConfig {
   database: unknown;
   /** Auth secret (>= 32 chars). Required; fail closed without it. */
   secret: string;
-  /** Canonical origin, e.g. https://app.eccos.chat (or http://localhost:3000). */
+  /** Canonical origin from BETTER_AUTH_URL (or http://localhost:3000). */
   baseURL: string;
   /** Origin allowlist for cross-origin auth requests (contract §6). */
   trustedOrigins: string[];

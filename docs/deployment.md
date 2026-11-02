@@ -149,8 +149,6 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 
 | Var | Default | Purpose |
 |---|---|---|
-| `ACCESS_TEAM_DOMAIN` | `""` | Cloudflare Zero Trust team domain. Both this and `ACCESS_AUD` empty allow localhost development only; public requests fail closed |
-| `ACCESS_AUD` | `""` | Cloudflare Access application Audience (AUD) tag |
 | `BETTER_AUTH_URL` | unset | The console's public HTTPS origin, e.g. `https://console.example.com`. **Required on a public host:** it is the only hostname the console answers (anything else, `workers.dev` included, gets `403`) and the only origin Better Auth trusts. Unset or non-https means development: localhost only |
 | `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
 | `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
@@ -238,8 +236,9 @@ cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote -c wrangle
 bun run deploy   # == scripts/deploy-dashboard.sh: checks, builds against wrangler.production.jsonc, then deploys
 ```
 
-Configure `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `apps/dashboard/wrangler.jsonc` before the
-production deploy, then open `/setup` once behind the Access policy to create the account.
+Set `BETTER_AUTH_URL` in `apps/dashboard/wrangler.production.jsonc` to the console's HTTPS origin
+before the production deploy; the console answers no other host. Then sign up there, verify the
+email and create a workspace: that links a new organization to a new control-plane account.
 Set `GATEWAY_PUBLIC_URL` in `apps/gateway/wrangler.production.jsonc` to the gateway's public HTTPS origin
 before using the dashboard's **Connect WhatsApp** action. The button starts the same account-bound
 Embedded Signup flow as `POST /connect/start` without exposing an account API key to the browser.
@@ -363,8 +362,8 @@ The **Connect WhatsApp** button takes one of two paths, and both must keep worki
 
 | Path | When | What it needs |
 |---|---|---|
-| **JavaScript SDK** (preferred) | `META_APP_ID` *and* `META_ES_CONFIG_ID` are set on the **dashboard** and `connect.facebook.net` loads | `app.eccos.chat` registered in the panel's *Allowed domains for the JavaScript SDK* **and** *Valid OAuth Redirect URIs* |
-| **Server-side redirect** (fallback, and the only self-host path) | the SDK is unconfigured or fails to load | `GATEWAY_PUBLIC_URL` and its `/connect` registered as a Valid OAuth Redirect URI |
+| **JavaScript SDK** (preferred) | `META_APP_ID` *and* `META_ES_CONFIG_ID` are set on the **dashboard** and `connect.facebook.net` loads | the console's origin (`BETTER_AUTH_URL`; `app.eccos.chat` on Eccos Cloud) registered in the panel's *Allowed domains for the JavaScript SDK* **and** *Valid OAuth Redirect URIs* |
+| **Server-side redirect** (fallback, and the only path without the console) | the SDK is unconfigured or fails to load | `GATEWAY_PUBLIC_URL` and its `/connect` registered as a Valid OAuth Redirect URI |
 
 The SDK path exists because Meta's coexistence requirements end with *"You must use Embedded Signup
 with session logging"* — a `message` listener on the page that spawned the flow, which a server-side
@@ -377,7 +376,7 @@ binding — no account API key ever exists in the browser.
 `POST /connect/start` and `GET /connect` on the gateway are untouched by any of this. A self-hoster
 with no console still connects a number with an API key and a browser, exactly as before.
 
-> **Panel, for the SDK path.** Add `app.eccos.chat` to **Facebook Login for Business → Settings →
+> **Panel, for the SDK path.** Add the console's origin (`app.eccos.chat` on Eccos Cloud) to **Facebook Login for Business → Settings →
 > Allowed domains for the JavaScript SDK** *and* to **Valid OAuth Redirect URIs** — Meta returns the
 > asset ids to the spawning window only when the spawning page's domain is in both. Confirm the
 > Client OAuth toggles are all **Yes**, including **Login with the JavaScript SDK**.

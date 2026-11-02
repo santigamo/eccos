@@ -2,8 +2,8 @@
 
 `apps/dashboard` (the operator console) has automated coverage for its server/data layer
 (`apps/dashboard/tests/gateway.test.ts`), a couple of render smoke tests for its shared UI
-primitives (`apps/dashboard/tests/ui.test.tsx`), and the Cloudflare Access gate
-(`apps/dashboard/tests/access.test.ts`) — but **nothing automated checks the rendered product UI**
+primitives (`apps/dashboard/tests/ui.test.tsx`), and the host and auth gates
+(`apps/dashboard/tests/host-allowlist.test.ts`, `page-gate.test.ts`) — but **nothing automated checks the rendered product UI**
 (visual correctness, responsive layout, keyboard navigation, or accessibility). This checklist is
 the manual gate for that until an automated visual-regression suite exists (see the note at the
 bottom).
@@ -11,7 +11,7 @@ bottom).
 Run it:
 
 - Before any release that touches `apps/dashboard/src/routes/*`, `src/ui.tsx`, or `src/routes/__root.tsx`.
-- After any Cloudflare Access (`src/access.ts`) or dashboard `wrangler.jsonc` config change.
+- After any change to `src/server.ts`, `src/auth/*` or the dashboard `wrangler.jsonc`.
 - Against `bunx vite dev` (gateway running) **and** with the gateway worker stopped, to exercise
   the "unreachable" fallback described in `apps/dashboard/README.md`.
 
@@ -25,14 +25,12 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
   dashboard (`cd apps/dashboard && bunx vite dev`) together, per the README.
 - **Unreachable**: run only the dashboard, with the gateway stopped (or `GATEWAY` binding pointed
   at nothing) — every view should render its "Gateway unreachable" card, never a crash/500.
-- **First run**: use a fresh control-plane namespace, open `/setup`, create a workspace, and confirm
-  the generated account ID and API key appear only after the POST succeeds. Refreshing the page
-  must not show the raw API key again, and an account with no WABA must remain visibly distinct from
-  the ready console. With `GATEWAY_PUBLIC_URL` configured, **Connect WhatsApp** must start the
+- **First run**: sign up with a new email, verify it, and create a workspace on `/onboarding`.
+  An account with no WABA must remain visibly distinct from the ready console. An API key created
+  in Settings is shown once; refreshing the page must not show it again. With `GATEWAY_PUBLIC_URL` configured, **Connect WhatsApp** must start the
   account-bound Embedded Signup handoff without asking for an account API key.
-- **Auth gate (Cloudflare Access)**: only testable against a deployment with `ACCESS_TEAM_DOMAIN`
-  / `ACCESS_AUD` set (see README § "Securing with Cloudflare Access"). Localhost `vite dev` is
-  allowed without the gate; public hosts fail closed.
+- **Auth gate**: sign-in and redirects work on localhost `vite dev`; the host check (anything
+  other than the `BETTER_AUTH_URL` host gets `403`) is only exercisable against a deployment.
 
 ## Cross-cutting — nav shell & shared states (`src/routes/__root.tsx`, `src/ui.tsx`)
 
@@ -245,20 +243,16 @@ interface (see the route's own comment).
 - [ ] Reachable with zero WABAs (it is the way OUT of that state), and pasting a token issued by
       another Meta app is refused as `foreign_app` with the Embedded Signup remedy named.
 
-## Auth gate (Cloudflare Access, `src/access.ts`)
+## Auth gate (`src/server.ts`, `src/auth/`)
 
-Only exercisable against a real deployment with Access configured (see README); not reachable via
-local `vite dev`.
-
-- [ ] Visiting the dashboard's public URL directly (bypassing the Access login prompt, e.g. via an
-      old bookmark or the raw `*.workers.dev` origin) without a valid `Cf-Access-Jwt-Assertion` /
-      `CF_Authorization` cookie returns `403 Forbidden` — the operator UI never renders.
-- [ ] Logging in through the configured Access application (correct team + policy) reaches the
-      dashboard normally, and all 6 views load as usual.
-- [ ] An expired Access session (or a session revoked in Zero Trust) is rejected on the next
-      request (`403`), not just at initial login.
-- [ ] With `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` unset (fresh deploy, no Access configured yet), a
-      public dashboard request returns `403 Forbidden`; only localhost development is reachable.
+- [ ] Signed out, any page redirects to `/signin` and returns to the original page after signing in.
+- [ ] `/signin`, `/signup`, `/forgot-password` and `/reset-password` load without a session.
+- [ ] Against a deployment: the raw `*.workers.dev` origin, or any host other than
+      `BETTER_AUTH_URL`, returns `403 Forbidden` — the operator UI never renders.
+- [ ] Signing out (or a session revoked from another device) is rejected on the next request,
+      not just at initial login.
+- [ ] A user who belongs to two workspaces sees only the active one's numbers and logs, and
+      switching workspaces switches all of them.
 
 ## Planned follow-up
 

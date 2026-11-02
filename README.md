@@ -55,7 +55,7 @@ and get **normalized events** forwarded to your backend.
   flow, plus a separate operator console Worker (`apps/dashboard/`) for ops visibility — status,
   the message and event logs, the forwarding queue, the subscriber target and resubscribe —
   reachable only over a
-  private RPC binding and gated by Cloudflare Access. Per-number GDPR erasure is available through
+  private RPC binding, with Better Auth sign-in and one workspace per organization. Per-number GDPR erasure is available through
   the scoped HTTP/RPC API.
 
 ## 🆚 How it compares
@@ -195,9 +195,9 @@ is where the newer v1 features (`/connect`, plus the operator console below) liv
 The operator console lives in [`apps/dashboard/`](./apps/dashboard/) as its **own** Cloudflare
 Worker (a TanStack Start / React app) — it is **not** a route on the gateway. It reaches the
 gateway only over a private **RPC service binding** (`env.GATEWAY`, entrypoint `GatewayRPC`); the
-gateway itself exposes **no public dashboard HTTP surface**. The console is secured with
-[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) (the
-Worker also re-verifies the Access JWT itself, as defense-in-depth). See
+gateway itself exposes **no public dashboard HTTP surface**. Users sign in with Better Auth
+(email and password, on the console's own D1 database) and only see their organization's numbers;
+the console answers only the host set in `BETTER_AUTH_URL`. See
 [`apps/dashboard/README.md`](./apps/dashboard/README.md) for setup.
 
 ## 🚀 Quickstart — local (Bun)
@@ -381,7 +381,7 @@ motion, and the legal invariants — in [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SY
 ## 🗺️ Roadmap
 
 - [x] Embedded Signup `/connect` (account-bound coexistence) — Workers target
-- [x] Operator console (`apps/dashboard/`) — separate Worker, RPC-only, Cloudflare Access
+- [x] Operator console (`apps/dashboard/`) — separate Worker, RPC-only, Better Auth organizations
 - [ ] Bun-target parity for `/connect` (and an operator-console equivalent)
 - [ ] Workers account-scoped onboarding and isolation for multiple WABAs and phones — the
       registry/auth/connect foundation and local provisioning reconciliation are landed, but

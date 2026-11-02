@@ -118,7 +118,7 @@ WhatsApp user ──▶ Meta Cloud API ──▶ Eccos (webhook, HMAC-verified) 
                                      (inbound/outbound/delivery rows, 30-day default on Workers)
                                             │
                                             ▼  (read-only + a few operator actions, via private RPC)
-                                   Dashboard Worker ──▶ operator's browser (behind Cloudflare Access)
+                                   Dashboard Worker ──▶ operator's browser (Better Auth session)
 ```
 
 Third parties that see this data, and why:
@@ -148,25 +148,24 @@ Third parties that see this data, and why:
 The only way to *see* stored data (outside direct database access) is the operator console
 (`apps/dashboard/`):
 
-- It is reachable only after passing **Cloudflare Access** at the edge, re-verified in-Worker
-  (`apps/dashboard/src/access.ts`) — see `docs/threat-model.md` §3.4. Until Access is configured,
-  a deployed dashboard has **no** application-level login of its own.
+- It requires a **Better Auth** sign-in, and each user sees only the data of the organizations
+  they belong to; the account is re-derived server-side on every request — see
+  `docs/threat-model.md` §3.4. It answers only the host in `BETTER_AUTH_URL`; any other host,
+  `*.workers.dev` included, gets `403`.
 - It renders inbound message text directly: `apps/dashboard/src/routes/events.tsx`
   (via `eventReading()` in `src/lib/logs.ts`) reads `ev.text` off the stored payload and displays
   it in a table row, and the event inspection sheet
   (`src/components/logs/event-sheet.tsx`) shows the **whole stored event JSON verbatim** —
   deliberately, since "what did my receiver actually get" is the console's reason to exist, and a
   summary cannot answer it. The message sheet likewise shows the outbound request body as sent.
-  So once someone passes the login, they can read message content for as long as it's
-  retained — authentication *is* the access-control boundary, there is no additional per-field
+  So any member of the organization can read its message content for as long as it's
+  retained — membership *is* the access-control boundary, there is no additional per-field
   redaction.
 - The console **never** displays `SUBSCRIBER_SECRET` or an account API key — `getSubscriberConfig()`
   returns `{ url, hasSecret: boolean, lastForward }` only (`apps/gateway/src/gateway.ts`), never the
   secret value itself, and no RPC method returns an API key, `META_ACCESS_TOKEN`, or
   `META_APP_SECRET` at all (confirmed by reading every method on `GatewayApi` in
   `apps/gateway/src/rpc.ts`).
-- If you don't configure Cloudflare Access, do not expose the dashboard's `*.workers.dev` URL —
-  this is called out explicitly in `apps/dashboard/README.md`.
 
 ## 5. Data handling in logs
 
