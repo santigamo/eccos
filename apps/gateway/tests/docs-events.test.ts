@@ -60,7 +60,7 @@ const metaPayloadFor: Record<string, (ev: Record<string, any>) => unknown[]> = {
             errors: [
               {
                 code: Number(ev.errorCode),
-                title: "Message undeliverable",
+                title: "a title the parser must not prefer",
                 message: "ignored",
                 error_data: { details: ev.errorMessage },
               },

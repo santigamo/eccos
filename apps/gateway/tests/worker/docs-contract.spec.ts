@@ -831,6 +831,7 @@ describe("webhooks.md", () => {
       await receiveFromMeta();
       await runAlarm();
       expect(forwards).toHaveLength(1);
+      expect(forwards[0]!.init.redirect).toBe("manual");
       await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
         expect(
           instance.sql
