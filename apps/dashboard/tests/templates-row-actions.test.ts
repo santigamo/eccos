@@ -27,13 +27,13 @@ describe("the kebab shield", () => {
   // phase — `floating-ui-react/hooks/useDismiss.js` — so that listener does not
   // exist yet when the click passes, and never sees it.)
   test("covers the trigger, not the column", () => {
-    const shield = route.slice(route.indexOf("<span\n      className="));
-    expect(shield.slice(0, 60)).toContain('className="inline-flex"');
-    expect(shield.slice(0, 60)).not.toContain("justify-end");
+    const shield = route.slice(route.indexOf("<span className=\"inline-flex\""));
+    expect(shield.slice(0, 90)).toContain("event.stopPropagation()");
+    expect(route).not.toContain("justify-end");
   });
 
   test("the row handler stays plain — nothing to stop", () => {
-    expect(route).toContain("onRowClick={openPreview}");
+    expect(route).toContain("onRowClick={openTemplate}");
   });
 });
 
@@ -62,7 +62,7 @@ describe("column widths", () => {
     expect(action.slice(0, 1600)).not.toContain("w-[");
   });
 
-  test("the pending view carries the same four columns", () => {
+  test("the pending view carries the same columns", () => {
     // Otherwise the three real columns stretch across the full width while the
     // loader runs and snap back the moment the rows land. A skeleton that
     // predicts a different layout from the one replacing it is worse than none.
@@ -70,6 +70,8 @@ describe("column widths", () => {
     expect(pending.slice(0, 400)).toContain("nameColumn()");
     expect(pending.slice(0, 400)).toContain("languageColumn");
     expect(pending.slice(0, 400)).toContain("statusColumn");
+    expect(pending.slice(0, 400)).toContain("categoryColumn");
+    expect(pending.slice(0, 400)).toContain("updatedColumn");
     expect(pending.slice(0, 400)).toContain('id: "action"');
   });
 });

@@ -1,238 +1,202 @@
+import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { GridEmptyState } from "../grid/empty-state";
+import { FactRow, SheetSection } from "../logs/sheet-parts";
+import { StatusTag } from "../../ui";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { previewBody } from "../../lib/template-params";
+  categoryLabel,
+  lastUpdated,
+  qualityReading,
+  rejectionReason,
+  templateView,
+  type TemplateRecord,
+} from "../../lib/template-view";
+import { WhatsAppPreview } from "./whatsapp-preview";
 
 /**
- * "Preview" — the template as Meta will render it (eccos-6je,
- * docs/console-gaps-2026-09 §4), read straight from the row's already-fetched
- * `components`.
+ * One template, inspected: how it reads on the customer's phone (with the
+ * example values Meta reviewed), Meta's verdict on it, and the acts it allows.
  *
- * `listTemplates` asks Meta for `message_templates?limit=N` with no `fields`
- * parameter, so the default response already carries the `components` array —
- * the browser has had the body, header, footer and buttons all along and never
- * drew them. This sheet draws them.
- *
- * The sheet is READ-ONLY by construction: it is the template itself, exactly
- * as the row describes it, so nothing here is filled in and no action is
- * offered. A `{{n}}` placeholder is a real thing Meta will fill; the preview
- * shows it as it is rather than pretending a value exists — the same rule and
- * the same `previewBody` the "Send test" sheet's preview uses, applied with
- * no values so every slot stays literal.
- *
- * `TemplatePreview` is exported on its own because the sheet around it is a
- * Base UI dialog: closed, it renders nothing at all, so a static-markup test
- * of `TemplatePreviewSheet` would assert against an empty string. Tests
- * render the inner preview — the same split as `SendTestForm`/
- * `CreateTemplateFields`.
+ * Inspection register. The acts below only open their own task sheet (send,
+ * edit, duplicate); nothing here writes by itself.
  */
 
-/** The subset of a Meta message-template component the preview reads. */
-interface MetaComponent {
-  type?: string;
-  format?: string;
-  text?: string;
-  buttons?: unknown;
+export interface TemplateActions {
+  onSend?: () => void;
+  onEdit?: () => void;
+  onDuplicate?: () => void;
+  /** Why edit and duplicate are not offered, when they are not. */
+  authoringBlocked?: string | null;
 }
 
-/** The subset of a Meta button component the preview reads. */
-interface MetaButton {
-  type?: string;
-  text?: string;
-  url?: string;
+const QUALITY_INK = {
+  neutral: "text-foreground",
+  warning: "text-[#f0a020]",
+  destructive: "text-destructive-foreground",
+};
+
+/** Best-effort deep link into WhatsApp Manager's template list for this WABA. */
+export function managerUrl(wabaId: string): string {
+  return `https://business.facebook.com/wa/manage/message-templates/?waba_id=${encodeURIComponent(wabaId)}`;
 }
 
-/** Everything the preview renders for one row, already parsed and ordered. */
-export interface PreviewContent {
-  /** The template's static HEADER text, if it carries one. */
-  header: string;
-  /** The HEADER's format when it is NOT text — `IMAGE`, `VIDEO`, `DOCUMENT`,
-   * `LOCATION`. A media header has no `text` at all (it carries an
-   * `example.header_handle`), so without this the preview drew nothing where
-   * Meta puts the most visible part of the message. */
-  headerFormat: string | null;
-  /** The BODY text; `{{n}}` placeholders left exactly as Meta authored them. */
-  body: string;
-  /** The static FOOTER text, if it has one. */
-  footer: string;
-  /** URL buttons in BUTTONS order; a dynamic URL keeps its `{{n}}`. */
-  buttons: { label: string; url: string }[];
+function variableKey(key: string): string {
+  return `{{${key}}}`;
 }
 
-function upper(value: unknown): string {
-  return typeof value === "string" ? value.toUpperCase() : "";
-}
-
-function text(part: MetaComponent | undefined): string {
-  return typeof part?.text === "string" ? part.text : "";
-}
-
-/**
- * The pieces of a row's `components` that can be previewed.
- *
- * `null` means there is nothing to show — either the row carries no
- * `components` at all (Meta returned the default shape without one) or every
- * component came back empty. The caller renders the graceful empty state
- * instead of a blank sheet.
- */
-export function previewContent(components: unknown): PreviewContent | null {
-  if (!Array.isArray(components)) return null;
-  const parts = components as MetaComponent[];
-
-  const headerPart = parts.find((part) => upper(part.type) === "HEADER");
-  const header = text(headerPart);
-  // A text header is rendered as its text; anything else is rendered as what it
-  // IS, because there is no text to show and silence reads as "no header".
-  const headerFormat =
-    headerPart && upper(headerPart.format) !== "TEXT" ? upper(headerPart.format) || "MEDIA" : null;
-  const body = text(parts.find((part) => upper(part.type) === "BODY"));
-  const footer = text(parts.find((part) => upper(part.type) === "FOOTER"));
-
-  const buttonsPart = parts.find((part) => upper(part.type) === "BUTTONS");
-  const buttons = Array.isArray(buttonsPart?.buttons)
-    ? (buttonsPart.buttons as MetaButton[]).map((button) => ({
-        label: typeof button.text === "string" ? button.text : "",
-        url: typeof button.url === "string" ? button.url : "",
-      }))
-    : [];
-
-  if (!header && !headerFormat && !body && !footer && buttons.length === 0) return null;
-  return { header, headerFormat, body, footer, buttons };
-}
-
-const LABEL =
-  "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
-
-export interface TemplatePreviewProps {
-  components?: unknown;
-}
-
-export function TemplatePreview({ components }: TemplatePreviewProps) {
-  const content = previewContent(components);
-  if (content === null) {
-    // Data rule 6: a structured empty state, never a lone muted line. The
-    // sheet still opens — "what does this template look like?" is the
-    // operator's question, and the honest answer is that there is nothing
-    // to show.
+export function TemplateDetail({
+  row,
+  wabaId,
+  businessName,
+  actions = {},
+}: {
+  row: TemplateRecord;
+  wabaId: string;
+  businessName: string;
+  actions?: TemplateActions;
+}) {
+  const view = templateView(row);
+  if (!view) {
     return (
       <div className="px-4 pb-4">
         <GridEmptyState
           label="No preview"
-          description="Meta returned this template without a components array, so there is nothing to preview here."
+          description="Meta returned this template without its components, so there is nothing to preview."
         />
       </div>
     );
   }
 
+  const quality = qualityReading(row);
+  const rejected = rejectionReason(row);
+  const updated = lastUpdated(row);
+  const variables = Object.entries(view.bodyExamples);
+  const links = view.buttons.filter((button) => button.url);
+  const hasActions = Boolean(actions.onSend || actions.onEdit || actions.onDuplicate);
+
   return (
-    <div className="flex flex-col gap-4 px-4 pb-4">
-      {content.headerFormat ? (
-        <div>
-          <span className={LABEL}>Header</span>
-          {/* THE BUG THIS REPLACED: the preview read the header's `text` only,
-              and a media header has none — so an IMAGE header rendered as
-              nothing at all and the sheet showed a complete-looking message
-              missing its most visible part. Named, not drawn: previewing the
-              asset would mean fetching Meta's example handle, and a placeholder
-              that says what it is beats a picture the console had to go and
-              get. */}
-          <p className="m-0 flex items-center gap-2 border border-(--line) bg-muted p-3 text-xs text-muted-foreground">
-            <span className="font-medium tracking-wider text-foreground uppercase">
-              {content.headerFormat}
-            </span>
-            <span>supplied when the message is sent</span>
+    <div className="grid gap-6 px-4 pb-4 md:grid-cols-[19.5rem_minmax(0,1fr)]">
+      <div className="flex flex-col gap-2 self-start">
+        <WhatsAppPreview
+          businessName={businessName}
+          header={view.header}
+          headerValues={view.headerExamples}
+          body={view.body}
+          bodyValues={view.bodyExamples}
+          footer={view.footer}
+          buttons={view.buttons}
+          markValues
+        />
+        {variables.length > 0 ? (
+          <p className="m-0 text-xs text-pretty text-muted-foreground">
+            Highlighted text is the example Meta reviewed. Each send fills in its own values.
           </p>
-        </div>
-      ) : content.header ? (
-        <div>
-          <span className={LABEL}>Header</span>
-          <p className="m-0 text-sm text-pretty text-foreground whitespace-pre-wrap">
-            {content.header}
-          </p>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
-      {content.body ? (
-        <div>
-          <span className={LABEL}>Body</span>
-          {/* Quiet and inert — `--ghost-fill` is the ghost CONTROL body and a
-              preview that wore it would read as something to click. Same panel
-              as the send sheet's preview: square, muted, `whitespace-pre-wrap`. */}
-          <p className="m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
-            {/* No values to fill, so every unfilled slot stays its literal
-                `{{n}}` — the preview never pretends a value exists. */}
-            {previewBody(content.body, [])}
+      <div className="flex min-w-0 flex-col gap-4">
+        {hasActions ? (
+          <div className="flex flex-wrap gap-2">
+            {actions.onSend ? (
+              <Button type="button" size="sm" onClick={actions.onSend}>
+                Send test
+              </Button>
+            ) : null}
+            {actions.onEdit ? (
+              <Button type="button" size="sm" variant="outline" className="rounded-none" onClick={actions.onEdit}>
+                Edit
+              </Button>
+            ) : null}
+            {actions.onDuplicate ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="rounded-none"
+                onClick={actions.onDuplicate}
+              >
+                Duplicate
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {actions.authoringBlocked ? (
+          <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">
+            {actions.authoringBlocked} Edit it in{" "}
+            <a href={managerUrl(wabaId)} target="_blank" rel="noreferrer" className="underline underline-offset-4">
+              WhatsApp Manager
+            </a>
+            .
           </p>
-        </div>
-      ) : null}
+        ) : null}
 
-      {content.footer ? (
-        <div>
-          <span className={LABEL}>Footer</span>
-          <p className="m-0 text-sm text-pretty text-foreground whitespace-pre-wrap">
-            {content.footer}
-          </p>
-        </div>
-      ) : null}
+        <SheetSection label="Review">
+          <dl className="m-0">
+            <FactRow label="Status" value={row.status ? <StatusTag status={row.status} /> : null} />
+            {rejected ? <FactRow label="Rejected for" value={rejected} tone="destructive" /> : null}
+            <FactRow
+              label="Category"
+              value={
+                row.previous_category && row.previous_category !== row.category
+                  ? `${categoryLabel(row.category)} (was ${categoryLabel(row.previous_category)})`
+                  : categoryLabel(row.category)
+              }
+            />
+            {quality ? (
+              <FactRow label="Quality" value={<span className={QUALITY_INK[quality.tone]}>{quality.label}</span>} />
+            ) : null}
+            <FactRow label="Language" value={row.language} mono />
+            {updated ? (
+              <FactRow label="Last updated" value={`${updated.toISOString().slice(0, 16).replace("T", " ")} UTC`} mono />
+            ) : null}
+            <FactRow label="Template id" value={row.id} mono />
+          </dl>
+        </SheetSection>
 
-      {content.buttons.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <span className={LABEL}>Buttons</span>
-          {content.buttons.map((button, index) => (
-            // Buttons have no names — BUTTONS order is the only identity, the
-            // list never reorders and its length is fixed by the template.
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
-            <div key={index} className="flex flex-col gap-1 border border-(--line) p-2.5">
-              <span className="text-sm text-foreground">{button.label}</span>
-              {button.url ? (
-                // A URL button's URL is shown as-is; a dynamic URL (a `{{n}}`
-                // placeholder) keeps it literal, the same convention as the
-                // body — there are no values to fill in a preview.
-                <span className="font-mono text-xs break-all text-muted-foreground">
-                  {previewBody(button.url, [])}
-                </span>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
+        {variables.length > 0 ? (
+          <SheetSection label="Variables">
+            <dl className="m-0">
+              {variables.map(([key, example]) => (
+                <FactRow key={key} label={variableKey(key)} value={example} />
+              ))}
+            </dl>
+          </SheetSection>
+        ) : null}
+
+        {links.length > 0 ? (
+          <SheetSection label="Links">
+            <dl className="m-0">
+              {links.map((button, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: buttons are positional
+                <FactRow key={index} label={button.text || `Button ${index + 1}`} value={button.url} mono />
+              ))}
+            </dl>
+          </SheetSection>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-/**
- * The sheet around the preview.
- *
- * The title lives here rather than in `TemplatePreview` because Base UI's
- * `Dialog.Title` needs the dialog context — which is also why the preview is
- * what the tests render.
- */
 export function TemplatePreviewSheet({
   open,
   onOpenChange,
-  templateName,
-  language,
-  components,
+  title,
+  children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  templateName: string;
-  language: string | undefined;
-  components: unknown;
+  title: string;
+  children: ReactNode;
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-md">
+      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-3xl">
         <SheetHeader className="gap-2">
-          <SheetTitle className="font-mono text-sm break-all">
-            {templateName} {language ? ` · ${language}` : ""}
-          </SheetTitle>
+          <SheetTitle className="font-mono text-sm break-all">{title}</SheetTitle>
         </SheetHeader>
-        <TemplatePreview components={components} />
+        {children}
       </SheetContent>
     </Sheet>
   );

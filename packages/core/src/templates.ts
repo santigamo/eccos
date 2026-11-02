@@ -5,12 +5,19 @@ export type TemplatesResult =
   | { ok: false; status: number; error: unknown };
 
 /** List approved/pending message templates for the configured WABA. */
-export async function listTemplates(cfg: MetaAppConfig, limit = 100): Promise<TemplatesResult> {
+export async function listTemplates(
+  cfg: MetaAppConfig,
+  limit = 100,
+  options: { fields?: readonly string[]; name?: string } = {},
+): Promise<TemplatesResult> {
   const wabaId = cfg.META_WABA_ID;
   if (!wabaId) {
     return { ok: false, status: 0, error: "META_WABA_ID is not configured" };
   }
-  const url = `${graphBaseUrl(cfg)}/${wabaId}/message_templates?limit=${limit}`;
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (options.fields) query.set("fields", options.fields.join(","));
+  if (options.name) query.set("name", options.name);
+  const url = `${graphBaseUrl(cfg)}/${wabaId}/message_templates?${query}`;
 
   let res: Response;
   try {
@@ -74,6 +81,37 @@ export async function createTemplate(
   if (!wabaId) {
     return { ok: false, status: 0, error: "META_WABA_ID is not configured" };
   }
+  const body = {
+    name: input.name,
+    language: input.language,
+    category: input.category,
+    components: templateComponents(input),
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(`${graphBaseUrl(cfg)}/${wabaId}/message_templates`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cfg.META_ACCESS_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    return { ok: false, status: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok) return { ok: false, status: res.status, error: json };
+  return { ok: true, data: json };
+}
+
+export type TemplateContent = Pick<CreateTemplateBody, "bodyText" | "examples" | "footerText" | "buttons">;
+
+/** The Graph `components[]` for a console-authored template, shared by create and edit. */
+export function templateComponents(input: TemplateContent): Record<string, unknown>[] {
   const examples = input.examples ?? [];
   const components: Record<string, unknown>[] = [
     {
@@ -102,16 +140,29 @@ export async function createTemplate(
       })),
     });
   }
+  return components;
+}
+
+/**
+ * Replace the components (and, when given, the category) of one template.
+ *
+ * Meta has no partial edit: the components sent here REPLACE every component
+ * the template had. The caller must have checked that the template id belongs
+ * to this WABA — `POST /{template-id}` is not addressed through the WABA.
+ */
+export async function editTemplate(
+  cfg: MetaAppConfig,
+  templateId: string,
+  input: TemplateContent & { category?: string },
+): Promise<TemplatesResult> {
   const body = {
-    name: input.name,
-    language: input.language,
-    category: input.category,
-    components,
+    ...(input.category ? { category: input.category } : {}),
+    components: templateComponents(input),
   };
 
   let res: Response;
   try {
-    res = await fetch(`${graphBaseUrl(cfg)}/${wabaId}/message_templates`, {
+    res = await fetch(`${graphBaseUrl(cfg)}/${encodeURIComponent(templateId)}`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${cfg.META_ACCESS_TOKEN}`,

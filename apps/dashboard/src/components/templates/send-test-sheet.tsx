@@ -19,6 +19,8 @@ import { sendTemplateTest } from "../../server/gateway";
 import type { SendTemplateTestResult } from "../../server/gateway";
 import { failureCopy, sendTestFailureCopy } from "../../lib/failure";
 import { previewBody, type TemplateSendability } from "../../lib/template-params";
+import type { TemplateView } from "../../lib/template-view";
+import { WhatsAppPreview } from "./whatsapp-preview";
 import type {
   ButtonUrlParam,
   TemplateHeaderMediaFormat,
@@ -44,6 +46,8 @@ interface SendTestFormProps {
   recipient?: string;
   /** Called once Meta has accepted the message, so the caller can refresh what it shows. */
   onSent?: () => void;
+  /** The template's parts, for the WhatsApp preview. Without it the preview is plain text. */
+  view?: TemplateView | null;
 }
 
 type Notice =
@@ -136,6 +140,7 @@ export function SendTestForm({
   initialPhoneNumberId,
   recipient: fixedRecipient,
   onSent,
+  view,
 }: SendTestFormProps) {
   const paramCount = sendability.kind === "ready" ? sendability.paramCount : 0;
   const [phoneNumberId, setPhoneNumberId] = useState(initialPhoneNumberId ?? phones[0]?.phoneNumberId ?? "");
@@ -344,7 +349,35 @@ export function SendTestForm({
           </div>
         ) : null}
 
-        {preview ? (
+        {view ? (
+          <div>
+            <span className={LABEL}>Preview</span>
+            <WhatsAppPreview
+              businessName={
+                phones.find((phone) => phone.phoneNumberId === phoneNumberId)?.displayPhoneNumber ||
+                "Your business"
+              }
+              header={view.header}
+              headerImageUrl={headerMedia === "image" && /^https:\/\/\S+$/.test(headerLink.trim()) ? headerLink.trim() : undefined}
+              body={view.body}
+              bodyValues={Object.fromEntries(
+                params.flatMap((value, index) => (value.trim() ? [[String(index + 1), value.trim()]] : [])),
+              )}
+              footer={view.footer}
+              buttons={view.buttons}
+              markValues
+            />
+            {previewButtonLines.length > 0 ? (
+              <div className="mt-1 flex flex-col gap-1">
+                {previewButtonLines.map((entry) => (
+                  <p key={entry.label} className="m-0 font-mono text-xs break-all text-muted-foreground">
+                    {entry.label} {"→"} {entry.url}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : preview ? (
           <div>
             <span className={LABEL}>Preview</span>
             {/* Quiet and inert: `--ghost-fill` is the ghost CONTROL body, and a

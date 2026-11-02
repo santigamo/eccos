@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createTemplate, deleteTemplate } from "@eccos/core/templates";
+import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import type { MetaAppConfig } from "@eccos/core/config-schema";
 
 /**
@@ -289,5 +289,57 @@ describe("deleteTemplate", () => {
       status: 400,
       error: { error: { message: "nope", code: 100 } },
     });
+  });
+});
+
+describe("editTemplate", () => {
+  it("posts the template node with every component and no name or language", async () => {
+    const { requests } = stubFetch(() => Response.json({ success: true }));
+    const result = await editTemplate(CFG, "987654", {
+      bodyText: "Hi {{1}}",
+      examples: ["Ada"],
+      footerText: "Eccos",
+      buttons: [{ text: "Track", url: "https://x.test/{{1}}", exampleUrl: "https://x.test/42" }],
+    });
+    expect(result.ok).toBe(true);
+    expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/987654");
+    expect(requests[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+      components: [
+        { type: "BODY", text: "Hi {{1}}", example: { body_text: [["Ada"]] } },
+        { type: "FOOTER", text: "Eccos" },
+        {
+          type: "BUTTONS",
+          buttons: [{ type: "URL", text: "Track", url: "https://x.test/{{1}}", example: ["https://x.test/42"] }],
+        },
+      ],
+    });
+  });
+
+  it("sends the category only when asked to change it", async () => {
+    const { requests } = stubFetch(() => Response.json({ success: true }));
+    await editTemplate(CFG, "987654", { bodyText: "Hello", category: "MARKETING" });
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+      category: "MARKETING",
+      components: [{ type: "BODY", text: "Hello" }],
+    });
+  });
+});
+
+describe("listTemplates", () => {
+  it("asks for the named fields and filters by name when given", async () => {
+    const { requests } = stubFetch(() => Response.json({ data: [] }));
+    await listTemplates(CFG, 50, { fields: ["id", "name"], name: "order_update" });
+    const url = new URL(requests[0]?.url ?? "");
+    expect(url.pathname).toBe("/v25.0/WABA_TEST/message_templates");
+    expect(url.searchParams.get("limit")).toBe("50");
+    expect(url.searchParams.get("fields")).toBe("id,name");
+    expect(url.searchParams.get("name")).toBe("order_update");
+  });
+
+  it("keeps Meta's default fields when none are named", async () => {
+    const { requests } = stubFetch(() => Response.json({ data: [] }));
+    await listTemplates(CFG);
+    expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/WABA_TEST/message_templates?limit=100");
   });
 });

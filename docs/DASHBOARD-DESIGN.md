@@ -19,7 +19,11 @@ The landing's **two laws** apply verbatim:
 
 1. **Nothing rounds a corner.** Every `--radius-*` token is 0 and the vendored
    shadcn/reui components carry an explicit `rounded-none` pass. A new component
-   shipping with a radius is off-system.
+   shipping with a radius is off-system. **One scoped exception:** the WhatsApp
+   preview (`components/templates/whatsapp-preview.tsx`) depicts the customer's
+   phone, not the console, so inside its square frame it wears WhatsApp's own
+   bubble radii and its dark palette (the `--wa-*` tokens). An operator judging a
+   template needs to see what the customer will see; nothing else borrows it.
 2. **Two voices, console distribution.** No third font — but the console
    deviates from the site in *which* voice carries functional micro-labels,
    because an operator reads them hundreds of times a day and a pixel face is
@@ -112,7 +116,9 @@ component" is therefore never the question. The register is.
 3. **Side Sheet — a task done beside the list, or one row inspected without acting on
    it.** Task: a form with its own primary submit whose neighbouring list is genuinely
    relevant (`create-template-sheet.tsx`, `send-test-sheet.tsx`). Inspection:
-   `template-preview-sheet.tsx`, read-only by construction, and the two log sheets
+   `template-preview-sheet.tsx` (the template as the phone shows it, Meta's review
+   verdict, and buttons that hand off to the send, edit and duplicate task sheets —
+   it closes before the task sheet opens, so one sheet is up at a time), and the two log sheets
    (`components/logs/message-sheet.tsx`, `event-sheet.tsx`) — one message or one event,
    hop by hop, with the full Meta ids, what the thing actually said, and the provider
    payload behind a disclosure (data rule 10).

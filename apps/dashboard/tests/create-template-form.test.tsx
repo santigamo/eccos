@@ -30,6 +30,7 @@ const {
   EMPTY_DRAFT,
   discardDraftCopy,
   exampleValues,
+  editNoticeFor,
   isDraftDirty,
   noticeFor,
   shouldGuardDismissal,
@@ -106,11 +107,12 @@ describe("CreateTemplateFields", () => {
   });
 
   test("the preview substitutes typed examples and keeps an unfilled slot literal", () => {
-    // The preview never pretends a value exists — the same rule the send
-    // sheet's preview follows, from the same `previewBody`.
+    // The preview never pretends a value exists.
     const html = render({ body: "Hi {{1}}, order {{2}} shipped.", examples: ["Ada"] });
-    expect(html).toContain("Preview");
-    expect(html).toContain("Hi Ada, order {{2}} shipped.");
+    const preview = html.slice(html.indexOf(">Preview<"));
+    expect(preview).toContain(">Ada<");
+    expect(preview).toContain(">{{2}}<");
+    expect(preview).toContain(" shipped.");
   });
 
   test("the preview names the row that is about to exist", () => {
@@ -251,7 +253,8 @@ describe("CreateTemplateFields", () => {
   });
 
   test("nothing rounds a corner", () => {
-    const html = render({ body: "Hi {{1}}" });
+    // The WhatsApp preview is the one exception: it depicts the phone, not the console.
+    const html = render({ body: "Hi {{1}}" }).replace(/<figure[\s\S]*<\/figure>/, "");
     const stripped = html
       .replace(/rounded-none/g, "")
       .replace(/rounded-\([^)]*\)/g, "")
@@ -268,12 +271,11 @@ describe("CreateTemplateFields", () => {
     expect(html).toContain("hover:border-(--ghost-edge-hover)");
   });
 
-  test("the preview panel stays square and muted, exactly like the send sheet's", () => {
-    // Deliberate: a rounded WhatsApp-style bubble here would break sheet-to-
-    // sheet consistency before it broke the design doc. What must not lie is
-    // the content; the container is chrome.
+  test("the preview is the WhatsApp facsimile, in a square frame", () => {
     const html = render({ body: "Hi {{1}}" });
-    expect(html).toContain("border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap");
+    expect(html).toContain('aria-label="Preview as the customer sees it in WhatsApp"');
+    expect(html).toContain("border border-(--line) bg-(--wa-wall)");
+    expect(html).toContain("bg-(--wa-bubble)");
   });
 
   test("the draft preview shows a typed footer and each button, in Meta's order", () => {
@@ -290,7 +292,7 @@ describe("CreateTemplateFields", () => {
         { text: "Track", url: "https://e.com/track", exampleUrl: "" },
       ],
     });
-    expect(html).toContain("Hi Ada");
+    expect(html).toContain(">Ada<");
     expect(html).toContain("Thanks from Eccos");
     expect(html).toContain("Status");
     expect(html).toContain("Track");
@@ -298,15 +300,14 @@ describe("CreateTemplateFields", () => {
     // slice from the Preview label onwards is needed because the footer and
     // button LABELS also appear in the input values ABOVE the panel.
     const previewHtml = html.slice(html.indexOf(">Preview<"));
-    expect(previewHtml.indexOf("Hi Ada")).toBeLessThan(previewHtml.indexOf("Thanks from Eccos"));
+    expect(previewHtml.indexOf(">Ada<")).toBeLessThan(previewHtml.indexOf("Thanks from Eccos"));
     expect(previewHtml.indexOf("Thanks from Eccos")).toBeLessThan(previewHtml.indexOf("Status"));
     expect(previewHtml.indexOf("Status")).toBeLessThan(previewHtml.indexOf("Track"));
   });
 
-  test("a dynamic URL in the draft preview keeps its {{n}} literal", () => {
-    // The same convention as the read-only preview sheet: there are no values
-    // to fill inside the creation preview, so the placeholder shows as Meta
-    // authored it rather than vanishing or pretending a value exists.
+  test("a dynamic URL keeps its {{n}} literal in the form", () => {
+    // WhatsApp never shows a button's URL, so the preview draws only its label;
+    // the URL as authored stays visible in its field.
     const html = render({
       body: "Hi {{1}}",
       footer: "",
@@ -319,8 +320,8 @@ describe("CreateTemplateFields", () => {
     // Unchanged from before authoring existed: the panel stays a single muted
     // body block, never a stack of empty components.
     const html = render({ body: "Hi {{1}}", examples: ["Ada"], footer: "", buttons: [] });
-    expect(html).toContain("Hi Ada");
-    expect(html).not.toContain("p-2.5");
+    expect(html).toContain(">Ada<");
+    expect(html).not.toContain("border-(--wa-rule)");
   });
 });
 
@@ -412,5 +413,20 @@ describe("the dismissal guard", () => {
     expect(discardDraftCopy(false)).toContain("buttons");
     expect(discardDraftCopy(true)).toContain("still being submitted");
     expect(discardDraftCopy(true)).not.toContain("Nothing has been created yet");
+  });
+});
+
+describe("editNoticeFor", () => {
+  test("edit failures read in the console's words, with Meta's sentence when it explains", () => {
+    expect(editNoticeFor({ ok: true })).toEqual({ ok: true, edited: true });
+    expect(editNoticeFor({ ok: false, code: "not_found", detail: null })).toMatchObject({
+      ok: false,
+      title: "Template not found",
+    });
+    expect(editNoticeFor({ ok: false, code: "graph", detail: "Edit limit reached" })).toMatchObject({
+      ok: false,
+      detail: "Edit limit reached",
+      secondary: "Edit limit reached",
+    });
   });
 });

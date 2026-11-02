@@ -894,6 +894,36 @@ export type CreateTemplateResult =
   | { ok: false; code: CreateTemplateFailureCode; detail: string | null };
 
 /**
+ * Replace the content of one template ("Edit").
+ *
+ * The same narrow content as {@link CreateTemplateInput}, for the same reason:
+ * the gateway builds the Graph `components[]` itself. `name` and `language`
+ * cannot change (Meta does not allow it); they identify the translation, and
+ * the gateway checks that `templateId` is that translation on this WABA before
+ * editing, because Meta's edit call is addressed to the template id alone.
+ */
+export interface EditTemplateInput extends Omit<CreateTemplateInput, "category"> {
+  /** Graph template id (`hsm_id`), digits only. */
+  templateId: string;
+  /** Omit to keep the category. Meta refuses a category change on an APPROVED template. */
+  category?: CreateTemplateInput["category"];
+}
+
+export type EditTemplateFailureCode =
+  /** No translation with this id, name and language exists on this WABA. */
+  | "not_found"
+  /** Graph 100 — Meta refused the shape, or the template cannot be edited in its current status. */
+  | "invalid"
+  /** Graph 80008 — Meta is rate-limiting template management for this account. */
+  | "rate_limited"
+  /** Anything else, including Meta's edit allowance; `detail` carries Meta's own message text. */
+  | "graph";
+
+export type EditTemplateResult =
+  | { ok: true }
+  | { ok: false; code: EditTemplateFailureCode; detail: string | null };
+
+/**
  * Delete ONE translation of a template.
  *
  * `templateId` (Meta's `hsm_id`) is required, never a bare name: the name-only
@@ -1012,6 +1042,9 @@ export interface GatewayApi {
    * Ownership is enforced either way.
    */
   createTemplate(input: CreateTemplateInput, accountId: string): Promise<CreateTemplateResult>;
+  /** Replace one template translation's content. Same reachability and role as
+   * {@link GatewayApi.createTemplate}. */
+  editTemplate(input: EditTemplateInput, accountId: string): Promise<EditTemplateResult>;
   /** Delete one translation of a template (by `hsm_id`, never by bare name).
    * WABA-level, same reachability as {@link GatewayApi.createTemplate}. */
   deleteTemplate(input: DeleteTemplateInput, accountId: string): Promise<DeleteTemplateResult>;

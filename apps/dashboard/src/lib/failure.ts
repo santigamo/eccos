@@ -1,6 +1,7 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import type {
   CreateTemplateFailureCode,
+  EditTemplateFailureCode,
   Failure,
   ManualConnectFailureCode,
   SendTestFailureCode,
@@ -211,6 +212,32 @@ export function createTemplateFailureCopy(
       return {
         title: "Meta refused the template",
         detail: detail ?? "Meta refused the template without saying why.",
+      };
+  }
+}
+
+export function editTemplateFailureCopy(code: EditTemplateFailureCode, detail: string | null): FailureCopy {
+  switch (code) {
+    case "not_found":
+      return {
+        title: "Template not found",
+        detail: "This translation is no longer on this WhatsApp Business Account. Reload the list and try again.",
+      };
+    case "invalid":
+      return {
+        title: "Meta refused the edit",
+        detail:
+          "Either the content does not meet Meta's format rules, or the template cannot be edited right now. Only approved, rejected or paused templates can be edited.",
+      };
+    case "rate_limited":
+      return {
+        title: "Too many requests",
+        detail: "Meta is rate-limiting template changes for this account. Wait a few minutes and try again.",
+      };
+    default:
+      return {
+        title: "Meta refused the edit",
+        detail: detail ?? "Meta refused the edit without saying why.",
       };
   }
 }

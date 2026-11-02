@@ -8,7 +8,7 @@ import {
 } from "./routes/connect";
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
-import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
+import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -29,6 +29,9 @@ import type {
   CreateTemplateFailureCode,
   CreateTemplateInput,
   CreateTemplateResult,
+  EditTemplateFailureCode,
+  EditTemplateInput,
+  EditTemplateResult,
   CursorPage,
   DeleteTemplateInput,
   DeleteTemplateResult,
@@ -149,6 +152,22 @@ const MAX_BUTTON_TEXT_LENGTH = 25;
 const MAX_BUTTON_URL_LENGTH = 2000;
 /** Graph template ids (`hsm_id`) are numeric. */
 const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
+/** What the console's template list reads. Named explicitly: quality, rejection
+ * reason and last edit are not in Meta's default response. */
+const TEMPLATE_LIST_FIELDS = [
+  "id",
+  "name",
+  "language",
+  "status",
+  "category",
+  "sub_category",
+  "previous_category",
+  "components",
+  "parameter_format",
+  "rejected_reason",
+  "quality_score",
+  "last_updated_time",
+] as const;
 /**
  * A pasted Meta access token: printable ASCII, no whitespace. Meta's tokens are
  * long opaque base64url-ish strings; the shape check exists to refuse a paste
@@ -223,6 +242,60 @@ function createTemplateFailure(code: number | null, subcode: number | null): Cre
   if (code === 80008) return "rate_limited";
   if (code === 100) return "invalid";
   return "graph";
+}
+
+/** The content rules shared by create and edit: body, examples, footer, URL buttons. */
+function assertTemplateContent(input: Pick<CreateTemplateInput, "bodyText" | "bodyExamples" | "footerText" | "buttons">) {
+  const examples = input.bodyExamples ?? [];
+  if (typeof input.bodyText !== "string" || input.bodyText.length === 0) {
+    throw new Error("template body is required");
+  }
+  if (input.bodyText.length > MAX_TEMPLATE_BODY_LENGTH) throw new Error("template body is too long");
+  if (examples.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+  for (const value of examples) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_BODY_PARAM_LENGTH) {
+      throw new Error("example values must be 1-1024 characters");
+    }
+  }
+  const footerText = input.footerText;
+  if (footerText !== undefined) {
+    if (typeof footerText !== "string" || footerText.length === 0) {
+      throw new Error("footer text is required when present");
+    }
+    if (footerText.length > MAX_FOOTER_LENGTH) throw new Error("footer text is too long");
+    if (/[\n\t]/.test(footerText)) throw new Error("footer text must not contain newlines or tabs");
+    if (/\{\{/.test(footerText)) throw new Error("footer text cannot contain placeholders");
+  }
+  const buttons = input.buttons ?? [];
+  if (buttons.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
+  for (const button of buttons) {
+    if (typeof button !== "object" || button === null) {
+      throw new Error("buttons must be objects");
+    }
+    const { text, url, exampleUrl } = button as {
+      text?: unknown;
+      url?: unknown;
+      exampleUrl?: unknown;
+    };
+    if (typeof text !== "string" || text.length === 0 || text.length > MAX_BUTTON_TEXT_LENGTH) {
+      throw new Error("button text must be 1-25 characters");
+    }
+    if (typeof url !== "string" || url.length === 0 || url.length > MAX_BUTTON_URL_LENGTH) {
+      throw new Error("button url is required");
+    }
+    if (!/^https?:\/\//.test(url)) throw new Error("button url must be http(s)");
+    if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
+      throw new Error("button text and url cannot contain newlines or tabs");
+    }
+    const dynamic = url.includes("{{");
+    if (dynamic && (typeof exampleUrl !== "string" || exampleUrl.length === 0)) {
+      throw new Error("a dynamic URL button requires an example url");
+    }
+    if (exampleUrl !== undefined && typeof exampleUrl !== "string") {
+      throw new Error("button example url must be a string");
+    }
+  }
+  return { examples, footerText, buttons };
 }
 
 /**
@@ -468,7 +541,11 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * connected-but-unprovisioned WABA can list its templates. */
   async listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult> {
     const { config: cfg } = await this.scoped(wabaId, accountId, { anyStatus: true });
-    return listTemplates(cfg, limit);
+    const result = await listTemplates(cfg, limit, { fields: TEMPLATE_LIST_FIELDS });
+    // The review fields are extras: if Meta ever refuses one of them, the list
+    // still loads with its default fields rather than not at all.
+    if (!result.ok && graphError(result.error).code === 100) return listTemplates(cfg, limit);
+    return result;
   }
 
   /**
@@ -495,58 +572,10 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     // one and the only caller, so reaching any of these means that validator
     // regressed — a programmer error, which belongs in the logs as a throw
     // rather than in the UI as a failure code.
-    const examples = input.bodyExamples ?? [];
     if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
     if (!LANGUAGE_PATTERN.test(input.language)) throw new Error("invalid template language");
     if (!TEMPLATE_CATEGORIES.has(input.category)) throw new Error("invalid template category");
-    if (typeof input.bodyText !== "string" || input.bodyText.length === 0) {
-      throw new Error("template body is required");
-    }
-    if (input.bodyText.length > MAX_TEMPLATE_BODY_LENGTH) throw new Error("template body is too long");
-    if (examples.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
-    for (const value of examples) {
-      if (typeof value !== "string" || value.length === 0 || value.length > MAX_BODY_PARAM_LENGTH) {
-        throw new Error("example values must be 1-1024 characters");
-      }
-    }
-    const footerText = input.footerText;
-    if (footerText !== undefined) {
-      if (typeof footerText !== "string" || footerText.length === 0) {
-        throw new Error("footer text is required when present");
-      }
-      if (footerText.length > MAX_FOOTER_LENGTH) throw new Error("footer text is too long");
-      if (/[\n\t]/.test(footerText)) throw new Error("footer text must not contain newlines or tabs");
-      if (/\{\{/.test(footerText)) throw new Error("footer text cannot contain placeholders");
-    }
-    const buttons = input.buttons ?? [];
-    if (buttons.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
-    for (const button of buttons) {
-      if (typeof button !== "object" || button === null) {
-        throw new Error("buttons must be objects");
-      }
-      const { text, url, exampleUrl } = button as {
-        text?: unknown;
-        url?: unknown;
-        exampleUrl?: unknown;
-      };
-      if (typeof text !== "string" || text.length === 0 || text.length > MAX_BUTTON_TEXT_LENGTH) {
-        throw new Error("button text must be 1-25 characters");
-      }
-      if (typeof url !== "string" || url.length === 0 || url.length > MAX_BUTTON_URL_LENGTH) {
-        throw new Error("button url is required");
-      }
-      if (!/^https?:\/\//.test(url)) throw new Error("button url must be http(s)");
-      if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
-        throw new Error("button text and url cannot contain newlines or tabs");
-      }
-      const dynamic = url.includes("{{");
-      if (dynamic && (typeof exampleUrl !== "string" || exampleUrl.length === 0)) {
-        throw new Error("a dynamic URL button requires an example url");
-      }
-      if (exampleUrl !== undefined && typeof exampleUrl !== "string") {
-        throw new Error("button example url must be a string");
-      }
-    }
+    const { examples, footerText, buttons } = assertTemplateContent(input);
 
     const result = await createTemplate(cfg, {
       name: input.name,
@@ -577,6 +606,54 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       status: typeof data?.status === "string" ? data.status : "PENDING",
       category: typeof data?.category === "string" ? data.category : input.category,
     };
+  }
+
+  /**
+   * Replace one translation's content ("Edit"). Same reachability, role and
+   * limiter stance as {@link GatewayRPC.createTemplate}.
+   *
+   * Meta's edit is addressed to the template id alone, so the id is first
+   * looked up among THIS WABA's templates of that name and language: a token
+   * that can reach another WABA's template must still not edit it from here.
+   */
+  async editTemplate(input: EditTemplateInput, accountId: string): Promise<EditTemplateResult> {
+    const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
+    if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
+    if (!LANGUAGE_PATTERN.test(input.language)) throw new Error("invalid template language");
+    if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
+    if (input.category !== undefined && !TEMPLATE_CATEGORIES.has(input.category)) {
+      throw new Error("invalid template category");
+    }
+    const { examples, footerText, buttons } = assertTemplateContent(input);
+
+    const found = await listTemplates(cfg, 100, { fields: ["id", "name", "language"], name: input.name });
+    if (!found.ok) {
+      const { message } = graphError(found.error);
+      return { ok: false, code: "graph", detail: message ?? `HTTP ${found.status}` };
+    }
+    const rows =
+      (found.data as { data?: { id?: unknown; name?: unknown; language?: unknown }[] } | null)?.data ?? [];
+    const owned = rows.some(
+      (row) => row.id === input.templateId && row.name === input.name && row.language === input.language,
+    );
+    if (!owned) {
+      return { ok: false, code: "not_found", detail: null };
+    }
+
+    const result = await editTemplate(cfg, input.templateId, {
+      bodyText: input.bodyText,
+      ...(examples.length > 0 ? { examples } : {}),
+      ...(footerText !== undefined ? { footerText } : {}),
+      ...(buttons.length > 0 ? { buttons } : {}),
+      ...(input.category ? { category: input.category } : {}),
+    });
+    if (!result.ok) {
+      const { code, message } = graphError(result.error);
+      const mapped: EditTemplateFailureCode =
+        code === 80008 ? "rate_limited" : code === 100 ? "invalid" : "graph";
+      return { ok: false, code: mapped, detail: message ?? `HTTP ${result.status}` };
+    }
+    return { ok: true };
   }
 
   /** Delete ONE translation of a template (by `hsm_id`). Same WABA-level

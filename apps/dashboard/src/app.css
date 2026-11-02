@@ -162,6 +162,17 @@
   --tag-live-edge: rgba(37, 211, 102, 0.3);
   --tag-soon-bg: rgba(255, 255, 255, 0.06);
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* WhatsApp's own dark palette, for the template previews only: they depict
+     the customer's phone, not the console (see DASHBOARD-DESIGN.md). */
+  --wa-wall: #0b141a;
+  --wa-bar: #202c33;
+  --wa-bubble: #202c33;
+  --wa-media: #2a3942;
+  --wa-chip: #182229;
+  --wa-ink: #e9edef;
+  --wa-muted: #8696a0;
+  --wa-link: #53bdeb;
+  --wa-rule: rgba(233, 237, 239, 0.08);
 }
 
 @layer base {

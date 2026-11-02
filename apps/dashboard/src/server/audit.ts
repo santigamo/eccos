@@ -72,6 +72,9 @@ export type SensitiveAction =
    * the id and status Meta returned.
    */
   | "template_create"
+  /** One template translation's content replaced from the console. Carries
+   * wabaId, name, language, Graph id and any category change — never content. */
+  | "template_edit"
   /** One template translation deleted from the console. Carries wabaId, the
    * template name and its Graph id — identifiers only, never content. */
   | "template_delete"

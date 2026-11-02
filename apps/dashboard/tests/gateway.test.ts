@@ -246,6 +246,7 @@ const {
   deleteTemplate,
   validateCreateTemplateInput,
   validateDeleteTemplateInput,
+  validateEditTemplateInput,
   connectWithToken,
   validateTokenConnectInput,
   listApiKeys,
@@ -2465,5 +2466,38 @@ describe("selectWaba (shared by the dashboard and the gateway)", () => {
     );
     expect(selectWaba("account-a", [w("a", "pending")], "a", false, "any").wabaId).toBe("a");
     expect(() => selectWaba("account-a", [w("a", "failed")], "a")).toThrow('WABA "a" provisioning failed');
+  });
+});
+
+describe("validateEditTemplateInput", () => {
+  const EDIT = {
+    wabaId: "waba-a",
+    templateId: " 555 ",
+    name: " order_update ",
+    language: "en_US",
+    bodyText: "Hi {{1}}",
+    bodyExamples: [" Ada "],
+  };
+
+  test("trims the identifiers and keeps the content rules of create", () => {
+    expect(validateEditTemplateInput(EDIT)).toEqual({
+      wabaId: "waba-a",
+      templateId: "555",
+      name: "order_update",
+      language: "en_US",
+      bodyText: "Hi {{1}}",
+      bodyExamples: ["Ada"],
+    });
+    expect(() => validateEditTemplateInput({ ...EDIT, bodyExamples: [] })).toThrow();
+  });
+
+  test("category is optional, and never AUTHENTICATION", () => {
+    expect(validateEditTemplateInput({ ...EDIT, category: "MARKETING" }).category).toBe("MARKETING");
+    expect(() => validateEditTemplateInput({ ...EDIT, category: "AUTHENTICATION" })).toThrow();
+  });
+
+  test("the template id is digits only", () => {
+    expect(() => validateEditTemplateInput({ ...EDIT, templateId: "../555" })).toThrow("invalid template id");
+    expect(() => validateEditTemplateInput({ ...EDIT, templateId: undefined })).toThrow("invalid template id");
   });
 });

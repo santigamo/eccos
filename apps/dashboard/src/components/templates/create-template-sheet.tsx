@@ -25,9 +25,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { createTemplate } from "../../server/gateway";
-import type { CreateTemplateResult } from "../../server/gateway";
-import { createTemplateFailureCopy, failureCopy } from "../../lib/failure";
+import { createTemplate, editTemplate } from "../../server/gateway";
+import type { CreateTemplateResult, EditTemplateResult } from "../../server/gateway";
+import { createTemplateFailureCopy, editTemplateFailureCopy, failureCopy } from "../../lib/failure";
+import { WhatsAppPreview } from "./whatsapp-preview";
 import {
   analyzeDraftBody,
   analyzeDraftButtons,
@@ -59,6 +60,13 @@ const LANGUAGES: { code: string; label: string }[] = [
   { code: "nl", label: "Dutch" },
   { code: "ca", label: "Catalan" },
 ];
+
+/** The curated list, plus a duplicated template's own language when it is not on it. */
+function languageOptions(current: string): { code: string; label: string }[] {
+  return LANGUAGES.some((entry) => entry.code === current)
+    ? LANGUAGES
+    : [{ code: current, label: current }, ...LANGUAGES];
+}
 
 /** AUTHENTICATION is absent by design: those templates are preset content plus
  * OTP buttons — a different creation shape, not a missing option. */
@@ -107,7 +115,8 @@ export const EMPTY_DRAFT: TemplateDraft = {
  * because it is the seam the dismissal guard is tested through — the sheet is a
  * Base UI portal, and a static render cannot open one.
  */
-export function isDraftDirty(draft: TemplateDraft): boolean {
+export function isDraftDirty(draft: TemplateDraft, initial: TemplateDraft = EMPTY_DRAFT): boolean {
+  if (initial !== EMPTY_DRAFT) return JSON.stringify(draft) !== JSON.stringify(initial);
   return (
     draft.name.trim() !== "" ||
     draft.body.trim() !== "" ||
@@ -146,14 +155,33 @@ export function shouldGuardDismissal(state: {
   draft: TemplateDraft;
   submitting: boolean;
   createdDraft: TemplateDraft | null;
+  initial?: TemplateDraft;
 }): boolean {
   if (state.submitting) return true;
   if (state.createdDraft === state.draft) return false;
-  return isDraftDirty(state.draft);
+  return isDraftDirty(state.draft, state.initial);
+}
+
+/**
+ * What the sheet is authoring. `edit` replaces an existing translation's
+ * content: its name and language are fixed, and so is the category of an
+ * APPROVED template (Meta refuses that change). `duplicate` starts a new
+ * template from an existing one's content.
+ */
+export type TemplateSheetMode =
+  | { kind: "create" }
+  | { kind: "duplicate"; initial: TemplateDraft }
+  | { kind: "edit"; initial: TemplateDraft; templateId: string; status: string | undefined };
+
+export const CREATE_MODE: TemplateSheetMode = { kind: "create" };
+
+function initialDraft(mode: TemplateSheetMode): TemplateDraft {
+  return mode.kind === "create" ? EMPTY_DRAFT : mode.initial;
 }
 
 export type CreateTemplateNotice =
   | { ok: true; id: string; status: string; recategorizedTo: string | null }
+  | { ok: true; edited: true }
   | { ok: false; title: string; detail: string; secondary?: string };
 
 /**
@@ -179,6 +207,9 @@ const HELP = "mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground";
 
 export interface CreateTemplateFieldsProps {
   wabaId: string;
+  mode?: TemplateSheetMode;
+  /** Shown in the preview's chat bar. */
+  businessName?: string;
   draft: TemplateDraft;
   onDraftChange: (draft: TemplateDraft) => void;
   submitting: boolean;
@@ -196,6 +227,8 @@ export interface CreateTemplateFieldsProps {
  */
 export function CreateTemplateFields({
   wabaId,
+  mode = CREATE_MODE,
+  businessName = "Your business",
   draft,
   onDraftChange,
   submitting,
@@ -238,10 +271,26 @@ export function CreateTemplateFields({
     onDraftChange({ ...draft, buttons: draft.buttons.filter((_, i) => i !== index) });
   }
 
-  const preview = draft.body ? previewBody(draft.body, values) : null;
+  const editing = mode.kind === "edit";
+  const categoryLocked = mode.kind === "edit" && mode.status?.toUpperCase() === "APPROVED";
 
   return (
-    <form onSubmit={onSubmit} aria-busy={submitting} className="flex flex-col gap-4 px-4 pb-4">
+    <form
+      onSubmit={onSubmit}
+      aria-busy={submitting}
+      className="grid gap-6 px-4 pb-4 md:grid-cols-[minmax(0,1fr)_19.5rem]"
+    >
+      <div className="flex min-w-0 flex-col gap-4">
+      {editing ? (
+        <div>
+          <span className={LABEL}>Template</span>
+          <p className="m-0 font-mono text-sm break-all text-foreground">
+            {draft.name} {"·"} {draft.language}
+          </p>
+          <p className={HELP}>Meta does not allow changing a template's name or language. Duplicate it instead.</p>
+        </div>
+      ) : (
+      <>
       <div>
         <label htmlFor="create-template-name" className={LABEL}>
           Name
@@ -274,7 +323,7 @@ export function CreateTemplateFields({
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="start">
-            {LANGUAGES.map((entry) => (
+            {languageOptions(draft.language).map((entry) => (
               <SelectItem key={entry.code} value={entry.code}>
                 {entry.label} {"·"} {entry.code}
               </SelectItem>
@@ -283,6 +332,8 @@ export function CreateTemplateFields({
         </Select>
         <p className={HELP}>A template name is unique per language, not on its own.</p>
       </div>
+      </>
+      )}
 
       <div>
         <label htmlFor="create-template-category" className={LABEL}>
@@ -290,6 +341,7 @@ export function CreateTemplateFields({
         </label>
         <Select
           value={draft.category}
+          disabled={categoryLocked}
           onValueChange={(value) =>
             onDraftChange({ ...draft, category: (value as TemplateCategory) ?? "UTILITY" })
           }
@@ -306,8 +358,9 @@ export function CreateTemplateFields({
           </SelectContent>
         </Select>
         <p className={HELP}>
-          Meta reviews the category and may reassign it. Authentication templates are created in
-          WhatsApp Manager.
+          {categoryLocked
+            ? "Meta does not allow changing the category of an approved template."
+            : "Meta reviews the category and may reassign it. Authentication templates are created in WhatsApp Manager."}
         </p>
       </div>
 
@@ -469,58 +522,20 @@ export function CreateTemplateFields({
         ) : null}
       </div>
 
-      {preview ? (
-        <div>
-          <span className={LABEL}>Preview</span>
-          <p className="m-0 font-mono text-[11px] break-all text-muted-foreground">
-            {draft.name || "—"} {"·"} {draft.language} {"·"} {draft.category}
-          </p>
-          {/* The panel is what the operator confirms BEFORE submitting, so it
-              draws exactly what the form now authors, in Meta's order: the
-              substituted body, then the footer, then every URL button with its
-              label and its URL. A typed footer or button that never reached
-              this panel would be the same contradiction class as the
-              collected-but-never-sent button params, so it must not be
-              invisible here. */}
-          <p className="mt-1 m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
-            {preview}
-          </p>
-          {draft.footer.trim() ? (
-            <p className="mt-1 m-0 border border-(--line) bg-muted p-3 text-sm whitespace-pre-wrap text-foreground">
-              {draft.footer}
-            </p>
-          ) : null}
-          {draft.buttons.length > 0 ? (
-            <div className="mt-1 flex flex-col gap-2">
-              {draft.buttons.map((button, index) => (
-                // Buttons have no names - the authoring order IS the identity,
-                // the same convention the template preview sheet applies.
-                // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
-                <div key={index} className="flex flex-col gap-1 border border-(--line) p-2.5">
-                  <span className="text-sm text-foreground">{button.text}</span>
-                  {button.url ? (
-                    // A dynamic URL keeps its `{{n}}` literal - there are no
-                    // values to fill in this panel, the same convention as the
-                    // template preview sheet.
-                    <span className="font-mono text-xs break-all text-muted-foreground">
-                      {button.url}
-                    </span>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       <Button
         type="submit"
         className="w-fit self-start"
         aria-busy={submitting}
         disabled={submitting || !analysis.ok || footerBlocked || buttonsBlocked}
       >
-        {submitting ? "Submitting…" : "Create template"}
+        {submitting ? "Submitting…" : editing ? "Submit changes for review" : "Create template"}
       </Button>
+      {editing ? (
+        <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">
+          Meta reviews every edit. An approved template can be edited once every 24 hours and up to 10
+          times in 30 days.
+        </p>
+      ) : null}
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -545,12 +560,32 @@ export function CreateTemplateFields({
         </a>
         .
       </p>
+      </div>
+
+      <aside className="flex flex-col gap-1 self-start md:sticky md:top-0">
+        <span className={LABEL}>Preview</span>
+        <WhatsAppPreview
+          businessName={businessName}
+          header={null}
+          body={draft.body}
+          bodyValues={Object.fromEntries(
+            values.flatMap((value, index) => (value.trim() ? [[String(index + 1), value.trim()]] : [])),
+          )}
+          footer={draft.footer.trim()}
+          buttons={draft.buttons.map((button) => ({ kind: "url" as const, text: button.text }))}
+          markValues
+        />
+        <p className="m-0 font-mono text-[11px] break-all text-muted-foreground">
+          {draft.name || "—"} {"·"} {draft.language} {"·"} {draft.category}
+        </p>
+      </aside>
     </form>
   );
 }
 
 interface CreateTemplateDraftProps {
   wabaId: string;
+  mode?: TemplateSheetMode;
   /** Called once Meta accepts the template, so the route can re-read the list
    * and show the new PENDING row without a manual refresh. */
   onCreated?: () => void;
@@ -573,8 +608,9 @@ interface CreateTemplateDraftProps {
  * ("is there anything here to lose?"), and asking the form through a callback
  * would make a second, lagging copy of the answer.
  */
-function useCreateTemplateDraft({ wabaId, onCreated }: CreateTemplateDraftProps) {
-  const [draft, setDraft] = useState<TemplateDraft>(EMPTY_DRAFT);
+function useCreateTemplateDraft({ wabaId, mode = CREATE_MODE, onCreated }: CreateTemplateDraftProps) {
+  const initial = initialDraft(mode);
+  const [draft, setDraft] = useState<TemplateDraft>(initial);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<CreateTemplateNotice | null>(null);
   /** The exact draft object Meta accepted, so the guard can tell a receipt
@@ -589,29 +625,37 @@ function useCreateTemplateDraft({ wabaId, onCreated }: CreateTemplateDraftProps)
     setNotice(null);
     setCreatedDraft(null);
     try {
-      const values = exampleValues(draft);
+      const content = draftContent(draft);
+      if (mode.kind === "edit") {
+        const result = await editTemplate({
+          data: {
+            wabaId,
+            templateId: mode.templateId,
+            name: draft.name,
+            language: draft.language,
+            ...(draft.category !== mode.initial.category ? { category: draft.category } : {}),
+            ...content,
+          },
+        });
+        if (!result.ok) {
+          const copy = failureCopy(result);
+          setNotice({ ok: false, title: copy.title, detail: copy.detail });
+          return;
+        }
+        setNotice(editNoticeFor(result.data));
+        if (result.data.ok) {
+          setCreatedDraft(draft);
+          onCreated?.();
+        }
+        return;
+      }
       const result = await createTemplate({
         data: {
           wabaId,
           name: draft.name,
           language: draft.language,
           category: draft.category,
-          bodyText: draft.body,
-          ...(values.length > 0 ? { bodyExamples: values } : {}),
-          ...(draft.footer.trim() ? { footerText: draft.footer } : {}),
-          ...(draft.buttons.filter((button) => button.text.trim() && button.url.trim()).length > 0
-            ? {
-                buttons: draft.buttons
-                  .filter((button) => button.text.trim() && button.url.trim())
-                  .map((button) => ({
-                    text: button.text,
-                    url: button.url,
-                    ...(button.url.includes("{{") && button.exampleUrl
-                      ? { exampleUrl: button.exampleUrl }
-                      : {}),
-                  })),
-              }
-            : {}),
+          ...content,
         },
       });
       if (!result.ok) {
@@ -631,7 +675,38 @@ function useCreateTemplateDraft({ wabaId, onCreated }: CreateTemplateDraftProps)
     }
   }
 
-  return { draft, setDraft, submitting, notice, createdDraft, onSubmit };
+  return { draft, setDraft, submitting, notice, createdDraft, initial, onSubmit };
+}
+
+/** The content half of the request, shared by create and edit. */
+function draftContent(draft: TemplateDraft) {
+  const values = exampleValues(draft);
+  const buttons = draft.buttons.filter((button) => button.text.trim() && button.url.trim());
+  return {
+    bodyText: draft.body,
+    ...(values.length > 0 ? { bodyExamples: values } : {}),
+    ...(draft.footer.trim() ? { footerText: draft.footer } : {}),
+    ...(buttons.length > 0
+      ? {
+          buttons: buttons.map((button) => ({
+            text: button.text,
+            url: button.url,
+            ...(button.url.includes("{{") && button.exampleUrl ? { exampleUrl: button.exampleUrl } : {}),
+          })),
+        }
+      : {}),
+  };
+}
+
+export function editNoticeFor(result: EditTemplateResult): CreateTemplateNotice {
+  if (result.ok) return { ok: true, edited: true };
+  const copy = editTemplateFailureCopy(result.code, result.detail);
+  return {
+    ok: false,
+    title: copy.title,
+    detail: copy.detail,
+    ...((result.code === "graph" || result.code === "invalid") && result.detail ? { secondary: result.detail } : {}),
+  };
 }
 
 /** Per-code copy, never a raw Graph payload. */
@@ -663,6 +738,13 @@ export function noticeFor(result: CreateTemplateResult, requested: string): Crea
 }
 
 function NoticeBody({ notice }: { notice: CreateTemplateNotice }) {
+  if (notice.ok && "edited" in notice) {
+    return (
+      <span className="block text-sm text-foreground">
+        Changes submitted. Meta reviews the edit and re-approves the template unless it fails review.
+      </span>
+    );
+  }
   if (notice.ok) {
     return (
       <span className="block text-sm text-foreground">
@@ -718,12 +800,15 @@ export function CreateTemplateSheet({
   open,
   onOpenChange,
   wabaId,
+  mode = CREATE_MODE,
+  businessName,
   onCreated,
 }: CreateTemplateDraftProps & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  businessName?: string;
 }) {
-  const form = useCreateTemplateDraft({ wabaId, onCreated });
+  const form = useCreateTemplateDraft({ wabaId, mode, onCreated });
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const guarded = shouldGuardDismissal(form);
 
@@ -740,12 +825,16 @@ export function CreateTemplateSheet({
         setConfirmingDiscard(true);
       }}
     >
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-md">
+      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-4xl">
         <SheetHeader className="gap-2">
-          <SheetTitle className="text-sm">New template</SheetTitle>
+          <SheetTitle className="text-sm">
+            {mode.kind === "edit" ? "Edit template" : mode.kind === "duplicate" ? "Duplicate template" : "New template"}
+          </SheetTitle>
         </SheetHeader>
         <CreateTemplateFields
           wabaId={wabaId}
+          mode={mode}
+          businessName={businessName}
           draft={form.draft}
           onDraftChange={form.setDraft}
           submitting={form.submitting}
@@ -758,6 +847,7 @@ export function CreateTemplateSheet({
         {confirmingDiscard ? (
           <DiscardDraftDialog
             submitting={form.submitting}
+            editing={mode.kind === "edit"}
             onOpenChange={(next) => {
               if (!next) setConfirmingDiscard(false);
             }}
@@ -775,9 +865,14 @@ export function CreateTemplateSheet({
 /** What abandoning the draft actually costs, in the operator's terms — and it
  * costs something different mid-flight. Exported so the wording is asserted
  * directly, the same way `deleteConfirmCopy` is. */
-export function discardDraftCopy(submitting: boolean): string {
-  return submitting
-    ? "This template is still being submitted. Closing now abandons Meta's answer to a creation that may already have succeeded."
+export function discardDraftCopy(submitting: boolean, editing = false): string {
+  if (submitting) {
+    return editing
+      ? "This edit is still being submitted. Closing now abandons Meta's answer to an edit that may already have been applied."
+      : "This template is still being submitted. Closing now abandons Meta's answer to a creation that may already have succeeded.";
+  }
+  return editing
+    ? "Nothing has been changed at Meta yet. The edits typed here are lost."
     : "Nothing has been created yet. The name, body, examples, footer and buttons typed here are lost.";
 }
 
@@ -791,10 +886,12 @@ export function discardDraftCopy(submitting: boolean): string {
  */
 function DiscardDraftDialog({
   submitting,
+  editing,
   onOpenChange,
   onDiscard,
 }: {
   submitting: boolean;
+  editing: boolean;
   onOpenChange: (open: boolean) => void;
   onDiscard: () => void;
 }) {
@@ -802,8 +899,8 @@ function DiscardDraftDialog({
     <AlertDialog open onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Discard this draft?</AlertDialogTitle>
-          <AlertDialogDescription>{discardDraftCopy(submitting)}</AlertDialogDescription>
+          <AlertDialogTitle>{editing ? "Discard these changes?" : "Discard this draft?"}</AlertDialogTitle>
+          <AlertDialogDescription>{discardDraftCopy(submitting, editing)}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Keep editing</AlertDialogCancel>
