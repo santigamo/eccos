@@ -413,6 +413,13 @@ covering the page, and the browser already gives its `<summary>` a tab stop and 
 activation. It is styled like every other ghost control — square, `--line-strong` edge
 on `--ghost-fill`, green edge and lift on hover, the green focus ring.
 
+**Toasts are not a fourth overlay.** The `sonner` Toaster (`components/ui/sonner.tsx`, mounted
+once in `__root.tsx`) carries transient, non-blocking notices: it asks nothing, traps no
+focus, and dismisses itself — e.g. the amber warning as an APPROVED template's edit sheet
+opens. A toast is never the only place a fact lives; the surface where the operator acts
+states it too. Solid `--popover`, `--line-strong` edge, square; a warning takes the amber
+rail and icon.
+
 ## Before shipping a console change
 
 - Diff against the two laws, then the interaction-contrast rules, then the overlay
