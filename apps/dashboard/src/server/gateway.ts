@@ -36,6 +36,8 @@ import type {
   DeleteTemplateInput,
   DeleteTemplateResult,
   DeliveryListOpts,
+  EditTemplateInput,
+  EditTemplateResult,
   DeliveryRecord,
   GatewayApi,
   GatewayStatus,
@@ -82,6 +84,8 @@ export type {
   CursorPage,
   DeleteTemplateResult,
   DeliveryRecord,
+  EditTemplateFailureCode,
+  EditTemplateResult,
   GatewayStatus,
   Health,
   InboundRow,
@@ -689,6 +693,19 @@ export function validateCreateTemplateInput(input: unknown): CreateTemplateInput
     // content plus OTP buttons, a creation shape this console does not build.
     throw new Error("template category must be MARKETING or UTILITY");
   }
+  return {
+    wabaId,
+    name: record.name.trim(),
+    language: record.language.trim(),
+    category: record.category,
+    ...templateContentOf(record),
+  };
+}
+
+/** The content half of a console-authored template, shared by create and edit. */
+function templateContentOf(
+  record: Record<string, unknown>,
+): Pick<CreateTemplateInput, "bodyText" | "bodyExamples" | "footerText" | "buttons"> {
   if (typeof record.bodyText !== "string") throw new Error("template body is required");
   // Not trimmed: leading and trailing whitespace is part of the message Meta
   // will store, and silently rewriting an operator's body would make the
@@ -768,14 +785,42 @@ export function validateCreateTemplateInput(input: unknown): CreateTemplateInput
   });
 
   return {
-    wabaId,
-    name: record.name.trim(),
-    language: record.language.trim(),
-    category: record.category,
     bodyText,
     ...(values.length > 0 ? { bodyExamples: values } : {}),
     ...(footerRaw !== undefined ? { footerText: String(footerRaw).trim() } : {}),
     ...(buttons.length > 0 ? { buttons } : {}),
+  };
+}
+
+/**
+ * One template translation's new content. `name` and `language` identify it
+ * and cannot change; `category` is optional because Meta refuses to change an
+ * APPROVED template's.
+ */
+export function validateEditTemplateInput(input: unknown): EditTemplateInput {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  if (typeof record.templateId !== "string" || !TEMPLATE_ID_PATTERN.test(record.templateId.trim())) {
+    throw new Error("invalid template id");
+  }
+  if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {
+    throw new Error("invalid template name");
+  }
+  if (typeof record.language !== "string" || !LANGUAGE_PATTERN.test(record.language.trim())) {
+    throw new Error("invalid template language");
+  }
+  const category = record.category;
+  if (category !== undefined && category !== "MARKETING" && category !== "UTILITY") {
+    throw new Error("template category must be MARKETING or UTILITY");
+  }
+  return {
+    wabaId,
+    templateId: record.templateId.trim(),
+    name: record.name.trim(),
+    language: record.language.trim(),
+    ...(category ? { category } : {}),
+    ...templateContentOf(record),
   };
 }
 
@@ -1703,6 +1748,36 @@ export const createTemplate = createServerFn({ method: "POST" })
             language: data.language,
             category: data.category,
             ...(result.ok ? { templateId: result.id, status: result.status } : {}),
+          },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
+        });
+        return result;
+      }),
+  );
+
+/** Replace one template translation's content ("Edit"). `configure`, like
+ * creation: it changes durable state at Meta under the business's name. */
+export const editTemplate = createServerFn({ method: "POST" })
+  .validator(validateEditTemplateInput)
+  .handler(
+    ({ data }): Promise<Result<EditTemplateResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("configure");
+        const scope = await resolveScope(gateway, data.wabaId, true, "any");
+        const result = await gateway.editTemplate({ ...data, wabaId: scope.wabaId }, scope.accountId);
+        // Identifiers only, never the body or an example (see "template_create").
+        auditEvent({
+          action: "template_edit",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: {
+            wabaId: scope.wabaId,
+            template: data.name,
+            language: data.language,
+            templateId: data.templateId,
+            ...(data.category ? { category: data.category } : {}),
           },
           outcome: result.ok ? "success" : "failed",
           ...(result.ok ? {} : { detail: result.code }),

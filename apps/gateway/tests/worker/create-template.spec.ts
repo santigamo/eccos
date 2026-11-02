@@ -306,3 +306,85 @@ describe("GatewayRPC.deleteTemplate", () => {
     ).toEqual({ ok: false, code: "graph", detail: "template not found" });
   });
 });
+
+describe("GatewayRPC.editTemplate", () => {
+  function edit(overrides: Record<string, unknown> = {}) {
+    return {
+      ...draft(),
+      category: undefined,
+      templateId: "555",
+      ...overrides,
+    } as Parameters<GatewayRPC["editTemplate"]>[0];
+  }
+
+  /** First call: the ownership lookup. Second: the edit itself. */
+  function mockLookupThen(rows: unknown[], editResponse: Response) {
+    return vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ data: rows }))
+      .mockResolvedValueOnce(editResponse);
+  }
+
+  it("checks the id is this WABA's translation, then replaces its components", async () => {
+    const fetchSpy = mockLookupThen(
+      [{ id: "555", language: "en_US" }],
+      Response.json({ success: true }),
+    );
+    const result = await makeRpc().editTemplate(edit({ footerText: "Eccos" }), TEST_ACCOUNT_ID);
+    expect(result).toEqual({ ok: true });
+
+    const lookup = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(lookup.pathname).toMatch(new RegExp(`/${TEST_WABA_ID}/message_templates$`));
+    expect(lookup.searchParams.get("name")).toBe("order_update");
+
+    const [url, init] = fetchSpy.mock.calls[1]!;
+    expect(String(url)).toMatch(/\/555$/);
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      components: [
+        { type: "BODY", text: "Hi {{1}}, your order is on its way.", example: { body_text: [["Ada"]] } },
+        { type: "FOOTER", text: "Eccos" },
+      ],
+    });
+  });
+
+  it("sends a category change only when one is asked for", async () => {
+    const fetchSpy = mockLookupThen([{ id: "555", language: "en_US" }], Response.json({ success: true }));
+    await makeRpc().editTemplate(edit({ category: "MARKETING" }), TEST_ACCOUNT_ID);
+    expect(JSON.parse(String(fetchSpy.mock.calls[1]![1]?.body)).category).toBe("MARKETING");
+  });
+
+  it("refuses an id that is not this name+language on this WABA, without editing", async () => {
+    const fetchSpy = mockLookupThen([{ id: "555", language: "es" }], Response.json({ success: true }));
+    const result = await makeRpc().editTemplate(edit(), TEST_ACCOUNT_ID);
+    expect(result).toEqual({ ok: false, code: "not_found", detail: null });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed for a WABA the account does not own, without calling Meta", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(
+      makeRpc().editTemplate(edit({ wabaId: "999999999" }), TEST_ACCOUNT_ID),
+    ).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("maps Meta's refusals to the closed vocabulary with Meta's sentence", async () => {
+    mockLookupThen(
+      [{ id: "555", language: "en_US" }],
+      Response.json({ error: { code: 100, message: "Invalid parameter" } }, { status: 400 }),
+    );
+    expect(await makeRpc().editTemplate(edit(), TEST_ACCOUNT_ID)).toEqual({
+      ok: false,
+      code: "invalid",
+      detail: "Invalid parameter",
+    });
+  });
+
+  it("throws on a malformed id or category", async () => {
+    await expect(makeRpc().editTemplate(edit({ templateId: "../x" }), TEST_ACCOUNT_ID)).rejects.toThrow();
+    await expect(
+      makeRpc().editTemplate(edit({ category: "AUTHENTICATION" }), TEST_ACCOUNT_ID),
+    ).rejects.toThrow();
+  });
+});

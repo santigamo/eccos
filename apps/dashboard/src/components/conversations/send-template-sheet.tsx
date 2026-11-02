@@ -11,6 +11,7 @@ import {
 } from "../../lib/template-params";
 import { listTemplates } from "../../server/gateway";
 import { SendTestForm, type SendTestPhone } from "../templates/send-test-sheet";
+import { templateView } from "../../lib/template-view";
 import { GridEmptyState } from "../grid/empty-state";
 
 export interface SendTemplateProps {
@@ -127,6 +128,7 @@ function TemplateChoice({ wabaId, waId, phoneNumberId, phones, onSent }: SendTem
           initialPhoneNumberId={phoneNumberId}
           recipient={waId}
           onSent={onSent}
+          view={templateView(chosen)}
         />
       </div>
     );

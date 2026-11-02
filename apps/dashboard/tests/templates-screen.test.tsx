@@ -24,8 +24,8 @@ import { renderToStaticMarkup } from "react-dom/server";
  * THE SHEET ITSELF IS NOT OPENED HERE. Opening it — and reading the row's
  * `components` into the header/body/footer/buttons — is a click-driven
  * transition no static render can reach; the sheet's own rendering contract
- * lives in `tests/template-preview-sheet.test.tsx`, which renders
- * `TemplatePreview` directly with the row's components fed in.
+ * lives in `tests/template-view.test.tsx`, which renders `TemplateDetail`
+ * directly with the row fed in.
  */
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
@@ -45,6 +45,7 @@ mock.module("@tanstack/react-router", () => ({
     ...(opts as object),
     useLoaderData: () => loaderData,
     useSearch: () => searchParams,
+    useNavigate: () => () => {},
   }),
   Link: (props: { to: string; children: React.ReactNode; className?: string }) => (
     <a href={props.to} className={props.className}>
@@ -162,7 +163,7 @@ describe("TemplatesPage row actions", () => {
     // preview would exist only for a pointer that happened to try, which is
     // the affordance-on-hover the design contract rules out.
     const html = render([ROW_WITH_COMPONENTS]);
-    expect(html).toContain('aria-label="Preview order_update"');
+    expect(html).toContain('aria-label="Open order_update"');
     expect(html).toContain(">order_update</button>");
     // The console's existing door anatomy (`COUNT_LINK` in src/ui.tsx): quiet
     // at rest, underlined and green under the pointer.

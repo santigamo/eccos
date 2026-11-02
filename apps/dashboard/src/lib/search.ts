@@ -28,3 +28,16 @@ export function normalizeSearchRowId(value: unknown): number | undefined {
 export function normalizeSearchBefore(value: unknown): number | undefined {
   return normalizeSearchRowId(value);
 }
+
+/** A Meta Graph id in the URL (`?template=`): digits only, kept as a string. */
+export function normalizeSearchGraphId(value: unknown): string | undefined {
+  const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+  return /^[0-9]{1,32}$/.test(text) ? text : undefined;
+}
+
+/** Free text typed into a filter box. */
+export function normalizeSearchQuery(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text && text.length <= 100 ? text : undefined;
+}
