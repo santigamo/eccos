@@ -101,6 +101,9 @@ describe("healthReading", () => {
       false,
     );
     expect(reading.label).toBe("Unhealthy");
-    expect(reading.banner?.detail).toBe("The gateway is experiencing an outage.");
+    expect(reading.banner?.detail).toBe(
+      "2 forwarded batches failed after every retry. Check your receiver, then retry them from the forwarding queue.",
+    );
+    expect(reading.banner?.action).toEqual({ to: "/deliveries", label: "Open the forwarding queue" });
   });
 });
