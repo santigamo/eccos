@@ -1,14 +1,8 @@
-"use client";
+"use client"
 
-import type { CSSProperties } from "react";
-import {
-  CircleCheckIcon,
-  InfoIcon,
-  Loader2Icon,
-  OctagonXIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
-import { Toaster as Sonner, type ToasterProps } from "sonner";
+import type { CSSProperties } from "react"
+import { CircleCheckIcon, InfoIcon, Loader2Icon, OctagonXIcon, TriangleAlertIcon } from "lucide-react"
+import { Toaster as Sonner, type ToasterProps } from "sonner"
 
 // Sonner's stylesheet is unlayered, so it beats Tailwind's utilities layer:
 // its own variables carry the tokens, and any override takes `!`.
@@ -49,7 +43,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         {...props}
       />
     </div>
-  );
-};
+  )
+}
 
-export { Toaster };
+export { Toaster }
