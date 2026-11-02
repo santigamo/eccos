@@ -3,7 +3,11 @@ import { checkSendRate } from "../src/send-rate-limit";
 
 function limiter(success = true) {
   const calls: { key: string }[] = [];
-  return { calls, binding: { limit: async (o: { key: string }) => (calls.push(o), { success }) } as RateLimit };
+  const limit = async (o: { key: string }) => {
+    calls.push(o);
+    return { success };
+  };
+  return { calls, binding: { limit } as RateLimit };
 }
 
 describe("checkSendRate", () => {
