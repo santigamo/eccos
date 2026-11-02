@@ -97,6 +97,36 @@ describe("MessageDetail", () => {
     expect(html).toContain("131047");
   });
 
+  test("a refused send leads with Meta's sentence and keeps the envelope behind the disclosure", () => {
+    const failed: OutboundRow = {
+      ...message,
+      status: "failed",
+      transport_message_id: null,
+      error: JSON.stringify({
+        error: { message: "(#132001) Template name does not exist", code: 132001, error_data: { details: "template name (x) does not exist in es" } },
+      }),
+      trail: [],
+    };
+    const html = renderToStaticMarkup(<MessageDetail row={failed} hasForwardingTarget={true} />);
+    const fact = html.indexOf("132001 · template name (x) does not exist in es");
+    const disclosure = html.indexOf("Meta&#x27;s error, exactly as stored");
+    expect(fact).toBeGreaterThan(-1);
+    expect(disclosure).toBeGreaterThan(fact);
+  });
+
+  test("a send that never reached Meta shows its sentence once, with no disclosure", () => {
+    const failed: OutboundRow = {
+      ...message,
+      status: "failed",
+      transport_message_id: null,
+      error: JSON.stringify("The operation was aborted due to timeout"),
+      trail: [],
+    };
+    const html = renderToStaticMarkup(<MessageDetail row={failed} hasForwardingTarget={true} />);
+    expect(html).toContain(">The operation was aborted due to timeout<");
+    expect(html).not.toContain("exactly as stored");
+  });
+
   test("a template send reads as its VALUES, labelled by slot", () => {
     // The readable answer to "what did this message say" that the sheet used
     // to give as pretty-printed JSON and nothing else.
