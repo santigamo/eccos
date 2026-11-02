@@ -24,6 +24,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER;
+  delete (env as { SEND_RATE_LIMITER_HIGH?: RateLimit }).SEND_RATE_LIMITER_HIGH;
+  delete (env as { HIGH_THROUGHPUT_ACCOUNTS?: string }).HIGH_THROUGHPUT_ACCOUNTS;
   vi.restoreAllMocks();
   await reset();
 });
@@ -160,6 +162,21 @@ describe("GatewayRPC.sendText", () => {
     expect(result).toEqual({ ok: false, code: "rate_limited", detail: null });
     expect(limit).toHaveBeenCalledWith({ key: `${TEST_ACCOUNT_ID}:${TEST_WABA_ID}` });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("draws from the HIGH limiter when the account is listed", async () => {
+    const standard = vi.fn(async () => ({ success: false }));
+    const high = vi.fn(async () => ({ success: true }));
+    const e = env as { SEND_RATE_LIMITER?: RateLimit; SEND_RATE_LIMITER_HIGH?: RateLimit; HIGH_THROUGHPUT_ACCOUNTS?: string };
+    e.SEND_RATE_LIMITER = { limit: standard };
+    e.SEND_RATE_LIMITER_HIGH = { limit: high };
+    e.HIGH_THROUGHPUT_ACCOUNTS = `other, ${TEST_ACCOUNT_ID}`;
+    mockSendOk();
+
+    const result = await makeRpc().sendText(input(), TEST_ACCOUNT_ID);
+    expect(result.ok).toBe(true);
+    expect(high).toHaveBeenCalledWith({ key: `${TEST_ACCOUNT_ID}:${TEST_WABA_ID}` });
+    expect(standard).not.toHaveBeenCalled();
   });
 
   it("maps Meta's 131047 to window_closed and logs the refused send as failed", async () => {

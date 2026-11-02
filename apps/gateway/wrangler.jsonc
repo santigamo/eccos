@@ -54,6 +54,14 @@
         "limit": 60,
         "period": 60
       }
+    },
+    {
+      "name": "SEND_RATE_LIMITER_HIGH",
+      "namespace_id": "1002",
+      "simple": {
+        "limit": 600,
+        "period": 60
+      }
     }
   ],
 
@@ -77,6 +85,9 @@
     // the panel on 2026-09-01). Bump procedure: docs/deployment.md#meta-graph-api-version.
     "META_GRAPH_VERSION": "v25.0",
     "FORWARD_MAX_ATTEMPTS": "6",
+    // Comma-separated account ids sending at 600/min (SEND_RATE_LIMITER_HIGH)
+    // instead of 60/min. Empty = everyone on the standard limit.
+    "HIGH_THROUGHPUT_ACCOUNTS": "",
     // Split retention (docs/data-lifecycle.md). Content window: after these days,
     // inbound_events and outbound_messages rows are deleted, terminal deliveries
     // keep only metadata (payload redacted), and pending deliveries — including

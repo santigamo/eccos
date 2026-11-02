@@ -92,7 +92,7 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
   control plane (revoked keys fail closed) — and the WABA must be owned by that account before
   dispatch to a data-plane object (`apps/gateway/src/worker.ts`).
 - **Rate limiting:** `POST /v1/wabas/<WABA_ID>/messages` is additionally throttled by Cloudflare's native Rate
-  Limiting binding (`SEND_RATE_LIMITER`, 60/min per key, `wrangler.jsonc`) — the code comment in
+  Limiting binding (`SEND_RATE_LIMITER`, 60/min per key, `wrangler.jsonc`; accounts in `HIGH_THROUGHPUT_ACCOUNTS` get `SEND_RATE_LIMITER_HIGH`, 600/min) — the code comment in
   `worker.ts` is explicit that this is "per-location and eventually consistent: good abuse/spike
   protection, not an exact global quota counter."
 - **Scope:** every account key is scoped to its account; unknown/revoked keys and cross-account

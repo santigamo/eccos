@@ -105,6 +105,7 @@ subscriber targets per WABA.
 | `FORWARD_MAX_ATTEMPTS` | `6` | Max delivery attempts before a forwarded event is marked failed |
 | `CONTENT_RETENTION_DAYS` | `30` (clamped to 7–90) | Content window: past it, `inbound_events`/`outbound_messages` rows are deleted, terminal `deliveries` rows are redacted to metadata-only, and `pending` `deliveries` rows — including events held for want of a forwarding target — are deleted outright |
 | `DELIVERY_RETENTION_DAYS` | `90` | Delivery-audit window: past it, terminal (`delivered`/`failed`) `deliveries` rows are deleted entirely. See [docs/data-lifecycle.md](./data-lifecycle.md#retention-split-content--delivery-windows) |
+| `HIGH_THROUGHPUT_ACCOUNTS` | `""` | Comma-separated account ids whose sends are limited by `SEND_RATE_LIMITER_HIGH` (600/min per WABA) instead of `SEND_RATE_LIMITER` (60/min). Needs the `SEND_RATE_LIMITER_HIGH` binding in your `ratelimits`; without it the account stays on the standard limit |
 | `DO_JURISDICTION` | `eu` in the template; unset = no jurisdiction | Optional Durable Object jurisdiction: `eu`, `fedramp`, or `fedramp-high` (Cloudflare has no `us` jurisdiction). Unset/empty = no jurisdiction, i.e. the DO is created wherever the first request lands. An invalid value makes every DO-touching request fail with a clear error instead of being silently ignored |
 
 > **CRITICAL — set `DO_JURISDICTION` before you have production data, and never change it
