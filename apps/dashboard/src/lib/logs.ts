@@ -379,28 +379,43 @@ export function prettyJson(raw: string): string {
 export interface ErrorReading {
   code: string | null;
   text: string;
+  /** `code · text`, or the text alone. */
+  label: string;
+  /** False when the stored value IS the text: nothing more to disclose. */
+  read: boolean;
 }
 
 /**
- * What a refused send's stored `error` says, read out of Meta's envelope:
- * `error_data.details` over `message`, the same preference as the webhook
- * parser. Anything that is not that envelope reads as itself.
+ * What a refused send's stored `error` says. Meta's envelope reads as its code
+ * and `error_data.details` over `message` (the webhook parser's preference); a
+ * JSON string — a timeout or network error that never reached Meta — reads as
+ * that string; anything else reads as itself.
  */
 export function errorReading(raw: string): ErrorReading {
+  let parsed: unknown;
   try {
-    const inner = (JSON.parse(raw) as { error?: unknown })?.error;
-    if (inner && typeof inner === "object") {
-      const { code, message, error_data } = inner as {
-        code?: unknown;
-        message?: unknown;
-        error_data?: { details?: unknown };
-      };
-      const details = typeof error_data?.details === "string" ? error_data.details.trim() : "";
-      const text = details || (typeof message === "string" ? message.trim() : "");
-      if (text) return { code: typeof code === "number" ? String(code) : null, text };
+    parsed = JSON.parse(raw);
+  } catch {
+    return { code: null, text: raw, label: raw, read: false };
+  }
+  if (typeof parsed === "string" && parsed.trim()) {
+    return { code: null, text: parsed.trim(), label: parsed.trim(), read: false };
+  }
+  const inner = (parsed as { error?: unknown } | null)?.error;
+  if (inner && typeof inner === "object") {
+    const { code, message, error_data } = inner as {
+      code?: unknown;
+      message?: unknown;
+      error_data?: { details?: unknown };
+    };
+    const details = typeof error_data?.details === "string" ? error_data.details.trim() : "";
+    const text = details || (typeof message === "string" ? message.trim() : "");
+    if (text) {
+      const codeText = typeof code === "number" ? String(code) : null;
+      return { code: codeText, text, label: codeText ? `${codeText} · ${text}` : text, read: true };
     }
-  } catch {}
-  return { code: null, text: raw };
+  }
+  return { code: null, text: raw, label: raw, read: false };
 }
 
 /**

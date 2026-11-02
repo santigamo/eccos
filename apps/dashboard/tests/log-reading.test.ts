@@ -360,18 +360,32 @@ describe("errorReading", () => {
         error_data: { messaging_product: "whatsapp", details: "template name (x) does not exist in es" },
       },
     });
-    expect(errorReading(raw)).toEqual({ code: "132001", text: "template name (x) does not exist in es" });
-  });
-
-  test("falls back to message when there are no details", () => {
-    expect(errorReading(JSON.stringify({ error: { message: "Invalid parameter", code: 100 } }))).toEqual({
-      code: "100",
-      text: "Invalid parameter",
+    expect(errorReading(raw)).toEqual({
+      code: "132001",
+      text: "template name (x) does not exist in es",
+      label: "132001 · template name (x) does not exist in es",
+      read: true,
     });
   });
 
-  test("anything that is not the envelope reads as itself", () => {
-    expect(errorReading("network timeout")).toEqual({ code: null, text: "network timeout" });
-    expect(errorReading('{"status":500}')).toEqual({ code: null, text: '{"status":500}' });
+  test("falls back to message when there are no details", () => {
+    expect(errorReading(JSON.stringify({ error: { message: "Invalid parameter", code: 100 } })).label).toBe(
+      "100 · Invalid parameter",
+    );
+  });
+
+  test("a send that never reached Meta is stored as a JSON string and reads without quotes", () => {
+    const raw = JSON.stringify("The operation was aborted due to timeout");
+    expect(errorReading(raw)).toEqual({
+      code: null,
+      text: "The operation was aborted due to timeout",
+      label: "The operation was aborted due to timeout",
+      read: false,
+    });
+  });
+
+  test("anything else reads as itself, with nothing more to disclose", () => {
+    expect(errorReading("null")).toMatchObject({ label: "null", read: false });
+    expect(errorReading('{"status":500}')).toMatchObject({ label: '{"status":500}', read: false });
   });
 });

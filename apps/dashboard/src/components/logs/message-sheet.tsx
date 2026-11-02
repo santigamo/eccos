@@ -59,6 +59,7 @@ export interface MessageDetailProps {
 
 export function MessageDetail({ row, hasForwardingTarget, wabaId }: MessageDetailProps) {
   const trail = row.trail ?? [];
+  const error = row.error ? errorReading(row.error) : null;
   return (
     <div className="flex flex-col gap-4 px-4 pb-4">
       <SheetSection label="Facts">
@@ -76,10 +77,10 @@ export function MessageDetail({ row, hasForwardingTarget, wabaId }: MessageDetai
               truncated here. */}
           <FactRow label="Meta message id" value={row.transport_message_id ?? EMPTY_CELL} mono />
           <FactRow label="Meta status" value={<StatusTag status={row.status} />} />
-          {row.error ? <FactRow label="Error" value={errorText(row.error)} tone="destructive" /> : null}
+          {error ? <FactRow label="Error" value={error.label} tone="destructive" /> : null}
         </dl>
-        {row.error ? (
-          <RawDisclosure summary="Meta's answer, exactly as stored" json={prettyJson(row.error)} />
+        {error?.read ? (
+          <RawDisclosure summary="Meta's error, exactly as stored" json={prettyJson(row.error ?? "")} />
         ) : null}
       </SheetSection>
 
@@ -276,9 +277,4 @@ export function MessageSheet({
       </SheetContent>
     </Sheet>
   );
-}
-
-function errorText(raw: string): string {
-  const { code, text } = errorReading(raw);
-  return code ? `${code} · ${text}` : text;
 }

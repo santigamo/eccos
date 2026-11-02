@@ -211,9 +211,9 @@ function messageColumns(onOpen?: (row: OutboundRow) => void, showPhone = true) {
       cell: (info) => {
         const raw = info.getValue();
         if (!raw) return EMPTY_CELL;
-        const { code, text } = errorReading(raw);
+        const { code, text, label } = errorReading(raw);
         return (
-          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={text}>
+          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={label}>
             {code ? <span className="font-mono text-xs">{code} · </span> : null}
             {text}
           </span>
