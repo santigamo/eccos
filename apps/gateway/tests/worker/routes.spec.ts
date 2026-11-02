@@ -374,7 +374,11 @@ describe("routes", () => {
       ["POST", "phones/PNID_TEST/messages"],
       ["GET", "templates"],
       ["POST", "broadcasts"],
+      ["POST", "phones/PNID_TEST/broadcasts"],
       ["GET", "broadcasts"],
+      ["GET", "broadcasts/b_1"],
+      ["GET", "broadcasts/b_1/recipients"],
+      ["POST", "broadcasts/b_1/cancel"],
       ["POST", "privacy/erasure"],
       ["GET", "export"],
     ];
@@ -387,6 +391,9 @@ describe("routes", () => {
       expect(res.status, path).toBe(404);
       expect(await res.json(), path).toEqual({ ok: false, error: "WABA is not configured" });
     }
+
+    const anonymous = await exports.default.fetch("http://example.com/v1/wabas/abc%20def/messages", { method: "POST" });
+    expect(anonymous.status).toBe(401);
   });
 
   it("GET /v1/wabas/WABA_TEST/templates requires auth and returns Meta JSON", async () => {
