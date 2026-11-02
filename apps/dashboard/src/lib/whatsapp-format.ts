@@ -24,7 +24,7 @@ const MARKERS: Record<string, "bold" | "italic" | "strike"> = {
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
 function isBoundary(char: string | undefined): boolean {
-  return char === undefined || /[\s\p{P}\p{S}\p{Extended_Pictographic}\u200d\ufe0f]/u.test(char);
+  return char === undefined || /[\s\p{P}\p{S}\p{Extended_Pictographic}]|\u200d|\ufe0f/u.test(char);
 }
 
 /** The whole code point before `i`, so an emoji's surrogate pair is read as one character. */
