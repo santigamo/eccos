@@ -26,16 +26,27 @@
   --sl-color-bg-sidebar: #10171d;
 }
 
+.site-title-link,
+.site-home-link {
+  text-decoration: none;
+}
 .site-title-link {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  color: var(--sl-color-white);
+  font-weight: 600;
 }
 .site-title-link img {
   height: 1.75rem;
   width: 1.75rem;
 }
 .site-home-link {
+  margin-inline-start: 1rem;
+  color: var(--sl-color-gray-3);
   font-size: var(--sl-text-sm);
   white-space: nowrap;
+}
+.site-home-link:hover {
+  color: var(--sl-color-accent-high);
 }
