@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "eccos-dashboard",
   // Custom server entry (src/server.ts) — wraps the default TanStack Start fetch
-  // handler with the Cloudflare Access JWT gate. TanStack Start also resolves
+  // handler with the host allowlist and the Better Auth gates. TanStack Start also resolves
   // src/server.ts by convention; pointing `main` here keeps wrangler in sync.
   "main": "src/server.ts",
   "compatibility_date": "2026-06-12",
@@ -27,13 +27,10 @@
   // a gitignored wrangler.production.jsonc (docs/deployment.md#production-config).
   // "routes": [{ "pattern": "console.example.com", "custom_domain": true }],
 
-  // Customer auth is Better Auth only (docs/auth-tenancy-contract.md §6): the
-  // server entry enforces the canonical-host allowlist (app.eccos.chat, plus
-  // localhost in dev) BEFORE routing, so the raw workers.dev/preview origins
-  // fail closed and are not alternate customer paths.
-
-  // Set BETTER_AUTH_URL to the console's https origin: it is the only host the
-  // console answers. Unset means local development (localhost only).
+  // Customer auth is Better Auth only (docs/auth-tenancy-contract.md §6). Set
+  // BETTER_AUTH_URL to the console's https origin: the server entry answers
+  // only that host (plus localhost in dev) BEFORE routing, so workers.dev and
+  // preview origins fail closed. Unset means local development only.
   // Set META_APP_ID / META_ES_CONFIG_ID in production vars or the Cloudflare
   // dashboard to enable the browser SDK. Unset disables it (OAuth still works).
   // Analytics is opt-in via ANALYTICS_SCRIPT_URL / ANALYTICS_WEBSITE_ID, with

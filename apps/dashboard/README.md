@@ -104,7 +104,8 @@ Customer authentication is **Better Auth only** on the dedicated auth D1
 (`DB` binding) — Cloudflare Access is not part of the customer surface. The
 contract lives in [`docs/auth-tenancy-contract.md`](../../docs/auth-tenancy-contract.md).
 
-- **Canonical host:** only `https://app.eccos.chat` is the customer origin. The
+- **Canonical host:** only the `BETTER_AUTH_URL` origin is the customer origin
+  (`https://app.eccos.chat` on Eccos Cloud; unset means localhost only). The
   server entry (`src/server.ts`) enforces this allowlist **before routing**, so
   raw `*.workers.dev` and preview origins fail closed with `403` and are not
   alternate customer paths. `workers_dev` is disabled in `wrangler.jsonc`.

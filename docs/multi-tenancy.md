@@ -84,11 +84,13 @@ Embedded Signup, the token is stored in the control plane and never returned.
 
 ## Dashboard scope
 
-A dashboard deployment is account-scoped: one dashboard and one Cloudflare Access application map to
-one generated control-plane account. The dashboard derives an installation identity from the Access
-team domain and application audience, then creates the account on the protected `/setup` screen.
-No account ID is entered or deployed manually. Local development uses a stable local installation
-identity. Once the account exists, **Connect WhatsApp** starts the account-bound Embedded Signup
+One dashboard deployment serves many organizations. A user signs up with Better Auth, verifies
+their email and creates an organization; the dashboard then links that organization to a new
+control-plane account (`ensureOrganizationAccount`, stored in `organization_accounts`). No account
+ID is entered or deployed manually, and invited members join the existing organization and its
+account. Every request re-derives the account from the session's organization membership (see
+[auth-tenancy-contract.md](./auth-tenancy-contract.md)). Once the account exists, **Connect
+WhatsApp** starts the account-bound Embedded Signup
 handoff through the private `GatewayRPC`; set the gateway's `GATEWAY_PUBLIC_URL` to the public
 gateway origin so the browser can reach its OAuth callback. The browser never receives an account
 API key to authorize this flow.

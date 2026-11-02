@@ -73,7 +73,7 @@ drill. The gateway deploy and live post-deploy smoke are recorded above.
 
 - ~~W-1 — Dashboard edge auth~~ **CLOSED by `eccos-0x0.4`** (customer-auth clean cut): the Access
   gate was deleted, replaced by Better Auth sessions + the canonical-host allowlist
-  (`app.eccos.chat` only; `workers.dev` disabled). Customer-auth hardening landed with
+  (`app.eccos.chat` only, now read from `BETTER_AUTH_URL`; `workers.dev` disabled). Customer-auth hardening landed with
   `eccos-0x0.7` (rate limiting, TOTP, audit). Remaining condition: production deploy and smoke
   evidence via `eccos-0x0.9` before customer traffic.
 
@@ -81,10 +81,9 @@ drill. The gateway deploy and live post-deploy smoke are recorded above.
 
 | Bead | Gap |
 |------|-----|
-| `eccos-0x0.9` | Deploy the Better Auth dashboard (auth D1 + secrets), run the fresh-state cutover, record smoke evidence |
 | `eccos-v80` | Production-shaped two-number acceptance, migration/rollback evidence, and the remaining technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
 | `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
-| `eccos-49b` | Meta-facing gateway origins still resolve to `workers.dev` while the Meta app declares `eccos.chat` — a reviewer sees the declared domain and the working endpoints disagree. The `api.eccos.chat` custom-domain route and the ordered cutover runbook are in the repo ([docs/deployment.md](./docs/deployment.md#cutover--moving-the-meta-facing-origin-to-a-custom-domain)); the deploy, the Meta panel edits and the `GATEWAY_PUBLIC_URL` flip are pending |
+| `eccos-49b` | The Meta-facing origins moved to `api.eccos.chat` (OAuth redirect, JS SDK domain, webhook callback, `GATEWAY_PUBLIC_URL`), and the first external number connected and has been receiving webhooks through it since 2026-10-28. Remaining: retire the `workers.dev` origin ([cutover step 8](./docs/deployment.md#cutover--moving-the-meta-facing-origin-to-a-custom-domain)) |
 | `eccos-8yy` | DPA and processor onboarding package |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
 | `eccos-u9x` | Resolve the production failed-delivery incident |

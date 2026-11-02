@@ -13,7 +13,7 @@ bun run dev            # Bun target, watch mode (http://localhost:3000)
 bun run typecheck      # regenerates the Workers types, then tsc --noEmit
 bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers tests for the Cloudflare Workers target
-bun run deploy         # wrangler deploy (Workers target)
+bun run deploy         # preflight, then deploy the gateway with apps/gateway/wrangler.production.jsonc
 ```
 
 > Use `bun run test` + `bun run test:workers`, **not** a bare `bun test` — the latter globs the
@@ -28,15 +28,21 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
   (`@eccos/core/parser`, …). Keep it free of HTTP/DB concerns.
 - `apps/gateway/` — the **Cloudflare Workers** target: Hono app (`src/worker.ts`) + the
   `EccosGateway` Durable Object (`src/gateway.ts`, SQLite storage + Alarms forwarding), plus
-  `/connect` (Embedded Signup). Owns `wrangler.jsonc` + `vitest.config.ts`. New v1 features live
+  `/connect` (Embedded Signup). Owns `wrangler.jsonc` (a self-host template; production values live
+  in the gitignored `wrangler.production.jsonc`, see `docs/deployment.md`) + `vitest.config.ts`. New v1 features live
   here. Tests in `apps/gateway/tests/` (`*.test.ts` Bun + `tests/worker/*.spec.ts` vitest-pool-workers).
 - `apps/dashboard/` (`@eccos/dashboard`) — the **operator console**: a TanStack Start (React) app
   on Cloudflare Workers that reads the gateway over an **RPC service binding** (`env.GATEWAY`,
   entrypoint `GatewayRPC`) — the operator API is never exposed as public HTTP. A custom server
-  entry (`src/server.ts`) gates every request behind Cloudflare Access (`src/access.ts`) when
-  configured and fails closed on public hosts without it (localhost is allowed for local dev).
+  entry (`src/server.ts`) answers only the `BETTER_AUTH_URL` host (localhost in dev) and gates
+  every request behind a Better Auth session; the account comes from the user's organization
+  (`docs/auth-tenancy-contract.md`). Deploy with `scripts/deploy-dashboard.sh`.
   Owns its own `wrangler.jsonc`. See `apps/dashboard/README.md`;
   any UI/styling change must follow `docs/DASHBOARD-DESIGN.md`.
+- `packages/gateway-contract/` — the `GatewayRPC` types shared by the gateway and the dashboard.
+- `packages/auth-baseline/` — reusable Better Auth organization conventions extracted from the
+  dashboard's customer auth.
+- `apps/site/` — the public site at eccos.chat (Astro on Workers): landing and the legal pages.
 - `src/` — the **Bun** self-host target (kept aside, retaken post-v1): Hono app, `bun:sqlite`
   storage, in-process delivery loop, `loadConfig(process.env)` adding `PORT` / `DATABASE_PATH`.
   Dockerised (`Dockerfile` runs `bun run src/index.ts`).
@@ -53,7 +59,8 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
 - The `WhatsAppCallbackEvent` shape is the public forwarding contract; changing it is a
   breaking change for any downstream subscriber. Add tests in `packages/core/tests/parser.test.ts`
   for any parser change.
-- Webhook handler must always return 200 quickly so Meta does not disable the subscription.
+- Webhook handler must return 200 quickly so Meta does not disable the subscription — except when
+  storing the events fails (sync capture or ingest): then it answers 5xx so Meta retries.
 - This repo is **public/OSS** — never commit real tokens, secrets, or `.env`.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
