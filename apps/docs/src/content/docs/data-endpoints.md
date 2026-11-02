@@ -15,7 +15,8 @@ POST /v1/wabas/{wabaId}/privacy/erasure     {"phone": "34600000000"}
 ```
 
 **Export** returns `{ "ok": true, "data": { ... } }` with everything Eccos still holds for the
-WABA, in one unpaginated response: incoming events, sent messages, delivery attempts, conversations and contacts. Message
+WABA, in one unpaginated response: incoming events (`inbound`), sent messages (`outbound`), delivery
+attempts (`deliveries`), conversations (`messages`) and `contacts`. Message
 content is kept for 30 days by default; delivery records are kept longer.
 
 **Erasure** deletes or redacts every stored trace of one customer, named by phone number or BSUID
