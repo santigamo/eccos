@@ -34,7 +34,9 @@ of every recipient.
 - `phone_number_id` (or `/v1/wabas/{wabaId}/phones/{phoneNumberId}/broadcasts`) is needed only
   when the WhatsApp Business Account has more than one number.
 - Send an [Idempotency-Key](/idempotency) header: retrying with the same key returns the same
-  broadcast instead of creating a second one. Reusing it with a different body returns `422`.
+  broadcast instead of creating a second one, for as long as the broadcast is kept. Reusing it
+  with a different set of recipients or values returns `422`. A broadcast's key is separate from
+  single-send keys and is not limited to 24 hours.
 
 Eccos checks the request before queueing anything:
 
@@ -42,6 +44,9 @@ Eccos checks the request before queueing anything:
 |---|---|
 | `202` | Queued. The body is the broadcast (below). |
 | `400` | A malformed request. When recipients are invalid, `invalid` lists them (`index`, `error`, up to 100) and nothing is queued. |
+| `404` | The WhatsApp Business Account, or the phone number, is not connected to your account. |
+| `409` | Five broadcasts are already running on this WhatsApp Business Account. Wait for one to finish or cancel one. |
+| `413` | The request body is over 8 MB. Split the recipients into several broadcasts. |
 | `422` | `template_not_found` or `template_not_approved` (with `templateStatus`) for that name and language, or `idempotency_key_reused`. |
 | `502` | Eccos could not read your templates from Meta. Nothing was queued. |
 
@@ -50,19 +55,23 @@ sent once; `duplicatesSkipped` counts the extra entries.
 
 ## How it is sent
 
-- **Pace.** One second at a time, at your account's rate (60 messages a minute by default). The
-  broadcast draws from the same budget as your [single sends](/errors-and-rate-limits), so
-  together they never go over it.
-- **Throttling.** When Meta answers that it is busy (HTTP 429, or codes 130429, 131056, 80007),
-  the message was not sent: Eccos queues it again and waits 5 seconds, then 10, 20… up to 5
-  minutes. After 8 throttled attempts the recipient is marked `failed`.
+- **Pace.** A broadcast uses 80% of the send rate of your WhatsApp Business Account (60
+  messages a minute by default, so 48), leaving the rest for your
+  [single sends](/errors-and-rate-limits) such as verification codes and replies. Both draw
+  from the same budget, which is approximate rather than an exact quota.
+- **Throttling.** When Meta answers that it is busy (HTTP 429, or codes 4, 80007, 130429,
+  131056), the message was not sent: Eccos queues it again and waits 5 seconds, then 10, 20… up
+  to 5 minutes. After 8 throttled attempts the recipient is marked `failed`.
 - **Never twice.** When Meta does not answer, or answers with a 5xx, the message may have been
   sent, so Eccos never retries it. The recipient ends as `unknown`: check the conversation.
-- **Errors for everyone stop it.** An invalid token, a locked or unpaid account, or a template
-  that no longer exists or does not match (codes 10, 190, 200, 131031, 131042, 132000, 132001,
-  132005, 132007, 132012, 132015, 132016, 133010) would fail every remaining recipient. The
-  broadcast stops as `halted`, with the reason in `haltReason`, and the recipients not yet
-  attempted are `cancelled`.
+- **Errors for everyone stop it.** An invalid token, a locked, blocked or unpaid account or
+  number, or a template that no longer exists or is paused (codes 10, 190, 200, 368, 131031,
+  131042, 131045, 131048, 132001, 132007, 132015, 132016, 133010) would fail every remaining
+  recipient. The broadcast stops as `halted`, with the reason in `haltReason`, and the
+  recipients not yet attempted are `cancelled`. It also stops if its first 20 sends all fail.
+- **Parameter errors** (codes 132000, 132005, 132012) fail only that recipient when it brought
+  its own `components`; when it used the template's, every recipient would fail, so the
+  broadcast stops.
 - **Any other Meta error** fails that recipient only, with Meta's error stored on it.
 
 Every message is a normal send: it appears in your logs and conversations, and your webhook
@@ -112,10 +121,11 @@ not yet attempted become `cancelled`; messages already sent are not recalled.
 
 ## Privacy
 
-Recipients and their values are message content. The values are deleted as soon as each
-message is attempted, and a broadcast's recipients are deleted with the rest of your content
-when the [retention window](/data-endpoints) passes. Erasing a customer removes them from your
-broadcasts too.
+Recipients and their values are message content. The broadcast's own copy of the values is
+deleted as soon as each message is attempted; the message itself is kept in your message log
+like any other send. Both, and the broadcast's recipients, are deleted with the rest of your
+content when the [retention window](/data-endpoints) passes. Erasing a customer removes them
+from your broadcasts too.
 
 ## Meta's limits
 

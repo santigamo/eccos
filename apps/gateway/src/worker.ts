@@ -25,7 +25,7 @@ import { EccosGateway as Gateway } from "./gateway";
 import { EccosControlPlane as ControlPlane } from "./control-plane";
 import { sentryOptions } from "./sentry";
 import { checkSendRate, sendRatePerMinute } from "./send-rate-limit";
-import { parseBroadcastRequest, parseStoredError, type RecipientStatus } from "./broadcasts";
+import { MAX_BROADCAST_BODY_BYTES, parseBroadcastRequest, parseStoredError, type RecipientStatus } from "./broadcasts";
 
 export const EccosGateway = Sentry.instrumentDurableObjectWithSentry(sentryOptions, Gateway);
 export type EccosGateway = Gateway;
@@ -903,6 +903,9 @@ async function createBroadcastRoute(c: AppContext) {
   }
   const waba = await ownedWaba(c.env, account, requestedWabaId(c));
   if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  if (Number(c.req.header("content-length") ?? 0) > MAX_BROADCAST_BODY_BYTES) {
+    return c.json({ ok: false, error: "request body is too large" }, 413);
+  }
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const parsed = parseBroadcastRequest(body);
   if (!parsed.ok) {
@@ -912,6 +915,14 @@ async function createBroadcastRoute(c: AppContext) {
   const phone = resolvePhone(c, waba, body ?? {});
   if (!phone.ok) return c.json({ ok: false, error: phone.error }, phone.status);
   const { request } = parsed;
+  const stub = getGatewayStubForWaba(c.env, waba.wabaId);
+  const bodyHash = await sendBodyHash(phone.phoneNumberId, request);
+  // A retry answers with the broadcast it created, even if the template changed since.
+  if (key !== undefined) {
+    const replay = await stub.replayBroadcast(account.accountId, key, bodyHash);
+    if (replay.state === "existing") return c.json({ ok: true, broadcast: replay.broadcast }, 202);
+    if (replay.state === "reused") return c.json({ ok: false, error: "idempotency_key_reused" }, 422);
+  }
 
   // Checked once here rather than failing every recipient at Meta.
   const cfg = tenantConfig(getAppConfig(c.env), {
@@ -934,7 +945,6 @@ async function createBroadcastRoute(c: AppContext) {
     return c.json({ ok: false, error: "template_not_approved", templateStatus: translation.status }, 422);
   }
 
-  const stub = getGatewayStubForWaba(c.env, waba.wabaId);
   const created = await stub.createBroadcast({
     accountId: account.accountId,
     phoneNumberId: phone.phoneNumberId,
@@ -942,10 +952,13 @@ async function createBroadcastRoute(c: AppContext) {
     duplicates: parsed.duplicates,
     ratePerMinute: sendRatePerMinute(c.env, account.accountId),
     ...(key !== undefined ? { idempotencyKey: key } : {}),
-    bodyHash: await sendBodyHash(phone.phoneNumberId, request),
+    bodyHash,
   });
   if (created.state === "reused") {
     return c.json({ ok: false, error: "idempotency_key_reused" }, 422);
+  }
+  if (created.state === "busy") {
+    return c.json({ ok: false, error: "too many running broadcasts on this WABA; wait for one to finish or cancel one" }, 409);
   }
   logEvent("broadcast_create", cid, 202, {
     wabaId: waba.wabaId,
@@ -976,7 +989,7 @@ app.get("/v1/wabas/:wabaId/broadcasts", async (c) => {
   const scope = await broadcastStub(c);
   if ("error" in scope) return scope.error;
   const n = Number(c.req.query("limit") ?? 20);
-  const limit = Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 100) : 20;
+  const limit = Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 50) : 20;
   return c.json({ ok: true, broadcasts: await scope.stub.listBroadcasts(scope.account.accountId, limit) });
 });
 

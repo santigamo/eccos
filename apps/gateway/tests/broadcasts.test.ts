@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   classifySendFailure,
   MAX_BROADCAST_RECIPIENTS,
+  pacing,
   parseBroadcastRequest,
   recipientMessage,
-  sendsPerTick,
   throttleDelayMs,
 } from "../src/broadcasts";
 
@@ -23,10 +23,8 @@ describe("parseBroadcastRequest", () => {
       request: {
         templateName: "promo",
         language: "es",
-        recipients: [
-          { to: "34600000001", components: [{ type: "body" }] },
-          { to: "34600000002", components: [] },
-        ],
+        defaultComponents: [{ type: "body" }],
+        recipients: [{ to: "34600000001" }, { to: "34600000002", components: [] }],
       },
     });
   });
@@ -55,6 +53,20 @@ describe("parseBroadcastRequest", () => {
 });
 
 describe("classifySendFailure", () => {
+  test("an unknown outcome wins over a throttle code: it may have been sent", () => {
+    expect(classifySendFailure(503, true, codes(130429))).toBe("unknown");
+  });
+
+  test("a parameter error fails one recipient with its own values, and halts on the template's defaults", () => {
+    expect(classifySendFailure(400, false, codes(132000), true)).toBe("failed");
+    expect(classifySendFailure(400, false, codes(132000), false)).toBe("halt");
+  });
+
+  test("number-wide refusals halt", () => {
+    expect(classifySendFailure(400, false, codes(131048))).toBe("halt");
+    expect(classifySendFailure(400, false, codes(368))).toBe("halt");
+  });
+
   test("throttling is retried; it was not sent", () => {
     expect(classifySendFailure(429, false, codes(null))).toBe("throttled");
     expect(classifySendFailure(400, false, codes(130429))).toBe("throttled");
@@ -69,15 +81,15 @@ describe("classifySendFailure", () => {
   test("token, account and template errors halt the broadcast; the rest fail one recipient", () => {
     expect(classifySendFailure(401, false, codes(190))).toBe("halt");
     expect(classifySendFailure(400, false, codes(132001))).toBe("halt");
+    expect(classifySendFailure(400, false, codes(null))).toBe("failed");
     expect(classifySendFailure(400, false, codes(131026))).toBe("failed");
   });
 });
 
 describe("pacing", () => {
-  test("sends per one-second tick, never zero", () => {
-    expect(sendsPerTick(60)).toBe(1);
-    expect(sendsPerTick(600)).toBe(10);
-    expect(sendsPerTick(30)).toBe(1);
+  test("a broadcast uses 80% of the rate, leaving the rest to single sends", () => {
+    expect(pacing(600)).toEqual({ perTick: 8, tickMs: 1_000 });
+    expect(pacing(60)).toEqual({ perTick: 1, tickMs: 1_250 });
   });
 
   test("throttle backoff doubles from 5 s up to 5 min", () => {

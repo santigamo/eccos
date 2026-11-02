@@ -16,6 +16,16 @@ export const MAX_BROADCAST_RECIPIENTS = 10_000;
 export const STALE_SENDING_MS = 60_000;
 /** Throttled attempts before a recipient is given up as failed. */
 export const MAX_THROTTLED_ATTEMPTS = 8;
+/** Broadcasts running at once on one WABA. */
+export const MAX_RUNNING_BROADCASTS = 5;
+/** Request body ceiling for POST /broadcasts. */
+export const MAX_BROADCAST_BODY_BYTES = 8 * 1024 * 1024;
+/** Stored values ceiling per recipient. */
+const MAX_COMPONENTS_BYTES = 8 * 1024;
+/** A broadcast whose first sends all fail stops: the cause is almost never the recipients. */
+export const FAILURE_BREAKER = 20;
+/** Share of the account's rate a broadcast uses, so single sends (OTPs, replies) keep the rest. */
+const BROADCAST_SHARE = 0.8;
 
 export type BroadcastStatus = "running" | "completed" | "cancelled" | "halted";
 export type RecipientStatus = "queued" | "sending" | "sent" | "failed" | "unknown" | "cancelled";
@@ -23,6 +33,8 @@ export type RecipientStatus = "queued" | "sending" | "sent" | "failed" | "unknow
 export interface BroadcastRequest {
   templateName: string;
   language: string;
+  /** Used for every recipient without its own `components`. */
+  defaultComponents?: unknown[];
   recipients: { to: string; components?: unknown[] }[];
 }
 
@@ -68,6 +80,9 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
     return { ok: false, error: "template.components must be an array" };
   }
   const defaults = template.components as unknown[] | undefined;
+  if (defaults && JSON.stringify(defaults).length > MAX_COMPONENTS_BYTES) {
+    return { ok: false, error: "template.components are too large" };
+  }
   if (!Array.isArray(record.recipients) || record.recipients.length === 0) {
     return { ok: false, error: "recipients must be a non-empty array" };
   }
@@ -89,6 +104,10 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
       invalid.push({ index, error: "components must be an array" });
       return;
     }
+    if (item.components !== undefined && JSON.stringify(item.components).length > MAX_COMPONENTS_BYTES) {
+      invalid.push({ index, error: "components are too large" });
+      return;
+    }
     const to = item.to.trim();
     const key = recipientKey(to);
     if (seen.has(key)) {
@@ -96,13 +115,16 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
       return;
     }
     seen.add(key);
-    const components = (item.components as unknown[] | undefined) ?? defaults;
-    recipients.push({ to, ...(components ? { components } : {}) });
+    recipients.push({ to, ...(item.components ? { components: item.components as unknown[] } : {}) });
   });
   if (invalid.length > 0) {
     return { ok: false, error: "some recipients are invalid", invalid: invalid.slice(0, 100) };
   }
-  return { ok: true, request: { templateName: template.name, language, recipients }, duplicates };
+  return {
+    ok: true,
+    request: { templateName: template.name, language, ...(defaults ? { defaultComponents: defaults } : {}), recipients },
+    duplicates,
+  };
 }
 
 /** The Meta message body for one recipient. */
@@ -130,13 +152,23 @@ export type SendVerdict =
   | "failed";
 
 const THROTTLE_CODES = new Set([4, 80007, 130429, 131056]);
-/** Token, permission, account, payment and template errors: the same for every recipient. */
-const HALT_CODES = new Set([10, 190, 200, 131031, 131042, 132000, 132001, 132005, 132007, 132012, 132015, 132016, 133010]);
+/** Token, permission, account, number, payment and template errors: the same for every recipient. */
+const HALT_CODES = new Set([10, 190, 200, 368, 131031, 131042, 131045, 131048, 132001, 132007, 132015, 132016, 133010]);
+/** Parameter errors: one recipient's values when it brought its own, the template defaults' otherwise. */
+const PARAMETER_CODES = new Set([132000, 132005, 132012]);
 
-export function classifySendFailure(status: number, unknown: boolean, codes: MetaErrorCodes): SendVerdict {
-  if (status === 429 || (codes.errorCode !== null && THROTTLE_CODES.has(codes.errorCode))) return "throttled";
+export function classifySendFailure(
+  status: number,
+  unknown: boolean,
+  codes: MetaErrorCodes,
+  ownValues = false,
+): SendVerdict {
+  // First: an answer that may mean "sent" is never retried, whatever code it carries.
   if (unknown) return "unknown";
-  if (codes.errorCode !== null && HALT_CODES.has(codes.errorCode)) return "halt";
+  if (status === 429 || (codes.errorCode !== null && THROTTLE_CODES.has(codes.errorCode))) return "throttled";
+  if (codes.errorCode === null) return "failed";
+  if (HALT_CODES.has(codes.errorCode)) return "halt";
+  if (PARAMETER_CODES.has(codes.errorCode)) return ownValues ? "failed" : "halt";
   return "failed";
 }
 
@@ -145,9 +177,14 @@ export function throttleDelayMs(attempts: number): number {
   return Math.min(5_000 * 2 ** Math.max(0, attempts - 1), 300_000);
 }
 
-/** Sends per one-second tick for a per-minute rate. */
-export function sendsPerTick(ratePerMinute: number): number {
-  return Math.max(1, Math.floor(ratePerMinute / 60));
+/**
+ * How a broadcast paces: `perTick` sends every `tickMs`, using 80% of the
+ * per-minute rate. 600/min → 8 a second; 60/min → one every 1.25 s.
+ */
+export function pacing(ratePerMinute: number): { perTick: number; tickMs: number } {
+  const budget = Math.max(1, ratePerMinute * BROADCAST_SHARE);
+  if (budget >= 60) return { perTick: Math.floor(budget / 60), tickMs: 1_000 };
+  return { perTick: 1, tickMs: Math.ceil(60_000 / budget) };
 }
 
 export const BROADCAST_SCHEMA = [
@@ -161,6 +198,7 @@ export const BROADCAST_SCHEMA = [
     total           INTEGER NOT NULL,
     duplicates      INTEGER NOT NULL,
     rate_per_minute INTEGER NOT NULL,
+    default_components TEXT,
     idempotency_key TEXT,
     body_hash       TEXT NOT NULL,
     halt_reason     TEXT,

@@ -311,3 +311,120 @@ describe("privacy", () => {
     });
   });
 });
+
+describe("review cases", () => {
+  const setSql = (query: string, ...params: unknown[]) =>
+    runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      instance.sql.exec(query, ...(params as SqlStorageValue[]));
+    });
+
+  it("a recipient whose own values Meta refuses fails alone; the broadcast goes on", async () => {
+    mockMeta({ sends: [{ status: 400, body: { error: { code: 132000, message: "Number of parameters does not match" } } }] });
+    const id = await createdId(broadcast(["34600000001", "34600000002"]));
+    await tick();
+    await tick();
+    await tick();
+    expect(await summary(id)).toMatchObject({ status: "completed", counts: { failed: 1, sent: 1 } });
+  });
+
+  it("the same parameter error on the template's own values halts", async () => {
+    mockMeta({ sends: [{ status: 400, body: { error: { code: 132000 } } }] });
+    const id = await createdId({
+      template: { name: "promo", language: "es", components: [{ type: "body", parameters: [] }] },
+      recipients: [{ to: "34600000001" }, { to: "34600000002" }],
+    });
+    await tick();
+    expect(await summary(id)).toMatchObject({ status: "halted", counts: { failed: 1, cancelled: 1 } });
+  });
+
+  it("stops when the first sends all fail, whatever the code", async () => {
+    mockMeta({ sends: Array.from({ length: 25 }, () => ({ status: 400, body: { error: { code: 131026 } } })) });
+    const numbers = Array.from({ length: 25 }, (_, i) => `346000001${String(i).padStart(2, "0")}`);
+    const id = await createdId(broadcast(numbers));
+    await setSql(`UPDATE broadcasts SET rate_per_minute = 300`);
+    for (let i = 0; i < 6; i++) await tick();
+    expect(await summary(id)).toMatchObject({
+      status: "halted",
+      haltReason: "the first 20 sends all failed",
+      counts: { failed: 20, cancelled: 5 },
+    });
+  });
+
+  it("a throttled recipient gives up as failed after the last attempt", async () => {
+    mockMeta({ sends: [{ status: 400, body: { error: { code: 130429 } } }] });
+    const id = await createdId(broadcast(["34600000001"]));
+    await setSql(`UPDATE broadcast_recipients SET attempts = 7`);
+    await tick();
+    expect(await summary(id)).toMatchObject({ status: "completed", counts: { failed: 1 } });
+  });
+
+  it("the limiter refusing a send queues it again without spending an attempt", async () => {
+    const fetchSpy = mockMeta();
+    const id = await createdId(broadcast(["34600000001"]));
+    const refused = { limit: async () => ({ success: false }) };
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      (instance as unknown as { env: Record<string, unknown> }).env.SEND_RATE_LIMITER = refused;
+    });
+    await tick();
+    expect(sendBodies(fetchSpy)).toHaveLength(0);
+    const row = await runInDurableObject(gatewayStub(), (instance: EccosGateway) =>
+      instance.sql.exec(`SELECT status, attempts FROM broadcast_recipients`).toArray()[0],
+    );
+    expect(row).toEqual({ status: "queued", attempts: 0 });
+    expect(await summary(id)).toMatchObject({ status: "running" });
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      delete (instance as unknown as { env: Record<string, unknown> }).env.SEND_RATE_LIMITER;
+    });
+  });
+
+  it("a WABA that is no longer connected halts the broadcast; a failed lookup waits", async () => {
+    mockMeta();
+    const id = await createdId(broadcast(["34600000001"]));
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      vi.spyOn(instance as unknown as { metaToken: () => Promise<string> }, "metaToken").mockResolvedValueOnce("unavailable");
+    });
+    await tick();
+    expect(await summary(id)).toMatchObject({ status: "running", counts: { queued: 1 } });
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      vi.spyOn(instance as unknown as { metaToken: () => Promise<string> }, "metaToken").mockResolvedValueOnce("missing");
+    });
+    await tick();
+    expect(await summary(id)).toMatchObject({ status: "halted", counts: { cancelled: 1 } });
+  });
+
+  it("a failing broadcast step never takes the rest of the alarm down", async () => {
+    mockMeta();
+    await createdId(broadcast(["34600000001"]));
+    const alarmAt = await runInDurableObject(gatewayStub(), async (instance: EccosGateway, state: DurableObjectState) => {
+      vi.spyOn(instance as unknown as { broadcastStep: () => Promise<number> }, "broadcastStep").mockRejectedValue(new Error("boom"));
+      instance.sql.exec(`UPDATE broadcasts SET next_send_at = 0`);
+      await state.storage.deleteAlarm();
+      await Object.getPrototypeOf(instance).alarm.call(instance);
+      return state.storage.getAlarm();
+    });
+    expect(alarmAt).toBeGreaterThan(Date.now() + 20_000);
+  });
+
+  it("two broadcasts progress together, and a sixth running one is refused", async () => {
+    const fetchSpy = mockMeta();
+    const a = await createdId(broadcast(["34600000001"]));
+    const b = await createdId(broadcast(["34600000002"]));
+    await tick();
+    expect(sendBodies(fetchSpy)).toHaveLength(2);
+    expect(await summary(a)).toMatchObject({ counts: { sent: 1 } });
+    expect(await summary(b)).toMatchObject({ counts: { sent: 1 } });
+    for (let i = 0; i < 5; i++) await createdId(broadcast([`3460000003${i}`]));
+    expect((await create(broadcast(["34600000040"]))).status).toBe(409);
+  });
+
+  it("a retry with the same key gets its broadcast back without asking Meta again", async () => {
+    const fetchSpy = mockMeta();
+    const first = await create(broadcast(["34600000001"]), { "idempotency-key": "k" });
+    const id = ((await first.json()) as { broadcast: { id: string } }).broadcast.id;
+    const lookups = () => fetchSpy.mock.calls.filter(([input]) => String(input).includes("/message_templates")).length;
+    expect(lookups()).toBe(1);
+    const again = await create(broadcast(["34600000001"]), { "idempotency-key": "k" });
+    expect(((await again.json()) as { broadcast: { id: string } }).broadcast.id).toBe(id);
+    expect(lookups()).toBe(1);
+  });
+});
