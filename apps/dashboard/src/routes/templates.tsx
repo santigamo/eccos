@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 import { MoreHorizontalIcon, SearchIcon } from "lucide-react";
@@ -200,6 +200,11 @@ function TemplatesPage() {
   const [sending, setSending] = useState<TemplateRecord | null>(null);
   const [authoring, setAuthoring] = useState<TemplateSheetMode | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  // The box follows the URL (Clear filters, Back) without fighting a trailing space being typed.
+  const [searchText, setSearchText] = useState(q ?? "");
+  useEffect(() => {
+    setSearchText((text) => (normalizeSearchQuery(text) === q ? text : (q ?? "")));
+  }, [q]);
 
   const ready = root.ok && root.data.stage === "ready" ? root.data.scope : null;
   const selectedWabaId = wabaId ?? ready?.selectedWabaId;
@@ -244,7 +249,7 @@ function TemplatesPage() {
   const openTemplate = (row: TemplateRecord) => {
     if (row.id) navigate({ search: (prev) => ({ ...prev, template: row.id }) });
   };
-  const closeTemplate = () => navigate({ search: (prev) => ({ ...prev, template: undefined }) });
+  const closeTemplate = () => navigate({ search: (prev) => ({ ...prev, template: undefined }), replace: true });
 
   /** What each row allows, decided once for the menu and the sheet alike. */
   function actionsFor(row: TemplateRecord) {
@@ -303,11 +308,14 @@ function TemplatesPage() {
         <Input
           id="template-search"
           type="search"
-          defaultValue={q ?? ""}
+          value={searchText}
           placeholder="Search"
           autoComplete="off"
           className="h-8 w-44 rounded-none pl-7 text-sm"
-          onChange={(event) => setFilter({ q: normalizeSearchQuery(event.target.value) })}
+          onChange={(event) => {
+            setSearchText(event.target.value);
+            setFilter({ q: normalizeSearchQuery(event.target.value) });
+          }}
         />
       </span>
       <label className="sr-only" htmlFor="template-status-filter">
@@ -419,6 +427,7 @@ function TemplatesPage() {
 
       {authoring && selectedWabaId ? (
         <CreateTemplateSheet
+          key={authoring.kind === "edit" ? `edit:${authoring.templateId}` : authoring.kind}
           open
           onOpenChange={(open) => {
             if (!open) setAuthoring(null);

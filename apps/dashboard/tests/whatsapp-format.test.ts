@@ -41,4 +41,20 @@ describe("parseWhatsApp", () => {
       { kind: "var", key: "first_name" },
     ]);
   });
+
+  test("an emoji next to a marker is a boundary, as on the phone", () => {
+    expect(parseWhatsApp("🎉*Sale*🎉")).toEqual([
+      { kind: "text", text: "🎉" },
+      { kind: "bold", children: [{ kind: "text", text: "Sale" }] },
+      { kind: "text", text: "🎉" },
+    ]);
+  });
+
+  test("placeholders inside code are still placeholders", () => {
+    expect(parseWhatsApp("Code: `{{1}}`")).toEqual([
+      { kind: "text", text: "Code: " },
+      { kind: "mono", children: [{ kind: "var", key: "1" }] },
+    ]);
+    expect(parseWhatsApp("```{{1}}```")).toEqual([{ kind: "mono", children: [{ kind: "var", key: "1" }] }]);
+  });
 });

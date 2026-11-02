@@ -92,6 +92,10 @@ describe("authoringReading", () => {
       ok: false,
       reason: "It has an image header, which the console does not author yet.",
     });
+    expect(
+      authoringReading({ ...simple, components: [{ type: "BODY", text: "Hi" }, { type: "CAROUSEL", cards: [] }] }),
+    ).toEqual({ ok: false, reason: "It has a carousel component, which the console does not author." });
+    expect(authoringReading({ ...simple, components: [{ type: "BODY", text: "Hi {{name}}" }] }).ok).toBe(false);
     expect(authoringReading({ ...simple, category: "AUTHENTICATION" }).ok).toBe(false);
     expect(authoringReading({ ...simple, parameter_format: "NAMED" }).ok).toBe(false);
     expect(
@@ -173,3 +177,4 @@ describe("WhatsAppPreview", () => {
     expect(html).not.toContain("<img");
   });
 });
+

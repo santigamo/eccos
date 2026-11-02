@@ -57,7 +57,7 @@ mock.module("@tanstack/react-router", () => ({
   useRouter: () => ({ invalidate: () => {} }),
 }));
 
-const { Route } = await import("../src/routes/templates");
+const { Route, filterTemplates } = await import("../src/routes/templates");
 
 /** A templates result as `listTemplates` resolves it, with a `components` row. */
 function loaderFixture(rows: unknown[]): unknown {
@@ -220,5 +220,18 @@ describe("TemplatesPage row actions", () => {
     expect(trigger).toContain("rounded-none");
     expect(trigger).toContain("hover:bg-(--ghost-fill-hover)");
     expect(trigger).not.toContain("--caustic");
+  });
+});
+
+describe("filterTemplates", () => {
+  const rows = [
+    { id: "1", name: "order_update", status: "APPROVED", components: [{ type: "BODY", text: "Your parcel shipped" }] },
+    { id: "2", name: "promo", status: "REJECTED", components: [{ type: "BODY", text: "Sale today" }] },
+  ];
+  test("narrows by status, case-insensitively, and by name or body text", () => {
+    expect(filterTemplates(rows, "rejected").map((row) => row.id)).toEqual(["2"]);
+    expect(filterTemplates(rows, undefined, "PARCEL").map((row) => row.id)).toEqual(["1"]);
+    expect(filterTemplates(rows, undefined, "promo").map((row) => row.id)).toEqual(["2"]);
+    expect(filterTemplates(rows)).toHaveLength(2);
   });
 });

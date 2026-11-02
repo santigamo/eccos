@@ -231,7 +231,7 @@ export function editTemplateFailureCopy(code: EditTemplateFailureCode, detail: s
       };
     case "rate_limited":
       return {
-        title: "Edit limit reached",
+        title: "Too many requests",
         detail: "Meta is rate-limiting template changes for this account. Wait a few minutes and try again.",
       };
     default:

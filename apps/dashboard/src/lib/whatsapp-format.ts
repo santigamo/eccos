@@ -24,7 +24,20 @@ const MARKERS: Record<string, "bold" | "italic" | "strike"> = {
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
 function isBoundary(char: string | undefined): boolean {
-  return char === undefined || /[\s\p{P}\p{S}]/u.test(char);
+  return char === undefined || /[\s\p{P}\p{S}\p{Extended_Pictographic}\u200d\ufe0f]/u.test(char);
+}
+
+/** The whole code point before `i`, so an emoji's surrogate pair is read as one character. */
+function before(text: string, i: number): string | undefined {
+  if (i <= 0) return undefined;
+  const low = text.charCodeAt(i - 1);
+  return low >= 0xdc00 && low <= 0xdfff && i >= 2 ? text.slice(i - 2, i) : text[i - 1];
+}
+
+/** The whole code point at `i`. */
+function at(text: string, i: number): string | undefined {
+  const point = text.codePointAt(i);
+  return point === undefined ? undefined : String.fromCodePoint(point);
 }
 
 function textNodes(text: string): WaNode[] {
@@ -44,7 +57,7 @@ function closingIndex(text: string, start: number, marker: string): number {
   for (let j = start + 2; j < text.length; j++) {
     const char = text[j];
     if (char === "\n") return -1;
-    if (char === marker && !/\s/.test(text[j - 1] ?? "") && isBoundary(text[j + 1])) return j;
+    if (char === marker && !/\s/.test(text[j - 1] ?? "") && isBoundary(at(text, j + 1))) return j;
   }
   return -1;
 }
@@ -63,13 +76,13 @@ function parseInline(text: string): WaNode[] {
       const end = text.indexOf("`", i + 1);
       if (end > i + 1 && !text.slice(i + 1, end).includes("\n")) {
         flush();
-        nodes.push({ kind: "mono", children: [{ kind: "text", text: text.slice(i + 1, end) }] });
+        nodes.push({ kind: "mono", children: textNodes(text.slice(i + 1, end)) });
         i = end + 1;
         continue;
       }
     }
     const kind = MARKERS[char];
-    if (kind && isBoundary(text[i - 1]) && text[i + 1] && !/\s/.test(text[i + 1] ?? "")) {
+    if (kind && isBoundary(before(text, i)) && text[i + 1] && !/\s/.test(text[i + 1] ?? "")) {
       const end = closingIndex(text, i, char);
       if (end !== -1) {
         flush();
@@ -93,7 +106,7 @@ export function parseWhatsApp(text: string): WaNode[] {
     const close = open === -1 ? -1 : rest.indexOf("```", open + 3);
     if (close === -1) break;
     nodes.push(...parseInline(rest.slice(0, open)));
-    nodes.push({ kind: "mono", children: [{ kind: "text", text: rest.slice(open + 3, close) }] });
+    nodes.push({ kind: "mono", children: textNodes(rest.slice(open + 3, close)) });
     rest = rest.slice(close + 3);
   }
   nodes.push(...parseInline(rest));

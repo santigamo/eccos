@@ -30,6 +30,7 @@ const {
   EMPTY_DRAFT,
   discardDraftCopy,
   exampleValues,
+  editNoticeFor,
   isDraftDirty,
   noticeFor,
   shouldGuardDismissal,
@@ -412,5 +413,20 @@ describe("the dismissal guard", () => {
     expect(discardDraftCopy(false)).toContain("buttons");
     expect(discardDraftCopy(true)).toContain("still being submitted");
     expect(discardDraftCopy(true)).not.toContain("Nothing has been created yet");
+  });
+});
+
+describe("editNoticeFor", () => {
+  test("edit failures read in the console's words, with Meta's sentence when it explains", () => {
+    expect(editNoticeFor({ ok: true })).toEqual({ ok: true, edited: true });
+    expect(editNoticeFor({ ok: false, code: "not_found", detail: null })).toMatchObject({
+      ok: false,
+      title: "Template not found",
+    });
+    expect(editNoticeFor({ ok: false, code: "graph", detail: "Edit limit reached" })).toMatchObject({
+      ok: false,
+      detail: "Edit limit reached",
+      secondary: "Edit limit reached",
+    });
   });
 });

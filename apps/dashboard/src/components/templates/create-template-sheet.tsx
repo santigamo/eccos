@@ -61,6 +61,13 @@ const LANGUAGES: { code: string; label: string }[] = [
   { code: "ca", label: "Catalan" },
 ];
 
+/** The curated list, plus a duplicated template's own language when it is not on it. */
+function languageOptions(current: string): { code: string; label: string }[] {
+  return LANGUAGES.some((entry) => entry.code === current)
+    ? LANGUAGES
+    : [{ code: current, label: current }, ...LANGUAGES];
+}
+
 /** AUTHENTICATION is absent by design: those templates are preset content plus
  * OTP buttons — a different creation shape, not a missing option. */
 const CATEGORIES: { value: TemplateCategory; label: string }[] = [
@@ -316,7 +323,7 @@ export function CreateTemplateFields({
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="start">
-            {LANGUAGES.map((entry) => (
+            {languageOptions(draft.language).map((entry) => (
               <SelectItem key={entry.code} value={entry.code}>
                 {entry.label} {"·"} {entry.code}
               </SelectItem>

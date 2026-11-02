@@ -5,7 +5,7 @@
  */
 
 import type { TemplateDraft } from "../components/templates/create-template-sheet";
-import type { TemplateListRow } from "./template-params";
+import { analyzeDraftBody, type TemplateListRow } from "./template-params";
 
 export type HeaderFormat = "IMAGE" | "VIDEO" | "DOCUMENT" | "LOCATION";
 
@@ -213,6 +213,9 @@ export type AuthoringReading =
   | { ok: true; draft: TemplateDraft }
   | { ok: false; reason: string };
 
+/** Everything else is refused: Meta's edit replaces every component, so one the form cannot hold would be deleted. */
+const AUTHORED_TYPES = new Set(["HEADER", "BODY", "FOOTER", "BUTTONS"]);
+
 const HEADER_NOUNS: Record<HeaderFormat | "TEXT", string> = {
   TEXT: "a text header",
   IMAGE: "an image header",
@@ -239,13 +242,24 @@ export function authoringReading(row: TemplateRecord): AuthoringReading {
   }
   const view = templateView(row);
   if (!view || !view.body) return { ok: false, reason: "Meta returned this template without a body." };
+  const other = (row.components as { type?: unknown }[]).find(
+    (part) => !AUTHORED_TYPES.has(upper(part?.type)),
+  );
+  if (other) {
+    return {
+      ok: false,
+      reason: `It has a ${upper(other.type).toLowerCase().replaceAll("_", " ")} component, which the console does not author.`,
+    };
+  }
   if (view.header) {
     return { ok: false, reason: `It has ${HEADER_NOUNS[view.header.format]}, which the console does not author yet.` };
   }
   if (view.buttons.length > 3 || view.buttons.some((button) => button.kind !== "url")) {
     return { ok: false, reason: "Its buttons are not all links, and the console authors link buttons only." };
   }
-  const count = Object.keys(view.bodyExamples).length;
+  const body = analyzeDraftBody(view.body);
+  if (!body.ok) return { ok: false, reason: body.reason };
+  const count = body.paramCount;
   return {
     ok: true,
     draft: {

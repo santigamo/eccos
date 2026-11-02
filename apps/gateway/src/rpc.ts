@@ -541,7 +541,11 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * connected-but-unprovisioned WABA can list its templates. */
   async listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult> {
     const { config: cfg } = await this.scoped(wabaId, accountId, { anyStatus: true });
-    return listTemplates(cfg, limit, { fields: TEMPLATE_LIST_FIELDS });
+    const result = await listTemplates(cfg, limit, { fields: TEMPLATE_LIST_FIELDS });
+    // The review fields are extras: if Meta ever refuses one of them, the list
+    // still loads with its default fields rather than not at all.
+    if (!result.ok && graphError(result.error).code === 100) return listTemplates(cfg, limit);
+    return result;
   }
 
   /**
@@ -622,13 +626,17 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     }
     const { examples, footerText, buttons } = assertTemplateContent(input);
 
-    const found = await listTemplates(cfg, 100, { fields: ["id", "language"], name: input.name });
+    const found = await listTemplates(cfg, 100, { fields: ["id", "name", "language"], name: input.name });
     if (!found.ok) {
       const { message } = graphError(found.error);
       return { ok: false, code: "graph", detail: message ?? `HTTP ${found.status}` };
     }
-    const rows = (found.data as { data?: { id?: unknown; language?: unknown }[] } | null)?.data ?? [];
-    if (!rows.some((row) => row.id === input.templateId && row.language === input.language)) {
+    const rows =
+      (found.data as { data?: { id?: unknown; name?: unknown; language?: unknown }[] } | null)?.data ?? [];
+    const owned = rows.some(
+      (row) => row.id === input.templateId && row.name === input.name && row.language === input.language,
+    );
+    if (!owned) {
       return { ok: false, code: "not_found", detail: null };
     }
 

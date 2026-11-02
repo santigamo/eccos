@@ -147,7 +147,9 @@ export function TemplateDetail({
               <FactRow label="Quality" value={<span className={QUALITY_INK[quality.tone]}>{quality.label}</span>} />
             ) : null}
             <FactRow label="Language" value={row.language} mono />
-            {updated ? <FactRow label="Last updated" value={updated.toLocaleString()} /> : null}
+            {updated ? (
+              <FactRow label="Last updated" value={`${updated.toISOString().slice(0, 16).replace("T", " ")} UTC`} mono />
+            ) : null}
             <FactRow label="Template id" value={row.id} mono />
           </dl>
         </SheetSection>

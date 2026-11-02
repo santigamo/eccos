@@ -210,7 +210,11 @@ export function WhatsAppPreview({
           </svg>
           {header && header.format !== "TEXT" ? (
             <div className="p-[3px] pb-0">
-              <MediaHeader header={header} imageUrl={headerImageUrl} />
+              <MediaHeader
+                key={headerImageUrl ?? header.exampleUrl ?? ""}
+                header={header}
+                imageUrl={headerImageUrl}
+              />
             </div>
           ) : null}
           <div className="relative px-2 pt-1.5 pb-2 text-[14px] leading-[19px] break-words whitespace-pre-wrap">

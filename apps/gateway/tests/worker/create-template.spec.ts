@@ -327,7 +327,7 @@ describe("GatewayRPC.editTemplate", () => {
 
   it("checks the id is this WABA's translation, then replaces its components", async () => {
     const fetchSpy = mockLookupThen(
-      [{ id: "555", language: "en_US" }],
+      [{ id: "555", name: "order_update", language: "en_US" }],
       Response.json({ success: true }),
     );
     const result = await makeRpc().editTemplate(edit({ footerText: "Eccos" }), TEST_ACCOUNT_ID);
@@ -349,15 +349,40 @@ describe("GatewayRPC.editTemplate", () => {
   });
 
   it("sends a category change only when one is asked for", async () => {
-    const fetchSpy = mockLookupThen([{ id: "555", language: "en_US" }], Response.json({ success: true }));
+    const fetchSpy = mockLookupThen([{ id: "555", name: "order_update", language: "en_US" }], Response.json({ success: true }));
     await makeRpc().editTemplate(edit({ category: "MARKETING" }), TEST_ACCOUNT_ID);
     expect(JSON.parse(String(fetchSpy.mock.calls[1]![1]?.body)).category).toBe("MARKETING");
   });
 
   it("refuses an id that is not this name+language on this WABA, without editing", async () => {
-    const fetchSpy = mockLookupThen([{ id: "555", language: "es" }], Response.json({ success: true }));
+    const fetchSpy = mockLookupThen([{ id: "555", name: "order_update", language: "es" }], Response.json({ success: true }));
     const result = await makeRpc().editTemplate(edit(), TEST_ACCOUNT_ID);
     expect(result).toEqual({ ok: false, code: "not_found", detail: null });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an id whose name differs from the one claimed, so the audit can never be wrong", async () => {
+    const fetchSpy = mockLookupThen(
+      [{ id: "555", name: "order_update_v2", language: "en_US" }],
+      Response.json({ success: true }),
+    );
+    expect(await makeRpc().editTemplate(edit(), TEST_ACCOUNT_ID)).toEqual({
+      ok: false,
+      code: "not_found",
+      detail: null,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed lookup is Meta's refusal, and nothing is edited", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ error: { code: 190, message: "Token expired" } }, { status: 401 }));
+    expect(await makeRpc().editTemplate(edit(), TEST_ACCOUNT_ID)).toEqual({
+      ok: false,
+      code: "graph",
+      detail: "Token expired",
+    });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -371,7 +396,7 @@ describe("GatewayRPC.editTemplate", () => {
 
   it("maps Meta's refusals to the closed vocabulary with Meta's sentence", async () => {
     mockLookupThen(
-      [{ id: "555", language: "en_US" }],
+      [{ id: "555", name: "order_update", language: "en_US" }],
       Response.json({ error: { code: 100, message: "Invalid parameter" } }, { status: 400 }),
     );
     expect(await makeRpc().editTemplate(edit(), TEST_ACCOUNT_ID)).toEqual({
@@ -386,5 +411,24 @@ describe("GatewayRPC.editTemplate", () => {
     await expect(
       makeRpc().editTemplate(edit({ category: "AUTHENTICATION" }), TEST_ACCOUNT_ID),
     ).rejects.toThrow();
+  });
+});
+
+describe("GatewayRPC.listTemplates", () => {
+  it("asks Meta for the review fields", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ data: [] }));
+    await makeRpc().listTemplates(TEST_WABA_ID, 100, TEST_ACCOUNT_ID);
+    const fields = new URL(String(fetchSpy.mock.calls[0]![0])).searchParams.get("fields") ?? "";
+    expect(fields.split(",")).toEqual(expect.arrayContaining(["rejected_reason", "quality_score", "last_updated_time"]));
+  });
+
+  it("falls back to Meta's default fields when it refuses one of them", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ error: { code: 100, message: "Unknown field" } }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ data: [{ id: "1" }] }));
+    const result = await makeRpc().listTemplates(TEST_WABA_ID, 100, TEST_ACCOUNT_ID);
+    expect(result).toEqual({ ok: true, data: { data: [{ id: "1" }] } });
+    expect(new URL(String(fetchSpy.mock.calls[1]![0])).searchParams.has("fields")).toBe(false);
   });
 });
