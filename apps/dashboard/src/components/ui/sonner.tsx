@@ -31,7 +31,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }
       toastOptions={{
         classNames: {
-          closeButton: "rounded-none!",
+          closeButton:
+            "rounded-none! bg-(--popover)! border-(--line-strong)! hover:bg-(--popover)! hover:border-(--ghost-edge-hover)! focus-visible:shadow-none! focus-visible:outline-2! focus-visible:outline-offset-2! focus-visible:outline-ring!",
           warning: "border-l-2! border-l-[#f0a020]!",
           error: "border-l-2! border-l-[#e03131]!",
         },

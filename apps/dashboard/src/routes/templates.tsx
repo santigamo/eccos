@@ -437,7 +437,10 @@ function TemplatesPage() {
           key={authoring.kind === "edit" ? `edit:${authoring.templateId}` : authoring.kind}
           open
           onOpenChange={(open) => {
-            if (!open) setAuthoring(null);
+            if (!open) {
+              setAuthoring(null);
+              toast.dismiss("edit-approved");
+            }
           }}
           wabaId={selectedWabaId}
           mode={authoring}
