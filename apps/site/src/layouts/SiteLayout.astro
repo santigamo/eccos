@@ -126,6 +126,7 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
       <a href="#pricing">{es ? "Precios" : "Pricing"}</a>
       <a href="#run">{es ? "Cómo usarlo" : "Run it"}</a>
       <a href="#data">{es ? "Tus datos" : "Your data"}</a>
+      <a href="https://docs.eccos.chat">Docs</a>
       <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
     </nav> : <nav class="nav" aria-label="Primary">
       <a href="/privacy" aria-current={active === "privacy" ? "page" : undefined}>Privacy</a>
@@ -168,6 +169,7 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
            {landing && <a href="#pricing">{es ? "Precios" : "Pricing"}</a>}
           <a href={landing ? "#run" : `${localeHome}#run`}>{es ? "Cómo usarlo" : "Run it"}</a>
           <a href={landing ? "#data" : `${localeHome}#data`}>{es ? "Tus datos" : "Your data"}</a>
+          <a href="https://docs.eccos.chat">Docs</a>
         </nav>
         <nav class="foot-col" aria-label="Legal">
           <p class="label">Legal</p>

@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eccos-docs",
+  "compatibility_date": "2026-06-12",
+
+  // Pure static-assets Worker, like apps/site: no `main`, Astro's output is
+  // served straight from Cloudflare's edge.
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  // `custom_domain: true` lets Cloudflare create and manage the DNS record.
+  "routes": [{ "pattern": "docs.eccos.chat", "custom_domain": true }]
+}

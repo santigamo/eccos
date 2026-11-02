@@ -1,0 +1,41 @@
+/* Eccos brand (docs/BRAND.md). Vivid green is a fill, never text on paper:
+   light mode uses Ink green for accents. Fonts are self-hosted (OFL). */
+@font-face {
+  font-family: "Inter";
+  src: url("/assets/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --sl-font: "Inter", system-ui, sans-serif;
+  --sl-color-accent-low: #d7efe2;
+  --sl-color-accent: #0b7a4b;
+  --sl-color-accent-high: #0b7a4b;
+  --sl-color-bg: #f7f9f8;
+  --sl-color-bg-nav: #f7f9f8;
+  --sl-color-bg-sidebar: #f7f9f8;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #0b3a26;
+  --sl-color-accent: #25d366;
+  --sl-color-accent-high: #25d366;
+  --sl-color-bg: #0b141a;
+  --sl-color-bg-nav: #10171d;
+  --sl-color-bg-sidebar: #10171d;
+}
+
+.site-title-link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.site-title-link img {
+  height: 1.75rem;
+  width: 1.75rem;
+}
+.site-home-link {
+  font-size: var(--sl-text-sm);
+  white-space: nowrap;
+}

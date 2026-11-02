@@ -1,0 +1,11 @@
+# Eccos docs are public and meant to be found and cited — by search engines,
+# by AI crawlers, and by agents pointed at a page. Everything is allowed on
+# purpose.
+#
+# Without a robots.txt of our own, Cloudflare's managed robots.txt would fill
+# the gap with a default that disallows the AI training crawlers.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://docs.eccos.chat/sitemap-index.xml

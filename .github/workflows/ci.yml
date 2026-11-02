@@ -41,6 +41,9 @@ jobs:
       - name: Site (check, build, links)
         run: bun run check:site
 
+      - name: Docs (check, build, links)
+        run: bun run check:docs
+
       - name: Dashboard (typecheck, test, build)
         run: |
           cd apps/dashboard
