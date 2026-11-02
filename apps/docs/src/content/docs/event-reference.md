@@ -12,6 +12,10 @@ Each element of `events` has a `type`. Common fields: `at` (ms since epoch) and,
 the send call. Status events do not name the recipient, so match on that id. Meta's `played`
 status (voice messages) arrives as `read`.
 
+With coexistence you also get statuses for messages sent from the WhatsApp Business app: their
+`transportMessageId` is the `messageId` of the matching [`echo`](#echo-and-message_echo-messages-sent-from-the-whatsapp-business-app)
+event, not an id the send call returned. Ignore ids you don't know if you only track API sends.
+
 ```json
 { "type": "delivered", "transportMessageId": "wamid.HBgL...", "at": 1767225600000, "phoneNumberId": "1098765432" }
 ```

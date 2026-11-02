@@ -47,7 +47,7 @@ const GENERIC_BANNER: Record<Health, HealthBanner | null> = {
     rail: "border-l-[#f0a020]",
   },
   unhealthy: {
-    detail: "The gateway is experiencing an outage.",
+    detail: "Forwarding to your receiver is failing.",
     rail: "border-l-[#e03131]",
   },
 };
@@ -82,6 +82,18 @@ export function healthReading(status: GatewayStatus, hasForwardingTarget: boolea
         detail: `${held} ${held === 1 ? "event is" : "events are"} waiting for a forwarding target. Nothing has been attempted and nothing has failed — they go out as soon as you name a receiver.`,
         rail: "border-l-[#f0a020]",
         action: { to: "/webhooks", label: "Set a forwarding target" },
+      },
+    };
+  }
+  // `unhealthy` means only this: forwarded batches that failed every attempt.
+  const failed = status.counts.deliveries.failed ?? 0;
+  if (status.health === "unhealthy" && failed > 0) {
+    return {
+      label,
+      banner: {
+        detail: `${failed} forwarded ${failed === 1 ? "batch" : "batches"} failed after every retry. Check your receiver, then retry ${failed === 1 ? "it" : "them"} from the forwarding queue.`,
+        rail: "border-l-[#e03131]",
+        action: { to: "/deliveries", label: "Open the forwarding queue" },
       },
     };
   }
