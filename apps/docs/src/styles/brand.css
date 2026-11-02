@@ -1,0 +1,52 @@
+/* Eccos brand (docs/BRAND.md). Vivid green is a fill, never text on paper:
+   light mode uses Ink green for accents. Fonts are self-hosted (OFL). */
+@font-face {
+  font-family: "Inter";
+  src: url("/assets/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --sl-font: "Inter", system-ui, sans-serif;
+  --sl-color-accent-low: #e2f4e9;
+  --sl-color-accent: #0b7a4b;
+  --sl-color-accent-high: #0b7a4b;
+  --sl-color-bg: #f7f9f8;
+  --sl-color-bg-nav: #f7f9f8;
+  --sl-color-bg-sidebar: #f7f9f8;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #0b3a26;
+  --sl-color-accent: #25d366;
+  --sl-color-accent-high: #25d366;
+  --sl-color-bg: #0b141a;
+  --sl-color-bg-nav: #10171d;
+  --sl-color-bg-sidebar: #10171d;
+}
+
+.site-title-link,
+.site-home-link {
+  text-decoration: none;
+}
+.site-title-link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--sl-color-white);
+  font-weight: 600;
+}
+.site-title-link img {
+  height: 1.75rem;
+  width: 1.75rem;
+}
+.site-home-link {
+  margin-inline-start: 1rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  white-space: nowrap;
+}
+.site-home-link:hover {
+  color: var(--sl-color-accent-high);
+}

@@ -40,6 +40,9 @@
     "dev:worker": "cd apps/gateway && wrangler dev",
     "dev:site": "cd apps/site && bun run dev",
     "deploy:site": "cd apps/site && bun run deploy",
+    "dev:docs": "cd apps/docs && bun run dev",
+    "deploy:docs": "cd apps/docs && bun run deploy",
+    "check:docs": "cd apps/docs && bun run check && bun run build",
     "check:site": "cd apps/site && bun run check && bun run build && cd ../.. && ./scripts/check-site-links.sh",
     "check:site-links": "cd apps/site && bun run build && cd ../.. && ./scripts/check-site-links.sh"
   },
