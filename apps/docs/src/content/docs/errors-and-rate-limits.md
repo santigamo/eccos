@@ -15,12 +15,11 @@ Every error body has `"ok": false` and an `error` field.
 | 400 | URL and body name different numbers | `"phone selector mismatch"` |
 | 400 | Malformed `Idempotency-Key` | `"Idempotency-Key must be 1-255 printable ASCII characters"` |
 | 401 | Missing, unknown or revoked key | `"unauthorized"` |
-| 404 | WABA unknown, not yours, or not active | `"WABA is not configured"` |
+| 404 | WABA unknown, malformed, not yours, or not active | `"WABA is not configured"` |
 | 404 | Number not in this WABA | `"phone number is not registered to this WABA"` |
 | 409 | Idempotency key in progress or unknown outcome | see [Idempotency](/idempotency) |
 | 422 | Idempotency key reused with a different body | `"idempotency_key_reused"` |
 | 429 | Rate limit | `"rate limited"` |
-| 500 | Malformed WABA id in the URL | `"internal error"` |
 | 502 | Meta did not accept the message | Meta's whole JSON error body under `error`, see below |
 
 A synchronous rejection from Meta (for example an unknown template or a bad parameter) looks like
@@ -46,6 +45,6 @@ Sending is limited to **60 messages per minute per WABA** by default; higher lim
 on request. The limit is shared by every number and API key of the WABA and by sends from the
 console (the conversation composer and "Send test"). It counts every send that passes
 validation, including idempotent replays and sends Meta rejects; requests rejected with
-`400`, `404` or `500` do not count. It is enforced at Cloudflare's edge, per location, so
+`400` or `404` do not count. It is enforced at Cloudflare's edge, per location, so
 it is approximate rather than an exact global counter. Over the limit you get `429`
 `{"ok":false,"error":"rate limited"}`. No `Retry-After` header is sent: back off and retry.
