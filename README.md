@@ -303,6 +303,8 @@ plane's liveness, and webhooks/sends become reachable once an account owns a reg
 
 ## 📡 HTTP API
 
+Integrating with Eccos Cloud? See the [API guide](./docs/api.md) (authentication, sending, idempotency, rate limit, webhooks, event reference). The table below is the route overview for both targets.
+
 | Method | Path              | Auth                   | Target | Purpose                              |
 |--------|-------------------|------------------------|--------|--------------------------------------|
 | GET    | `/health`         | none                   | both   | Liveness                             |
