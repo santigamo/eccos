@@ -16,7 +16,7 @@ import { loaderFailure } from "../lib/failure";
 import { listOutbound } from "../server/gateway";
 import type { OutboundRow, OutboundTrailEvent } from "../server/gateway";
 import { normalizeSearchRowId, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
-import { EMPTY_CELL, messageSummary, messageSummaryText } from "../lib/logs";
+import { EMPTY_CELL, errorReading, messageSummary, messageSummaryText } from "../lib/logs";
 import { COUNT_LINK, Page, StatusCounts, StatusTag, fmtTs } from "../ui";
 import {
   Select,
@@ -208,8 +208,18 @@ function messageColumns(onOpen?: (row: OutboundRow) => void, showPhone = true) {
     columnHelper.accessor("error", {
       id: "error",
       header: "Error",
-      cell: (info) => info.getValue() ?? EMPTY_CELL,
-      meta: { cellClassName: "text-foreground/80 break-words" },
+      cell: (info) => {
+        const raw = info.getValue();
+        if (!raw) return EMPTY_CELL;
+        const { code, text } = errorReading(raw);
+        return (
+          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={text}>
+            {code ? <span className="font-mono text-xs">{code} · </span> : null}
+            {text}
+          </span>
+        );
+      },
+      meta: { cellClassName: "text-foreground/80" },
     }),
     ...(showPhone ? [phoneColumn] : []),
   ];

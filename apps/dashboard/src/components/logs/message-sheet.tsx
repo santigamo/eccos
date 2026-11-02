@@ -7,6 +7,7 @@ import type { OutboundRow, OutboundTrailEvent } from "../../server/gateway";
 import { forwardReading } from "../../lib/forwarding";
 import {
   EMPTY_CELL,
+  errorReading,
   messageSummary,
   messageSummaryText,
   prettyJson,
@@ -75,8 +76,11 @@ export function MessageDetail({ row, hasForwardingTarget, wabaId }: MessageDetai
               truncated here. */}
           <FactRow label="Meta message id" value={row.transport_message_id ?? EMPTY_CELL} mono />
           <FactRow label="Meta status" value={<StatusTag status={row.status} />} />
-          {row.error ? <FactRow label="Error" value={row.error} tone="destructive" /> : null}
+          {row.error ? <FactRow label="Error" value={errorText(row.error)} tone="destructive" /> : null}
         </dl>
+        {row.error ? (
+          <RawDisclosure summary="Meta's answer, exactly as stored" json={prettyJson(row.error)} />
+        ) : null}
       </SheetSection>
 
       <SheetSection label="What was sent">
@@ -272,4 +276,9 @@ export function MessageSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+function errorText(raw: string): string {
+  const { code, text } = errorReading(raw);
+  return code ? `${code} · ${text}` : text;
 }

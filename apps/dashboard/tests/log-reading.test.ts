@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  errorReading,
   eventCountEntries,
   eventReading,
   messageRefText,
@@ -347,5 +348,30 @@ describe("wamidTail and prettyJson", () => {
     expect(prettyJson('{"a":1}')).toBe('{\n  "a": 1\n}');
     expect(prettyJson("not json")).toBe("not json");
     expect(prettyJson("")).toBe("");
+  });
+});
+
+describe("errorReading", () => {
+  test("reads Meta's envelope, preferring error_data.details over message", () => {
+    const raw = JSON.stringify({
+      error: {
+        message: "(#132001) Template name does not exist in the translation",
+        code: 132001,
+        error_data: { messaging_product: "whatsapp", details: "template name (x) does not exist in es" },
+      },
+    });
+    expect(errorReading(raw)).toEqual({ code: "132001", text: "template name (x) does not exist in es" });
+  });
+
+  test("falls back to message when there are no details", () => {
+    expect(errorReading(JSON.stringify({ error: { message: "Invalid parameter", code: 100 } }))).toEqual({
+      code: "100",
+      text: "Invalid parameter",
+    });
+  });
+
+  test("anything that is not the envelope reads as itself", () => {
+    expect(errorReading("network timeout")).toEqual({ code: null, text: "network timeout" });
+    expect(errorReading('{"status":500}')).toEqual({ code: null, text: '{"status":500}' });
   });
 });

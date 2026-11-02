@@ -376,6 +376,33 @@ export function prettyJson(raw: string): string {
   }
 }
 
+export interface ErrorReading {
+  code: string | null;
+  text: string;
+}
+
+/**
+ * What a refused send's stored `error` says, read out of Meta's envelope:
+ * `error_data.details` over `message`, the same preference as the webhook
+ * parser. Anything that is not that envelope reads as itself.
+ */
+export function errorReading(raw: string): ErrorReading {
+  try {
+    const inner = (JSON.parse(raw) as { error?: unknown })?.error;
+    if (inner && typeof inner === "object") {
+      const { code, message, error_data } = inner as {
+        code?: unknown;
+        message?: unknown;
+        error_data?: { details?: unknown };
+      };
+      const details = typeof error_data?.details === "string" ? error_data.details.trim() : "";
+      const text = details || (typeof message === "string" ? message.trim() : "");
+      if (text) return { code: typeof code === "number" ? String(code) : null, text };
+    }
+  } catch {}
+  return { code: null, text: raw };
+}
+
 /**
  * The label an event kind takes in a COUNT. `reply` and `echo` are countable
  * things and get their plural; `delivered` / `read` / `failed` describe a
