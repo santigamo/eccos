@@ -740,6 +740,8 @@ export interface SendTemplateTestInput {
    * without adding a fetcher, and there is no request Eccos can be talked into
    * making on someone's behalf. */
   headerMedia?: TemplateHeaderMedia;
+  /** One per send intent: a retry with the same key never sends twice (24 h). */
+  idempotencyKey?: string;
 }
 
 /** The header formats the console can fill from a link. LOCATION is not one of
@@ -769,6 +771,12 @@ export type SendTestFailureCode =
   | "template_not_found"
   /** Graph 132000 — the template expects different parameters. */
   | "parameter_mismatch"
+  /** An earlier request with the same idempotency key has not settled, or its outcome is unknown; nothing was sent now. */
+  | "in_progress"
+  /** No answer from Meta (network, timeout, 5xx): the message may have been sent. The key stays pending. */
+  | "unknown"
+  /** The idempotency key was already used for a different message; nothing was sent. */
+  | "key_reused"
   /** Anything else; `detail` carries Meta's own message text. */
   | "graph";
 
@@ -793,6 +801,8 @@ export interface SendTextInput {
   to: string;
   /** 1 to 4096 characters, Meta's own body ceiling. */
   text: string;
+  /** One per send intent: a retry with the same key never sends twice (24 h). */
+  idempotencyKey?: string;
 }
 
 /** Closed failure vocabulary for a free-text send. Same design as {@link SendTestFailureCode}. */
@@ -803,6 +813,12 @@ export type SendTextFailureCode =
   | "no_phone"
   /** Graph 131047 — the 24-hour customer service window is closed; only a template can be sent. */
   | "window_closed"
+  /** An earlier request with the same idempotency key has not settled, or its outcome is unknown; nothing was sent now. */
+  | "in_progress"
+  /** No answer from Meta (network, timeout, 5xx): the message may have been sent. The key stays pending. */
+  | "unknown"
+  /** The idempotency key was already used for a different message; nothing was sent. */
+  | "key_reused"
   /** Graph 131030 — the Cloud API test number's recipient allowlist. */
   | "recipient_not_allowlisted"
   /** Anything else; `detail` carries Meta's own message text. */

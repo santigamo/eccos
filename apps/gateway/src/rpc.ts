@@ -10,11 +10,12 @@ import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./met
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
-import { metaErrorCodes, sendMessage, type SendResult } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
+import { isIdempotencyKey, sendBodyHash } from "./gateway";
 import type {
   AccountKeyResource,
   AccountResources,
@@ -831,41 +832,45 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
     });
-    const result = await sendMessage(cfg, metaBody);
-    logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
     const stub = this.stubFor(waba.wabaId);
+    const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
+    return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTemplateTestResult> => {
+      const result = await sendMessage(cfg, metaBody);
+      logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
 
-    if (!result.ok) {
-      // The data-plane log carries the full body, parameters included — it is
-      // retention- and erasure-governed exactly like an API send. The AUDIT log
-      // is the one that must stay content-free.
+      if (!result.ok) {
+        // The data-plane log carries the full body, parameters included — it is
+        // retention- and erasure-governed exactly like an API send. The AUDIT log
+        // is the one that must stay content-free.
+        await stub.logOutbound(
+          null,
+          input.to,
+          JSON.stringify(metaBody),
+          "failed",
+          JSON.stringify(result.error),
+          input.phoneNumberId,
+        );
+        if (sendOutcomeUnknown(result)) return { ok: false, code: "unknown", detail: null };
+        const { code, message } = graphError(result.error);
+        const mapped = code === null ? undefined : GRAPH_ERROR_CODES[code];
+        return {
+          ok: false,
+          code: mapped ?? "graph",
+          detail: mapped ? message : (message ?? `HTTP ${result.status}`),
+        };
+      }
+
       await stub.logOutbound(
-        null,
+        result.id,
         input.to,
         JSON.stringify(metaBody),
-        "failed",
-        JSON.stringify(result.error),
+        "sent",
+        null,
         input.phoneNumberId,
+        result.waId,
       );
-      const { code, message } = graphError(result.error);
-      const mapped = code === null ? undefined : GRAPH_ERROR_CODES[code];
-      return {
-        ok: false,
-        code: mapped ?? "graph",
-        detail: mapped ? message : (message ?? `HTTP ${result.status}`),
-      };
-    }
-
-    await stub.logOutbound(
-      result.id,
-      input.to,
-      JSON.stringify(metaBody),
-      "sent",
-      null,
-      input.phoneNumberId,
-      result.waId,
-    );
-    return { ok: true, messageId: result.id };
+      return { ok: true, messageId: result.id };
+    });
   }
 
   /**
@@ -914,34 +919,68 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
     });
-    const result = await sendMessage(cfg, metaBody);
-    logSend("send_text", waba.wabaId, input.phoneNumberId, "text", result);
     const stub = this.stubFor(waba.wabaId);
+    const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
+    return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTextResult> => {
+      const result = await sendMessage(cfg, metaBody);
+      logSend("send_text", waba.wabaId, input.phoneNumberId, "text", result);
 
-    if (!result.ok) {
+      if (!result.ok) {
+        await stub.logOutbound(
+          null,
+          input.to,
+          JSON.stringify(metaBody),
+          "failed",
+          JSON.stringify(result.error),
+          input.phoneNumberId,
+        );
+        if (sendOutcomeUnknown(result)) return { ok: false, code: "unknown", detail: null };
+        const { code, message } = graphError(result.error);
+        const mapped = code === null ? undefined : TEXT_GRAPH_ERROR_CODES[code];
+        return { ok: false, code: mapped ?? "graph", detail: message ?? `HTTP ${result.status}` };
+      }
+
       await stub.logOutbound(
-        null,
+        result.id,
         input.to,
         JSON.stringify(metaBody),
-        "failed",
-        JSON.stringify(result.error),
+        "sent",
+        null,
         input.phoneNumberId,
+        result.waId,
       );
-      const { code, message } = graphError(result.error);
-      const mapped = code === null ? undefined : TEXT_GRAPH_ERROR_CODES[code];
-      return { ok: false, code: mapped ?? "graph", detail: message ?? `HTTP ${result.status}` };
-    }
+      return { ok: true, messageId: result.id };
+    });
+  }
 
-    await stub.logOutbound(
-      result.id,
-      input.to,
-      JSON.stringify(metaBody),
-      "sent",
-      null,
-      input.phoneNumberId,
-      result.waId,
-    );
-    return { ok: true, messageId: result.id };
+  /**
+   * Runs `send` at most once per (account, key) on the WABA's Durable Object.
+   * The claim is stored before `send` runs, so a concurrent duplicate gets
+   * `in_progress` and sends nothing; a later one gets the stored result back.
+   * Every answer is stored, a Meta refusal included: a retry with the same key
+   * never resends, and sending again is a new key. An `unknown` outcome is not
+   * stored, so the key stays pending and a retry gets `in_progress`. A key reused
+   * for another body gets `key_reused`. No key: `send` just runs.
+   */
+  private async sendOnce<T extends SendTemplateTestResult | SendTextResult>(
+    stub: ReturnType<GatewayRPC["stubFor"]>,
+    accountId: string,
+    wabaId: string,
+    { key, bodyHash }: { key: string | undefined; bodyHash: string },
+    send: () => Promise<T>,
+  ): Promise<T | { ok: false; code: "in_progress" | "key_reused"; detail: null }> {
+    if (key === undefined) return send();
+    if (!isIdempotencyKey(key)) throw new Error("invalid idempotencyKey");
+    const claim = await stub.claimSendKey(accountId, key, bodyHash);
+    if (claim.state === "pending") return { ok: false, code: "in_progress", detail: null };
+    if (claim.state === "reused") return { ok: false, code: "key_reused", detail: null };
+    if (claim.state === "done") {
+      console.log(JSON.stringify({ level: "info", area: "rpc", event: "outbound_send", wabaId, deduped: true }));
+      return JSON.parse(claim.result) as T;
+    }
+    const result = await send();
+    if (result.ok || result.code !== "unknown") await stub.settleSendKey(accountId, key, JSON.stringify(result));
+    return result;
   }
 
   /** One control-plane hop from organization to account + resources (see

@@ -571,7 +571,15 @@ export function validateSendTestInput(input: unknown): SendTemplateTestInput {
     ...(values.length > 0 ? { bodyParams: values } : {}),
     ...(buttons.length > 0 ? { buttonParams: buttons } : {}),
     ...(headerMedia ? { headerMedia } : {}),
+    ...idempotencyKey(record.idempotencyKey),
   };
+}
+
+/** A UUID from the console's send gate; optional, so a missing key just sends. */
+function idempotencyKey(value: unknown): { idempotencyKey?: string } {
+  if (value === undefined) return {};
+  if (typeof value !== "string" || !/^[0-9a-f-]{36}$/i.test(value)) throw new Error("invalid idempotency key");
+  return { idempotencyKey: value };
 }
 
 /** Meta's ceiling for a free-text body. */
@@ -594,7 +602,7 @@ export function validateSendTextInput(input: unknown): SendTextInput {
   const text = record.text.trim();
   if (!text) throw new Error("message text is required");
   if (text.length > MAX_TEXT_LENGTH) throw new Error("message text is too long");
-  return { wabaId, phoneNumberId: record.phoneNumberId.trim(), to, text };
+  return { wabaId, phoneNumberId: record.phoneNumberId.trim(), to, text, ...idempotencyKey(record.idempotencyKey) };
 }
 
 /**

@@ -154,6 +154,10 @@ describe("SendTestForm in a real DOM", () => {
     await act(async () => submit.click());
     expect(send).toHaveBeenCalledTimes(2);
     expect(host.textContent).toContain("wamid.sent-1");
+    // The retry is the same intent: the gateway dedupes it on the same key.
+    const keys = send.mock.calls.map((call) => (call as unknown as [{ data: { idempotencyKey: string } }])[0].data.idempotencyKey);
+    expect(keys[0]).toBeString();
+    expect(keys[1]).toBe(keys[0]);
   });
 });
 

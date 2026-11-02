@@ -288,9 +288,9 @@ describe("GatewayRPC.sendTemplateTest", () => {
   });
 
   it("falls back to the HTTP status when Meta sends no message text", async () => {
-    mockSendError(null, "", 502);
+    mockSendError(null, "", 400);
     const result = await makeRpc().sendTemplateTest(input(), TEST_ACCOUNT_ID);
-    expect(result).toEqual({ ok: false, code: "graph", detail: "HTTP 502" });
+    expect(result).toEqual({ ok: false, code: "graph", detail: "HTTP 400" });
   });
 
   it("throws on malformed input, because only a regressed console can produce it", async () => {
