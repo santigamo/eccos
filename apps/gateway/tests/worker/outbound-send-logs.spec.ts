@@ -1,5 +1,5 @@
 /**
- * eccos-7xa7: every outbound send logs its WABA, phone and, on failure, Meta's error codes,
+ * Every outbound send logs its WABA, phone and, on failure, Meta's error codes,
  * never the recipient, the content or Meta's free-text message.
  */
 import { env, exports } from "cloudflare:workers";
@@ -95,11 +95,20 @@ describe("outbound_send log lines", () => {
     expectNoLeak();
   });
 
-  it("names the requested WABA and phone of an invalid target", async () => {
-    expect((await send(`/v1/wabas/${TEST_WABA_ID}/phones/PN_OTHER/messages`)).status).toBe(404);
+  it("marks a network failure with httpStatus 0 and no Meta codes", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error(`connect failed for ${TO}`));
+    expect((await send()).status).toBe(502);
     expect(sendLines()).toEqual([
-      expect.objectContaining({ reason: "invalid_target", wabaId: TEST_WABA_ID, phoneNumberId: "PN_OTHER" }),
+      expect.objectContaining({ wabaId: TEST_WABA_ID, ok: false, httpStatus: 0, errorCode: null }),
     ]);
+    expectNoLeak();
+  });
+
+  it("names the requested WABA of an invalid target, not the path's phone", async () => {
+    expect((await send(`/v1/wabas/${TEST_WABA_ID}/phones/PN_OTHER/messages`)).status).toBe(404);
+    const [line] = sendLines();
+    expect(line).toEqual(expect.objectContaining({ reason: "invalid_target", wabaId: TEST_WABA_ID }));
+    expect(line).not.toHaveProperty("phoneNumberId");
     expectNoLeak();
   });
 

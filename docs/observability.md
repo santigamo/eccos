@@ -39,7 +39,7 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 
 | `event` | When | Fields |
 |---|---|---|
-| `outbound_send` | One per send request | `wabaId`, `phoneNumberId`, `messageType`, `ok`; `messageId` on success. On a Meta failure (`status` 502): `httpStatus` (Graph's; `0` when the request never got an answer), `errorCode`, `errorSubcode`, `errorType` (Meta's `error.code` / `error_subcode` / `type`, null when absent). A request refused before Meta is called has `reason = invalid_target` and the requested `wabaId`, `phoneNumberId` |
+| `outbound_send` | One per send request | `wabaId`, `phoneNumberId`, `messageType`, `ok`; `messageId` on success. On a Meta failure (`status` 502): `httpStatus` (Graph's; `0` when the request never got an answer), `errorCode`, `errorSubcode`, `errorType` (Meta's `error.code` / `error_subcode` / `type`, null when absent). A request refused before Meta is called has `reason = invalid_target` and the requested `wabaId` |
 
 Meta's error `message` and `error_data` are never logged: they can echo the recipient or content.
 
@@ -82,7 +82,7 @@ reported in the next alert.
    over all attempts. Group by `httpStatus` to see how a subscriber fails.
 5. **Failed sends by Meta error per WABA.** Filter `event = outbound_send` and `ok = false`; group
    by `wabaId`, `errorCode`, `errorSubcode`; calculate `count`. `131047` is a free-form message
-   outside the 24-hour window; a null `errorCode` with `httpStatus = 0` is a network failure.
+   outside the 24-hour window; `httpStatus = 0` is a network failure, with no Meta codes.
 6. **What a customer's console did.** Filter `event = rpc_scope` and `accountId = <id>`; group by
    `$workers.event.rpcMethods`.
 

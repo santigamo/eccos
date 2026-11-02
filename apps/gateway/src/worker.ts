@@ -735,7 +735,6 @@ async function sendMessageRoute(c: AppContext) {
     logEvent("outbound_send", cid, target.status, {
       reason: "invalid_target",
       wabaId: requestedWabaId(c),
-      phoneNumberId: c.req.param("phoneNumberId"),
     });
     return c.json({ ok: false, error: target.error }, target.status);
   }
@@ -750,6 +749,13 @@ async function sendMessageRoute(c: AppContext) {
   const result = await sendMessage(cfg, target.metaBody);
   const stub = getGatewayStubForWaba(c.env, target.waba.wabaId);
   if (!result.ok) {
+    logEvent("outbound_send", cid, 502, {
+      ...ids,
+      messageType,
+      ok: false,
+      httpStatus: result.status,
+      ...metaErrorCodes(result.error),
+    });
     await stub.logOutbound(
       null,
       recipient,
@@ -758,15 +764,9 @@ async function sendMessageRoute(c: AppContext) {
       JSON.stringify(result.error),
       target.phoneNumberId,
     );
-    logEvent("outbound_send", cid, 502, {
-      ...ids,
-      messageType,
-      ok: false,
-      httpStatus: result.status,
-      ...metaErrorCodes(result.error),
-    });
     return c.json({ ok: false, error: result.error }, 502);
   }
+  logEvent("outbound_send", cid, 200, { ...ids, messageType, messageId: result.id, ok: true });
   await stub.logOutbound(
     result.id,
     recipient,
@@ -776,7 +776,6 @@ async function sendMessageRoute(c: AppContext) {
     target.phoneNumberId,
     result.waId,
   );
-  logEvent("outbound_send", cid, 200, { ...ids, messageType, messageId: result.id, ok: true });
   return c.json({ ok: true, messages: [{ id: result.id }] });
 }
 
