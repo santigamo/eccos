@@ -312,6 +312,24 @@ describe("routes", () => {
     expect(standard).toHaveBeenCalledTimes(1);
   });
 
+  it("an encoded or padded WABA id shares the canonical rate-limit bucket", async () => {
+    const limit = vi.fn(async () => ({ success: false }));
+    (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER = { limit };
+    const graphFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unexpected", { status: 200 }));
+
+    for (const segment of ["%57ABA_TEST", "%20WABA_TEST", "WABA_TEST%20"]) {
+      const res = await exports.default.fetch(`http://example.com/v1/wabas/${segment}/messages`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
+      });
+      expect(res.status, segment).toBe(429);
+    }
+    expect(limit.mock.calls.every(([arg]) => arg.key === `${TEST_ACCOUNT_ID}:WABA_TEST`)).toBe(true);
+    expect(limit).toHaveBeenCalledTimes(3);
+    expect(graphFetch).not.toHaveBeenCalled();
+  });
+
   it("POST /v1/wabas/{pending|failed}/messages is fail-closed: 404 and Meta is never called", async () => {
     await runInDurableObject(getControlPlaneStub(env), async (instance) => {
       await instance.registerWaba({

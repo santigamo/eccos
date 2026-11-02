@@ -16,9 +16,7 @@ interface Env {
    */
   ECCOS_TOKEN_ENCRYPTION_KEY?: string;
   SEND_RATE_LIMITER?: RateLimit;
-  /** 600/min tier for the accounts in `HIGH_THROUGHPUT_ACCOUNTS`. */
   SEND_RATE_LIMITER_HIGH?: RateLimit;
-  /** Comma-separated account ids on the high tier. Empty = nobody. */
   HIGH_THROUGHPUT_ACCOUNTS?: string;
   /**
    * Optional Durable Object jurisdiction ("eu", "fedramp", "fedramp-high").

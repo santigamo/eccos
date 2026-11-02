@@ -776,8 +776,6 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       if (/[\s]/.test(link)) throw new Error("headerMedia link must not contain whitespace");
     }
 
-    // Same limiter and key as the HTTP middleware: console sends and API-key
-    // sends draw from one per-tenant budget. A session must not buy a bigger one.
     if (!(await checkSendRate(this.env, account, waba.wabaId))) {
       return { ok: false, code: "rate_limited", detail: null };
     }

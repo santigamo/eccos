@@ -4,11 +4,7 @@
  * key is shared by API and console sends, so one budget covers both.
  */
 
-export interface SendRateLimitEnv {
-  SEND_RATE_LIMITER?: RateLimit;
-  SEND_RATE_LIMITER_HIGH?: RateLimit;
-  HIGH_THROUGHPUT_ACCOUNTS?: string;
-}
+export type SendRateLimitEnv = Pick<Env, "SEND_RATE_LIMITER" | "SEND_RATE_LIMITER_HIGH" | "HIGH_THROUGHPUT_ACCOUNTS">;
 
 /** True when the send may proceed; always true with no limiter bound. */
 export async function checkSendRate(env: SendRateLimitEnv, accountId: string, wabaId: string): Promise<boolean> {
