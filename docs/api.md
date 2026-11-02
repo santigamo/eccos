@@ -180,8 +180,9 @@ its verdict comes back as a `502`.
 
 Sending is limited to **60 messages per minute per WABA** by default; higher limits are available
 on request. The limit is shared by every number and API key of the WABA and by sends from the
-console (the conversation composer and "Send test"), and counts every `POST` to a messages
-endpoint, including rejected ones. It is enforced at Cloudflare's edge, per location, so
+console (the conversation composer and "Send test"). It counts every send that passes
+validation, including idempotent replays and sends Meta rejects; requests rejected with
+`400`, `404` or `500` do not count. It is enforced at Cloudflare's edge, per location, so
 it is approximate rather than an exact global counter. Over the limit you get `429`
 `{"ok":false,"error":"rate limited"}`. No `Retry-After` header is sent: back off and retry.
 
