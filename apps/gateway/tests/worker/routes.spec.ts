@@ -367,6 +367,28 @@ describe("routes", () => {
     expect(graphFetch.mock.calls.some(([input]) => String(input).includes("/messages"))).toBe(false);
   });
 
+  it("a malformed WABA id is a 404 on every /v1/wabas route, never a 500", async () => {
+    mockGraphFetch();
+    const routes: Array<[string, string]> = [
+      ["POST", "messages"],
+      ["POST", "phones/PNID_TEST/messages"],
+      ["GET", "templates"],
+      ["POST", "broadcasts"],
+      ["GET", "broadcasts"],
+      ["POST", "privacy/erasure"],
+      ["GET", "export"],
+    ];
+    for (const [method, path] of routes) {
+      const res = await exports.default.fetch(`http://example.com/v1/wabas/abc%20def/${path}`, {
+        method,
+        headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+        body: method === "POST" ? "{}" : undefined,
+      });
+      expect(res.status, path).toBe(404);
+      expect(await res.json(), path).toEqual({ ok: false, error: "WABA is not configured" });
+    }
+  });
+
   it("GET /v1/wabas/WABA_TEST/templates requires auth and returns Meta JSON", async () => {
     mockGraphFetch();
 

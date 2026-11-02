@@ -429,6 +429,14 @@ app.use("/v1/*", async (c, next) => {
   await next();
 });
 
+// A malformed id can never be a configured WABA: answer like an unknown one before any DO call.
+app.use("/v1/wabas/:wabaId/*", async (c, next) => {
+  if (!WABA_ID_PATTERN.test(c.req.param("wabaId").trim())) {
+    return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  }
+  await next();
+});
+
 // --- Admin bootstrap endpoints ------------------------------------------------
 
 async function createAccountRoute(c: AppContext) {

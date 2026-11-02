@@ -210,7 +210,7 @@ describe("errors-and-rate-limits.md error table", () => {
       send(text(), { "idempotency-key": "a b" }),
     "Missing, unknown or revoked key": () =>
       send(text(), { authorization: undefined }),
-    "WABA unknown, not yours, or not active": () =>
+    "WABA unknown, malformed, not yours, or not active": () =>
       send(text(), undefined, "/v1/wabas/WABA_NOPE/messages"),
     "Number not in this WABA": () =>
       send(
@@ -232,8 +232,6 @@ describe("errors-and-rate-limits.md error table", () => {
       limiter(false);
       return send();
     },
-    "Malformed WABA id in the URL": () =>
-      send(text(), undefined, "/v1/wabas/bad%21id/messages"),
     "Meta did not accept the message": async () => {
       mockMeta(() => json(metaError.error, 400));
       return send();
@@ -264,11 +262,11 @@ describe("errors-and-rate-limits.md error table", () => {
     });
   }
 
-  it("404 also covers a WABA of another account and a WABA that is not active", async () => {
+  it("404 also covers a WABA of another account, one that is not active and a malformed id", async () => {
     const expected = quoted(
       rows.find((r) => r[0] === "404" && r[1]!.startsWith("WABA unknown"))![2]!,
     );
-    for (const waba of ["WABA_FOREIGN", "WABA_PENDING"]) {
+    for (const waba of ["WABA_FOREIGN", "WABA_PENDING", "bad%21id"]) {
       const res = await send(text(), undefined, `/v1/wabas/${waba}/messages`);
       expect(res.status, waba).toBe(404);
       expect(await res.json()).toEqual({ ok: false, error: expected });
@@ -314,7 +312,7 @@ describe("errors-and-rate-limits.md rate limit", () => {
     expect(meta).not.toHaveBeenCalled();
   });
 
-  it("counts validated sends (replays and Meta rejections included) and not 400/404/500", async () => {
+  it("counts validated sends (replays and Meta rejections included) and not 400/404", async () => {
     const limit = limiter(true);
     mockMeta(() => json({ error: { code: 100 } }, 400));
     const outcomes = [
@@ -322,7 +320,7 @@ describe("errors-and-rate-limits.md rate limit", () => {
       await send(text(), undefined, "/v1/wabas/WABA_NOPE/messages"),
       await send(text(), undefined, "/v1/wabas/bad%21id/messages"),
     ];
-    expect(outcomes.map((r) => r.status)).toEqual([400, 404, 500]);
+    expect(outcomes.map((r) => r.status)).toEqual([400, 404, 404]);
     expect(limit).not.toHaveBeenCalled();
     await send(text(), { "idempotency-key": "k" });
     await send(text(), { "idempotency-key": "k" });
