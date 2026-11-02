@@ -263,7 +263,7 @@ export function EventSheet({
 } & Omit<EventDetailProps, "row">) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-lg">
+      <SheetContent side="right" className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
         <SheetHeader className="gap-2">
           <SheetTitle className="text-sm break-all">
             {row ? `${row.type} · event #${row.id}` : "Event"}

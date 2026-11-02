@@ -36,7 +36,7 @@ export function SendTemplateSheet({
 }: SendTemplateProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-md">
+      <SheetContent side="right" className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
         <SheetHeader className="gap-2">
           <SheetTitle>Send a template</SheetTitle>
         </SheetHeader>
