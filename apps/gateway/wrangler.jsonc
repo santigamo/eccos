@@ -57,7 +57,7 @@
     },
     {
       "name": "SEND_RATE_LIMITER_HIGH",
-      "namespace_id": "1002",
+      "namespace_id": "3001",
       "simple": {
         "limit": 600,
         "period": 60
