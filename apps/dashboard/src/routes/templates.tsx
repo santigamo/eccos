@@ -31,6 +31,7 @@ import {
   templateView,
   type TemplateRecord,
 } from "../lib/template-view";
+import { plainWhatsApp } from "../lib/whatsapp-format";
 import { normalizeSearchGraphId, normalizeSearchQuery, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { SendTestSheet, type SendTestPhone } from "../components/templates/send-test-sheet";
 import {
@@ -81,7 +82,8 @@ function nameColumn(onOpen?: (row: TemplateRecord) => void) {
       const row = info.row.original;
       const name = info.getValue();
       if (!name) return <span className="text-muted-foreground">—</span>;
-      const body = templateView(row)?.body.replace(/\s+/g, " ").trim();
+      const text = templateView(row)?.body;
+      const body = text ? plainWhatsApp(text).replace(/\s+/g, " ").trim() : "";
       return (
         <span className="flex min-w-0 flex-col gap-0.5">
           {onOpen ? (

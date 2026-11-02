@@ -192,7 +192,7 @@ export function TemplatePreviewSheet({
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-3xl">
+      <SheetContent side="right" className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-3xl">
         <SheetHeader className="gap-2">
           <SheetTitle className="font-mono text-sm break-all">{title}</SheetTitle>
         </SheetHeader>

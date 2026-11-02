@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseWhatsApp } from "../src/lib/whatsapp-format";
+import { parseWhatsApp, plainWhatsApp } from "../src/lib/whatsapp-format";
 
 describe("parseWhatsApp", () => {
   test("reads the four markers and keeps placeholders as their own nodes", () => {
@@ -56,5 +56,9 @@ describe("parseWhatsApp", () => {
       { kind: "mono", children: [{ kind: "var", key: "1" }] },
     ]);
     expect(parseWhatsApp("```{{1}}```")).toEqual([{ kind: "mono", children: [{ kind: "var", key: "1" }] }]);
+  });
+
+  test("plainWhatsApp drops the markers and keeps placeholders", () => {
+    expect(plainWhatsApp("*¡Hola {{1}}!* _ya_ ~no~ `x`")).toBe("¡Hola {{1}}! ya no x");
   });
 });

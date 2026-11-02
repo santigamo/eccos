@@ -825,7 +825,7 @@ export function CreateTemplateSheet({
         setConfirmingDiscard(true);
       }}
     >
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-4xl">
+      <SheetContent side="right" className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-4xl">
         <SheetHeader className="gap-2">
           <SheetTitle className="text-sm">
             {mode.kind === "edit" ? "Edit template" : mode.kind === "duplicate" ? "Duplicate template" : "New template"}
