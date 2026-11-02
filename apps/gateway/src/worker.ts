@@ -10,7 +10,7 @@ import {
   type MetaWebhookBatch,
 } from "@eccos/core/parser";
 import { isBsuid } from "@eccos/core/bsuid";
-import { sendMessage } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage } from "@eccos/core/send";
 import { listTemplates } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
@@ -732,7 +732,10 @@ async function sendMessageRoute(c: AppContext) {
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
   const target = await tenantSendTarget(c);
   if (!target.ok) {
-    logEvent("outbound_send", cid, target.status, { reason: "invalid_target" });
+    logEvent("outbound_send", cid, target.status, {
+      reason: "invalid_target",
+      wabaId: requestedWabaId(c),
+    });
     return c.json({ ok: false, error: target.error }, target.status);
   }
   const cfg = tenantConfig(getAppConfig(c.env), {
@@ -741,10 +744,18 @@ async function sendMessageRoute(c: AppContext) {
     metaAccessToken: target.metaAccessToken,
   });
   const { recipient } = target;
+  const ids = { wabaId: target.waba.wabaId, phoneNumberId: target.phoneNumberId };
   const messageType = typeof target.metaBody.type === "string" ? target.metaBody.type : "unknown";
   const result = await sendMessage(cfg, target.metaBody);
   const stub = getGatewayStubForWaba(c.env, target.waba.wabaId);
   if (!result.ok) {
+    logEvent("outbound_send", cid, 502, {
+      ...ids,
+      messageType,
+      ok: false,
+      httpStatus: result.status,
+      ...metaErrorCodes(result.error),
+    });
     await stub.logOutbound(
       null,
       recipient,
@@ -753,9 +764,9 @@ async function sendMessageRoute(c: AppContext) {
       JSON.stringify(result.error),
       target.phoneNumberId,
     );
-    logEvent("outbound_send", cid, 502, { messageType, ok: false });
     return c.json({ ok: false, error: result.error }, 502);
   }
+  logEvent("outbound_send", cid, 200, { ...ids, messageType, messageId: result.id, ok: true });
   await stub.logOutbound(
     result.id,
     recipient,
@@ -765,7 +776,6 @@ async function sendMessageRoute(c: AppContext) {
     target.phoneNumberId,
     result.waId,
   );
-  logEvent("outbound_send", cid, 200, { messageType, messageId: result.id, ok: true });
   return c.json({ ok: true, messages: [{ id: result.id }] });
 }
 
