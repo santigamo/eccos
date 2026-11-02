@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
+import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   ContactRecord,
@@ -43,13 +44,31 @@ import {
   MediaTokenError,
 } from "./media-download";
 import { deleteMediaObjects } from "./media-store";
+import {
+  BROADCAST_SCHEMA,
+  type BroadcastRecipientRow,
+  type BroadcastRequest,
+  type BroadcastSummary,
+  classifySendFailure,
+  MAX_THROTTLED_ATTEMPTS,
+  FAILURE_BREAKER,
+  MAX_RUNNING_BROADCASTS,
+  pacing,
+  readBroadcast,
+  readRecipients,
+  type RecipientStatus,
+  recipientMessage,
+  STALE_SENDING_MS,
+  throttleDelayMs,
+} from "./broadcasts";
+import { checkSendRate, type SendRateLimitEnv } from "./send-rate-limit";
 import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
-interface Env extends OpsAlertEnv {
+interface Env extends OpsAlertEnv, SendRateLimitEnv {
   FORWARD_MAX_ATTEMPTS: string;
   /** WhatsApp media bytes, under `waba/<wabaId>/media/` (src/media-store.ts). */
   MEDIA: R2Bucket;
@@ -385,6 +404,7 @@ export class EccosGateway extends DurableObject<Env> {
         PRIMARY KEY (account_id, key)
       );`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_send_keys_created ON send_keys (created_at);`);
+      for (const statement of BROADCAST_SCHEMA) this.sql.exec(statement);
       // Additive migration for objects created before a column existed. `type`
       // matters: SQLite applies column affinity on write, so an epoch-ms
       // timestamp landing in a TEXT column would come back out as a string and
@@ -1287,6 +1307,341 @@ export class EccosGateway extends DurableObject<Env> {
     return { requeued, skippedRedacted };
   }
 
+  /** The broadcast an Idempotency-Key already created, or that it was used for another body. */
+  async replayBroadcast(
+    accountId: string,
+    idempotencyKey: string,
+    bodyHash: string,
+  ): Promise<{ state: "none" } | { state: "existing"; broadcast: BroadcastSummary | null } | { state: "reused" }> {
+    const prior = this.sql
+      .exec(`SELECT id, body_hash FROM broadcasts WHERE account_id = ? AND idempotency_key = ?`, accountId, idempotencyKey)
+      .toArray()[0];
+    if (!prior) return { state: "none" };
+    return prior.body_hash === bodyHash
+      ? { state: "existing", broadcast: readBroadcast(this.sql, String(prior.id)) }
+      : { state: "reused" };
+  }
+
+  /**
+   * Queues a broadcast. An Idempotency-Key replays the broadcast it created
+   * (`existing`), or is refused when it was used for a different body (`reused`).
+   * `busy` when the WABA already runs MAX_RUNNING_BROADCASTS.
+   */
+  async createBroadcast(input: {
+    accountId: string;
+    phoneNumberId: string;
+    request: BroadcastRequest;
+    duplicates: number;
+    ratePerMinute: number;
+    idempotencyKey?: string;
+    bodyHash: string;
+  }): Promise<{ state: "created" | "existing" | "reused" | "busy"; broadcast: BroadcastSummary | null }> {
+    const now = Date.now();
+    if (input.idempotencyKey !== undefined) {
+      const replay = await this.replayBroadcast(input.accountId, input.idempotencyKey, input.bodyHash);
+      if (replay.state === "existing") return replay;
+      if (replay.state === "reused") return { state: "reused", broadcast: null };
+    }
+    const running = Number(
+      this.sql.exec(`SELECT COUNT(*) AS n FROM broadcasts WHERE status = 'running'`).toArray()[0]?.n ?? 0,
+    );
+    if (running >= MAX_RUNNING_BROADCASTS) return { state: "busy", broadcast: null };
+    const id = `bc_${crypto.randomUUID().replaceAll("-", "")}`;
+    const { request } = input;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO broadcasts (id, account_id, phone_number_id, template_name, language, status, total,
+           duplicates, rate_per_minute, default_components, idempotency_key, body_hash, next_send_at, created_at)
+         VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        input.accountId,
+        input.phoneNumberId,
+        request.templateName,
+        request.language,
+        request.recipients.length,
+        input.duplicates,
+        input.ratePerMinute,
+        request.defaultComponents ? JSON.stringify(request.defaultComponents) : null,
+        input.idempotencyKey ?? null,
+        input.bodyHash,
+        now,
+        now,
+      );
+      request.recipients.forEach((recipient, seq) => {
+        this.sql.exec(
+          `INSERT INTO broadcast_recipients (broadcast_id, seq, recipient, components, status, updated_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+          id,
+          seq,
+          recipient.to,
+          recipient.components ? JSON.stringify(recipient.components) : null,
+          now,
+        );
+      });
+    });
+    this.ctx.storage.setAlarm(now);
+    this.wakeArrived = true;
+    return { state: "created", broadcast: readBroadcast(this.sql, id) };
+  }
+
+  async getBroadcast(accountId: string, id: string): Promise<BroadcastSummary | null> {
+    return this.ownsBroadcast(accountId, id) ? readBroadcast(this.sql, id) : null;
+  }
+
+  async listBroadcasts(accountId: string, limit: number): Promise<BroadcastSummary[]> {
+    return this.sql
+      .exec(`SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`, accountId, limit)
+      .toArray()
+      .map((row) => readBroadcast(this.sql, String(row.id)))
+      .filter((summary): summary is BroadcastSummary => summary !== null);
+  }
+
+  async listBroadcastRecipients(
+    accountId: string,
+    id: string,
+    opts: { status?: RecipientStatus; after?: number; limit: number },
+  ): Promise<BroadcastRecipientRow[] | null> {
+    return this.ownsBroadcast(accountId, id) ? readRecipients(this.sql, id, opts) : null;
+  }
+
+  /** Stops a running broadcast: recipients not yet attempted are cancelled. */
+  async cancelBroadcast(accountId: string, id: string): Promise<BroadcastSummary | null> {
+    if (!this.ownsBroadcast(accountId, id)) return null;
+    this.endBroadcast(id, "cancelled", null, Date.now());
+    return readBroadcast(this.sql, id);
+  }
+
+  private ownsBroadcast(accountId: string, id: string): boolean {
+    return this.sql.exec(`SELECT 1 FROM broadcasts WHERE id = ? AND account_id = ?`, id, accountId).toArray().length > 0;
+  }
+
+  /** broadcastStep, but never thrown: the delivery and media wakes in alarm() must run whatever happens here. */
+  private async runBroadcastStep(): Promise<number | null> {
+    try {
+      return await this.broadcastStep(Date.now());
+    } catch (error) {
+      console.error(
+        JSON.stringify({ level: "error", area: "broadcast", event: "step-failed", wabaId: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
+      );
+      return Date.now() + 30_000;
+    }
+  }
+
+  /**
+   * One tick of every due broadcast: up to its share of sends, each also drawn
+   * from the account's send limiter (shared with single sends). Returns when it
+   * wants to run again, or null when nothing is running.
+   */
+  private async broadcastStep(now: number): Promise<number | null> {
+    const running = this.sql
+      .exec(`SELECT * FROM broadcasts WHERE status = 'running' ORDER BY created_at`)
+      .toArray();
+    if (running.length === 0) return null;
+    // A run that died mid-send left rows in `sending`: Meta may have them, so they end as unknown.
+    for (const broadcast of running) {
+      this.sql.exec(
+        `UPDATE broadcast_recipients SET status = 'unknown', components = NULL, updated_at = ?
+         WHERE broadcast_id = ? AND status = 'sending' AND updated_at < ?`,
+        now,
+        broadcast.id,
+        now - STALE_SENDING_MS,
+      );
+    }
+    let token: string | "missing" | "unavailable" | null = null;
+    for (const broadcast of running) {
+      const id = String(broadcast.id);
+      if (Number(broadcast.next_send_at) > now) continue;
+      const { perTick, tickMs } = pacing(Number(broadcast.rate_per_minute));
+      const due = this.sql
+        .exec(
+          `UPDATE broadcast_recipients SET status = 'sending', updated_at = ?
+           WHERE broadcast_id = ? AND seq IN (
+             SELECT seq FROM broadcast_recipients WHERE broadcast_id = ? AND status = 'queued' ORDER BY seq LIMIT ?)
+           RETURNING seq, recipient, components, attempts`,
+          Date.now(),
+          id,
+          id,
+          perTick,
+        )
+        .toArray();
+      if (due.length === 0) {
+        this.finishBroadcastIfDone(id, now);
+        continue;
+      }
+      token ??= await this.metaToken();
+      if (token === "missing" || token === "unavailable") {
+        this.requeue(id, due.map((row) => Number(row.seq)), Date.now());
+        if (token === "missing") this.endBroadcast(id, "halted", "the WhatsApp Business Account is no longer connected", Date.now());
+        else this.sql.exec(`UPDATE broadcasts SET next_send_at = ? WHERE id = ?`, Date.now() + 30_000, id);
+        continue;
+      }
+      // The next tick is set before sending: an early wake must not send faster than the pace.
+      this.sql.exec(`UPDATE broadcasts SET next_send_at = ? WHERE id = ?`, now + tickMs, id);
+      const cfg = {
+        META_GRAPH_VERSION: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
+        META_ACCESS_TOKEN: token,
+        META_PHONE_NUMBER_ID: String(broadcast.phone_number_id),
+        META_WABA_ID: this.wabaIdForOps(),
+      };
+      const defaults =
+        broadcast.default_components === null ? null : (JSON.parse(String(broadcast.default_components)) as unknown[]);
+      const results = await Promise.all(
+        due.map((row) => this.sendBroadcastRecipient(broadcast, row, defaults, cfg)),
+      );
+      const halt = results.find((result) => result.kind === "halt");
+      const throttled = results.filter((result) => result.kind === "throttled");
+      if (halt) this.endBroadcast(id, "halted", halt.reason, Date.now());
+      else if (this.breakerTripped(id)) {
+        this.endBroadcast(id, "halted", `the first ${FAILURE_BREAKER} sends all failed`, Date.now());
+      } else if (throttled.length > 0) {
+        const attempts = Math.max(...throttled.map((result) => result.attempts));
+        this.sql.exec(`UPDATE broadcasts SET next_send_at = ? WHERE id = ?`, Date.now() + throttleDelayMs(attempts), id);
+      }
+      // A cancel that landed during the sends: whatever came back to the queue is cancelled too.
+      if (this.sql.exec(`SELECT status FROM broadcasts WHERE id = ?`, id).toArray()[0]?.status !== "running") {
+        this.endBroadcast(id, null, null, Date.now());
+      }
+      this.finishBroadcastIfDone(id, Date.now());
+    }
+    const next = this.sql
+      .exec(`SELECT MIN(next_send_at) AS next FROM broadcasts WHERE status = 'running'`)
+      .toArray()[0]?.next;
+    return next == null ? null : Math.max(Number(next), Date.now() + 250);
+  }
+
+  private async sendBroadcastRecipient(
+    broadcast: Record<string, SqlStorageValue>,
+    row: Record<string, SqlStorageValue>,
+    defaults: unknown[] | null,
+    cfg: { META_GRAPH_VERSION: string; META_ACCESS_TOKEN: string; META_PHONE_NUMBER_ID: string; META_WABA_ID: string },
+  ): Promise<{ kind: "done" } | { kind: "throttled"; attempts: number } | { kind: "halt"; reason: string }> {
+    const id = String(broadcast.id);
+    const seq = Number(row.seq);
+    const recipient = String(row.recipient);
+    const attempts = Number(row.attempts) + 1;
+    let allowed: boolean;
+    try {
+      allowed = await checkSendRate(this.env, String(broadcast.account_id), this.wabaIdForOps());
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      this.requeue(id, [seq], Date.now());
+      return { kind: "throttled", attempts: 1 };
+    }
+    const own = row.components === null ? null : (JSON.parse(String(row.components)) as unknown[]);
+    const body = recipientMessage(String(broadcast.template_name), String(broadcast.language), recipient, own ?? defaults);
+    const result = await sendMessage(cfg, body);
+    const now = Date.now();
+    // False when the recipient was erased while its send was in flight: then nothing more is stored.
+    const settle = (status: RecipientStatus, messageId: string | null, error: string | null): boolean =>
+      this.sql
+        .exec(
+          `UPDATE broadcast_recipients SET status = ?, message_id = ?, error = ?, attempts = ?, components = NULL, updated_at = ?
+           WHERE broadcast_id = ? AND seq = ? RETURNING seq`,
+          status,
+          messageId,
+          error,
+          attempts,
+          now,
+          id,
+          seq,
+        )
+        .toArray().length > 0;
+    if (result.ok) {
+      if (settle("sent", result.id, null)) {
+        this.logOutbound(result.id, recipient, JSON.stringify(body), "sent", null, cfg.META_PHONE_NUMBER_ID, result.waId);
+      }
+      return { kind: "done" };
+    }
+    const error = JSON.stringify(result.error);
+    const codes = metaErrorCodes(result.error);
+    const verdict = classifySendFailure(result.status, sendOutcomeUnknown(result), codes, own !== null);
+    if (verdict === "throttled" && attempts < MAX_THROTTLED_ATTEMPTS) {
+      this.sql.exec(
+        `UPDATE broadcast_recipients SET status = 'queued', attempts = ?, error = ?, updated_at = ?
+         WHERE broadcast_id = ? AND seq = ?`,
+        attempts,
+        error,
+        now,
+        id,
+        seq,
+      );
+      return { kind: "throttled", attempts };
+    }
+    if (settle(verdict === "unknown" ? "unknown" : "failed", null, error)) {
+      this.logOutbound(null, recipient, JSON.stringify(body), "failed", error, cfg.META_PHONE_NUMBER_ID);
+    }
+    return verdict === "halt"
+      ? { kind: "halt", reason: `Meta refused the send with error ${codes.errorCode ?? "unknown"}` }
+      : { kind: "done" };
+  }
+
+  private requeue(id: string, seqs: number[], now: number): void {
+    for (const seq of seqs) {
+      this.sql.exec(
+        `UPDATE broadcast_recipients SET status = 'queued', updated_at = ? WHERE broadcast_id = ? AND seq = ? AND status = 'sending'`,
+        now,
+        id,
+        seq,
+      );
+    }
+  }
+
+  /** Nothing sent yet, and the first FAILURE_BREAKER attempts all failed. */
+  private breakerTripped(id: string): boolean {
+    const row = this.sql
+      .exec(
+        `SELECT SUM(status = 'sent') AS sent, SUM(status = 'failed') AS failed
+         FROM broadcast_recipients WHERE broadcast_id = ?`,
+        id,
+      )
+      .toArray()[0];
+    return Number(row?.sent ?? 0) === 0 && Number(row?.failed ?? 0) >= FAILURE_BREAKER;
+  }
+
+  /**
+   * Ends a running broadcast as `status` (null: it already ended) and cancels
+   * what is still queued. The template values it held are dropped.
+   */
+  private endBroadcast(id: string, status: "cancelled" | "halted" | null, reason: string | null, now: number): void {
+    this.ctx.storage.transactionSync(() => {
+      if (status) {
+        this.sql.exec(
+          `UPDATE broadcasts SET status = ?, halt_reason = ?, finished_at = ? WHERE id = ? AND status = 'running'`,
+          status,
+          reason,
+          now,
+          id,
+        );
+      }
+      if (this.sql.exec(`SELECT status FROM broadcasts WHERE id = ?`, id).toArray()[0]?.status === "running") return;
+      this.sql.exec(`UPDATE broadcasts SET default_components = NULL WHERE id = ?`, id);
+      this.sql.exec(
+        `UPDATE broadcast_recipients SET status = 'cancelled', components = NULL, updated_at = ?
+         WHERE broadcast_id = ? AND status = 'queued'`,
+        now,
+        id,
+      );
+    });
+  }
+
+  private finishBroadcastIfDone(id: string, now: number): void {
+    const open = this.sql
+      .exec(
+        `SELECT 1 FROM broadcast_recipients WHERE broadcast_id = ? AND status IN ('queued', 'sending') LIMIT 1`,
+        id,
+      )
+      .toArray();
+    if (open.length === 0) {
+      this.sql.exec(
+        `UPDATE broadcasts SET status = 'completed', finished_at = ?, default_components = NULL WHERE id = ? AND status = 'running'`,
+        now,
+        id,
+      );
+    }
+  }
+
   /**
    * Right-to-erasure (GDPR Art. 17): removes every trace of a customer — named by
    * phone number or by BSUID — from the data tables, within whatever is still
@@ -1389,6 +1744,18 @@ export class EccosGateway extends DurableObject<Env> {
         if (!keys.has(customerKeyOf(row.recipient as string) ?? "")) continue;
         outboundIds.push(row.id as number);
         if (row.transport_message_id) wamids.add(row.transport_message_id as string);
+      }
+
+      for (const row of this.sql
+        .exec(`SELECT broadcast_id, seq, recipient, message_id FROM broadcast_recipients`)
+        .toArray()) {
+        if (!keys.has(customerKeyOf(row.recipient as string) ?? "")) continue;
+        if (row.message_id) wamids.add(row.message_id as string);
+        this.sql.exec(
+          `DELETE FROM broadcast_recipients WHERE broadcast_id = ? AND seq = ?`,
+          row.broadcast_id,
+          row.seq,
+        );
       }
 
       for (const id of inboundIds) {
@@ -1775,6 +2142,8 @@ export class EccosGateway extends DurableObject<Env> {
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
     if (syncWake !== null) wakes.push(Date.now() + syncWake);
+    const broadcastWakeAt = await this.runBroadcastStep();
+    if (broadcastWakeAt !== null) wakes.push(broadcastWakeAt);
     // Last, after the sweep, so the media of the messages it just pruned is purged in this same alarm.
     const mediaWakeAt = await this.mediaStep(now);
     if (mediaWakeAt !== null) wakes.push(mediaWakeAt);
@@ -2360,6 +2729,13 @@ export class EccosGateway extends DurableObject<Env> {
     this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, deliveryCutoff);
     this.sql.exec(`DELETE FROM send_keys WHERE created_at < ?`, now - SEND_KEY_TTL_MS);
+    // Recipients are phone numbers and message values: content, gone with the content window.
+    this.sql.exec(
+      `DELETE FROM broadcast_recipients WHERE broadcast_id IN
+        (SELECT id FROM broadcasts WHERE created_at < ? AND status != 'running')`,
+      contentCutoff,
+    );
+    this.sql.exec(`DELETE FROM broadcasts WHERE created_at < ? AND status != 'running'`, contentCutoff);
   }
 
   /**
