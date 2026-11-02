@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 import { MoreHorizontalIcon, SearchIcon } from "lucide-react";
+import { toast } from "sonner";
 import { invalidatePage } from "../lib/invalidate";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
@@ -37,6 +38,7 @@ import { SendTestSheet, type SendTestPhone } from "../components/templates/send-
 import {
   CREATE_MODE,
   CreateTemplateSheet,
+  editApprovedWarning,
   type TemplateSheetMode,
 } from "../components/templates/create-template-sheet";
 import { TemplateDetail, TemplatePreviewSheet } from "../components/templates/template-preview-sheet";
@@ -262,8 +264,11 @@ function TemplatesPage() {
       onSend: sendable ? () => setSending(row) : undefined,
       onEdit:
         editable && authoring.ok && row.id
-          ? () =>
-              setAuthoring({ kind: "edit", initial: authoring.draft, templateId: row.id ?? "", status: row.status })
+          ? () => {
+              setAuthoring({ kind: "edit", initial: authoring.draft, templateId: row.id ?? "", status: row.status });
+              const warning = editApprovedWarning(row.status);
+              if (warning) toast.warning(warning, { id: "edit-approved", duration: 10_000 });
+            }
           : undefined,
       onDuplicate: authoring.ok ? () => setAuthoring({ kind: "duplicate", initial: authoring.draft }) : undefined,
       onDelete:
@@ -432,7 +437,10 @@ function TemplatesPage() {
           key={authoring.kind === "edit" ? `edit:${authoring.templateId}` : authoring.kind}
           open
           onOpenChange={(open) => {
-            if (!open) setAuthoring(null);
+            if (!open) {
+              setAuthoring(null);
+              toast.dismiss("edit-approved");
+            }
           }}
           wabaId={selectedWabaId}
           mode={authoring}

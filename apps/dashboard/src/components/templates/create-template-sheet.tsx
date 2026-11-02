@@ -175,6 +175,14 @@ export type TemplateSheetMode =
 
 export const CREATE_MODE: TemplateSheetMode = { kind: "create" };
 
+/** The toast raised as an APPROVED template's edit sheet opens, or `null`:
+ * a REJECTED or PAUSED template is not sendable before the edit either. */
+export function editApprovedWarning(status: string | undefined): string | null {
+  return status?.toUpperCase() === "APPROVED"
+    ? "Editing an approved template sends it back to review. Until Meta approves it again it shows as Pending and can't be sent."
+    : null;
+}
+
 function initialDraft(mode: TemplateSheetMode): TemplateDraft {
   return mode.kind === "create" ? EMPTY_DRAFT : mode.initial;
 }
@@ -532,8 +540,8 @@ export function CreateTemplateFields({
       </Button>
       {editing ? (
         <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">
-          Meta reviews every edit. An approved template can be edited once every 24 hours and up to 10
-          times in 30 days.
+          Meta reviews every edit, and the template can't be sent until it is approved. An approved
+          template can be edited once every 24 hours and up to 10 times in 30 days.
         </p>
       ) : null}
 
@@ -741,7 +749,7 @@ function NoticeBody({ notice }: { notice: CreateTemplateNotice }) {
   if (notice.ok && "edited" in notice) {
     return (
       <span className="block text-sm text-foreground">
-        Changes submitted. Meta reviews the edit and re-approves the template unless it fails review.
+        Changes submitted. The template is pending review and can't be sent until Meta approves it.
       </span>
     );
   }

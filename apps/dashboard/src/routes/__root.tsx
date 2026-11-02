@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
+import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
 import { type getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
@@ -262,6 +263,7 @@ function RootDocument({
         {lanternExempt ? null : <CursorLight />}
         <AnalyticsIdentify userId={analytics?.userId ?? null} />
         {children}
+        <Toaster closeButton />
         <Scripts />
       </body>
     </html>
