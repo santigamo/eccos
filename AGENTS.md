@@ -59,7 +59,8 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
 - The `WhatsAppCallbackEvent` shape is the public forwarding contract; changing it is a
   breaking change for any downstream subscriber. Add tests in `packages/core/tests/parser.test.ts`
   for any parser change.
-- Webhook handler must always return 200 quickly so Meta does not disable the subscription.
+- Webhook handler must return 200 quickly so Meta does not disable the subscription — except when
+  storing the events fails (sync capture or ingest): then it answers 5xx so Meta retries.
 - This repo is **public/OSS** — never commit real tokens, secrets, or `.env`.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
