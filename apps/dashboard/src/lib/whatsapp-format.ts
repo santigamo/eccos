@@ -112,3 +112,14 @@ export function parseWhatsApp(text: string): WaNode[] {
   nodes.push(...parseInline(rest));
   return nodes;
 }
+
+/** The text without its markers, placeholders kept as `{{n}}`: for one-line summaries. */
+export function plainWhatsApp(text: string): string {
+  const flatten = (nodes: WaNode[]): string =>
+    nodes
+      .map((node) =>
+        node.kind === "text" ? node.text : node.kind === "var" ? `{{${node.key}}}` : flatten(node.children),
+      )
+      .join("");
+  return flatten(parseWhatsApp(text));
+}

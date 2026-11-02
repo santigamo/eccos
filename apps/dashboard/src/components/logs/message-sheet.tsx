@@ -258,7 +258,7 @@ export function MessageSheet({
 } & Omit<MessageDetailProps, "row">) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto sm:max-w-lg">
+      <SheetContent side="right" className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
         <SheetHeader className="gap-2">
           <SheetTitle className="font-mono text-sm break-all">
             {row ? messageSummaryText(messageSummary(row.id, row.request)) : "Message"}
