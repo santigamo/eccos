@@ -110,8 +110,8 @@ Body parameters are positional (`{{1}}`, `{{2}}`) unless the template uses named
 those, add `"parameter_name"` to each parameter. A quick-reply `payload` comes back in the
 incoming [`reply` event](#10-event-reference) when the customer taps the button.
 
-**Media.** Eccos has no media upload endpoint, and Eccos holds the Meta credentials, so you cannot
-upload to Meta yourself. Send media by a public HTTPS `link` (as in the header above, or
+**Media.** Eccos has no media upload endpoint, and if you connected through Embedded Signup,
+Eccos holds the Meta credentials, so you cannot upload to Meta yourself. Send media by a public HTTPS `link` (as in the header above, or
 `{"type":"image","image":{"link":"https://..."}}`); Meta must be able to fetch it without
 authentication. Incoming media is the reverse gap: only the Meta media id is forwarded, and
 the API cannot return the file (see [`message` events](#10-event-reference)).
@@ -152,11 +152,11 @@ Every error body has `"ok": false` and an `error` field.
 | 400 | Malformed `Idempotency-Key` | `"Idempotency-Key must be 1-255 printable ASCII characters"` |
 | 401 | Missing, unknown or revoked key | `"unauthorized"` |
 | 404 | WABA unknown, not yours, or not active | `"WABA is not configured"` |
-| 500 | Malformed WABA id in the URL | `"internal error"` |
 | 404 | Number not in this WABA | `"phone number is not registered to this WABA"` |
 | 409 | Idempotency key in progress or unknown outcome | see [Idempotency](#4-idempotency) |
 | 422 | Idempotency key reused with a different body | `"idempotency_key_reused"` |
 | 429 | Rate limit | `"rate limited"` |
+| 500 | Malformed WABA id in the URL | `"internal error"` |
 | 502 | Meta did not accept the message | Meta's whole JSON error body under `error`, see below |
 
 A synchronous rejection from Meta (for example an unknown template or a bad parameter) looks like
