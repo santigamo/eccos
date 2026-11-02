@@ -32,7 +32,7 @@ Authorization: Bearer ek_...
 X-API-Key: ek_...
 ```
 
-If both are present, `Authorization: Bearer` is used. A missing, unknown or revoked key returns:
+If both are present, `Authorization: Bearer` is used (the word `Bearer` is case-sensitive). A missing, unknown or revoked key returns:
 
 ```
 401 {"ok":false,"error":"unauthorized"}
@@ -51,8 +51,8 @@ POST /v1/wabas/{wabaId}/phones/{phoneNumberId}/messages
 The body is a Meta Cloud API message object, passed through unchanged except that Eccos adds
 `"messaging_product": "whatsapp"`. Send `Content-Type: application/json`.
 
-- **Recipient**: `to` is a phone number (5 to 15 digits; a leading `+`, spaces, dots, dashes and
-  parentheses are accepted) or a business-scoped user id (BSUID, like `US.13491208655302741918`).
+- **Recipient**: `to` is a phone number (5 to 15 digits; a leading `+` and, inside the number, spaces,
+  dots, dashes and parentheses are accepted; a leading `(` is rejected) or a business-scoped user id (BSUID, like `US.13491208655302741918`).
   A BSUID can also be given as `recipient` when `to` is absent. Eccos sends BSUIDs to Meta in the
   `recipient` field.
 - **Which number sends**: if the WABA has exactly one number, nothing else is needed. With several
@@ -110,10 +110,11 @@ Body parameters are positional (`{{1}}`, `{{2}}`) unless the template uses named
 those, add `"parameter_name"` to each parameter. A quick-reply `payload` comes back in the
 incoming [`reply` event](#10-event-reference) when the customer taps the button.
 
-**Media.** Eccos has no media upload endpoint. Reference media in the message body either by a
-public HTTPS `link` (as in the header above, or `{"type":"image","image":{"link":"https://..."}}`)
-or by the id of a media object you uploaded to Meta yourself. A `link` must be reachable by Meta
-without authentication.
+**Media.** Eccos has no media upload endpoint, and Eccos holds the Meta credentials, so you cannot
+upload to Meta yourself. Send media by a public HTTPS `link` (as in the header above, or
+`{"type":"image","image":{"link":"https://..."}}`); Meta must be able to fetch it without
+authentication. Incoming media is the reverse gap: only the Meta media id is forwarded, and
+the API cannot return the file (see [`message` events](#10-event-reference)).
 
 ## 4. Idempotency
 
@@ -151,20 +152,36 @@ Every error body has `"ok": false` and an `error` field.
 | 400 | Malformed `Idempotency-Key` | `"Idempotency-Key must be 1-255 printable ASCII characters"` |
 | 401 | Missing, unknown or revoked key | `"unauthorized"` |
 | 404 | WABA unknown, not yours, or not active | `"WABA is not configured"` |
+| 500 | Malformed WABA id in the URL | `"internal error"` |
 | 404 | Number not in this WABA | `"phone number is not registered to this WABA"` |
 | 409 | Idempotency key in progress or unknown outcome | see [Idempotency](#4-idempotency) |
 | 422 | Idempotency key reused with a different body | `"idempotency_key_reused"` |
 | 429 | Rate limit | `"rate limited"` |
-| 502 | Meta did not accept the message | Meta's error object, for example `{"error":{"code":131026,"message":"..."}}`; see Meta's [error codes](https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes) |
+| 502 | Meta did not accept the message | Meta's whole JSON error body under `error`, see below |
+
+A synchronous rejection from Meta (for example an unknown template or a bad parameter) looks like
+this; `error` is Meta's body unchanged, hence the doubled `error`
+([error codes](https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes)):
+
+```json
+{ "ok": false,
+  "error": { "error": { "message": "(#132001) Template name does not exist in the translation",
+                        "type": "OAuthException", "code": 132001, "fbtrace_id": "A1b2..." } } }
+```
+
+When the outcome is unknown the body also has `"outcome": "unknown"`, and `error` may be Meta's
+JSON, a string (network error or timeout), or `null` (a non-JSON 5xx). Unknown also covers a
+Meta 2xx that carries no message id.
 
 Eccos does not validate the message itself (template name, parameters, media). Meta does, and
 its verdict comes back as a `502`.
 
 ## 6. Rate limit
 
-Sending is limited to **60 messages per minute per WABA** by default; contact us if you need
-more. The limit is shared by every number and API key of the WABA and counts every `POST` to a
-messages endpoint, including rejected ones. It is enforced at Cloudflare's edge, per location, so
+Sending is limited to **60 messages per minute per WABA** by default; higher limits are available
+on request. The limit is shared by every number and API key of the WABA and by sends from the
+console (the conversation composer and "Send test"), and counts every `POST` to a messages
+endpoint, including rejected ones. It is enforced at Cloudflare's edge, per location, so
 it is approximate rather than an exact global counter. Over the limit you get `429`
 `{"ok":false,"error":"rate limited"}`. No `Retry-After` header is sent: back off and retry.
 
@@ -178,6 +195,9 @@ recipient, driven by your code:
    rather than relying on `429`s.
 3. On `429`, wait (exponential backoff with jitter) and retry with the **same** key. A `429`
    happens before the send, so nothing was sent.
+   Meta's own throughput and pacing errors (for example codes 130429 and 131056) come back as a
+   Meta 4xx, which Eccos stores as a final `502` under the key. Retrying with the same key
+   replays that failure, so back off and retry these with a **new** key.
 4. Record each returned message `id`, then follow `sent` / `delivered` / `read` / `failed` through
    [status events](#10-event-reference). A `200` only means Meta accepted the message.
 5. Skip customers who opted out (see [Opt-out](#opt-out)).
@@ -218,7 +238,8 @@ WhatsApp Manager and approved by Meta before you can send it.
 Set the **Forwarding URL** and **Signing secret** in the console under **Webhooks**. The URL must
 be `https`, without credentials, and not a private or local host. Until a URL is set, events are
 queued, not attempted, and go out when you save one; queued events expire with the retention
-window (30 days by default).
+window (30 days by default). The target is per WABA: each connected WABA has its own URL and
+secret.
 
 ### The request
 
@@ -234,12 +255,19 @@ x-idempotency-key: <SHA-256 hex of the raw body>
 { "events": [ { ... }, { ... } ] }
 ```
 
-- The body is a **batch** of one or more events. Batches can arrive out of order, so order events
-  by their `at` (milliseconds since the Unix epoch).
+- The body is a **batch** of one or more events, and batches can arrive out of order. `at` is
+  Meta's timestamp (whole seconds, times 1000), so statuses often tie; do not sort by it. Handle
+  statuses forward-only: `sent`, then `delivered`, then `read`, ignoring anything older; `failed`
+  is final. A status can arrive before the send call has returned its message `id`, so be ready
+  to store statuses for ids you do not know yet.
 - `x-eccos-signature` is only sent while a signing secret is set. It is `sha256=` followed by the
   lowercase hex **HMAC-SHA256 of the raw request body**, keyed with the signing secret you saved
   in the console (as a UTF-8 string). Verify it against the raw bytes before parsing the JSON.
-- `x-idempotency-key` is identical on every retry of the same batch; use it to deduplicate.
+- `x-idempotency-key` is identical on every retry of the same batch, but it identifies a batch
+  only. A new batch can re-include events you already received (Meta repeats events in its
+  callbacks), and an erasure rewrites queued batches, which changes their key. Deduplicate per
+  event: by `messageId` for incoming messages and echoes, and by `(transportMessageId, type)` for
+  statuses.
 
 ### Acknowledging and retrying
 
@@ -255,8 +283,9 @@ at 1 hour, with +/-10% jitter:
 | Runs | when the event arrives | ~5 s later | ~25 s later | ~2 min later | ~10 min later | ~52 min later |
 
 After the 6th failure (about 65 minutes after the first attempt) the batch is marked failed and
-is not retried automatically. The console's **Deliveries** page lists each batch with its status
-and last error.
+is not retried automatically. The console's **Forwarding queue** page (opened from links on the
+Webhooks page; it is not in the sidebar) lists each batch with its status and last error, and has
+a **Retry** action to send a failed batch again.
 
 ### Verifying the signature
 
@@ -269,7 +298,7 @@ export function verifyEccos(rawBody: Buffer, header: string | undefined, secret:
   if (!header?.startsWith("sha256=")) return false;
   const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
   const given = header.slice("sha256=".length);
-  return given.length === expected.length &&
+  return /^[0-9a-f]{64}$/.test(given) &&
     timingSafeEqual(Buffer.from(given), Buffer.from(expected));
 }
 ```
@@ -310,7 +339,8 @@ status (voice messages) arrives as `read`.
   "errorCode": "131026", "errorMessage": "Message undeliverable", "phoneNumberId": "1098765432" }
 ```
 
-`errorCode` and `errorMessage` come from Meta's first error ([error codes](https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes)).
+`errorCode` and `errorMessage` come from Meta's first error; `errorMessage` prefers
+`error_data.details` over `message` ([error codes](https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes)).
 
 ### `reply`: incoming text, button taps and list choices
 
@@ -382,7 +412,7 @@ POST /v1/wabas/{wabaId}/privacy/erasure     {"phone": "34600000000"}
 ```
 
 **Export** returns `{ "ok": true, "data": { ... } }` with everything Eccos still holds for the
-WABA: incoming events, sent messages, delivery attempts, conversations and contacts. Message
+WABA, in one unpaginated response: incoming events, sent messages, delivery attempts, conversations and contacts. Message
 content is kept for 30 days by default; delivery records are kept longer.
 
 **Erasure** deletes or redacts every stored trace of one customer, named by phone number or BSUID
