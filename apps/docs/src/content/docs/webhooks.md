@@ -45,6 +45,9 @@ Answer with any `2xx` within **5 seconds**. Anything else (non-2xx, timeout, con
 is retried. **Redirects are not followed**: a `3xx` counts as a failure, so configure the final
 URL.
 
+Acknowledge first and do the work afterwards (a queue or a background job): a slow answer
+holds up the batches queued behind it.
+
 There are 6 attempts in total. After failed attempt n, the next one waits 5 s x 5^(n-1), capped
 at 1 hour, with +/-10% jitter:
 

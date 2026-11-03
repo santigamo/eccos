@@ -91,6 +91,12 @@ describe("webhook log lines", () => {
     ]);
   });
 
+  it("logs a coexistence sync webhook it stored as sync_only, not no_events", async () => {
+    await post([{ id: TEST_WABA_ID, changes: [{ field: "history", value: { messaging_product: "whatsapp", history: [] } }] }]);
+    expect(lines("webhook_sync_captured")).toHaveLength(1);
+    expect(lines("webhook_ignored")).toEqual([expect.objectContaining({ reason: "sync_only", wabaIds: TEST_WABA_ID })]);
+  });
+
   it("logs dropped messages by field and type, and alerts once per window for an active WABA", async () => {
     const dropped = { id: "wamid.D", timestamp: "1700000000", type: "text", text: { body: "secret text" } };
     await post([{ id: TEST_WABA_ID, changes: messages("PNID1", { messages: [TEXT, dropped, { ...dropped, id: "wamid.D2", type: "reaction" }] }) }]);
