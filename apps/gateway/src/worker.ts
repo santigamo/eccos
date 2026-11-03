@@ -293,6 +293,7 @@ app.post("/webhooks/meta", async (c) => {
   // Sync webhooks are stored for any registered WABA whatever its status (the
   // sync lands before the WABA turns active). A failed capture answers 5xx so
   // Meta retries: these payloads are never sent again.
+  let syncCaptured = false;
   try {
     await Promise.all(
       [...syncFieldsByWaba(payload)]
@@ -300,6 +301,7 @@ app.post("/webhooks/meta", async (c) => {
         .map(async ([wabaId, fields]) => {
           if (!(await cp.getWabaById(wabaId))) return;
           const stored = await getGatewayStubForWaba(c.env, wabaId).captureSyncPayload(fields, rawBody);
+          syncCaptured = true;
           logEvent("webhook_sync_captured", cid, 200, { wabaId, fields: fields.join(","), ...stored });
         }),
     );
@@ -316,7 +318,7 @@ app.post("/webhooks/meta", async (c) => {
   alertDrops(c, drops);
   if (batches.length === 0) {
     logEvent("webhook_ignored", cid, 200, {
-      reason: "no_events",
+      reason: syncCaptured ? "sync_only" : "no_events",
       wabaIds: webhookWabaIds(payload),
       bodyBytes: rawBody.length,
       shape: webhookShape(payload),

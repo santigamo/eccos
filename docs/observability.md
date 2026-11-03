@@ -16,7 +16,7 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `event` | When | Fields |
 |---|---|---|
 | `webhook_ingested` | One per stored batch (WABA + phone) | `wabaId`, `phoneNumberId`, `eventCount`, `received`, one `n_<type>` count per event type: `n_reply`, `n_echo`, `n_status_sent` / `_delivered` / `_read` / `_failed`, `n_message_<messageType>`, `n_message_echo_<messageType>` |
-| `webhook_ignored` | A batch was parsed but not stored, or the webhook parsed to no event | `reason`, plus `wabaId`, `phoneNumberId`, `eventCount` for a batch, or `wabaIds`, `bodyBytes`, `shape` for `no_events` |
+| `webhook_ignored` | A batch was parsed but not stored, or the webhook parsed to no event | `reason`, plus `wabaId`, `phoneNumberId`, `eventCount` for a batch, or `wabaIds`, `bodyBytes`, `shape` for `no_events` and `sync_only` |
 | `webhook_dropped` | Messages or echoes of a WABA parsed to no event | `wabaId`, `dropped` (count), `missing` (required fields absent, e.g. `from`; empty when they only carried nothing), `types` (`text+reaction`, `echo_text`), `keys` (their top-level key names) |
 | `webhook_held` | A batch of a `pending` WABA (provisioning or a re-run Embedded Signup) was held in its Durable Object, to be ingested once it is active | `wabaId`, `phoneNumberId`, `eventCount`, `heldEvents` (total now held for the WABA) |
 | `webhook_ingest_failed` | The Durable Object write failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
@@ -28,6 +28,7 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `reason` | Meaning |
 |---|---|
 | `no_events` | Nothing in the webhook maps to an event (a field Eccos does not forward, or every message dropped: see `webhook_dropped` and `shape`) |
+| `sync_only` | A coexistence sync webhook (`history`, `smb_app_state_sync`): stored (see `webhook_sync_captured`), nothing to forward live. Expected in bulk while a number imports its history |
 | `unknown_waba` | The WABA is not registered in the control plane |
 | `inactive_waba` | Registered but `failed` (a `pending` WABA's batches are held instead: `webhook_held`) |
 | `hold_full` | The WABA is `pending` and already holds 5000 events |
