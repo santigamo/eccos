@@ -48,3 +48,19 @@ export function scheduledOutcome(
   if (row.status === "unknown") return row.error ? { kind: "error", raw: row.error } : { kind: "unknown" };
   return null;
 }
+
+/** Why a send can no longer be cancelled, for "It already ended: …". */
+export function endedPhrase(row: Pick<ScheduledSend, "status" | "failureReason">): string {
+  switch (row.status) {
+    case "sending":
+      return "is being sent";
+    case "sent":
+      return "was sent";
+    case "failed":
+      return row.failureReason === "expired" ? "expired" : "failed";
+    case "unknown":
+      return "has an unknown outcome";
+    default:
+      return row.status;
+  }
+}

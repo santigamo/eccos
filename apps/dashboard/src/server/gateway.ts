@@ -1690,7 +1690,8 @@ export const cancelScheduled = createServerFn({ method: "POST" })
         const actor = await requireActor("operate");
         const scope = await resolveScope(gateway, data.wabaId, true, "any");
         const result = await gateway.cancelScheduled({ wabaId: scope.wabaId, key: data.key }, scope.accountId);
-        const done = result.state === "cancelled" || result.state === "unchanged";
+        // `unchanged` on a send that ended some other way (it expired meanwhile) did nothing.
+        const done = result.state === "cancelled" || (result.state === "unchanged" && result.scheduled?.status === "cancelled");
         auditEvent({
           action: "scheduled_cancel",
           actorUserId: actor.session.userId,
@@ -1698,7 +1699,7 @@ export const cancelScheduled = createServerFn({ method: "POST" })
           accountId: scope.accountId,
           resource: { wabaId: scope.wabaId, key: data.key },
           outcome: done ? "success" : "failed",
-          ...(done ? {} : { detail: result.state }),
+          ...(done ? {} : { detail: result.state === "unchanged" ? "ended" : result.state }),
         });
         return result;
       }),

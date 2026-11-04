@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   normalizeScheduledStatus,
   normalizeScheduleKey,
+  endedPhrase,
   readsSoonestFirst,
   scheduledOutcome,
 } from "../src/lib/scheduled";
@@ -70,5 +71,15 @@ describe("scheduledOutcome", () => {
     for (const status of ["pending", "sending", "cancelled"] as const) {
       expect(scheduledOutcome(row({ status }))).toBeNull();
     }
+  });
+});
+
+describe("endedPhrase", () => {
+  test("words each way a send can have ended", () => {
+    expect(endedPhrase({ status: "sending", failureReason: null })).toBe("is being sent");
+    expect(endedPhrase({ status: "sent", failureReason: null })).toBe("was sent");
+    expect(endedPhrase({ status: "failed", failureReason: "expired" })).toBe("expired");
+    expect(endedPhrase({ status: "failed", failureReason: "rejected" })).toBe("failed");
+    expect(endedPhrase({ status: "unknown", failureReason: "unknown" })).toBe("has an unknown outcome");
   });
 });

@@ -1,6 +1,7 @@
 import type { ScheduledSend } from "@eccos/gateway-contract";
 import { cancelScheduled } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { endedPhrase } from "../../lib/scheduled";
 import { fmtTs } from "../../ui";
 import { CancelDialog } from "../sending/cancel-dialog";
 
@@ -39,11 +40,12 @@ export function CancelScheduledDialog({
       onConfirm={async () => {
         const result = await cancelScheduled({ data: { wabaId, key: scheduled.key } });
         if (!result.ok) return failureCopy(result);
-        if (result.data.state === "not_pending") {
+        const { state, scheduled: current } = result.data;
+        if (state === "not_pending" || (state === "unchanged" && current?.status !== "cancelled")) {
           onCancelled();
           return {
             title: "Too late to cancel",
-            detail: `It is already ${result.data.scheduled?.status ?? "sending"}.`,
+            detail: `It already ended: ${current ? endedPhrase(current) : "is being sent"}.`,
           };
         }
         return null;

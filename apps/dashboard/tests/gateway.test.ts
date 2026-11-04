@@ -1401,6 +1401,17 @@ describe("scheduled", () => {
     expect(audit).toContain('"detail":"not_pending"');
   });
 
+  test("cancelScheduled: unchanged on a send that expired meanwhile is audited as failed", async () => {
+    withResources({ cancelScheduled: async () => ({ state: "unchanged", scheduled: { status: "failed" } }) });
+    const { audit } = await audited(() => cancelScheduled({ data: { wabaId: "waba-a", key: "appt-1" } }));
+    expect(audit).toContain('"outcome":"failed"');
+    expect(audit).toContain('"detail":"ended"');
+    withResources({ cancelScheduled: async () => ({ state: "unchanged", scheduled: { status: "cancelled" } }) });
+    expect((await audited(() => cancelScheduled({ data: { wabaId: "waba-a", key: "appt-1" } }))).audit).toContain(
+      '"outcome":"success"',
+    );
+  });
+
   test("cancelScheduled: a viewer is refused typed forbidden and the gateway is untouched", async () => {
     let called = false;
     withResources({
