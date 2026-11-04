@@ -2,7 +2,9 @@ import { env, exports } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signPayload } from "@eccos/core/signature";
+import eventsMd from "../../../docs/src/content/docs/event-reference.md?raw";
 import type { EccosGateway } from "../../src/gateway";
+import { jsonFences } from "../docs-md";
 import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, SUBSCRIBER_SECRET, SUBSCRIBER_URL, TEST_WABA_ID } from "./helpers";
 
 let API_KEY = "";
@@ -452,6 +454,18 @@ describe("pacing and alarm", () => {
     const sendAt = Date.now() + HOUR;
     await put("later", sched({ sendAt }));
     expect(armed.at(-1)).toBe(sendAt);
+  });
+});
+
+describe("docs contract", () => {
+  it("the documented scheduled_failed example has the keys of the emitted event", async () => {
+    mockMeta({ sends: [{ status: 400, body: { error: { code: 131026, message: "Message undeliverable" } } }] });
+    await subscribe();
+    await put("appt-8812", sched());
+    await due();
+    const emitted = (await forwardedEvents()).find((ev) => ev.type === "scheduled_failed")!;
+    const documented = jsonFences(eventsMd).find((ev) => ev.type === "scheduled_failed")!;
+    expect(Object.keys(emitted).sort()).toEqual(Object.keys(documented).sort());
   });
 });
 
