@@ -290,6 +290,7 @@ Each non-2xx answer is logged as `coexistence_sync_failed` with Meta's status, c
 message. When that log shows Meta refused the request, an operator can avoid the offboarding: call
 `GatewayRPC.resetUnconfirmedCoexistenceSync(wabaId, accountId, syncKind)` over a remote binding, then
 `reconcileWaba`. Never use it after a timeout or a lost answer, where the first request may have landed.
+`GatewayRPC.diagnoseWaba(wabaId, accountId)` returns Meta's read-only view of the token, WABA and number.
 
 ### A number that turned out not to be a coexistence number
 

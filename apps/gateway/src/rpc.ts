@@ -7,6 +7,7 @@ import {
   startConnectForAccount,
 } from "./routes/connect";
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
+import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
@@ -788,6 +789,19 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   ): Promise<boolean> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(account, wabaId, syncKind);
+  }
+
+  /** Operator-only and outside `GatewayApi`, like the reset above: read-only Graph view of a WABA. */
+  async diagnoseWaba(wabaId: string, accountId: string) {
+    const account = requireAccountId(accountId, "accountId is required");
+    const waba = await getControlPlaneStub(this.env).getWabaRecord(account, wabaId);
+    if (!waba) throw new Error(`WABA "${wabaId}" is not owned by account "${account}"`);
+    return diagnoseWaba(
+      getAppConfig(this.env),
+      waba.wabaId,
+      waba.phones[0]?.phoneNumberId ?? null,
+      waba.metaAccessToken,
+    );
   }
 
   /**
