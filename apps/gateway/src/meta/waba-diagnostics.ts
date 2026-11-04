@@ -1,5 +1,5 @@
 import { graphBaseUrl } from "@eccos/core/config-schema";
-import { inspectToken } from "./connect-api";
+import type { inspectToken } from "./connect-api";
 
 type Cfg = Parameters<typeof inspectToken>[0];
 
@@ -26,9 +26,9 @@ async function read(cfg: Cfg, path: string, auth: string): Promise<Read> {
     headers: { authorization: `Bearer ${auth}` },
     signal: AbortSignal.timeout(15_000),
   });
-  const json = (await res.json().catch(() => null)) as Record<string, any> | null;
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!res.ok) {
-    const error = json?.error;
+    const error = json?.error as { code?: unknown; error_subcode?: unknown; message?: unknown } | undefined;
     return { status: res.status, code: error?.code, subcode: error?.error_subcode, message: error?.message };
   }
   const { paging: _paging, ...value } = json ?? {};
