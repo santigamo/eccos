@@ -19,6 +19,7 @@ import type {
   OperatorCounts,
   OutboundRow,
   OutboundTrailEvent,
+  ScheduledCancelResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
   ThreadView,
@@ -64,8 +65,10 @@ import {
 import {
   cancelScheduled,
   claimDue,
+  countScheduled,
   expireDue,
   listScheduled,
+  listScheduledByTime,
   nextScheduledWake,
   readScheduled,
   type ScheduledFailure,
@@ -1520,10 +1523,7 @@ export class EccosGateway extends DurableObject<Env> {
     return readScheduled(this.sql, accountId, key);
   }
 
-  async cancelScheduled(
-    accountId: string,
-    key: string,
-  ): Promise<{ state: "cancelled" | "unchanged" | "not_pending" | "missing"; scheduled: ScheduledSend | null }> {
+  async cancelScheduled(accountId: string, key: string): Promise<ScheduledCancelResult> {
     const { state, row } = cancelScheduled(this.sql, accountId, key, Date.now());
     return { state, scheduled: row };
   }
@@ -1533,6 +1533,19 @@ export class EccosGateway extends DurableObject<Env> {
     opts: { status?: ScheduledStatus; after?: string; limit: number },
   ): Promise<ScheduledSend[]> {
     return listScheduled(this.sql, accountId, opts);
+  }
+
+  /** The console's page: one status by send time, with the per-status counts. */
+  async listScheduledPage(
+    accountId: string,
+    opts: { status: ScheduledStatus; cursor?: string; limit: number },
+  ): Promise<{ items: ScheduledSend[]; hasMore: boolean; counts: Record<ScheduledStatus, number> }> {
+    const rows = listScheduledByTime(this.sql, accountId, { ...opts, limit: opts.limit + 1 });
+    return {
+      items: rows.slice(0, opts.limit),
+      hasMore: rows.length > opts.limit,
+      counts: countScheduled(this.sql, accountId),
+    };
   }
 
   /** scheduledStep, but never thrown: the broadcast and media wakes in alarm() must run whatever happens here. */

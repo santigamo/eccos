@@ -265,6 +265,8 @@ const {
   listBroadcasts,
   getBroadcast,
   cancelBroadcast,
+  listScheduled,
+  cancelScheduled,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -1322,6 +1324,109 @@ describe("broadcasts", () => {
     expect(foreign).toMatchObject({ ok: false, kind: "unreachable" });
     expect(calls).toBe(0);
     expect(await cancelBroadcast({ data: { wabaId: "waba-a", broadcastId: BC2 } })).toEqual({ ok: true, data: null });
+  });
+});
+
+// --- Scheduled sends (routes/scheduled.tsx) ---
+
+describe("scheduled", () => {
+  const page = { items: [], counts: {}, nextCursor: null };
+  const cancelled = { state: "cancelled", scheduled: { key: "appt-1", status: "cancelled" } };
+
+  async function audited<T>(run: () => Promise<T>): Promise<{ res: T; audit: string | undefined }> {
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      const res = await run();
+      return { res, audit: emitted.find((line) => line.includes('"area":"audit"')) };
+    } finally {
+      console.info = original;
+    }
+  }
+
+  test("listScheduled forwards status, cursor and the resolved WABA, never an account", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      readScheduled: async (...args: unknown[]) => {
+        calls.push(args);
+        return { scope: {}, data: page };
+      },
+    });
+    const res = await listScheduled({
+      data: { wabaId: "waba-a", status: "sent", cursor: "appt-1", accountId: "evil" } as never,
+    });
+    expect(res.ok).toBe(true);
+    expect(calls).toEqual([
+      [{ organizationId: ORG_ID, wabaId: "waba-a" }, { status: "sent", cursor: "appt-1", limit: 50 }],
+    ]);
+  });
+
+  test("listScheduled refuses a bad status or cursor before the gateway", async () => {
+    let called = false;
+    withResources({
+      readScheduled: async () => {
+        called = true;
+        return { scope: {}, data: page };
+      },
+    });
+    expect(() => listScheduled({ data: { status: "queued" as never } })).toThrow("invalid status");
+    expect(() => listScheduled({ data: { cursor: "a/b" } })).toThrow("invalid cursor");
+    expect(called).toBe(false);
+  });
+
+  test("cancelScheduled: an operator cancels, with the session's account and an ids-only audit line", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      cancelScheduled: async (...args: unknown[]) => {
+        calls.push(args);
+        return cancelled;
+      },
+    });
+    const { res, audit } = await audited(() => cancelScheduled({ data: { wabaId: "waba-a", key: "appt-1" } }));
+    expect(res).toMatchObject({ ok: true, data: { state: "cancelled" } });
+    expect(calls).toEqual([[{ wabaId: "waba-a", key: "appt-1" }, "account-a"]]);
+    expect(audit).toContain('"action":"scheduled_cancel"');
+    expect(audit).toContain('"resource":{"wabaId":"waba-a","key":"appt-1"}');
+    expect(audit).not.toContain('"to"');
+  });
+
+  test("cancelScheduled: not_pending is audited as failed with its state", async () => {
+    withResources({ cancelScheduled: async () => ({ state: "not_pending", scheduled: { status: "sent" } }) });
+    const { res, audit } = await audited(() => cancelScheduled({ data: { wabaId: "waba-a", key: "appt-1" } }));
+    expect(res).toMatchObject({ ok: true, data: { state: "not_pending" } });
+    expect(audit).toContain('"outcome":"failed"');
+    expect(audit).toContain('"detail":"not_pending"');
+  });
+
+  test("cancelScheduled: a viewer is refused typed forbidden and the gateway is untouched", async () => {
+    let called = false;
+    withResources({
+      cancelScheduled: async () => {
+        called = true;
+        return cancelled;
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    const res = await cancelScheduled({ data: { wabaId: "waba-a", key: "appt-1" } });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("cancelScheduled: a WABA the account does not own is refused, a bad key never reaches the gateway", async () => {
+    let calls = 0;
+    withResources({
+      cancelScheduled: async () => {
+        calls++;
+        return cancelled;
+      },
+    });
+    const foreign = await cancelScheduled({ data: { wabaId: "waba-foreign", key: "appt-1" } });
+    expect(foreign).toMatchObject({ ok: false, kind: "unreachable" });
+    expect(() => cancelScheduled({ data: { wabaId: "waba-a", key: "a/b" } })).toThrow("invalid key");
+    expect(calls).toBe(0);
   });
 });
 

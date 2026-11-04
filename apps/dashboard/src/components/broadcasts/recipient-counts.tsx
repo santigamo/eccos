@@ -4,7 +4,7 @@ import { RECIPIENT_STATUSES } from "../../lib/broadcasts";
 import { COUNT_LINK } from "../../ui";
 
 /** Red only where an operator may have to act; progress states stay muted. */
-function ink(status: string): string {
+export function countInk(status: string): string {
   if (status === "failed" || status === "unknown") return "text-[#ff7777]";
   return "text-muted-foreground hover:text-foreground";
 }
@@ -41,7 +41,7 @@ export function RecipientCounts({
             to="/broadcasts/$broadcastId"
             params={{ broadcastId }}
             search={{ status, ...(wabaId ? { wabaId } : {}) }}
-            className={`${COUNT_LINK} ${ink(status)}`}
+            className={`${COUNT_LINK} ${countInk(status)}`}
           >
             {status} <span className="tabular-nums">{counts[status]}</span>
           </Link>

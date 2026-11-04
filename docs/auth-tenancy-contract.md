@@ -95,9 +95,9 @@ defaults; `operator` and `viewer` are configured custom roles):
 
 | Dashboard operation | Minimum role | MFA / step-up (§8) | Notes |
 |---|---|---|---|
-| View status, logs (messages/events/forwarding queue), broadcasts, templates | viewer | — | Read-only |
+| View status, logs (messages/events/forwarding queue), broadcasts, scheduled sends, templates | viewer | — | Read-only |
 | Retry delivery | operator | — | |
-| Cancel broadcast | operator | — | Stops sends not yet attempted; ids-only audit line |
+| Cancel broadcast or scheduled send | operator | — | Stops sends not yet attempted; ids-only audit line |
 | Subscriber config read | operator | — | Secret value never returned |
 | Subscriber config write | admin | **Yes** | TOTP (owner/admin) + ≤15 min recent auth |
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |

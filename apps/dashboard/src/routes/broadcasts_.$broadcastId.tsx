@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MetaErrorCell } from "../components/broadcasts/meta-error-cell";
 import { CancelBroadcastDialog } from "../components/broadcasts/cancel-broadcast-dialog";
 import { RecipientCounts } from "../components/broadcasts/recipient-counts";
 import { FailureView } from "../components/dashboard/failure";
@@ -30,7 +31,7 @@ import {
 } from "../lib/broadcasts";
 import { loaderFailure } from "../lib/failure";
 import { invalidatePage } from "../lib/invalidate";
-import { EMPTY_CELL, errorReading, wamidTail } from "../lib/logs";
+import { EMPTY_CELL, wamidTail } from "../lib/logs";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchWabaId } from "../lib/search";
 import { getBroadcast } from "../server/gateway";
@@ -116,17 +117,7 @@ function recipientColumns() {
     columnHelper.accessor("error", {
       id: "error",
       header: "Error",
-      cell: (info) => {
-        const raw = info.getValue();
-        if (!raw) return EMPTY_CELL;
-        const { code, text, label } = errorReading(raw);
-        return (
-          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={label}>
-            {code ? <span className="font-mono text-xs">{code} · </span> : null}
-            {text}
-          </span>
-        );
-      },
+      cell: (info) => <MetaErrorCell raw={info.getValue()} />,
       meta: { cellClassName: "text-foreground/80" },
     }),
   ];

@@ -56,6 +56,11 @@ export type SensitiveAction =
    */
   | "broadcast_cancel"
   /**
+   * A pending scheduled send stopped from the console. Ids only (wabaId, key): never
+   * the recipient, same rule as `broadcast_cancel`.
+   */
+  | "scheduled_cancel"
+  /**
    * One free-text message sent from the conversation composer.
    *
    * Same rule as `template_test_send`, and for the same reason: the body is

@@ -28,7 +28,8 @@ time.
 
 - `key` is 1 to 128 characters: letters, digits and `. _ : -`. It is unique per WhatsApp Business
   Account. The key is the idempotency: repeating the same `PUT` changes nothing, so there is no
-  [Idempotency-Key](/idempotency) header here.
+  [Idempotency-Key](/idempotency) header here. Use an id from your own system (an appointment id),
+  not a phone number or a name: the key shows in the console, its URLs and audit lines.
 - `to` is a phone number or a BSUID. `template` is Meta's template object, as in a
   [broadcast](/bulk-sending).
 - `sendAt` is absolute: epoch milliseconds, or an ISO 8601 time **with** a timezone (`Z` or an

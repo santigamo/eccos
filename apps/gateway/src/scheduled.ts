@@ -7,6 +7,12 @@
 
 import { metaErrorCodes } from "@eccos/core/send";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
+import type {
+  ScheduledCancelState,
+  ScheduledFailure,
+  ScheduledSend,
+  ScheduledStatus,
+} from "@eccos/gateway-contract";
 import { isRecipient, parseTemplate, STALE_SENDING_MS } from "./broadcasts";
 
 export const MAX_PENDING_SCHEDULED = 50_000;
@@ -16,8 +22,16 @@ export const MAX_EXPIRY_AFTER_SEND_MS = 7 * 24 * 3600_000;
 export const MAX_SCHEDULED_BODY_BYTES = 64 * 1024;
 export const SCHEDULE_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 
-export type ScheduledStatus = "pending" | "sending" | "sent" | "failed" | "unknown" | "cancelled";
-export type ScheduledFailure = "rejected" | "expired" | "unknown";
+export type { ScheduledFailure, ScheduledSend, ScheduledStatus };
+
+export const SCHEDULED_STATUSES: ReadonlySet<string> = new Set<ScheduledStatus>([
+  "pending",
+  "sending",
+  "sent",
+  "failed",
+  "unknown",
+  "cancelled",
+]);
 
 export interface ScheduledRequest {
   to: string;
@@ -29,23 +43,6 @@ export interface ScheduledRequest {
 }
 
 export type ParsedScheduled = { ok: true; request: ScheduledRequest } | { ok: false; error: string };
-
-export interface ScheduledSend {
-  key: string;
-  status: ScheduledStatus;
-  phoneNumberId: string;
-  to: string;
-  template: { name: string; language: string };
-  sendAt: number;
-  expiresAt: number;
-  attempts: number;
-  messageId: string | null;
-  failureReason: ScheduledFailure | null;
-  /** Meta's error envelope as stored (JSON text); the route parses it. */
-  error: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
 
 type Row = Record<string, SqlStorageValue>;
 
@@ -121,6 +118,8 @@ export const SCHEDULED_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_sends (status, next_attempt_at);`,
   // Retention sweeps by settle time; unindexed it would scan every row hourly (billed as rows read).
   `CREATE INDEX IF NOT EXISTS idx_scheduled_updated ON scheduled_sends (updated_at);`,
+  // The console lists one status by send time.
+  `CREATE INDEX IF NOT EXISTS idx_scheduled_console ON scheduled_sends (account_id, status, send_at, key);`,
 ];
 
 const text = (value: SqlStorageValue | undefined): string | null => (value == null ? null : String(value));
@@ -166,6 +165,47 @@ export function listScheduled(
     .map(toScheduled);
 }
 
+/** One status by send time: soonest first while it can still go out, newest first once ended. The caller asks for `limit + 1` to learn whether more exist. */
+export function listScheduledByTime(
+  sql: SqlStorage,
+  accountId: string,
+  opts: { status: ScheduledStatus; cursor?: string; limit: number },
+): ScheduledSend[] {
+  const asc = opts.status === "pending" || opts.status === "sending";
+  const dir = asc ? "ASC" : "DESC";
+  const params: (string | number)[] = [accountId, opts.status];
+  let after = "";
+  if (opts.cursor !== undefined) {
+    after = `AND (send_at, key) ${asc ? ">" : "<"} (SELECT send_at, key FROM scheduled_sends WHERE account_id = ? AND key = ?)`;
+    params.push(accountId, opts.cursor);
+  }
+  params.push(opts.limit);
+  return sql
+    .exec(
+      `SELECT * FROM scheduled_sends WHERE account_id = ? AND status = ? ${after} ORDER BY send_at ${dir}, key ${dir} LIMIT ?`,
+      ...params,
+    )
+    .toArray()
+    .map(toScheduled);
+}
+
+export function countScheduled(sql: SqlStorage, accountId: string): Record<ScheduledStatus, number> {
+  const counts: Record<ScheduledStatus, number> = {
+    pending: 0,
+    sending: 0,
+    sent: 0,
+    failed: 0,
+    unknown: 0,
+    cancelled: 0,
+  };
+  for (const row of sql
+    .exec(`SELECT status, COUNT(*) AS n FROM scheduled_sends WHERE account_id = ? GROUP BY status`, accountId)
+    .toArray()) {
+    counts[row.status as ScheduledStatus] = Number(row.n);
+  }
+  return counts;
+}
+
 export type PutState = "created" | "replaced" | "not_pending" | "full";
 
 /** Creates or replaces the row under `key`. Sent, sending and unknown rows may have reached the customer: they stay. */
@@ -203,14 +243,12 @@ export function upsertScheduled(
   return { state: "created", row: readScheduled(sql, accountId, key) };
 }
 
-export type CancelState = "cancelled" | "unchanged" | "not_pending" | "missing";
-
 export function cancelScheduled(
   sql: SqlStorage,
   accountId: string,
   key: string,
   now: number,
-): { state: CancelState; row: ScheduledSend | null } {
+): { state: ScheduledCancelState; row: ScheduledSend | null } {
   const row = readScheduled(sql, accountId, key);
   if (!row) return { state: "missing", row: null };
   if (row.status === "cancelled" || row.status === "failed") return { state: "unchanged", row };

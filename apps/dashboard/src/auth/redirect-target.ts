@@ -24,6 +24,7 @@ export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/",
   "/broadcasts",
   "/broadcasts/$broadcastId",
+  "/scheduled",
   "/conversations",
   "/deliveries",
   "/events",

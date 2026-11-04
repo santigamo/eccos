@@ -36,6 +36,7 @@ import {
   MAX_SCHEDULED_BODY_BYTES,
   parseScheduledRequest,
   SCHEDULE_KEY,
+  SCHEDULED_STATUSES,
   type ScheduledSend,
   type ScheduledStatus,
 } from "./scheduled";
@@ -1066,8 +1067,6 @@ app.post("/v1/wabas/:wabaId/broadcasts/:broadcastId/cancel", async (c) => {
 });
 
 // --- Scheduled sends (src/scheduled.ts) -------------------------------------
-
-const SCHEDULED_STATUSES = new Set(["pending", "sending", "sent", "failed", "unknown", "cancelled"]);
 
 const scheduledJson = (row: ScheduledSend) => ({ ...row, error: parseStoredError(row.error) });
 

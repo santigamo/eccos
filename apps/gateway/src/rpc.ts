@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { RECIPIENT_STATUSES, type RecipientStatus } from "./broadcasts";
+import { SCHEDULE_KEY, SCHEDULED_STATUSES } from "./scheduled";
 import { getControlPlaneStub } from "./control-plane-stub";
 import {
   exchangeAndRegisterAll,
@@ -72,6 +73,9 @@ import type {
   SubscriberConfig,
   TemplatesResult,
   OrganizationAccountContext,
+  ScheduledCancelResult,
+  ScheduledListOpts,
+  ScheduledPage,
   ScopedOrg,
   ScopedRead,
   AccountWabaResource,
@@ -489,6 +493,28 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     // Ownership only, whatever the WABA's status: stopping sends is always safe.
     const stub = await this.ownedStub(input.wabaId, accountId);
     return stub.cancelBroadcast(accountId, input.broadcastId);
+  }
+
+  async readScheduled(org: ScopedOrg, opts: ScheduledListOpts): Promise<ScopedRead<ScheduledPage>> {
+    const { scope, stub } = await this.selected(org);
+    const status = opts?.status ?? "pending";
+    if (!SCHEDULED_STATUSES.has(status)) throw new Error("invalid status");
+    if (opts?.cursor !== undefined && !SCHEDULE_KEY.test(opts.cursor)) throw new Error("invalid cursor");
+    const limit = clampLimit(opts?.limit, 100, 50);
+    const { items, hasMore, counts } = await stub.listScheduledPage(scope.accountId, {
+      status,
+      cursor: opts?.cursor,
+      limit,
+    });
+    return { scope, data: { items, counts, nextCursor: hasMore ? (items.at(-1)?.key ?? null) : null } };
+  }
+
+  async cancelScheduled(input: { wabaId: string; key: string }, accountId: string): Promise<ScheduledCancelResult> {
+    // Ownership only, whatever the WABA's status: stopping a send is always safe.
+    if (!SCHEDULE_KEY.test(input?.key ?? "")) throw new Error("invalid key");
+    const stub = await this.ownedStub(input.wabaId, accountId);
+    const { state, scheduled } = await stub.cancelScheduled(accountId, input.key);
+    return { state, scheduled };
   }
 
   async readConversations(

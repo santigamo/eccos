@@ -14,6 +14,7 @@ import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ScheduledRouteImport } from './routes/scheduled'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as NumbersRouteImport } from './routes/numbers'
@@ -52,6 +53,11 @@ const SigninRoute = SigninRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScheduledRoute = ScheduledRouteImport.update({
+  id: '/scheduled',
+  path: '/scheduled',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -137,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
@@ -158,6 +165,7 @@ export interface FileRoutesByTo {
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
@@ -180,6 +188,7 @@ export interface FileRoutesById {
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
@@ -203,6 +212,7 @@ export interface FileRouteTypes {
     | '/numbers'
     | '/onboarding'
     | '/reset-password'
+    | '/scheduled'
     | '/settings'
     | '/signin'
     | '/signup'
@@ -224,6 +234,7 @@ export interface FileRouteTypes {
     | '/numbers'
     | '/onboarding'
     | '/reset-password'
+    | '/scheduled'
     | '/settings'
     | '/signin'
     | '/signup'
@@ -245,6 +256,7 @@ export interface FileRouteTypes {
     | '/numbers'
     | '/onboarding'
     | '/reset-password'
+    | '/scheduled'
     | '/settings'
     | '/signin'
     | '/signup'
@@ -267,6 +279,7 @@ export interface RootRouteChildren {
   NumbersRoute: typeof NumbersRoute
   OnboardingRoute: typeof OnboardingRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ScheduledRoute: typeof ScheduledRoute
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
@@ -312,6 +325,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scheduled': {
+      id: '/scheduled'
+      path: '/scheduled'
+      fullPath: '/scheduled'
+      preLoaderRoute: typeof ScheduledRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -427,6 +447,7 @@ const rootRouteChildren: RootRouteChildren = {
   NumbersRoute: NumbersRoute,
   OnboardingRoute: OnboardingRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ScheduledRoute: ScheduledRoute,
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,

@@ -13,6 +13,7 @@ import type { SessionEvent } from "../lib/embedded-signup";
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
 import { normalizeBroadcastId, normalizeRecipientStatus, normalizeSeqCursor } from "../lib/broadcasts";
+import { normalizeScheduledStatus, normalizeScheduleKey } from "../lib/scheduled";
 import { analyzeDraftBody } from "../lib/template-params";
 import { isBsuid } from "@eccos/core/bsuid";
 import { normalizeCustomerId } from "../lib/customer-id";
@@ -27,6 +28,9 @@ import type {
   BroadcastDetail,
   BroadcastRecipientStatus,
   BroadcastSummary,
+  ScheduledCancelResult,
+  ScheduledPage,
+  ScheduledStatus,
   AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
@@ -85,6 +89,10 @@ export type {
   BroadcastRecipientStatus,
   BroadcastStatus,
   BroadcastSummary,
+  ScheduledCancelResult,
+  ScheduledPage,
+  ScheduledSend,
+  ScheduledStatus,
   ConnectExchangeResult,
   ConnectStartResult,
   ConversationSummary,
@@ -439,6 +447,37 @@ export function validateCancelBroadcastInput(input: unknown): { wabaId: string; 
   const wabaId = optionalWabaId(record.wabaId);
   if (!wabaId) throw new Error("wabaId is required");
   return { wabaId, broadcastId: requiredBroadcastId(record.broadcastId) };
+}
+
+const SCHEDULED_PAGE_SIZE = 50;
+
+function requiredScheduleKey(value: unknown): string {
+  const key = normalizeScheduleKey(value);
+  if (!key) throw new Error("invalid key");
+  return key;
+}
+
+export function validateScheduledListInput(
+  input: unknown,
+): { wabaId?: string; status?: ScheduledStatus; cursor?: string } | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  const status = normalizeScheduledStatus(record.status);
+  if (record.status !== undefined && !status) throw new Error("invalid status");
+  if (record.cursor !== undefined && !normalizeScheduleKey(record.cursor)) throw new Error("invalid cursor");
+  return {
+    ...(wabaId ? { wabaId } : {}),
+    ...(status ? { status } : {}),
+    ...(record.cursor !== undefined ? { cursor: record.cursor as string } : {}),
+  };
+}
+
+export function validateCancelScheduledInput(input: unknown): { wabaId: string; key: string } {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  return { wabaId, key: requiredScheduleKey(record.key) };
 }
 
 function validateRetryInput(input: unknown): { id: number; wabaId: string } {
@@ -1627,6 +1666,41 @@ export const cancelBroadcast = createServerFn({ method: "POST" })
           ...(broadcast ? {} : { detail: "not_found" }),
         });
         return broadcast;
+      }),
+  );
+
+/** Scheduled sends of the selected WABA in one status (default pending), with per-status counts. */
+export const listScheduled = createServerFn({ method: "GET" })
+  .validator(validateScheduledListInput)
+  .handler(({ data }): Promise<Result<ScheduledPage>> =>
+    withScopedData({ action: "view", wabaId: data?.wabaId }, (gateway, org) =>
+      gateway.readScheduled(org, { status: data?.status, cursor: data?.cursor, limit: SCHEDULED_PAGE_SIZE }),
+    ),
+  );
+
+/**
+ * Stop a pending scheduled send (`operate`, like `cancelBroadcast`). The audit line
+ * carries ids only, never the recipient (see `SensitiveAction`'s "scheduled_cancel").
+ */
+export const cancelScheduled = createServerFn({ method: "POST" })
+  .validator(validateCancelScheduledInput)
+  .handler(
+    ({ data }): Promise<Result<ScheduledCancelResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("operate");
+        const scope = await resolveScope(gateway, data.wabaId, true, "any");
+        const result = await gateway.cancelScheduled({ wabaId: scope.wabaId, key: data.key }, scope.accountId);
+        const done = result.state === "cancelled" || result.state === "unchanged";
+        auditEvent({
+          action: "scheduled_cancel",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: { wabaId: scope.wabaId, key: data.key },
+          outcome: done ? "success" : "failed",
+          ...(done ? {} : { detail: result.state }),
+        });
+        return result;
       }),
   );
 
