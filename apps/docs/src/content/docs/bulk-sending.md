@@ -75,8 +75,10 @@ sent once; `duplicatesSkipped` counts the extra entries.
 - **Any other Meta error** fails that recipient only, with Meta's error stored on it.
 
 Every message is a normal send: it appears in your logs and conversations, and your webhook
-receives its `sent`, `delivered`, `read` and `failed` [status events](/event-reference). Use a
-recipient's `messageId` to match them.
+receives its `sent`, `delivered`, `read` and `failed` [status events](/event-reference). Each of
+those events carries `broadcastId`, and so does a `reply` or `message` whose `replyTo` is one of
+the broadcast's messages, for example a tap on the template's button. A recipient's `messageId`
+is the `transportMessageId` of its statuses.
 
 ## Follow it
 

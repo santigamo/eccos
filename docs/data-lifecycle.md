@@ -149,7 +149,7 @@ keeps its key pending, with no answer stored, until it expires.
 Broadcasts (`broadcasts`, `broadcast_recipients`): each recipient's phone number and status,
 and Meta's error when its send failed. A recipient's template values are deleted as soon as its
 send is attempted, and the broadcast's default values when it ends (each sent message keeps its
-request in `outbound_messages`, like any send). A finished broadcast and its recipients are deleted with the content window
+request and its broadcast id in `outbound_messages`, like any send). A finished broadcast and its recipients are deleted with the content window
 (by the broadcast's `created_at`); a running one is kept until it finishes. `eraseByPhone`
 removes the customer from every broadcast.
 

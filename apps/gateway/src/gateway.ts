@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
-import type { WhatsAppCallbackEvent } from "@eccos/core/types";
+import type { EventOrigin, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   ContactRecord,
   ConversationSummary,
@@ -417,6 +417,8 @@ export class EccosGateway extends DurableObject<Env> {
       };
       ensureColumn("inbound_events", "phone_number_id");
       ensureColumn("outbound_messages", "phone_number_id");
+      // The origin of a send (EventOrigin JSON, e.g. its broadcast), copied onto the events about it.
+      ensureColumn("outbound_messages", "origin");
       ensureColumn("deliveries", "phone_number_id");
       // When a delivery reached its terminal state (`delivered` or `failed`).
       // `created_at` alone can only say when the batch was ENQUEUED, so "last
@@ -593,6 +595,16 @@ export class EccosGateway extends DurableObject<Env> {
     return { duplicate, bytes: bytes.length, parts };
   }
 
+  /** The event with the origin of the message it is about, when Eccos sent that message with one. */
+  private withOrigin(ev: WhatsAppCallbackEvent): WhatsAppCallbackEvent {
+    const wamid = "transportMessageId" in ev ? ev.transportMessageId : "replyTo" in ev ? ev.replyTo : undefined;
+    if (!wamid) return ev;
+    const row = this.sql
+      .exec(`SELECT origin FROM outbound_messages WHERE transport_message_id = ? AND origin IS NOT NULL LIMIT 1`, wamid)
+      .toArray()[0];
+    return row ? { ...ev, ...(JSON.parse(String(row.origin)) as EventOrigin) } : ev;
+  }
+
   /** `heldPending` tells the worker that batches held while the WABA was pending still
    * wait for `releaseHeld` (activation raced the hold). */
   ingest(events: WhatsAppCallbackEvent[]): { received: number; heldPending: boolean } {
@@ -600,7 +612,8 @@ export class EccosGateway extends DurableObject<Env> {
     const now = Date.now();
     const insertedIds: number[] = [];
     this.ctx.storage.transactionSync(() => {
-      for (const ev of events) {
+      const stored = events.map((ev) => this.withOrigin(ev));
+      for (const ev of stored) {
         const tmid = "transportMessageId" in ev ? ev.transportMessageId : null;
         const mid = "messageId" in ev ? ev.messageId : null;
         const phoneNumberId = ev.phoneNumberId?.trim() || null;
@@ -623,7 +636,7 @@ export class EccosGateway extends DurableObject<Env> {
         this.writeConversation(ev, now);
       }
       if (insertedIds.length > 0) {
-        const phoneIds = new Set(events.map((event) => event.phoneNumberId?.trim() || null));
+        const phoneIds = new Set(stored.map((event) => event.phoneNumberId?.trim() || null));
         const phoneNumberId = phoneIds.size === 1 ? [...phoneIds][0] ?? null : null;
         const batch = this.sql
           .exec(
@@ -631,7 +644,7 @@ export class EccosGateway extends DurableObject<Env> {
              VALUES (?, ?, 'pending', 0, ?, ?)
              RETURNING id`,
             phoneNumberId,
-            JSON.stringify({ events }),
+            JSON.stringify({ events: stored }),
             now,
             now,
           )
@@ -720,20 +733,22 @@ export class EccosGateway extends DurableObject<Env> {
     errorJson: string | null,
     phoneNumberId?: string | null,
     waId?: string | null,
+    origin?: EventOrigin,
   ): void {
     const now = Date.now();
     const phoneId = phoneNumberId?.trim() || null;
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
         `INSERT INTO outbound_messages
-           (transport_message_id, recipient, phone_number_id, request, status, error, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (transport_message_id, recipient, phone_number_id, request, status, error, origin, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         transportMessageId,
         recipient,
         phoneId,
         requestJson,
         status,
         errorJson,
+        origin ? JSON.stringify(origin) : null,
         now,
       );
       if (status !== "sent" || !transportMessageId) return;
@@ -747,13 +762,31 @@ export class EccosGateway extends DurableObject<Env> {
       this.storeMessage(message, now);
       // A status callback can overtake the send's own response. It was stored
       // with no message to move, so replay it now that the message exists.
-      for (const row of this.sql.exec(
-        `SELECT payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`,
-        transportMessageId,
-      )) {
+      const overtaken = this.sql
+        .exec(`SELECT id, delivery_id, payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
+        .toArray();
+      for (const row of overtaken) {
         this.applyStoredEvent(row.payload as string, now);
+        if (origin) {
+          const deliveryId = row.delivery_id == null ? null : Number(row.delivery_id);
+          this.attachLateOrigin(Number(row.id), deliveryId, transportMessageId, row.payload as string, origin);
+        }
       }
     });
+  }
+
+  /** A status that overtook its send was stored without the origin: add it to the event and its
+   * batch, but only while that batch has never been attempted. A forwarded body is never rewritten. */
+  private attachLateOrigin(eventId: number, deliveryId: number | null, wamid: string, payload: string, origin: EventOrigin): void {
+    if (deliveryId === null) return;
+    const batch = this.sql
+      .exec(`SELECT payload FROM deliveries WHERE id = ? AND status = 'pending' AND attempts = 0`, deliveryId)
+      .toArray()[0];
+    if (!batch) return;
+    const { events } = JSON.parse(String(batch.payload)) as { events: WhatsAppCallbackEvent[] };
+    const patched = events.map((ev) => ("transportMessageId" in ev && ev.transportMessageId === wamid ? { ...ev, ...origin } : ev));
+    this.sql.exec(`UPDATE deliveries SET payload = ? WHERE id = ?`, JSON.stringify({ events: patched }), deliveryId);
+    this.sql.exec(`UPDATE inbound_events SET payload = ? WHERE id = ?`, JSON.stringify({ ...JSON.parse(payload), ...origin }), eventId);
   }
 
   /** Claims `key` for one send. Synchronous, so two concurrent claims cannot both see "new". */
@@ -1550,7 +1583,7 @@ export class EccosGateway extends DurableObject<Env> {
         .toArray().length > 0;
     if (result.ok) {
       if (settle("sent", result.id, null)) {
-        this.logOutbound(result.id, recipient, JSON.stringify(body), "sent", null, cfg.META_PHONE_NUMBER_ID, result.waId);
+        this.logOutbound(result.id, recipient, JSON.stringify(body), "sent", null, cfg.META_PHONE_NUMBER_ID, result.waId, { broadcastId: id });
       }
       return { kind: "done" };
     }
@@ -1570,7 +1603,7 @@ export class EccosGateway extends DurableObject<Env> {
       return { kind: "throttled", attempts };
     }
     if (settle(verdict === "unknown" ? "unknown" : "failed", null, error)) {
-      this.logOutbound(null, recipient, JSON.stringify(body), "failed", error, cfg.META_PHONE_NUMBER_ID);
+      this.logOutbound(null, recipient, JSON.stringify(body), "failed", error, cfg.META_PHONE_NUMBER_ID, null, { broadcastId: id });
     }
     return verdict === "halt"
       ? { kind: "halt", reason: `Meta refused the send with error ${codes.errorCode ?? "unknown"}` }
