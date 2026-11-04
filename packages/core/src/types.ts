@@ -63,7 +63,7 @@ export type WhatsAppCallbackEvent =
       profileName?: string;
       /** A quick-reply button's `payload`, or a button/list reply's `id`. */
       payload?: string;
-      /** The id (wamid) of the message this one replies to: a quoted message, or the template or interactive message whose button was tapped. */
+      /** The id (wamid) of the message this one replies to: a quoted message, the template or interactive message whose button was tapped, or the Flow message answered. */
       replyTo?: string;
     }
   | {
@@ -88,7 +88,7 @@ export type WhatsAppCallbackEvent =
       phoneNumberId?: string;
       /** The sender's WhatsApp profile name, when Meta sends one. */
       profileName?: string;
-      /** The id (wamid) of the message this one replies to: a quoted message, or the template or interactive message whose button was tapped. */
+      /** The id (wamid) of the message this one replies to: a quoted message, the template or interactive message whose button was tapped, or the Flow message answered. */
       replyTo?: string;
     } & MessageContent)
   | ({

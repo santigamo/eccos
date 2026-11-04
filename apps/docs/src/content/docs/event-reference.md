@@ -44,7 +44,7 @@ of the interactive button or list row.
 carries the BSUID whenever Meta sends one. `profileName` is the WhatsApp profile name, if any.
 
 `replyTo` is the id of the message the customer replied to: the template or interactive
-message whose button they tapped, or the message they quoted. It is absent otherwise.
+message whose button they tapped, the message they quoted, or the product message they asked about. It is absent otherwise.
 
 ## `message`: any other incoming content
 
