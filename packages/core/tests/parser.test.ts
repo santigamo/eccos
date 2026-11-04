@@ -669,6 +669,78 @@ describe("profile names", () => {
   });
 });
 
+describe("reply context (replyTo)", () => {
+  const BIZ = "15550555555";
+  const base = { from: "34600000000", timestamp: TS_SEC };
+  const ctx = (id: string) => ({ from: BIZ, id });
+  const parse = (message: Record<string, unknown>) => parseMetaWebhook(envelope({ messages: [{ ...base, ...message }] }))[0];
+
+  it("carries the quoted message id on a text reply, and nothing else from the context", () => {
+    const ev = parse({ id: "wamid.R", type: "text", text: { body: "Yes" }, context: ctx("wamid.ORIG") });
+    expect(ev).toEqual({ type: "reply", from: "34600000000", messageId: "wamid.R", text: "Yes", at: TS_MS, replyTo: "wamid.ORIG" });
+    expect(JSON.stringify(ev)).not.toContain(BIZ);
+  });
+
+  it("carries the template's id on a quick-reply tap", () => {
+    const ev = parse({ id: "wamid.B", type: "button", button: { text: "Confirm", payload: "confirm_42" }, context: ctx("wamid.TPL") });
+    expect(ev).toMatchObject({ type: "reply", payload: "confirm_42", replyTo: "wamid.TPL" });
+  });
+
+  it("carries it on interactive button and list replies", () => {
+    const button = parse({ id: "wamid.BR", type: "interactive", interactive: { type: "button_reply", button_reply: { id: "y", title: "Yes" } }, context: ctx("wamid.I1") });
+    const list = parse({ id: "wamid.LR", type: "interactive", interactive: { type: "list_reply", list_reply: { id: "nl", title: "Nederlands" } }, context: ctx("wamid.I2") });
+    expect(button).toMatchObject({ type: "reply", replyTo: "wamid.I1" });
+    expect(list).toMatchObject({ type: "reply", replyTo: "wamid.I2" });
+  });
+
+  it("carries it on a quoted image and on a Flow response", () => {
+    const image = parse({ id: "wamid.IM", type: "image", image: { id: "M", mime_type: "image/jpeg" }, context: ctx("wamid.ORIG") });
+    const flow = parse({
+      id: "wamid.F",
+      type: "interactive",
+      interactive: { type: "nfm_reply", nfm_reply: { name: "flow", body: "Sent", response_json: "{}" } },
+      context: ctx("wamid.FLOW"),
+    });
+    expect(image).toMatchObject({ type: "message", messageType: "image", replyTo: "wamid.ORIG" });
+    expect(flow).toMatchObject({ type: "message", replyTo: "wamid.FLOW" });
+  });
+
+  it("leaves replyTo out for forwarded messages, no context, and a blank id", () => {
+    for (const context of [{ forwarded: true }, undefined, { id: "  " }]) {
+      const extra = context ? { context } : {};
+      expect(parse({ id: "wamid.T", type: "text", text: { body: "Hi" }, ...extra })).not.toHaveProperty("replyTo");
+      expect(parse({ id: "wamid.I", type: "image", image: { id: "M" }, ...extra })).not.toHaveProperty("replyTo");
+    }
+  });
+
+  it("leaves it out of a reaction, whose target stays in reaction.messageId", () => {
+    const ev = parse({ id: "wamid.RX", type: "reaction", reaction: { message_id: "wamid.ORIG", emoji: "👍" } });
+    expect(ev).not.toHaveProperty("replyTo");
+    expect(ev).toMatchObject({ reaction: { messageId: "wamid.ORIG" } });
+  });
+
+  it("does not forward the context of an echo", () => {
+    const [echo] = parseMetaEchoes({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "WABA_ID",
+          changes: [
+            {
+              field: "smb_message_echoes",
+              value: {
+                message_echoes: [{ to: "34600000000", id: "wamid.E1", timestamp: TS_SEC, type: "text", text: { body: "Hola" }, context: ctx("wamid.ORIG") }],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(echo.type).toBe("echo");
+    expect(echo).not.toHaveProperty("replyTo");
+  });
+});
+
 // Shapes from Meta's "Business-scoped user IDs" guide: a username user whose number
 // Meta withholds has no `from`/`to`/`wa_id`, only the BSUID.
 describe("business-scoped user ids (BSUID)", () => {
