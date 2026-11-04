@@ -1438,26 +1438,42 @@ export class EccosGateway extends DurableObject<Env> {
     return this.ownsBroadcast(accountId, id) ? readBroadcast(this.sql, id) : null;
   }
 
-  /** `before` is a broadcast id: the page starts after it. A cursor swept by retention yields an empty page. */
-  async listBroadcasts(accountId: string, limit: number, before?: string): Promise<BroadcastSummary[]> {
-    const rows = before
-      ? this.sql.exec(
-          `SELECT id FROM broadcasts WHERE account_id = ?
-             AND (created_at, rowid) < (SELECT created_at, rowid FROM broadcasts WHERE id = ?)
-           ORDER BY created_at DESC, rowid DESC LIMIT ?`,
-          accountId,
-          before,
-          limit,
-        )
-      : this.sql.exec(
-          `SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
-          accountId,
-          limit,
-        );
-    return rows
+  async listBroadcasts(accountId: string, limit: number): Promise<BroadcastSummary[]> {
+    return (await this.listBroadcastPage(accountId, limit)).items;
+  }
+
+  /**
+   * `before` is a broadcast id: the page starts after it (a cursor swept by retention yields an
+   * empty page). One extra id is selected to know whether more exist; only `limit` summaries are built.
+   */
+  async listBroadcastPage(
+    accountId: string,
+    limit: number,
+    before?: string,
+  ): Promise<{ items: BroadcastSummary[]; hasMore: boolean }> {
+    const ids = (
+      before
+        ? this.sql.exec(
+            `SELECT id FROM broadcasts WHERE account_id = ?
+               AND (created_at, rowid) < (SELECT created_at, rowid FROM broadcasts WHERE id = ?)
+             ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+            accountId,
+            before,
+            limit + 1,
+          )
+        : this.sql.exec(
+            `SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+            accountId,
+            limit + 1,
+          )
+    )
       .toArray()
-      .map((row) => readBroadcast(this.sql, String(row.id)))
+      .map((row) => String(row.id));
+    const items = ids
+      .slice(0, limit)
+      .map((id) => readBroadcast(this.sql, id))
       .filter((summary): summary is BroadcastSummary => summary !== null);
+    return { items, hasMore: ids.length > limit };
   }
 
   async listBroadcastRecipients(

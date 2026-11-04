@@ -457,9 +457,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   ): Promise<ScopedRead<CursorPage<BroadcastSummary>>> {
     const { scope, stub } = await this.selected(org);
     const limit = clampLimit(opts?.limit, 50, 20);
-    const rows = await stub.listBroadcasts(scope.accountId, limit + 1, opts?.cursor);
-    const items = rows.slice(0, limit);
-    return { scope, data: { items, nextCursor: rows.length > limit ? (items.at(-1)?.id ?? null) : null } };
+    const { items, hasMore } = await stub.listBroadcastPage(scope.accountId, limit, opts?.cursor);
+    return { scope, data: { items, nextCursor: hasMore ? (items.at(-1)?.id ?? null) : null } };
   }
 
   async readBroadcast(org: ScopedOrg, opts: BroadcastOpts): Promise<ScopedRead<BroadcastDetail | null>> {

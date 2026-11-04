@@ -99,7 +99,9 @@ describe("/broadcasts", () => {
   });
 
   test("failed is red only when there is something to act on", () => {
-    expect(renderList([summary()])).toContain("text-[#ff7777]");
+    const html = renderList([summary()]);
+    expect(html).toContain("text-[#ff7777]");
+    expect(html).toContain('href="/broadcasts/$broadcastId"');
     const clean = renderList([summary({ counts: { queued: 0, sending: 0, sent: 12, failed: 0, unknown: 0, cancelled: 0 } })]);
     expect(clean).not.toContain("text-[#ff7777]");
   });

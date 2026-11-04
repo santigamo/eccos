@@ -108,8 +108,17 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
       header: "Failed",
       cell: (info) => {
         const failed = failedCount(info.row.original.counts);
+        if (failed === 0) return <span className="font-mono text-xs tabular-nums">0</span>;
         return (
-          <span className={`font-mono text-xs tabular-nums ${failed > 0 ? "text-[#ff7777]" : ""}`}>{failed}</span>
+          <Link
+            to="/broadcasts/$broadcastId"
+            params={{ broadcastId: info.row.original.id }}
+            search={{ status: "failed", ...(wabaId ? { wabaId } : {}) }}
+            onClick={(event) => event.stopPropagation()}
+            className={`font-mono text-xs tabular-nums text-[#ff7777] ${COUNT_LINK}`}
+          >
+            {failed}
+          </Link>
         );
       },
       meta: numeric,

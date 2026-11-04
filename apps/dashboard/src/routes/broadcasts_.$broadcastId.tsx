@@ -273,7 +273,6 @@ function BroadcastPage() {
           <RecipientCounts
             broadcastId={broadcast.id}
             counts={counts}
-            running={running}
             wabaId={selectedWabaId}
           />
         </FactCell>

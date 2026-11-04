@@ -12,6 +12,7 @@ import type { SessionEvent } from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
+import { normalizeBroadcastId, normalizeRecipientStatus, normalizeSeqCursor } from "../lib/broadcasts";
 import { analyzeDraftBody } from "../lib/template-params";
 import { isBsuid } from "@eccos/core/bsuid";
 import { normalizeCustomerId } from "../lib/customer-id";
@@ -397,19 +398,11 @@ function validateOutboundInput(input: unknown): (DashboardOutboundOpts & Dashboa
 /** Page sizes: a broadcast summary is two aggregate queries over up to 10 000 recipients. */
 const BROADCAST_PAGE_SIZE = 20;
 const RECIPIENT_PAGE_SIZE = 100;
-const BROADCAST_ID_PATTERN = /^bc_[0-9a-f]{32}$/;
-const RECIPIENT_STATUSES: readonly BroadcastRecipientStatus[] = [
-  "queued",
-  "sending",
-  "sent",
-  "failed",
-  "unknown",
-  "cancelled",
-];
 
 function requiredBroadcastId(value: unknown): string {
-  if (typeof value !== "string" || !BROADCAST_ID_PATTERN.test(value)) throw new Error("invalid broadcastId");
-  return value;
+  const id = normalizeBroadcastId(value);
+  if (!id) throw new Error("invalid broadcastId");
+  return id;
 }
 
 export function validateBroadcastListInput(input: unknown): { wabaId?: string; cursor?: string } | undefined {
@@ -429,17 +422,15 @@ export function validateBroadcastInput(input: unknown): {
   const record = inputRecord(input);
   const wabaId = optionalWabaId(record.wabaId);
   const broadcastId = requiredBroadcastId(record.broadcastId);
-  if (record.status !== undefined && !RECIPIENT_STATUSES.includes(record.status as BroadcastRecipientStatus)) {
-    throw new Error("invalid status");
-  }
-  if (record.cursor !== undefined && (typeof record.cursor !== "string" || !/^[0-9]{1,15}$/.test(record.cursor))) {
-    throw new Error("invalid cursor");
-  }
+  const status = normalizeRecipientStatus(record.status);
+  if (record.status !== undefined && !status) throw new Error("invalid status");
+  const cursor = typeof record.cursor === "string" ? normalizeSeqCursor(record.cursor) : undefined;
+  if (record.cursor !== undefined && !cursor) throw new Error("invalid cursor");
   return {
     ...(wabaId ? { wabaId } : {}),
     broadcastId,
-    ...(record.status !== undefined ? { status: record.status as BroadcastRecipientStatus } : {}),
-    ...(record.cursor !== undefined ? { cursor: record.cursor as string } : {}),
+    ...(status ? { status } : {}),
+    ...(cursor ? { cursor } : {}),
   };
 }
 

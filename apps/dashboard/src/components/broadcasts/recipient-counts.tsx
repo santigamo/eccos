@@ -3,10 +3,9 @@ import type { BroadcastSummary } from "@eccos/gateway-contract";
 import { RECIPIENT_STATUSES } from "../../lib/broadcasts";
 import { COUNT_LINK } from "../../ui";
 
-/** Red where an operator may have to act; amber only while the broadcast is still going. */
-function ink(status: string, running: boolean): string {
+/** Red only where an operator may have to act; progress states stay muted. */
+function ink(status: string): string {
   if (status === "failed" || status === "unknown") return "text-[#ff7777]";
-  if (running && (status === "queued" || status === "sending")) return "text-[#f0a020]";
   return "text-muted-foreground hover:text-foreground";
 }
 
@@ -18,12 +17,10 @@ function ink(status: string, running: boolean): string {
 export function RecipientCounts({
   broadcastId,
   counts,
-  running,
   wabaId,
 }: {
   broadcastId: string;
   counts: BroadcastSummary["counts"];
-  running: boolean;
   wabaId?: string;
 }) {
   const entries = RECIPIENT_STATUSES.filter((status) => counts[status] > 0);
@@ -44,7 +41,7 @@ export function RecipientCounts({
             to="/broadcasts/$broadcastId"
             params={{ broadcastId }}
             search={{ status, ...(wabaId ? { wabaId } : {}) }}
-            className={`${COUNT_LINK} ${ink(status, running)}`}
+            className={`${COUNT_LINK} ${ink(status)}`}
           >
             {status} <span className="tabular-nums">{counts[status]}</span>
           </Link>
