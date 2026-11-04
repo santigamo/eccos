@@ -47,6 +47,15 @@ describe("parseScheduledRequest", () => {
     });
   });
 
+  test("refuses an expiresAt more than 7 days after sendAt", () => {
+    const sendAt = NOW + 60_000;
+    expect(parseScheduledRequest(body({ expiresAt: sendAt + 7 * 24 * 3600_000 }), NOW).ok).toBe(true);
+    expect(parseScheduledRequest(body({ expiresAt: sendAt + 7 * 24 * 3600_000 + 1 }), NOW)).toEqual({
+      ok: false,
+      error: "expiresAt can be at most 7 days after sendAt",
+    });
+  });
+
   test("refuses more than 90 days ahead", () => {
     expect(parseScheduledRequest(body({ sendAt: NOW + 91 * 24 * 3600_000 }), NOW)).toEqual({
       ok: false,

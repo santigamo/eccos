@@ -12,6 +12,7 @@ import { isRecipient, parseTemplate, STALE_SENDING_MS } from "./broadcasts";
 export const MAX_PENDING_SCHEDULED = 50_000;
 export const MAX_SCHEDULE_AHEAD_MS = 90 * 24 * 3600_000;
 export const DEFAULT_EXPIRY_MS = 3600_000;
+export const MAX_EXPIRY_AFTER_SEND_MS = 7 * 24 * 3600_000;
 export const MAX_SCHEDULED_BODY_BYTES = 64 * 1024;
 export const SCHEDULE_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -79,6 +80,9 @@ export function parseScheduledRequest(body: unknown, now: number): ParsedSchedul
     expiresAt = parsed;
   }
   if (expiresAt <= sendAt) return { ok: false, error: "expiresAt must be after sendAt" };
+  if (expiresAt > sendAt + MAX_EXPIRY_AFTER_SEND_MS) {
+    return { ok: false, error: "expiresAt can be at most 7 days after sendAt" };
+  }
   if (expiresAt <= now) return { ok: false, error: "expiresAt is in the past" };
   return {
     ok: true,
@@ -179,7 +183,7 @@ export function upsertScheduled(
   if (existing?.status === "pending") {
     sql.exec(
       `UPDATE scheduled_sends SET phone_number_id = ?, recipient = ?, template_name = ?, language = ?, components = ?,
-         send_at = ?, expires_at = ?, next_attempt_at = ?, updated_at = ? WHERE account_id = ? AND key = ?`,
+         send_at = ?, expires_at = ?, next_attempt_at = ?, attempts = 0, error = NULL, updated_at = ? WHERE account_id = ? AND key = ?`,
       phoneNumberId, request.to, request.templateName, request.language, components,
       request.sendAt, request.expiresAt, request.sendAt, now, accountId, key,
     );

@@ -1506,23 +1506,34 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /** scheduledStep, but never thrown: the broadcast and media wakes in alarm() must run whatever happens here. */
-  private async runScheduledStep(): Promise<{ claimed: number; wakeAt: number | null }> {
+  private async runScheduledStep(): Promise<{ claimed: number; retryAt: number | null }> {
     try {
-      return await this.scheduledStep(Date.now());
+      return { claimed: await this.scheduledStep(Date.now()), retryAt: null };
     } catch (error) {
       console.error(
         JSON.stringify({ level: "error", area: "scheduled", event: "step-failed", wabaId: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
       );
-      return { claimed: 0, wakeAt: Date.now() + 30_000 };
+      return { claimed: 0, retryAt: Date.now() + 30_000 };
     }
+  }
+
+  /**
+   * When the scheduled sends next need the alarm. Read after the last await of alarm():
+   * a PUT that landed during the run is seen here and not overwritten.
+   */
+  private scheduledWakeAt(): number | null {
+    const next = nextScheduledWake(this.sql);
+    if (next === null) return null;
+    const tickAt = Number(this.sql.exec(`SELECT value FROM ops_state WHERE key = 'scheduled_next_tick_at'`).toArray()[0]?.value ?? 0);
+    return Math.max(next, tickAt);
   }
 
   /**
    * One tick of the due scheduled sends: ends the stale and expired ones, then claims up to
    * the account's per-tick share and sends them. Returns how many it claimed (broadcasts
-   * give way by that much this tick) and when it wants to run again.
+   * give way by that much this tick).
    */
-  private async scheduledStep(now: number): Promise<{ claimed: number; wakeAt: number | null }> {
+  private async scheduledStep(now: number): Promise<number> {
     // The UPDATEs and their events share one sync segment: no await in between.
     const ended = [
       ...sweepStaleSending(this.sql, now).map((row) => scheduledFailedEvent(row, "unknown", null, now)),
@@ -1531,33 +1542,34 @@ export class EccosGateway extends DurableObject<Env> {
     this.ingest(ended);
 
     const tickAt = Number(this.sql.exec(`SELECT value FROM ops_state WHERE key = 'scheduled_next_tick_at'`).toArray()[0]?.value ?? 0);
-    const wake = (): number | null => {
-      const next = nextScheduledWake(this.sql);
-      return next === null ? null : Math.max(next, tickAt);
-    };
-    if (tickAt > now) return { claimed: 0, wakeAt: wake() };
+    if (tickAt > now) return 0;
     const first = this.sql
       .exec(`SELECT account_id FROM scheduled_sends WHERE status = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at LIMIT 1`, now)
       .toArray()[0];
-    if (!first) return { claimed: 0, wakeAt: nextScheduledWake(this.sql) };
+    if (!first) return 0;
 
-    const { perTick, tickMs } = pacing(sendRatePerMinute(this.env, String(first.account_id)));
-    const due = claimDue(this.sql, now, perTick);
-    // Set before sending: an early wake must not send faster than the pace.
-    const next = now + tickMs;
-    this.sql.exec(
-      "INSERT INTO ops_state (key, value) VALUES ('scheduled_next_tick_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      String(next),
-    );
+    // The token comes before the claim: a run that dies here leaves no row `sending` with nothing sent.
     const token = await this.metaToken();
     if (token === "missing" || token === "unavailable") {
       // Nothing is spent: the rows wait, and expire if the WABA stays disconnected.
-      for (const row of due) this.requeueScheduled(row, Math.min(now + 30_000, Number(row.expires_at)));
-      return { claimed: 0, wakeAt: Math.max(nextScheduledWake(this.sql) ?? next, next) };
+      this.sql.exec(
+        `UPDATE scheduled_sends SET next_attempt_at = MIN(?, expires_at), updated_at = ?
+         WHERE status = 'pending' AND next_attempt_at <= ?`,
+        now + 30_000,
+        Date.now(),
+        now,
+      );
+      return 0;
     }
+    const { perTick, tickMs } = pacing(sendRatePerMinute(this.env, String(first.account_id)));
+    const due = claimDue(this.sql, now, perTick);
+    // Set before sending: an early wake must not send faster than the pace.
+    this.sql.exec(
+      "INSERT INTO ops_state (key, value) VALUES ('scheduled_next_tick_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      String(now + tickMs),
+    );
     await Promise.all(due.map((row) => this.sendScheduled(row, token)));
-    const after = nextScheduledWake(this.sql);
-    return { claimed: due.length, wakeAt: after === null ? null : Math.max(after, next) };
+    return due.length;
   }
 
   /** Back to pending without spending an attempt. */
@@ -2395,12 +2407,15 @@ export class EccosGateway extends DurableObject<Env> {
     const syncWake = await this.runSyncBatch(now);
     if (syncWake !== null) wakes.push(Date.now() + syncWake);
     const scheduled = await this.runScheduledStep();
-    if (scheduled.wakeAt !== null) wakes.push(scheduled.wakeAt);
+    if (scheduled.retryAt !== null) wakes.push(scheduled.retryAt);
     const broadcastWakeAt = await this.runBroadcastStep(scheduled.claimed);
     if (broadcastWakeAt !== null) wakes.push(broadcastWakeAt);
     // Last, after the sweep, so the media of the messages it just pruned is purged in this same alarm.
     const mediaWakeAt = await this.mediaStep(now);
     if (mediaWakeAt !== null) wakes.push(mediaWakeAt);
+    // After the last await, so a send scheduled during the run is not overwritten.
+    const scheduledWakeAt = this.scheduledWakeAt();
+    if (scheduledWakeAt !== null) wakes.push(scheduledWakeAt);
     // Work that arrived during this run was armed for now, and the earlier wakes above would overwrite it.
     if (this.wakeArrived) wakes.push(Date.now());
     if (wakes.length > 0) this.ctx.storage.setAlarm(Math.min(...wakes));

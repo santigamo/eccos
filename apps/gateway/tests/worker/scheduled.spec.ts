@@ -30,7 +30,7 @@ afterEach(async () => {
 type SendAnswer = { status: number; body: unknown };
 
 /** Meta: the template lookup answers with `templateStatus`; each send takes the next answer from `sends`. */
-function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[] } = {}) {
+function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[]; onSend?: () => Promise<void> } = {}) {
   const sends = [...(opts.sends ?? [])];
   let wamid = 0;
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -43,6 +43,7 @@ function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[] }
       const status = opts.templateStatus === undefined ? "APPROVED" : opts.templateStatus;
       return Response.json({ data: status === null ? [] : [{ name: "promo", language: "es", status, id: "1" }] });
     }
+    await opts.onSend?.();
     const answer = sends.shift();
     if (answer) return Response.json(answer.body, { status: answer.status });
     wamid++;
@@ -150,7 +151,9 @@ describe("PUT /scheduled/:key", () => {
       sendAt: Date.now() + 2 * HOUR,
       template: { name: "promo", language: "es", components: [{ type: "body", parameters: [{ type: "text", text: "Berta" }] }] },
     });
+    await sql((s) => s.exec(`UPDATE scheduled_sends SET attempts = 2, error = '{}'`));
     expect((await put("appt-1", newer)).status).toBe(200);
+    expect(await row("appt-1")).toMatchObject({ attempts: 0, error: null });
     expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM scheduled_sends`).one().n)).toBe(1);
     await due();
     const bodies = sendBodies(fetchSpy);
@@ -434,6 +437,31 @@ describe("pacing and alarm", () => {
     await sql((s) => s.exec(`UPDATE broadcasts SET next_send_at = 0`));
     await runAlarm();
     expect(await alarm()).toBe(sendAt);
+  });
+
+  it("a send scheduled during the alarm's awaits is not overwritten by its final re-arm", async () => {
+    const sendAt = Date.now() + 20_000;
+    let issued = false;
+    mockMeta({
+      onSend: async () => {
+        if (issued) return;
+        issued = true;
+        expect((await put("late", sched({ sendAt }))).status).toBe(201);
+      },
+    });
+    // No subscriber: the events wait in `deliveries`, whose hold wake is about an hour away.
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => i.ingest([{ type: "sent", transportMessageId: "wamid.X", at: 1 }]));
+    const res = await exports.default.fetch(`http://example.com/v1/wabas/${TEST_WABA_ID}/broadcasts`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ template: { name: "promo", language: { code: "es" } }, recipients: [{ to: "34600000002" }] }),
+    });
+    expect(res.status).toBe(202);
+    await runAlarm();
+    expect(issued).toBe(true);
+    const alarm = await runInDurableObject(gatewayStub(), (_i, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm).toBeLessThanOrEqual(sendAt);
   });
 
   it("a PUT arms the alarm", async () => {

@@ -35,7 +35,7 @@ time.
   offset). A time without one is refused. It can be at most 90 days ahead. A `sendAt` already in
   the past is sent now, as long as it has not expired.
 - `expiresAt` is optional and defaults to `sendAt` plus one hour. A send that has not gone out by
-  then is not sent at all. It must be after `sendAt` and in the future.
+  then is not sent at all. It must be after `sendAt`, at most 7 days after it, and in the future.
 - `phone_number_id` (or `/v1/wabas/{wabaId}/phones/{phoneNumberId}/scheduled/{key}`) is needed
   only when the account has more than one number.
 

@@ -156,8 +156,8 @@ removes the customer from every broadcast.
 Scheduled sends (`scheduled_sends`): the recipient, the template, its values, the status and
 Meta's error when the send failed. The values are deleted at the first terminal transition or
 cancel; a throttled retry keeps them until it settles. A terminal row is deleted with the content
-window, by its `updated_at`. A pending row is kept until it ends, which can be up to 90 days plus
-its expiry, longer than the content window: the client asked for it. `eraseByPhone` deletes the
+window, by its `updated_at`. A pending row is kept until it ends, which can be at most 97 days (90 days ahead plus
+up to 7 days of expiry), longer than the content window: the client asked for it. `eraseByPhone` deletes the
 customer's rows in every status (a pending one is then never sent). Each logged send carries
 `{scheduleKey}` in `outbound_messages.origin`. `scheduled_failed` events are ordinary
 `inbound_events` and `deliveries` rows.
