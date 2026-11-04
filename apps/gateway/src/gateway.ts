@@ -1438,9 +1438,23 @@ export class EccosGateway extends DurableObject<Env> {
     return this.ownsBroadcast(accountId, id) ? readBroadcast(this.sql, id) : null;
   }
 
-  async listBroadcasts(accountId: string, limit: number): Promise<BroadcastSummary[]> {
-    return this.sql
-      .exec(`SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`, accountId, limit)
+  /** `before` is a broadcast id: the page starts after it. A cursor swept by retention yields an empty page. */
+  async listBroadcasts(accountId: string, limit: number, before?: string): Promise<BroadcastSummary[]> {
+    const rows = before
+      ? this.sql.exec(
+          `SELECT id FROM broadcasts WHERE account_id = ?
+             AND (created_at, rowid) < (SELECT created_at, rowid FROM broadcasts WHERE id = ?)
+           ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+          accountId,
+          before,
+          limit,
+        )
+      : this.sql.exec(
+          `SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+          accountId,
+          limit,
+        );
+    return rows
       .toArray()
       .map((row) => readBroadcast(this.sql, String(row.id)))
       .filter((summary): summary is BroadcastSummary => summary !== null);

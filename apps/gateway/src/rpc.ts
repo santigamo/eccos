@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getGatewayStubForWaba } from "./gateway-stub";
+import { RECIPIENT_STATUSES, type RecipientStatus } from "./broadcasts";
 import { getControlPlaneStub } from "./control-plane-stub";
 import {
   exchangeAndRegisterAll,
@@ -19,6 +20,10 @@ import { isIdempotencyKey, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
 import type {
   AccountKeyResource,
+  BroadcastDetail,
+  BroadcastListOpts,
+  BroadcastOpts,
+  BroadcastSummary,
   AccountResources,
   ConnectExchangeResult,
   ConnectStartResult,
@@ -108,6 +113,10 @@ function logSend(source: string, wabaId: string, phoneNumberId: string, messageT
   console.log(
     JSON.stringify({ level: result.ok ? "info" : "error", area: "rpc", event: "outbound_send", source, wabaId, phoneNumberId, messageType, ...outcome }),
   );
+}
+
+function clampLimit(n: number | undefined, max: number, fallback: number): number {
+  return typeof n === "number" && Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), max) : fallback;
 }
 
 function requireAccountId(accountId: string | undefined, message: string): string {
@@ -440,6 +449,47 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   ): Promise<ScopedRead<DeliveryRecord[]>> {
     const { scope, stub } = await this.selected(org);
     return { scope, data: await stub.listDeliveries(opts) };
+  }
+
+  async readBroadcasts(
+    org: ScopedOrg,
+    opts: BroadcastListOpts,
+  ): Promise<ScopedRead<CursorPage<BroadcastSummary>>> {
+    const { scope, stub } = await this.selected(org);
+    const limit = clampLimit(opts?.limit, 50, 20);
+    const rows = await stub.listBroadcasts(scope.accountId, limit + 1, opts?.cursor);
+    const items = rows.slice(0, limit);
+    return { scope, data: { items, nextCursor: rows.length > limit ? (items.at(-1)?.id ?? null) : null } };
+  }
+
+  async readBroadcast(org: ScopedOrg, opts: BroadcastOpts): Promise<ScopedRead<BroadcastDetail | null>> {
+    const { scope, stub } = await this.selected(org);
+    const id = requireAccountId(opts?.broadcastId, "broadcastId is required");
+    if (opts.status !== undefined && !RECIPIENT_STATUSES.has(opts.status)) throw new Error("invalid status");
+    const after = opts.cursor === undefined ? undefined : Number(opts.cursor);
+    if (after !== undefined && !(Number.isSafeInteger(after) && after >= 0)) throw new Error("invalid cursor");
+    const limit = clampLimit(opts.limit, 500, 100);
+    const broadcast = await stub.getBroadcast(scope.accountId, id);
+    if (!broadcast) return { scope, data: null };
+    const rows =
+      (await stub.listBroadcastRecipients(scope.accountId, id, {
+        ...(opts.status ? { status: opts.status as RecipientStatus } : {}),
+        ...(after !== undefined ? { after } : {}),
+        limit: limit + 1,
+      })) ?? [];
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
+    const nextCursor = rows.length > limit && last ? String(last.seq) : null;
+    return { scope, data: { broadcast, recipients: { items, nextCursor } } };
+  }
+
+  async cancelBroadcast(
+    input: { wabaId: string; broadcastId: string },
+    accountId: string,
+  ): Promise<BroadcastSummary | null> {
+    // Ownership only, whatever the WABA's status: stopping sends is always safe.
+    const stub = await this.ownedStub(input.wabaId, accountId);
+    return stub.cancelBroadcast(accountId, input.broadcastId);
   }
 
   async readConversations(

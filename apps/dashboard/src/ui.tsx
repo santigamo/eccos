@@ -45,6 +45,7 @@ const STATUS_TONES: Record<string, StatusTone> = {
   active: "success",
   delivered: "success",
   sent: "success",
+  completed: "success",
   approved: "success",
   // The Webhooks page's own two states. `forwarding` is a FACT, not a switch:
   // Eccos has no pause semantics, and a tag that reads as a toggle but is not
@@ -71,6 +72,10 @@ const STATUS_TONES: Record<string, StatusTone> = {
   unreachable: "destructive",
   failed: "destructive",
   rejected: "destructive",
+  // A broadcast stopped on its own: its cause is stated beside the tag.
+  halted: "destructive",
+  // Meta may have sent it, and Eccos never retries it: the operator has to look.
+  unknown: "warning",
 }
 
 const TONE_CLASSES: Record<StatusTone, string> = {

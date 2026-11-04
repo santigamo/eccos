@@ -25,7 +25,13 @@ import { EccosGateway as Gateway } from "./gateway";
 import { EccosControlPlane as ControlPlane } from "./control-plane";
 import { sentryOptions } from "./sentry";
 import { checkSendRate, sendRatePerMinute } from "./send-rate-limit";
-import { MAX_BROADCAST_BODY_BYTES, parseBroadcastRequest, parseStoredError, type RecipientStatus } from "./broadcasts";
+import {
+  MAX_BROADCAST_BODY_BYTES,
+  parseBroadcastRequest,
+  parseStoredError,
+  RECIPIENT_STATUSES,
+  type RecipientStatus,
+} from "./broadcasts";
 import {
   MAX_SCHEDULED_BODY_BYTES,
   parseScheduledRequest,
@@ -1009,8 +1015,6 @@ async function broadcastStub(c: AppContext) {
   }
   return { account, stub: getGatewayStubForWaba(c.env, wabaId) } as const;
 }
-
-const RECIPIENT_STATUSES = new Set(["queued", "sending", "sent", "failed", "unknown", "cancelled"]);
 
 app.post("/v1/wabas/:wabaId/broadcasts", createBroadcastRoute);
 app.post("/v1/wabas/:wabaId/phones/:phoneNumberId/broadcasts", createBroadcastRoute);

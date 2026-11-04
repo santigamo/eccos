@@ -262,6 +262,9 @@ const {
   getThreadView,
   validateConversationListInput,
   validateConversationInput,
+  listBroadcasts,
+  getBroadcast,
+  cancelBroadcast,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -1207,6 +1210,118 @@ describe("sendTemplateTest (Send test sheet)", () => {
     expect(audit).not.toContain("34600000011");
     expect(audit).not.toContain("600");
     expect(audit).not.toContain("Ada Lovelace");
+  });
+});
+
+// --- Broadcasts (routes/broadcasts.tsx, routes/broadcasts_.$broadcastId.tsx) ---
+
+describe("broadcasts", () => {
+  const BC = `bc_${"a".repeat(32)}`;
+  const BC2 = `bc_${"b".repeat(32)}`;
+  const page = { items: [], nextCursor: null };
+
+  test("listBroadcasts forwards the cursor and the resolved WABA, never an account", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      readBroadcasts: async (...args: unknown[]) => {
+        calls.push(args);
+        return { scope: {}, data: page };
+      },
+    });
+    const res = await listBroadcasts({ data: { wabaId: "waba-a", cursor: BC, accountId: "evil" } as never });
+    expect(res.ok).toBe(true);
+    expect(calls).toEqual([[{ organizationId: ORG_ID, wabaId: "waba-a" }, { cursor: BC, limit: 20 }]]);
+  });
+
+  test("listBroadcasts refuses a malformed cursor before the gateway", async () => {
+    let called = false;
+    withResources({
+      readBroadcasts: async () => {
+        called = true;
+        return { scope: {}, data: page };
+      },
+    });
+    expect(() => listBroadcasts({ data: { cursor: "1; DROP" } })).toThrow("invalid broadcastId");
+    expect(called).toBe(false);
+  });
+
+  test("getBroadcast validates the id, status and cursor, then forwards them", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      readBroadcast: async (...args: unknown[]) => {
+        calls.push(args);
+        return { scope: {}, data: null };
+      },
+    });
+    expect(() => getBroadcast({ data: { broadcastId: "nope" } })).toThrow("invalid broadcastId");
+    expect(() => getBroadcast({ data: { broadcastId: BC, status: "delivered" as never } })).toThrow(
+      "invalid status",
+    );
+    expect(() => getBroadcast({ data: { broadcastId: BC, cursor: "-1" } })).toThrow("invalid cursor");
+    expect(calls).toEqual([]);
+    const res = await getBroadcast({ data: { broadcastId: BC, status: "failed", cursor: "99", wabaId: "waba-a" } });
+    expect(res).toMatchObject({ ok: true, data: null });
+    expect(calls).toEqual([
+      [
+        { organizationId: ORG_ID, wabaId: "waba-a" },
+        { broadcastId: BC, status: "failed", cursor: "99", limit: 100 },
+      ],
+    ]);
+  });
+
+  test("cancelBroadcast: an operator cancels, with the session's account and an ids-only audit line", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      cancelBroadcast: async (...args: unknown[]) => {
+        calls.push(args);
+        return { id: BC, status: "cancelled" };
+      },
+    });
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    let res: Awaited<ReturnType<typeof cancelBroadcast>>;
+    try {
+      res = await cancelBroadcast({ data: { wabaId: "waba-a", broadcastId: BC } });
+    } finally {
+      console.info = original;
+    }
+    expect(res).toMatchObject({ ok: true, data: { status: "cancelled" } });
+    expect(calls).toEqual([[{ wabaId: "waba-a", broadcastId: BC }, "account-a"]]);
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    expect(audit).toContain('"action":"broadcast_cancel"');
+    expect(audit).toContain(BC);
+    expect(audit).not.toMatch(/\d{9,}/);
+  });
+
+  test("cancelBroadcast: a viewer is refused typed forbidden and the gateway is untouched", async () => {
+    let called = false;
+    withResources({
+      cancelBroadcast: async () => {
+        called = true;
+        return null;
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    const res = await cancelBroadcast({ data: { wabaId: "waba-a", broadcastId: BC } });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("cancelBroadcast: a WABA the account does not own is refused, a missing id comes back null", async () => {
+    let calls = 0;
+    withResources({
+      cancelBroadcast: async () => {
+        calls++;
+        return null;
+      },
+    });
+    const foreign = await cancelBroadcast({ data: { wabaId: "waba-foreign", broadcastId: BC } });
+    expect(foreign).toMatchObject({ ok: false, kind: "unreachable" });
+    expect(calls).toBe(0);
+    expect(await cancelBroadcast({ data: { wabaId: "waba-a", broadcastId: BC2 } })).toEqual({ ok: true, data: null });
   });
 });
 

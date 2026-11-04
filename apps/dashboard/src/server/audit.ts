@@ -50,6 +50,12 @@ export type SensitiveAction =
    */
   | "template_test_send"
   /**
+   * A running broadcast stopped from the console. Ids only (wabaId, broadcastId):
+   * the recipients are phone numbers and audit logs are not per-phone erasable,
+   * same rule as `template_test_send`.
+   */
+  | "broadcast_cancel"
+  /**
    * One free-text message sent from the conversation composer.
    *
    * Same rule as `template_test_send`, and for the same reason: the body is

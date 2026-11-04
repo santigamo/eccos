@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import {
   ActivityIcon,
   InboxIcon,
+  MegaphoneIcon,
   MessagesSquareIcon,
   SendIcon,
   FileTextIcon,
@@ -117,6 +118,19 @@ export const NAV_MAIN: NavGroup[] = [
         label: "Conversations",
         href: "/conversations",
         icon: <MessagesSquareIcon aria-hidden="true" />,
+        requires: "number",
+      },
+    ],
+  },
+  {
+    id: "sending",
+    label: "Sending",
+    items: [
+      {
+        id: "broadcasts",
+        label: "Broadcasts",
+        href: "/broadcasts",
+        icon: <MegaphoneIcon aria-hidden="true" />,
         requires: "number",
       },
     ],

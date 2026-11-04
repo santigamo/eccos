@@ -10,6 +10,14 @@
 
 import { isBsuid } from "@eccos/core/bsuid";
 import type { MetaErrorCodes } from "@eccos/core/send";
+import type {
+  BroadcastRecipientRow,
+  BroadcastRecipientStatus,
+  BroadcastStatus,
+  BroadcastSummary,
+} from "@eccos/gateway-contract";
+
+export type { BroadcastRecipientRow, BroadcastStatus, BroadcastSummary };
 
 export const MAX_BROADCAST_RECIPIENTS = 10_000;
 /** Sending rows older than this belong to a run that died mid-send: their outcome is unknown. */
@@ -27,8 +35,15 @@ export const FAILURE_BREAKER = 20;
 /** Share of the account's rate a broadcast uses, so single sends (OTPs, replies) keep the rest. */
 const BROADCAST_SHARE = 0.8;
 
-export type BroadcastStatus = "running" | "completed" | "cancelled" | "halted";
-export type RecipientStatus = "queued" | "sending" | "sent" | "failed" | "unknown" | "cancelled";
+export type RecipientStatus = BroadcastRecipientStatus;
+export const RECIPIENT_STATUSES: ReadonlySet<string> = new Set<RecipientStatus>([
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "unknown",
+  "cancelled",
+]);
 
 export interface BroadcastRequest {
   templateName: string;
@@ -234,22 +249,6 @@ export const BROADCAST_SCHEMA = [
     ON broadcast_recipients (broadcast_id, status, seq);`,
 ];
 
-export interface BroadcastSummary {
-  id: string;
-  status: BroadcastStatus;
-  phoneNumberId: string;
-  template: { name: string; language: string };
-  total: number;
-  duplicatesSkipped: number;
-  ratePerMinute: number;
-  counts: Record<RecipientStatus, number>;
-  /** Meta's later receipts for the messages that were sent. */
-  delivery: { delivered: number; read: number; failed: number };
-  haltReason: string | null;
-  createdAt: number;
-  finishedAt: number | null;
-}
-
 const EMPTY_COUNTS: Record<RecipientStatus, number> = {
   queued: 0,
   sending: 0,
@@ -294,16 +293,6 @@ export function readBroadcast(sql: SqlStorage, id: string): BroadcastSummary | n
     createdAt: Number(row.created_at),
     finishedAt: row.finished_at === null ? null : Number(row.finished_at),
   };
-}
-
-export interface BroadcastRecipientRow {
-  seq: number;
-  to: string;
-  status: RecipientStatus;
-  messageId: string | null;
-  /** Meta's error envelope as stored (JSON text); the route parses it. */
-  error: string | null;
-  attempts: number;
 }
 
 export function readRecipients(

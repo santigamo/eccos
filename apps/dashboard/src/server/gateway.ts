@@ -23,6 +23,9 @@ import {
 import { ForbiddenError, resolveMemberships } from "../auth/tenant";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
+  BroadcastDetail,
+  BroadcastRecipientStatus,
+  BroadcastSummary,
   AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
@@ -76,6 +79,11 @@ type DashboardConversationOpts = Omit<ConversationOpts, "wabaId">;
 export type {
   AccountKeyResource,
   AccountResources,
+  BroadcastDetail,
+  BroadcastRecipientRow,
+  BroadcastRecipientStatus,
+  BroadcastStatus,
+  BroadcastSummary,
   ConnectExchangeResult,
   ConnectStartResult,
   ConversationSummary,
@@ -384,6 +392,62 @@ function validateOutboundInput(input: unknown): (DashboardOutboundOpts & Dashboa
     ...(status !== undefined ? { status } : {}),
     ...(before !== undefined ? { before } : {}),
   };
+}
+
+/** Page sizes: a broadcast summary is two aggregate queries over up to 10 000 recipients. */
+const BROADCAST_PAGE_SIZE = 20;
+const RECIPIENT_PAGE_SIZE = 100;
+const BROADCAST_ID_PATTERN = /^bc_[0-9a-f]{32}$/;
+const RECIPIENT_STATUSES: readonly BroadcastRecipientStatus[] = [
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "unknown",
+  "cancelled",
+];
+
+function requiredBroadcastId(value: unknown): string {
+  if (typeof value !== "string" || !BROADCAST_ID_PATTERN.test(value)) throw new Error("invalid broadcastId");
+  return value;
+}
+
+export function validateBroadcastListInput(input: unknown): { wabaId?: string; cursor?: string } | undefined {
+  if (input === undefined) return undefined;
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (record.cursor !== undefined) requiredBroadcastId(record.cursor);
+  return { ...(wabaId ? { wabaId } : {}), ...(record.cursor !== undefined ? { cursor: record.cursor as string } : {}) };
+}
+
+export function validateBroadcastInput(input: unknown): {
+  wabaId?: string;
+  broadcastId: string;
+  status?: BroadcastRecipientStatus;
+  cursor?: string;
+} {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  const broadcastId = requiredBroadcastId(record.broadcastId);
+  if (record.status !== undefined && !RECIPIENT_STATUSES.includes(record.status as BroadcastRecipientStatus)) {
+    throw new Error("invalid status");
+  }
+  if (record.cursor !== undefined && (typeof record.cursor !== "string" || !/^[0-9]{1,15}$/.test(record.cursor))) {
+    throw new Error("invalid cursor");
+  }
+  return {
+    ...(wabaId ? { wabaId } : {}),
+    broadcastId,
+    ...(record.status !== undefined ? { status: record.status as BroadcastRecipientStatus } : {}),
+    ...(record.cursor !== undefined ? { cursor: record.cursor as string } : {}),
+  };
+}
+
+export function validateCancelBroadcastInput(input: unknown): { wabaId: string; broadcastId: string } {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  return { wabaId, broadcastId: requiredBroadcastId(record.broadcastId) };
 }
 
 function validateRetryInput(input: unknown): { id: number; wabaId: string } {
@@ -1522,6 +1586,57 @@ export const listDeliveries = createServerFn({ method: "GET" })
       withScopedData({ action: "view", wabaId: data?.wabaId }, (gateway, org) =>
         gateway.readDeliveries(org, withoutWaba(data)),
       ),
+  );
+
+export const listBroadcasts = createServerFn({ method: "GET" })
+  .validator(validateBroadcastListInput)
+  .handler(({ data }): Promise<Result<CursorPage<BroadcastSummary>>> =>
+    withScopedData({ action: "view", wabaId: data?.wabaId }, (gateway, org) =>
+      gateway.readBroadcasts(org, { cursor: data?.cursor, limit: BROADCAST_PAGE_SIZE }),
+    ),
+  );
+
+/** One broadcast and a page of its recipients; null data when it is not this account's. */
+export const getBroadcast = createServerFn({ method: "GET" })
+  .validator(validateBroadcastInput)
+  .handler(({ data }): Promise<Result<BroadcastDetail | null>> =>
+    withScopedData({ action: "view", wabaId: data.wabaId }, (gateway, org) =>
+      gateway.readBroadcast(org, {
+        broadcastId: data.broadcastId,
+        status: data.status,
+        cursor: data.cursor,
+        limit: RECIPIENT_PAGE_SIZE,
+      }),
+    ),
+  );
+
+/**
+ * Stop a running broadcast (`operate`: it changes outbound traffic, it configures
+ * nothing). Any WABA status is fine — stopping sends is always safe. The audit line
+ * carries ids only, never a recipient (see `SensitiveAction`'s "broadcast_cancel").
+ */
+export const cancelBroadcast = createServerFn({ method: "POST" })
+  .validator(validateCancelBroadcastInput)
+  .handler(
+    ({ data }): Promise<Result<BroadcastSummary | null>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("operate");
+        const scope = await resolveScope(gateway, data.wabaId, true, "any");
+        const broadcast = await gateway.cancelBroadcast(
+          { wabaId: scope.wabaId, broadcastId: data.broadcastId },
+          scope.accountId,
+        );
+        auditEvent({
+          action: "broadcast_cancel",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: { wabaId: scope.wabaId, broadcastId: data.broadcastId },
+          outcome: broadcast ? "success" : "failed",
+          ...(broadcast ? {} : { detail: "not_found" }),
+        });
+        return broadcast;
+      }),
   );
 
 export const listInbound = createServerFn({ method: "GET" })

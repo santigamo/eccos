@@ -87,6 +87,7 @@ describe("SCOPE_REQUIREMENTS", () => {
       "/events": "number",
       "/messages": "number",
       "/conversations": "number",
+      "/broadcasts": "number",
     });
   });
 
@@ -186,7 +187,7 @@ describe("nav and the root redirect agree", () => {
 });
 
 describe("the sidebar's groups", () => {
-  test("three named groups over a lead row, and no collapsibles", () => {
+  test("four named groups over a lead row, and no collapsibles", () => {
     // Eight items do not need collapsing; what the grouping buys is that the
     // `requires` levels cluster, so a fresh account dims the whole LOGS group
     // as "later" rather than three unrelated grey rows.
@@ -194,6 +195,7 @@ describe("the sidebar's groups", () => {
       null,
       "Setup",
       "Inbox",
+      "Sending",
       "Logs",
       "Workspace",
     ]);
@@ -201,6 +203,7 @@ describe("the sidebar's groups", () => {
       ["/"],
       ["/numbers", "/webhooks", "/templates"],
       ["/conversations"],
+      ["/broadcasts"],
       // TWO LOGS. One send used to produce a row in each of three: an outbound
       // message, a `delivered` callback under "Inbound", and a forwarding
       // batch. Messages and Events are the two UNITS; the forward is a state on

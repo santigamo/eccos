@@ -22,6 +22,8 @@ export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
  */
 export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/",
+  "/broadcasts",
+  "/broadcasts/$broadcastId",
   "/conversations",
   "/deliveries",
   "/events",
