@@ -1002,6 +1002,36 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
     });
   });
 
+  it("an operator settling a #10 on contacts lets history run", async () => {
+    const accountId = "acc-coex-settle";
+    const wabaId = "WABA_COEX_SETTLE";
+    await createAccount(accountId);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { syncCalls } = mockGraph((call) =>
+      call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts ? refused(10) : accepted("REQ_HIST"),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+    await cp(async (instance) => {
+      expect(await instance.settleCoexistenceSyncNotPermitted(accountId, wabaId, "history")).toBe(false);
+      expect(await instance.settleCoexistenceSyncNotPermitted(accountId, wabaId, "contacts")).toBe(true);
+      await instance.retryWabaProvisioning(accountId, wabaId);
+    });
+    await provisionWaba(env, accountId, wabaId);
+
+    expect(syncCalls.map((call) => call.syncType)).toEqual([
+      SMB_APP_DATA_SYNC_TYPE.contacts,
+      SMB_APP_DATA_SYNC_TYPE.history,
+    ]);
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(syncUnavailableReason(waba!.coexistence.contactsRequestId)).toBe("not_permitted");
+      expect(waba?.coexistence.historyRequestId).toBe("REQ_HIST");
+    });
+  });
+
   it("an unknown Meta error after issue still fails terminally and is never retried", async () => {
     const accountId = "acc-coex-unknown-code";
     const wabaId = "WABA_COEX_UNKNOWN_CODE";

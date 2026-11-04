@@ -791,6 +791,16 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(account, wabaId, syncKind);
   }
 
+  /** Operator-only and outside `GatewayApi`, like the reset above. */
+  async settleCoexistenceSyncNotPermitted(
+    wabaId: string,
+    accountId: string,
+    syncKind: "contacts" | "history",
+  ): Promise<boolean> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).settleCoexistenceSyncNotPermitted(account, wabaId, syncKind);
+  }
+
   /** Operator-only and outside `GatewayApi`, like the reset above: read-only Graph view of a WABA. */
   async diagnoseWaba(wabaId: string, accountId: string) {
     const account = requireAccountId(accountId, "accountId is required");

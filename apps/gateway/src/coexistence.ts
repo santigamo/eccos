@@ -375,9 +375,10 @@ export function coexistenceSyncSpentUnconfirmed(state: {
 /**
  * Why Meta refused a sync in a way that settles it: `already_synced` is
  * `2593107` (the number's one sync was spent before, possibly by another
- * provider), `history_sharing_off` is `2593109`.
+ * provider), `history_sharing_off` is `2593109`, `not_permitted` is recorded
+ * only by an operator, after reading Meta's `#10` in the logs.
  */
-export type SyncUnavailableReason = "already_synced" | "history_sharing_off";
+export type SyncUnavailableReason = "already_synced" | "history_sharing_off" | "not_permitted";
 
 /**
  * A refusal is stored in the sync's request-id column under this prefix, so a
@@ -394,6 +395,7 @@ export function syncUnavailableMarker(reason: SyncUnavailableReason): string {
 export function syncUnavailableReason(requestId: string | null): SyncUnavailableReason | null {
   if (requestId === syncUnavailableMarker("already_synced")) return "already_synced";
   if (requestId === syncUnavailableMarker("history_sharing_off")) return "history_sharing_off";
+  if (requestId === syncUnavailableMarker("not_permitted")) return "not_permitted";
   return null;
 }
 
@@ -402,6 +404,7 @@ const SYNC_LABEL = { contacts: "contacts", history: "message-history" } as const
 const UNAVAILABLE_BECAUSE: Record<SyncUnavailableReason, string> = {
   already_synced: "Meta reports it was already performed for this number",
   history_sharing_off: "the business has history sharing turned off",
+  not_permitted: "Meta refused it with a permission error",
 };
 
 /**
