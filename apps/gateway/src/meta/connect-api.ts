@@ -17,13 +17,22 @@ export class MetaGraphError extends Error {
   readonly graphMessage: string | null;
   /** Meta's numeric `error.code`, or null when the body carried none. */
   readonly code: number | null;
+  /** Meta's numeric `error.error_subcode`, or null when the body carried none. */
+  readonly subcode: number | null;
 
-  constructor(operation: string, status: number, message: string | null, code: number | null = null) {
+  constructor(
+    operation: string,
+    status: number,
+    message: string | null,
+    code: number | null = null,
+    subcode: number | null = null,
+  ) {
     super(`${operation} failed: ${status}${message ? `: ${message}` : ""}`);
     this.name = "MetaGraphError";
     this.status = status;
     this.graphMessage = message;
     this.code = code;
+    this.subcode = subcode;
   }
 }
 

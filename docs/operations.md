@@ -286,6 +286,11 @@ as `active`. Two failures are terminal by design and need a human:
 Pressing "re-check" on such a WABA is safe — it re-runs the saga, which refuses to re-issue a spent
 sync and lands back on the same message. Only a genuinely new Embedded Signup handoff clears it.
 
+Each non-2xx answer is logged as `coexistence_sync_failed` with Meta's status, code, subcode and
+message. When that log shows Meta refused the request, an operator can avoid the offboarding: call
+`GatewayRPC.resetUnconfirmedCoexistenceSync(wabaId, accountId, syncKind)` over a remote binding, then
+`reconcileWaba`. Never use it after a timeout or a lost answer, where the first request may have landed.
+
 ### A number that turned out not to be a coexistence number
 
 A third outcome is **not** a failure and needs no remedy. When the verification above says the

@@ -932,6 +932,76 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
     expect(waba?.coexistence.error).toContain("message-history sync unavailable");
   });
 
+  it("reads the refusal from error_subcode too", async () => {
+    const accountId = "acc-coex-subcode";
+    const wabaId = "WABA_COEX_SUBCODE";
+    await createAccount(accountId);
+    mockGraph((call) =>
+      call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts
+        ? new Response(
+            JSON.stringify({ error: { message: "refused", code: 100, error_subcode: 2593107 } }),
+            { status: 400 },
+          )
+        : accepted("REQ_HIST"),
+    );
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(syncUnavailableReason(waba!.coexistence.contactsRequestId)).toBe("already_synced");
+    });
+  });
+
+  it("logs Meta's answer and an operator reset lets the sync be issued again", async () => {
+    const accountId = "acc-coex-reset";
+    const wabaId = "WABA_COEX_RESET";
+    await createAccount(accountId);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let firstContacts = true;
+    const { syncCalls } = mockGraph((call) => {
+      if (call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts && firstContacts) {
+        firstContacts = false;
+        return new Response(
+          JSON.stringify({ error: { message: "not yet", code: 131000, error_subcode: 42 } }),
+          { status: 400 },
+        );
+      }
+      return accepted("REQ_OK");
+    });
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+    const entry = JSON.parse(String(logged.mock.calls[0]?.[0]));
+    expect(entry).toMatchObject({
+      event: "coexistence_sync_failed",
+      wabaId,
+      syncKind: "contacts",
+      status: 400,
+      code: 131000,
+      subcode: 42,
+      message: "not yet",
+    });
+
+    await cp(async (instance) => {
+      expect(await instance.resetUnconfirmedCoexistenceSync(accountId, wabaId, "history")).toBe(false);
+      expect(await instance.resetUnconfirmedCoexistenceSync(accountId, wabaId, "contacts")).toBe(true);
+      await instance.retryWabaProvisioning(accountId, wabaId);
+    });
+    await provisionWaba(env, accountId, wabaId);
+
+    expect(syncCalls).toHaveLength(3);
+    await cp(async (instance) => {
+      const waba = await instance.getWabaRecord(accountId, wabaId);
+      expect(waba?.status).toBe("active");
+      expect(waba?.coexistence.status).toBe("initiated");
+      // Active now, so nothing is left to reset.
+      expect(await instance.resetUnconfirmedCoexistenceSync(accountId, wabaId, "contacts")).toBe(false);
+    });
+  });
+
   it("an unknown Meta error after issue still fails terminally and is never retried", async () => {
     const accountId = "acc-coex-unknown-code";
     const wabaId = "WABA_COEX_UNKNOWN_CODE";

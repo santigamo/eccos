@@ -1507,6 +1507,35 @@ export class EccosControlPlane extends DurableObject<Env> {
   }
 
   /**
+   * Operator recovery: forget one sync recorded as issued and unconfirmed, so the
+   * next re-check issues it again. Only for a failed WABA whose failure was read
+   * as a refusal from Meta; the worst outcome of the repeat is `2593107`, which
+   * the saga settles. Returns whether a row changed.
+   */
+  async resetUnconfirmedCoexistenceSync(
+    accountId: string,
+    wabaId: string,
+    syncKind: CoexistenceSyncKind,
+  ): Promise<boolean> {
+    const account = this.requireAccount(accountId);
+    const id = validateWabaId(wabaId, "wabaId");
+    if (syncKind !== "contacts" && syncKind !== "history") throw new Error("invalid syncKind");
+    const started = syncKind === "contacts" ? "contacts_sync_started_at" : "history_sync_started_at";
+    const requestId = syncKind === "contacts" ? "contacts_sync_request_id" : "history_sync_request_id";
+    const updated = this.sql
+      .exec(
+        `UPDATE wabas SET ${started} = NULL
+         WHERE account_id = ? AND waba_id = ? AND status = 'failed'
+           AND ${started} IS NOT NULL AND ${requestId} IS NULL
+         RETURNING waba_id`,
+        account,
+        id,
+      )
+      .toArray();
+    return updated.length === 1;
+  }
+
+  /**
    * Record that a coexistence sync is *about to be requested*, before the
    * request leaves the Worker (eccos-vss).
    *

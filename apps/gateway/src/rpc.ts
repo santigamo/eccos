@@ -778,6 +778,19 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   }
 
   /**
+   * Operator-only, deliberately outside `GatewayApi` so the console cannot call
+   * it. See `docs/operations.md`, "Coexistence sync failures".
+   */
+  async resetUnconfirmedCoexistenceSync(
+    wabaId: string,
+    accountId: string,
+    syncKind: "contacts" | "history",
+  ): Promise<boolean> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(account, wabaId, syncKind);
+  }
+
+  /**
    * Send one template message on the operator's behalf ("Send test").
    *
    * Deliberately does NOT go through `scoped()`: that helper configures for

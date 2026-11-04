@@ -133,8 +133,13 @@ async function postSmbAppDataSync(
   if (!res.ok) {
     const error = asRecord(asRecord(json)?.error);
     const message = typeof error?.message === "string" ? error.message : null;
-    const code = metaErrorCode(error?.code);
-    throw new MetaGraphError(`${SMB_APP_DATA_EDGE} ${syncType}`, res.status, message, code);
+    throw new MetaGraphError(
+      `${SMB_APP_DATA_EDGE} ${syncType}`,
+      res.status,
+      message,
+      metaErrorCode(error?.code),
+      metaErrorCode(error?.error_subcode),
+    );
   }
   const requestId = asRecord(json)?.request_id;
   return { requestId: typeof requestId === "string" && requestId !== "" ? requestId : null };
