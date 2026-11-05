@@ -1298,6 +1298,25 @@ describe("broadcasts", () => {
     expect(audit).not.toMatch(/\d{9,}/);
   });
 
+  test("cancelBroadcast: one that had already finished is audited failed (ended), not success", async () => {
+    withResources({ cancelBroadcast: async () => ({ id: BC, status: "completed" }) });
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    let res: Awaited<ReturnType<typeof cancelBroadcast>>;
+    try {
+      res = await cancelBroadcast({ data: { wabaId: "waba-a", broadcastId: BC } });
+    } finally {
+      console.info = original;
+    }
+    expect(res).toMatchObject({ ok: true, data: { status: "completed" } });
+    const audit = emitted.find((line) => line.includes('"area":"audit"'));
+    expect(audit).toContain('"outcome":"failed"');
+    expect(audit).toContain('"detail":"ended"');
+  });
+
   test("cancelBroadcast: a viewer is refused typed forbidden and the gateway is untouched", async () => {
     let called = false;
     withResources({

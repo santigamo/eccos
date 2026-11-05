@@ -1662,8 +1662,8 @@ export const cancelBroadcast = createServerFn({ method: "POST" })
           organizationId: actor.organizationId,
           accountId: scope.accountId,
           resource: { wabaId: scope.wabaId, broadcastId: data.broadcastId },
-          outcome: broadcast ? "success" : "failed",
-          ...(broadcast ? {} : { detail: "not_found" }),
+          outcome: broadcast?.status === "cancelled" ? "success" : "failed",
+          ...(broadcast?.status === "cancelled" ? {} : { detail: broadcast ? "ended" : "not_found" }),
         });
         return broadcast;
       }),
