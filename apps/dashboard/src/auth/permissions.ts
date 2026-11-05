@@ -5,8 +5,8 @@
  * defines the Eccos access controller and the four organization roles mapped
  * onto the contract's role matrix. `gateway` is the Eccos-specific resource:
  *
- *   view       — read status, logs (inbound/outbound/deliveries), templates
- *   operate    — retry delivery, read subscriber config
+ *   view       — read status, logs (inbound/outbound/deliveries), broadcasts, scheduled sends, templates
+ *   operate    — retry delivery, cancel a broadcast or scheduled send, read subscriber config
  *   configure  — write subscriber config, resubscribe webhook, re-check a
  *                number's provisioning
  *   administer — API key management, Embedded Signup (/connect), export data

@@ -68,7 +68,8 @@ Approved template with an image header, body parameters and buttons (Meta's
 
 Body parameters are positional (`{{1}}`, `{{2}}`) unless the template uses named parameters; for
 those, add `"parameter_name"` to each parameter. A quick-reply `payload` comes back in the
-incoming [`reply` event](/event-reference) when the customer taps the button.
+incoming [`reply` event](/event-reference) when the customer taps the button, with `replyTo`
+set to the template's message id.
 
 **Media.** Eccos has no media upload endpoint, and if you connected through Embedded Signup,
 Eccos holds the Meta credentials, so you cannot upload to Meta yourself. Send media by a public HTTPS `link` (as in the header above, or

@@ -90,17 +90,20 @@ your app  ◀──forward (HMAC)────   Eccos  ◀──  Meta webhook  
 Normalized event shape (`WhatsAppCallbackEvent`):
 
 ```ts
-| { type: "sent" | "delivered" | "read"; transportMessageId; at }
-| { type: "failed"; transportMessageId; at; errorCode?; errorMessage? }
-| { type: "reply"; from; fromUserId?; messageId; text; at; profileName?; payload? }
+| { type: "sent" | "delivered" | "read"; transportMessageId; at; broadcastId?; scheduleKey? }
+| { type: "failed"; transportMessageId; at; errorCode?; errorMessage?; broadcastId?; scheduleKey? }
+| { type: "reply"; from; fromUserId?; messageId; text; at; profileName?; payload?; replyTo?; broadcastId?; scheduleKey? }
 | { type: "echo"; to; toUserId?; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 // Additive: every other message type, inbound and echoed, instead of being dropped
-| { type: "message"; from; fromUserId?; messageId; at; profileName? } & MessageContent
+| { type: "message"; from; fromUserId?; messageId; at; profileName?; replyTo?; broadcastId?; scheduleKey? } & MessageContent
 | { type: "message_echo"; to; toUserId?; messageId; at } & MessageContent
+// Emitted by Eccos, not Meta: a scheduled send that will not go out (reason: "rejected" | "expired" | "unknown")
+| { type: "scheduled_failed"; scheduleKey; to; reason; errorCode?; errorMessage?; at; phoneNumberId? }
 ```
 
 `reply` / `echo` still carry text, button and interactive replies; `payload` (on `reply`) is the quick-reply button `payload` or the interactive `button_reply` / `list_reply` `id`, absent when there is none. `profileName` is
 the sender's WhatsApp profile name, present only when Meta sends one (`reply` and inbound `message` only).
+`replyTo` (`reply` and inbound `message`) is the id of the message the customer replied to: a quoted message, or the template or interactive message whose button they tapped. Absent otherwise. `broadcastId` (statuses, and `reply`/`message` whose `replyTo` is such a message) names the broadcast that sent the message, and `scheduleKey` the scheduled send.
 `fromUserId` / `toUserId` is the customer's business-scoped user id (BSUID, e.g. `US.13491208655302741918`)
 when Meta sends one. For a username user whose phone number Meta withholds, `from` / `to` carries that BSUID
 instead of a number; otherwise `from` / `to` is the phone number as before. A subscriber that

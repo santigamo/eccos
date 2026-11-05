@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
-import type { WhatsAppCallbackEvent } from "@eccos/core/types";
+import type { EventOrigin, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   ContactRecord,
   ConversationSummary,
@@ -19,6 +19,7 @@ import type {
   OperatorCounts,
   OutboundRow,
   OutboundTrailEvent,
+  ScheduledCancelResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
   ThreadView,
@@ -61,7 +62,26 @@ import {
   STALE_SENDING_MS,
   throttleDelayMs,
 } from "./broadcasts";
-import { checkSendRate, type SendRateLimitEnv } from "./send-rate-limit";
+import {
+  cancelScheduled,
+  claimDue,
+  countScheduled,
+  type EndedRow,
+  expireDue,
+  listScheduled,
+  listScheduledByTime,
+  nextScheduledWake,
+  readScheduled,
+  type ScheduledFailure,
+  type ScheduledRequest,
+  type ScheduledSend,
+  type ScheduledStatus,
+  SCHEDULED_SCHEMA,
+  scheduledFailedEvent,
+  sweepStaleSending,
+  upsertScheduled,
+} from "./scheduled";
+import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-rate-limit";
 import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
@@ -405,6 +425,7 @@ export class EccosGateway extends DurableObject<Env> {
       );`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_send_keys_created ON send_keys (created_at);`);
       for (const statement of BROADCAST_SCHEMA) this.sql.exec(statement);
+      for (const statement of SCHEDULED_SCHEMA) this.sql.exec(statement);
       // Additive migration for objects created before a column existed. `type`
       // matters: SQLite applies column affinity on write, so an epoch-ms
       // timestamp landing in a TEXT column would come back out as a string and
@@ -417,6 +438,8 @@ export class EccosGateway extends DurableObject<Env> {
       };
       ensureColumn("inbound_events", "phone_number_id");
       ensureColumn("outbound_messages", "phone_number_id");
+      // The origin of a send (EventOrigin JSON, e.g. its broadcast), copied onto the events about it.
+      ensureColumn("outbound_messages", "origin");
       ensureColumn("deliveries", "phone_number_id");
       // When a delivery reached its terminal state (`delivered` or `failed`).
       // `created_at` alone can only say when the batch was ENQUEUED, so "last
@@ -593,6 +616,16 @@ export class EccosGateway extends DurableObject<Env> {
     return { duplicate, bytes: bytes.length, parts };
   }
 
+  /** The event with the origin of the message it is about, when Eccos sent that message with one. */
+  private withOrigin(ev: WhatsAppCallbackEvent): WhatsAppCallbackEvent {
+    const wamid = "transportMessageId" in ev ? ev.transportMessageId : "replyTo" in ev ? ev.replyTo : undefined;
+    if (!wamid) return ev;
+    const row = this.sql
+      .exec(`SELECT origin FROM outbound_messages WHERE transport_message_id = ? AND origin IS NOT NULL LIMIT 1`, wamid)
+      .toArray()[0];
+    return row ? { ...ev, ...(JSON.parse(String(row.origin)) as EventOrigin) } : ev;
+  }
+
   /** `heldPending` tells the worker that batches held while the WABA was pending still
    * wait for `releaseHeld` (activation raced the hold). */
   ingest(events: WhatsAppCallbackEvent[]): { received: number; heldPending: boolean } {
@@ -600,7 +633,8 @@ export class EccosGateway extends DurableObject<Env> {
     const now = Date.now();
     const insertedIds: number[] = [];
     this.ctx.storage.transactionSync(() => {
-      for (const ev of events) {
+      const stored = events.map((ev) => this.withOrigin(ev));
+      for (const ev of stored) {
         const tmid = "transportMessageId" in ev ? ev.transportMessageId : null;
         const mid = "messageId" in ev ? ev.messageId : null;
         const phoneNumberId = ev.phoneNumberId?.trim() || null;
@@ -623,7 +657,7 @@ export class EccosGateway extends DurableObject<Env> {
         this.writeConversation(ev, now);
       }
       if (insertedIds.length > 0) {
-        const phoneIds = new Set(events.map((event) => event.phoneNumberId?.trim() || null));
+        const phoneIds = new Set(stored.map((event) => event.phoneNumberId?.trim() || null));
         const phoneNumberId = phoneIds.size === 1 ? [...phoneIds][0] ?? null : null;
         const batch = this.sql
           .exec(
@@ -631,7 +665,7 @@ export class EccosGateway extends DurableObject<Env> {
              VALUES (?, ?, 'pending', 0, ?, ?)
              RETURNING id`,
             phoneNumberId,
-            JSON.stringify({ events }),
+            JSON.stringify({ events: stored }),
             now,
             now,
           )
@@ -652,12 +686,15 @@ export class EccosGateway extends DurableObject<Env> {
         // answer: that is the batch the subscriber received it in.
         if (batch) {
           const deliveryId = Number(batch.id);
-          const placeholders = insertedIds.map(() => "?").join(", ");
-          this.sql.exec(
-            `UPDATE inbound_events SET delivery_id = ? WHERE id IN (${placeholders})`,
-            deliveryId,
-            ...insertedIds,
-          );
+          // Durable Object SQL binds at most 100 variables per statement.
+          for (let i = 0; i < insertedIds.length; i += 99) {
+            const ids = insertedIds.slice(i, i + 99);
+            this.sql.exec(
+              `UPDATE inbound_events SET delivery_id = ? WHERE id IN (${ids.map(() => "?").join(", ")})`,
+              deliveryId,
+              ...ids,
+            );
+          }
         }
       }
     });
@@ -720,20 +757,22 @@ export class EccosGateway extends DurableObject<Env> {
     errorJson: string | null,
     phoneNumberId?: string | null,
     waId?: string | null,
+    origin?: EventOrigin,
   ): void {
     const now = Date.now();
     const phoneId = phoneNumberId?.trim() || null;
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
         `INSERT INTO outbound_messages
-           (transport_message_id, recipient, phone_number_id, request, status, error, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (transport_message_id, recipient, phone_number_id, request, status, error, origin, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         transportMessageId,
         recipient,
         phoneId,
         requestJson,
         status,
         errorJson,
+        origin ? JSON.stringify(origin) : null,
         now,
       );
       if (status !== "sent" || !transportMessageId) return;
@@ -747,13 +786,31 @@ export class EccosGateway extends DurableObject<Env> {
       this.storeMessage(message, now);
       // A status callback can overtake the send's own response. It was stored
       // with no message to move, so replay it now that the message exists.
-      for (const row of this.sql.exec(
-        `SELECT payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`,
-        transportMessageId,
-      )) {
+      const overtaken = this.sql
+        .exec(`SELECT id, delivery_id, payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
+        .toArray();
+      for (const row of overtaken) {
         this.applyStoredEvent(row.payload as string, now);
+        if (origin) {
+          const deliveryId = row.delivery_id == null ? null : Number(row.delivery_id);
+          this.attachLateOrigin(Number(row.id), deliveryId, transportMessageId, row.payload as string, origin);
+        }
       }
     });
+  }
+
+  /** A status that overtook its send was stored without the origin: add it to the event and its
+   * batch, but only while that batch has never been attempted. A forwarded body is never rewritten. */
+  private attachLateOrigin(eventId: number, deliveryId: number | null, wamid: string, payload: string, origin: EventOrigin): void {
+    if (deliveryId === null) return;
+    const batch = this.sql
+      .exec(`SELECT payload FROM deliveries WHERE id = ? AND status = 'pending' AND attempts = 0`, deliveryId)
+      .toArray()[0];
+    if (!batch) return;
+    const { events } = JSON.parse(String(batch.payload)) as { events: WhatsAppCallbackEvent[] };
+    const patched = events.map((ev) => ("transportMessageId" in ev && ev.transportMessageId === wamid ? { ...ev, ...origin } : ev));
+    this.sql.exec(`UPDATE deliveries SET payload = ? WHERE id = ?`, JSON.stringify({ events: patched }), deliveryId);
+    this.sql.exec(`UPDATE inbound_events SET payload = ? WHERE id = ?`, JSON.stringify({ ...JSON.parse(payload), ...origin }), eventId);
   }
 
   /** Claims `key` for one send. Synchronous, so two concurrent claims cannot both see "new". */
@@ -1389,11 +1446,41 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   async listBroadcasts(accountId: string, limit: number): Promise<BroadcastSummary[]> {
-    return this.sql
-      .exec(`SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`, accountId, limit)
+    return (await this.listBroadcastPage(accountId, limit)).items;
+  }
+
+  /**
+   * `before` is a broadcast id: the page starts after it (a cursor swept by retention yields an
+   * empty page). One extra id is selected to know whether more exist; only `limit` summaries are built.
+   */
+  async listBroadcastPage(
+    accountId: string,
+    limit: number,
+    before?: string,
+  ): Promise<{ items: BroadcastSummary[]; hasMore: boolean }> {
+    const ids = (
+      before
+        ? this.sql.exec(
+            `SELECT id FROM broadcasts WHERE account_id = ?
+               AND (created_at, rowid) < (SELECT created_at, rowid FROM broadcasts WHERE id = ?)
+             ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+            accountId,
+            before,
+            limit + 1,
+          )
+        : this.sql.exec(
+            `SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+            accountId,
+            limit + 1,
+          )
+    )
       .toArray()
-      .map((row) => readBroadcast(this.sql, String(row.id)))
+      .map((row) => String(row.id));
+    const items = ids
+      .slice(0, limit)
+      .map((id) => readBroadcast(this.sql, id))
       .filter((summary): summary is BroadcastSummary => summary !== null);
+    return { items, hasMore: ids.length > limit };
   }
 
   async listBroadcastRecipients(
@@ -1415,10 +1502,244 @@ export class EccosGateway extends DurableObject<Env> {
     return this.sql.exec(`SELECT 1 FROM broadcasts WHERE id = ? AND account_id = ?`, id, accountId).toArray().length > 0;
   }
 
-  /** broadcastStep, but never thrown: the delivery and media wakes in alarm() must run whatever happens here. */
-  private async runBroadcastStep(): Promise<number | null> {
+  // --- Scheduled sends (src/scheduled.ts) ---------------------------------
+
+  async putScheduled(input: {
+    accountId: string;
+    key: string;
+    phoneNumberId: string;
+    request: ScheduledRequest;
+  }): Promise<{ state: "created" | "replaced" | "not_pending" | "full"; scheduled: ScheduledSend | null }> {
+    const now = Date.now();
+    const { state, row } = this.ctx.storage.transactionSync(() => upsertScheduled(this.sql, input, now));
+    if (state === "created" || state === "replaced") {
+      const at = input.request.sendAt;
+      if (at <= now) this.wakeNow();
+      else {
+        const armed = await this.ctx.storage.getAlarm();
+        if (armed === null || armed > at) this.ctx.storage.setAlarm(at);
+      }
+    }
+    return { state, scheduled: row };
+  }
+
+  async getScheduled(accountId: string, key: string): Promise<ScheduledSend | null> {
+    return readScheduled(this.sql, accountId, key);
+  }
+
+  async cancelScheduled(accountId: string, key: string): Promise<ScheduledCancelResult> {
+    const { state, row } = cancelScheduled(this.sql, accountId, key, Date.now());
+    return { state, scheduled: row };
+  }
+
+  async listScheduledSends(
+    accountId: string,
+    opts: { status?: ScheduledStatus; after?: string; limit: number },
+  ): Promise<ScheduledSend[]> {
+    return listScheduled(this.sql, accountId, opts);
+  }
+
+  /** The console's page: one status by send time, with the per-status counts. */
+  async listScheduledPage(
+    accountId: string,
+    opts: { status: ScheduledStatus; cursor?: string; limit: number },
+  ): Promise<{ items: ScheduledSend[]; hasMore: boolean; counts: Record<ScheduledStatus, number> }> {
+    const rows = listScheduledByTime(this.sql, accountId, { ...opts, limit: opts.limit + 1 });
+    return {
+      items: rows.slice(0, opts.limit),
+      hasMore: rows.length > opts.limit,
+      counts: countScheduled(this.sql, accountId),
+    };
+  }
+
+  /** scheduledStep, but never thrown: the broadcast and media wakes in alarm() must run whatever happens here. */
+  private async runScheduledStep(): Promise<{ claimed: number; retryAt: number | null }> {
     try {
-      return await this.broadcastStep(Date.now());
+      return { claimed: await this.scheduledStep(Date.now()), retryAt: null };
+    } catch (error) {
+      console.error(
+        JSON.stringify({ level: "error", area: "scheduled", event: "step-failed", wabaId: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
+      );
+      return { claimed: 0, retryAt: Date.now() + 30_000 };
+    }
+  }
+
+  /**
+   * When the scheduled sends next need the alarm. Read after the last await of alarm():
+   * a PUT that landed during the run is seen here and not overwritten.
+   */
+  private scheduledWakeAt(): number | null {
+    const next = nextScheduledWake(this.sql);
+    if (next === null) return null;
+    const tickAt = Number(this.sql.exec(`SELECT value FROM ops_state WHERE key = 'scheduled_next_tick_at'`).toArray()[0]?.value ?? 0);
+    return Math.max(next, tickAt);
+  }
+
+  /**
+   * One tick of the due scheduled sends: ends the stale and expired ones, then claims up to
+   * the account's per-tick share and sends them. Returns how many it claimed (broadcasts
+   * give way by that much this tick).
+   */
+  private async scheduledStep(now: number): Promise<number> {
+    this.endScheduled(() => sweepStaleSending(this.sql, now), "unknown", now);
+    this.endScheduled(() => expireDue(this.sql, now), "expired", now);
+
+    const tickAt = Number(this.sql.exec(`SELECT value FROM ops_state WHERE key = 'scheduled_next_tick_at'`).toArray()[0]?.value ?? 0);
+    if (tickAt > now) return 0;
+    const first = this.sql
+      .exec(`SELECT account_id FROM scheduled_sends WHERE status = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at LIMIT 1`, now)
+      .toArray()[0];
+    if (!first) return 0;
+
+    // The token comes before the claim: a run that dies here leaves no row `sending` with nothing sent.
+    const token = await this.metaToken();
+    if (token === "missing" || token === "unavailable") {
+      // Nothing is spent: the rows wait, and expire if the WABA stays disconnected.
+      this.sql.exec(
+        `UPDATE scheduled_sends SET next_attempt_at = MIN(?, expires_at), updated_at = ?
+         WHERE status = 'pending' AND next_attempt_at <= ?`,
+        now + 30_000,
+        Date.now(),
+        now,
+      );
+      return 0;
+    }
+    const { perTick, tickMs } = pacing(sendRatePerMinute(this.env, String(first.account_id)));
+    const due = claimDue(this.sql, now, perTick);
+    // Set before sending: an early wake must not send faster than the pace.
+    this.sql.exec(
+      "INSERT INTO ops_state (key, value) VALUES ('scheduled_next_tick_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      String(now + tickMs),
+    );
+    await Promise.all(due.map((row) => this.sendScheduled(row, token)));
+    return due.length;
+  }
+
+  /** Ends rows and emits their events in one transaction: a failing ingest leaves the rows as they were for the next tick. */
+  private endScheduled(end: () => EndedRow[], reason: "unknown" | "expired", now: number): void {
+    this.ctx.storage.transactionSync(() => {
+      const events = end().map((row) => scheduledFailedEvent(row, reason, null, now));
+      for (let i = 0; i < events.length; i += 50) this.ingest(events.slice(i, i + 50));
+    });
+  }
+
+  /** Back to pending without spending an attempt. */
+  private requeueScheduled(row: Record<string, SqlStorageValue>, nextAttemptAt: number): void {
+    this.sql.exec(
+      `UPDATE scheduled_sends SET status = 'pending', next_attempt_at = ?, updated_at = ?
+       WHERE account_id = ? AND key = ? AND status = 'sending'`,
+      nextAttemptAt,
+      Date.now(),
+      row.account_id,
+      row.key,
+    );
+  }
+
+  private async sendScheduled(row: Record<string, SqlStorageValue>, token: string): Promise<void> {
+    const accountId = String(row.account_id);
+    const key = String(row.key);
+    const recipient = String(row.recipient);
+    const phoneNumberId = String(row.phone_number_id);
+    const expiresAt = Number(row.expires_at);
+    let allowed: boolean;
+    try {
+      allowed = await checkSendRate(this.env, accountId, this.wabaIdForOps());
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      this.requeueScheduled(row, Math.min(Date.now() + throttleDelayMs(1), expiresAt));
+      return;
+    }
+    // Re-read after the awaits: the row may have been erased meanwhile or run past its expiry.
+    const live = this.sql
+      .exec(`SELECT expires_at FROM scheduled_sends WHERE account_id = ? AND key = ? AND status = 'sending'`, accountId, key)
+      .toArray()[0];
+    if (!live) return;
+    if (Number(live.expires_at) <= Date.now()) {
+      const at = Date.now();
+      this.ctx.storage.transactionSync(() => {
+        const ended = this.sql
+          .exec(
+            `UPDATE scheduled_sends SET status = 'failed', reason = 'expired', components = NULL, updated_at = ?
+             WHERE account_id = ? AND key = ? AND status = 'sending' RETURNING key`,
+            at,
+            accountId,
+            key,
+          )
+          .toArray();
+        if (ended.length > 0) this.ingest([scheduledFailedEvent({ key, recipient, phone_number_id: phoneNumberId }, "expired", null, at)]);
+      });
+      return;
+    }
+    const body = recipientMessage(
+      String(row.template_name),
+      String(row.language),
+      recipient,
+      row.components === null ? null : (JSON.parse(String(row.components)) as unknown[]),
+    );
+    const cfg = {
+      META_GRAPH_VERSION: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
+      META_ACCESS_TOKEN: token,
+      META_PHONE_NUMBER_ID: phoneNumberId,
+      META_WABA_ID: this.wabaIdForOps(),
+    };
+    const result = await sendMessage(cfg, body);
+    const now = Date.now();
+    const attempts = Number(row.attempts) + 1;
+    // False when the row was erased while its send was in flight: then nothing more is stored or emitted.
+    const settle = (
+      status: "sent" | "failed" | "unknown",
+      messageId: string | null,
+      error: string | null,
+      reason: ScheduledFailure | null,
+    ): boolean =>
+      this.sql
+        .exec(
+          `UPDATE scheduled_sends SET status = ?, message_id = ?, error = ?, reason = ?, attempts = ?, components = NULL, updated_at = ?
+           WHERE account_id = ? AND key = ? AND status = 'sending' RETURNING key`,
+          status,
+          messageId,
+          error,
+          reason,
+          attempts,
+          now,
+          accountId,
+          key,
+        )
+        .toArray().length > 0;
+    if (result.ok) {
+      if (settle("sent", result.id, null, null)) {
+        this.logOutbound(result.id, recipient, JSON.stringify(body), "sent", null, phoneNumberId, result.waId, { scheduleKey: key });
+      }
+      return;
+    }
+    const error = JSON.stringify(result.error);
+    const verdict = classifySendFailure(result.status, sendOutcomeUnknown(result), metaErrorCodes(result.error), true);
+    if (verdict === "throttled" && attempts < MAX_THROTTLED_ATTEMPTS) {
+      this.sql.exec(
+        `UPDATE scheduled_sends SET status = 'pending', attempts = ?, error = ?, next_attempt_at = ?, updated_at = ?
+         WHERE account_id = ? AND key = ? AND status = 'sending'`,
+        attempts,
+        error,
+        Math.min(now + throttleDelayMs(attempts), expiresAt),
+        now,
+        accountId,
+        key,
+      );
+      return;
+    }
+    const reason = verdict === "unknown" ? "unknown" : "rejected";
+    if (settle(reason === "unknown" ? "unknown" : "failed", null, error, reason)) {
+      this.logOutbound(null, recipient, JSON.stringify(body), "failed", error, phoneNumberId, null, { scheduleKey: key });
+      this.ingest([scheduledFailedEvent({ key, recipient, phone_number_id: phoneNumberId }, reason, result.error, now)]);
+    }
+  }
+
+  /** broadcastStep, but never thrown: the delivery and media wakes in alarm() must run whatever happens here. */
+  private async runBroadcastStep(reserved: number): Promise<number | null> {
+    try {
+      return await this.broadcastStep(Date.now(), reserved);
     } catch (error) {
       console.error(
         JSON.stringify({ level: "error", area: "broadcast", event: "step-failed", wabaId: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
@@ -1430,9 +1751,10 @@ export class EccosGateway extends DurableObject<Env> {
   /**
    * One tick of every due broadcast: up to its share of sends, each also drawn
    * from the account's send limiter (shared with single sends). Returns when it
-   * wants to run again, or null when nothing is running.
+   * wants to run again, or null when nothing is running. `reserved` sends of the
+   * tick already went to scheduled sends, which come first.
    */
-  private async broadcastStep(now: number): Promise<number | null> {
+  private async broadcastStep(now: number, reserved = 0): Promise<number | null> {
     const running = this.sql
       .exec(`SELECT * FROM broadcasts WHERE status = 'running' ORDER BY created_at`)
       .toArray();
@@ -1451,7 +1773,12 @@ export class EccosGateway extends DurableObject<Env> {
     for (const broadcast of running) {
       const id = String(broadcast.id);
       if (Number(broadcast.next_send_at) > now) continue;
-      const { perTick, tickMs } = pacing(Number(broadcast.rate_per_minute));
+      const { perTick: tickShare, tickMs } = pacing(Number(broadcast.rate_per_minute));
+      const perTick = tickShare - reserved;
+      if (perTick <= 0) {
+        this.sql.exec(`UPDATE broadcasts SET next_send_at = ? WHERE id = ?`, now + tickMs, id);
+        continue;
+      }
       const due = this.sql
         .exec(
           `UPDATE broadcast_recipients SET status = 'sending', updated_at = ?
@@ -1550,7 +1877,7 @@ export class EccosGateway extends DurableObject<Env> {
         .toArray().length > 0;
     if (result.ok) {
       if (settle("sent", result.id, null)) {
-        this.logOutbound(result.id, recipient, JSON.stringify(body), "sent", null, cfg.META_PHONE_NUMBER_ID, result.waId);
+        this.logOutbound(result.id, recipient, JSON.stringify(body), "sent", null, cfg.META_PHONE_NUMBER_ID, result.waId, { broadcastId: id });
       }
       return { kind: "done" };
     }
@@ -1570,7 +1897,7 @@ export class EccosGateway extends DurableObject<Env> {
       return { kind: "throttled", attempts };
     }
     if (settle(verdict === "unknown" ? "unknown" : "failed", null, error)) {
-      this.logOutbound(null, recipient, JSON.stringify(body), "failed", error, cfg.META_PHONE_NUMBER_ID);
+      this.logOutbound(null, recipient, JSON.stringify(body), "failed", error, cfg.META_PHONE_NUMBER_ID, null, { broadcastId: id });
     }
     return verdict === "halt"
       ? { kind: "halt", reason: `Meta refused the send with error ${codes.errorCode ?? "unknown"}` }
@@ -1756,6 +2083,15 @@ export class EccosGateway extends DurableObject<Env> {
           row.broadcast_id,
           row.seq,
         );
+      }
+
+      // A pending scheduled send is deleted too: erasure means it is never sent.
+      for (const row of this.sql
+        .exec(`SELECT account_id, key, recipient, message_id FROM scheduled_sends`)
+        .toArray()) {
+        if (!keys.has(customerKeyOf(row.recipient as string) ?? "")) continue;
+        if (row.message_id) wamids.add(row.message_id as string);
+        this.sql.exec(`DELETE FROM scheduled_sends WHERE account_id = ? AND key = ?`, row.account_id, row.key);
       }
 
       for (const id of inboundIds) {
@@ -2142,11 +2478,17 @@ export class EccosGateway extends DurableObject<Env> {
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
     if (syncWake !== null) wakes.push(Date.now() + syncWake);
-    const broadcastWakeAt = await this.runBroadcastStep();
+    const scheduled = await this.runScheduledStep();
+    if (scheduled.retryAt !== null) wakes.push(scheduled.retryAt);
+    const broadcastWakeAt = await this.runBroadcastStep(scheduled.claimed);
     if (broadcastWakeAt !== null) wakes.push(broadcastWakeAt);
     // Last, after the sweep, so the media of the messages it just pruned is purged in this same alarm.
     const mediaWakeAt = await this.mediaStep(now);
     if (mediaWakeAt !== null) wakes.push(mediaWakeAt);
+    // After the last await, so a send scheduled during the run is not overwritten.
+    // Not after a failed step: its rows stay due, and a wake in the past would spin past the retry.
+    const scheduledWakeAt = scheduled.retryAt === null ? this.scheduledWakeAt() : null;
+    if (scheduledWakeAt !== null) wakes.push(scheduledWakeAt);
     // Work that arrived during this run was armed for now, and the earlier wakes above would overwrite it.
     if (this.wakeArrived) wakes.push(Date.now());
     if (wakes.length > 0) this.ctx.storage.setAlarm(Math.min(...wakes));
@@ -2736,6 +3078,11 @@ export class EccosGateway extends DurableObject<Env> {
       contentCutoff,
     );
     this.sql.exec(`DELETE FROM broadcasts WHERE created_at < ? AND status != 'running'`, contentCutoff);
+    // A scheduled send that has not ended is kept: the client asked for it.
+    this.sql.exec(
+      `DELETE FROM scheduled_sends WHERE updated_at < ? AND status NOT IN ('pending', 'sending')`,
+      contentCutoff,
+    );
   }
 
   /**

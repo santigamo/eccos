@@ -37,7 +37,7 @@ x-idempotency-key: <SHA-256 hex of the raw body>
   only. A new batch can re-include events you already received (Meta repeats events in its
   callbacks), and an erasure rewrites queued batches, which changes their key. Deduplicate per
   event: by `messageId` for incoming messages and echoes, and by `(transportMessageId, type)` for
-  statuses.
+  statuses and by `(scheduleKey, at)` for `scheduled_failed`.
 
 ## Acknowledging and retrying
 

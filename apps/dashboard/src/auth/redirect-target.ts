@@ -22,6 +22,9 @@ export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
  */
 export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/",
+  "/broadcasts",
+  "/broadcasts/$broadcastId",
+  "/scheduled",
   "/conversations",
   "/deliveries",
   "/events",
@@ -36,6 +39,14 @@ export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/workspaces/new",
 ]);
 
+/** A page of the set, where a `$param` segment stands for one real path segment. */
+function isRedirectablePath(pathname: string): boolean {
+  if (REDIRECTABLE_PAGES.has(pathname)) return true;
+  return [...REDIRECTABLE_PAGES].some(
+    (page) => page.includes("$") && new RegExp(`^${page.replace(/\$[^/]+/g, "[^/]+")}$`).test(pathname),
+  );
+}
+
 export function safeRedirectTarget(value: string | undefined): string | undefined {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return undefined;
   if (value.includes("\\")) return undefined;
@@ -48,7 +59,7 @@ export function safeRedirectTarget(value: string | undefined): string | undefine
   const end = value.search(/[?#]/);
   const path = end === -1 ? value : value.slice(0, end);
   const pathname = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
-  if (!REDIRECTABLE_PAGES.has(pathname)) return undefined;
+  if (!isRedirectablePath(pathname)) return undefined;
   return end === -1 ? pathname : pathname + value.slice(end);
 }
 

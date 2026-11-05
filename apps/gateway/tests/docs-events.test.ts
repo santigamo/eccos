@@ -11,7 +11,8 @@ const typesSource = readFileSync(
   new URL("../../../packages/core/src/types.ts", import.meta.url),
   "utf8",
 );
-const examples = jsonFences(doc) as Array<Record<string, any>>;
+// Gateway-originated events are pinned by tests/worker/scheduled.spec.ts.
+const examples = (jsonFences(doc) as Array<Record<string, any>>).filter((e) => e.type !== "scheduled_failed");
 
 const sec = (ms: number) => String(ms / 1000);
 const metadata = (ev: Record<string, any>) => ({
@@ -27,7 +28,7 @@ const inbound = (ev: Record<string, any>, message: Record<string, unknown>) =>
       metadata: metadata(ev),
       contacts: [{ wa_id: ev.from, profile: { name: ev.profileName } }],
       messages: [
-        { from: ev.from, id: ev.messageId, timestamp: sec(ev.at), ...message },
+        { from: ev.from, id: ev.messageId, timestamp: sec(ev.at), ...(ev.replyTo && { context: { from: "15550555555", id: ev.replyTo } }), ...message },
       ],
     }),
   );

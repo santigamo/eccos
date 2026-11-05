@@ -19,6 +19,12 @@ describe("safeRedirectTarget", () => {
     expect(safeRedirectTarget("/deliveries")).toBe("/deliveries");
   });
 
+  test("a parametrised page matches its real path, one segment deep", () => {
+    expect(safeRedirectTarget("/broadcasts/bc_0123?wabaId=abc")).toBe("/broadcasts/bc_0123?wabaId=abc");
+    expect(safeRedirectTarget("/broadcasts/bc_0123/extra")).toBeUndefined();
+    expect(safeRedirectTarget("/broadcasts/")).toBe("/broadcasts");
+  });
+
   test("rejects protocol-relative and backslash open-redirect vectors", () => {
     expect(safeRedirectTarget("//evil.example")).toBeUndefined();
     expect(safeRedirectTarget("/\\evil.example")).toBeUndefined();

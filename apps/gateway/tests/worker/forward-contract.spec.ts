@@ -46,6 +46,26 @@ async function forwardedEvents(): Promise<Record<string, unknown>[]> {
 }
 
 describe("forwarded event contract", () => {
+  it("stores, stamps and forwards a callback of 150 new events as one delivery", async () => {
+    await postMetaWebhook({
+      contacts: [{ wa_id: "34600000000", profile: { name: "Ana" } }],
+      messages: Array.from({ length: 150 }, (_, i) => ({
+        from: "34600000000",
+        id: `wamid.BULK${i}`,
+        timestamp: "1700000000",
+        type: "text",
+        text: { body: `m${i}` },
+      })),
+    });
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      expect(instance.sql.exec("SELECT COUNT(*) AS n FROM inbound_events WHERE delivery_id IS NOT NULL").one().n).toBe(150);
+      expect(instance.sql.exec("SELECT COUNT(DISTINCT delivery_id) AS n FROM inbound_events").one().n).toBe(1);
+      expect(instance.sql.exec("SELECT COUNT(*) AS n FROM deliveries").one().n).toBe(1);
+    });
+    expect(await forwardedEvents()).toHaveLength(150);
+    expect(forwardedBodies).toHaveLength(1);
+  });
+
   it("forwards a sent status, and a late sent never moves a read message back", async () => {
     await gatewayStub().logOutbound("wamid.OUT", "34600000000", '{"to":"34600000000","type":"text"}', "sent", null, "PNID1");
 
@@ -66,7 +86,7 @@ describe("forwarded event contract", () => {
     await postMetaWebhook({
       contacts: [{ wa_id: "34600000000", profile: { name: "Ana" } }],
       messages: [
-        { from: "34600000000", id: "wamid.BTN", timestamp: "1700000000", type: "button", button: { text: "Stop promotions", payload: "STOP_PROMO" } },
+        { from: "34600000000", id: "wamid.BTN", timestamp: "1700000000", type: "button", button: { text: "Stop promotions", payload: "STOP_PROMO" }, context: { from: "15550555555", id: "wamid.TPL" } },
         { from: "34600000000", id: "wamid.BR", timestamp: "1700000000", type: "interactive", interactive: { type: "button_reply", button_reply: { id: "poll_yes", title: "Yes" } } },
         { from: "34600000000", id: "wamid.LR", timestamp: "1700000000", type: "interactive", interactive: { type: "list_reply", list_reply: { id: "lang_nl", title: "Nederlands" } } },
         { from: "34600000000", id: "wamid.TXT", timestamp: "1700000000", type: "text", text: { body: "STOP" } },
@@ -75,7 +95,7 @@ describe("forwarded event contract", () => {
 
     const events = await forwardedEvents();
     const byId = Object.fromEntries(events.map((ev) => [ev.messageId, ev]));
-    expect(byId["wamid.BTN"]).toMatchObject({ type: "reply", text: "Stop promotions", payload: "STOP_PROMO", profileName: "Ana" });
+    expect(byId["wamid.BTN"]).toMatchObject({ type: "reply", text: "Stop promotions", payload: "STOP_PROMO", profileName: "Ana", replyTo: "wamid.TPL" });
     expect(byId["wamid.BR"]).toMatchObject({ type: "reply", text: "Yes", payload: "poll_yes" });
     expect(byId["wamid.LR"]).toMatchObject({ type: "reply", text: "Nederlands", payload: "lang_nl" });
     expect(byId["wamid.TXT"]).toEqual({ type: "reply", from: "34600000000", messageId: "wamid.TXT", text: "STOP", at: 1_700_000_000_000, phoneNumberId: "PNID1", profileName: "Ana" });

@@ -178,6 +178,93 @@ export interface CursorPage<T> {
   nextCursor: string | null;
 }
 
+export type BroadcastStatus = "running" | "completed" | "cancelled" | "halted";
+export type BroadcastRecipientStatus = "queued" | "sending" | "sent" | "failed" | "unknown" | "cancelled";
+
+export interface BroadcastSummary {
+  id: string;
+  status: BroadcastStatus;
+  phoneNumberId: string;
+  template: { name: string; language: string };
+  total: number;
+  duplicatesSkipped: number;
+  ratePerMinute: number;
+  counts: Record<BroadcastRecipientStatus, number>;
+  /** Meta's later receipts for the messages that were sent. */
+  delivery: { delivered: number; read: number; failed: number };
+  haltReason: string | null;
+  createdAt: number;
+  finishedAt: number | null;
+}
+
+export interface BroadcastRecipientRow {
+  seq: number;
+  to: string;
+  status: BroadcastRecipientStatus;
+  messageId: string | null;
+  /** Meta's error envelope as stored (JSON text); the route parses it. */
+  error: string | null;
+  attempts: number;
+}
+
+export interface BroadcastListOpts {
+  limit?: number;
+  /** The `nextCursor` of the previous page. */
+  cursor?: string;
+}
+
+export interface BroadcastOpts {
+  broadcastId: string;
+  status?: BroadcastRecipientStatus;
+  /** The `nextCursor` of the previous page (the last seq it held). */
+  cursor?: string;
+  limit?: number;
+}
+
+export interface BroadcastDetail {
+  broadcast: BroadcastSummary;
+  recipients: CursorPage<BroadcastRecipientRow>;
+}
+
+export type ScheduledStatus = "pending" | "sending" | "sent" | "failed" | "unknown" | "cancelled";
+export type ScheduledFailure = "rejected" | "expired" | "unknown";
+
+export interface ScheduledSend {
+  key: string;
+  status: ScheduledStatus;
+  phoneNumberId: string;
+  to: string;
+  template: { name: string; language: string };
+  sendAt: number;
+  expiresAt: number;
+  attempts: number;
+  messageId: string | null;
+  failureReason: ScheduledFailure | null;
+  /** Meta's error envelope as stored (JSON text); the route parses it. */
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ScheduledListOpts {
+  /** Default `pending`. */
+  status?: ScheduledStatus;
+  /** The `nextCursor` of the previous page (the last key it held). */
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ScheduledPage extends CursorPage<ScheduledSend> {
+  /** Every status of the account's scheduled sends on this WABA, zeros included. */
+  counts: Record<ScheduledStatus, number>;
+}
+
+export type ScheduledCancelState = "cancelled" | "unchanged" | "not_pending" | "missing";
+export interface ScheduledCancelResult {
+  state: ScheduledCancelState;
+  scheduled: ScheduledSend | null;
+}
+
 /**
  * Which failed deliveries a bulk retry re-enqueues: those ENQUEUED inside
  * [from, to] (epoch ms, both inclusive). The window is always explicit because
@@ -1060,6 +1147,10 @@ export interface GatewayApi {
   /** One stored media object of the account's WABA, or null when it is not stored (yet,
    * or any more). The bytes are streamed from R2; nothing is buffered in the gateway. */
   getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null>;
+  /** Stop a running broadcast; recipients not yet attempted are cancelled. Null when it is not found. */
+  cancelBroadcast(input: { wabaId: string; broadcastId: string }, accountId: string): Promise<BroadcastSummary | null>;
+  /** Cancel a pending scheduled send. not_pending once it is sending or ended; missing when the key is not this account's. */
+  cancelScheduled(input: { wabaId: string; key: string }, accountId: string): Promise<ScheduledCancelResult>;
   /**
    * Resolve an organization to its account in ONE control-plane hop: link
    * (reconciling a missing one, contract §2), refusal of a pending/disabled link
@@ -1075,6 +1166,12 @@ export interface GatewayApi {
   readInbound(org: ScopedOrg, opts: Omit<InboundListOpts, "wabaId">): Promise<ScopedRead<InboundRow[]>>;
   readOutbound(org: ScopedOrg, opts: Omit<OutboundListOpts, "wabaId">): Promise<ScopedRead<OutboundRow[]>>;
   readDeliveries(org: ScopedOrg, opts: Omit<DeliveryListOpts, "wabaId">): Promise<ScopedRead<DeliveryRecord[]>>;
+  /** Broadcasts of the selected WABA, newest first. */
+  readBroadcasts(org: ScopedOrg, opts: BroadcastListOpts): Promise<ScopedRead<CursorPage<BroadcastSummary>>>;
+  /** One broadcast and one page of its recipients (seq order); null when it is not this account's. */
+  readBroadcast(org: ScopedOrg, opts: BroadcastOpts): Promise<ScopedRead<BroadcastDetail | null>>;
+  /** Scheduled sends of the selected WABA in one status (default pending), with per-status counts. */
+  readScheduled(org: ScopedOrg, opts: ScheduledListOpts): Promise<ScopedRead<ScheduledPage>>;
   readConversations(
     org: ScopedOrg,
     opts: Omit<ConversationListOpts, "wabaId">,

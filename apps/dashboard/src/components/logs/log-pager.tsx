@@ -21,18 +21,21 @@ export function LogPager({
   hasCursor,
   onLatest,
   onOlder,
+  labels = { first: "← Latest", next: "Load older →" },
 }: {
   canLoadOlder: boolean;
   /** Whether the view is already past the newest page. */
   hasCursor: boolean;
   onLatest: () => void;
   onOlder: () => void;
+  /** For a log read oldest-first, where "latest" and "older" would mislead. */
+  labels?: { first: string; next: string };
 }) {
   return (
     <div className="mt-3 flex justify-end gap-2">
       {hasCursor ? (
         <Button type="button" variant="outline" size="sm" className="rounded-none" onClick={onLatest}>
-          ← Latest
+          {labels.first}
         </Button>
       ) : null}
       <Button
@@ -43,7 +46,7 @@ export function LogPager({
         disabled={!canLoadOlder}
         onClick={onOlder}
       >
-        Load older →
+        {labels.next}
       </Button>
     </div>
   );

@@ -300,6 +300,7 @@ const EVENT_FAMILIES: Record<string, EventFamily> = {
   delivered: "status",
   read: "status",
   failed: "problem",
+  scheduled_failed: "problem",
 };
 
 export function eventReading(type: string, payload: string): EventReading {

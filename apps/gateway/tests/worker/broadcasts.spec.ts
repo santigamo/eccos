@@ -3,12 +3,14 @@ import { createExecutionContext, reset, runInDurableObject } from "cloudflare:te
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
-import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { signPayload } from "@eccos/core/signature";
 
 let API_KEY = "";
 const BASE = `http://example.com/v1/wabas/${TEST_WABA_ID}/broadcasts`;
 
 beforeEach(async () => {
+  forwarded = [];
   API_KEY = (await bootstrapAccount()).apiKey;
   await holdAlarms();
 });
@@ -18,22 +20,30 @@ afterEach(async () => {
   await reset();
 });
 
+/** Bodies the subscriber received. */
+let forwarded: string[] = [];
+
 type SendAnswer = { status: number; body: unknown };
 
 /**
  * Meta: the template lookup answers with `templateStatus`, and each send takes
  * the next answer from `sends` (default: accepted with a fresh wamid).
  */
-function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[] } = {}) {
+function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[]; onSend?: () => Promise<void> } = {}) {
   const sends = [...(opts.sends ?? [])];
   let wamid = 0;
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input instanceof Request ? input.url : input);
+    if (url === SUBSCRIBER_URL) {
+      forwarded.push(String(init?.body));
+      return new Response("ok");
+    }
     if (url.includes("/message_templates")) {
       const status = opts.templateStatus === undefined ? "APPROVED" : opts.templateStatus;
       const data = status === null ? [] : [{ name: "promo", language: "es", status, id: "1" }];
       return Response.json({ data });
     }
+    await opts.onSend?.();
     const answer = sends.shift();
     if (answer) return Response.json(answer.body, { status: answer.status });
     wamid++;
@@ -426,5 +436,122 @@ describe("review cases", () => {
     const again = await create(broadcast(["34600000001"]), { "idempotency-key": "k" });
     expect(((await again.json()) as { broadcast: { id: string } }).broadcast.id).toBe(id);
     expect(lookups()).toBe(1);
+  });
+});
+
+describe("event origin", () => {
+  const PHONE = "PNID1";
+  const GUEST = "34600000001";
+
+  async function postMetaWebhook(value: Record<string, unknown>) {
+    const body = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: TEST_WABA_ID, changes: [{ field: "messages", value: { metadata: { phone_number_id: PHONE }, ...value } }] }],
+    });
+    const res = await exports.default.fetch("http://example.com/webhooks/meta", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-hub-signature-256": await signPayload(body, env.META_APP_SECRET) },
+      body,
+    });
+    expect(res.status).toBe(200);
+  }
+
+  const status = (id: string, name: string, extra: Record<string, unknown> = {}) =>
+    postMetaWebhook({ statuses: [{ id, status: name, timestamp: "1700000000", recipient_id: GUEST, ...extra }] });
+
+  const buttonReply = (id: string, contextId?: string) =>
+    postMetaWebhook({
+      messages: [
+        {
+          from: GUEST,
+          id,
+          timestamp: "1700000000",
+          type: "button",
+          button: { text: "Yes", payload: "yes" },
+          ...(contextId ? { context: { from: "15550555555", id: contextId } } : {}),
+        },
+      ],
+    });
+
+  const imageMessage = (id: string, contextId: string) =>
+    postMetaWebhook({
+      messages: [
+        { from: GUEST, id, timestamp: "1700000000", type: "image", image: { id: "media-1", mime_type: "image/jpeg", sha256: "x" }, context: { from: "15550555555", id: contextId } },
+      ],
+    });
+
+  async function forwardedEvents(): Promise<Record<string, unknown>[]> {
+    await runAlarm();
+    return forwarded.flatMap((body) => JSON.parse(body).events);
+  }
+
+  const storedEvent = (wamid: string) =>
+    runInDurableObject(gatewayStub(), (i: EccosGateway) =>
+      JSON.parse(String(i.sql.exec(`SELECT payload FROM inbound_events WHERE transport_message_id = ?`, wamid).toArray()[0]?.payload)),
+    );
+
+  async function sendOne(onSend?: () => Promise<void>) {
+    mockMeta({ onSend });
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
+    const id = await createdId(broadcast([GUEST]));
+    await tick();
+    return id;
+  }
+
+  it("status events of a broadcast message carry its broadcastId", async () => {
+    const id = await sendOne();
+    for (const name of ["sent", "delivered", "read"]) await status("wamid.1", name);
+    await status("wamid.1", "failed", { errors: [{ code: 131026, title: "Undeliverable" }] });
+    const events = await forwardedEvents();
+    expect(events.map((ev) => ev.type).sort()).toEqual(["delivered", "failed", "read", "sent"]);
+    for (const ev of events) expect(ev.broadcastId).toBe(id);
+    expect((await storedEvent("wamid.1")).broadcastId).toBe(id);
+  });
+
+  it("a reply or message whose replyTo is a broadcast message carries its broadcastId", async () => {
+    const id = await sendOne();
+    await buttonReply("wamid.BTN", "wamid.1");
+    await imageMessage("wamid.IMG", "wamid.1");
+    const events = await forwardedEvents();
+    expect(events.map((ev) => ev.type).sort()).toEqual(["message", "reply"]);
+    for (const ev of events) expect(ev).toMatchObject({ replyTo: "wamid.1", broadcastId: id });
+  });
+
+  it("single sends and unrelated replies do not carry a broadcastId", async () => {
+    await sendOne();
+    await gatewayStub().logOutbound("wamid.SINGLE", GUEST, "{}", "sent", null, PHONE);
+    await status("wamid.SINGLE", "delivered");
+    await buttonReply("wamid.R1", "wamid.SINGLE");
+    await buttonReply("wamid.R2");
+    await buttonReply("wamid.R3", "wamid.NEVER_SENT");
+    const events = await forwardedEvents();
+    expect(events).toHaveLength(4);
+    for (const ev of events) expect("broadcastId" in ev).toBe(false);
+  });
+
+  it("a status that arrives while the send is in flight still carries the broadcastId", async () => {
+    const id = await sendOne(() => status("wamid.1", "sent"));
+    const events = await forwardedEvents();
+    expect(events).toMatchObject([{ type: "sent", transportMessageId: "wamid.1", broadcastId: id }]);
+    expect((await storedEvent("wamid.1")).broadcastId).toBe(id);
+  });
+
+  it("adds the origin to a status that overtook its send, before the batch is first attempted", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([{ type: "sent", transportMessageId: "wamid.R", at: 1 }]);
+      i.logOutbound("wamid.R", GUEST, "{}", "sent", null, PHONE, null, { broadcastId: "bc_x" });
+      expect(JSON.parse(String(i.sql.exec(`SELECT payload FROM deliveries`).one().payload)).events[0].broadcastId).toBe("bc_x");
+      expect(JSON.parse(String(i.sql.exec(`SELECT payload FROM inbound_events`).one().payload)).broadcastId).toBe("bc_x");
+    });
+  });
+
+  it("never rewrites a batch that was already attempted", async () => {
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.ingest([{ type: "sent", transportMessageId: "wamid.L", at: 1 }]);
+      i.sql.exec(`UPDATE deliveries SET attempts = 1`);
+      i.logOutbound("wamid.L", GUEST, "{}", "sent", null, PHONE, null, { broadcastId: "bc_x" });
+      expect(String(i.sql.exec(`SELECT payload FROM deliveries`).one().payload)).not.toContain("broadcastId");
+      expect(String(i.sql.exec(`SELECT payload FROM inbound_events`).one().payload)).not.toContain("broadcastId");
+    });
   });
 });
