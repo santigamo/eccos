@@ -37,11 +37,14 @@ of the interactive button or list row.
 
 ```json
 { "type": "reply", "from": "34600000000", "messageId": "wamid.HBgM...", "text": "Yes, count me in",
-  "payload": "optin_yes", "profileName": "Ana", "at": 1767225600000, "phoneNumberId": "1098765432" }
+  "payload": "optin_yes", "replyTo": "wamid.HBgL...", "profileName": "Ana", "at": 1767225600000, "phoneNumberId": "1098765432" }
 ```
 
 `from` is the customer's phone number, or their BSUID when Meta withholds the number; `fromUserId`
 carries the BSUID whenever Meta sends one. `profileName` is the WhatsApp profile name, if any.
+
+`replyTo` is the id of the message the customer replied to: the template or interactive
+message whose button they tapped, the message they quoted, or the product message they asked about. It is absent otherwise.
 
 ## `message`: any other incoming content
 
@@ -68,6 +71,9 @@ extra fields depend on it. Unknown future types are forwarded with `messageType`
 
 `media.id` is a Meta media id. Eccos does not forward the file, and the API has no endpoint to
 download it.
+
+`message` carries `replyTo` too when the customer quoted a message (for example an image
+sent as a reply) or answered a Flow.
 
 ## `echo` and `message_echo`: messages sent from the WhatsApp Business app
 

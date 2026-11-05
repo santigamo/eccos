@@ -224,15 +224,16 @@ function parseMetaMessage(message: Record<string, unknown>, names: Map<string, s
   if (!from || !messageId || !at) return null;
 
   const profileName = names.get(from) ?? (fromUserId ? names.get(fromUserId) : undefined);
+  const replyTo = getString(asRecord(message.context)?.id);
   const text = metaMessageBody(message);
   if (text) {
     const payload = metaReplyPayload(message);
-    return compact<WhatsAppCallbackEvent>({ type: "reply", from, fromUserId, messageId, text, at, profileName, payload });
+    return compact<WhatsAppCallbackEvent>({ type: "reply", from, fromUserId, messageId, text, at, profileName, payload, replyTo });
   }
   const content = messageContent(message);
   return isEmptyReply(content)
     ? null
-    : compact<WhatsAppCallbackEvent>({ type: "message", from, fromUserId, messageId, at, profileName, ...content });
+    : compact<WhatsAppCallbackEvent>({ type: "message", from, fromUserId, messageId, at, profileName, replyTo, ...content });
 }
 
 function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent[] {

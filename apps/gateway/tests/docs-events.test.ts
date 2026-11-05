@@ -27,7 +27,7 @@ const inbound = (ev: Record<string, any>, message: Record<string, unknown>) =>
       metadata: metadata(ev),
       contacts: [{ wa_id: ev.from, profile: { name: ev.profileName } }],
       messages: [
-        { from: ev.from, id: ev.messageId, timestamp: sec(ev.at), ...message },
+        { from: ev.from, id: ev.messageId, timestamp: sec(ev.at), ...(ev.replyTo && { context: { from: "15550555555", id: ev.replyTo } }), ...message },
       ],
     }),
   );
