@@ -114,7 +114,7 @@ export type WhatsAppCallbackEvent =
       type: "scheduled_failed";
       /** The key it was scheduled under. */
       scheduleKey: string;
-      /** The recipient as it was scheduled. */
+      /** The recipient: digits only for a phone number, or their BSUID. */
       to: string;
       /** `rejected`: Meta refused it. `expired`: not sent before `expiresAt`. `unknown`: Meta may have sent it; never retried. */
       reason: "rejected" | "expired" | "unknown";

@@ -2486,7 +2486,8 @@ export class EccosGateway extends DurableObject<Env> {
     const mediaWakeAt = await this.mediaStep(now);
     if (mediaWakeAt !== null) wakes.push(mediaWakeAt);
     // After the last await, so a send scheduled during the run is not overwritten.
-    const scheduledWakeAt = this.scheduledWakeAt();
+    // Not after a failed step: its rows stay due, and a wake in the past would spin past the retry.
+    const scheduledWakeAt = scheduled.retryAt === null ? this.scheduledWakeAt() : null;
     if (scheduledWakeAt !== null) wakes.push(scheduledWakeAt);
     // Work that arrived during this run was armed for now, and the earlier wakes above would overwrite it.
     if (this.wakeArrived) wakes.push(Date.now());

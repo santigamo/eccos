@@ -419,6 +419,20 @@ describe("sending", () => {
     expect(await forwardedEvents()).toHaveLength(3);
   });
 
+  it("a failing step waits for its retry instead of spinning on the due rows", async () => {
+    mockMeta();
+    await subscribe();
+    await insertExpired(3);
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      vi.spyOn(instance, "ingest").mockImplementationOnce(() => {
+        throw new Error("boom");
+      });
+    });
+    await runAlarm();
+    const alarm = await runInDurableObject(gatewayStub(), (_: EccosGateway, state: DurableObjectState) => state.storage.getAlarm());
+    expect(alarm).toBeGreaterThan(Date.now() + 20_000);
+  });
+
   it("an expiry passed while the limiter was awaited ends the row with no Meta call", async () => {
     const fetchSpy = mockMeta();
     await subscribe();
