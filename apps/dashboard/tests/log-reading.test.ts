@@ -237,6 +237,11 @@ describe("eventReading", () => {
     expect(reading.family).toBe("problem");
   });
 
+  test("a scheduled send that will not go out is a problem, like a failed status", () => {
+    const payload = JSON.stringify({ type: "scheduled_failed", scheduleKey: "appt-1", to: "34600000001", reason: "expired", at: 1 });
+    expect(eventReading("scheduled_failed", payload).family).toBe("problem");
+  });
+
   test("a non-text message reads as its Meta type, caption or error", () => {
     const image = JSON.stringify({
       type: "message",
