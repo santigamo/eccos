@@ -90,18 +90,18 @@ your app  ◀──forward (HMAC)────   Eccos  ◀──  Meta webhook  
 Normalized event shape (`WhatsAppCallbackEvent`):
 
 ```ts
-| { type: "sent" | "delivered" | "read"; transportMessageId; at }
-| { type: "failed"; transportMessageId; at; errorCode?; errorMessage? }
-| { type: "reply"; from; fromUserId?; messageId; text; at; profileName?; payload?; replyTo? }
+| { type: "sent" | "delivered" | "read"; transportMessageId; at; broadcastId? }
+| { type: "failed"; transportMessageId; at; errorCode?; errorMessage?; broadcastId? }
+| { type: "reply"; from; fromUserId?; messageId; text; at; profileName?; payload?; replyTo?; broadcastId? }
 | { type: "echo"; to; toUserId?; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
 // Additive: every other message type, inbound and echoed, instead of being dropped
-| { type: "message"; from; fromUserId?; messageId; at; profileName?; replyTo? } & MessageContent
+| { type: "message"; from; fromUserId?; messageId; at; profileName?; replyTo?; broadcastId? } & MessageContent
 | { type: "message_echo"; to; toUserId?; messageId; at } & MessageContent
 ```
 
 `reply` / `echo` still carry text, button and interactive replies; `payload` (on `reply`) is the quick-reply button `payload` or the interactive `button_reply` / `list_reply` `id`, absent when there is none. `profileName` is
 the sender's WhatsApp profile name, present only when Meta sends one (`reply` and inbound `message` only).
-`replyTo` (`reply` and inbound `message`) is the id of the message the customer replied to: a quoted message, or the template or interactive message whose button they tapped. Absent otherwise.
+`replyTo` (`reply` and inbound `message`) is the id of the message the customer replied to: a quoted message, or the template or interactive message whose button they tapped. Absent otherwise. `broadcastId` (statuses, and `reply`/`message` whose `replyTo` is such a message) names the broadcast that sent the message.
 `fromUserId` / `toUserId` is the customer's business-scoped user id (BSUID, e.g. `US.13491208655302741918`)
 when Meta sends one. For a username user whose phone number Meta withholds, `from` / `to` carries that BSUID
 instead of a number; otherwise `from` / `to` is the phone number as before. A subscriber that

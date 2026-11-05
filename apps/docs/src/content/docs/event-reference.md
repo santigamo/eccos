@@ -28,6 +28,9 @@ event, not an id the send call returned. Ignore ids you don't know if you only t
 `errorCode` and `errorMessage` come from Meta's first error; `errorMessage` prefers
 `error_data.details` over `message` ([error codes](https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes)).
 
+`broadcastId` names the [broadcast](/bulk-sending) that sent the message. It is absent for other
+sends, and once the message has left the [retention window](/data-endpoints).
+
 ## `reply`: incoming text, button taps and list choices
 
 Plain text messages, template quick-reply taps, and interactive button or list replies all arrive
@@ -44,7 +47,8 @@ of the interactive button or list row.
 carries the BSUID whenever Meta sends one. `profileName` is the WhatsApp profile name, if any.
 
 `replyTo` is the id of the message the customer replied to: the template or interactive
-message whose button they tapped, the message they quoted, or the product message they asked about. It is absent otherwise.
+message whose button they tapped, the message they quoted, or the product message they asked about. It is absent otherwise. When `replyTo` is a message a
+[broadcast](/bulk-sending) sent, `broadcastId` names that broadcast.
 
 ## `message`: any other incoming content
 
@@ -73,7 +77,7 @@ extra fields depend on it. Unknown future types are forwarded with `messageType`
 download it.
 
 `message` carries `replyTo` too when the customer quoted a message (for example an image
-sent as a reply) or answered a Flow.
+sent as a reply) or answered a Flow, and `broadcastId` the same way as on `reply`.
 
 ## `echo` and `message_echo`: messages sent from the WhatsApp Business app
 
