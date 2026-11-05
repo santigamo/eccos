@@ -30,7 +30,8 @@ time.
   Account. The key is the idempotency: repeating a `PUT` never schedules a second send, so there is no
   [Idempotency-Key](/idempotency) header here. While the send is pending, a repeat replaces it
   and starts its attempts and backoff over; once it is being sent, was sent or has an unknown
-  outcome, it answers `409`.
+  outcome, it answers `409`. Use an id from your own system (an appointment id),
+  not a phone number or a name: the key shows in the console, its URLs and audit lines.
 - `to` is a phone number or a BSUID. `template` is Meta's template object, as in a
   [broadcast](/bulk-sending).
 - `sendAt` is absolute: epoch milliseconds, or an ISO 8601 time **with** a timezone (`Z` or an

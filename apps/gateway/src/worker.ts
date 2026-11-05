@@ -25,11 +25,18 @@ import { EccosGateway as Gateway } from "./gateway";
 import { EccosControlPlane as ControlPlane } from "./control-plane";
 import { sentryOptions } from "./sentry";
 import { checkSendRate, sendRatePerMinute } from "./send-rate-limit";
-import { MAX_BROADCAST_BODY_BYTES, parseBroadcastRequest, parseStoredError, type RecipientStatus } from "./broadcasts";
+import {
+  MAX_BROADCAST_BODY_BYTES,
+  parseBroadcastRequest,
+  parseStoredError,
+  RECIPIENT_STATUSES,
+  type RecipientStatus,
+} from "./broadcasts";
 import {
   MAX_SCHEDULED_BODY_BYTES,
   parseScheduledRequest,
   SCHEDULE_KEY,
+  SCHEDULED_STATUSES,
   type ScheduledSend,
   type ScheduledStatus,
 } from "./scheduled";
@@ -1010,8 +1017,6 @@ async function broadcastStub(c: AppContext) {
   return { account, stub: getGatewayStubForWaba(c.env, wabaId) } as const;
 }
 
-const RECIPIENT_STATUSES = new Set(["queued", "sending", "sent", "failed", "unknown", "cancelled"]);
-
 app.post("/v1/wabas/:wabaId/broadcasts", createBroadcastRoute);
 app.post("/v1/wabas/:wabaId/phones/:phoneNumberId/broadcasts", createBroadcastRoute);
 
@@ -1062,8 +1067,6 @@ app.post("/v1/wabas/:wabaId/broadcasts/:broadcastId/cancel", async (c) => {
 });
 
 // --- Scheduled sends (src/scheduled.ts) -------------------------------------
-
-const SCHEDULED_STATUSES = new Set(["pending", "sending", "sent", "failed", "unknown", "cancelled"]);
 
 const scheduledJson = (row: ScheduledSend) => ({ ...row, error: parseStoredError(row.error) });
 

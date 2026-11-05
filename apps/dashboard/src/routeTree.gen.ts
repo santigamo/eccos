@@ -14,6 +14,7 @@ import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ScheduledRouteImport } from './routes/scheduled'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as NumbersRouteImport } from './routes/numbers'
@@ -23,9 +24,11 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as DeliveriesRouteImport } from './routes/deliveries'
 import { Route as ConversationsRouteImport } from './routes/conversations'
+import { Route as BroadcastsRouteImport } from './routes/broadcasts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
 import { Route as NumbersAttachTokenRouteImport } from './routes/numbers_.attach-token'
+import { Route as BroadcastsBroadcastIdRouteImport } from './routes/broadcasts_.$broadcastId'
 
 const WebhooksRoute = WebhooksRouteImport.update({
   id: '/webhooks',
@@ -50,6 +53,11 @@ const SigninRoute = SigninRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScheduledRoute = ScheduledRouteImport.update({
+  id: '/scheduled',
+  path: '/scheduled',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -97,6 +105,11 @@ const ConversationsRoute = ConversationsRouteImport.update({
   path: '/conversations',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BroadcastsRoute = BroadcastsRouteImport.update({
+  id: '/broadcasts',
+  path: '/broadcasts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -112,9 +125,15 @@ const NumbersAttachTokenRoute = NumbersAttachTokenRouteImport.update({
   path: '/numbers/attach-token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BroadcastsBroadcastIdRoute = BroadcastsBroadcastIdRouteImport.update({
+  id: '/broadcasts_/$broadcastId',
+  path: '/broadcasts/$broadcastId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/broadcasts': typeof BroadcastsRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
@@ -124,16 +143,19 @@ export interface FileRoutesByFullPath {
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/templates': typeof TemplatesRoute
   '/webhooks': typeof WebhooksRoute
+  '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/broadcasts': typeof BroadcastsRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
@@ -143,17 +165,20 @@ export interface FileRoutesByTo {
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/templates': typeof TemplatesRoute
   '/webhooks': typeof WebhooksRoute
+  '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/broadcasts': typeof BroadcastsRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
@@ -163,11 +188,13 @@ export interface FileRoutesById {
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/templates': typeof TemplatesRoute
   '/webhooks': typeof WebhooksRoute
+  '/broadcasts_/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers_/attach-token': typeof NumbersAttachTokenRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
@@ -175,6 +202,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/broadcasts'
     | '/conversations'
     | '/deliveries'
     | '/events'
@@ -184,16 +212,19 @@ export interface FileRouteTypes {
     | '/numbers'
     | '/onboarding'
     | '/reset-password'
+    | '/scheduled'
     | '/settings'
     | '/signin'
     | '/signup'
     | '/templates'
     | '/webhooks'
+    | '/broadcasts/$broadcastId'
     | '/numbers/attach-token'
     | '/workspaces/new'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/broadcasts'
     | '/conversations'
     | '/deliveries'
     | '/events'
@@ -203,16 +234,19 @@ export interface FileRouteTypes {
     | '/numbers'
     | '/onboarding'
     | '/reset-password'
+    | '/scheduled'
     | '/settings'
     | '/signin'
     | '/signup'
     | '/templates'
     | '/webhooks'
+    | '/broadcasts/$broadcastId'
     | '/numbers/attach-token'
     | '/workspaces/new'
   id:
     | '__root__'
     | '/'
+    | '/broadcasts'
     | '/conversations'
     | '/deliveries'
     | '/events'
@@ -222,17 +256,20 @@ export interface FileRouteTypes {
     | '/numbers'
     | '/onboarding'
     | '/reset-password'
+    | '/scheduled'
     | '/settings'
     | '/signin'
     | '/signup'
     | '/templates'
     | '/webhooks'
+    | '/broadcasts_/$broadcastId'
     | '/numbers_/attach-token'
     | '/workspaces/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BroadcastsRoute: typeof BroadcastsRoute
   ConversationsRoute: typeof ConversationsRoute
   DeliveriesRoute: typeof DeliveriesRoute
   EventsRoute: typeof EventsRoute
@@ -242,11 +279,13 @@ export interface RootRouteChildren {
   NumbersRoute: typeof NumbersRoute
   OnboardingRoute: typeof OnboardingRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ScheduledRoute: typeof ScheduledRoute
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
   TemplatesRoute: typeof TemplatesRoute
   WebhooksRoute: typeof WebhooksRoute
+  BroadcastsBroadcastIdRoute: typeof BroadcastsBroadcastIdRoute
   NumbersAttachTokenRoute: typeof NumbersAttachTokenRoute
   WorkspacesNewRoute: typeof WorkspacesNewRoute
 }
@@ -286,6 +325,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scheduled': {
+      id: '/scheduled'
+      path: '/scheduled'
+      fullPath: '/scheduled'
+      preLoaderRoute: typeof ScheduledRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -351,6 +397,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConversationsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/broadcasts': {
+      id: '/broadcasts'
+      path: '/broadcasts'
+      fullPath: '/broadcasts'
+      preLoaderRoute: typeof BroadcastsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -372,11 +425,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NumbersAttachTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/broadcasts_/$broadcastId': {
+      id: '/broadcasts_/$broadcastId'
+      path: '/broadcasts/$broadcastId'
+      fullPath: '/broadcasts/$broadcastId'
+      preLoaderRoute: typeof BroadcastsBroadcastIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BroadcastsRoute: BroadcastsRoute,
   ConversationsRoute: ConversationsRoute,
   DeliveriesRoute: DeliveriesRoute,
   EventsRoute: EventsRoute,
@@ -386,11 +447,13 @@ const rootRouteChildren: RootRouteChildren = {
   NumbersRoute: NumbersRoute,
   OnboardingRoute: OnboardingRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ScheduledRoute: ScheduledRoute,
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
   TemplatesRoute: TemplatesRoute,
   WebhooksRoute: WebhooksRoute,
+  BroadcastsBroadcastIdRoute: BroadcastsBroadcastIdRoute,
   NumbersAttachTokenRoute: NumbersAttachTokenRoute,
   WorkspacesNewRoute: WorkspacesNewRoute,
 }

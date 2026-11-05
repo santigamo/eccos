@@ -19,6 +19,7 @@ import type {
   OperatorCounts,
   OutboundRow,
   OutboundTrailEvent,
+  ScheduledCancelResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
   ThreadView,
@@ -64,9 +65,11 @@ import {
 import {
   cancelScheduled,
   claimDue,
+  countScheduled,
   type EndedRow,
   expireDue,
   listScheduled,
+  listScheduledByTime,
   nextScheduledWake,
   readScheduled,
   type ScheduledFailure,
@@ -1443,11 +1446,41 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   async listBroadcasts(accountId: string, limit: number): Promise<BroadcastSummary[]> {
-    return this.sql
-      .exec(`SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`, accountId, limit)
+    return (await this.listBroadcastPage(accountId, limit)).items;
+  }
+
+  /**
+   * `before` is a broadcast id: the page starts after it (a cursor swept by retention yields an
+   * empty page). One extra id is selected to know whether more exist; only `limit` summaries are built.
+   */
+  async listBroadcastPage(
+    accountId: string,
+    limit: number,
+    before?: string,
+  ): Promise<{ items: BroadcastSummary[]; hasMore: boolean }> {
+    const ids = (
+      before
+        ? this.sql.exec(
+            `SELECT id FROM broadcasts WHERE account_id = ?
+               AND (created_at, rowid) < (SELECT created_at, rowid FROM broadcasts WHERE id = ?)
+             ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+            accountId,
+            before,
+            limit + 1,
+          )
+        : this.sql.exec(
+            `SELECT id FROM broadcasts WHERE account_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+            accountId,
+            limit + 1,
+          )
+    )
       .toArray()
-      .map((row) => readBroadcast(this.sql, String(row.id)))
+      .map((row) => String(row.id));
+    const items = ids
+      .slice(0, limit)
+      .map((id) => readBroadcast(this.sql, id))
       .filter((summary): summary is BroadcastSummary => summary !== null);
+    return { items, hasMore: ids.length > limit };
   }
 
   async listBroadcastRecipients(
@@ -1494,10 +1527,7 @@ export class EccosGateway extends DurableObject<Env> {
     return readScheduled(this.sql, accountId, key);
   }
 
-  async cancelScheduled(
-    accountId: string,
-    key: string,
-  ): Promise<{ state: "cancelled" | "unchanged" | "not_pending" | "missing"; scheduled: ScheduledSend | null }> {
+  async cancelScheduled(accountId: string, key: string): Promise<ScheduledCancelResult> {
     const { state, row } = cancelScheduled(this.sql, accountId, key, Date.now());
     return { state, scheduled: row };
   }
@@ -1507,6 +1537,19 @@ export class EccosGateway extends DurableObject<Env> {
     opts: { status?: ScheduledStatus; after?: string; limit: number },
   ): Promise<ScheduledSend[]> {
     return listScheduled(this.sql, accountId, opts);
+  }
+
+  /** The console's page: one status by send time, with the per-status counts. */
+  async listScheduledPage(
+    accountId: string,
+    opts: { status: ScheduledStatus; cursor?: string; limit: number },
+  ): Promise<{ items: ScheduledSend[]; hasMore: boolean; counts: Record<ScheduledStatus, number> }> {
+    const rows = listScheduledByTime(this.sql, accountId, { ...opts, limit: opts.limit + 1 });
+    return {
+      items: rows.slice(0, opts.limit),
+      hasMore: rows.length > opts.limit,
+      counts: countScheduled(this.sql, accountId),
+    };
   }
 
   /** scheduledStep, but never thrown: the broadcast and media wakes in alarm() must run whatever happens here. */
