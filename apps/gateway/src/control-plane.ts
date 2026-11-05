@@ -1509,8 +1509,10 @@ export class EccosControlPlane extends DurableObject<Env> {
   /**
    * Operator recovery: forget one sync recorded as issued and unconfirmed, so the
    * next re-check issues it again. Only for a failed WABA whose failure was read
-   * as a refusal from Meta; the worst outcome of the repeat is `2593107`, which
-   * the saga settles. Returns whether a row changed.
+   * as a refusal from Meta. The saga posts to every phone of the WABA while Meta's
+   * once-only rule is per phone, so on a multi-phone WABA the repeat would reach a
+   * phone that already accepted, get `2593107` and be recorded as `already_synced`
+   * for a sync that did run: that case throws. Returns whether a row changed.
    */
   async resetUnconfirmedCoexistenceSync(
     accountId: string,
@@ -1522,6 +1524,11 @@ export class EccosControlPlane extends DurableObject<Env> {
     if (syncKind !== "contacts" && syncKind !== "history") throw new Error("invalid syncKind");
     const started = syncKind === "contacts" ? "contacts_sync_started_at" : "history_sync_started_at";
     const requestId = syncKind === "contacts" ? "contacts_sync_request_id" : "history_sync_request_id";
+    if (phonesOf(id, this.sql).length > 1) {
+      throw new Error(
+        "cannot reset a coexistence sync on a WABA with several phones: Meta's once-only rule is per phone and the log cannot say which phone refused",
+      );
+    }
     const updated = this.sql
       .exec(
         `UPDATE wabas SET ${started} = NULL
@@ -1537,7 +1544,8 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   /**
    * Operator recovery: record that Meta refused a sync with a permission error, so
-   * the next re-check moves on to the other sync. Same guards as the reset above.
+   * the next re-check moves on to the other sync. Same row guards as the reset above,
+   * but allowed on a multi-phone WABA, where it marks the whole sync unavailable.
    */
   async settleCoexistenceSyncNotPermitted(
     accountId: string,

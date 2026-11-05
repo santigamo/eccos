@@ -95,6 +95,17 @@ function publicConfig(config: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(config).filter(([key]) => isPublicConfigKey(key)));
 }
 
+/** Audit line for an operator sync recovery; ids only. */
+function logOperatorSyncAction(
+  event: string,
+  accountId: string,
+  wabaId: string,
+  syncKind: "contacts" | "history",
+  changed: boolean,
+): void {
+  console.log(JSON.stringify({ event, accountId, wabaId, syncKind, changed }));
+}
+
 /** Names the account and WABA an RPC call acts on. Workers Logs adds the RPC method to
  * the line, so console traffic can be attributed to a customer. Ids only. */
 function logScope(accountId: string, wabaId: string): void {
@@ -779,8 +790,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   }
 
   /**
-   * Operator-only, deliberately outside `GatewayApi` so the console cannot call
-   * it. See `docs/operations.md`, "Coexistence sync failures".
+   * Operator-only: outside `GatewayApi`, so the console's types do not expose it,
+   * but the dashboard binds this same entrypoint. See `docs/operations.md`, "Coexistence sync failures".
    */
   async resetUnconfirmedCoexistenceSync(
     wabaId: string,
@@ -788,7 +799,13 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     syncKind: "contacts" | "history",
   ): Promise<boolean> {
     const account = requireAccountId(accountId, "accountId is required");
-    return getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(account, wabaId, syncKind);
+    const changed = await getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(
+      account,
+      wabaId,
+      syncKind,
+    );
+    logOperatorSyncAction("coexistence_sync_reset", account, wabaId, syncKind, changed);
+    return changed;
   }
 
   /** Operator-only and outside `GatewayApi`, like the reset above. */
@@ -798,7 +815,13 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     syncKind: "contacts" | "history",
   ): Promise<boolean> {
     const account = requireAccountId(accountId, "accountId is required");
-    return getControlPlaneStub(this.env).settleCoexistenceSyncNotPermitted(account, wabaId, syncKind);
+    const changed = await getControlPlaneStub(this.env).settleCoexistenceSyncNotPermitted(
+      account,
+      wabaId,
+      syncKind,
+    );
+    logOperatorSyncAction("coexistence_sync_settled_not_permitted", account, wabaId, syncKind, changed);
+    return changed;
   }
 
   /** Operator-only and outside `GatewayApi`, like the reset above: read-only Graph view of a WABA. */

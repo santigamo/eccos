@@ -1032,6 +1032,54 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
     });
   });
 
+  it("refuses to reset a sync on a WABA with several phones, but still lets it be settled", async () => {
+    const accountId = "acc-coex-multi";
+    const wabaId = "WABA_COEX_MULTI";
+    await createAccount(accountId);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockGraph((call) => (call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts ? refused(10) : accepted()));
+
+    await begin(accountId, wabaId, "coexistence", [
+      ...PHONES,
+      { phoneNumberId: "PN_COEX_2", displayPhoneNumber: "+34 600 000 002" },
+    ]);
+    await provisionWaba(env, accountId, wabaId);
+
+    await cp(async (instance) => {
+      await expect(
+        instance.resetUnconfirmedCoexistenceSync(accountId, wabaId, "contacts"),
+      ).rejects.toThrow(/several phones/);
+      expect(row(instance, wabaId).contacts_sync_started_at).not.toBeNull();
+      expect(await instance.settleCoexistenceSyncNotPermitted(accountId, wabaId, "contacts")).toBe(true);
+    });
+  });
+
+  it("the RPC passes (wabaId, accountId, syncKind) in the right order and refuses another account", async () => {
+    const accountId = "acc-coex-rpc";
+    const otherId = "acc-coex-rpc-other";
+    const wabaId = "WABA_COEX_RPC";
+    await createAccount(accountId);
+    await createAccount(otherId);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    mockGraph((call) => (call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts ? refused(10) : accepted()));
+
+    await begin(accountId, wabaId, "coexistence");
+    await provisionWaba(env, accountId, wabaId);
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const startedAt = () => cp((instance) => row(instance, wabaId).contacts_sync_started_at);
+    const before = await startedAt();
+    expect(before).not.toBeNull();
+
+    // Another account must neither change the row nor learn that it exists.
+    await expect(rpc.resetUnconfirmedCoexistenceSync(wabaId, otherId, "contacts")).resolves.toBe(false);
+    await expect(rpc.settleCoexistenceSyncNotPermitted(wabaId, otherId, "contacts")).resolves.toBe(false);
+    expect(await startedAt()).toBe(before);
+
+    await expect(rpc.resetUnconfirmedCoexistenceSync(wabaId, accountId, "contacts")).resolves.toBe(true);
+    expect(await startedAt()).toBeNull();
+  });
+
   it("an unknown Meta error after issue still fails terminally and is never retried", async () => {
     const accountId = "acc-coex-unknown-code";
     const wabaId = "WABA_COEX_UNKNOWN_CODE";

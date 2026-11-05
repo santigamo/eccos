@@ -181,6 +181,19 @@ describe("NumbersTable", () => {
     expect(affected).toContain("2 numbers were connected");
   });
 
+  test("a settled-unavailable sync says the number works but its data will not arrive", () => {
+    const state = resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "unavailable" });
+    state.wabas[0]!.coexistence.error =
+      "contacts sync unavailable: Meta refused it with a permission error. The number works as a Cloud API number without that data";
+    const body = text(render(state));
+    expect(body).toContain("Some WhatsApp Business app data will not arrive");
+    expect(body).toContain("works normally for sending and receiving");
+    expect(body).toContain("Meta refused it with a permission error");
+    expect(text(render(resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "initiated" })))).not.toContain(
+      "will not arrive",
+    );
+  });
+
   test("a coexistence number that synchronised normally shows no note", () => {
     const html = text(
       render(resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "initiated" })),

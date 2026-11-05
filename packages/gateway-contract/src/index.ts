@@ -439,8 +439,8 @@ export type WabaOnboardingType = "standard" | "coexistence";
  * - `initiated` — contacts and message history have both been requested.
  * - `unconfirmed` — a request was issued and Meta never confirmed it. Terminal:
  *   each sync is allowed once, so it cannot be safely retried.
- * - `unavailable` — every sync is settled and Meta refused at least one as
- *   already performed or with history sharing off. Terminal, and not a failure;
+ * - `unavailable` — every sync is settled and at least one was refused: already
+ *   performed, history sharing off, or a permission error an operator recorded. Terminal, and not a failure;
  *   `error` says which sync and why.
  * - `not_coexistence` — Eccos recorded a coexistence onboarding and Meta reports
  *   the number is not one, so nothing was issued. Terminal, and not a failure.

@@ -281,18 +281,27 @@ as `active`. Two failures are terminal by design and need a human:
 | `provisioningError` on the WABA | What happened | What to do |
 | --- | --- | --- |
 | `coexistence message-history sync window expired (24h); …` | The 24-hour window closed with the sync not initiated. Meta would answer `2593108`, so Eccos does not even send it. | Offboard the customer and re-run Embedded Signup. The reconnect starts a fresh window automatically. |
-| `coexistence sync was issued but not confirmed by Meta …` | A sync request was sent and no success came back. It may well have been processed, so Eccos will **not** send it again — a duplicate is Meta's `2593107` and breaks the onboarding permanently. | Offboard the customer and re-run Embedded Signup. Do **not** look for a retry button; there deliberately isn't one. |
+| `coexistence sync was issued but not confirmed by Meta …` | A sync request was sent and no success came back. It may well have been processed, so Eccos will **not** send it again — a duplicate is Meta's `2593107`, which the saga would record as already synced, hiding whether it ever ran. | Offboard the customer and re-run Embedded Signup. The console has no retry button, deliberately; see the narrow recovery below. |
 
 Pressing "re-check" on such a WABA is safe — it re-runs the saga, which refuses to re-issue a spent
-sync and lands back on the same message. Only a genuinely new Embedded Signup handoff clears it.
+sync and lands back on the same message. Outside the narrow recovery below, only a genuinely new Embedded Signup handoff clears it.
 
 Each non-2xx answer is logged as `coexistence_sync_failed` with Meta's status, code, subcode and
-message. When that log shows Meta refused the request, an operator can avoid the offboarding: call
-`GatewayRPC.resetUnconfirmedCoexistenceSync(wabaId, accountId, syncKind)` over a remote binding, then
-`reconcileWaba`. Never use it after a timeout or a lost answer, where the first request may have landed.
-If Meta refused it with `#10`, `GatewayRPC.settleCoexistenceSyncNotPermitted(wabaId, accountId, syncKind)`
-records that, and the next `reconcileWaba` moves on to the other sync.
-`GatewayRPC.diagnoseWaba(wabaId, accountId)` returns Meta's read-only view of the token, WABA and number.
+message. In narrow cases an operator can recover without offboarding, with these RPCs over a remote
+binding (each call is logged with its ids and whether a row changed):
+
+- `GatewayRPC.resetUnconfirmedCoexistenceSync(wabaId, accountId, syncKind)`, then `reconcileWaba`.
+  Only for an explicit 4xx refusal from Meta, read in the log. Never after a timeout, a lost answer or
+  a 5xx, where the first request may have landed. Refused (it throws) on a WABA with more than one
+  phone: Meta's once-only rule is per phone and the log cannot say which phone refused.
+- `GatewayRPC.settleCoexistenceSyncNotPermitted(wabaId, accountId, syncKind)` records a `#10` refusal
+  as `unavailable:not_permitted`, and the next `reconcileWaba` moves on to the other sync. It cannot
+  be undone: afterwards neither settle nor reset applies, and the sync can only be re-issued through a
+  new Embedded Signup. A `#10` probably did not spend the sync, and fixing the permission within the
+  24-hour window could still work, so settle only once the data has been given up on. On a multi-phone
+  WABA it marks the whole sync unavailable even if another phone accepted. Afterwards tell the
+  customer that their contacts or history will not arrive.
+- `GatewayRPC.diagnoseWaba(wabaId, accountId)` returns Meta's read-only view of the token, WABA and number.
 
 ### A number that turned out not to be a coexistence number
 

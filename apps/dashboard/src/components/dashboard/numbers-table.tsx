@@ -17,6 +17,8 @@ type NumberRow = {
   coexistence: string;
 };
 
+type UnavailableSync = { count: number; errors: string[] };
+
 /**
  * One row per phone number, the unit an operator actually thinks in; the WABA
  * it belongs to is the secondary column. Rail-separated rows on the shared
@@ -51,6 +53,11 @@ export function NumbersTable({
   );
   const pendingRows = rows.filter((row) => row.status === "pending").length;
   const notCoexistenceRows = rows.filter((row) => row.coexistence === "not_coexistence").length;
+  const unavailableWabas = resources.wabas.filter((waba) => waba.coexistence.status === "unavailable");
+  const unavailable: UnavailableSync = {
+    count: unavailableWabas.reduce((sum, waba) => sum + waba.phones.length, 0),
+    errors: unavailableWabas.flatMap((waba) => (waba.coexistence.error ? [waba.coexistence.error] : [])),
+  };
   // A WABA with no numbers produces no rows at all, so without these it would be
   // connected and completely invisible here (Embedded Signup v4). Split by
   // status, because the two say opposite things to an operator: one resolves
@@ -144,6 +151,7 @@ export function NumbersTable({
         <FailedPhonelessNote wabas={failedPhonelessWabas} />
       ) : null}
       {notCoexistenceRows > 0 ? <NotCoexistenceNote count={notCoexistenceRows} /> : null}
+      {unavailable.count > 0 ? <UnavailableSyncNote {...unavailable} /> : null}
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -339,6 +347,32 @@ function NotCoexistenceNote({ count }: { count: number }) {
           ? "This number was connected as a WhatsApp Business app number, but Meta reports it is not one. It works normally for sending and receiving; its existing WhatsApp Business app chats and contacts were not synchronised and will not be."
           : `${count} numbers were connected as WhatsApp Business app numbers, but Meta reports they are not. They work normally for sending and receiving; their existing WhatsApp Business app chats and contacts were not synchronised and will not be.`}
       </p>
+    </div>
+  );
+}
+
+/**
+ * A coexistence sync Meta refused or an operator settled. The row stays `active`
+ * because the number works; what would mislead is leaving somebody waiting for
+ * contacts or history that will not come. `error` is built by the gateway from
+ * fixed wording, never from Meta's response, so it is safe to show.
+ */
+function UnavailableSyncNote({ count, errors }: UnavailableSync) {
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
+      <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+        Some WhatsApp Business app data will not arrive
+      </p>
+      <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
+        {count === 1 ? "This number works" : `${count} numbers work`} normally for sending and
+        receiving, but the contacts or message history from the WhatsApp Business app did not
+        synchronise and will not.
+      </p>
+      {errors.map((error) => (
+        <p key={error} className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
+          {error}
+        </p>
+      ))}
     </div>
   );
 }
