@@ -1524,9 +1524,12 @@ export class EccosControlPlane extends DurableObject<Env> {
     if (syncKind !== "contacts" && syncKind !== "history") throw new Error("invalid syncKind");
     const started = syncKind === "contacts" ? "contacts_sync_started_at" : "history_sync_started_at";
     const requestId = syncKind === "contacts" ? "contacts_sync_request_id" : "history_sync_request_id";
-    if (phonesOf(id, this.sql).length > 1) {
+    const owned = this.sql
+      .exec("SELECT 1 FROM wabas WHERE account_id = ? AND waba_id = ?", account, id)
+      .toArray();
+    if (owned.length === 1 && phonesOf(id, this.sql).length > 1) {
       throw new Error(
-        "cannot reset a coexistence sync on a WABA with several phones: Meta's once-only rule is per phone and the log cannot say which phone refused",
+        "cannot reset a coexistence sync on a WABA with several phones: Meta's once-only rule is per phone and the log does not record which phone accepted",
       );
     }
     const updated = this.sql

@@ -291,9 +291,9 @@ async function runCoexistenceSync(
   if (coexistence.onboardingType !== "coexistence") return;
 
   // A sync that was issued and never confirmed is spent: Meta allows exactly one
-  // per phone number, and no answer proves it was not processed. Retrying a lost
-  // 200 is precisely how a working onboarding gets broken, so the step refuses
-  // rather than gambles, and the operator gets the remedy Meta prescribes.
+  // per phone number, and no answer proves it was not processed. A retried lost
+  // 200 comes back as 2593107 and would be recorded as already synced, so the step
+  // refuses rather than gambles, and the operator gets the remedy Meta prescribes.
   if (coexistenceSyncSpentUnconfirmed(coexistence)) throw new SyncUnconfirmedError();
   if (!coexistenceSyncOutstanding(coexistence)) return;
 

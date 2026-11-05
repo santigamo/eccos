@@ -799,13 +799,18 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     syncKind: "contacts" | "history",
   ): Promise<boolean> {
     const account = requireAccountId(accountId, "accountId is required");
-    const changed = await getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(
-      account,
-      wabaId,
-      syncKind,
-    );
-    logOperatorSyncAction("coexistence_sync_reset", account, wabaId, syncKind, changed);
-    return changed;
+    try {
+      const changed = await getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(
+        account,
+        wabaId,
+        syncKind,
+      );
+      logOperatorSyncAction("coexistence_sync_reset", account, wabaId, syncKind, changed);
+      return changed;
+    } catch (err) {
+      logOperatorSyncAction("coexistence_sync_reset_refused", account, wabaId, syncKind, false);
+      throw err;
+    }
   }
 
   /** Operator-only and outside `GatewayApi`, like the reset above. */

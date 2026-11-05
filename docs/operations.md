@@ -288,12 +288,12 @@ sync and lands back on the same message. Outside the narrow recovery below, only
 
 Each non-2xx answer is logged as `coexistence_sync_failed` with Meta's status, code, subcode and
 message. In narrow cases an operator can recover without offboarding, with these RPCs over a remote
-binding (each call is logged with its ids and whether a row changed):
+binding (each call, including a refused reset, is logged with its ids):
 
 - `GatewayRPC.resetUnconfirmedCoexistenceSync(wabaId, accountId, syncKind)`, then `reconcileWaba`.
   Only for an explicit 4xx refusal from Meta, read in the log. Never after a timeout, a lost answer or
   a 5xx, where the first request may have landed. Refused (it throws) on a WABA with more than one
-  phone: Meta's once-only rule is per phone and the log cannot say which phone refused.
+  phone: Meta's once-only rule is per phone and the log does not record which phone accepted.
 - `GatewayRPC.settleCoexistenceSyncNotPermitted(wabaId, accountId, syncKind)` records a `#10` refusal
   as `unavailable:not_permitted`, and the next `reconcileWaba` moves on to the other sync. It cannot
   be undone: afterwards neither settle nor reset applies, and the sync can only be re-issued through a

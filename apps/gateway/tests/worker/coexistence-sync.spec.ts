@@ -1036,6 +1036,7 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
     const accountId = "acc-coex-multi";
     const wabaId = "WABA_COEX_MULTI";
     await createAccount(accountId);
+    await createAccount("acc-coex-multi-other");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     mockGraph((call) => (call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts ? refused(10) : accepted()));
 
@@ -1050,6 +1051,8 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
         instance.resetUnconfirmedCoexistenceSync(accountId, wabaId, "contacts"),
       ).rejects.toThrow(/several phones/);
       expect(row(instance, wabaId).contacts_sync_started_at).not.toBeNull();
+      // Another account learns nothing about the WABA.
+      expect(await instance.resetUnconfirmedCoexistenceSync("acc-coex-multi-other", wabaId, "contacts")).toBe(false);
       expect(await instance.settleCoexistenceSyncNotPermitted(accountId, wabaId, "contacts")).toBe(true);
     });
   });
@@ -1061,7 +1064,7 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
     await createAccount(accountId);
     await createAccount(otherId);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const audit = vi.spyOn(console, "log").mockImplementation(() => undefined);
     mockGraph((call) => (call.syncType === SMB_APP_DATA_SYNC_TYPE.contacts ? refused(10) : accepted()));
 
     await begin(accountId, wabaId, "coexistence");
@@ -1078,6 +1081,17 @@ describe("a documented refusal settles a sync instead of failing the onboarding"
 
     await expect(rpc.resetUnconfirmedCoexistenceSync(wabaId, accountId, "contacts")).resolves.toBe(true);
     expect(await startedAt()).toBeNull();
+    await rpc.resetUnconfirmedCoexistenceSync(wabaId, accountId, "history");
+    await rpc.settleCoexistenceSyncNotPermitted(wabaId, accountId, "history");
+
+    const lines = audit.mock.calls.map((call) => JSON.parse(String(call[0])));
+    expect(lines).toEqual([
+      { event: "coexistence_sync_reset", accountId: otherId, wabaId, syncKind: "contacts", changed: false },
+      { event: "coexistence_sync_settled_not_permitted", accountId: otherId, wabaId, syncKind: "contacts", changed: false },
+      { event: "coexistence_sync_reset", accountId, wabaId, syncKind: "contacts", changed: true },
+      { event: "coexistence_sync_reset", accountId, wabaId, syncKind: "history", changed: false },
+      { event: "coexistence_sync_settled_not_permitted", accountId, wabaId, syncKind: "history", changed: false },
+    ]);
   });
 
   it("an unknown Meta error after issue still fails terminally and is never retried", async () => {

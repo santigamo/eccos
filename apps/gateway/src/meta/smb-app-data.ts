@@ -27,7 +27,8 @@
  * the customer. So a caller must record that it is about to make the call
  * *before* making it, and must never re-issue one it has already sent — even
  * after a timeout, and especially after a 5xx. A lost `200` costs nothing if
- * left alone and costs the customer their onboarding if retried.
+ * left alone and is a duplicate (`2593107`) if retried,
+ * and the saga can then no longer tell whether the sync ever ran.
  * `src/provisioning.ts` is what enforces that; this module only sends, and
  * hands Meta's `error.code` back on the thrown `MetaGraphError` so a documented
  * refusal can be told apart from a lost answer.

@@ -53,10 +53,14 @@ export function NumbersTable({
   );
   const pendingRows = rows.filter((row) => row.status === "pending").length;
   const notCoexistenceRows = rows.filter((row) => row.coexistence === "not_coexistence").length;
-  const unavailableWabas = resources.wabas.filter((waba) => waba.coexistence.status === "unavailable");
+  const unavailableWabas = resources.wabas.filter(
+    (waba) => waba.status === "active" && waba.coexistence.status === "unavailable",
+  );
   const unavailable: UnavailableSync = {
     count: unavailableWabas.reduce((sum, waba) => sum + waba.phones.length, 0),
-    errors: unavailableWabas.flatMap((waba) => (waba.coexistence.error ? [waba.coexistence.error] : [])),
+    errors: [
+      ...new Set(unavailableWabas.flatMap((waba) => (waba.coexistence.error ? [waba.coexistence.error] : []))),
+    ],
   };
   // A WABA with no numbers produces no rows at all, so without these it would be
   // connected and completely invisible here (Embedded Signup v4). Split by
