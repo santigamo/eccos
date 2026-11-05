@@ -682,12 +682,15 @@ export class EccosGateway extends DurableObject<Env> {
         // answer: that is the batch the subscriber received it in.
         if (batch) {
           const deliveryId = Number(batch.id);
-          const placeholders = insertedIds.map(() => "?").join(", ");
-          this.sql.exec(
-            `UPDATE inbound_events SET delivery_id = ? WHERE id IN (${placeholders})`,
-            deliveryId,
-            ...insertedIds,
-          );
+          // Durable Object SQL binds at most 100 variables per statement.
+          for (let i = 0; i < insertedIds.length; i += 99) {
+            const ids = insertedIds.slice(i, i + 99);
+            this.sql.exec(
+              `UPDATE inbound_events SET delivery_id = ? WHERE id IN (${ids.map(() => "?").join(", ")})`,
+              deliveryId,
+              ...ids,
+            );
+          }
         }
       }
     });
