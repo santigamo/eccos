@@ -26,6 +26,13 @@ import { EccosControlPlane as ControlPlane } from "./control-plane";
 import { sentryOptions } from "./sentry";
 import { checkSendRate, sendRatePerMinute } from "./send-rate-limit";
 import { MAX_BROADCAST_BODY_BYTES, parseBroadcastRequest, parseStoredError, type RecipientStatus } from "./broadcasts";
+import {
+  MAX_SCHEDULED_BODY_BYTES,
+  parseScheduledRequest,
+  SCHEDULE_KEY,
+  type ScheduledSend,
+  type ScheduledStatus,
+} from "./scheduled";
 
 export const EccosGateway = Sentry.instrumentDurableObjectWithSentry(sentryOptions, Gateway);
 export type EccosGateway = Gateway;
@@ -903,6 +910,36 @@ app.get("/v1/wabas/:wabaId/templates", templatesRoute);
 
 // --- Broadcasts (src/broadcasts.ts) -----------------------------------------
 
+/** Null when the template is APPROVED in exactly that language (no en vs en_US fallback); otherwise the response that ends the request. */
+async function templateRefusal(
+  c: AppContext,
+  cid: string,
+  event: string,
+  waba: AccountWaba,
+  phoneNumberId: string,
+  name: string,
+  language: string,
+): Promise<Response | null> {
+  const cfg = tenantConfig(getAppConfig(c.env), {
+    wabaId: waba.wabaId,
+    phoneNumberId,
+    metaAccessToken: waba.metaAccessToken,
+  });
+  const templates = await listTemplates(cfg, 100, { fields: ["name", "language", "status"], name });
+  if (!templates.ok) {
+    logEvent(event, cid, 502, { wabaId: waba.wabaId, reason: "template_lookup_failed" });
+    return c.json({ ok: false, error: templates.error }, 502);
+  }
+  const translation = ((templates.data as { data?: { name?: unknown; language?: unknown; status?: unknown }[] })?.data ?? []).find(
+    (row) => row.name === name && row.language === language,
+  );
+  if (!translation) return c.json({ ok: false, error: "template_not_found" }, 422);
+  if (translation.status !== "APPROVED") {
+    return c.json({ ok: false, error: "template_not_approved", templateStatus: translation.status }, 422);
+  }
+  return null;
+}
+
 async function createBroadcastRoute(c: AppContext) {
   const cid = correlationId(c);
   const account = c.get("account") ?? null;
@@ -935,25 +972,8 @@ async function createBroadcastRoute(c: AppContext) {
   }
 
   // Checked once here rather than failing every recipient at Meta.
-  const cfg = tenantConfig(getAppConfig(c.env), {
-    wabaId: waba.wabaId,
-    phoneNumberId: phone.phoneNumberId,
-    metaAccessToken: waba.metaAccessToken,
-  });
-  const templates = await listTemplates(cfg, 100, { fields: ["name", "language", "status"], name: request.templateName });
-  if (!templates.ok) {
-    logEvent("broadcast_create", cid, 502, { wabaId: waba.wabaId, reason: "template_lookup_failed" });
-    return c.json({ ok: false, error: templates.error }, 502);
-  }
-  const translation = ((templates.data as { data?: { name?: unknown; language?: unknown; status?: unknown }[] })?.data ?? []).find(
-    (row) => row.name === request.templateName && row.language === request.language,
-  );
-  if (!translation) {
-    return c.json({ ok: false, error: "template_not_found" }, 422);
-  }
-  if (translation.status !== "APPROVED") {
-    return c.json({ ok: false, error: "template_not_approved", templateStatus: translation.status }, 422);
-  }
+  const refusal = await templateRefusal(c, cid, "broadcast_create", waba, phone.phoneNumberId, request.templateName, request.language);
+  if (refusal) return refusal;
 
   const created = await stub.createBroadcast({
     accountId: account.accountId,
@@ -1039,6 +1059,95 @@ app.post("/v1/wabas/:wabaId/broadcasts/:broadcastId/cancel", async (c) => {
   if ("error" in scope) return scope.error;
   const broadcast = await scope.stub.cancelBroadcast(scope.account.accountId, c.req.param("broadcastId"));
   return broadcast ? c.json({ ok: true, broadcast }) : c.json({ ok: false, error: "broadcast not found" }, 404);
+});
+
+// --- Scheduled sends (src/scheduled.ts) -------------------------------------
+
+const SCHEDULED_STATUSES = new Set(["pending", "sending", "sent", "failed", "unknown", "cancelled"]);
+
+const scheduledJson = (row: ScheduledSend) => ({ ...row, error: parseStoredError(row.error) });
+
+async function putScheduledRoute(c: AppContext) {
+  const cid = correlationId(c);
+  const account = c.get("account") ?? null;
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const key = c.req.param("key") ?? "";
+  if (!SCHEDULE_KEY.test(key)) {
+    return c.json({ ok: false, error: "key must be 1-128 characters: letters, digits, . _ : -" }, 400);
+  }
+  const waba = await ownedWaba(c.env, account, requestedWabaId(c));
+  if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  if (Number(c.req.header("content-length") ?? 0) > MAX_SCHEDULED_BODY_BYTES) {
+    return c.json({ ok: false, error: "request body is too large" }, 413);
+  }
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const parsed = parseScheduledRequest(body, Date.now());
+  if (!parsed.ok) {
+    logEvent("scheduled_put", cid, 400, { wabaId: waba.wabaId, reason: "invalid_request" });
+    return c.json({ ok: false, error: parsed.error }, 400);
+  }
+  const phone = resolvePhone(c, waba, body ?? {});
+  if (!phone.ok) return c.json({ ok: false, error: phone.error }, phone.status);
+  const refusal = await templateRefusal(c, cid, "scheduled_put", waba, phone.phoneNumberId, parsed.request.templateName, parsed.request.language);
+  if (refusal) return refusal;
+
+  const put = await getGatewayStubForWaba(c.env, waba.wabaId).putScheduled({
+    accountId: account.accountId,
+    key,
+    phoneNumberId: phone.phoneNumberId,
+    request: parsed.request,
+  });
+  const status = put.state === "created" ? 201 : put.state === "replaced" ? 200 : 409;
+  logEvent("scheduled_put", cid, status, { wabaId: waba.wabaId, state: put.state });
+  if (put.state === "full") return c.json({ ok: false, error: "too_many_scheduled_sends" }, 409);
+  if (put.state === "not_pending") {
+    return c.json({ ok: false, error: "scheduled_send_not_pending", status: put.scheduled?.status }, 409);
+  }
+  return c.json({ ok: true, scheduled: put.scheduled && scheduledJson(put.scheduled) }, status);
+}
+
+app.put("/v1/wabas/:wabaId/scheduled/:key", putScheduledRoute);
+app.put("/v1/wabas/:wabaId/phones/:phoneNumberId/scheduled/:key", putScheduledRoute);
+
+app.get("/v1/wabas/:wabaId/scheduled/:key", async (c) => {
+  const scope = await broadcastStub(c);
+  if ("error" in scope) return scope.error;
+  const row = await scope.stub.getScheduled(scope.account.accountId, c.req.param("key"));
+  return row ? c.json({ ok: true, scheduled: scheduledJson(row) }) : c.json({ ok: false, error: "scheduled send not found" }, 404);
+});
+
+app.delete("/v1/wabas/:wabaId/scheduled/:key", async (c) => {
+  const scope = await broadcastStub(c);
+  if ("error" in scope) return scope.error;
+  const { state, scheduled } = await scope.stub.cancelScheduled(scope.account.accountId, c.req.param("key"));
+  if (state === "missing") return c.json({ ok: false, error: "scheduled send not found" }, 404);
+  if (state === "not_pending") {
+    return c.json({ ok: false, error: "scheduled_send_not_pending", status: scheduled?.status }, 409);
+  }
+  return c.json({ ok: true, scheduled: scheduled && scheduledJson(scheduled) });
+});
+
+app.get("/v1/wabas/:wabaId/scheduled", async (c) => {
+  const scope = await broadcastStub(c);
+  if ("error" in scope) return scope.error;
+  const status = c.req.query("status");
+  if (status !== undefined && !SCHEDULED_STATUSES.has(status)) {
+    return c.json({ ok: false, error: "invalid status" }, 400);
+  }
+  const after = c.req.query("after");
+  const n = Number(c.req.query("limit") ?? 100);
+  const limit = Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 1000) : 100;
+  const rows = await scope.stub.listScheduledSends(scope.account.accountId, {
+    ...(status ? { status: status as ScheduledStatus } : {}),
+    ...(after !== undefined && SCHEDULE_KEY.test(after) ? { after } : {}),
+    limit,
+  });
+  const last = rows.at(-1);
+  return c.json({
+    ok: true,
+    scheduled: rows.map(scheduledJson),
+    ...(rows.length === limit && last ? { next: last.key } : {}),
+  });
 });
 
 app.get("/v1/wabas/:wabaId/export", async (c) => {

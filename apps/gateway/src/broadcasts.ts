@@ -45,26 +45,22 @@ export type ParsedBroadcast =
 const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
 const LANGUAGE = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 
-function isRecipient(to: string): boolean {
+export function isRecipient(to: string): boolean {
   if (isBsuid(to)) return true;
   const digits = to.replace(/\D/g, "").length;
   return /^\+?[0-9][0-9 ().-]*$/.test(to) && digits >= 5 && digits <= 15;
 }
 
 /** The same customer written two ways ("+34 600…" and "34600…") is one recipient. */
-function recipientKey(to: string): string {
+export function recipientKey(to: string): string {
   return isBsuid(to) ? to : to.replace(/\D/g, "");
 }
 
-/**
- * Validates a `POST /broadcasts` body. Every recipient must be valid or the
- * whole request is refused (with up to 100 indexes), so a typo never turns into
- * a half-sent campaign. Repeated recipients are dropped, keeping the first.
- */
-export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
-  if (!body || typeof body !== "object") return { ok: false, error: "invalid body" };
-  const record = body as Record<string, unknown>;
-  const template = record.template as { name?: unknown; language?: unknown; components?: unknown } | undefined;
+/** Validates the `template` object shared by broadcasts and scheduled sends. */
+export function parseTemplate(
+  raw: unknown,
+): { ok: true; name: string; language: string; components?: unknown[] } | { ok: false; error: string } {
+  const template = raw as { name?: unknown; language?: unknown; components?: unknown } | undefined;
   if (!template || typeof template !== "object") return { ok: false, error: "template is required" };
   if (typeof template.name !== "string" || !TEMPLATE_NAME.test(template.name)) {
     return { ok: false, error: "template.name must be a template name" };
@@ -79,10 +75,24 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
   if (template.components !== undefined && !Array.isArray(template.components)) {
     return { ok: false, error: "template.components must be an array" };
   }
-  const defaults = template.components as unknown[] | undefined;
-  if (defaults && JSON.stringify(defaults).length > MAX_COMPONENTS_BYTES) {
+  const components = template.components as unknown[] | undefined;
+  if (components && JSON.stringify(components).length > MAX_COMPONENTS_BYTES) {
     return { ok: false, error: "template.components are too large" };
   }
+  return { ok: true, name: template.name, language, ...(components ? { components } : {}) };
+}
+
+/**
+ * Validates a `POST /broadcasts` body. Every recipient must be valid or the
+ * whole request is refused (with up to 100 indexes), so a typo never turns into
+ * a half-sent campaign. Repeated recipients are dropped, keeping the first.
+ */
+export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
+  if (!body || typeof body !== "object") return { ok: false, error: "invalid body" };
+  const record = body as Record<string, unknown>;
+  const template = parseTemplate(record.template);
+  if (!template.ok) return template;
+  const { name: templateName, language, components: defaults } = template;
   if (!Array.isArray(record.recipients) || record.recipients.length === 0) {
     return { ok: false, error: "recipients must be a non-empty array" };
   }
@@ -122,7 +132,7 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
   }
   return {
     ok: true,
-    request: { templateName: template.name, language, ...(defaults ? { defaultComponents: defaults } : {}), recipients },
+    request: { templateName, language, ...(defaults ? { defaultComponents: defaults } : {}), recipients },
     duplicates,
   };
 }

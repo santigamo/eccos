@@ -1,10 +1,10 @@
 ---
 title: Event reference
-description: "Reference for every webhook event Eccos forwards: statuses, reply, message, echo and message_echo, with example payloads."
+description: "Reference for every webhook event Eccos forwards: statuses, reply, message, echo, message_echo and scheduled_failed, with example payloads."
 ---
 
 Each element of `events` has a `type`. Common fields: `at` (ms since epoch) and, when known,
-`phoneNumberId` (the number the event belongs to). Absent values are omitted, never `null`.
+`phoneNumberId` (the number the event belongs to). Absent values are omitted, never `null`. New event types can be added; ignore the ones you do not handle.
 
 ## Statuses of messages you sent
 
@@ -28,7 +28,8 @@ event, not an id the send call returned. Ignore ids you don't know if you only t
 `errorCode` and `errorMessage` come from Meta's first error; `errorMessage` prefers
 `error_data.details` over `message` ([error codes](https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes)).
 
-`broadcastId` names the [broadcast](/bulk-sending) that sent the message. It is absent for other
+`broadcastId` names the [broadcast](/bulk-sending) that sent the message, and `scheduleKey` the
+[scheduled send](/scheduled-sends) that sent it, the same way. Both are absent for other
 sends, and once the message has left the [retention window](/data-endpoints).
 
 ## `reply`: incoming text, button taps and list choices
@@ -48,7 +49,7 @@ carries the BSUID whenever Meta sends one. `profileName` is the WhatsApp profile
 
 `replyTo` is the id of the message the customer replied to: the template or interactive
 message whose button they tapped, the message they quoted, or the product message they asked about. It is absent otherwise. When `replyTo` is a message a
-[broadcast](/bulk-sending) sent, `broadcastId` names that broadcast.
+[broadcast](/bulk-sending) sent, `broadcastId` or `scheduleKey` names that broadcast or scheduled send.
 
 ## `message`: any other incoming content
 
@@ -77,7 +78,7 @@ extra fields depend on it. Unknown future types are forwarded with `messageType`
 download it.
 
 `message` carries `replyTo` too when the customer quoted a message (for example an image
-sent as a reply) or answered a Flow, and `broadcastId` the same way as on `reply`.
+sent as a reply) or answered a Flow, and `broadcastId` or `scheduleKey` the same way as on `reply`.
 
 ## `echo` and `message_echo`: messages sent from the WhatsApp Business app
 
@@ -89,6 +90,20 @@ as `message`.
 ```json
 { "type": "echo", "to": "34600000000", "messageId": "wamid.HBgM...", "text": "Thanks!", "at": 1767225600000, "phoneNumberId": "1098765432" }
 ```
+
+## `scheduled_failed`: a scheduled send that will not go out
+
+Eccos emits this event, not Meta, when a [scheduled send](/scheduled-sends) ends without being
+sent. `reason` is `rejected` (Meta refused it), `expired` (not sent before `expiresAt`) or
+`unknown` (Meta may have sent it; Eccos never retries it).
+
+```json
+{ "type": "scheduled_failed", "scheduleKey": "appt-8812", "to": "34600000001", "reason": "rejected",
+  "errorCode": "131026", "errorMessage": "Message undeliverable", "at": 1767225600000, "phoneNumberId": "1098765432" }
+```
+
+`at` is Eccos's time in milliseconds, not Meta's whole seconds. Deduplicate by
+`(scheduleKey, at)`. `errorCode` and `errorMessage` appear only when Meta answered.
 
 ## Opt-out
 

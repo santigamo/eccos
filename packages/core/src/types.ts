@@ -33,6 +33,8 @@ export interface MessageContent {
 export interface EventOrigin {
   /** The broadcast that sent it. */
   broadcastId?: string;
+  /** The key of the scheduled send that sent it. */
+  scheduleKey?: string;
 }
 
 /**
@@ -106,4 +108,22 @@ export type WhatsAppCallbackEvent =
       messageId: string;
       at: number;
       phoneNumberId?: string;
-    } & MessageContent);
+    } & MessageContent)
+  | {
+      /** Emitted by Eccos, never by Meta: a scheduled send that will not be sent. */
+      type: "scheduled_failed";
+      /** The key it was scheduled under. */
+      scheduleKey: string;
+      /** The recipient: digits only for a phone number, or their BSUID. */
+      to: string;
+      /** `rejected`: Meta refused it. `expired`: not sent before `expiresAt`. `unknown`: Meta may have sent it; never retried. */
+      reason: "rejected" | "expired" | "unknown";
+      /** Meta's error code and message, when Meta answered with one. */
+      errorCode?: string;
+      errorMessage?: string;
+      /** When Eccos gave it up (ms since epoch). */
+      at: number;
+      phoneNumberId?: string;
+    };
+
+export type ScheduledFailedEvent = Extract<WhatsAppCallbackEvent, { type: "scheduled_failed" }>;

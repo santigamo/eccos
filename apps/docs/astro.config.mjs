@@ -40,6 +40,7 @@ export default defineConfig({
         { slug: "idempotency" },
         { slug: "errors-and-rate-limits" },
         { slug: "bulk-sending" },
+        { slug: "scheduled-sends" },
         { slug: "webhooks" },
         { slug: "event-reference" },
         { slug: "data-endpoints" },
