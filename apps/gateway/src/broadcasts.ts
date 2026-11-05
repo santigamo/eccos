@@ -67,7 +67,7 @@ export function isRecipient(to: string): boolean {
 }
 
 /** The same customer written two ways ("+34 600…" and "34600…") is one recipient. */
-function recipientKey(to: string): string {
+export function recipientKey(to: string): string {
   return isBsuid(to) ? to : to.replace(/\D/g, "");
 }
 

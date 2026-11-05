@@ -46,6 +46,26 @@ async function forwardedEvents(): Promise<Record<string, unknown>[]> {
 }
 
 describe("forwarded event contract", () => {
+  it("stores, stamps and forwards a callback of 150 new events as one delivery", async () => {
+    await postMetaWebhook({
+      contacts: [{ wa_id: "34600000000", profile: { name: "Ana" } }],
+      messages: Array.from({ length: 150 }, (_, i) => ({
+        from: "34600000000",
+        id: `wamid.BULK${i}`,
+        timestamp: "1700000000",
+        type: "text",
+        text: { body: `m${i}` },
+      })),
+    });
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      expect(instance.sql.exec("SELECT COUNT(*) AS n FROM inbound_events WHERE delivery_id IS NOT NULL").one().n).toBe(150);
+      expect(instance.sql.exec("SELECT COUNT(DISTINCT delivery_id) AS n FROM inbound_events").one().n).toBe(1);
+      expect(instance.sql.exec("SELECT COUNT(*) AS n FROM deliveries").one().n).toBe(1);
+    });
+    expect(await forwardedEvents()).toHaveLength(150);
+    expect(forwardedBodies).toHaveLength(1);
+  });
+
   it("forwards a sent status, and a late sent never moves a read message back", async () => {
     await gatewayStub().logOutbound("wamid.OUT", "34600000000", '{"to":"34600000000","type":"text"}', "sent", null, "PNID1");
 

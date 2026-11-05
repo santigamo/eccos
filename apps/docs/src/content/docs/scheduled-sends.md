@@ -27,8 +27,10 @@ time.
 ```
 
 - `key` is 1 to 128 characters: letters, digits and `. _ : -`. It is unique per WhatsApp Business
-  Account. The key is the idempotency: repeating the same `PUT` changes nothing, so there is no
-  [Idempotency-Key](/idempotency) header here. Use an id from your own system (an appointment id),
+  Account. The key is the idempotency: repeating a `PUT` never schedules a second send, so there is no
+  [Idempotency-Key](/idempotency) header here. While the send is pending, a repeat replaces it
+  and starts its attempts and backoff over; once it is being sent, was sent or has an unknown
+  outcome, it answers `409`. Use an id from your own system (an appointment id),
   not a phone number or a name: the key shows in the console, its URLs and audit lines.
 - `to` is a phone number or a BSUID. `template` is Meta's template object, as in a
   [broadcast](/bulk-sending).
@@ -68,7 +70,7 @@ The template must be `APPROVED` in exactly that language when you schedule: ther
 
 ## How it is sent
 
-- At `sendAt` (within a second or two). Scheduled sends go ahead of
+- At `sendAt`, usually within seconds. Scheduled sends go ahead of
   [broadcasts](/bulk-sending) inside the 80% share of your send rate that broadcasts use, so a
   large campaign does not delay a reminder.
 - **Throttling.** When Meta says it is busy (HTTP 429, or codes 4, 80007, 130429, 131056), the
@@ -129,8 +131,10 @@ own, and cancelling emits none.
 
 ## Privacy
 
-The recipient and the template values are message content. The values are deleted as soon as the
-send is attempted, or when it is cancelled or expires. A settled send is deleted with the rest of
+The recipient and the template values are message content. The values are deleted from the
+schedule as soon as the send is attempted, or when it is cancelled or expires. The log of a send
+that was attempted keeps the request, values included, until the [retention window](/data-endpoints)
+ends: in `outbound_messages`, and in the conversation (`messages`) once it was sent. A settled send is deleted with the rest of
 your content when the [retention window](/data-endpoints) passes; a pending one is kept until it
 ends. Erasing a customer deletes their scheduled sends too, pending ones included, which are then
 never sent.
