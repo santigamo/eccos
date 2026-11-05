@@ -23,6 +23,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await setLimiter(null);
   vi.restoreAllMocks();
   await reset();
 });
@@ -96,6 +97,29 @@ async function due() {
   });
   await runAlarm();
 }
+
+type Limit = () => Promise<{ success: boolean }>;
+const setLimiter = (limit: Limit | null) =>
+  runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+    const e = (instance as unknown as { env: Record<string, unknown> }).env;
+    if (limit) e.SEND_RATE_LIMITER = { limit };
+    else delete e.SEND_RATE_LIMITER;
+  });
+
+const FORMATTED = "+34 600 000 001";
+
+/** Inserts `count` pending rows already past their expiry. */
+const insertExpired = (count: number) =>
+  sql((s) => {
+    for (let i = 0; i < count; i++) {
+      s.exec(
+        `INSERT INTO scheduled_sends (account_id, key, phone_number_id, recipient, template_name, language, components, status,
+           send_at, expires_at, next_attempt_at, attempts, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'promo', 'es', '[]', 'pending', 1, 2, 1, 0, 1, 1)`,
+        "test-account", `bulk-${i}`, PHONE, GUEST,
+      );
+    }
+  });
 
 async function subscribe(secret = false) {
   await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL, ...(secret ? { SUBSCRIBER_SECRET } : {}) });
@@ -367,6 +391,121 @@ describe("sending", () => {
     expect(delivery.headers.get("x-webhook-event")).toBe("scheduled_failed");
   });
 
+  it("expiring 150 rows forwards all 150 events and drops their values", async () => {
+    mockMeta();
+    await subscribe();
+    await insertExpired(150);
+    await runAlarm();
+    expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM scheduled_sends WHERE status = 'failed' AND components IS NULL`).one().n)).toBe(150);
+    expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM deliveries`).one().n)).toBe(3);
+    const events = await forwardedEvents();
+    expect(events.filter((ev) => ev.type === "scheduled_failed" && ev.reason === "expired")).toHaveLength(150);
+  });
+
+  it("a failing ingest leaves the rows pending for the next tick", async () => {
+    mockMeta();
+    await subscribe();
+    await insertExpired(3);
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      vi.spyOn(instance, "ingest").mockImplementationOnce(() => {
+        throw new Error("boom");
+      });
+    });
+    await runAlarm();
+    expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM scheduled_sends WHERE status = 'pending'`).one().n)).toBe(3);
+    expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM inbound_events`).one().n)).toBe(0);
+    await runAlarm();
+    expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM scheduled_sends WHERE status = 'failed'`).one().n)).toBe(3);
+    expect(await forwardedEvents()).toHaveLength(3);
+  });
+
+  it("an expiry passed while the limiter was awaited ends the row with no Meta call", async () => {
+    const fetchSpy = mockMeta();
+    await subscribe();
+    await put("appt-1", sched());
+    await setLimiter(async () => {
+      await sql((s) => s.exec(`UPDATE scheduled_sends SET expires_at = ?`, Date.now() - 1));
+      return { success: true };
+    });
+    await due();
+    expect(sendBodies(fetchSpy)).toHaveLength(0);
+    expect(await row("appt-1")).toMatchObject({ status: "failed", reason: "expired", components: null });
+    expect((await forwardedEvents()).filter((ev) => ev.type === "scheduled_failed")).toMatchObject([{ scheduleKey: "appt-1", reason: "expired" }]);
+  });
+
+  it("a row erased while the limiter was awaited is not sent", async () => {
+    const fetchSpy = mockMeta();
+    await subscribe();
+    await put("appt-1", sched());
+    await setLimiter(async () => {
+      await sql((s) => s.exec(`DELETE FROM scheduled_sends`));
+      return { success: true };
+    });
+    await due();
+    expect(sendBodies(fetchSpy)).toHaveLength(0);
+    expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM outbound_messages`).one().n)).toBe(0);
+    expect((await forwardedEvents()).filter((ev) => ev.type === "scheduled_failed")).toHaveLength(0);
+  });
+
+  it("waits while the token is missing or unavailable, never past the expiry", async () => {
+    const fetchSpy = mockMeta();
+    await put("appt-1", sched());
+    await put("appt-2", sched());
+    const soon = Date.now() + 2_000;
+    await sql((s) => s.exec(`UPDATE scheduled_sends SET expires_at = ? WHERE key = 'appt-2'`, soon));
+    for (const answer of ["unavailable", "missing"]) {
+      await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+        vi.spyOn(instance as unknown as { metaToken: () => Promise<string> }, "metaToken").mockResolvedValueOnce(answer);
+      });
+      const before = Date.now();
+      await due();
+      expect(await row("appt-1")).toMatchObject({ status: "pending", attempts: 0 });
+      expect((await row("appt-1")).next_attempt_at).toBeGreaterThanOrEqual(before + 30_000);
+      expect((await row("appt-2")).next_attempt_at).toBe(soon);
+    }
+    expect(sendBodies(fetchSpy)).toHaveLength(0);
+  });
+
+  it("a refused limiter requeues without sending or spending an attempt, never past the expiry", async () => {
+    const fetchSpy = mockMeta();
+    await put("appt-1", sched());
+    await put("appt-2", sched());
+    const soon = Date.now() + 1_000;
+    await sql((s) => s.exec(`UPDATE scheduled_sends SET expires_at = ? WHERE key = 'appt-2'`, soon));
+    await setLimiter(async () => ({ success: false }));
+    const before = Date.now();
+    await sql((s) => s.exec(`UPDATE scheduled_sends SET next_attempt_at = 0, send_at = 0`));
+    for (let i = 0; i < 2; i++) {
+      await sql((s) => s.exec(`DELETE FROM ops_state WHERE key = 'scheduled_next_tick_at'`));
+      await runAlarm();
+    }
+    expect(sendBodies(fetchSpy)).toHaveLength(0);
+    expect(await row("appt-1")).toMatchObject({ status: "pending", attempts: 0 });
+    expect((await row("appt-1")).next_attempt_at).toBeGreaterThanOrEqual(before + 4_000);
+    expect((await row("appt-2")).next_attempt_at).toBe(soon);
+  });
+
+  it("gives up on a throttled send at the 8th attempt, and never retries past the expiry", async () => {
+    const throttled = { status: 429, body: { error: { code: 130429 } } };
+    mockMeta({ sends: [throttled, throttled] });
+    await subscribe();
+    await put("last", sched());
+    await put("soon", sched());
+    const soon = Date.now() + 2_000;
+    await sql((s) => {
+      s.exec(`UPDATE scheduled_sends SET attempts = 7 WHERE key = 'last'`);
+      s.exec(`UPDATE scheduled_sends SET expires_at = ? WHERE key = 'soon'`, soon);
+    });
+    await sql((s) => s.exec(`UPDATE scheduled_sends SET next_attempt_at = CASE key WHEN 'last' THEN 1 ELSE 2 END, send_at = 0`));
+    for (let i = 0; i < 2; i++) {
+      await sql((s) => s.exec(`DELETE FROM ops_state WHERE key = 'scheduled_next_tick_at'`));
+      await runAlarm();
+    }
+    expect(await row("last")).toMatchObject({ status: "failed", reason: "rejected", attempts: 8 });
+    expect(await row("soon")).toMatchObject({ status: "pending", attempts: 1, next_attempt_at: soon });
+    expect((await forwardedEvents()).filter((ev) => ev.type === "scheduled_failed")).toMatchObject([{ scheduleKey: "last", reason: "rejected" }]);
+  });
+
   it("a rejected send fails that row alone, with Meta's error, even for halt-class codes", async () => {
     const fetchSpy = mockMeta({
       sends: [
@@ -515,6 +654,30 @@ describe("privacy and retention", () => {
     expect(await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM deliveries WHERE payload LIKE '%scheduled_failed%'`).one().n)).toBe(0);
     await due();
     expect(sendBodies(fetchSpy)).toHaveLength(1);
+  });
+
+  it("erases a scheduled send written with a formatted number, and its failure event", async () => {
+    mockMeta();
+    await subscribe();
+    await put("sent", sched({ to: FORMATTED }));
+    await due();
+    await put("expired", sched({ to: FORMATTED }));
+    await sql((s) => s.exec(`UPDATE scheduled_sends SET expires_at = 1, next_attempt_at = 0 WHERE key = 'expired'`));
+    await runAlarm();
+    expect(await sql((s) => s.exec(`SELECT payload FROM inbound_events WHERE type = 'scheduled_failed'`).one().payload)).toContain(`"to":"${GUEST}"`);
+
+    const result = await runInDurableObject(gatewayStub(), (instance: EccosGateway) => instance.eraseByPhone(GUEST));
+    expect(result.ok).toBe(true);
+    for (const [table, column] of [
+      ["scheduled_sends", "recipient"],
+      ["inbound_events", "payload"],
+      ["deliveries", "payload"],
+      ["outbound_messages", "recipient"],
+      ["messages", "wa_id"],
+    ]) {
+      const n = await sql((s) => s.exec(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} LIKE '%600%'`).one().n);
+      expect([table, n]).toEqual([table, 0]);
+    }
   });
 
   it("settled rows leave with the content window; a pending one stays", async () => {

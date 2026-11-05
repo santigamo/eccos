@@ -7,7 +7,7 @@
 
 import { metaErrorCodes } from "@eccos/core/send";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import { isRecipient, parseTemplate, STALE_SENDING_MS } from "./broadcasts";
+import { isRecipient, parseTemplate, recipientKey, STALE_SENDING_MS } from "./broadcasts";
 
 export const MAX_PENDING_SCHEDULED = 50_000;
 export const MAX_SCHEDULE_AHEAD_MS = 90 * 24 * 3600_000;
@@ -278,7 +278,7 @@ export function nextScheduledWake(sql: SqlStorage): number | null {
   return wakes.length > 0 ? Math.min(...wakes) : null;
 }
 
-/** The `scheduled_failed` event for a row that ended without a send. Error fields only when Meta answered. */
+/** The `scheduled_failed` event for a row that ended without a send; `to` is digits-only like the rest of the stream. Error fields only when Meta answered. */
 export function scheduledFailedEvent(
   row: Pick<EndedRow, "key" | "recipient" | "phone_number_id">,
   reason: ScheduledFailure,
@@ -291,7 +291,7 @@ export function scheduledFailedEvent(
   return {
     type: "scheduled_failed",
     scheduleKey: String(row.key),
-    to: String(row.recipient),
+    to: recipientKey(String(row.recipient)),
     reason,
     ...(errorCode !== null ? { errorCode: String(errorCode) } : {}),
     ...(typeof message === "string" ? { errorMessage: message } : {}),

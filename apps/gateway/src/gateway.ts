@@ -64,6 +64,7 @@ import {
 import {
   cancelScheduled,
   claimDue,
+  type EndedRow,
   expireDue,
   listScheduled,
   nextScheduledWake,
@@ -1537,12 +1538,8 @@ export class EccosGateway extends DurableObject<Env> {
    * give way by that much this tick).
    */
   private async scheduledStep(now: number): Promise<number> {
-    // The UPDATEs and their events share one sync segment: no await in between.
-    const ended = [
-      ...sweepStaleSending(this.sql, now).map((row) => scheduledFailedEvent(row, "unknown", null, now)),
-      ...expireDue(this.sql, now).map((row) => scheduledFailedEvent(row, "expired", null, now)),
-    ];
-    this.ingest(ended);
+    this.endScheduled(() => sweepStaleSending(this.sql, now), "unknown", now);
+    this.endScheduled(() => expireDue(this.sql, now), "expired", now);
 
     const tickAt = Number(this.sql.exec(`SELECT value FROM ops_state WHERE key = 'scheduled_next_tick_at'`).toArray()[0]?.value ?? 0);
     if (tickAt > now) return 0;
@@ -1575,6 +1572,14 @@ export class EccosGateway extends DurableObject<Env> {
     return due.length;
   }
 
+  /** Ends rows and emits their events in one transaction: a failing ingest leaves the rows as they were for the next tick. */
+  private endScheduled(end: () => EndedRow[], reason: "unknown" | "expired", now: number): void {
+    this.ctx.storage.transactionSync(() => {
+      const events = end().map((row) => scheduledFailedEvent(row, reason, null, now));
+      for (let i = 0; i < events.length; i += 50) this.ingest(events.slice(i, i + 50));
+    });
+  }
+
   /** Back to pending without spending an attempt. */
   private requeueScheduled(row: Record<string, SqlStorageValue>, nextAttemptAt: number): void {
     this.sql.exec(
@@ -1601,6 +1606,27 @@ export class EccosGateway extends DurableObject<Env> {
     }
     if (!allowed) {
       this.requeueScheduled(row, Math.min(Date.now() + throttleDelayMs(1), expiresAt));
+      return;
+    }
+    // Re-read after the awaits: the row may have been erased meanwhile or run past its expiry.
+    const live = this.sql
+      .exec(`SELECT expires_at FROM scheduled_sends WHERE account_id = ? AND key = ? AND status = 'sending'`, accountId, key)
+      .toArray()[0];
+    if (!live) return;
+    if (Number(live.expires_at) <= Date.now()) {
+      const at = Date.now();
+      this.ctx.storage.transactionSync(() => {
+        const ended = this.sql
+          .exec(
+            `UPDATE scheduled_sends SET status = 'failed', reason = 'expired', components = NULL, updated_at = ?
+             WHERE account_id = ? AND key = ? AND status = 'sending' RETURNING key`,
+            at,
+            accountId,
+            key,
+          )
+          .toArray();
+        if (ended.length > 0) this.ingest([scheduledFailedEvent({ key, recipient, phone_number_id: phoneNumberId }, "expired", null, at)]);
+      });
       return;
     }
     const body = recipientMessage(
