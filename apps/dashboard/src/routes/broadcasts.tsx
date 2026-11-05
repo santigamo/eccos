@@ -10,7 +10,7 @@ import { RefreshControls } from "../components/logs/refresh-controls";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
-import { attemptedCount, broadcastStateLabel, failedCount, normalizeBroadcastId } from "../lib/broadcasts";
+import { attemptedCount, broadcastStateLabel, normalizeBroadcastId } from "../lib/broadcasts";
 import { loaderFailure } from "../lib/failure";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchWabaId } from "../lib/search";
@@ -107,18 +107,31 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
       id: "failed",
       header: "Failed",
       cell: (info) => {
-        const failed = failedCount(info.row.original.counts);
-        if (failed === 0) return <span className="font-mono text-xs tabular-nums">0</span>;
+        const { failed, unknown } = info.row.original.counts;
+        if (failed + unknown === 0) return <span className="font-mono text-xs tabular-nums">0</span>;
         return (
-          <Link
-            to="/broadcasts/$broadcastId"
-            params={{ broadcastId: info.row.original.id }}
-            search={{ status: "failed", ...(wabaId ? { wabaId } : {}) }}
-            onClick={(event) => event.stopPropagation()}
-            className={`font-mono text-xs tabular-nums text-[#ff7777] ${COUNT_LINK}`}
-          >
-            {failed}
-          </Link>
+          <span className="inline-flex gap-2">
+            {(
+              [
+                ["failed", failed],
+                ["unknown", unknown],
+              ] as const
+            )
+              .filter(([, count]) => count > 0)
+              .map(([status, count]) => (
+                <Link
+                  key={status}
+                  to="/broadcasts/$broadcastId"
+                  params={{ broadcastId: info.row.original.id }}
+                  search={{ status, ...(wabaId ? { wabaId } : {}) }}
+                  onClick={(event) => event.stopPropagation()}
+                  className={`font-mono text-xs tabular-nums text-[#ff7777] ${COUNT_LINK}`}
+                >
+                  {count}
+                  {status === "unknown" ? " unknown" : ""}
+                </Link>
+              ))}
+          </span>
         );
       },
       meta: numeric,

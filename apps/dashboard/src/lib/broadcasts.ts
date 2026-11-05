@@ -35,11 +35,6 @@ export function attemptedCount(counts: BroadcastSummary["counts"]): number {
   return counts.sent + counts.failed + counts.unknown;
 }
 
-/** Failed plus unknown outcome: the recipients an operator may have to act on. */
-export function failedCount(counts: BroadcastSummary["counts"]): number {
-  return counts.failed + counts.unknown;
-}
-
 /** A recipient status from the URL, or undefined. */
 export function normalizeRecipientStatus(value: unknown): BroadcastRecipientStatus | undefined {
   return RECIPIENT_STATUSES.find((status) => status === value);

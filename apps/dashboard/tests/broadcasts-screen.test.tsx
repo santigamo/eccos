@@ -106,6 +106,12 @@ describe("/broadcasts", () => {
     expect(clean).not.toContain("text-[#ff7777]");
   });
 
+  test("unknown outcomes are counted and linked on their own, not folded into failed", () => {
+    const html = renderList([summary({ counts: { queued: 0, sending: 0, sent: 10, failed: 0, unknown: 2, cancelled: 0 } })]);
+    expect(html).toContain("unknown</a>");
+    expect(html.match(/text-\[#ff7777\]/g)).toHaveLength(1);
+  });
+
   test("empty: says what will appear and links the guide", () => {
     const html = renderList([]);
     expect(html).toContain("NO BROADCASTS YET");
@@ -187,7 +193,7 @@ describe("/broadcasts/$broadcastId", () => {
 describe("cancel confirmation", () => {
   test("states the cost in recipients, not in hedges", () => {
     expect(cancelConfirmCopy({ queued: 4, sending: 1, sent: 7, failed: 0, unknown: 0, cancelled: 0 })).toBe(
-      "5 recipients not yet sent will not be messaged. The 7 already sent stay sent. A cancelled broadcast cannot be resumed.",
+      "4 queued recipients will not be messaged. The 1 being sent now may still go out. The 7 already sent stay sent. A cancelled broadcast cannot be resumed.",
     );
   });
 });

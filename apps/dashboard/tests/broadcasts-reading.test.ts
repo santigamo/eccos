@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   attemptedCount,
   broadcastStateLabel,
-  failedCount,
   normalizeBroadcastId,
   normalizeRecipientStatus,
   normalizeSeqCursor,
@@ -30,10 +29,6 @@ describe("broadcast state words", () => {
 describe("counts", () => {
   test("attempted excludes queued, sending and cancelled", () => {
     expect(attemptedCount(counts)).toBe(13);
-  });
-
-  test("failed folds in the unknown outcomes", () => {
-    expect(failedCount(counts)).toBe(3);
   });
 });
 

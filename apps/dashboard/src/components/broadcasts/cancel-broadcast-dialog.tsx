@@ -1,12 +1,13 @@
 import type { BroadcastSummary } from "@eccos/gateway-contract";
 import { cancelBroadcast } from "../../server/gateway";
+import { broadcastStateLabel } from "../../lib/broadcasts";
 import { failureCopy } from "../../lib/failure";
 import { CancelDialog } from "../sending/cancel-dialog";
 
 /** What cancelling THIS broadcast costs, in the system's own terms. */
 export function cancelConfirmCopy(counts: BroadcastSummary["counts"]): string {
-  const waiting = counts.queued + counts.sending;
-  return `${waiting} recipients not yet sent will not be messaged. The ${counts.sent} already sent stay sent. A cancelled broadcast cannot be resumed.`;
+  const inFlight = counts.sending > 0 ? ` The ${counts.sending} being sent now may still go out.` : "";
+  return `${counts.queued} queued recipients will not be messaged.${inFlight} The ${counts.sent} already sent stay sent. A cancelled broadcast cannot be resumed.`;
 }
 
 /** Confirm and cancel a running broadcast. The server decides who may; a refusal reads in the dialog. */
@@ -38,7 +39,12 @@ export function CancelBroadcastDialog({
       busyLabel="Cancelling…"
       onConfirm={async () => {
         const result = await cancelBroadcast({ data: { wabaId, broadcastId: broadcast.id } });
-        return result.ok ? null : failureCopy(result);
+        if (!result.ok) return failureCopy(result);
+        if (result.data && result.data.status !== "cancelled") {
+          onCancelled();
+          return { title: "Too late to cancel", detail: `It already ended: ${broadcastStateLabel(result.data)}.` };
+        }
+        return null;
       }}
       onOpenChange={onOpenChange}
       onDone={onCancelled}
