@@ -159,8 +159,8 @@ export type CoexistenceSyncStatus =
  *
  * The two timestamps are `*StartedAt`, not `*SyncedAt`, and the distinction is
  * the whole safety property. Meta allows each sync exactly once per phone
- * number; a second attempt is error `2593107` and costs the customer their
- * onboarding. So the moment Eccos is *about to* call is the moment it records —
+ * number; a second attempt is error `2593107`, which Meta documents as needing
+ * offboarding to redo. So the moment Eccos is *about to* call is the moment it records —
  * before the request goes out — and a recorded start is never re-attempted,
  * whatever the response was or failed to be. Acceptance is the separate fact,
  * carried by the request id Meta returns.
@@ -253,9 +253,10 @@ export const HISTORY_SYNC_EXPIRED_ERROR =
  *
  * Meta allows each sync exactly once. Once a request has been issued, no answer
  * — a 5xx, a timeout, a dropped connection — proves Meta did not process it, and
- * a retry that turns out to be a duplicate is error `2593107`, which breaks the
- * onboarding for good. A lost `200` left alone costs nothing; the same lost
- * `200` retried costs the customer everything. So the step stops, and says so.
+ * a retry that turns out to be a duplicate is error `2593107`, which the saga
+ * records as `already_synced`, hiding whether the sync ever ran. A lost `200`
+ * left alone costs nothing; retried, it costs that knowledge. So the step stops,
+ * and says so.
  */
 export const SYNC_UNCONFIRMED_ERROR =
   "coexistence sync was issued but not confirmed by Meta and cannot be safely retried (each sync is allowed once); offboard this customer and onboard it again";
@@ -375,9 +376,10 @@ export function coexistenceSyncSpentUnconfirmed(state: {
 /**
  * Why Meta refused a sync in a way that settles it: `already_synced` is
  * `2593107` (the number's one sync was spent before, possibly by another
- * provider), `history_sharing_off` is `2593109`.
+ * provider), `history_sharing_off` is `2593109`, `not_permitted` is recorded
+ * only by an operator, after reading Meta's `#10` in the logs.
  */
-export type SyncUnavailableReason = "already_synced" | "history_sharing_off";
+export type SyncUnavailableReason = "already_synced" | "history_sharing_off" | "not_permitted";
 
 /**
  * A refusal is stored in the sync's request-id column under this prefix, so a
@@ -394,6 +396,7 @@ export function syncUnavailableMarker(reason: SyncUnavailableReason): string {
 export function syncUnavailableReason(requestId: string | null): SyncUnavailableReason | null {
   if (requestId === syncUnavailableMarker("already_synced")) return "already_synced";
   if (requestId === syncUnavailableMarker("history_sharing_off")) return "history_sharing_off";
+  if (requestId === syncUnavailableMarker("not_permitted")) return "not_permitted";
   return null;
 }
 
@@ -402,6 +405,7 @@ const SYNC_LABEL = { contacts: "contacts", history: "message-history" } as const
 const UNAVAILABLE_BECAUSE: Record<SyncUnavailableReason, string> = {
   already_synced: "Meta reports it was already performed for this number",
   history_sharing_off: "the business has history sharing turned off",
+  not_permitted: "Meta refused it with a permission error",
 };
 
 /**

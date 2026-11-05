@@ -72,11 +72,35 @@ const SYNC_ACCEPTED_WITHOUT_REQUEST_ID = "accepted";
  */
 function syncRefusal(kind: "contacts" | "history", error: unknown): SyncUnavailableReason | null {
   if (!(error instanceof MetaGraphError)) return null;
-  if (error.code === SMB_APP_DATA_ALREADY_SYNCED_CODE) return "already_synced";
-  if (kind === "history" && error.code === SMB_APP_DATA_HISTORY_SHARING_OFF_CODE) {
+  const isCode = (code: number) => error.code === code || error.subcode === code;
+  if (isCode(SMB_APP_DATA_ALREADY_SYNCED_CODE)) return "already_synced";
+  if (kind === "history" && isCode(SMB_APP_DATA_HISTORY_SHARING_OFF_CODE)) {
     return "history_sharing_off";
   }
   return null;
+}
+
+/** Meta's answer is the only evidence of why a once-only sync failed, and nothing else keeps it. */
+function logSyncFailure(
+  claim: WabaProvisioningClaim,
+  phoneNumberId: string,
+  syncKind: "contacts" | "history",
+  error: unknown,
+): void {
+  const meta = error instanceof MetaGraphError ? error : null;
+  console.error(
+    JSON.stringify({
+      event: "coexistence_sync_failed",
+      accountId: claim.accountId,
+      wabaId: claim.wabaId,
+      phoneNumberId,
+      syncKind,
+      status: meta?.status ?? null,
+      code: meta?.code ?? null,
+      subcode: meta?.subcode ?? null,
+      message: meta?.graphMessage ?? (error instanceof Error ? error.message : String(error)),
+    }),
+  );
 }
 
 export interface ProvisioningRun {
@@ -267,9 +291,9 @@ async function runCoexistenceSync(
   if (coexistence.onboardingType !== "coexistence") return;
 
   // A sync that was issued and never confirmed is spent: Meta allows exactly one
-  // per phone number, and no answer proves it was not processed. Retrying a lost
-  // 200 is precisely how a working onboarding gets broken, so the step refuses
-  // rather than gambles, and the operator gets the remedy Meta prescribes.
+  // per phone number, and no answer proves it was not processed. A retried lost
+  // 200 comes back as 2593107 and would be recorded as already synced, so the step
+  // refuses rather than gambles, and the operator gets the remedy Meta prescribes.
   if (coexistenceSyncSpentUnconfirmed(coexistence)) throw new SyncUnconfirmedError();
   if (!coexistenceSyncOutstanding(coexistence)) return;
 
@@ -362,6 +386,7 @@ async function runCoexistenceSync(
         const accepted = await step.initiate(appConfig, phoneNumberId, claim.metaAccessToken);
         requestId ??= accepted.requestId;
       } catch (error) {
+        logSyncFailure(claim, phoneNumberId, step.kind, error);
         const reason = syncRefusal(step.kind, error);
         if (!reason) throw error;
         // A refusal on any number wins: that number's data is not coming.

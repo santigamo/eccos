@@ -9,6 +9,7 @@ import {
   startConnectForAccount,
 } from "./routes/connect";
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
+import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
@@ -101,6 +102,17 @@ function healthFromCounts(counts: OperatorCounts): Health {
 
 function publicConfig(config: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(config).filter(([key]) => isPublicConfigKey(key)));
+}
+
+/** Audit line for an operator sync recovery; ids only. */
+function logOperatorSyncAction(
+  event: string,
+  accountId: string,
+  wabaId: string,
+  syncKind: "contacts" | "history",
+  changed: boolean,
+): void {
+  console.log(JSON.stringify({ event, accountId, wabaId, syncKind, changed }));
 }
 
 /** Names the account and WABA an RPC call acts on. Workers Logs adds the RPC method to
@@ -850,6 +862,59 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /**
+   * Operator-only: outside `GatewayApi`, so the console's types do not expose it,
+   * but the dashboard binds this same entrypoint. See `docs/operations.md`, "Coexistence sync failures".
+   */
+  async resetUnconfirmedCoexistenceSync(
+    wabaId: string,
+    accountId: string,
+    syncKind: "contacts" | "history",
+  ): Promise<boolean> {
+    const account = requireAccountId(accountId, "accountId is required");
+    try {
+      const changed = await getControlPlaneStub(this.env).resetUnconfirmedCoexistenceSync(
+        account,
+        wabaId,
+        syncKind,
+      );
+      logOperatorSyncAction("coexistence_sync_reset", account, wabaId, syncKind, changed);
+      return changed;
+    } catch (err) {
+      logOperatorSyncAction("coexistence_sync_reset_refused", account, wabaId, syncKind, false);
+      throw err;
+    }
+  }
+
+  /** Operator-only and outside `GatewayApi`, like the reset above. */
+  async settleCoexistenceSyncNotPermitted(
+    wabaId: string,
+    accountId: string,
+    syncKind: "contacts" | "history",
+  ): Promise<boolean> {
+    const account = requireAccountId(accountId, "accountId is required");
+    const changed = await getControlPlaneStub(this.env).settleCoexistenceSyncNotPermitted(
+      account,
+      wabaId,
+      syncKind,
+    );
+    logOperatorSyncAction("coexistence_sync_settled_not_permitted", account, wabaId, syncKind, changed);
+    return changed;
+  }
+
+  /** Operator-only and outside `GatewayApi`, like the reset above: read-only Graph view of a WABA. */
+  async diagnoseWaba(wabaId: string, accountId: string) {
+    const account = requireAccountId(accountId, "accountId is required");
+    const waba = await getControlPlaneStub(this.env).getWabaRecord(account, wabaId);
+    if (!waba) throw new Error(`WABA "${wabaId}" is not owned by account "${account}"`);
+    return diagnoseWaba(
+      getAppConfig(this.env),
+      waba.wabaId,
+      waba.phones[0]?.phoneNumberId ?? null,
+      waba.metaAccessToken,
+    );
   }
 
   /**

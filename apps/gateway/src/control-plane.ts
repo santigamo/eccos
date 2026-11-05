@@ -1507,6 +1507,74 @@ export class EccosControlPlane extends DurableObject<Env> {
   }
 
   /**
+   * Operator recovery: forget one sync recorded as issued and unconfirmed, so the
+   * next re-check issues it again. Only for a failed WABA whose failure was read
+   * as a refusal from Meta. The saga posts to every phone of the WABA while Meta's
+   * once-only rule is per phone, so on a multi-phone WABA the repeat would reach a
+   * phone that already accepted, get `2593107` and be recorded as `already_synced`
+   * for a sync that did run: that case throws. Returns whether a row changed.
+   */
+  async resetUnconfirmedCoexistenceSync(
+    accountId: string,
+    wabaId: string,
+    syncKind: CoexistenceSyncKind,
+  ): Promise<boolean> {
+    const account = this.requireAccount(accountId);
+    const id = validateWabaId(wabaId, "wabaId");
+    if (syncKind !== "contacts" && syncKind !== "history") throw new Error("invalid syncKind");
+    const started = syncKind === "contacts" ? "contacts_sync_started_at" : "history_sync_started_at";
+    const requestId = syncKind === "contacts" ? "contacts_sync_request_id" : "history_sync_request_id";
+    const owned = this.sql
+      .exec("SELECT 1 FROM wabas WHERE account_id = ? AND waba_id = ?", account, id)
+      .toArray();
+    if (owned.length === 1 && phonesOf(id, this.sql).length > 1) {
+      throw new Error(
+        "cannot reset a coexistence sync on a WABA with several phones: Meta's once-only rule is per phone and the log does not record which phone accepted",
+      );
+    }
+    const updated = this.sql
+      .exec(
+        `UPDATE wabas SET ${started} = NULL
+         WHERE account_id = ? AND waba_id = ? AND status = 'failed'
+           AND ${started} IS NOT NULL AND ${requestId} IS NULL
+         RETURNING waba_id`,
+        account,
+        id,
+      )
+      .toArray();
+    return updated.length === 1;
+  }
+
+  /**
+   * Operator recovery: record that Meta refused a sync with a permission error, so
+   * the next re-check moves on to the other sync. Same row guards as the reset above,
+   * but allowed on a multi-phone WABA, where it marks the whole sync unavailable.
+   */
+  async settleCoexistenceSyncNotPermitted(
+    accountId: string,
+    wabaId: string,
+    syncKind: CoexistenceSyncKind,
+  ): Promise<boolean> {
+    const account = this.requireAccount(accountId);
+    const id = validateWabaId(wabaId, "wabaId");
+    if (syncKind !== "contacts" && syncKind !== "history") throw new Error("invalid syncKind");
+    const started = syncKind === "contacts" ? "contacts_sync_started_at" : "history_sync_started_at";
+    const requestId = syncKind === "contacts" ? "contacts_sync_request_id" : "history_sync_request_id";
+    const updated = this.sql
+      .exec(
+        `UPDATE wabas SET ${requestId} = ?
+         WHERE account_id = ? AND waba_id = ? AND status = 'failed'
+           AND ${started} IS NOT NULL AND ${requestId} IS NULL
+         RETURNING waba_id`,
+        syncUnavailableMarker("not_permitted"),
+        account,
+        id,
+      )
+      .toArray();
+    return updated.length === 1;
+  }
+
+  /**
    * Record that a coexistence sync is *about to be requested*, before the
    * request leaves the Worker (eccos-vss).
    *
