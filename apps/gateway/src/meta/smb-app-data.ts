@@ -23,9 +23,10 @@
  * Meta, on the same page, for each of the two steps: *"You can only perform this
  * step once. If you need to perform it again, the customer must first offboard,
  * then complete the Embedded Signup flow again."* A second call of the same
- * `sync_type` returns error `2593107`, whose documented remedy is offboarding
- * the customer. So a caller must record that it is about to make the call
- * *before* making it, and must never re-issue one it has already sent — even
+ * `sync_type` returns error `2593107` (Meta: the maximum number of syncs was
+ * exceeded), and repeating it needs the customer to offboard and onboard again.
+ * The onboarding itself is not broken; the saga settles it as `already_synced`.
+ * So a caller must record that it is about to make the call *before* making it, and must never re-issue one it has already sent — even
  * after a timeout, and especially after a 5xx. A lost `200` costs nothing if
  * left alone and is a duplicate (`2593107`) if retried,
  * and the saga can then no longer tell whether the sync ever ran.

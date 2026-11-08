@@ -17,11 +17,14 @@
  * WABA an operator has to act on, and it must never be indistinguishable from a
  * fully provisioned one.
  *
- * Meta also allows each sync **exactly once** per phone number, and answers a
- * duplicate with error `2593107` — whose remedy is, again, offboarding. That
- * turns the usual saga instinct on its head: the dangerous move here is not
- * giving up too early but trying again, so the states below distinguish "issued"
- * from "confirmed", and an issued-but-unanswered sync is terminal.
+ * Meta also allows each sync **exactly once** per phone number. A duplicate is
+ * error `2593107`: Meta says only that the maximum number of syncs was exceeded
+ * and that repeating one needs the customer to offboard and onboard again. It
+ * does not break the onboarding; Eccos settles it as `already_synced` (below).
+ * What a retry does destroy is the knowledge of whether the first sync ran, so
+ * the dangerous move is trying again rather than giving up too early. The states
+ * below distinguish "issued" from "confirmed", and an issued-but-unanswered sync
+ * is terminal.
  *
  * A sync Meta *refuses* with a documented reason is different: already spent
  * (`2593107`, e.g. a number that coexisted with another provider first) or
@@ -159,8 +162,8 @@ export type CoexistenceSyncStatus =
  *
  * The two timestamps are `*StartedAt`, not `*SyncedAt`, and the distinction is
  * the whole safety property. Meta allows each sync exactly once per phone
- * number; a second attempt is error `2593107`, which Meta documents as needing
- * offboarding to redo. So the moment Eccos is *about to* call is the moment it records —
+ * number; a second attempt is error `2593107` (maximum syncs exceeded), which
+ * Meta says can only be redone through offboarding and a new onboarding. So the moment Eccos is *about to* call is the moment it records —
  * before the request goes out — and a recorded start is never re-attempted,
  * whatever the response was or failed to be. Acceptance is the separate fact,
  * carried by the request id Meta returns.

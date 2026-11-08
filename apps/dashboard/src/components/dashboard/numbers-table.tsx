@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { recheckNumber } from "../../server/gateway";
 import type { AccountResources } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { failedWabaCopy, syncUnavailableCopy } from "../../lib/provisioning-copy";
+import { wabaLabel } from "../../lib/wabas";
 import { StatusTag } from "../../ui";
 
 type Notice = { ok: boolean; text: string };
@@ -16,8 +18,6 @@ type NumberRow = {
   /** Coexistence sync state of the WABA this number belongs to (eccos-vss). */
   coexistence: string;
 };
-
-type UnavailableSync = { count: number; errors: string[] };
 
 /**
  * One row per phone number, the unit an operator actually thinks in; the WABA
@@ -52,23 +52,24 @@ export function NumbersTable({
     })),
   );
   const pendingRows = rows.filter((row) => row.status === "pending").length;
-  const notCoexistenceRows = rows.filter((row) => row.coexistence === "not_coexistence").length;
-  const unavailableWabas = resources.wabas.filter(
-    (waba) => waba.status === "active" && waba.coexistence.status === "unavailable",
-  );
-  const unavailable: UnavailableSync = {
-    count: unavailableWabas.reduce((sum, waba) => sum + waba.phones.length, 0),
-    errors: [
-      ...new Set(unavailableWabas.flatMap((waba) => (waba.coexistence.error ? [waba.coexistence.error] : []))),
-    ],
-  };
+  const notCoexistenceRows = rows.filter(
+    (row) => row.status === "active" && row.coexistence === "not_coexistence",
+  ).length;
+  const unavailableLines = [
+    ...new Set(
+      resources.wabas
+        .filter((waba) => waba.status === "active" && waba.coexistence.status === "unavailable")
+        .flatMap((waba) => syncUnavailableCopy(waba.coexistence)),
+    ),
+  ];
+  const failedWabas = resources.wabas.filter((waba) => waba.status === "failed");
   // A WABA with no numbers produces no rows at all, so without these it would be
   // connected and completely invisible here (Embedded Signup v4). Split by
   // status, because the two say opposite things to an operator: one resolves
   // itself and one does not.
-  const phonelessWabas = resources.wabas.filter((waba) => waba.phones.length === 0);
-  const awaitingPhoneWabas = phonelessWabas.filter((waba) => waba.status !== "failed");
-  const failedPhonelessWabas = phonelessWabas.filter((waba) => waba.status === "failed");
+  const awaitingPhoneWabas = resources.wabas.filter(
+    (waba) => waba.phones.length === 0 && waba.status !== "failed",
+  );
 
   async function onRecheck(wabaId: string) {
     setRechecking(wabaId);
@@ -88,11 +89,13 @@ export function NumbersTable({
         await onRefresh?.();
         return;
       }
+      const failed =
+        result.data.status === "failed" ? failedWabas.find((waba) => waba.wabaId === wabaId) : undefined;
       setNotice({
         ok: false,
-        text:
-          result.data.error ??
-          "Meta has not confirmed the subscription yet. Eccos will keep retrying.",
+        text: failed
+          ? failedWabaCopy(failed)
+          : "Meta has not confirmed the subscription yet. Eccos will keep retrying.",
       });
       await onRefresh?.();
     } finally {
@@ -151,11 +154,9 @@ export function NumbersTable({
           onRecheck={onRecheck}
         />
       ) : null}
-      {failedPhonelessWabas.length > 0 ? (
-        <FailedPhonelessNote wabas={failedPhonelessWabas} />
-      ) : null}
+      {failedWabas.length > 0 ? <FailedNote wabas={failedWabas} /> : null}
       {notCoexistenceRows > 0 ? <NotCoexistenceNote count={notCoexistenceRows} /> : null}
-      {unavailable.count > 0 ? <UnavailableSyncNote {...unavailable} /> : null}
+      {unavailableLines.length > 0 ? <UnavailableSyncNote lines={unavailableLines} /> : null}
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -291,18 +292,12 @@ function AwaitingPhoneNote({
 }
 
 /**
- * A WABA with no numbers whose provisioning actually failed — Meta refused the
- * subscription, say. It is the same invisible shape as the one above (no
- * numbers, so no rows) but the opposite situation: nothing is coming, and the
- * only account-level error message there is lives on the WABA record. Without
- * this the table would either show nothing at all or, worse, tell the operator
- * to sit and wait.
+ * WABAs whose provisioning gave up. A failed WABA does not send or forward, so
+ * this says what happened and what to do, in words built from the structured
+ * state, never from the operator-facing `provisioningError`. A WABA with no
+ * numbers produces no rows, so without this it would not show at all.
  */
-function FailedPhonelessNote({
-  wabas,
-}: {
-  wabas: AccountResources["wabas"];
-}) {
+function FailedNote({ wabas }: { wabas: AccountResources["wabas"] }) {
   return (
     <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
       <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -310,18 +305,11 @@ function FailedPhonelessNote({
       </p>
       <ul className="m-0 flex list-none flex-col gap-1 p-0">
         {wabas.map((waba) => (
-          <li
-            key={waba.wabaId}
-            className="max-w-prose text-sm text-pretty text-muted-foreground"
-          >
-            <span className="font-medium text-foreground">{waba.wabaId}</span>
-            {waba.provisioningError ? ` — ${waba.provisioningError}` : null}
+          <li key={waba.wabaId} className="max-w-prose text-sm text-pretty text-muted-foreground">
+            <span className="font-medium text-foreground">{wabaLabel(waba)}</span> — {failedWabaCopy(waba)}
           </li>
         ))}
       </ul>
-      <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
-        Connect the number again to retry.
-      </p>
     </div>
   );
 }
@@ -356,25 +344,19 @@ function NotCoexistenceNote({ count }: { count: number }) {
 }
 
 /**
- * A coexistence sync Meta refused or an operator settled. The row stays `active`
- * because the number works; what would mislead is leaving somebody waiting for
- * contacts or history that will not come. `error` is built by the gateway from
- * fixed wording, never from Meta's response, so it is safe to show.
+ * A coexistence sync Meta refused or an operator settled. The row stays `active`;
+ * what would mislead is leaving somebody waiting for contacts or history that
+ * will not come.
  */
-function UnavailableSyncNote({ count, errors }: UnavailableSync) {
+function UnavailableSyncNote({ lines }: { lines: string[] }) {
   return (
     <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
       <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-        Some WhatsApp Business app data will not arrive
+        Some WhatsApp Business app data was not imported
       </p>
-      <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
-        {count === 1 ? "This number works" : `${count} numbers work`} normally for sending and
-        receiving, but the contacts or message history from the WhatsApp Business app did not
-        synchronise and will not.
-      </p>
-      {errors.map((error) => (
-        <p key={error} className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
-          {error}
+      {lines.map((line) => (
+        <p key={line} className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
+          {line}
         </p>
       ))}
     </div>

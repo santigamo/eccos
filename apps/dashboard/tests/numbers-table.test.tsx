@@ -181,30 +181,66 @@ describe("NumbersTable", () => {
     expect(affected).toContain("2 numbers were connected");
   });
 
-  test("a settled-unavailable sync says the number works but its data will not arrive", () => {
+  test("a refused sync says which data was not imported and what to do, without operator wording", () => {
     const state = resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "unavailable" });
-    state.wabas[0]!.coexistence.error =
+    const coexistence = state.wabas[0]!.coexistence;
+    coexistence.contactsRequestId = "unavailable:not_permitted";
+    coexistence.historyRequestId = "unavailable:history_sharing_off";
+    coexistence.error =
       "contacts sync unavailable: Meta refused it with a permission error. The number works as a Cloud API number without that data";
     const body = text(render(state));
-    expect(body).toContain("Some WhatsApp Business app data will not arrive");
-    expect(body).toContain("works normally for sending and receiving");
-    expect(body).toContain("Meta refused it with a permission error");
+    expect(body).toContain("Some WhatsApp Business app data was not imported");
+    expect(body).toContain("contacts were not imported: Meta did not allow it for this number. Contact Eccos support.");
+    expect(body).toContain("history sharing was off when the number was connected");
+    expect(body).not.toContain("Cloud API number");
+    expect(body).not.toContain("offboard");
     expect(text(render(resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "initiated" })))).not.toContain(
-      "will not arrive",
+      "was not imported",
     );
+  });
+
+  test("an already-used sync says it cannot be repeated by the customer", () => {
+    const state = resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "unavailable" });
+    state.wabas[0]!.coexistence.historyRequestId = "unavailable:already_synced";
+    const body = text(render(state));
+    expect(body).toContain("chat history was not imported: Meta allows that import once per number");
+    expect(body).toContain("contact Eccos support");
   });
 
   test("a failed WABA never claims the number works, and equal reasons show once", () => {
     const failed = resources({ wabaId: "waba-a", status: "failed", phones: 1, coexistence: "unavailable" });
-    expect(text(render(failed))).not.toContain("will not arrive");
+    expect(text(render(failed))).not.toContain("was not imported");
 
-    const reason = "contacts sync unavailable: Meta refused it with a permission error";
     const two = resources(
       { wabaId: "waba-a", status: "active", phones: 1, coexistence: "unavailable" },
       { wabaId: "waba-b", status: "active", phones: 1, coexistence: "unavailable" },
     );
-    for (const waba of two.wabas) waba.coexistence.error = reason;
-    expect(text(render(two)).split(reason)).toHaveLength(2);
+    for (const waba of two.wabas) waba.coexistence.contactsRequestId = "unavailable:not_permitted";
+    expect(text(render(two)).split("contacts were not imported")).toHaveLength(2);
+  });
+
+  test("an unconfirmed sync on a failed WABA is told plainly, with no operator wording", () => {
+    const state = resources({ wabaId: "waba-a", status: "failed", phones: 1, coexistence: "unconfirmed" });
+    state.wabas[0]!.provisioningError =
+      "coexistence sync was issued but not confirmed by Meta and cannot be safely retried (each sync is allowed once); offboard this customer and onboard it again";
+    const body = text(render(state));
+    expect(body).toContain("Connection failed");
+    expect(body).toContain("+34 600 000 000");
+    expect(body).toContain("This number is not connected: Eccos could not confirm");
+    expect(body).toContain("Contact Eccos support.");
+    expect(body).not.toContain("offboard");
+    expect(body).not.toContain("works normally");
+  });
+
+  test("an expired history window on a failed WABA is told plainly", () => {
+    const body = text(render(resources({ wabaId: "waba-a", status: "failed", phones: 1, coexistence: "expired" })));
+    expect(body).toContain("the 24-hour window to import your WhatsApp Business app chat history ran out");
+    expect(body).not.toContain("offboard");
+  });
+
+  test("a coexistence note never claims a failed number works", () => {
+    const body = text(render(resources({ wabaId: "waba-a", status: "failed", phones: 1, coexistence: "not_coexistence" })));
+    expect(body).not.toContain("works normally");
   });
 
   test("a coexistence number that synchronised normally shows no note", () => {
@@ -249,8 +285,8 @@ describe("NumbersTable", () => {
   test("a failed account with no number is not told to sit and wait", () => {
     const html = text(render(resources({ wabaId: "waba-a", status: "failed", phones: 0 })));
     expect(html).toContain("Connection failed");
-    expect(html).toContain("subscribed_apps failed with HTTP 400");
-    expect(html).toContain("Connect the number again to retry");
+    expect(html).toContain("Eccos could not finish connecting this number");
+    expect(html).not.toContain("subscribed_apps");
     // The waiting note would be a lie here: nothing is coming.
     expect(html).not.toContain("Waiting on a phone number");
   });
