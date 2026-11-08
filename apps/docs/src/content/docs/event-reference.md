@@ -85,7 +85,9 @@ sent as a reply) or answered a Flow, and `broadcastId` or `scheduleKey` the same
 For numbers connected with coexistence, messages you send from the phone app are forwarded too.
 They mirror `reply` and `message` but name the recipient with `to` (and `toUserId` for a BSUID)
 instead of `from`. Text is `echo`; anything else is `message_echo`, with the same content fields
-as `message`.
+as `message`. A button tapped in the app on a template you sent arrives as `message_echo` with
+`messageType` `button`, `text` the button title and `payload` the quick-reply `payload` you set
+(or the button or list reply `id` for an interactive message).
 
 ```json
 { "type": "echo", "to": "34600000000", "messageId": "wamid.HBgM...", "text": "Thanks!", "at": 1767225600000, "phoneNumberId": "1098765432" }

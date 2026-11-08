@@ -584,6 +584,35 @@ describe("non-text echoes", () => {
     }
   });
 
+  it("carries the payload of a quick-reply button tapped in the Business app", () => {
+    expect(echo({ type: "button", button: { text: "Enviar", payload: "review:abc:approve" } })).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "button",
+      text: "Enviar",
+      payload: "review:abc:approve",
+    });
+  });
+
+  it("keeps a button echo that has a payload but no title", () => {
+    expect(echo({ type: "button", button: { text: "", payload: "review:abc:approve" } })).toEqual({
+      type: "message_echo",
+      to: "16505551234",
+      messageId: "wamid.E",
+      at: 1_520_383_574_000,
+      messageType: "button",
+      payload: "review:abc:approve",
+    });
+  });
+
+  it("carries the id of an interactive button reply echo as its payload", () => {
+    expect(
+      echo({ type: "interactive", interactive: { type: "button_reply", button_reply: { id: "opt-1", title: "Sí" } } }),
+    ).toMatchObject({ messageType: "interactive", interactive: { type: "button_reply", body: "Sí" }, payload: "opt-1" });
+  });
+
   it("parses a revoke", () => {
     expect(echo({ type: "revoke", revoke: { original_message_id: "wamid.ORIG" } })).toEqual({
       type: "message_echo",
