@@ -82,6 +82,21 @@ describe("daily census", () => {
         phones: [{ phoneNumberId: "PN4", displayPhoneNumber: "+34 600 555 666" }],
       });
       cp.sql.exec("UPDATE wabas SET created_at = ? WHERE waba_id = 'WABA_STUCK'", NOON - 25 * 3600_000);
+      await cp.registerWaba({
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_FRESH",
+        metaAccessToken: "t",
+        provisioningStatus: "pending",
+        phones: [{ phoneNumberId: "PN5", displayPhoneNumber: "+34 600 777 888" }],
+      });
+      cp.sql.exec("UPDATE wabas SET created_at = ? WHERE waba_id = 'WABA_FRESH'", NOON - 23 * 3600_000);
+      await cp.registerWaba({
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_OLDFAIL",
+        metaAccessToken: "t",
+        provisioningStatus: "active",
+        phones: [{ phoneNumberId: "PN6", displayPhoneNumber: "+34 600 999 000" }],
+      });
     });
     const hour = 3600_000;
     await seedDeliveries(
@@ -95,6 +110,7 @@ describe("daily census", () => {
       ],
       "https://subscriber.example/hook",
     );
+    await seedDeliveries("WABA_OLDFAIL", [["failed", NOON - 40 * 24 * hour]], "https://subscriber.example/hook");
     await seedDeliveries("WABA_NOTARGET", [["pending", NOON], ["pending", NOON]]);
     await runInDurableObject(getGatewayStubForWaba(env, "WABA_BROKEN"), (i: EccosGateway) => {
       i.sql.exec("INSERT INTO held_webhooks (phone_number_id, events, event_count, held_at) VALUES ('PN3', '[]', 3, ?)", NOON);
@@ -106,9 +122,9 @@ describe("daily census", () => {
     const [text] = sentTexts(fetchMock);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(text).toContain("Eccos daily census, 2026-11-08 UTC");
-    expect(text).toContain("1 account, 4 WABAs (2 active, 1 pending, 1 failed)");
+    expect(text).toContain("1 account, 6 WABAs (3 active, 2 pending, 1 failed)");
     expect(text).toContain(
-      "Deliveries: 1 pending, 2 held: no forwarding target, 2 failed, 1 delivered (queued in the last 24 h)",
+      "Deliveries: 1 pending, 2 held: no forwarding target, 3 failed, 1 delivered (queued in the last 24 h)",
     );
     expect(text).toContain("Webhooks held: WABA not active: 3 events");
     // Only the failure from the last 24 h is flagged; the old one stays in the totals.
@@ -116,11 +132,16 @@ describe("daily census", () => {
     expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_NOTARGET: 2 events held: no forwarding target`);
     expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_BROKEN: provisioning failed`);
     expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_BROKEN: 3 events held: WABA not active`);
-    expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_STUCK: provisioning pending for over 24 h`);
+    expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_STUCK: still pending, registered over 24 h ago`);
     expect(text).toContain(
       `WABA ${TEST_WABA_ID}, active, standard, target set: 1 pending, 0 held: no forwarding target, 2 failed, 1 delivered (queued 24 h), 0 held: WABA not active`,
     );
     expect(text).toMatch(/WABA WABA_NOTARGET, active, coexistence, sync \w+, no target: 0 pending, 2 held: no forwarding target/);
+    // Neither an old failure alone nor a fresh pending registration is flagged.
+    const attention = text.slice(text.indexOf("Needs attention"), text.indexOf("\n\n", text.indexOf("Needs attention")));
+    expect(attention).not.toContain("WABA_OLDFAIL");
+    expect(attention).not.toContain("WABA_FRESH");
+    expect(text).toContain("WABA WABA_OLDFAIL, active, standard, target set: 0 pending, 0 held: no forwarding target, 1 failed");
     // No numbers, tokens or secrets.
     expect(text).not.toMatch(/\+34|600|test-bot-token|tenant-token|subscriber\.example/);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];

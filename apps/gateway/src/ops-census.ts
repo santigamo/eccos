@@ -1,7 +1,7 @@
 /**
  * Daily operator census to the Telegram HQ ops topic (eccos-r8x0).
  *
- * Runs from the 5-minute cron tick, at most once per UTC day after 07:00 UTC. The day is
+ * Runs from the 5-minute cron tick, at most once per UTC day at or after 07:00 UTC. The day is
  * checked read-only first, the data is gathered, and the control plane's `claimDailyCensus`
  * is claimed atomically just before sending: a crash while gathering leaves the day open for
  * the next tick, while a retried tick or a second isolate cannot send twice. A send that
@@ -32,7 +32,7 @@ interface WabaLine {
   pending: number;
   /** Pending deliveries waiting for a forwarding target. */
   held: number;
-  /** Failed deliveries, all time. */
+  /** Failed deliveries still within delivery retention. */
   failed: number;
   recentFailed: number;
   /** Delivered among the deliveries queued in the last 24 h. */
@@ -135,7 +135,7 @@ export function formatCensus(day: string, blocks: AccountBlock[]): string {
     for (const w of b.wabas) {
       const who = `${b.name} / WABA ${w.wabaId}`;
       if (w.status === "failed") attention.push(`${who}: provisioning failed`);
-      if (w.stuckPending) attention.push(`${who}: provisioning pending for over 24 h`);
+      if (w.stuckPending) attention.push(`${who}: still pending, registered over 24 h ago`);
       if (!w.readable) attention.push(`${who}: data plane unreadable`);
       if (w.recentFailed > 0) {
         attention.push(`${who}: ${w.recentFailed} ${w.recentFailed === 1 ? "delivery" : "deliveries"} failed in the last 24 h`);

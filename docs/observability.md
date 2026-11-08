@@ -75,11 +75,11 @@ reported in the next alert.
 Once per UTC day, on the first cron tick at or after 07:00 UTC, the gateway posts a census to the
 same topic. It lists each account (with its organization id), its WABAs with status, onboarding
 type (and coexistence sync state), whether a forwarding target is set, and counts: pending,
-"held: no forwarding target" (deliveries waiting for a target), failed (all time), delivered among
+"held: no forwarding target" (deliveries waiting for a target), failed (those still within `DELIVERY_RETENTION_DAYS`, default 90), delivered among
 the deliveries queued in the last 24 h, and "held: WABA not active" (webhooks held for a WABA that
 is not active yet). A "Needs attention" block comes first:
 
-- a WABA whose provisioning failed, or has been pending for over 24 h;
+- a WABA whose provisioning failed, or is still pending and was registered over 24 h ago;
 - deliveries that failed in the last 24 h (older failures stay in the totals only);
 - events held for lack of a forwarding target, or because the WABA is not active;
 - a coexistence sync that ended `unconfirmed` or `expired`;
