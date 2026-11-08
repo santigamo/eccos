@@ -166,6 +166,16 @@ export function ConnectNumberChoices({
   const attempt = useRef(0);
   /** At most one exchange in flight. */
   const exchanging = useRef(false);
+  /** Set once the page is on its way out: every later callback is a no-op, so a
+   * second window's code cannot register the number twice before it unloads. */
+  const left = useRef(false);
+  const leave = useCallback(
+    (path: string) => {
+      left.current = true;
+      navigate(path);
+    },
+    [navigate],
+  );
   /**
    * What a retry can skip. The SDK and its config are loaded on the first
    * click, never on mount (docs/threat-model.md); `next` is the handoff
@@ -228,7 +238,7 @@ export function ConnectNumberChoices({
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(
     async (code: string, state: string) => {
-      if (exchanging.current) return;
+      if (left.current || exchanging.current) return;
       exchanging.current = true;
       try {
         let result: Awaited<ReturnType<typeof exchangeConnectCode>>;
@@ -239,13 +249,13 @@ export function ConnectNumberChoices({
           // The state is spent and provisioning may have run, so the outcome is
           // unknown. A retry would re-onboard the number: show the real state.
           track("connect_outcome", { result: "unknown" });
-          navigate(CONNECT_RETURN_PATH);
+          leave(CONNECT_RETURN_PATH);
           return;
         }
         if (!result.ok) {
           if (result.kind === "unreachable") {
             track("connect_outcome", { result: "unknown" });
-            navigate(CONNECT_RETURN_PATH);
+            leave(CONNECT_RETURN_PATH);
             return;
           }
           setError(failureCopy(result).detail);
@@ -263,12 +273,12 @@ export function ConnectNumberChoices({
         }
         // The numbers table is a loader read; a reload is the honest way to
         // show what provisioning just did without duplicating its state here.
-        navigate(returnPathFor(CONNECT_RETURN_PATH, verdict.skipped));
+        leave(returnPathFor(CONNECT_RETURN_PATH, verdict.skipped));
       } finally {
         exchanging.current = false;
       }
     },
-    [navigate, setError, prepareNext],
+    [leave, setError, prepareNext],
   );
 
   /** A handoff prepared in the background, if its state has long enough left. */
@@ -312,7 +322,7 @@ export function ConnectNumberChoices({
           setError(config.ok ? SDK_REQUIRED_MESSAGE : failureCopy(config).detail);
           return;
         }
-        navigate(handoff.data.url);
+        leave(handoff.data.url);
         return;
       }
 
@@ -322,9 +332,11 @@ export function ConnectNumberChoices({
       track("es_popup_open");
       opened = true;
       sdk.login((response) => {
+        if (left.current) return;
         stopWatch.current?.();
         const code = response.authResponse?.code;
         if (code) {
+          setFeedback((current) => (current?.tone === "blocked" ? null : current));
           void finish(code, state).finally(() => {
             if (attempt.current === mine) setStarting(null);
           });
@@ -355,6 +367,7 @@ export function ConnectNumberChoices({
   }
 
   function startAgain() {
+    if (exchanging.current) return;
     stopWatch.current?.();
     attempt.current += 1;
     setFeedback(null);

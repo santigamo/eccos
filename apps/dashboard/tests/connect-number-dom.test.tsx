@@ -351,4 +351,118 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await wait(60);
     expect(live(host)).toBe("");
   });
+
+  test("once the page is leaving, a second window's code is not exchanged", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await wait(60);
+    await act(async () => loginCallback?.(FINISHED));
+    await settle();
+    expect(navigated).toEqual(["/numbers"]);
+
+    await act(async () => loginCallback?.({ authResponse: { code: "code-2" } }));
+    await settle();
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-1" }]);
+  });
+
+  test("a retry after a failed result exchanges again", async () => {
+    let calls = 0;
+    stubs.exchangeConnectCode = async (input: unknown) => {
+      exchanges.push((input as { data: { code: string; state: string } }).data);
+      calls += 1;
+      return calls === 1 ? { ok: true, data: { ok: false, code: "failed", error: "x" } } : exchanged();
+    };
+    const host = await mountChoices();
+    await runFlow(host, FINISHED);
+    expect(navigated).toEqual([]);
+
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await act(async () => loginCallback?.({ authResponse: { code: "code-2" } }));
+    await settle();
+    expect(exchanges.map((e) => e.code)).toEqual(["code-1", "code-2"]);
+    expect(navigated).toEqual(["/numbers"]);
+  });
+
+  test("a code arriving clears the blocked-popup message", async () => {
+    let release: (value: unknown) => void = () => {};
+    stubs.exchangeConnectCode = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await wait(60);
+    expect(live(host)).toContain("Allow pop-ups");
+
+    await act(async () => loginCallback?.(FINISHED));
+    expect(live(host)).toBe("");
+    await act(async () => release(exchanged()));
+    await settle();
+  });
+
+  test("Start again does nothing while an exchange is in flight", async () => {
+    let release: (value: unknown) => void = () => {};
+    stubs.exchangeConnectCode = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await wait(60);
+    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Start again");
+    await act(async () => loginCallback?.(FINISHED));
+    await act(async () => again?.click());
+    expect(card(host, "A new number").disabled).toBe(true);
+    await act(async () => release(exchanged()));
+    await settle();
+  });
+
+  async function blockThenStartAgain(host: HTMLElement) {
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    const staleCallback = loginCallback;
+    await wait(60);
+    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Start again");
+    await act(async () => again?.click());
+    return staleCallback;
+  }
+
+  test("an old window's cancel after Start again changes nothing", async () => {
+    const host = await mountChoices(20);
+    const stale = await blockThenStartAgain(host);
+    await act(async () => stale?.({ authResponse: null }));
+    expect(live(host)).toBe("");
+  });
+
+  test("an old window's cancel does not re-enable the cards of a newer attempt", async () => {
+    const host = await mountChoices(20);
+    const stale = await blockThenStartAgain(host);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await act(async () => stale?.({ authResponse: null }));
+    expect(live(host)).toBe("");
+    expect(card(host, "A new number").disabled).toBe(true);
+  });
+
+  test("the watchdog prepares the next attempt", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(handoffs).toBe(1);
+    await wait(60);
+    expect(handoffs).toBe(2);
+  });
+
+  test("a visibilitychange while the page is still visible does not stop the watchdog", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    document.dispatchEvent(new Event("visibilitychange"));
+    await wait(60);
+    expect(live(host)).toContain("Allow pop-ups");
+  });
 });
