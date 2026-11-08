@@ -14,7 +14,7 @@ const WABA_FIELDS = [
   "owner_business_info", "health_status",
 ];
 const DEBUG_TOKEN_FIELDS = [
-  "app_id", "type", "application", "is_valid", "expires_at", "data_access_expires_at",
+  "app_id", "type", "application", "user_id", "is_valid", "expires_at", "data_access_expires_at",
   "scopes", "granular_scopes",
 ];
 
