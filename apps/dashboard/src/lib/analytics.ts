@@ -69,7 +69,9 @@ export interface AnalyticsEventMap {
   es_finish: undefined;
   es_cancel: { step?: string };
   es_error: { code?: string };
-  connect_outcome: { result: "ok" | "skipped" | ConnectFailureCode };
+  connect_outcome: {
+    result: "ok" | "skipped" | "cancelled" | "no_number" | "provisioning_failed" | ConnectFailureCode;
+  };
 }
 
 /** A no-op without a tracker (self-host, `?nostats`, ad blocker); never throws. */

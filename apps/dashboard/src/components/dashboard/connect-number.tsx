@@ -23,6 +23,7 @@ import {
 } from "../../lib/embedded-signup";
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
+import { CONNECT_CANCELLED_MESSAGE, judgeExchange } from "./connect-result";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
 
@@ -135,6 +136,8 @@ export function ConnectNumberChoices({
   /** The path whose flow is opening, or null. Also disables the other card. */
   const [starting, setStarting] = useState<ConnectPath | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A neutral note for the customer closing Meta's window: not a failure. */
+  const [notice, setNotice] = useState<string | null>(null);
   /**
    * The OAuth state for the popup currently open. Held in a ref, not state,
    * because the SDK callbacks fire outside React's render cycle and must see
@@ -190,13 +193,24 @@ export function ConnectNumberChoices({
       setError("This connection attempt expired. Start it again.");
       return;
     }
-    const result = await exchangeConnectCode({ data: { code, state } });
+    let result: Awaited<ReturnType<typeof exchangeConnectCode>>;
+    try {
+      result = await exchangeConnectCode({ data: { code, state } });
+    } catch (err) {
+      if (followSignIn(err)) return;
+      setError(failureCopy({ ok: false, kind: "unreachable", error: String(err) }).detail);
+      return;
+    }
     if (!result.ok) {
       setError(failureCopy(result).detail);
       return;
     }
-    if (!result.data.ok) {
-      setError(result.data.error);
+    // Only a registered number counts as connected. The server function audits
+    // every outcome; the customer is told the truth and can start again.
+    const verdict = judgeExchange(result.data);
+    if (!verdict.connected) {
+      track("connect_outcome", { result: verdict.outcome });
+      setError(verdict.message);
       return;
     }
     track("connect_outcome", { result: "ok" });
@@ -209,6 +223,7 @@ export function ConnectNumberChoices({
     track("connect_choice", { path });
     setStarting(path);
     setError(null);
+    setNotice(null);
     try {
       const [config, handoff] = await Promise.all([
         getEmbeddedSignupConfig(),
@@ -224,7 +239,7 @@ export function ConnectNumberChoices({
       // the flow that would take the number off the app.
       if (!config.ok || !config.data) {
         if (path === "business-app") {
-          setError(SDK_REQUIRED_MESSAGE);
+          setError(config.ok ? SDK_REQUIRED_MESSAGE : failureCopy(config).detail);
           return;
         }
         window.location.assign(handoff.data.url);
@@ -253,6 +268,8 @@ export function ConnectNumberChoices({
           // Closing the popup before the final screen is a cancel, not a
           // failure — the session event already recorded which screen it was.
           pendingState.current = null;
+          track("connect_outcome", { result: "cancelled" });
+          setNotice(CONNECT_CANCELLED_MESSAGE);
           setStarting(null);
           return;
         }
@@ -275,6 +292,11 @@ export function ConnectNumberChoices({
         <p className={AUTH_ERROR_BANNER_CLASS} role="alert">
           {error}
         </p>
+      ) : null}
+      {notice ? (
+        <output className="block border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground">
+          {notice}
+        </output>
       ) : null}
 
       {/* Each choice IS the action: there is nothing to configure between

@@ -1370,16 +1370,25 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
           data.state,
           data.wabaId,
         );
+        const shortfall = result.ok
+          ? result.connected.length === 0
+            ? "no_number"
+            : result.status === "failed"
+              ? "provisioning_failed"
+              : null
+          : result.error;
         auditEvent({
           action: "connect_exchange",
           actorUserId: actor.session.userId,
           organizationId: actor.organizationId,
           accountId,
           resource: result.ok
-            ? { wabaId: result.waba_id, connected: result.connected.length }
+            ? { wabaId: result.waba_id, connected: result.connected.length, status: result.status }
             : { code: result.code },
-          outcome: result.ok ? "success" : "failed",
-          ...(result.ok ? {} : { detail: result.error }),
+          // A WABA with no number, or whose provisioning failed, is a failed
+          // connect to the customer, and the console says so too.
+          outcome: shortfall ? "failed" : "success",
+          ...(shortfall ? { detail: shortfall } : {}),
         });
         return result;
       }),

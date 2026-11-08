@@ -39,7 +39,7 @@ export function normalizeConnectSkipped(value: unknown): number | undefined {
  * code, never a Graph error message: the wording is a product decision, and a
  * raw provider error has no business sitting in a URL.
  */
-const CONNECT_FAILURES: Record<ConnectFailureCode, string> = {
+export const CONNECT_FAILURES: Record<ConnectFailureCode, string> = {
   state: "That connection attempt expired before Meta answered. Start it again.",
   denied: "Meta ended the connection before a number was attached. Nothing changed here.",
   owned: "That WhatsApp Business Account is already connected to another Eccos workspace.",
