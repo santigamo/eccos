@@ -127,6 +127,14 @@ Every line has the same envelope:
 The webhook pipeline's events, fields, alerts, and ready-made Observability queries are in
 [observability.md](observability.md).
 
+### Daily census
+
+When the `OPS_TELEGRAM_*` secrets are set, the existing 5-minute cron also posts a once-a-day
+census of every account and WABA to the Telegram ops topic (first tick after 07:00 UTC; see
+[observability.md](observability.md#daily-census-telegram-hq-eccos-ops)). No new cron trigger is
+needed. A self-host without those secrets does nothing. To re-send one after a failed post, delete
+the `census_day` row from the control plane's `ops_state` table.
+
 ### Viewing logs
 
 ```bash

@@ -1292,6 +1292,22 @@ export class EccosGateway extends DurableObject<Env> {
     };
   }
 
+  /** What the operator census reads: delivery counts by status, whether a target is set, and deliveries created since `sinceMs` that reached `delivered`. Index-only scans. */
+  getCensus(sinceMs: number): { hasTarget: boolean; deliveries: Record<string, number>; deliveredSince: number } {
+    const deliveries: Record<string, number> = {};
+    for (const row of this.sql.exec("SELECT status, COUNT(*) AS c FROM deliveries GROUP BY status").toArray()) {
+      deliveries[row.status as string] = Number(row.c);
+    }
+    const recent = this.sql
+      .exec("SELECT COUNT(*) AS c FROM deliveries WHERE created_at >= ? AND status = 'delivered'", sinceMs)
+      .toArray()[0];
+    return {
+      hasTarget: Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL")),
+      deliveries,
+      deliveredSince: Number(recent?.c ?? 0),
+    };
+  }
+
   /** Re-enqueue a delivery — retry a failed one or replay a delivered one.
    * Redacted rows (payload emptied by content retention or erasure) are metadata-only
    * and cannot be replayed. */

@@ -70,6 +70,19 @@ reported in the next alert.
 - **Held webhooks expired:** events held for a WABA that never became active (e.g. a failed
   provisioning) were deleted after 3 days, never forwarded. Matching logs: `held_expired`.
 
+### Daily census (Telegram HQ, "Eccos ops")
+
+Once per UTC day, on the first cron tick after 07:00 UTC, the gateway posts a census to the same
+topic. It lists each account (with its organization id), its WABAs with status, onboarding type
+(and coexistence sync state), whether a forwarding target is set, and its pending, held, failed and
+last-24-hour delivered counts. A "Needs attention" block comes first: failed WABAs, WABAs with failed
+deliveries, WABAs holding events for lack of a target, coexistence syncs that ended `unavailable`,
+`expired` or `not_coexistence`, and WABAs whose data plane could not be read. It carries ids, names
+and counts only: no phone numbers, message content or secrets. Like the alerts, it is off unless
+the `OPS_TELEGRAM_*` secrets are set. The day is claimed before sending and a rejected send is
+not retried, so a missed census shows up as no message that day; look for `area = ops-alert`
+warnings.
+
 ## Queries
 
 1. **Traffic per WABA.** Filter `event = webhook_ingested`; group by `wabaId` (and `phoneNumberId`);
