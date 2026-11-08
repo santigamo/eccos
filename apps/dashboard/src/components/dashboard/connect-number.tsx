@@ -81,6 +81,20 @@ const CONNECT_PATHS: ReadonlyArray<{
   },
 ];
 
+/**
+ * Once per page load, not per instance: the dialog can be closed and reopened
+ * mid-flow, and Meta's SDK still holds the first instance's callback.
+ * `exchanging` allows one exchange in flight; `left` is set when the page is on
+ * its way out, so no later code can register the number a second time.
+ */
+const guards = { exchanging: false, left: false };
+
+/** Test seam: module state must not leak between tests. */
+export function resetConnectGuards(): void {
+  guards.exchanging = false;
+  guards.left = false;
+}
+
 type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
 
@@ -164,14 +178,9 @@ export function ConnectNumberChoices({
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
   const attempt = useRef(0);
-  /** At most one exchange in flight. */
-  const exchanging = useRef(false);
-  /** Set once the page is on its way out: every later callback is a no-op, so a
-   * second window's code cannot register the number twice before it unloads. */
-  const left = useRef(false);
   const leave = useCallback(
     (path: string) => {
-      left.current = true;
+      guards.left = true;
       navigate(path);
     },
     [navigate],
@@ -238,8 +247,8 @@ export function ConnectNumberChoices({
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(
     async (code: string, state: string) => {
-      if (left.current || exchanging.current) return;
-      exchanging.current = true;
+      if (guards.left || guards.exchanging) return;
+      guards.exchanging = true;
       try {
         let result: Awaited<ReturnType<typeof exchangeConnectCode>>;
         try {
@@ -275,7 +284,7 @@ export function ConnectNumberChoices({
         // show what provisioning just did without duplicating its state here.
         leave(returnPathFor(CONNECT_RETURN_PATH, verdict.skipped));
       } finally {
-        exchanging.current = false;
+        guards.exchanging = false;
       }
     },
     [leave, setError, prepareNext],
@@ -332,7 +341,7 @@ export function ConnectNumberChoices({
       track("es_popup_open");
       opened = true;
       sdk.login((response) => {
-        if (left.current) return;
+        if (guards.left) return;
         stopWatch.current?.();
         const code = response.authResponse?.code;
         if (code) {
@@ -367,7 +376,7 @@ export function ConnectNumberChoices({
   }
 
   function startAgain() {
-    if (exchanging.current) return;
+    if (guards.exchanging) return;
     stopWatch.current?.();
     attempt.current += 1;
     setFeedback(null);

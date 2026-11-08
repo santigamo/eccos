@@ -35,7 +35,7 @@ mock.module("../src/server/gateway", () => ({
 
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { ConnectNumberChoices } = await import("../src/components/dashboard/connect-number");
+const { ConnectNumberChoices, resetConnectGuards } = await import("../src/components/dashboard/connect-number");
 
 type LoginCallback = (response: { authResponse?: { code?: string } | null }) => void;
 
@@ -62,6 +62,7 @@ let handoffTtlMs = 30 * 60_000;
 let exchanges: { code: string; state: string }[] = [];
 
 beforeEach(() => {
+  resetConnectGuards();
   navigated = [];
   loginCallback = null;
   loginCalls = 0;
@@ -464,5 +465,38 @@ describe("ConnectNumberChoices in a real DOM", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await wait(60);
     expect(live(host)).toContain("Allow pop-ups");
+  });
+
+  test("a remounted panel cannot exchange a second code while the first is in flight", async () => {
+    let release: (value: unknown) => void = () => {};
+    stubs.exchangeConnectCode = (input: unknown) => {
+      exchanges.push((input as { data: { code: string; state: string } }).data);
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    };
+    const first = await mountChoices();
+    await act(async () => card(first, "A new number").click());
+    await settle();
+    const firstCallback = loginCallback;
+
+    // The dialog is closed with X mid-flow and opened again.
+    act(() => unmount?.());
+    document.body.innerHTML = "";
+    const second = await mountChoices();
+    await act(async () => card(second, "A new number").click());
+    await settle();
+    const secondCallback = loginCallback;
+
+    await act(async () => {
+      firstCallback?.(FINISHED);
+      secondCallback?.({ authResponse: { code: "code-2" } });
+    });
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-1" }]);
+    await act(async () => release(exchanged()));
+    await settle();
+    await act(async () => secondCallback?.({ authResponse: { code: "code-3" } }));
+    await settle();
+    expect(exchanges.length).toBe(1);
   });
 });
