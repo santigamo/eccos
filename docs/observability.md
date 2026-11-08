@@ -20,7 +20,7 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `webhook_dropped` | Messages or echoes of a WABA parsed to no event | `wabaId`, `dropped` (count), `missing` (required fields absent, e.g. `from`; empty when they only carried nothing), `types` (`text+reaction`, `echo_text`), `keys` (their top-level key names) |
 | `webhook_held` | A batch of a WABA that is not active (`pending`: provisioning or a re-run Embedded Signup; or `failed`) was held in its Durable Object, to be ingested once it is active | `wabaId`, `phoneNumberId`, `eventCount`, `heldEvents` (total now held for the WABA) |
 | `webhook_ingest_failed` | The Durable Object write failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
-| `webhook_hold_failed` | Holding a pending WABA's batch failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
+| `webhook_hold_failed` | Holding the batch of a WABA that is not active failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
 | `webhook_sync_captured` | A coexistence sync payload was stored | `wabaId`, `fields`, and what was stored |
 
 `webhook_ignored.reason`:
@@ -67,7 +67,8 @@ reported in the next alert.
   so Meta changed a shape and that customer's messages are neither stored nor forwarded. Matching
   logs: `webhook_dropped`.
 - **Held webhooks expired:** events held for a WABA that never became active (e.g. a provisioning
-  that stayed `failed`) were deleted after 3 days, never forwarded. Matching logs: `held_expired`.
+  that stayed `failed`) were deleted after 3 days, never forwarded. It keeps recurring (at most hourly)
+  while a WABA Meta still sends webhooks for stays `failed`. Matching logs: `held_expired`.
 
 ## Queries
 

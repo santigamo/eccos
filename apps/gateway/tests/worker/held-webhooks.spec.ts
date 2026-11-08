@@ -1,6 +1,6 @@
 /**
- * eccos-brqz: webhooks of a registered WABA that is pending or failed (provisioning or a re-run
- * Embedded Signup) are held in its Durable Object and forwarded once it is active again.
+ * eccos-brqz: webhooks of a registered WABA that is not active (pending: provisioning or a re-run
+ * Embedded Signup; or failed) are held in its Durable Object and forwarded once it is active again.
  */
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";

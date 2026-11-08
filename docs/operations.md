@@ -301,10 +301,11 @@ binding (each call, including a refused reset, is logged with its ids):
   24-hour window could still work, so settle only once the data has been given up on. On a multi-phone
   WABA it marks the whole sync unavailable even if another phone accepted. Afterwards tell the
   customer that their contacts or history will not arrive.
-While a WABA is `failed`, Meta's webhooks for it are held (up to 5000 events, 3 days), not dropped. They
-are ingested and forwarded when the WABA becomes `active` after a `reconcileWaba`. Past 3 days they are deleted.
-
 - `GatewayRPC.diagnoseWaba(wabaId, accountId)` returns Meta's read-only view of the token, WABA and number.
+
+While a WABA is `failed`, Meta's webhooks for it are held (up to 5000 events, 3 days), not dropped. They
+are ingested and forwarded when the WABA becomes `active`, after a `reconcileWaba` or a new Embedded
+Signup. Past 3 days they are deleted.
 
 ### A number that turned out not to be a coexistence number
 
