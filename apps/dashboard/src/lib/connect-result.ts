@@ -20,7 +20,7 @@ export const CONNECT_CANCELLED_MESSAGE =
 
 /** Meta's SDK never calls back when the browser blocks its popup. */
 export const CONNECT_POPUP_BLOCKED_MESSAGE =
-  "Meta's window did not open. Allow pop-ups for this site and try again.";
+  "Meta's window did not open. Allow pop-ups for this site, then start again.";
 
 /** What the connect view does with an Embedded Signup exchange. */
 export type ConnectVerdict =
@@ -62,18 +62,43 @@ export function returnPathFor(base: string, skipped: number): string {
 }
 
 /**
- * Calls `onBlocked` unless the window loses focus within `ms`. A popup that
- * opened takes focus away from this window; a blocked one does not.
+ * The log line for an exchange, from the same verdict the console acts on, so
+ * the two cannot drift: anything but a clean connect is `failed`.
+ */
+export function connectAudit(result: ConnectExchangeResult): {
+  outcome: "success" | "failed";
+  detail?: string;
+} {
+  const verdict = judgeExchange(result);
+  if (verdict.outcome === "ok") return { outcome: "success" };
+  return { outcome: "failed", detail: result.ok ? verdict.outcome : result.error };
+}
+
+/** A handoff is reused only if its state still has this long to live. */
+export const HANDOFF_MIN_REMAINING_MS = 25 * 60_000;
+
+export function handoffUsable(expiresAt: number, now: number): boolean {
+  return expiresAt - now >= HANDOFF_MIN_REMAINING_MS;
+}
+
+/**
+ * Calls `onBlocked` unless this window is left within `ms`: Meta's popup takes
+ * focus (`blur`), or opens as a tab and hides this page.
  */
 export function watchPopup(onBlocked: () => void, ms: number): () => void {
+  const opened = () => {
+    if (document.visibilityState === "hidden") stop();
+  };
   const stop = () => {
     clearTimeout(timer);
     window.removeEventListener("blur", stop);
+    document.removeEventListener("visibilitychange", opened);
   };
   const timer = setTimeout(() => {
     stop();
     onBlocked();
   }, ms);
   window.addEventListener("blur", stop);
+  document.addEventListener("visibilitychange", opened);
   return stop;
 }

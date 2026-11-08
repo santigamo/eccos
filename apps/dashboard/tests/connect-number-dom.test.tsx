@@ -57,22 +57,38 @@ let unmount: (() => void) | null = null;
 let navigated: string[] = [];
 let loginCallback: LoginCallback | null = null;
 let loginCalls = 0;
+let handoffs = 0;
+let handoffTtlMs = 30 * 60_000;
+let exchanges: { code: string; state: string }[] = [];
 
 beforeEach(() => {
   navigated = [];
   loginCallback = null;
   loginCalls = 0;
+  handoffs = 0;
+  handoffTtlMs = 30 * 60_000;
+  exchanges = [];
   stubs = {
     ...real,
     getEmbeddedSignupConfig: async () => ({
       ok: true,
       data: { appId: "app", configId: "cfg", graphVersion: "v25.0" },
     }),
-    startConnect: async () => ({
-      ok: true,
-      data: { state: "state-1", url: "https://gateway.test/connect" },
-    }),
-    exchangeConnectCode: async () => exchanged(),
+    startConnect: async () => {
+      handoffs += 1;
+      return {
+        ok: true,
+        data: {
+          state: `state-${handoffs}`,
+          url: "https://gateway.test/connect",
+          expiresAt: Date.now() + handoffTtlMs,
+        },
+      };
+    },
+    exchangeConnectCode: async (input: unknown) => {
+      exchanges.push((input as { data: { code: string; state: string } }).data);
+      return exchanged();
+    },
     recordConnectSessionEvent: async () => ({ ok: true }),
   };
   (window as unknown as { FB: unknown }).FB = {
@@ -213,29 +229,106 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(live(host)).not.toContain("boom");
   });
 
-  test("the SDK and the handoff are fetched before the click", async () => {
-    let handoffs = 0;
-    stubs.startConnect = async () => {
-      handoffs += 1;
-      return { ok: true, data: { state: "state-1", url: "https://gateway.test/connect" } };
-    };
-    const host = await mountChoices();
-    expect(handoffs).toBe(1);
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(handoffs).toBe(1);
-    expect(loginCalls).toBe(1);
+  test("mounting loads nothing and starts nothing", async () => {
+    await mountChoices();
+    expect(handoffs).toBe(0);
+    expect(loginCalls).toBe(0);
   });
 
-  test("a blocked popup clears the spinner and says how to fix it", async () => {
+  const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
+
+  test("a retry after a cancel logs in with the handoff prepared in the background", async () => {
+    const host = await mountChoices();
+    await runFlow(host, { authResponse: null });
+    expect(handoffs).toBe(2);
+
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(handoffs).toBe(2);
+    expect(loginCalls).toBe(2);
+    await act(async () => loginCallback?.(FINISHED));
+    await settle();
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-2" }]);
+  });
+
+  test("a prepared handoff with too little life left is not reused", async () => {
+    const host = await mountChoices();
+    handoffTtlMs = 10 * 60_000;
+    await runFlow(host, { authResponse: null });
+    expect(handoffs).toBe(2);
+
+    handoffTtlMs = 30 * 60_000;
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(handoffs).toBe(3);
+    await act(async () => loginCallback?.(FINISHED));
+    await settle();
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-3" }]);
+  });
+
+  test("a failure code also prepares the next attempt", async () => {
+    stubs.exchangeConnectCode = async () => ({ ok: true, data: { ok: false, code: "failed", error: "x" } });
+    const host = await mountChoices();
+    await runFlow(host, FINISHED);
+    expect(handoffs).toBe(2);
+  });
+
+  test("a blocked popup shows a message and a Start again control, and changes nothing else", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
-    expect(card(host, "A new number").disabled).toBe(true);
-    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 60))));
+    await wait(60);
     expect(live(host)).toContain("Allow pop-ups");
-    expect(card(host, "A new number").disabled).toBe(false);
+    expect(live(host)).toContain("Start again");
+    // Message only: the cards stay disabled until the customer resets.
+    expect(card(host, "A new number").disabled).toBe(true);
     expect(navigated).toEqual([]);
+  });
+
+  test("a false watchdog fire followed by a completed callback still exchanges and navigates", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await wait(60);
+    expect(live(host)).toContain("Allow pop-ups");
+
+    await act(async () => loginCallback?.(FINISHED));
+    await settle();
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-1" }]);
+    expect(navigated).toEqual(["/numbers"]);
+  });
+
+  test("only one exchange runs at a time", async () => {
+    let release: (value: unknown) => void = () => {};
+    stubs.exchangeConnectCode = (input: unknown) => {
+      exchanges.push((input as { data: { code: string; state: string } }).data);
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    };
+    const host = await mountChoices();
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await act(async () => {
+      loginCallback?.(FINISHED);
+      loginCallback?.(FINISHED);
+    });
+    expect(exchanges.length).toBe(1);
+    await act(async () => release(exchanged()));
+    await settle();
+    expect(navigated).toEqual(["/numbers"]);
+  });
+
+  test("Start again resets the view so the customer can pick again", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await wait(60);
+
+    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Start again");
+    await act(async () => again?.click());
+    expect(live(host)).toBe("");
+    expect(card(host, "A new number").disabled).toBe(false);
   });
 
   test("a window that took focus is not a blocked popup", async () => {
@@ -243,8 +336,19 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => card(host, "A new number").click());
     await settle();
     window.dispatchEvent(new Event("blur"));
-    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 60))));
+    await wait(60);
     expect(live(host)).toBe("");
     expect(card(host, "A new number").disabled).toBe(true);
+  });
+
+  test("a page hidden by a popup opening as a tab is not a blocked popup either", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    await wait(60);
+    expect(live(host)).toBe("");
   });
 });
