@@ -38,7 +38,7 @@ export function syncUnavailableCopy(coexistence: CoexistenceResource): string[] 
 /** The notice after a Re-check that left the WABA not active. */
 export function recheckNotice(status: string): string {
   return status === "failed"
-    ? "This number could not be connected. See the note below."
+    ? "This number could not be connected. See Connection failed above."
     : "Meta has not confirmed the subscription yet. Eccos will keep retrying.";
 }
 
@@ -73,5 +73,5 @@ export function failedWabaCopy(waba: Pick<AccountWabaResource, "coexistence" | "
   if (coexistence.contactsStartedAt !== null || coexistence.historyStartedAt !== null) {
     return `${subject} not connected: Eccos started importing your WhatsApp Business app data and could not finish. Contact Eccos support.`;
   }
-  return "Eccos could not finish connecting this number. Connect it again; if it still fails, contact Eccos support.";
+  return `${subject} not connected yet: Eccos could not finish the setup. Connect it again; if it still fails, contact Eccos support.`;
 }

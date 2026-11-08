@@ -251,7 +251,9 @@ describe("NumbersTable", () => {
       contactsStartedAt: 1,
       contactsRequestId: "unavailable:not_permitted",
     });
-    for (const state of [pending, settled]) {
+    const historyOnly = resources({ wabaId: "waba-c", status: "failed", phones: 1, coexistence: "pending" });
+    Object.assign(historyOnly.wabas[0]!.coexistence, { historyStartedAt: 2 });
+    for (const state of [pending, settled, historyOnly]) {
       const body = text(render(state));
       expect(body).toContain("Contact Eccos support.");
       expect(body).not.toContain("Connect it again");
@@ -271,8 +273,14 @@ describe("NumbersTable", () => {
     expect(body).not.toContain("contacts and chat history");
   });
 
+  test("a failed WABA with no sync requested is told to connect again", () => {
+    const body = text(render(resources({ wabaId: "waba-a", status: "failed", phones: 1 })));
+    expect(body).toContain("This number is not connected yet");
+    expect(body).toContain("Connect it again");
+  });
+
   test("the re-check notice does not promise retries once the WABA failed", () => {
-    expect(recheckNotice("failed")).toContain("See the note below");
+    expect(recheckNotice("failed")).toContain("See Connection failed above");
     expect(recheckNotice("failed")).not.toContain("keep retrying");
     expect(recheckNotice("pending")).toContain("keep retrying");
   });
@@ -334,7 +342,7 @@ describe("NumbersTable", () => {
   test("a failed account with no number is not told to sit and wait", () => {
     const html = text(render(resources({ wabaId: "waba-a", status: "failed", phones: 0 })));
     expect(html).toContain("Connection failed");
-    expect(html).toContain("Eccos could not finish connecting this number");
+    expect(html).toContain("Eccos could not finish the setup");
     expect(html).not.toContain("subscribed_apps");
     // The waiting note would be a lie here: nothing is coming.
     expect(html).not.toContain("Waiting on a phone number");
