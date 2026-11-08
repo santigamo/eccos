@@ -11,7 +11,7 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
-import { createTemplate, deleteTemplate, editTemplate, listTemplates, TEMPLATE_LIST_FIELDS } from "@eccos/core/templates";
+import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -177,6 +177,22 @@ const MAX_BUTTON_TEXT_LENGTH = 25;
 const MAX_BUTTON_URL_LENGTH = 2000;
 /** Graph template ids (`hsm_id`) are numeric. */
 const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
+/** What the console's template list reads. Named explicitly: quality, rejection
+ * reason and last edit are not in Meta's default response. */
+const TEMPLATE_LIST_FIELDS = [
+  "id",
+  "name",
+  "language",
+  "status",
+  "category",
+  "sub_category",
+  "previous_category",
+  "components",
+  "parameter_format",
+  "rejected_reason",
+  "quality_score",
+  "last_updated_time",
+] as const;
 /**
  * A pasted Meta access token: printable ASCII, no whitespace. Meta's tokens are
  * long opaque base64url-ish strings; the shape check exists to refuse a paste

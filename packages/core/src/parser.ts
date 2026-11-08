@@ -320,7 +320,7 @@ function parseEchoEntry(echo: Record<string, unknown>): WhatsAppCallbackEvent | 
   const text = echo.type === "text" ? getString(asRecord(echo.text)?.body) : null;
   if (text) return compact<WhatsAppCallbackEvent>({ type: "echo", to, toUserId, messageId, text, at });
   const content = messageContent(echo);
-  // A button tapped in the Business app on a template it sent: the payload says which one.
+  // A button tapped in the Business app: the payload says which option.
   const payload = metaReplyPayload(echo);
   return isEmptyReply(content) && !payload
     ? null
