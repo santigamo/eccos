@@ -143,6 +143,7 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 | Secret | Purpose |
 |---|---|
 | `BETTER_AUTH_SECRET` | Better Auth signing secret (at least 32 characters). A public (https) deployment refuses to boot without it |
+| `SIGUE_PROXY_SECRET` | Optional. Shared secret of a failover proxy that forwards the visitor IP (`apps/dashboard/src/server/sigue-proxy.ts`). With `SIGUE_PROXY_IPS` (var, comma-separated proxy egress IPs), requests from those IPs keep their own auth rate-limit buckets. Either one unset = off. |
 | `RECCADO_API_KEY` | Transactional email provider key (reccado). Absent = the development console sender, which logs instead of sending — never set that way in production. See [docs/auth-email-delivery.md](./auth-email-delivery.md) |
 | `RECCADO_ENDPOINT` | Full transactional message endpoint, `https://<host>/v1/mailboxes/<mailboxId>/transactional/messages`. A secret rather than a var because it carries the provider host and the repo is public — the Cloudflare account subdomain deliberately stays out of it. Required whenever `RECCADO_API_KEY` is set; the adapter validates it and fails closed on boot without it |
 
