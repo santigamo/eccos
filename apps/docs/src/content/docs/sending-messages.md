@@ -84,8 +84,9 @@ GET /v1/wabas/{wabaId}/templates?limit=100
 ```
 
 Returns Meta's `message_templates` response for the WABA unchanged (`{ "data": [...], "paging": ... }`).
-Each template has `name`, `language`, `status` (only `APPROVED` ones can be sent), `category` and
-`components`. `limit` is clamped to 1 to 1000 (default 100). The endpoint does not follow Meta's
+Each template has `id`, `name`, `language`, `status` (only `APPROVED` ones can be sent), `category`,
+`components` and `parameter_format`, plus `sub_category`, `previous_category`, `rejected_reason`,
+`quality_score` and `last_updated_time` when Meta has them. `limit` is clamped to 1 to 1000 (default 100). The endpoint does not follow Meta's
 paging cursor, so you get at most `limit` templates. If Meta fails, the answer is
 `502 {"ok":false,"error":...}`.
 

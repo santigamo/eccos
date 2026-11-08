@@ -4,6 +4,24 @@ export type TemplatesResult =
   | { ok: true; data: unknown }
   | { ok: false; status: number; error: unknown };
 
+/** The fields every template list asks Meta for (console and public API), named so the
+ * response does not depend on Meta's defaults: quality, rejection reason and last edit are
+ * not in them. */
+export const TEMPLATE_LIST_FIELDS = [
+  "id",
+  "name",
+  "language",
+  "status",
+  "category",
+  "sub_category",
+  "previous_category",
+  "components",
+  "parameter_format",
+  "rejected_reason",
+  "quality_score",
+  "last_updated_time",
+] as const;
+
 /** List approved/pending message templates for the configured WABA. */
 export async function listTemplates(
   cfg: MetaAppConfig,

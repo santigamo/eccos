@@ -11,7 +11,7 @@ import {
 } from "@eccos/core/parser";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
-import { listTemplates } from "@eccos/core/templates";
+import { listTemplates, TEMPLATE_LIST_FIELDS } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
@@ -900,7 +900,7 @@ async function templatesRoute(c: AppContext) {
     phoneNumberId: waba.phones[0]?.phoneNumberId ?? "",
     metaAccessToken: waba.metaAccessToken,
   });
-  const result = await listTemplates(cfg, limit);
+  const result = await listTemplates(cfg, limit, { fields: TEMPLATE_LIST_FIELDS });
   if (!result.ok) {
     logEvent("templates_list", cid, 502, { limit });
     return c.json({ ok: false, error: result.error }, 502);
