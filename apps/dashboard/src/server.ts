@@ -17,6 +17,7 @@ import { resolveSession } from "./auth/session";
 import { parseMediaPath, serveMedia } from "./server/media";
 import { absolutizeUnfurlTags } from "./server/unfurl";
 import { beginTiming, finishTiming, logPerf } from "./server/timing";
+import { withSigueClientIp, type SigueProxyEnv } from "./server/sigue-proxy";
 import { sentryOptions } from "./lib/sentry";
 
 /**
@@ -44,7 +45,9 @@ const startHandler = createStartHandler(defaultStreamHandler);
 const forbidden = (): Response =>
   new Response("Forbidden", { status: 403, headers: { "cache-control": "private, no-store" } });
 
-const handleFetch: ServerEntry["fetch"] = async (request, opts) => {
+const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
+  // First, so every reader of `cf-connecting-ip` sees the visitor behind the fallback proxy.
+  const request = withSigueClientIp(incoming, env as SigueProxyEnv);
   const url = new URL(request.url);
   if (!isAllowedHost(url.hostname, env.BETTER_AUTH_URL)) {
     return forbidden();
