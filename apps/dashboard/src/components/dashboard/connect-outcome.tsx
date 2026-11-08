@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
 import { track, whenUmamiReady } from "@/lib/analytics";
+import { CONNECT_FAILURES } from "@/lib/connect-result";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,19 +34,6 @@ export function normalizeConnectSkipped(value: unknown): number | undefined {
   const normalized = typeof value === "number" ? value : Number(value);
   return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : undefined;
 }
-
-/**
- * One sentence per outcome, in the console's own words. The gateway sends a
- * code, never a Graph error message: the wording is a product decision, and a
- * raw provider error has no business sitting in a URL.
- */
-export const CONNECT_FAILURES: Record<ConnectFailureCode, string> = {
-  state: "That connection attempt expired before Meta answered. Start it again.",
-  denied: "Meta ended the connection before a number was attached. Nothing changed here.",
-  owned: "That WhatsApp Business Account is already connected to another Eccos workspace.",
-  no_waba: "That Meta login has no WhatsApp Business Account yet. Create one, then connect again.",
-  failed: "Meta could not complete the connection. Try again.",
-};
 
 function skippedDetail(skipped: number): string {
   return skipped === 1

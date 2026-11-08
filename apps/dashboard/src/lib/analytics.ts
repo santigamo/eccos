@@ -70,7 +70,7 @@ export interface AnalyticsEventMap {
   es_cancel: { step?: string };
   es_error: { code?: string };
   connect_outcome: {
-    result: "ok" | "skipped" | "cancelled" | "no_number" | "provisioning_failed" | ConnectFailureCode;
+    result: "ok" | "skipped" | "cancelled" | "popup_blocked" | "unknown" | "no_number" | "provisioning_failed" | ConnectFailureCode;
   };
 }
 

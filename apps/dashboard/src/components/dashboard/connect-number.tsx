@@ -15,7 +15,7 @@ import {
   recordConnectSessionEvent,
   startConnect,
 } from "../../server/gateway";
-import { loadFacebookSdk } from "../../lib/facebook-sdk";
+import { type FacebookSdk, loadFacebookSdk } from "../../lib/facebook-sdk";
 import {
   type ConnectPath,
   loginOptions,
@@ -23,7 +23,13 @@ import {
 } from "../../lib/embedded-signup";
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
-import { CONNECT_CANCELLED_MESSAGE, judgeExchange } from "./connect-result";
+import {
+  CONNECT_CANCELLED_MESSAGE,
+  CONNECT_POPUP_BLOCKED_MESSAGE,
+  judgeExchange,
+  returnPathFor,
+  watchPopup,
+} from "../../lib/connect-result";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +79,24 @@ const CONNECT_PATHS: ReadonlyArray<{
     caution: "A number on WhatsApp today stops working in the app",
   },
 ];
+
+const PREPARED_MAX_AGE_MS = 20 * 60_000;
+
+type Prepared = {
+  config: Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
+  handoff: Awaited<ReturnType<typeof startConnect>>;
+  /** Null when Meta's script is not configured or would not load. */
+  sdk: FacebookSdk | null;
+};
+
+async function prepareConnect(): Promise<Prepared> {
+  const [config, handoff] = await Promise.all([getEmbeddedSignupConfig(), startConnect()]);
+  const sdk =
+    config.ok && config.data
+      ? await loadFacebookSdk(config.data.appId, config.data.graphVersion).catch(() => null)
+      : null;
+  return { config, handoff, sdk };
+}
 
 /**
  * Shown when the customer picks the WhatsApp Business app path and the SDK is
@@ -127,17 +151,33 @@ export const CONNECT_FORK_DESCRIPTION =
 export function ConnectNumberChoices({
   className,
   onBusyChange,
+  navigate = (path) => window.location.assign(path),
+  popupWatchdogMs = 3_000,
 }: {
   className?: string;
+  /** Full navigation. A seam for tests. */
+  navigate?: (path: string) => void;
+  /** How long Meta's window may take to steal focus before it counts as blocked. */
+  popupWatchdogMs?: number;
   /** Told whenever a flow opens or settles, so a container can refuse to be
    * dismissed under it. See the effect below. */
   onBusyChange?: (busy: boolean) => void;
 }) {
   /** The path whose flow is opening, or null. Also disables the other card. */
   const [starting, setStarting] = useState<ConnectPath | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  /** A neutral note for the customer closing Meta's window: not a failure. */
-  const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * What the customer is told: a failure (red) or a neutral note, such as
+   * closing Meta's window. One live region carries both, always mounted.
+   */
+  const [feedback, setFeedback] = useState<{ text: string; tone: "error" | "notice" } | null>(null);
+  const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
+  const stopWatch = useRef<(() => void) | null>(null);
+  /**
+   * Config, handoff and SDK, fetched when the panel mounts so `FB.login` runs
+   * right after the click: browsers (Safari, iPad) block a popup opened after
+   * slow awaits. Single-use, because a handoff's state is.
+   */
+  const prepared = useRef<{ at: number; ready: Promise<Prepared> } | null>(null);
   /**
    * The OAuth state for the popup currently open. Held in a ref, not state,
    * because the SDK callbacks fire outside React's render cycle and must see
@@ -185,97 +225,114 @@ export function ConnectNumberChoices({
     onBusyChange?.(starting !== null);
   }, [starting, onBusyChange]);
 
-  /** Hand the code to the server before Meta's 30-second TTL runs out. */
-  const finish = useCallback(async (code: string) => {
-    const state = pendingState.current;
-    pendingState.current = null;
-    if (!state) {
-      setError("This connection attempt expired. Start it again.");
-      return;
-    }
-    let result: Awaited<ReturnType<typeof exchangeConnectCode>>;
-    try {
-      result = await exchangeConnectCode({ data: { code, state } });
-    } catch (err) {
-      if (followSignIn(err)) return;
-      setError(failureCopy({ ok: false, kind: "unreachable", error: String(err) }).detail);
-      return;
-    }
-    if (!result.ok) {
-      setError(failureCopy(result).detail);
-      return;
-    }
-    // Only a registered number counts as connected; failed provisioning is shown
-    // on /numbers, not retried here. The server function audits
-    // every outcome; the customer is told the truth and can start again.
-    const verdict = judgeExchange(result.data);
-    if (!verdict.connected) {
-      track("connect_outcome", { result: verdict.outcome });
-      setError(verdict.message);
-      return;
-    }
-    track("connect_outcome", { result: verdict.provisioningFailed ? "provisioning_failed" : "ok" });
-    // The numbers table is a loader read; a reload is the honest way to show
-    // what provisioning just did without duplicating its state here.
-    window.location.assign(CONNECT_RETURN_PATH);
+  const prepare = useCallback(() => {
+    const ready = prepareConnect();
+    const entry = { at: Date.now(), ready };
+    prepared.current = entry;
+    // A failed warm-up is not an error yet: the click fetches afresh.
+    ready.catch(() => {
+      if (prepared.current === entry) prepared.current = null;
+    });
+    return ready;
   }, []);
+
+  useEffect(() => {
+    void prepare();
+  }, [prepare]);
+
+  /** Hand the code to the server before Meta's 30-second TTL runs out. */
+  const finish = useCallback(
+    async (code: string) => {
+      const state = pendingState.current;
+      pendingState.current = null;
+      if (!state) {
+        setError("This connection attempt expired. Start it again.");
+        return;
+      }
+      let result: Awaited<ReturnType<typeof exchangeConnectCode>>;
+      try {
+        result = await exchangeConnectCode({ data: { code, state } });
+      } catch (err) {
+        if (followSignIn(err)) return;
+        // The state is spent and provisioning may have run, so the outcome is
+        // unknown. A retry would re-onboard the number: show the real state.
+        track("connect_outcome", { result: "unknown" });
+        navigate(CONNECT_RETURN_PATH);
+        return;
+      }
+      if (!result.ok) {
+        if (result.kind === "unreachable") {
+          track("connect_outcome", { result: "unknown" });
+          navigate(CONNECT_RETURN_PATH);
+          return;
+        }
+        setError(failureCopy(result).detail);
+        return;
+      }
+      // The server function audits every outcome. Only a failed exchange stays
+      // here; everything that registered something lands on /numbers.
+      const verdict = judgeExchange(result.data);
+      track("connect_outcome", { result: verdict.outcome });
+      if (!verdict.navigate) {
+        setError(verdict.message);
+        return;
+      }
+      // The numbers table is a loader read; a reload is the honest way to show
+      // what provisioning just did without duplicating its state here.
+      navigate(returnPathFor(CONNECT_RETURN_PATH, verdict.skipped));
+    },
+    [navigate, setError],
+  );
 
   async function start(path: ConnectPath) {
     track("connect_choice", { path });
     setStarting(path);
-    setError(null);
-    setNotice(null);
+    setFeedback(null);
     try {
-      const [config, handoff] = await Promise.all([
-        getEmbeddedSignupConfig(),
-        startConnect(),
-      ]);
+      const warm = prepared.current;
+      const fresh = warm && Date.now() - warm.at < PREPARED_MAX_AGE_MS ? warm.ready : prepare();
+      prepared.current = null;
+      const { config, handoff, sdk } = await fresh;
       if (!handoff.ok) {
         setError(failureCopy(handoff).detail);
         return;
       }
 
-      // No SDK configured. The redirect still serves `new-number`; it CANNOT
-      // serve `business-app`, so that one stops here rather than being handed
-      // the flow that would take the number off the app.
-      if (!config.ok || !config.data) {
+      // No SDK configured, or it would not load (blocked, offline, an
+      // extension). The redirect still serves `new-number`; it CANNOT serve
+      // `business-app`, so that one stops here rather than being handed the
+      // flow that would take the number off the app.
+      if (!config.ok || !config.data || !sdk) {
         if (path === "business-app") {
           setError(config.ok ? SDK_REQUIRED_MESSAGE : failureCopy(config).detail);
           return;
         }
-        window.location.assign(handoff.data.url);
-        return;
-      }
-
-      let sdk: Awaited<ReturnType<typeof loadFacebookSdk>>;
-      try {
-        sdk = await loadFacebookSdk(config.data.appId, config.data.graphVersion);
-      } catch {
-        // Blocked, offline, or an extension ate it. Same rule as above: the
-        // redirect is a fallback for one path and a wrong answer for the other.
-        if (path === "business-app") {
-          setError(SDK_REQUIRED_MESSAGE);
-          return;
-        }
-        window.location.assign(handoff.data.url);
+        navigate(handoff.data.url);
         return;
       }
 
       pendingState.current = handoff.data.state;
       track("es_popup_open");
       sdk.login((response) => {
+        stopWatch.current?.();
         const code = response.authResponse?.code;
         if (!code) {
           // Closing the popup before the final screen is a cancel, not a
           // failure — the session event already recorded which screen it was.
           pendingState.current = null;
           track("connect_outcome", { result: "cancelled" });
-          setNotice(CONNECT_CANCELLED_MESSAGE);
+          setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
           setStarting(null);
           return;
         }
         void finish(code).finally(() => setStarting(null));
       }, loginOptions(config.data.configId, path));
+      stopWatch.current = watchPopup(() => {
+        pendingState.current = null;
+        track("connect_outcome", { result: "popup_blocked" });
+        setError(CONNECT_POPUP_BLOCKED_MESSAGE);
+        setStarting(null);
+      }, popupWatchdogMs);
       // The popup owns the flow now; `starting` is cleared by the callback.
       return;
     } catch (err) {
@@ -289,16 +346,18 @@ export function ConnectNumberChoices({
 
   return (
     <div className={cn("flex flex-col gap-4", className)}>
-      {error ? (
-        <p className={AUTH_ERROR_BANNER_CLASS} role="alert">
-          {error}
-        </p>
-      ) : null}
-      {notice ? (
-        <output className="block border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground">
-          {notice}
-        </output>
-      ) : null}
+      {/* Mounted even while empty, so a filling region is announced. */}
+      <output
+        className={cn(
+          "block",
+          feedback &&
+            (feedback.tone === "error"
+              ? AUTH_ERROR_BANNER_CLASS
+              : "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground"),
+        )}
+      >
+        {feedback?.text}
+      </output>
 
       {/* Each choice IS the action: there is nothing to configure between
             picking and launching, and a confirm step here would only add a

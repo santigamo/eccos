@@ -8,6 +8,7 @@ import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
+import { judgeExchange } from "../lib/connect-result";
 import type { SessionEvent } from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
@@ -1370,13 +1371,7 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
           data.state,
           data.wabaId,
         );
-        const shortfall = result.ok
-          ? result.connected.length === 0
-            ? "no_number"
-            : result.status === "failed"
-              ? "provisioning_failed"
-              : null
-          : result.error;
+        const verdict = judgeExchange(result);
         auditEvent({
           action: "connect_exchange",
           actorUserId: actor.session.userId,
@@ -1385,10 +1380,12 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
           resource: result.ok
             ? { wabaId: result.waba_id, connected: result.connected.length, status: result.status }
             : { code: result.code },
-          // A WABA with no number, or whose provisioning failed, is a failed
-          // connect to the customer, and the console says so too.
-          outcome: shortfall ? "failed" : "success",
-          ...(shortfall ? { detail: shortfall } : {}),
+          // The same verdict the console acts on, so the log cannot drift from
+          // what the customer saw: anything but a clean connect is `failed`.
+          outcome: verdict.outcome === "ok" ? "success" : "failed",
+          ...(verdict.outcome === "ok"
+            ? {}
+            : { detail: result.ok ? verdict.outcome : result.error }),
         });
         return result;
       }),

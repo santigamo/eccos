@@ -75,7 +75,7 @@ describe("ConnectOutcome", () => {
 
   test("a failure code wins over a skipped count", () => {
     const html = render({ connectError: "failed", connectSkipped: 3 });
-    expect(text(html)).toBe("Meta could not complete the connection. Try again.");
+    expect(text(html)).toBe("The connection could not be completed. Try again.");
   });
 
   test("the skipped sentence agrees in number", () => {
