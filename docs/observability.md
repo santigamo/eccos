@@ -72,16 +72,23 @@ reported in the next alert.
 
 ### Daily census (Telegram HQ, "Eccos ops")
 
-Once per UTC day, on the first cron tick after 07:00 UTC, the gateway posts a census to the same
-topic. It lists each account (with its organization id), its WABAs with status, onboarding type
-(and coexistence sync state), whether a forwarding target is set, and its pending, held, failed and
-last-24-hour delivered counts. A "Needs attention" block comes first: failed WABAs, WABAs with failed
-deliveries, WABAs holding events for lack of a target, coexistence syncs that ended `unavailable`,
-`expired` or `not_coexistence`, and WABAs whose data plane could not be read. It carries ids, names
-and counts only: no phone numbers, message content or secrets. Like the alerts, it is off unless
-the `OPS_TELEGRAM_*` secrets are set. The day is claimed before sending and a rejected send is
-not retried, so a missed census shows up as no message that day; look for `area = ops-alert`
-warnings.
+Once per UTC day, on the first cron tick at or after 07:00 UTC, the gateway posts a census to the
+same topic. It lists each account (with its organization id), its WABAs with status, onboarding
+type (and coexistence sync state), whether a forwarding target is set, and counts: pending,
+"held: no forwarding target" (deliveries waiting for a target), failed (all time), delivered among
+the deliveries queued in the last 24 h, and "held: WABA not active" (webhooks held for a WABA that
+is not active yet). A "Needs attention" block comes first:
+
+- a WABA whose provisioning failed, or has been pending for over 24 h;
+- deliveries that failed in the last 24 h (older failures stay in the totals only);
+- events held for lack of a forwarding target, or because the WABA is not active;
+- a coexistence sync that ended `unconfirmed` or `expired`;
+- a WABA whose data plane did not answer within 10 s.
+
+It carries ids, names and counts only: no phone numbers, message content or secrets. Like the
+alerts, it is off unless the `OPS_TELEGRAM_*` secrets are set. The day is claimed just before the
+send and a rejected send is not retried, so a missed census shows up as no message that day; look
+for `area = ops-alert` and `area = ops-census` warnings.
 
 ## Queries
 

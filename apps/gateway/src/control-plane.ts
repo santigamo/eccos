@@ -1798,10 +1798,15 @@ export class EccosControlPlane extends DurableObject<Env> {
       }));
   }
 
-  /** True for the first caller of a UTC day (`YYYY-MM-DD`); false once the day is taken. Synchronous, so the single-threaded object makes it atomic. */
-  claimDailyCensus(day: string): boolean {
+  /** Whether the census of this UTC day (`YYYY-MM-DD`) or a later one was already claimed. Read-only. */
+  censusClaimed(day: string): boolean {
     const last = this.sql.exec("SELECT value FROM ops_state WHERE key = 'census_day'").toArray()[0]?.value;
-    if (last !== undefined && String(last) >= day) return false;
+    return last !== undefined && String(last) >= day;
+  }
+
+  /** True for the first caller of a UTC day; false once taken. Synchronous, so the single-threaded object makes it atomic. */
+  claimDailyCensus(day: string): boolean {
+    if (this.censusClaimed(day)) return false;
     this.sql.exec(
       "INSERT INTO ops_state (key, value) VALUES ('census_day', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
       day,
