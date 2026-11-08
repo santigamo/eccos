@@ -3,9 +3,10 @@ import type { HeldWebhookRow } from "@eccos/gateway-contract";
 import { getGatewayStubForWaba } from "./gateway-stub";
 
 /**
- * Webhook batches of a registered WABA that is still `pending` (first provisioning or a
- * re-run Embedded Signup). Meta does not resend a webhook answered 200, so they wait here
- * until the WABA is active again, bounded by event count and age.
+ * Webhook batches of a registered WABA that is not active: `pending` (first provisioning or a
+ * re-run Embedded Signup) or `failed` (an operator can still recover it). Meta does not resend
+ * a webhook answered 200, so they wait here until the WABA is active, bounded by event count
+ * and age.
  */
 export const HELD_MAX_EVENTS = 5000;
 export const HELD_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
