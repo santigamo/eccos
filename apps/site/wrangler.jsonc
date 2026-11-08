@@ -23,11 +23,10 @@
   // hostnames serve the same site; the canonical <link> in every page points at
   // the apex, so this costs nothing in search.
   // eccos.chat (apex): zone route + registro DNS autogestionado, para que el
-  // failover de Sigue Online pueda conmutar el A. www sigue como custom_domain
-  // (red de seguridad intacta durante la conversion del apex).
+  // failover de Sigue Online pueda conmutar el A. www, igual desde el 8-nov-2026.
   "routes": [
     { "pattern": "eccos.chat/*", "zone_name": "eccos.chat" },
-    { "pattern": "www.eccos.chat", "custom_domain": true }
+    { "pattern": "www.eccos.chat/*", "zone_name": "eccos.chat" }
   ],
 
   // Kept on during setup so there is a URL to test against before DNS settles.
