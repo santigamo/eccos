@@ -205,7 +205,8 @@ export function ConnectNumberChoices({
       setError(failureCopy(result).detail);
       return;
     }
-    // Only a registered number counts as connected. The server function audits
+    // Only a registered number counts as connected; failed provisioning is shown
+    // on /numbers, not retried here. The server function audits
     // every outcome; the customer is told the truth and can start again.
     const verdict = judgeExchange(result.data);
     if (!verdict.connected) {
@@ -213,7 +214,7 @@ export function ConnectNumberChoices({
       setError(verdict.message);
       return;
     }
-    track("connect_outcome", { result: "ok" });
+    track("connect_outcome", { result: verdict.provisioningFailed ? "provisioning_failed" : "ok" });
     // The numbers table is a loader read; a reload is the honest way to show
     // what provisioning just did without duplicating its state here.
     window.location.assign(CONNECT_RETURN_PATH);

@@ -27,9 +27,11 @@ describe("judgeExchange", () => {
     expect(verdict).toMatchObject({ connected: false, outcome: "no_number" });
   });
 
-  test("failed provisioning is not a connection", () => {
-    const verdict = judgeExchange(ok({ status: "failed" }));
-    expect(verdict).toMatchObject({ connected: false, outcome: "provisioning_failed" });
+  test("failed provisioning goes to /numbers, with no retry invitation", () => {
+    expect(judgeExchange(ok({ status: "failed" }))).toEqual({
+      connected: true,
+      provisioningFailed: true,
+    });
   });
 
   test("every gateway failure code says something and keeps its code", () => {
@@ -44,7 +46,7 @@ describe("judgeExchange", () => {
 
   test("copy has no em dashes and the cancel note is not an error", () => {
     const messages = [CONNECT_CANCELLED_MESSAGE];
-    for (const r of [ok({ connected: [] }), ok({ status: "failed" })]) {
+    for (const r of [ok({ connected: [] })]) {
       const v = judgeExchange(r);
       if (!v.connected) messages.push(v.message);
     }
