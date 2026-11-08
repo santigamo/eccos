@@ -35,17 +35,43 @@ export function syncUnavailableCopy(coexistence: CoexistenceResource): string[] 
   return lines.length > 0 ? lines : ["Some WhatsApp Business app data was not imported. Contact Eccos support."];
 }
 
+/** The notice after a Re-check that left the WABA not active. */
+export function recheckNotice(status: string): string {
+  return status === "failed"
+    ? "This number could not be connected. See the note below."
+    : "Meta has not confirmed the subscription yet. Eccos will keep retrying.";
+}
+
+const SYNC_NAME = { contacts: "contacts", history: "chat history" } as const;
+
+/** The syncs Eccos requested and Meta never answered. */
+function unconfirmedSyncs({ coexistence }: Pick<AccountWabaResource, "coexistence">): string {
+  const names = [
+    coexistence.contactsStartedAt !== null && coexistence.contactsRequestId === null ? SYNC_NAME.contacts : null,
+    coexistence.historyStartedAt !== null && coexistence.historyRequestId === null ? SYNC_NAME.history : null,
+  ].filter((name) => name !== null);
+  return names.length > 0 ? names.join(" and ") : "contacts and chat history";
+}
+
 /**
  * Why a failed WABA is not connected, and what to do. A `failed` WABA neither
  * sends nor forwards, so none of this says the number works.
+ *
+ * Once a once-only sync was requested, connecting again would re-issue it and
+ * destroy the evidence, so those states point to support only. That includes a
+ * failed WABA whose coexistence status still reads `pending` or `unavailable`.
  */
-export function failedWabaCopy(waba: Pick<AccountWabaResource, "coexistence">): string {
-  switch (waba.coexistence.status) {
-    case "unconfirmed":
-      return "This number is not connected: Eccos could not confirm that your WhatsApp Business app contacts and chat history were imported. Contact Eccos support.";
-    case "expired":
-      return "This number is not connected: the 24-hour window to import your WhatsApp Business app chat history ran out. Contact Eccos support.";
-    default:
-      return "Eccos could not finish connecting this number. Connect it again; if it still fails, contact Eccos support.";
+export function failedWabaCopy(waba: Pick<AccountWabaResource, "coexistence" | "phones">): string {
+  const subject = waba.phones.length > 0 ? "This number is" : "This account is";
+  const { coexistence } = waba;
+  if (coexistence.status === "expired") {
+    return `${subject} not connected: the 24-hour window to import your WhatsApp Business app chat history ran out. Contact Eccos support.`;
   }
+  if (coexistence.status === "unconfirmed") {
+    return `${subject} not connected: Eccos could not confirm that your WhatsApp Business app ${unconfirmedSyncs(waba)} import finished. Contact Eccos support.`;
+  }
+  if (coexistence.contactsStartedAt !== null || coexistence.historyStartedAt !== null) {
+    return `${subject} not connected: Eccos started importing your WhatsApp Business app data and could not finish. Contact Eccos support.`;
+  }
+  return "Eccos could not finish connecting this number. Connect it again; if it still fails, contact Eccos support.";
 }

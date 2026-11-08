@@ -250,7 +250,7 @@ The cron's batch is ordered by due time, so an hourly row cannot starve a fresh 
 
 The console shows the account under **"Waiting on a phone number"** — it has no rows in the numbers
 table, because the table is built from phone numbers. A zero-phone WABA that failed for some *other*
-reason (Meta refusing the subscription, say) appears under **"Connection failed"** with its error
+reason (Meta refusing the subscription, say) appears under **"Connection failed"**
 instead, and that one does need reconnecting.
 
 An **unverified** number is different: it registers and provisions normally, and only fails when

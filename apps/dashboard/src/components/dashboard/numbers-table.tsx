@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { recheckNumber } from "../../server/gateway";
 import type { AccountResources } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
-import { failedWabaCopy, syncUnavailableCopy } from "../../lib/provisioning-copy";
+import { failedWabaCopy, recheckNotice, syncUnavailableCopy } from "../../lib/provisioning-copy";
 import { wabaLabel } from "../../lib/wabas";
 import { StatusTag } from "../../ui";
 
@@ -59,7 +59,11 @@ export function NumbersTable({
     ...new Set(
       resources.wabas
         .filter((waba) => waba.status === "active" && waba.coexistence.status === "unavailable")
-        .flatMap((waba) => syncUnavailableCopy(waba.coexistence)),
+        .flatMap((waba) =>
+          syncUnavailableCopy(waba.coexistence).map((line) =>
+            resources.wabas.length > 1 ? `${wabaLabel(waba)}: ${line}` : line,
+          ),
+        ),
     ),
   ];
   const failedWabas = resources.wabas.filter((waba) => waba.status === "failed");
@@ -89,14 +93,7 @@ export function NumbersTable({
         await onRefresh?.();
         return;
       }
-      const failed =
-        result.data.status === "failed" ? failedWabas.find((waba) => waba.wabaId === wabaId) : undefined;
-      setNotice({
-        ok: false,
-        text: failed
-          ? failedWabaCopy(failed)
-          : "Meta has not confirmed the subscription yet. Eccos will keep retrying.",
-      });
+      setNotice({ ok: false, text: recheckNotice(result.data.status) });
       await onRefresh?.();
     } finally {
       setRechecking(null);

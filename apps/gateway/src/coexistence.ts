@@ -163,8 +163,9 @@ export type CoexistenceSyncStatus =
  * The two timestamps are `*StartedAt`, not `*SyncedAt`, and the distinction is
  * the whole safety property. Meta allows each sync exactly once per phone
  * number; a second attempt is error `2593107` (maximum syncs exceeded), which
- * Meta says can only be redone through offboarding and a new onboarding. So the moment Eccos is *about to* call is the moment it records —
- * before the request goes out — and a recorded start is never re-attempted,
+ * Meta says can only be redone through offboarding and a new onboarding. So
+ * the moment Eccos is *about to* call is the moment it records — before the
+ * request goes out — and a recorded start is never re-attempted,
  * whatever the response was or failed to be. Acceptance is the separate fact,
  * carried by the request id Meta returns.
  */
@@ -245,8 +246,8 @@ export function historySyncTimeRemainingMs(
 
 /**
  * The one message an operator has to be able to act on: the window is gone and
- * Meta's remedy is offboarding. Kept as an exported constant so the console, the
- * tests and the runbook all quote the same words.
+ * Meta's remedy is offboarding. Kept as an exported constant so the tests and
+ * the runbook quote the same words. The console does not show it to customers.
  */
 export const HISTORY_SYNC_EXPIRED_ERROR =
   "coexistence message-history sync window expired (24h); Meta requires offboarding this customer and onboarding it again";
@@ -413,8 +414,8 @@ const UNAVAILABLE_BECAUSE: Record<SyncUnavailableReason, string> = {
 
 /**
  * Operator-facing wording for the syncs Meta refused, or null when it refused
- * none. Names each unavailable sync and why, so the console can say "history
- * not available" rather than leave someone waiting for it.
+ * none. Names each unavailable sync and why; the console builds its own
+ * customer wording from the request ids instead.
  */
 export function syncUnavailableError(requestIds: {
   contactsRequestId: string | null;

@@ -25,6 +25,7 @@ import type {
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { NumbersTable } = await import("../src/components/dashboard/numbers-table");
+const { recheckNotice } = await import("../src/lib/provisioning-copy");
 
 type Status = "pending" | "active" | "failed";
 
@@ -236,6 +237,54 @@ describe("NumbersTable", () => {
     const body = text(render(resources({ wabaId: "waba-a", status: "failed", phones: 1, coexistence: "expired" })));
     expect(body).toContain("the 24-hour window to import your WhatsApp Business app chat history ran out");
     expect(body).not.toContain("offboard");
+  });
+
+  test("a failed WABA with a sync already requested never says to connect again", () => {
+    const pending = resources({ wabaId: "waba-a", status: "failed", phones: 1, coexistence: "pending" });
+    Object.assign(pending.wabas[0]!.coexistence, {
+      contactsStartedAt: 1,
+      contactsRequestId: "accepted",
+      historyStartedAt: 2,
+    });
+    const settled = resources({ wabaId: "waba-b", status: "failed", phones: 1, coexistence: "unavailable" });
+    Object.assign(settled.wabas[0]!.coexistence, {
+      contactsStartedAt: 1,
+      contactsRequestId: "unavailable:not_permitted",
+    });
+    for (const state of [pending, settled]) {
+      const body = text(render(state));
+      expect(body).toContain("Contact Eccos support.");
+      expect(body).not.toContain("Connect it again");
+    }
+  });
+
+  test("an unconfirmed sync names only the sync in doubt, and a numberless account is not a number", () => {
+    const state = resources({ wabaId: "waba-a", status: "failed", phones: 0, coexistence: "unconfirmed" });
+    Object.assign(state.wabas[0]!.coexistence, {
+      contactsStartedAt: 1,
+      contactsRequestId: "accepted",
+      historyStartedAt: 2,
+    });
+    const body = text(render(state));
+    expect(body).toContain("This account is not connected");
+    expect(body).toContain("chat history import finished");
+    expect(body).not.toContain("contacts and chat history");
+  });
+
+  test("the re-check notice does not promise retries once the WABA failed", () => {
+    expect(recheckNotice("failed")).toContain("See the note below");
+    expect(recheckNotice("failed")).not.toContain("keep retrying");
+    expect(recheckNotice("pending")).toContain("keep retrying");
+  });
+
+  test("unavailable lines name the number when the account has several", () => {
+    const two = resources(
+      { wabaId: "waba-a", status: "active", phones: 1, coexistence: "unavailable" },
+      { wabaId: "waba-b", status: "active", phones: 1, coexistence: "unavailable" },
+    );
+    two.wabas[0]!.coexistence.contactsRequestId = "unavailable:not_permitted";
+    two.wabas[1]!.coexistence.historyRequestId = "unavailable:history_sharing_off";
+    expect(text(render(two))).toContain("+34 600 000 000: Your WhatsApp Business app contacts were not imported");
   });
 
   test("a coexistence note never claims a failed number works", () => {
