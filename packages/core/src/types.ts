@@ -108,6 +108,8 @@ export type WhatsAppCallbackEvent =
       messageId: string;
       at: number;
       phoneNumberId?: string;
+      /** A button tapped in the Business app: the quick-reply `payload`, or the button/list reply `id`. */
+      payload?: string;
     } & MessageContent)
   | {
       /** Emitted by Eccos, never by Meta: a scheduled send that will not be sent. */

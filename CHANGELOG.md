@@ -24,6 +24,13 @@
 - Worker names, Durable Object migrations and jurisdiction are unchanged. See the
   [upgrade note](./docs/deployment.md#upgrade-note--existing-self-hosters).
 
+### Forwarded events
+
+- `message_echo` now carries `payload` when a quick-reply or interactive button is tapped in the
+  WhatsApp Business app (coexistence). Additive: the field was dropped before.
+- `GET /v1/wabas/{wabaId}/templates` now asks Meta for `id`, `name`, `language`, `status`,
+  `category` and `components` explicitly, instead of relying on Meta's default fields.
+
 ### Business-scoped user IDs (BSUIDs)
 
 Meta now names some WhatsApp users by a business-scoped user id (BSUID, e.g.

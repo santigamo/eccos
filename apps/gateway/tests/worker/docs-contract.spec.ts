@@ -575,6 +575,8 @@ describe("sending-messages.md", () => {
     expect(
       meta.mock.calls.map(([url]) => String(url).match(/limit=(\d+)/)![1]),
     ).toEqual(["100", "1000", "1"]);
+    const fields = new URL(String(meta.mock.calls[0]![0])).searchParams.get("fields")!.split(",");
+    expect(fields).toEqual(["id", "name", "language", "status", "category", "components"]);
     mockMeta(() => json({ error: { code: 190 } }, 401));
     const failed = await get();
     expect(failed.status).toBe(502);

@@ -4,6 +4,10 @@ export type TemplatesResult =
   | { ok: true; data: unknown }
   | { ok: false; status: number; error: unknown };
 
+/** What the public templates route returns: the documented fields, named so the response does
+ * not depend on Meta's defaults, and only core ones Meta has no reason to refuse. */
+export const TEMPLATE_FIELDS = ["id", "name", "language", "status", "category", "components"] as const;
+
 /** List approved/pending message templates for the configured WABA. */
 export async function listTemplates(
   cfg: MetaAppConfig,
