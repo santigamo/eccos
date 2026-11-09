@@ -580,17 +580,28 @@ describe("conversation store: read state", () => {
     });
   });
 
-  it("a reply clears the unread count, and a duplicate or echo of it moves nothing", async () => {
+  it("a send through Eccos leaves the unread state alone: it may be a broadcast or a bot", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(WA, "wamid.X1", 1000)]);
+      i.markConversation({ waId: WA, read: true });
+      i.ingest([reply(WA, "wamid.X2", 2000)]);
+      i.markConversation({ waId: WA, read: false });
+      i.logOutbound("wamid.OUT9", WA, textSend(WA, "hola"), "sent", null, PHONE_NUMBER_ID);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1, markedUnread: true });
+    });
+  });
+
+  it("a reply from the Business app clears the unread state, and a duplicate of it moves nothing", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       i.ingest([reply(WA, "wamid.X1", 1000)]);
       i.markConversation({ waId: WA, read: false });
-      i.logOutbound("wamid.OUT9", WA, textSend(WA, "hola"), "sent", null, PHONE_NUMBER_ID);
+      const echo = { type: "echo", to: WA, messageId: "wamid.E1", text: "hola", at: 1500 } as const;
+      i.ingest([echo]);
       expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 0, markedUnread: false });
 
       i.ingest([reply(WA, "wamid.X2", 2000)]);
       expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1 });
-      i.logOutbound("wamid.OUT9", WA, textSend(WA, "hola"), "sent", null, PHONE_NUMBER_ID);
-      i.ingest([{ type: "echo", to: WA, messageId: "wamid.OUT9", text: "hola", at: 2500 }]);
+      i.ingest([echo]);
       expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1 });
     });
   });

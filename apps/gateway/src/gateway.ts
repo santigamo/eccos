@@ -2350,9 +2350,10 @@ export class EccosGateway extends DurableObject<Env> {
       profileName,
       createdAt,
     );
-    // A live reply or echo that was really written reads its conversation through itself.
+    // A reply from the Business app means the staff read the conversation. A send through
+    // Eccos does not: it may be a broadcast, a schedule or a bot, and the console marks what it opens.
     // MAX: a history row replaced by a live one keeps its old rowid, which must not move the read point back.
-    if (existing?.origin !== "live" && message.origin === "live" && message.direction !== "in") {
+    if (existing?.origin !== "live" && message.origin === "live" && message.direction === "echo") {
       this.sql.exec(
         `INSERT INTO conversation_reads (wa_id, read_seq, marked_unread)
          SELECT ?, rowid, 0 FROM messages WHERE id = ?

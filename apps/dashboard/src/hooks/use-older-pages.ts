@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { absorbNewest, appendOlder, bridgeTo, startWalk, type Walk } from "../lib/history";
 import type { CursorPage, Result } from "../server/gateway";
@@ -79,11 +79,17 @@ export function useOlderPages<T>(newest: CursorPage<T>, { key, fetchOlder, oldes
 
   const items = useMemo(() => (oldestFirst ? [...walk.items].reverse() : walk.items), [walk.items, oldestFirst]);
 
+  /** Updates loaded items in place: a reload only refreshes the newest page, never the older ones. */
+  const patch = useCallback((matches: (item: T) => boolean, update: (item: T) => T) => {
+    setWalk((prev) => ({ ...prev, items: prev.items.map((item) => (matches(item) ? update(item) : item)) }));
+  }, []);
+
   return {
     items,
     canLoadOlder: walk.cursor !== null && !loading,
     loading,
     failed,
     loadOlder: () => void loadOlder(),
+    patch,
   };
 }

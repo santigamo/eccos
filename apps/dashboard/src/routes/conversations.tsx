@@ -1,5 +1,5 @@
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { useWhenIdle } from "../hooks/use-idle-prefetch";
 import { useConversationSearch } from "../hooks/use-conversation-search";
 import { useLastGood } from "../hooks/use-last-good";
+import { useMarkOpenRead } from "../hooks/use-mark-open-read";
 import { useAlwaysLive } from "../hooks/use-live-refresh";
 import { useOlderPages } from "../hooks/use-older-pages";
 import { prefetchThread, useThread } from "../hooks/use-thread";
@@ -273,22 +274,15 @@ function ConversationListPane({
     fetchOlder: (cursor) => listConversations({ data: { wabaId, limit: PAGE_SIZE, cursor, q: query } }),
   });
 
-  // Opening a conversation marks it read. One request at a time; a failure is retried by the next poll.
-  const marking = useRef(false);
-  useEffect(() => {
-    const row = older.items.find((item) => item.waId === selectedWaId);
-    if (!canSend || !row || !(row.unreadCount > 0 || row.markedUnread)) return;
-    if (document.visibilityState !== "visible" || marking.current) return;
-    marking.current = true;
-    markConversation({ data: { wabaId, waId: row.waId, read: true } })
-      .then((result) => {
-        if (result.ok) invalidatePage(router);
-      })
-      .catch(() => {})
-      .finally(() => {
-        marking.current = false;
-      });
-  }, [older.items, selectedWaId, canSend, wabaId, router]);
+  useMarkOpenRead(older.items, canSend ? selectedWaId : undefined, async ({ waId }) => {
+    const result = await markConversation({ data: { wabaId, waId, read: true } });
+    if (!result.ok) return;
+    older.patch(
+      (item) => item.waId === waId,
+      (item) => ({ ...item, unreadCount: 0, markedUnread: false }),
+    );
+    await invalidatePage(router);
+  });
 
   return (
     <ConversationList
