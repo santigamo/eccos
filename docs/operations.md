@@ -258,7 +258,7 @@ The cron's batch is ordered by due time, so an hourly row cannot starve a fresh 
 
 The console shows the account under **"Waiting on a phone number"** — it has no rows in the numbers
 table, because the table is built from phone numbers. A zero-phone WABA that failed for some *other*
-reason (Meta refusing the subscription, say) appears under **"Connection failed"** with its error
+reason (Meta refusing the subscription, say) appears under **"Connection failed"**
 instead, and that one does need reconnecting.
 
 An **unverified** number is different: it registers and provisions normally, and only fails when
@@ -291,6 +291,11 @@ as `active`. Two failures are terminal by design and need a human:
 | `coexistence message-history sync window expired (24h); …` | The 24-hour window closed with the sync not initiated. Meta would answer `2593108`, so Eccos does not even send it. | Offboard the customer and re-run Embedded Signup. The reconnect starts a fresh window automatically. |
 | `coexistence sync was issued but not confirmed by Meta …` | A sync request was sent and no success came back. It may well have been processed, so Eccos will **not** send it again — a duplicate is Meta's `2593107`, which the saga would record as already synced, hiding whether it ever ran. | Offboard the customer and re-run Embedded Signup. The console has no retry button, deliberately; see the narrow recovery below. |
 
+The sentences above are for operators and stay in the API and the logs. The console never shows
+them: it builds customer wording from the structured state (`status`, `coexistence.status` and the
+sync request ids) in `apps/dashboard/src/lib/provisioning-copy.ts`, says plainly what happened,
+and sends the customer to Eccos support instead of telling them to offboard.
+
 Pressing "re-check" on such a WABA is safe — it re-runs the saga, which refuses to re-issue a spent
 sync and lands back on the same message. Outside the narrow recovery below, only a genuinely new Embedded Signup handoff clears it.
 
@@ -310,6 +315,10 @@ binding (each call, including a refused reset, is logged with its ids):
   WABA it marks the whole sync unavailable even if another phone accepted. Afterwards tell the
   customer that their contacts or history will not arrive.
 - `GatewayRPC.diagnoseWaba(wabaId, accountId)` returns Meta's read-only view of the token, WABA and number.
+
+While a WABA is `failed`, Meta's webhooks for it are held (up to 5000 events, 3 days), not dropped. They
+are ingested and forwarded when the WABA becomes `active`, after a `reconcileWaba` or a new Embedded
+Signup. Past 3 days they are deleted.
 
 ### A number that turned out not to be a coexistence number
 

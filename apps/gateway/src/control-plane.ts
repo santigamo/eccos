@@ -1584,12 +1584,13 @@ export class EccosControlPlane extends DurableObject<Env> {
    * request leaves the Worker (eccos-vss).
    *
    * Meta allows each sync exactly once per phone number: a second call is error
-   * `2593107` and its documented remedy is offboarding the customer. Writing
-   * after the call would lose the fact whenever the response is lost — a
-   * timeout, an eviction, a dropped connection — and the next attempt would
-   * duplicate it. Writing before means the worst case is a sync recorded but
-   * never sent, whose remedy is the same offboarding and which at least cannot
-   * break a customer whose sync actually succeeded.
+   * `2593107` (maximum syncs exceeded; Meta says repeating needs offboarding and
+   * a new onboarding), which is recorded as `already_synced` and hides whether
+   * the first one ran. Writing after the call would lose the fact whenever the
+   * response is lost — a timeout, an eviction, a dropped connection — and the
+   * next attempt would duplicate it. Writing before means the worst case is a
+   * sync recorded but never sent, which at least cannot turn a sync that
+   * succeeded into a duplicate.
    *
    * Guarded on the same lease revision and attempt as the rest of the saga, so a
    * stale claim can never mark a sync spent. Returns false when the guard

@@ -626,7 +626,7 @@ export class EccosGateway extends DurableObject<Env> {
     return row ? { ...ev, ...(JSON.parse(String(row.origin)) as EventOrigin) } : ev;
   }
 
-  /** `heldPending` tells the worker that batches held while the WABA was pending still
+  /** `heldPending` tells the worker that batches held while the WABA was not active still
    * wait for `releaseHeld` (activation raced the hold). */
   ingest(events: WhatsAppCallbackEvent[]): { received: number; heldPending: boolean } {
     if (events.length === 0) return { received: 0, heldPending: hasHeld(this.sql) };
