@@ -13,13 +13,19 @@ import { normalizeSearchWabaId } from "./search";
 const MEDIA_TYPES = new Set(["image", "sticker", "audio", "video", "document"]);
 
 /**
- * The `?wabaId=` and `?waId=` a conversations URL carries. A bare id is read as the
+ * The `?wabaId=`, `?waId=` and `?q=` a conversations URL carries. A bare id is read as the
  * JSON number the router makes of it (`?waId=34600111222`), so both forms select the same thread.
  * The id normalizes first, so a bad `?waId=` never reaches the gateway as a refusal that would read as an outage.
  */
-export function conversationsSearch(search: Record<string, unknown>): { wabaId?: string; waId?: string } {
+export function conversationsSearch(search: Record<string, unknown>): { wabaId?: string; waId?: string; q?: string } {
   const asText = (value: unknown) => (typeof value === "number" ? String(value) : value);
-  return { wabaId: normalizeSearchWabaId(asText(search.wabaId)), waId: normalizeCustomerId(asText(search.waId)) };
+  const q = asText(search.q);
+  const query = typeof q === "string" ? q.trim().slice(0, 100).trimEnd() : "";
+  return {
+    wabaId: normalizeSearchWabaId(asText(search.wabaId)),
+    waId: normalizeCustomerId(asText(search.waId)),
+    q: query || undefined,
+  };
 }
 
 type Json = Record<string, unknown>;
@@ -134,6 +140,10 @@ export interface ThreadEntry {
   deleted: boolean;
   /** The emoji each sender's latest reaction carries; a sender holds at most one. */
   reactions: string[];
+  /** The business's own reaction on this message: the one the React menu marks. */
+  myReaction: string | null;
+  /** The message a reply quotes. `found` is false when that message is not in the thread. */
+  quoted: { id: string; found: boolean; sender: string | null; preview: string } | null;
 }
 
 /**
@@ -174,9 +184,74 @@ export function threadEntries(messages: MessageRecord[]): ThreadEntry[] {
     }
     folded.add(message.id);
   }
+  const byId = new Map(rows.map((row) => [row.message.id, row]));
   return rows
     .filter((row) => !folded.has(row.message.id))
-    .map(({ reactedBy, ...row }) => ({ ...row, reactions: [...reactedBy.values()] }));
+    .map(({ reactedBy, ...row }) => ({
+      ...row,
+      reactions: [...reactedBy.values()],
+      myReaction: reactedBy.get("business") ?? null,
+      quoted: quotedOf(row.message, byId),
+    }));
+}
+
+/** Who a message is from and what it reads as: the words a quote and a reply banner both show. */
+export function describeEntry(entry: Pick<ThreadEntry, "message" | "text" | "deleted">): { sender: string; preview: string } {
+  const kind = entry.deleted ? "revoke" : entry.message.type;
+  return {
+    sender: entry.message.direction === "in" ? "Customer" : "You",
+    preview: entry.text !== null && !entry.deleted ? entry.text : (TYPE_LABEL[kind] ?? kind),
+  };
+}
+
+/** The message a reply is being written to, as the composer quotes it. */
+export interface ReplyTarget {
+  id: string;
+  sender: string;
+  preview: string;
+}
+
+/** Acts that fold into the message they name, so they never quote one. */
+const ACTS = new Set(["edit", "revoke", "reaction"]);
+
+function quotedOf(
+  message: MessageRecord,
+  rowsById: Map<string, Pick<ThreadEntry, "message" | "text" | "deleted">>,
+): ThreadEntry["quoted"] {
+  if (!message.targetId || ACTS.has(message.type)) return null;
+  const target = rowsById.get(message.targetId);
+  if (!target) return { id: message.targetId, found: false, sender: null, preview: "Original message not loaded" };
+  return { id: target.message.id, found: true, ...describeEntry(target) };
+}
+
+/** Types a reader can neither reply to nor react to: acts on other messages, and notices. */
+const NOT_ACTIONABLE = new Set(["reaction", "edit", "revoke", "system", "unsupported", "media_placeholder"]);
+
+export function canActOn(entry: ThreadEntry): boolean {
+  return !entry.deleted && !NOT_ACTIONABLE.has(entry.message.type);
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The UTC day a time falls on: the dividers and the timestamps under each message agree on it. */
+const utcDay = (at: number) => Math.floor(at / DAY_MS);
+
+/**
+ * The date divider printed before an entry, or null while the day goes on. A gap of a day
+ * or more since the previous message starts a new conversation; the first entry always gets its date.
+ */
+export function dividerBefore(
+  previous: ThreadEntry | undefined,
+  entry: ThreadEntry,
+  now: number,
+): { label: string; newConversation: boolean } | null {
+  const at = entry.message.at;
+  if (previous && utcDay(previous.message.at) === utcDay(at)) return null;
+  const day = utcDay(at);
+  let label = new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  if (day === utcDay(now)) label = "Today";
+  else if (day === utcDay(now) - 1) label = "Yesterday";
+  return { label, newConversation: previous !== undefined && at - previous.message.at >= DAY_MS };
 }
 
 /** Drops repeats, keeping the first occurrence: a page that shifted under a live refresh can overlap the one before it. */

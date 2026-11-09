@@ -68,6 +68,7 @@ import type {
   SendTemplateTestResult,
   SendTestFailureCode,
   SendTextFailureCode,
+  SendReactionInput,
   SendTextInput,
   SendTextResult,
   SetSubscriberConfigInput,
@@ -152,6 +153,8 @@ const MAX_BODY_PARAMS = 30;
 const MAX_BODY_PARAM_LENGTH = 1024;
 /** Meta's ceiling for a free-text message body. */
 const MAX_TEXT_LENGTH = 4096;
+/** Code units a reaction's emoji may span; the one-grapheme rule is the dashboard validator's. */
+const MAX_EMOJI_LENGTH = 32;
 /** A BUTTONS component carries at most 3 URL buttons — the same cap the
  * create validator applies, so a later-created template can always be sent. */
 const MAX_BUTTON_PARAMS = 3;
@@ -548,6 +551,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async readThreadView(org: ScopedOrg, opts: Omit<ConversationOpts, "wabaId">): Promise<ScopedRead<ThreadView>> {
     const { scope, stub } = await this.selected(org);
     return { scope, data: await stub.getThreadView(opts) };
+  }
+
+  async markConversation(org: ScopedOrg, opts: { waId: string; read: boolean }): Promise<ScopedRead<void>> {
+    const { scope, stub } = await this.selected(org);
+    await stub.markConversation(opts);
+    return { scope, data: undefined };
   }
 
   async readSubscriberConfig(org: ScopedOrg): Promise<ScopedRead<SubscriberConfig>> {
@@ -1087,13 +1096,48 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   /**
    * Send one free-text message from the conversation composer.
    *
-   * Mirrors `sendTemplateTest` on every rule that matters: the same `getWaba`
-   * ownership read (a non-active WABA fails closed), the same `accountId:wabaId`
-   * limiter key, the same outbound row. Free-form bodies are only deliverable
-   * inside Meta's 24-hour customer service window, so 131047 is an expected
-   * answer the console turns into "send a template", not a fault to chase.
+   * Mirrors `sendTemplateTest` on every rule that matters (see
+   * {@link sendConsoleMessage}). Free-form bodies are only deliverable inside
+   * Meta's 24-hour customer service window, so 131047 is an expected answer the
+   * console turns into "send a template", not a fault to chase.
    */
   async sendText(input: SendTextInput, accountId: string): Promise<SendTextResult> {
+    if (typeof input.text !== "string" || input.text.length === 0 || input.text.length > MAX_TEXT_LENGTH) {
+      throw new Error("text must be 1-4096 characters");
+    }
+    return this.sendConsoleMessage(accountId, input, "send_text", {
+      to: input.to,
+      type: "text",
+      text: { body: input.text, preview_url: false },
+      ...(input.replyToMessageId ? { context: { message_id: input.replyToMessageId } } : {}),
+    });
+  }
+
+  /** React to one message from the conversation: `emoji` "" removes the reaction. */
+  async sendReaction(input: SendReactionInput, accountId: string): Promise<SendTextResult> {
+    if (typeof input.messageId !== "string" || input.messageId === "") throw new Error("messageId is required");
+    if (typeof input.emoji !== "string" || input.emoji.length > MAX_EMOJI_LENGTH) {
+      throw new Error("emoji must be one emoji, or empty");
+    }
+    return this.sendConsoleMessage(accountId, input, "send_reaction", {
+      to: input.to,
+      type: "reaction",
+      reaction: { message_id: input.messageId, emoji: input.emoji },
+    });
+  }
+
+  /**
+   * The send both console messages share: the same `getWaba` ownership read (a
+   * non-active WABA fails closed), the same `accountId:wabaId` limiter key, the
+   * same idempotent claim and the same outbound row. `metaBody` is the Graph
+   * message object, built by the caller from the validated input.
+   */
+  private async sendConsoleMessage(
+    accountId: string,
+    input: { wabaId: string; phoneNumberId: string; to: string; idempotencyKey?: string },
+    source: "send_text" | "send_reaction",
+    metaBody: Record<string, unknown>,
+  ): Promise<SendTextResult> {
     const account = requireAccountId(accountId, "accountId is required");
     const waba = await getControlPlaneStub(this.env).getWaba(account, input.wabaId);
     if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
@@ -1106,22 +1150,14 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       };
     }
 
-    // Defense in depth, as in `sendTemplateTest`: the dashboard validator is the
-    // strict one, so a failure here is a regressed caller, not a UI state.
+    // Defense in depth: the dashboard validator is the strict one, so a failure here
+    // is a regressed caller, not a UI state.
     if (!TO_PATTERN.test(input.to) && !isBsuid(input.to)) throw new Error(TO_ERROR);
-    if (typeof input.text !== "string" || input.text.length === 0 || input.text.length > MAX_TEXT_LENGTH) {
-      throw new Error("text must be 1-4096 characters");
-    }
 
     if (!(await checkSendRate(this.env, account, waba.wabaId))) {
       return { ok: false, code: "rate_limited", detail: null };
     }
 
-    const metaBody = {
-      to: input.to,
-      type: "text",
-      text: { body: input.text, preview_url: false },
-    };
     const cfg = tenantConfig(getAppConfig(this.env), {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
@@ -1131,7 +1167,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTextResult> => {
       const result = await sendMessage(cfg, metaBody);
-      logSend("send_text", waba.wabaId, input.phoneNumberId, "text", result);
+      logSend(source, waba.wabaId, input.phoneNumberId, String(metaBody.type), result);
 
       if (!result.ok) {
         await stub.logOutbound(

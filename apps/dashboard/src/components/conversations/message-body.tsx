@@ -10,6 +10,7 @@ import {
   reactionEmojiOf,
   type ThreadEntry,
 } from "../../lib/conversations";
+import { ImageViewer } from "./image-viewer";
 
 /**
  * What one message SAYS, by its type. Every type the gateway stores has a
@@ -126,6 +127,8 @@ function MediaFile({
   src: string | null;
 }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [viewing, setViewing] = useState(false);
   if (!src || failed) return <MediaUnavailable />;
   const onError = () => setFailed(true);
   // Customer media arrives without a caption track; its text caption sits beside the player.
@@ -137,14 +140,29 @@ function MediaFile({
     // biome-ignore lint/a11y/useMediaCaption: no caption track exists for customer media
     return <video controls preload="metadata" src={src} aria-label="Video message" onError={onError} className="max-h-72 max-w-full" />;
   }
+  if (kind === "sticker") {
+    return <img src={src} alt="Sticker" loading="lazy" onError={onError} className="block max-h-40 w-auto max-w-full object-contain" />;
+  }
+  // The placeholder holds the bubble's room until the picture has loaded, then drops away.
   return (
-    <img
-      src={src}
-      alt={kind === "sticker" ? "Sticker" : "Image"}
-      loading="lazy"
-      onError={onError}
-      className="max-h-72 max-w-full border border-(--line)"
-    />
+    <>
+      <button
+        type="button"
+        aria-label="Open image"
+        onClick={() => setViewing(true)}
+        className="block cursor-zoom-in outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <img
+          src={src}
+          alt="Attachment from this conversation"
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          onError={onError}
+          className={`block max-h-96 w-auto max-w-full object-contain ${loaded ? "" : "min-h-24 min-w-40 bg-muted/40"}`}
+        />
+      </button>
+      <ImageViewer src={src} alt="Attachment from this conversation" open={viewing} onOpenChange={setViewing} />
+    </>
   );
 }
 

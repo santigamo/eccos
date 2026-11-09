@@ -129,6 +129,8 @@ const SUMMARY: ConversationSummary = {
   waId: CUSTOMER,
   name: "Cliente de prueba",
   messageCount: THREAD.length,
+  unreadCount: 0,
+  markedUnread: false,
   lastMessage: { type: "poll", text: null, direction: "in", at: NOW + 19_000 },
 };
 
@@ -143,6 +145,7 @@ function threadProps(overrides: Partial<Parameters<typeof ConversationThread>[0]
     loadingOlder: false,
     olderFailed: false,
     onLoadOlder: () => {},
+    now: NOW,
     ...overrides,
   };
 }
@@ -262,6 +265,59 @@ describe("ConversationThread: every message type reads", () => {
   });
 });
 
+describe("ConversationThread: dates, quotes and actions", () => {
+  const DAY = 86_400_000;
+
+  test("a date divider opens each day, and a gap of a day or more says it starts a new conversation", () => {
+    const html = renderToStaticMarkup(<ConversationThread {...threadProps()} />);
+    expect(html.match(/role="separator"/g)).toHaveLength(1);
+    expect(html).toContain("Today");
+
+    const gap = threadEntries([
+      message({ id: "wamid.g-1", text: "Hola", at: NOW - 3 * DAY }),
+      message({ id: "wamid.g-2", text: "Vuelvo", at: NOW }),
+    ]);
+    const gapHtml = renderToStaticMarkup(<ConversationThread {...threadProps({ entries: gap })} />);
+    expect(gapHtml.match(/role="separator"/g)).toHaveLength(2);
+    expect(gapHtml).toContain("11 Nov 2023");
+    expect(gapHtml).toContain("New conversation");
+    expectDesignContract(gapHtml);
+  });
+
+  test("a reply shows the message it quotes above its body; a quote of a message not loaded says so", () => {
+    const quoting = threadEntries([
+      message({ id: "wamid.q-in", text: "¿Tenéis cita?", at: NOW }),
+      message({ id: "wamid.q-out", direction: "out", status: "read", text: "Sí, a las 10.", targetId: "wamid.q-in", at: NOW + 1_000 }),
+      message({ id: "wamid.q-lost", text: "¿Y el martes?", targetId: "wamid.gone", at: NOW + 2_000 }),
+    ]);
+    const html = renderToStaticMarkup(<ConversationThread {...threadProps({ entries: quoting })} />);
+    expect(html).toContain('id="message-wamid.q-in"');
+    expect(html).toMatch(/<button type="button" class="[^"]*border-l-2[^"]*">/);
+    expect(html).toContain("Original message not loaded");
+    expectDesignContract(html);
+  });
+
+  test("Reply and React are offered only with handlers, and never on a deleted message", () => {
+    const plain = renderToStaticMarkup(<ConversationThread {...threadProps()} />);
+    expect(plain).not.toContain('aria-label="Reply"');
+    expect(plain).not.toContain('aria-label="React"');
+
+    const acting = threadProps({ onReply: () => {}, onReact: () => {} });
+    const html = renderToStaticMarkup(<ConversationThread {...acting} />);
+    expect(html).toContain('aria-label="Reply"');
+    expect(html).toContain('aria-label="React"');
+    expectDesignContract(html);
+
+    const deleted = threadEntries([
+      message({ id: "wamid.d-1", text: "Esto se borra" }),
+      message({ id: "wamid.d-2", type: "revoke", targetId: "wamid.d-1", at: NOW + 1 }),
+    ]);
+    const gone = renderToStaticMarkup(<ConversationThread {...acting} entries={deleted} />);
+    expect(gone).not.toContain('aria-label="Reply"');
+    expect(gone).not.toContain('aria-label="React"');
+  });
+});
+
 describe("ConversationThread: pagination and empty states", () => {
   test("Load older is shown only while there is an older page, or one is loading", () => {
     const more = renderToStaticMarkup(<ConversationThread {...threadProps({ canLoadOlder: true })} />);
@@ -276,6 +332,18 @@ describe("ConversationThread: pagination and empty states", () => {
   test("a failed older page says so beside the control", () => {
     const html = renderToStaticMarkup(<ConversationThread {...threadProps({ olderFailed: true })} />);
     expect(html).toContain("Messages did not load. Try again.");
+  });
+
+  test("Mark unread is offered only when a handler is given", () => {
+    const withHandler = renderToStaticMarkup(<ConversationThread {...threadProps({ onMarkUnread: () => {} })} />);
+    expect(withHandler).toMatch(/<button[^>]*>Mark unread<\/button>/);
+    const without = renderToStaticMarkup(<ConversationThread {...threadProps()} />);
+    expect(without).not.toContain("Mark unread");
+  });
+
+  test("the back link to the list keeps the search", () => {
+    const html = renderToStaticMarkup(<ConversationThread {...threadProps({ query: "Ana" })} />);
+    expect(html).toContain(`href="/conversations?wabaId=waba-a&amp;q=Ana"`);
   });
 
   test("a thread with nothing in the retained history says so", () => {
@@ -302,6 +370,11 @@ describe("ConversationList", () => {
     expect(html).toContain(`href="/conversations?wabaId=waba-a&amp;waId=${CUSTOMER}"`);
     expect(html).toContain('aria-current="true"');
     expect(html).toContain("Cliente de prueba");
+  });
+
+  test("the list contains its rows' absolutely positioned text, so a long list cannot stretch the page", () => {
+    const html = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} />);
+    expect(html).toMatch(/<ol class="relative [^"]*overflow-y-auto/);
   });
 
   test("a BSUID row links to its thread with the id URL-encoded as written", () => {
@@ -347,6 +420,44 @@ describe("ConversationList", () => {
   test("every state of the list honours the design contract", () => {
     expectDesignContract(renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} />));
     expectDesignContract(renderToStaticMarkup(<ConversationList {...listProps} items={[]} />));
+  });
+
+  test("a row with unread messages is bold and counts them in a live badge, not its message count", () => {
+    const html = renderToStaticMarkup(
+      <ConversationList {...listProps} items={[{ ...SUMMARY, unreadCount: 3 }]} />,
+    );
+    expect(html).toContain('<span class="truncate font-semibold text-foreground">Cliente de prueba</span>');
+    expect(html).toContain(
+      'class="shrink-0 border border-(--tag-live-edge) bg-(--tag-live-bg) px-1.5 text-xs tabular-nums text-(color:--tag-live-ink)"',
+    );
+    expect(html).toContain('3<span class="sr-only"> unread messages</span>');
+    expect(html).not.toContain(`${THREAD.length}<span class="sr-only"> messages</span>`);
+  });
+
+  test("a row marked unread with nothing new is bold and shows a square dot, named for a reader", () => {
+    const html = renderToStaticMarkup(
+      <ConversationList {...listProps} items={[{ ...SUMMARY, markedUnread: true }]} />,
+    );
+    expect(html).toContain('<span class="truncate font-semibold text-foreground">Cliente de prueba</span>');
+    expect(html).toContain('<span class="size-2 shrink-0 bg-(--color-glow)"><span class="sr-only">Marked unread</span></span>');
+    expect(html).not.toContain("unread messages");
+  });
+
+  test("a read row keeps its medium title and its message count", () => {
+    const html = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} />);
+    expect(html).toContain('<span class="truncate font-medium text-foreground">Cliente de prueba</span>');
+    expect(html).toContain(`${THREAD.length}<span class="sr-only"> messages</span>`);
+    expect(html).not.toContain("Marked unread");
+    expect(html).not.toContain("unread messages");
+  });
+
+  test("with a search, the empty list says no conversation matches it, and the rows keep the search", () => {
+    const empty = renderToStaticMarkup(<ConversationList {...listProps} items={[]} query="Ana" />);
+    expect(empty).toContain("NO MATCHES");
+    expect(empty).toContain("No conversation matches &quot;Ana&quot;.");
+    expect(empty).not.toContain("NO CONVERSATIONS YET");
+    const rows = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} query="Ana" />);
+    expect(rows).toContain(`href="/conversations?wabaId=waba-a&amp;waId=${CUSTOMER}&amp;q=Ana"`);
   });
 });
 
@@ -448,12 +559,12 @@ describe("the conversations page", () => {
     expect(html).toContain("NO CONVERSATION OPEN");
   });
 
-  test("the refresh and live controls are on the page, as on Events and Messages", () => {
+  test("an inbox has no refresh or live controls: it is always live", () => {
     searchParams = { wabaId: WABA };
     ready({ ok: true, data: page([SUMMARY]) });
     const html = renderToStaticMarkup(<Route.component />);
-    expect(html).toContain("Refresh");
-    expect(html).toContain("Live off");
+    expect(html).not.toContain("Refresh");
+    expect(html).not.toContain("Live off");
   });
 
   test("a gateway failure on the list replaces the page with the failure view", () => {
@@ -497,6 +608,42 @@ describe("the conversations page", () => {
     expect(html).toContain("Conversations");
     expect(html).toContain('aria-busy="true"');
     expectDesignContract(html);
+  });
+});
+
+describe("the search and read state of the page", () => {
+  const thread = { ok: true, data: { page: page(THREAD), name: "Cliente de prueba", reply: { phoneNumberId: "phone-a", lastInboundAt: null } } };
+
+  test("a member gets Mark unread on an open thread; a viewer does not", () => {
+    searchParams = { wabaId: WABA, waId: CUSTOMER };
+    loaderData = { conversations: { ok: true, data: page([SUMMARY]) }, canSend: true };
+    threadRead = thread;
+    rootData = readyRoot;
+    expect(renderToStaticMarkup(<Route.component />)).toContain("Mark unread");
+    loaderData = { conversations: { ok: true, data: page([SUMMARY]) }, canSend: false };
+    expect(renderToStaticMarkup(<Route.component />)).not.toContain("Mark unread");
+  });
+
+  test("a search that has not finished shows skeleton rows in the list, and the thread stays", () => {
+    searchParams = { wabaId: WABA, waId: CUSTOMER, q: "Ana" };
+    loaderData = { conversations: { ok: true, data: page([SUMMARY]) }, canSend: true };
+    threadRead = thread;
+    rootData = readyRoot;
+    const html = renderToStaticMarkup(<Route.component />);
+    expect(html).toMatch(/data-pane="list"[\s\S]*aria-busy="true"[\s\S]*data-slot="skeleton"/);
+    expect(html).toContain('aria-label="Search conversations"');
+    expect(html).toContain("Hola, ¿tenéis cita mañana?");
+    expectDesignContract(html);
+  });
+
+  test("the search box is outside the list pane, so it keeps its focus while results change", () => {
+    searchParams = { wabaId: WABA, q: "Ana" };
+    loaderData = { conversations: { ok: true, data: page([SUMMARY]) }, canSend: true };
+    rootData = readyRoot;
+    const html = renderToStaticMarkup(<Route.component />);
+    expect(html).toMatch(/<input[^>]*type="search"[^>]*value="Ana"/);
+    expect(html).toContain('placeholder="Search name or number"');
+    expect(html).toContain("rounded-none");
   });
 });
 

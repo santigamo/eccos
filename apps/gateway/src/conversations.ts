@@ -68,7 +68,8 @@ export function messageFromEvent(ev: WhatsAppCallbackEvent): NewMessage | null {
   const outbound = ev.type === "echo" || ev.type === "message_echo";
   const fields: MessageContent =
     ev.type === "reply" || ev.type === "echo" ? { messageType: "text", text: ev.text } : ev;
-  const waId = ev.type === "reply" || ev.type === "message" ? ev.from : ev.to;
+  const inbound = ev.type === "reply" || ev.type === "message";
+  const waId = inbound ? ev.from : ev.to;
   return {
     id: ev.messageId,
     waId: waIdOf(waId),
@@ -79,7 +80,7 @@ export function messageFromEvent(ev: WhatsAppCallbackEvent): NewMessage | null {
     content: contentJson(fields),
     at: ev.at,
     status: outbound ? "sent" : null,
-    targetId: fields.reaction?.messageId ?? fields.originalMessageId ?? null,
+    targetId: fields.reaction?.messageId ?? fields.originalMessageId ?? (inbound ? ev.replyTo : undefined) ?? null,
     phoneNumberId: ev.phoneNumberId ?? null,
   };
 }
@@ -96,6 +97,8 @@ export function messageFromOutbound(input: {
   const body = parseRecord(input.request) ?? {};
   const type = typeof body.type === "string" ? body.type : "unknown";
   const typed = asRecord(body[type]);
+  // A reaction is stored the way the inbound reader reads one: `reaction.emoji`, folded by the message it names.
+  const reactedId = type === "reaction" ? str(typed?.message_id) : null;
   return {
     id: input.id,
     waId: waIdOf(input.waId),
@@ -103,10 +106,14 @@ export function messageFromOutbound(input: {
     origin: "live",
     type,
     text: outboundText(type, typed),
-    content: type === "text" || !typed ? null : JSON.stringify(typed),
+    content: reactedId
+      ? JSON.stringify({ reaction: { messageId: reactedId, emoji: str(typed?.emoji) } })
+      : type === "text" || !typed
+        ? null
+        : JSON.stringify(typed),
     at: input.at,
     status: "sent",
-    targetId: null,
+    targetId: reactedId ?? str(asRecord(body.context)?.message_id),
     phoneNumberId: input.phoneNumberId,
   };
 }

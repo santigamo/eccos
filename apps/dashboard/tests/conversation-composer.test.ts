@@ -196,6 +196,33 @@ describe("submitReply", () => {
     expect(noPhone).toMatchObject({ sent: false, title: "Number no longer available", secondary: null });
   });
 
+  test("a reply carries the id of the message it quotes; a plain send carries none", async () => {
+    const { calls, send } = fakeSend({ ok: true, data: { ok: true, messageId: "wamid.3" } });
+    await submitReply(send, { ...target, replyToMessageId: "wamid.in-1" }, "Hola");
+    await submitReply(send, target, "Hola");
+    expect(calls).toEqual([
+      {
+        data: {
+          wabaId: WABA,
+          phoneNumberId: "phone-a",
+          to: CUSTOMER,
+          text: "Hola",
+          replyToMessageId: "wamid.in-1",
+          idempotencyKey: expect.any(String),
+        },
+      },
+      {
+        data: {
+          wabaId: WABA,
+          phoneNumberId: "phone-a",
+          to: CUSTOMER,
+          text: "Hola",
+          idempotencyKey: expect.any(String),
+        },
+      },
+    ]);
+  });
+
   test("a boundary failure keeps the failure's own copy, and the text is not treated as sent", async () => {
     const outcome = await submitReply(
       fakeSend({ ok: false, kind: "unreachable", error: "binding down" }).send,

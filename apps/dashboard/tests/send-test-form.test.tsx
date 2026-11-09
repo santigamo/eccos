@@ -1,6 +1,7 @@
-import { describe, expect, mock, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import type { ReactElement, ReactNode } from "react";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
-import { renderToStaticMarkup } from "react-dom/server";
 
 /**
  * Rendering contract for the "Send test" sheet's form
@@ -21,6 +22,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
+// Registered before the first import of a component: React reads the DOM globals
+// when react-dom first loads, and a DOM test in this file would get no input events.
+GlobalRegistrator.register();
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const { renderToStaticMarkup } = await import("react-dom/server");
+
 const {
   SendTestForm,
   SendTestSheet,
@@ -30,6 +37,25 @@ const {
 } = await import("../src/components/templates/send-test-sheet");
 const { runSend } = await import("../src/lib/send-gate");
 const { analyzeTemplate } = await import("../src/lib/template-params");
+
+// SPREAD and delegating, as in `send-gate-dom.test.tsx`: the real send is captured
+// before `mock.module` retro-patches the live binding, and only the send is swapped.
+const gateway = await import("../src/server/gateway");
+const realSendTemplateTest = gateway.sendTemplateTest as (input: unknown) => Promise<unknown>;
+let sendTemplateTest = realSendTemplateTest;
+mock.module("../src/server/gateway", () => ({
+  ...gateway,
+  sendTemplateTest: (input: unknown) => sendTemplateTest(input),
+}));
+// A successful send renders the "View in messages" Link, which needs a router.
+const routerModule = await import("@tanstack/react-router");
+mock.module("@tanstack/react-router", () => ({
+  ...routerModule,
+  Link: (props: { children: ReactNode }) => <a href="/messages">{props.children}</a>,
+}));
+const { act } = await import("react");
+const { createRoot } = await import("react-dom/client");
+
 
 const PHONES = [{ phoneNumberId: "PNID1", displayPhoneNumber: "+34600000000" }];
 
@@ -463,5 +489,81 @@ describe("a real send is never repeated without an explicit act", () => {
     const idle = renderToStaticMarkup(<SendTestAction phase="idle" onSendAnother={() => {}} />);
     expect(idle).toContain("Send test message");
     expect(idle).not.toMatch(/ disabled=""/);
+  });
+});
+
+describe("SendTestForm reports the recipient it sent to", () => {
+  let unmount: (() => void) | null = null;
+
+  afterEach(() => {
+    act(() => unmount?.());
+    unmount = null;
+    document.body.innerHTML = "";
+    sendTemplateTest = realSendTemplateTest;
+  });
+
+  afterAll(async () => {
+    delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+    await GlobalRegistrator.unregister();
+  });
+
+/** Types into a controlled field the way a browser does, so React sees the change. */
+function type(field: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+  async function mount(node: ReactElement): Promise<HTMLElement> {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(node));
+    unmount = () => root.unmount();
+    return host;
+  }
+
+  const SENT = { ok: true, data: { ok: true, messageId: "wamid.sent-1" } };
+
+  test("a typed recipient is the one onSent receives", async () => {
+    sendTemplateTest = mock(async () => SENT);
+    const onSent = mock((_recipient: string) => {});
+    const host = await mount(
+      <SendTestForm
+        wabaId="waba-a"
+        templateName="hello_world"
+        languageCode="en_US"
+        sendability={ready("hi")}
+        phones={PHONES}
+        onSent={onSent}
+      />,
+    );
+    const field = host.querySelector<HTMLInputElement>("#send-test-recipient")!;
+    await act(async () => type(field, "+34 600 00 00 11"));
+
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    const submit = [...host.querySelectorAll("button")].find((b) => b.type === "submit")!;
+    await act(async () => submit.click());
+
+    expect(onSent).toHaveBeenCalledWith("+34 600 00 00 11");
+  });
+
+  test("a fixed recipient is passed through unchanged", async () => {
+    sendTemplateTest = mock(async () => SENT);
+    const onSent = mock((_recipient: string) => {});
+    const host = await mount(
+      <SendTestForm
+        wabaId="waba-a"
+        templateName="hello_world"
+        languageCode="en_US"
+        sendability={ready("hi")}
+        phones={PHONES}
+        recipient="15550100001"
+        onSent={onSent}
+      />,
+    );
+    const submit = [...host.querySelectorAll("button")].find((b) => b.type === "submit")!;
+    await act(async () => submit.click());
+
+    expect(onSent).toHaveBeenCalledWith("15550100001");
   });
 });

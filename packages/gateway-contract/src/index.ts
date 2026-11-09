@@ -128,7 +128,8 @@ export type MessageStatus = "sent" | "delivered" | "read" | "failed";
  * forward only (sent → delivered → read) and `failed` is terminal.
  *
  * Edits and revokes come back as their own rows: `targetId` names the message
- * they act on, and the reader resolves it.
+ * they act on, and the reader resolves it. A reaction's `targetId` is the message
+ * it reacts to, and a reply's is the message it quotes.
  */
 export interface MessageRecord {
   id: string;
@@ -168,6 +169,10 @@ export interface ConversationSummary {
   waId: string;
   name: string | null;
   messageCount: number;
+  /** Inbound live messages after the workspace's read point (system, reaction and edit notices excluded). */
+  unreadCount: number;
+  /** The operator flagged the conversation unread, to come back to it. */
+  markedUnread: boolean;
   lastMessage: { type: string; text: string | null; direction: MessageDirection; at: number };
 }
 
@@ -352,10 +357,10 @@ export type InboundListOpts = ListOpts & { type?: string; deliveryStatus?: strin
 export type OutboundListOpts = ListOpts & { status?: string };
 
 /** `cursor` is the `nextCursor` of the previous page; omit it for the first page. */
-export type ConversationListOpts = Omit<ListOpts, "before"> & { cursor?: string };
+export type ConversationListOpts = Omit<ListOpts, "before"> & { cursor?: string; q?: string };
 
 /** `waId` is the customer's number; digits or formatted, the gateway normalizes it. */
-export type ConversationOpts = ConversationListOpts & { waId: string };
+export type ConversationOpts = Omit<ConversationListOpts, "q"> & { waId: string };
 
 /** Where a reply to a thread goes out from, and the newest inbound that opens its window. */
 export interface ThreadReply {
@@ -888,7 +893,26 @@ export interface SendTextInput {
   to: string;
   /** 1 to 4096 characters, Meta's own body ceiling. */
   text: string;
+  /** The id (wamid) of the message this one quotes, sent as Meta's `context`. */
+  replyToMessageId?: string;
   /** One per send intent: a retry with the same key never sends twice (24 h). */
+  idempotencyKey?: string;
+}
+
+/**
+ * One emoji reaction from the conversation, sent to a message in the thread.
+ * An empty `emoji` removes the business's reaction, as it does in WhatsApp.
+ */
+export interface SendReactionInput {
+  wabaId: string;
+  phoneNumberId: string;
+  /** Digits for a phone number, or a BSUID, as {@link SendTextInput.to}. */
+  to: string;
+  /** The id (wamid) of the message reacted to. */
+  messageId: string;
+  /** One emoji, or "" to remove the reaction. */
+  emoji: string;
+  /** One per send intent, as {@link SendTextInput.idempotencyKey}. */
   idempotencyKey?: string;
 }
 
@@ -1119,6 +1143,11 @@ export interface GatewayApi {
    */
   sendText(input: SendTextInput, accountId: string): Promise<SendTextResult>;
   /**
+   * React to one message from the conversation. Same rules as {@link sendText}:
+   * ownership, rate limit, idempotency and the audit-trail row all apply.
+   */
+  sendReaction(input: SendReactionInput, accountId: string): Promise<SendTextResult>;
+  /**
    * Create one message template on the WABA ("New template").
    *
    * Narrow on purpose (see {@link CreateTemplateInput}): the caller names a
@@ -1181,6 +1210,7 @@ export interface GatewayApi {
     opts: Omit<ConversationOpts, "wabaId">,
   ): Promise<ScopedRead<CursorPage<MessageRecord>>>;
   readThreadView(org: ScopedOrg, opts: Omit<ConversationOpts, "wabaId">): Promise<ScopedRead<ThreadView>>;
+  markConversation(org: ScopedOrg, opts: { waId: string; read: boolean }): Promise<ScopedRead<void>>;
   readSubscriberConfig(org: ScopedOrg): Promise<ScopedRead<SubscriberConfig>>;
   /**
    * The root loader's read: the account context, plus the status of the

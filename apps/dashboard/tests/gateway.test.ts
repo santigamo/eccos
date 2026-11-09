@@ -240,6 +240,9 @@ const {
   recheckNumber,
   sendTemplateTest,
   sendText,
+  sendReaction,
+  validateSendReactionInput,
+  validateSendTextInput,
   canSendMessages,
   validateSendTestInput,
   createTemplate,
@@ -262,6 +265,8 @@ const {
   getThreadView,
   validateConversationListInput,
   validateConversationInput,
+  validateMarkConversationInput,
+  markConversation,
   listBroadcasts,
   getBroadcast,
   cancelBroadcast,
@@ -2583,10 +2588,110 @@ describe("listConversations / getConversation (Conversations view)", () => {
     expect(() => validateConversationListInput({ limit: 0 })).toThrow(/limit/);
     expect(validateConversationListInput(undefined)).toBeUndefined();
   });
+
+  test("the inbox search is trimmed, omitted when blank, and capped at 100 characters", () => {
+    expect(validateConversationListInput({ q: "  Ana  " })).toEqual({ q: "Ana" });
+    expect(validateConversationListInput({ q: "   " })).toEqual({});
+    expect(validateConversationListInput({ q: "x".repeat(100) })).toEqual({ q: "x".repeat(100) });
+    expect(() => validateConversationListInput({ q: "x".repeat(101) })).toThrow(/q must be at most 100/);
+    expect(() => validateConversationListInput({ q: 42 })).toThrow(/q must be a string/);
+  });
+
+  test("markConversation takes a phone number or BSUID and a strict boolean", () => {
+    expect(validateMarkConversationInput({ waId: "+1 (555) 010-0001", read: true })).toEqual({
+      waId: "15550100001",
+      read: true,
+    });
+    expect(validateMarkConversationInput({ waId: "US.13491208655302741918", read: false, wabaId: "waba-a" })).toEqual({
+      wabaId: "waba-a",
+      waId: "US.13491208655302741918",
+      read: false,
+    });
+    expect(() => validateMarkConversationInput({ waId: "abc", read: true })).toThrow(/waId must be/);
+    expect(() => validateMarkConversationInput({ waId: "15550100001", read: "yes" })).toThrow(/read must be true or false/);
+    expect(() => validateMarkConversationInput({ waId: "15550100001" })).toThrow(/read must be true or false/);
+  });
+
+  test("marking a conversation is an operator's act: a viewer is refused before the gateway is touched", async () => {
+    let called = false;
+    withResources({
+      markConversation: async () => {
+        called = true;
+        return { scope: {}, data: undefined };
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    expect(await markConversation({ data: { waId: "15550100001", read: true, wabaId: "waba-a" } })).toMatchObject({
+      ok: false,
+      kind: "forbidden",
+    });
+    expect(called).toBe(false);
+  });
+
+  test("an operator marks a conversation read through the gateway", async () => {
+    const seen: unknown[] = [];
+    withResources({
+      markConversation: async (...args: unknown[]) => {
+        seen.push(args);
+        return { scope: {}, data: undefined };
+      },
+    });
+    expect(await markConversation({ data: { waId: "15550100001", read: false, wabaId: "waba-a" } })).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    expect(seen).toEqual([[{ organizationId: ORG_ID, wabaId: "waba-a", rejectUnknown: undefined, mode: undefined }, { waId: "15550100001", read: false }]]);
+  });
+});
+
+describe("validateSendTextInput and validateSendReactionInput (quotes and reactions)", () => {
+  const TEXT = { wabaId: "waba-a", phoneNumberId: "phone-a", to: "34600111222", text: "Hola" };
+  const REACTION = { wabaId: "waba-a", phoneNumberId: "phone-a", to: "34600111222", messageId: "wamid.IN1", emoji: "👍" };
+
+  test("a reply carries the quoted message id, trimmed; a plain send carries none", () => {
+    expect(validateSendTextInput({ ...TEXT, replyToMessageId: " wamid.HBgL+/=_:-1 " })).toEqual({
+      ...TEXT,
+      replyToMessageId: "wamid.HBgL+/=_:-1",
+    });
+    expect(validateSendTextInput(TEXT)).not.toHaveProperty("replyToMessageId");
+  });
+
+  test("refuses a quoted id that is malformed, too long, or blank", () => {
+    expect(() => validateSendTextInput({ ...TEXT, replyToMessageId: "wamid 1" })).toThrow(/valid message id/);
+    expect(() => validateSendTextInput({ ...TEXT, replyToMessageId: "x".repeat(257) })).toThrow(/valid message id/);
+    expect(() => validateSendTextInput({ ...TEXT, replyToMessageId: "   " })).toThrow(/valid message id/);
+    expect(() => validateSendTextInput({ ...TEXT, replyToMessageId: 42 })).toThrow(/valid message id/);
+  });
+
+  test("passes a well-formed reaction through, with the emoji as typed", () => {
+    expect(validateSendReactionInput(REACTION)).toEqual(REACTION);
+    expect(validateSendReactionInput({ ...REACTION, emoji: "👨‍👩‍👧" }).emoji).toBe("👨‍👩‍👧");
+    expect(validateSendReactionInput({ ...REACTION, emoji: "🇪🇸" }).emoji).toBe("🇪🇸");
+  });
+
+  test("accepts an empty emoji, which removes the reaction", () => {
+    expect(validateSendReactionInput({ ...REACTION, emoji: "" }).emoji).toBe("");
+  });
+
+  test("refuses two emoji, an emoji with a word, or an emoji past 32 code units", () => {
+    expect(() => validateSendReactionInput({ ...REACTION, emoji: "👍👍" })).toThrow(/one emoji/);
+    expect(() => validateSendReactionInput({ ...REACTION, emoji: "ok" })).toThrow(/one emoji/);
+    expect(() => validateSendReactionInput({ ...REACTION, emoji: "👍".repeat(17) })).toThrow(/one emoji/);
+    expect(() => validateSendReactionInput({ ...REACTION, emoji: 1 })).toThrow(/must be a string/);
+  });
+
+  test("refuses a bad message id, and keeps the sendText recipient and WABA rules", () => {
+    expect(() => validateSendReactionInput({ ...REACTION, messageId: "" })).toThrow(/messageId is required/);
+    expect(() => validateSendReactionInput({ ...REACTION, messageId: "wamid 1" })).toThrow(/messageId is required/);
+    expect(() => validateSendReactionInput({ ...REACTION, to: "not-a-number" })).toThrow(/international format/);
+    expect(() => validateSendReactionInput({ ...REACTION, wabaId: undefined })).toThrow(/wabaId is required/);
+    expect(() => validateSendReactionInput({ ...REACTION, idempotencyKey: "short" })).toThrow(/idempotency/);
+  });
 });
 
 describe("the conversation composer's server functions", () => {
   const TEXT = { wabaId: "waba-a", phoneNumberId: "phone-a", to: "34600111222", text: "Hola" };
+  const REACTION = { wabaId: "waba-a", phoneNumberId: "phone-a", to: "34600111222", messageId: "wamid.IN1", emoji: "👍" };
 
   test("a viewer may not send free text: refused as forbidden, and the binding is never touched", async () => {
     let called = false;
@@ -2598,6 +2703,20 @@ describe("the conversation composer's server functions", () => {
     });
     fakeDeniedActions = new Set(["operate"]);
     const res = await sendText({ data: TEXT });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("a viewer may not react: refused as forbidden, and the binding is never touched", async () => {
+    let called = false;
+    withResources({
+      sendReaction: async () => {
+        called = true;
+        return { ok: true, messageId: "wamid.REACT" };
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    const res = await sendReaction({ data: REACTION });
     expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
     expect(called).toBe(false);
   });

@@ -55,6 +55,13 @@ describe("Page (shared page shell, all views)", () => {
     const html = renderToStaticMarkup(<Page title="Events">{null}</Page>);
     expect(html).toContain("Events");
   });
+
+  test("fill takes the shell's height instead of at least it, and only when asked", () => {
+    const filled = renderToStaticMarkup(<Page title="Conversations" fill>{null}</Page>);
+    expect(filled.startsWith('<div class="flex min-h-0 flex-1 flex-col">')).toBe(true);
+    const plain = renderToStaticMarkup(<Page title="Events">{null}</Page>);
+    expect(plain.startsWith('<div class="flex min-h-full flex-col">')).toBe(true);
+  });
 });
 
 describe("StatusTag (the status column on every log and table)", () => {
