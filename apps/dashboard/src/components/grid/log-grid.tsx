@@ -118,10 +118,10 @@ export function LogGrid<TData extends object>({
         scrollbar.
       */}
       <DataGridScrollArea
-        className="w-full min-h-0 max-h-[calc(100svh-var(--header-height,3rem)-10rem)] border border-border bg-card"
+        className="w-full min-h-0 max-h-[calc(100svh-var(--header-height,3rem)-16rem)] border border-border bg-card"
         orientation="vertical"
       >
-        <DataGridContainer>
+        <DataGridContainer className="overflow-visible">
           <DataGridTable footerContent={footer} />
         </DataGridContainer>
       </DataGridScrollArea>
