@@ -16,6 +16,6 @@
     "head_sampling_rate": 1
   },
 
-  // `custom_domain: true` lets Cloudflare create and manage the DNS record.
-  "routes": [{ "pattern": "docs.eccos.chat", "custom_domain": true }]
+  // A zone route with a proxied placeholder A, so the Sigue Online failover can switch it.
+  "routes": [{ "pattern": "docs.eccos.chat/*", "zone_name": "eccos.chat" }]
 }
