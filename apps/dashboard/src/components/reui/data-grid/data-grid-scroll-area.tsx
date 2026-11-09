@@ -397,13 +397,13 @@ function DataGridScrollArea({
         // vertical overflow, so consumers can style scrollable vs short
         // grids with a plain ancestor attribute selector.
         data-overflow-vertical={hasCustomVerticalOverflow ? "true" : undefined}
-        className={cn("relative", className)}
+        className={cn("relative flex flex-col", className)}
         {...props}
       >
         <ScrollAreaPrimitive.Viewport
           ref={viewportRef}
           data-slot="scroll-area-viewport"
-          className="size-full"
+          className="min-h-0 w-full flex-auto"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content">
             {children}
