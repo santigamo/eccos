@@ -10,6 +10,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -17,6 +18,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { ThemeMenu } from "@/components/theme-menu"
 
 /**
  * The account section of the sidebar: who is signed in, and the way out.
@@ -76,6 +78,8 @@ export function NavUser() {
           {/* No identity header inside the menu: it opens directly above the
               trigger, which already shows the same name and email. */}
           <DropdownMenuContent align="end" side="top" className="min-w-56">
+            <ThemeMenu />
+            <DropdownMenuSeparator />
             <DropdownMenuItem disabled={signingOut} onClick={() => void signOut()}>
               <LogOutIcon aria-hidden="true" />
               {signingOut ? "Signing out…" : "Sign out"}

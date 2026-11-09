@@ -40,7 +40,7 @@ export function HeldNotice({
     <output
       className={
         held
-          ? "mb-4 block border-l-2 border-l-[#f0a020] px-3 py-2 text-foreground text-sm"
+          ? "mb-4 block border-l-2 border-l-warning px-3 py-2 text-foreground text-sm"
           : undefined
       }
       aria-live="polite"
@@ -53,7 +53,7 @@ export function HeldNotice({
           <Link
             to="/webhooks"
             search={wabaId ? { wabaId } : {}}
-            className="text-primary underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             Set a forwarding target
           </Link>

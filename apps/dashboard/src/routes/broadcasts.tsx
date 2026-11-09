@@ -69,7 +69,7 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
             params={{ broadcastId: row.id }}
             search={wabaId ? { wabaId } : {}}
             onClick={(event) => event.stopPropagation()}
-            className={`text-foreground ${COUNT_LINK} hover:text-primary`}
+            className={`text-foreground ${COUNT_LINK} hover:text-ink`}
           >
             {row.template.name}
             <span className="text-muted-foreground"> · {row.template.language}</span>
@@ -125,7 +125,7 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
                   params={{ broadcastId: info.row.original.id }}
                   search={{ status, ...(wabaId ? { wabaId } : {}) }}
                   onClick={(event) => event.stopPropagation()}
-                  className={`font-mono text-xs tabular-nums text-[#ff7777] ${COUNT_LINK}`}
+                  className={`font-mono text-xs tabular-nums text-destructive-foreground ${COUNT_LINK}`}
                 >
                   {count}
                   {status === "unknown" ? " unknown" : ""}

@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useTheme } from "@/lib/theme";
+
 /**
  * The landing's "iridescent silk" hero shader (apps/site/public/js/shader.js)
  * ported to the pre-auth brand panel. Vanilla WebGL1, no libraries, no
  * external requests. VERT/FRAG are kept byte-identical to the canonical site
- * shader so the two cannot drift; the console runs it dark-only (u_light
- * stays 0 — the console has no daylight reading) and targets this
- * component's host element instead of the site's #hero.
+ * shader so the two cannot drift; the console runs it in the dark reading only
+ * (u_light stays 0) and targets this component's host element instead of the
+ * site's #hero. In light the loop never starts: the static daylight photo
+ * (hero-silk-light.jpg, the site's daylight fallback) stands in.
  *
  * Bails out — leaving the CSS fallback gradient visible — on reduced motion,
  * missing WebGL, or context loss. Parks off-screen and on hidden tabs.
@@ -148,6 +151,7 @@ const LG_QUERY = "(min-width: 64rem)";
 
 export function SilkPanel({ className }: { className?: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const { effective } = useTheme();
   // SSR-safe: matchMedia is unavailable during server render, so the canvas
   // is a progressive enhancement that fades in after hydration on desktop
   // (the CSS fallback gradient paints first). Crossing the breakpoint tears
@@ -166,7 +170,7 @@ export function SilkPanel({ className }: { className?: string }) {
   }, []);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || effective !== "dark") return;
     const mounted = hostRef.current;
     // A CSS-hidden host (breakpoint crossed before hydration) has no box;
     // never allocate a WebGL context for an invisible panel.
@@ -185,7 +189,10 @@ export function SilkPanel({ className }: { className?: string }) {
     canvas.style.height = "100%";
     canvas.style.opacity = "0";
     canvas.style.transition = "opacity 700ms ease";
-    host.insertBefore(canvas, host.firstChild);
+    canvas.style.display = "var(--silk-canvas-display)";
+    // Appended, not prepended: the CSS fallback and the daylight photo are
+    // children of the host too, and the canvas must paint above both.
+    host.appendChild(canvas);
 
     const glOpts: WebGLContextAttributes = {
       alpha: false,
@@ -246,7 +253,7 @@ export function SilkPanel({ className }: { className?: string }) {
 
     const uRes = gl.getUniformLocation(prog, "uRes");
     const uTime = gl.getUniformLocation(prog, "uTime");
-    // Dark-only console: the night palette is canonical here, u_light stays 0.
+    // Dark reading only: the night palette is canonical here, u_light stays 0.
     gl.uniform1f(gl.getUniformLocation(prog, "u_light"), 0.0);
 
     /* ---- sizing: DPR capped at 1.5, plus a total-pixel ceiling ---- */
@@ -379,14 +386,24 @@ export function SilkPanel({ className }: { className?: string }) {
     }
 
     return cleanup;
-  }, [active]);
+  }, [active, effective]);
 
   return (
-    <div
-      ref={hostRef}
-      aria-hidden="true"
-      className={className}
-      style={{ background: FALLBACK_BG }}
-    />
+    <div ref={hostRef} aria-hidden="true" className={className}>
+      <img
+        src="/assets/hero-silk-light.jpg"
+        alt=""
+        loading="lazy"
+        className="absolute inset-0 h-full w-full object-cover"
+        style={{ display: "var(--silk-photo-display)" }}
+      />
+      <div
+        className="absolute inset-0"
+        style={{
+          background: FALLBACK_BG,
+          display: "var(--silk-canvas-display)",
+        }}
+      />
+    </div>
   );
 }

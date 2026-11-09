@@ -18,7 +18,18 @@
   font-display: swap;
 }
 
-@custom-variant dark (&:is(.dark *));
+/* `dark:` follows the effective theme: the system preference unless an
+   explicit override on <html> says otherwise (see lib/theme.ts). */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:is(:root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+  &:is(:root[data-theme="dark"] *) {
+    @slot;
+  }
+}
 
 @theme inline {
   --font-sans: "Inter Variable", sans-serif;
@@ -56,6 +67,7 @@
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --color-glow: #34e27a;
+  --color-ink: var(--ink);
   --radius-xs: 0;
   --radius-sm: 0;
   --radius-md: 0;
@@ -160,6 +172,10 @@
   --tag-live-bg: rgba(37, 211, 102, 0.13);
   --tag-live-ink: #34e27a;
   --tag-live-edge: rgba(37, 211, 102, 0.3);
+  --tint-live: rgba(37, 211, 102, 0.13);
+  --mark: #34e27a;
+  --outline-focus: color-mix(in oklab, #25d366 50%, transparent);
+  --progress-still: rgba(37, 211, 102, 0.45);
   --tag-soon-bg: rgba(255, 255, 255, 0.06);
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   /* WhatsApp's own dark palette, for the template previews only: they depict
@@ -173,11 +189,197 @@
   --wa-muted: #8696a0;
   --wa-link: #53bdeb;
   --wa-rule: rgba(233, 237, 239, 0.08);
+  /* Light-theme tokens. Dark values are what the console always rendered; the
+     light blocks below declare the same set (tests/theme-tokens.test.ts). */
+  --ink: #25d366;
+  --row-hover: rgba(255, 255, 255, 0.03);
+  --selection-bg: rgba(37, 211, 102, 0.2);
+  --lantern-display: block;
+  --ambient:
+    radial-gradient(1000px 540px at 78% -10%, rgba(37, 211, 102, 0.1), transparent 62%),
+    radial-gradient(1400px 900px at 55% 45%, rgba(37, 211, 102, 0.035), transparent 68%),
+    radial-gradient(900px 520px at 88% 110%, rgba(15, 179, 154, 0.07), transparent 62%);
+  --auth-scrim: linear-gradient(
+    to right,
+    rgba(7, 12, 15, 0.72) 0%,
+    rgba(7, 12, 15, 0.42) 45%,
+    rgba(7, 12, 15, 0.08) 100%
+  );
+  --silk-photo-display: none;
+  --silk-canvas-display: block;
+}
+
+/* Daylight: paper, ink and hairlines. Same token set as the override block. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --background: #f7f9f8;
+    --foreground: #0b141a;
+    --card: #ffffff;
+    --card-foreground: #0b141a;
+    --popover: #ffffff;
+    --popover-foreground: #0b141a;
+    --primary: #25d366;
+    --primary-foreground: #06120c;
+    --secondary: #eef3f0;
+    --secondary-foreground: #0b141a;
+    --muted: #eef3f0;
+    --muted-foreground: rgba(11, 20, 26, 0.64);
+    --accent: rgba(11, 20, 26, 0.06);
+    --accent-foreground: #0b141a;
+    --destructive: #e03131;
+    --border: rgba(11, 20, 26, 0.1);
+    --input: rgba(11, 20, 26, 0.5);
+    --ring: #0f9d58;
+    --chart-1: #0f9d58;
+    --chart-2: #0a6b5c;
+    --chart-3: #0e7490;
+    --chart-4: #0b141a;
+    --chart-5: rgba(11, 20, 26, 0.64);
+    --sidebar: #ffffff;
+    --sidebar-foreground: rgba(11, 20, 26, 0.72);
+    --sidebar-primary: #25d366;
+    --sidebar-primary-foreground: #06120c;
+    --sidebar-accent: rgba(11, 20, 26, 0.06);
+    --sidebar-accent-foreground: #0b141a;
+    --sidebar-border: rgba(11, 20, 26, 0.1);
+    --sidebar-ring: #0f9d58;
+    --destructive-foreground: #b3261e;
+    --success: #25d366;
+    --success-foreground: #0b7a4b;
+    --info: #0fb39a;
+    --info-foreground: #0a6b5c;
+    --warning: #f0a020;
+    --warning-foreground: #8a5a00;
+    --invert: #0b141a;
+    --invert-foreground: #f7f9f8;
+    --line: rgba(11, 20, 26, 0.1);
+    --line-strong: rgba(11, 20, 26, 0.5);
+    --ghost-fill: transparent;
+    --ghost-fill-hover: #eef3f0;
+    --ghost-edge-hover: #0b141a;
+    --hatch-line: rgba(11, 20, 26, 0.12);
+    --nav-bg: rgba(247, 249, 248, 0.85);
+    --caustic: 0 24px 64px rgba(37, 211, 102, 0.16);
+    --caustic-hi: 0 30px 76px rgba(37, 211, 102, 0.24);
+    --tag-live-bg: #25d366;
+    --tag-live-ink: #06120c;
+    --tag-live-edge: #1cb857;
+    --tint-live: rgba(37, 211, 102, 0.14);
+    --mark: #0f9d58;
+    --outline-focus: #0f9d58;
+    --progress-still: #0f9d58;
+    --tag-soon-bg: transparent;
+    --wa-wall: #efeae2;
+    --wa-bar: #f0f2f5;
+    --wa-bubble: #ffffff;
+    --wa-media: #d1d7db;
+    --wa-chip: #ffffff;
+    --wa-ink: #111b21;
+    --wa-muted: #54656f;
+    --wa-link: #027eb5;
+    --wa-rule: rgba(11, 20, 26, 0.08);
+    --ink: #0b7a4b;
+    --row-hover: rgba(11, 20, 26, 0.05);
+    --selection-bg: #25d366;
+    --lantern-display: none;
+    --ambient: none;
+    --auth-scrim: linear-gradient(
+      to right,
+      rgba(247, 249, 248, 0.92) 0%,
+      rgba(247, 249, 248, 0.7) 45%,
+      rgba(247, 249, 248, 0.2) 100%
+    );
+    --silk-photo-display: block;
+    --silk-canvas-display: none;
+  }
+}
+
+:root[data-theme="light"] {
+  --background: #f7f9f8;
+  --foreground: #0b141a;
+  --card: #ffffff;
+  --card-foreground: #0b141a;
+  --popover: #ffffff;
+  --popover-foreground: #0b141a;
+  --primary: #25d366;
+  --primary-foreground: #06120c;
+  --secondary: #eef3f0;
+  --secondary-foreground: #0b141a;
+  --muted: #eef3f0;
+  --muted-foreground: rgba(11, 20, 26, 0.64);
+  --accent: rgba(11, 20, 26, 0.06);
+  --accent-foreground: #0b141a;
+  --destructive: #e03131;
+  --border: rgba(11, 20, 26, 0.1);
+  --input: rgba(11, 20, 26, 0.5);
+  --ring: #0f9d58;
+  --chart-1: #0f9d58;
+  --chart-2: #0a6b5c;
+  --chart-3: #0e7490;
+  --chart-4: #0b141a;
+  --chart-5: rgba(11, 20, 26, 0.64);
+  --sidebar: #ffffff;
+  --sidebar-foreground: rgba(11, 20, 26, 0.72);
+  --sidebar-primary: #25d366;
+  --sidebar-primary-foreground: #06120c;
+  --sidebar-accent: rgba(11, 20, 26, 0.06);
+  --sidebar-accent-foreground: #0b141a;
+  --sidebar-border: rgba(11, 20, 26, 0.1);
+  --sidebar-ring: #0f9d58;
+  --destructive-foreground: #b3261e;
+  --success: #25d366;
+  --success-foreground: #0b7a4b;
+  --info: #0fb39a;
+  --info-foreground: #0a6b5c;
+  --warning: #f0a020;
+  --warning-foreground: #8a5a00;
+  --invert: #0b141a;
+  --invert-foreground: #f7f9f8;
+  --line: rgba(11, 20, 26, 0.1);
+  --line-strong: rgba(11, 20, 26, 0.5);
+  --ghost-fill: transparent;
+  --ghost-fill-hover: #eef3f0;
+  --ghost-edge-hover: #0b141a;
+  --hatch-line: rgba(11, 20, 26, 0.12);
+  --nav-bg: rgba(247, 249, 248, 0.85);
+  --caustic: 0 24px 64px rgba(37, 211, 102, 0.16);
+  --caustic-hi: 0 30px 76px rgba(37, 211, 102, 0.24);
+  --tag-live-bg: #25d366;
+  --tag-live-ink: #06120c;
+  --tag-live-edge: #1cb857;
+  --tint-live: rgba(37, 211, 102, 0.14);
+  --mark: #0f9d58;
+  --outline-focus: #0f9d58;
+  --progress-still: #0f9d58;
+  --tag-soon-bg: transparent;
+  --wa-wall: #efeae2;
+  --wa-bar: #f0f2f5;
+  --wa-bubble: #ffffff;
+  --wa-media: #d1d7db;
+  --wa-chip: #ffffff;
+  --wa-ink: #111b21;
+  --wa-muted: #54656f;
+  --wa-link: #027eb5;
+  --wa-rule: rgba(11, 20, 26, 0.08);
+  --ink: #0b7a4b;
+  --row-hover: rgba(11, 20, 26, 0.05);
+  --selection-bg: #25d366;
+  --lantern-display: none;
+  --ambient: none;
+  --auth-scrim: linear-gradient(
+    to right,
+    rgba(247, 249, 248, 0.92) 0%,
+    rgba(247, 249, 248, 0.7) 45%,
+    rgba(247, 249, 248, 0.2) 100%
+  );
+  --silk-photo-display: block;
+  --silk-canvas-display: none;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
+    outline-color: var(--outline-focus);
   }
   body {
     @apply bg-background text-foreground;
@@ -191,10 +393,7 @@
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    background:
-      radial-gradient(1000px 540px at 78% -10%, rgba(37, 211, 102, 0.1), transparent 62%),
-      radial-gradient(1400px 900px at 55% 45%, rgba(37, 211, 102, 0.035), transparent 68%),
-      radial-gradient(900px 520px at 88% 110%, rgba(15, 179, 154, 0.07), transparent 62%);
+    background: var(--ambient);
   }
   /* The app content is static flow, so it would paint below a positioned
      z-index:0 layer. Lift every body child one step above the glow. Base-layer
@@ -207,7 +406,7 @@
     @apply font-sans;
   }
   ::selection {
-    background-color: rgba(37, 211, 102, 0.2);
+    background-color: var(--selection-bg);
   }
   /* Pixel faces blur under subpixel smoothing at small sizes — grayscale AA
      keeps the stems crisp. 11px is the machine voice's floor (12px standard). */
@@ -230,6 +429,7 @@
     height: 1200px;
     pointer-events: none;
     z-index: 0;
+    display: var(--lantern-display);
     opacity: 0;
     transition: opacity 0.6s var(--ease);
     background: radial-gradient(closest-side, rgba(37, 211, 102, 0.06), transparent 70%);
@@ -283,7 +483,7 @@
     background: linear-gradient(
       90deg,
       transparent,
-      var(--color-glow),
+      var(--mark),
       transparent
     );
     animation: route-progress-sweep 1s linear infinite;
@@ -299,7 +499,7 @@
   @media (prefers-reduced-motion: reduce) {
     .route-progress::after {
       width: 100%;
-      background: rgba(37, 211, 102, 0.45);
+      background: var(--progress-still);
       animation: none;
     }
   }

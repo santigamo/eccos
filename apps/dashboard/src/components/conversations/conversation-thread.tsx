@@ -201,7 +201,7 @@ function MessageBubble({
         <article
           className={
             outgoing
-              ? "max-w-[min(34rem,88%)] border border-(--tag-live-edge) bg-(--tag-live-bg) px-3 py-2 text-sm"
+              ? "max-w-[min(34rem,88%)] border border-(--tag-live-edge) bg-(--tint-live) px-3 py-2 text-sm"
               : "max-w-[min(34rem,88%)] border border-(--line-strong) bg-muted/40 px-3 py-2 text-sm"
           }
         >

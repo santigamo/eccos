@@ -90,7 +90,7 @@ function ResetPasswordPage() {
           {/* <output> is the console's live-region element; `block` keeps the
               div box it replaces (output is inline by default). */}
           <output aria-live="polite" aria-atomic="true" className="block">
-            <a href="/signin" className="text-primary text-sm underline-offset-4 hover:underline">
+            <a href="/signin" className="text-ink text-sm underline-offset-4 hover:underline">
               Go to sign in
             </a>
           </output>
@@ -107,7 +107,7 @@ function ResetPasswordPage() {
                 : "This page needs the link from your reset email. Request a new one from the forgot-password page."}
             </FrameDescription>
           </FrameHeader>
-          <a href="/forgot-password" className="text-primary text-sm underline-offset-4 hover:underline">
+          <a href="/forgot-password" className="text-ink text-sm underline-offset-4 hover:underline">
             Request a new link
           </a>
         </>

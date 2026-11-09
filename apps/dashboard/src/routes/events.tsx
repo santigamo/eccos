@@ -152,7 +152,7 @@ function kindColumn(onOpen?: (row: InboundRow) => void) {
             onOpen(row);
           }}
           aria-label={`Inspect event ${row.id}`}
-          className={cn(ink, COUNT_LINK, "hover:text-primary")}
+          className={cn(ink, COUNT_LINK, "hover:text-ink")}
         >
           {row.type}
         </button>
@@ -200,7 +200,7 @@ function partyColumn(wabaId?: string) {
             // Stops here: this link goes to the MESSAGE sheet on another page,
             // while the row underneath opens this event's own sheet.
             onClick={(event) => event.stopPropagation()}
-            className={cn("font-mono text-xs text-foreground hover:text-primary", COUNT_LINK)}
+            className={cn("font-mono text-xs text-foreground hover:text-ink", COUNT_LINK)}
           >
             ↳ {messageRefText(summary)}
           </Link>
@@ -586,7 +586,7 @@ function EventCounts({
             className={cn(
               COUNT_LINK,
               entry.family === "problem"
-                ? "text-[#ff7777]"
+                ? "text-destructive-foreground"
                 : entry.family === "message"
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground",

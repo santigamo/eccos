@@ -154,7 +154,7 @@ function ConversationRow({
         data-selected={selected}
         onMouseEnter={prefetch}
         onFocus={prefetch}
-        className="block border-b border-(--line) px-4 py-3 outline-none transition-colors hover:bg-white/[.03] focus-visible:ring-1 focus-visible:ring-ring data-[selected=true]:bg-(--tag-live-bg) data-[selected=true]:shadow-[inset_2px_0_0_0_var(--color-glow)]"
+        className="block border-b border-(--line) px-4 py-3 outline-none transition-colors hover:bg-(--row-hover) focus-visible:ring-1 focus-visible:ring-ring data-[selected=true]:bg-(--tint-live) data-[selected=true]:shadow-[inset_2px_0_0_0_var(--mark)]"
       >
         <span className="flex items-baseline justify-between gap-3">
           <span className={`truncate ${unread ? "font-semibold" : "font-medium"} text-foreground`}>
@@ -179,7 +179,7 @@ function ConversationRow({
               <span className="sr-only"> unread messages</span>
             </span>
           ) : markedUnread ? (
-            <span className="size-2 shrink-0 bg-(--color-glow)">
+            <span className="size-2 shrink-0 bg-(--mark)">
               <span className="sr-only">Marked unread</span>
             </span>
           ) : (

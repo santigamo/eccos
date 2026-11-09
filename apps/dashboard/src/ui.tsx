@@ -81,9 +81,9 @@ const STATUS_TONES: Record<string, StatusTone> = {
 const TONE_CLASSES: Record<StatusTone, string> = {
   success:
     "bg-(--tag-live-bg) text-(color:--tag-live-ink) border-(--tag-live-edge)",
-  warning: "bg-[rgba(240,160,32,.12)] text-[#f0a020] border-[rgba(240,160,32,.3)]",
+  warning: "bg-warning/12 text-warning-foreground border-warning/30",
   destructive:
-    "bg-[rgba(224,49,49,.12)] text-[#ff7777] border-[rgba(224,49,49,.3)]",
+    "bg-destructive/12 text-destructive-foreground border-destructive/30",
   neutral: "bg-(--tag-soon-bg) text-muted-foreground border-(--line-strong)",
 }
 
@@ -116,11 +116,11 @@ export function StatusTag({ status }: { status: string }) {
  * on, so the exceptions carry; everything else stays muted.
  */
 const COUNT_INK: Record<string, string> = {
-  failed: "text-[#ff7777]",
-  rejected: "text-[#ff7777]",
-  unhealthy: "text-[#ff7777]",
-  pending: "text-[#f0a020]",
-  degraded: "text-[#f0a020]",
+  failed: "text-destructive-foreground",
+  rejected: "text-destructive-foreground",
+  unhealthy: "text-destructive-foreground",
+  pending: "text-warning-foreground",
+  degraded: "text-warning-foreground",
 }
 
 /** Quiet at rest, underlined on hover — a count that admits it is a door. */

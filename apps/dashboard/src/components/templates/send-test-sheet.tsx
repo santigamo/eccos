@@ -482,7 +482,7 @@ function NoticeBody({ notice, wabaId }: { notice: Notice; wabaId: string }) {
   }
   return (
     <span className="block">
-      <span className="block text-sm text-[#ff7777]">{notice.title}</span>
+      <span className="block text-sm text-destructive-foreground">{notice.title}</span>
       <span className="block text-sm text-muted-foreground">{notice.detail}</span>
       {notice.secondary ? (
         <span className="mt-1 block font-mono text-xs break-words text-muted-foreground">

@@ -374,7 +374,7 @@ describe("WabaOption: the account list, its state, and its active marking", () =
     );
     expect(pending).toContain(">pending<");
     // The existing tag anatomy: square, 1px edge, machine voice, amber ink.
-    expect(pending).toContain("text-[#f0a020]");
+    expect(pending).toContain("text-warning-foreground");
 
     const coexistence = renderToStaticMarkup(
       <WabaOption

@@ -439,7 +439,7 @@ describe("ConversationList", () => {
       <ConversationList {...listProps} items={[{ ...SUMMARY, markedUnread: true }]} />,
     );
     expect(html).toContain('<span class="truncate font-semibold text-foreground">Cliente de prueba</span>');
-    expect(html).toContain('<span class="size-2 shrink-0 bg-(--color-glow)"><span class="sr-only">Marked unread</span></span>');
+    expect(html).toContain('<span class="size-2 shrink-0 bg-(--mark)"><span class="sr-only">Marked unread</span></span>');
     expect(html).not.toContain("unread messages");
   });
 

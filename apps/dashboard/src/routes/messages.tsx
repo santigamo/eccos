@@ -115,7 +115,7 @@ function messageColumn(onOpen?: (row: OutboundRow) => void) {
             onOpen(row);
           }}
           aria-label={`Inspect message ${row.id}`}
-          className={`font-mono text-xs text-foreground ${COUNT_LINK} hover:text-primary`}
+          className={`font-mono text-xs text-foreground ${COUNT_LINK} hover:text-ink`}
         >
           {label}
         </button>

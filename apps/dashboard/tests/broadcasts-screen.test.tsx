@@ -100,16 +100,16 @@ describe("/broadcasts", () => {
 
   test("failed is red only when there is something to act on", () => {
     const html = renderList([summary()]);
-    expect(html).toContain("text-[#ff7777]");
+    expect(html).toContain("text-destructive-foreground");
     expect(html).toContain('href="/broadcasts/$broadcastId"');
     const clean = renderList([summary({ counts: { queued: 0, sending: 0, sent: 12, failed: 0, unknown: 0, cancelled: 0 } })]);
-    expect(clean).not.toContain("text-[#ff7777]");
+    expect(clean).not.toContain("text-destructive-foreground");
   });
 
   test("unknown outcomes are counted and linked on their own, not folded into failed", () => {
     const html = renderList([summary({ counts: { queued: 0, sending: 0, sent: 10, failed: 0, unknown: 2, cancelled: 0 } })]);
     expect(html).toContain("unknown</a>");
-    expect(html.match(/text-\[#ff7777\]/g)).toHaveLength(1);
+    expect(html.match(/text-destructive-foreground/g)).toHaveLength(1);
   });
 
   test("empty: says what will appear and links the guide", () => {

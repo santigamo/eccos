@@ -141,7 +141,7 @@ function DataGridColumnHeaderInner<TData extends object, TValue>({
           <ArrowUpIcon className="size-3.5!" />
           <span className="grow">Asc</span>
           {isSorted === "asc" && (
-            <CheckIcon className="text-primary size-4 opacity-100!" />
+            <CheckIcon className="text-ink size-4 opacity-100!" />
           )}
         </DropdownMenuItem>,
         <DropdownMenuItem
@@ -158,7 +158,7 @@ function DataGridColumnHeaderInner<TData extends object, TValue>({
           <ArrowDownIcon className="size-3.5!" />
           <span className="grow">Desc</span>
           {isSorted === "desc" && (
-            <CheckIcon className="text-primary size-4 opacity-100!" />
+            <CheckIcon className="text-ink size-4 opacity-100!" />
           )}
         </DropdownMenuItem>
       )
@@ -178,7 +178,7 @@ function DataGridColumnHeaderInner<TData extends object, TValue>({
           <ArrowLeftToLineIcon className="size-3.5!" aria-hidden="true" />
           <span className="grow">Pin to left</span>
           {isPinned === "start" && (
-            <CheckIcon className="text-primary size-4 opacity-100!" />
+            <CheckIcon className="text-ink size-4 opacity-100!" />
           )}
         </DropdownMenuItem>,
         <DropdownMenuItem
@@ -188,7 +188,7 @@ function DataGridColumnHeaderInner<TData extends object, TValue>({
           <ArrowRightToLineIcon className="size-3.5!" aria-hidden="true" />
           <span className="grow">Pin to right</span>
           {isPinned === "end" && (
-            <CheckIcon className="text-primary size-4 opacity-100!" />
+            <CheckIcon className="text-ink size-4 opacity-100!" />
           )}
         </DropdownMenuItem>
       )

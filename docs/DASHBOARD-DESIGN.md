@@ -22,8 +22,9 @@ The landing's **two laws** apply verbatim:
    shipping with a radius is off-system. **One scoped exception:** the WhatsApp
    preview (`components/templates/whatsapp-preview.tsx`) depicts the customer's
    phone, not the console, so inside its square frame it wears WhatsApp's own
-   bubble radii and its dark palette (the `--wa-*` tokens). An operator judging a
-   template needs to see what the customer will see; nothing else borrows it.
+   bubble radii and its palette for the active theme (the `--wa-*` tokens, dark or
+   light). An operator judging a template needs to see what the customer will see;
+   nothing else borrows it.
 2. **Two voices, console distribution.** No third font — but the console
    deviates from the site in *which* voice carries functional micro-labels,
    because an operator reads them hundreds of times a day and a pixel face is
@@ -47,10 +48,18 @@ The landing's **two laws** apply verbatim:
 Both faces are self-hosted in `apps/dashboard/public/assets/fonts/` with their OFL
 licenses, preloaded in `__root.tsx`. Never load a font from a third-party host.
 
-**Dark-only.** The console ships `<html class="dark">` with a single palette. Dark is
-the brand's canonical rendering and an operator console does not need the landing's
-daylight reading. If that ever changes, follow DESIGN-SYSTEM.md's light-theme
-architecture — don't invent a second one.
+**Two themes, one architecture.** The console follows DESIGN-SYSTEM.md's light theme
+("The light theme"): dark is the canonical rendering, light its daylight reading. The
+default is auto. `<html data-theme>` absent means follow the system (never
+`data-theme="auto"`); `"light"` and `"dark"` are explicit overrides. Light is two
+identical guarded blocks in `src/app.css`: `@media (prefers-color-scheme: light)` on
+`:root:not([data-theme="dark"])`, and `:root[data-theme="light"]`. The `dark:` variant
+resolves from the same guards. The override persists in `localStorage["eccos-theme"]`
+for this origin only (`src/lib/theme.ts`, try/catch around storage access), is applied
+before first paint by `THEME_BOOT` in `src/routes/__root.tsx`, and is deliberately not
+synced with eccos.chat. The selector is `ThemeMenu`, a Theme submenu in the sidebar user
+menu (`src/components/blocks/app-shell-7/components/nav-user.tsx`); its placement is
+provisional.
 
 ## Token contract
 
@@ -59,22 +68,40 @@ architecture — don't invent a second one.
 re-copy; the two must not drift independently):
 
 `--line` (structural hairlines, = `--border`) · `--line-strong` (interactive edges)
-· `--ghost-fill` / `--ghost-fill-hover` / `--ghost-edge-hover` (the green hover edge)
+· `--ghost-fill` / `--ghost-fill-hover` / `--ghost-edge-hover` (the hover edge: green on
+  dark, ink on light)
 · `--hatch-line` · `--caustic` / `--caustic-hi` (primary CTA glow shadow)
 · `--tag-live-*` / `--tag-soon-bg` (status tag anatomy) · `--ease`
 · `--color-glow` (#34e27a, in `@theme`, so `bg-glow` exists as a utility).
 `--nav-bg` started as a copy but is a **documented console deviation** — it joined
-the glass family (see "Atmosphere, glass, and the lantern").
+the glass family on dark (see "Atmosphere, glass, and the lantern"); on light it is the
+landing's paper wash.
 
-Any new theme-varying value must be a token here — a hardcoded color in a component
-rule is off-system. **`--accent` is the hover LIFT and must never equal a surface**
+Any new theme-varying value must be a token here, defined in `:root` and in both light
+blocks; a hardcoded color in a component rule is off-system. **`--accent` is the hover
+LIFT and must never equal a surface**
 (`--popover`, `--muted`, `--secondary`, `--card`, `--background`): it was `#0f1d1e`,
 the same value as three of them, so every `hover:bg-accent` in the console painted a
 row in its own background and no dropdown row, select option or filter row had a hover
 at all. It is a translucent white lift for that reason — one value that works over any
-of those grounds. The semantic inks are fixed: **warning `#f0a020`**, **destructive
-surface `#e03131`**, **destructive text on dark `#ff7777`** (never `#e03131` as text —
-~3.9:1). Vivid green never dims on hover; it **brightens** to `--color-glow`.
+of those grounds. The semantic inks are fixed per theme. Fills are the same in both:
+**warning `#f0a020`**, **destructive surface `#e03131`**. Text inks differ: warning text
+is `#f0a020` on dark and `#8a5a00` on light; destructive text is **`#ff7777` on dark,
+`#b3261e` on light** (never
+`#e03131` as text — ~3.9:1). Vivid green never dims on hover; it **brightens** to
+`--color-glow`.
+
+**The ink law.** On light, vivid green never carries text or an icon (`#25d366` and
+`#34e27a` are 1.9:1 on paper). Green text and icons use `text-ink` (`--ink`: `#25d366` on
+dark, `#0b7a4b` on light, 5.1:1 on paper). Meaning-bearing marks use `--mark` (`#34e27a`
+on dark, `#0f9d58` on light, 3.4:1, the graphic floor). Vivid green survives on light only
+as fills and tints: the solid primary CTA, the tag-live stamp, `--tint-live`.
+
+`--tag-live-bg` is a 13% tint on dark but a solid stamp on light (`#25d366`), so it must
+not be reused for a surface: surfaces use `--tint-live` (the outbound bubble and the
+selected conversation; 13% on dark, 14% on light). `--line-strong` and `--input` are the
+deliberate light drift from the landing: ink at 0.5 alpha, where the landing's
+`--line-strong` is 0.16, so interactive edges and inputs clear WCAG 1.4.11's 3:1.
 
 ## Page anatomy
 
@@ -206,7 +233,9 @@ The rules that follow from it:
 
 ## Atmosphere, glass, and the lantern
 
-The console's dark is lit, not dead — three layers, all under the content:
+The console's dark is lit, not dead — three layers, all under the content. They are
+dark-hour only: light sets `--ambient` and `--lantern-display` to `none`, and its
+surfaces are paper, not glass:
 
 - **Ambient glow** (`body::before`): three fixed radials — emerald top-right
   (10%), a faint mid-page veil (3.5%), teal bottom-right (7%) — so the light
@@ -226,26 +255,30 @@ The console's dark is lit, not dead — three layers, all under the content:
   `__root.tsx`): a faint green light (6%, 1200px) that *trails* the pointer with
   a lerp — the console's one spectacle, as the silk shader is the landing's.
   It paints under the lifted content, so it lights the floor between panels,
-  never the text. Gone on coarse pointers and under `prefers-reduced-motion`;
+  never the text. Gone on coarse pointers, under `prefers-reduced-motion`, and in light;
   the rAF loop parks itself when the pointer rests. Everything else stays quiet
   — do not add a second ambient motion.
 
 The masthead keeps the landing's construction (`--nav-bg` wash under a 14px
 backdrop blur, 1px bottom rule) but its wash joined the glass family —
 `rgba(13, 26, 27, 0.55)`, a deliberate console deviation from the site's
-`rgba(7, 12, 15, 0.72)` so the atmosphere reads through the bar too.
+`rgba(7, 12, 15, 0.72)` so the atmosphere reads through the bar too. On light it is the
+landing's paper, `rgba(247, 249, 248, 0.85)`.
 
 ### The one-spectacle rule, per surface (pre-auth deviation)
 
 The lantern is the console's one spectacle — but the rule is **per surface**, and
 the pre-auth brand panel (sign-in / sign-up, the reui auth-13 split screen) is a
-different surface: there the landing's iridescent silk owns the spectacle and the
+different surface: there, in dark, the landing's iridescent silk owns the spectacle and the
 lantern is absent (gated by `LANTERN_EXEMPT_PATHS` in `__root.tsx`). The silk
 renders under the brand panel's glass through `SilkPanel`
 (`src/components/blocks/auth-13/components/silk-panel.tsx`) — a byte-identical
 port of the site shader (`apps/site/public/js/shader.js`, keep the FRAG/VERT
-in sync; the console pins `u_light = 0`, dark-only) with a CSS gradient fallback
-(no WebGL, reduced motion, context loss). Below the `lg` breakpoint the brand
+in sync; the console pins `u_light = 0` because the shader only runs in dark) with a
+CSS gradient fallback (no WebGL, reduced motion, context loss). In light the loop never
+starts and no WebGL context is allocated: the static daylight photo
+(`hero-silk-light.jpg`, the site's daylight fallback) shows under `--auth-scrim` instead.
+Below the `lg` breakpoint the brand
 panel does not render and the form is the whole page; the WebGL context is not
 even allocated there. The hatch band stays out of the panel: over the silk it
 read as noise, not as the chapter divider it is on flat pages.
@@ -253,17 +286,21 @@ read as noise, not as the chapter divider it is on flat pages.
 ## Interaction contrast (the console's own law)
 
 The landing signals interactivity with green edges; the console keeps that signature
-everywhere. Rest → hover → active must each be visibly distinct:
+on dark. On light the hover edge goes ink (`--ghost-edge-hover`), and green stays in the
+focus and rail tokens (`--ring`, `--sidebar-ring`). Rest → hover → active must each be
+visibly distinct:
 
-- **Sidebar**: rest ink is muted (72%); hover gets a white-7% fill and full-white
-  ink; the active item gets the green tint `rgba(37,211,102,.10)`, a 2px inset green
-  rail, full ink, green icon. Active + hover deepens the tint (`.16`) — active never
-  falls back to the grey hover.
+- **Sidebar**: rest ink is muted (72%); hover gets `--sidebar-accent` (white 7% on dark,
+  ink 6% on light) and full ink; the active item gets the green tint
+  `rgba(37,211,102,.10)`, a 2px inset rail in `--sidebar-ring`, full ink, a `text-ink`
+  icon. Active + hover deepens the tint (`.16`) — active never falls back to the grey
+  hover.
 - **Buttons**: primary is solid `--green` on `#06120c`, hover **brightens** to
   `bg-glow` and carries `--caustic`. Ghost/outline (and select triggers) sit on
-  `--ghost-fill` with a `--line-strong` edge; hover raises the fill and turns the
-  edge green (`--ghost-edge-hover`). One primary per view; everything else is ghost.
-- **Table rows**: `hover:bg-white/[.03]` — visible, quiet. No information exists
+  `--ghost-fill` with a `--line-strong` edge; hover raises the fill and turns the edge
+  `--ghost-edge-hover` (green on dark, ink on light). One primary per view; everything
+  else is ghost.
+- **Table rows**: `hover:bg-(--row-hover)` — visible, quiet. No information exists
   only on hover. A row that **opens something** (the template name on /templates, the
   MESSAGE cell on /messages, the KIND cell on /events) owes
   the reader a real control inside it — focusable, labelled, and marked at rest with the
@@ -411,7 +448,7 @@ sit over text. The `<details>` disclosure of data rule 10 does **not** count aga
 that set and no accordion component is needed for one: it reveals in place instead of
 covering the page, and the browser already gives its `<summary>` a tab stop and Enter
 activation. It is styled like every other ghost control — square, `--line-strong` edge
-on `--ghost-fill`, green edge and lift on hover, the green focus ring.
+on `--ghost-fill`, the hover edge and lift (`--ghost-edge-hover`), the green focus ring.
 
 **Toasts are not a fourth overlay.** The `sonner` Toaster (`components/ui/sonner.tsx`, mounted
 once in `__root.tsx`) carries transient, non-blocking notices: it asks nothing, traps no
@@ -423,7 +460,7 @@ rail and icon.
 ## Before shipping a console change
 
 - Diff against the two laws, then the interaction-contrast rules, then the overlay
-  registers, then the data rules. If a screen looks "cleaner" but lost a green edge,
+  registers, then the data rules. If a screen looks "cleaner" but lost its interactive edge,
   a hover state, or an evidence link, it regressed.
 - A surface that covers the page names its register out loud — confirm, decision,
   task, or inspection — and proves it can be left: an explicit close, plus Escape
@@ -439,6 +476,6 @@ rail and icon.
 - A word on a new surface is checked against data rule 9's table before it is written.
   If it names a hop, it uses that hop's vocabulary; if it names a state, the state's
   derivation is a pure function in `lib/`, not a ternary in a cell.
-- `bun run typecheck` + `bun run test` from `apps/dashboard`; verify visually
+- `bun run typecheck` + `bun run test` from `apps/dashboard`; verify visually in both themes
   against the landing — the parity test is a side-by-side with eccos.chat:
   **same building, different room.**

@@ -126,7 +126,7 @@ describe("ConnectNumberPanel", () => {
     // "before shipping" checklist says a screen that looks cleaner but lost a
     // green edge has regressed, so this is pinned rather than assumed.
     expect(html).toContain("hover:border-(--ghost-edge-hover)");
-    expect(html).toContain("group-hover:text-primary");
+    expect(html).toContain("group-hover:text-ink");
   });
 });
 

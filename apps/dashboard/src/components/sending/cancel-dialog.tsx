@@ -72,7 +72,7 @@ export function CancelDialog({
         <output aria-live="polite" aria-atomic="true">
           {error ? (
             <span className="block">
-              <span className="block text-xs text-[#ff7777]">{error.title}</span>
+              <span className="block text-xs text-destructive-foreground">{error.title}</span>
               <span className="block text-xs text-muted-foreground">{error.detail}</span>
             </span>
           ) : null}

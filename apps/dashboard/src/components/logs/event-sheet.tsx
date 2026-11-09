@@ -222,7 +222,7 @@ export function EventDetail({ row, hasForwardingTarget, wabaId, onRetry, retryin
             <Link
               to="/messages"
               search={{ message: row.outbound_id ?? undefined, ...(wabaId ? { wabaId } : {}) }}
-              className="text-primary underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+              className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
             >
               Open message {messageRefText(message)}
             </Link>

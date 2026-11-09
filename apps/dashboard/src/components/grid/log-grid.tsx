@@ -89,7 +89,7 @@ export function LogGrid<TData extends object>({
         headerRow: "bg-muted",
         // Quiet row hover — visible on the dark ground, never a highlight.
         // Last in the row's cn(), so it wins over the default hover:bg-muted/40.
-        bodyRow: "hover:bg-white/[.03]",
+        bodyRow: "hover:bg-(--row-hover)",
       }}
       tableLayout={{
         dense: true,

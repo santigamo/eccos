@@ -69,8 +69,8 @@ describe("ConnectOutcome", () => {
   });
 
   test("failures take the destructive rail, a partial result the amber one", () => {
-    expect(render({ connectError: "owned" })).toContain("border-l-[#e03131]");
-    expect(render({ connectSkipped: 2 })).toContain("border-l-[#f0a020]");
+    expect(render({ connectError: "owned" })).toContain("border-l-destructive");
+    expect(render({ connectSkipped: 2 })).toContain("border-l-warning");
   });
 
   test("a failure code wins over a skipped count", () => {

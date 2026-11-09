@@ -132,9 +132,9 @@ describe("/scheduled", () => {
   });
 
   test("failed is red only when something failed, and pending is never amber", () => {
-    expect(render([], { counts: { pending: 3 } })).not.toContain("text-[#ff7777]");
+    expect(render([], { counts: { pending: 3 } })).not.toContain("text-destructive-foreground");
     const failing = render([], { counts: { pending: 3, failed: 2 } });
-    expect(failing).toContain("text-[#ff7777]");
+    expect(failing).toContain("text-destructive-foreground");
     expect(failing).not.toMatch(/amber|warning/);
   });
 

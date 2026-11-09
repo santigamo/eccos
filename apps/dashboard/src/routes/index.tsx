@@ -88,7 +88,7 @@ function StatusBanner({ banner, wabaId }: { banner: HealthBanner | null; wabaId:
             // The house link idiom (the `link` button variant): green ink, the
             // console's interactivity signature, underlined on hover, green
             // ring on focus.
-            className="text-primary underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             {banner.action.label}
           </Link>
