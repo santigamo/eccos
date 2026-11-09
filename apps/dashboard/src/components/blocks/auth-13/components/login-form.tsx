@@ -22,7 +22,7 @@ export type FormSubmitEvent = Parameters<FormSubmitHandler>[0];
  * Eccos sign-in form on the reui auth-13 split-screen skeleton.
  *
  * Design-contract adaptations vs the stock block: machine-voice labels
- * (11px uppercase, tracking-wider), dark-only palette, the real
+ * (11px uppercase, tracking-wider), tokenised palette (both themes), the real
  * email+password flow (the stock block's magic link and social logins do
  * not exist in Eccos), pending state, the shared anti-enumeration error
  * mapping, and no external image dependencies.

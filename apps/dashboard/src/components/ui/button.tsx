@@ -23,7 +23,7 @@ const buttonVariants = cva(
         // reads at ~3.9:1 as text on #070c0f. The washes stay `--destructive`.
         destructive:
           "bg-destructive/10 text-destructive-foreground hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
-        link: "text-primary underline-offset-4 hover:underline",
+        link: "text-ink underline-offset-4 hover:underline",
       },
       size: {
         default:

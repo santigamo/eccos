@@ -32,7 +32,7 @@ export interface TemplateActions {
 
 const QUALITY_INK = {
   neutral: "text-foreground",
-  warning: "text-[#f0a020]",
+  warning: "text-warning-foreground",
   destructive: "text-destructive-foreground",
 };
 

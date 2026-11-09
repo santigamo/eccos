@@ -393,7 +393,7 @@ export function CreateTemplateFields({
           // disabled button from being a dead one (data rule 5).
           <p
             id="create-template-body-error"
-            className="mt-1 m-0 max-w-prose text-xs text-pretty text-[#ff7777]"
+            className="mt-1 m-0 max-w-prose text-xs text-pretty text-destructive-foreground"
           >
             {analysis.reason}
           </p>
@@ -401,7 +401,7 @@ export function CreateTemplateFields({
         {warnings.map((warning) => (
           // Amber, and never a wall: these are reseller-reported review
           // heuristics, not rules Meta publishes. See `draftWarnings`.
-          <p key={warning} className="mt-1 m-0 max-w-prose text-xs text-pretty text-[#f0a020]">
+          <p key={warning} className="mt-1 m-0 max-w-prose text-xs text-pretty text-warning-foreground">
             {warning}
           </p>
         ))}
@@ -449,7 +449,7 @@ export function CreateTemplateFields({
         {footerBlocked && !footerAnalysis.ok ? (
           <p
             id="create-template-footer-error"
-            className="mt-1 m-0 max-w-prose text-xs text-pretty text-[#ff7777]"
+            className="mt-1 m-0 max-w-prose text-xs text-pretty text-destructive-foreground"
           >
             {footerAnalysis.reason}
           </p>
@@ -515,7 +515,7 @@ export function CreateTemplateFields({
           );
         })}
         {buttonsBlocked && !buttonsAnalysis.ok ? (
-          <p className="m-0 max-w-prose text-xs text-pretty text-[#ff7777]">
+          <p className="m-0 max-w-prose text-xs text-pretty text-destructive-foreground">
             {buttonsAnalysis.reason}
           </p>
         ) : null}
@@ -769,7 +769,7 @@ function NoticeBody({ notice }: { notice: CreateTemplateNotice }) {
   }
   return (
     <span className="block">
-      <span className="block text-sm text-[#ff7777]">{notice.title}</span>
+      <span className="block text-sm text-destructive-foreground">{notice.title}</span>
       <span className="block text-sm text-muted-foreground">{notice.detail}</span>
       {notice.secondary ? (
         <span className="mt-1 block font-mono text-xs break-words text-muted-foreground">

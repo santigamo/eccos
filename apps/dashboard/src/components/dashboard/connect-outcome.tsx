@@ -70,7 +70,7 @@ export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeS
         detail
           ? cn(
               "mb-4 block border-l-2 px-3 py-2 text-sm text-foreground",
-              connectError ? "border-l-[#e03131]" : "border-l-[#f0a020]",
+              connectError ? "border-l-destructive" : "border-l-warning",
             )
           : undefined
       }

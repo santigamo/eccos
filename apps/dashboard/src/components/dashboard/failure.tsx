@@ -145,7 +145,7 @@ function WorkspacePicker({ organizations }: { organizations: Membership[] }) {
         aria-atomic="true"
         className={
           error
-            ? "mt-4 block border-l-2 border-l-[#e03131] px-3 py-2 text-sm break-words whitespace-pre-wrap text-foreground"
+            ? "mt-4 block border-l-2 border-l-destructive px-3 py-2 text-sm break-words whitespace-pre-wrap text-foreground"
             : undefined
         }
       >

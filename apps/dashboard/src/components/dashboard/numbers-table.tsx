@@ -115,7 +115,7 @@ export function NumbersTable({
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.key} className="border-b border-(--line) transition-colors hover:bg-white/[.03]">
+              <tr key={row.key} className="border-b border-(--line) transition-colors hover:bg-(--row-hover)">
                 <td className="px-3 py-2.5 font-mono text-xs text-foreground">
                   {row.displayPhoneNumber || "—"}
                 </td>
@@ -162,7 +162,7 @@ export function NumbersTable({
         aria-atomic="true"
         className={
           notice
-            ? "block border-l-2 border-l-[#e03131] px-3 py-2 text-sm break-words whitespace-pre-wrap text-foreground"
+            ? "block border-l-2 border-l-destructive px-3 py-2 text-sm break-words whitespace-pre-wrap text-foreground"
             : undefined
         }
       >

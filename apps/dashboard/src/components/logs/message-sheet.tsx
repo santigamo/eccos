@@ -186,7 +186,7 @@ function SentContent({ request, wabaId }: { request: string; wabaId?: string }) 
           <Link
             to="/templates"
             search={wabaId ? { wabaId } : {}}
-            className={`text-primary ${COUNT_LINK}`}
+            className={`text-ink ${COUNT_LINK}`}
           >
             Open {template.name} in Templates
           </Link>{" "}

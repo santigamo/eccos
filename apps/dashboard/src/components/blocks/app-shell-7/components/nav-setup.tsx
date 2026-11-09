@@ -149,7 +149,7 @@ function StepMark({ state }: { state: SetupStep["state"] }) {
         state === "done"
           ? "border-primary bg-primary"
           : state === "in-progress"
-            ? "border-[#f0a020]"
+            ? "border-warning"
             : "border-(--line-strong)",
       )}
     />

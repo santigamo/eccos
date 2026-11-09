@@ -304,7 +304,7 @@ describe("the result's wording", () => {
     );
     expect(html).toContain("Not available to your role");
     expect(html).toContain("Ask an admin.");
-    expect(html).toContain("text-[#ff7777]");
+    expect(html).toContain("text-destructive-foreground");
   });
 });
 

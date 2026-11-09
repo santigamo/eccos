@@ -204,7 +204,7 @@ function ForwardingFacts({
               {last.attempts === 1 ? "attempt" : "attempts"}
             </p>
             {last.lastError ? (
-              <p className="m-0 text-xs break-words text-[#ff7777]">{last.lastError}</p>
+              <p className="m-0 text-xs break-words text-destructive-foreground">{last.lastError}</p>
             ) : null}
           </div>
         ) : null}

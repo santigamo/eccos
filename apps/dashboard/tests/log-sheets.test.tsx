@@ -372,7 +372,7 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
     const html = renderToStaticMarkup(
       <HeldNotice pending={4} hasForwardingTarget={false} wabaId="WABA1" />,
     );
-    expect(html).toContain("border-l-[#f0a020]");
+    expect(html).toContain("border-l-warning");
     expect(html).toContain("Forwarding is held");
     expect(html).toContain("4 events are waiting");
     expect(html).toContain("nothing has failed");
@@ -392,7 +392,7 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
     const withTarget = renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={true} />);
     expect(withTarget).toContain("<output");
     expect(withTarget).not.toContain("Forwarding is held");
-    expect(withTarget).not.toContain("border-l-[#f0a020]");
+    expect(withTarget).not.toContain("border-l-warning");
     // Nothing waiting is not held either: a standing scold on a page that is
     // behaving is exactly what data rule 1 forbids.
     expect(

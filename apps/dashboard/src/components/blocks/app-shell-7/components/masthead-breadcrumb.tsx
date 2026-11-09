@@ -262,7 +262,7 @@ export function WorkspaceSwitcher({
         aria-atomic="true"
         className={
           error
-            ? "absolute top-full left-0 z-50 block max-w-sm border-l-2 border-l-[#e03131] bg-popover px-2 py-1 text-xs break-words whitespace-pre-wrap text-foreground shadow-md"
+            ? "absolute top-full left-0 z-50 block max-w-sm border-l-2 border-l-destructive bg-popover px-2 py-1 text-xs break-words whitespace-pre-wrap text-foreground shadow-md"
             : undefined
         }
       >
@@ -326,8 +326,8 @@ export function WorkspaceOption({
       {active ? (
         <>
           {/* Green marks "this is the current one" — the same signal the active
-              sidebar item already uses (`[data-active] svg` → text-primary). */}
-          <CheckIcon aria-hidden="true" className="ml-auto size-4 text-primary" />
+              sidebar item already uses (`[data-active] svg` → text-ink). */}
+          <CheckIcon aria-hidden="true" className="ml-auto size-4 text-ink" />
           <span className="sr-only">Current workspace</span>
         </>
       ) : null}
@@ -450,7 +450,7 @@ export function WabaOption({
         <StatusTag status={wabaState(waba)} />
         {active ? (
           <>
-            <CheckIcon aria-hidden="true" className="size-4 text-primary" />
+            <CheckIcon aria-hidden="true" className="size-4 text-ink" />
             <span className="sr-only">Current WhatsApp Business account</span>
           </>
         ) : null}

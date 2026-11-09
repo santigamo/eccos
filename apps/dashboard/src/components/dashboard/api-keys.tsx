@@ -156,7 +156,7 @@ export function IssuedKeyNotice({
     <div className="mt-5 border border-(--line-strong) bg-(--ghost-fill) p-3">
       <span className={`block ${MACHINE_CLASS}`}>New key</span>
       <code className="mt-2 block font-mono text-xs break-all text-foreground">{issued.apiKey}</code>
-      <p className="mt-2 mb-0 text-xs text-[#f0a020]">
+      <p className="mt-2 mb-0 text-xs text-warning-foreground">
         Copy it now. You won't see this key again: Eccos stores only its hash.
       </p>
       <div className="mt-3 flex gap-2">
@@ -271,7 +271,7 @@ function RevokeKeyDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <output aria-live="polite" aria-atomic="true">
-          {error ? <span className="block text-xs text-[#ff7777]">{error}</span> : null}
+          {error ? <span className="block text-xs text-destructive-foreground">{error}</span> : null}
         </output>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>

@@ -458,7 +458,7 @@ export function ConnectNumberChoices({
                     edge going green stays the interactivity signal it was. */}
                 <span
                   aria-hidden="true"
-                  className="flex size-9 shrink-0 items-center justify-center border border-(--line-strong) text-primary/70 transition-colors group-hover:border-(--ghost-edge-hover) group-hover:text-primary"
+                  className="flex size-9 shrink-0 items-center justify-center border border-(--line-strong) text-ink/70 transition-colors group-hover:border-(--ghost-edge-hover) group-hover:text-ink"
                 >
                   {starting === path ? (
                     <LoaderCircleIcon className="size-4 animate-spin" />
@@ -486,7 +486,7 @@ export function ConnectNumberChoices({
                   <span
                     className={cn(
                       "pt-1 text-[11px] font-medium uppercase tracking-wider",
-                      tone === "warning" ? "text-warning" : "text-muted-foreground",
+                      tone === "warning" ? "text-warning-foreground" : "text-muted-foreground",
                     )}
                   >
                     {caution}

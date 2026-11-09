@@ -167,8 +167,8 @@ describe("FailureView: console design rules", () => {
     // operator has to act on as a fault. #e03131 / #ff7777 are those inks.
     for (const failure of cases) {
       const html = render(failure);
-      expect(html).not.toContain("#e03131");
-      expect(html).not.toContain("#ff7777");
+      expect(html).not.toContain("border-l-destructive");
+      expect(html).not.toContain("text-destructive-foreground");
     }
   });
 

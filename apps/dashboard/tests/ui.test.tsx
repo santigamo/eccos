@@ -81,7 +81,7 @@ describe("StatusTag (the status column on every log and table)", () => {
     // state of a healthy queue for a few seconds, and colouring it would fire
     // on every well-behaved gateway (data rule 1).
     expect(renderToStaticMarkup(<StatusTag status="forwarded" />)).toContain("--tag-live-bg");
-    expect(renderToStaticMarkup(<StatusTag status="held" />)).toContain("240,160,32");
+    expect(renderToStaticMarkup(<StatusTag status="held" />)).toContain("bg-warning/12");
     expect(renderToStaticMarkup(<StatusTag status="queued" />)).toContain("--tag-soon-bg");
   });
 
@@ -92,7 +92,7 @@ describe("StatusTag (the status column on every log and table)", () => {
     // written for.
     const html = renderToStaticMarkup(<StatusTag status="retrying 2/6" />);
     expect(html).toContain("retrying 2/6");
-    expect(html).toContain("240,160,32");
+    expect(html).toContain("bg-warning/12");
   });
 });
 

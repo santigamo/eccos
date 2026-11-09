@@ -16,7 +16,7 @@ const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-fore
 const HELP = "mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground";
 // The native picker is drawn by the browser, which paints it for a light page
 // unless told otherwise: without this the calendar icon is dark on dark.
-const DATE_TIME_INPUT = "[color-scheme:dark]";
+const DATE_TIME_INPUT = "dark:[color-scheme:dark]";
 
 /**
  * "Retry failed": the forwarding queue's one batch-shaped act at window scale.
@@ -112,7 +112,7 @@ export function RetryFailedFields({
         // The blocker sentence IS the reason the button is off, and it is on
         // screen rather than in a tooltip, which keeps a disabled button from
         // being a dead one (data rule 5).
-        <p id="retry-failed-window" className="m-0 max-w-prose text-xs text-pretty text-[#ff7777]">
+        <p id="retry-failed-window" className="m-0 max-w-prose text-xs text-pretty text-destructive-foreground">
           {reading.reason}
         </p>
       )}
@@ -158,7 +158,7 @@ export function NoticeBody({ notice }: { notice: RetryFailedNotice }) {
   }
   return (
     <span className="block">
-      <span className="block text-sm text-[#ff7777]">{notice.title}</span>
+      <span className="block text-sm text-destructive-foreground">{notice.title}</span>
       <span className="block text-sm text-muted-foreground">{notice.detail}</span>
     </span>
   );

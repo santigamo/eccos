@@ -5,7 +5,7 @@ import { SilkPanel } from "./silk-panel";
 
 /**
  * Split-screen shell adapted from the reui auth-13 block to the Eccos design
- * contract: dark-only, glass brand panel instead of the stock Unsplash
+ * contract: a glass brand panel instead of the stock Unsplash
  * photography (self-hosted builds must not depend on external image hosts),
  * the landing's pixel kicker + light Inter heading, and no extra atmosphere
  * layers (the ambient glow and the lantern already own the floor — "do not
@@ -34,16 +34,13 @@ export function AuthSplitShell({ children }: { children: ReactNode }) {
               <FramePanel className="relative h-full min-h-[32rem] overflow-hidden p-0 shadow-none before:hidden">
                 {/* The landing's iridescent silk under the glass — the
                     pre-auth surface's one spectacle (see DASHBOARD-DESIGN.md
-                    "Atmosphere"). The translucent panel tints/scrim it so the
-                    copy clears; the CSS gradient below is the no-WebGL/reduced
-                    -motion fallback. */}
+                    "Atmosphere"). The scrim below clears the copy; SilkPanel
+                    paints the static daylight photo in light and the shader
+                    (or its CSS fallback) in dark. */}
                 <SilkPanel className="absolute inset-0 hidden lg:block" />
                 <div
                   className="pointer-events-none absolute inset-0 hidden lg:block"
-                  style={{
-                    background:
-                      "linear-gradient(to right, rgba(7,12,15,0.72) 0%, rgba(7,12,15,0.42) 45%, rgba(7,12,15,0.08) 100%)",
-                  }}
+                  style={{ background: "var(--auth-scrim)" }}
                   aria-hidden="true"
                 />
                 <div className="relative flex min-h-0 flex-1 flex-col justify-between gap-10 p-8 xl:p-10">

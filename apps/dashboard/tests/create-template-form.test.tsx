@@ -139,7 +139,7 @@ describe("CreateTemplateFields", () => {
   test("review warnings render amber and never disable anything", () => {
     // Reseller-sourced heuristics warn; only Meta's own rules wall.
     const html = render({ body: "{{1}} {{2}} {{3}}" });
-    expect(html).toContain("#f0a020");
+    expect(html).toContain("text-warning-foreground");
     expect(html).toContain("start or end with a variable");
     expect(submitDisabled(html)).toBe(false);
   });

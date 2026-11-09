@@ -168,7 +168,7 @@ describe("TemplatesPage row actions", () => {
     // The console's existing door anatomy (`COUNT_LINK` in src/ui.tsx): quiet
     // at rest, underlined and green under the pointer.
     expect(html).toContain("hover:underline");
-    expect(html).toContain("hover:text-primary");
+    expect(html).toContain("hover:text-ink");
   });
 
   test("the row itself is the wide target", () => {

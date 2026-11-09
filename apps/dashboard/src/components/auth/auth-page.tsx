@@ -95,7 +95,7 @@ export function redactError(value: string): string | undefined {
 
 /** Classes of the shared auth error banner (red = meaningful failure only). */
 export const AUTH_ERROR_BANNER_CLASS =
-  "border-l-2 border-[#e03131] bg-[rgba(224,49,49,.12)] px-3 py-2 text-sm text-[#ff7777]";
+  "border-l-2 border-destructive bg-destructive/12 px-3 py-2 text-sm text-destructive-foreground";
 
 /**
  * What the check-your-inbox screen says after a "Resend" attempt (eccos-hk5).
@@ -168,8 +168,8 @@ export function ResendNote({ outcome }: { outcome: ResendOutcome | null }) {
       : outcome.kind === "sent"
         ? "text-muted-foreground mt-4 block text-xs"
         : outcome.kind === "limited"
-          ? "mt-4 block border-l-2 border-l-[#f0a020] px-3 py-2 text-sm text-foreground"
-          : "mt-4 block border-l-2 border-l-[#e03131] px-3 py-2 text-sm text-foreground";
+          ? "mt-4 block border-l-2 border-l-warning px-3 py-2 text-sm text-foreground"
+          : "mt-4 block border-l-2 border-l-destructive px-3 py-2 text-sm text-foreground";
   return (
     <output className={tone} aria-live="polite" aria-atomic="true">
       {outcome?.message}

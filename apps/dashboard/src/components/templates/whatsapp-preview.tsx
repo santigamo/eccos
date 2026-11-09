@@ -15,9 +15,9 @@ import { parseWhatsApp, type WaNode } from "../../lib/whatsapp-format";
 import type { ButtonKind, TemplateHeader } from "../../lib/template-view";
 
 /**
- * A template as the customer's phone shows it: WhatsApp's dark chat, the
- * business's name in the bar, one incoming bubble with its header, formatted
- * body, footer, time and buttons.
+ * A template as the customer's phone shows it: WhatsApp's chat in the console's
+ * theme, the business's name in the bar, one incoming bubble with its header,
+ * formatted body, footer, time and buttons.
  *
  * It depicts another product, so it wears that product's shapes and colours
  * (`--wa-*`): the rounded bubble is WhatsApp's, not the console's. The frame
@@ -160,8 +160,8 @@ function MediaHeader({ header, imageUrl }: { header: TemplateHeader; imageUrl?: 
   const Icon = header.format === "VIDEO" ? PlayIcon : header.format === "LOCATION" ? MapPinIcon : ImageIcon;
   return (
     <div className="flex aspect-[1.91/1] w-full items-center justify-center rounded-[6px] bg-(--wa-media)">
-      <span className="flex size-11 items-center justify-center rounded-[50%] bg-black/35">
-        <Icon aria-hidden="true" className="size-5 text-(--wa-ink)" />
+      <span className="flex size-11 items-center justify-center rounded-[50%] bg-black/50 dark:bg-black/35">
+        <Icon aria-hidden="true" className="size-5 text-white dark:text-(--wa-ink)" />
       </span>
     </div>
   );
@@ -187,7 +187,7 @@ export function WhatsAppPreview({
       className="m-0 flex flex-col overflow-hidden border border-(--line) bg-(--wa-wall)"
     >
       <figcaption className="flex items-center gap-2.5 bg-(--wa-bar) px-3 py-2">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-[50%] bg-[#6a7175]">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-[50%] bg-[#dfe5e7] dark:bg-[#6a7175]">
           <StoreIcon aria-hidden="true" className="size-4 text-(--wa-ink)" />
         </span>
         <span className="min-w-0">

@@ -3,22 +3,24 @@
 import type { CSSProperties } from "react"
 import { CircleCheckIcon, InfoIcon, Loader2Icon, OctagonXIcon, TriangleAlertIcon } from "lucide-react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
+import { useTheme } from "@/lib/theme"
 
 // Sonner's stylesheet is unlayered, so it beats Tailwind's utilities layer:
 // its own variables carry the tokens, and any override takes `!`.
 const Toaster = ({ ...props }: ToasterProps) => {
+  const { effective } = useTheme()
   // Above the sheets: every body child sits at z-index 1 (app.css), and a
   // portalled sheet mounted later would otherwise cover the toast.
   return (
     <div className="z-[100]">
       <Sonner
-        theme="dark"
+        theme={effective}
         className="toaster group"
         icons={{
           success: <CircleCheckIcon className="size-4" />,
           info: <InfoIcon className="size-4" />,
-          warning: <TriangleAlertIcon className="size-4 text-[#f0a020]" />,
-          error: <OctagonXIcon className="size-4 text-[#ff7777]" />,
+          warning: <TriangleAlertIcon className="size-4 text-warning-foreground" />,
+          error: <OctagonXIcon className="size-4 text-destructive-foreground" />,
           loading: <Loader2Icon className="size-4 animate-spin" />,
         }}
         style={
@@ -36,8 +38,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
           classNames: {
             closeButton:
               "rounded-none! bg-(--popover)! border-(--line-strong)! hover:bg-(--popover)! hover:border-(--ghost-edge-hover)! focus-visible:shadow-none! focus-visible:outline-2! focus-visible:outline-offset-2! focus-visible:outline-ring!",
-            warning: "border-l-2! border-l-[#f0a020]!",
-            error: "border-l-2! border-l-[#e03131]!",
+            warning: "border-l-2! border-l-warning!",
+            error: "border-l-2! border-l-destructive!",
           },
         }}
         {...props}

@@ -1542,7 +1542,7 @@ function DataGridTableRowPin<TData extends object>({
       }}
       className={cn(
         "text-muted-foreground hover:text-foreground rounded-lg inline-flex size-7 items-center justify-center transition-colors",
-        isPinned && "text-primary hover:text-primary/80"
+        isPinned && "text-ink hover:text-ink/80"
       )}
     >
       {isPinned ? (

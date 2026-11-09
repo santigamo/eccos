@@ -97,7 +97,7 @@ function nameColumn(onOpen?: (row: TemplateRecord) => void) {
                 onOpen(row);
               }}
               aria-label={`Open ${name}`}
-              className={`w-fit font-mono text-xs text-foreground ${COUNT_LINK} hover:text-primary`}
+              className={`w-fit font-mono text-xs text-foreground ${COUNT_LINK} hover:text-ink`}
             >
               {name}
             </button>
@@ -140,7 +140,7 @@ const statusColumn = columnHelper.accessor("status", {
       : quality && quality.tone !== "neutral"
         ? {
             text: `${quality.label} quality`,
-            ink: quality.tone === "warning" ? "text-[#f0a020]" : "text-destructive-foreground",
+            ink: quality.tone === "warning" ? "text-warning-foreground" : "text-destructive-foreground",
           }
         : null;
     return (

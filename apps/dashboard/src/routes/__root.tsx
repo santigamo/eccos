@@ -22,6 +22,7 @@ import type { AnalyticsConfig } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
 import { hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
 import type { Bootstrap } from "../lib/bootstrap"
+import { THEME_STORAGE_KEY, syncThemeColor } from "../lib/theme"
 import appCss from "../app.css?url"
 
 type ScopeSearch = { wabaId?: string }
@@ -94,7 +95,6 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Eccos — Operator Console" },
-      { name: "theme-color", content: "#070c0f" },
       // Everything below is for LINK UNFURLS — what Slack, iMessage, WhatsApp
       // and the like render when someone pastes a console URL. Without
       // a description and an og:image the unfurl is a bare hostname, which
@@ -235,6 +235,9 @@ function RootComponent() {
   )
 }
 
+/** Applies an explicit theme override before first paint. */
+const THEME_BOOT = `try{var t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}`
+
 function RootDocument({
   children,
   lanternExempt,
@@ -244,11 +247,19 @@ function RootDocument({
   lanternExempt: boolean
   analytics: AnalyticsConfig | null
 }>) {
+  // An override changes what the browser chrome should show, and the metas'
+  // own media queries cannot know about it.
+  useEffect(() => syncThemeColor(), [])
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         <HeadContent />
         <AnalyticsScripts analytics={analytics} />
+        {/* Two metas, not head(): TanStack dedupes head meta by name, so a
+            second theme-color entry there would be dropped. */}
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9f8" />
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070c0f" />
       </head>
       <body>
         <a

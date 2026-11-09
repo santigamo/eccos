@@ -5,7 +5,7 @@ import { COUNT_LINK } from "../../ui";
 
 /** Red only where an operator may have to act; progress states stay muted. */
 export function countInk(status: string): string {
-  if (status === "failed" || status === "unknown") return "text-[#ff7777]";
+  if (status === "failed" || status === "unknown") return "text-destructive-foreground";
   return "text-muted-foreground hover:text-foreground";
 }
 

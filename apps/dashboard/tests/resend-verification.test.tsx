@@ -72,15 +72,15 @@ describe("ResendNote", () => {
     expect(text(html)).toContain("Wait a few minutes");
     // Degraded ink (docs/DASHBOARD-DESIGN.md data rule 1), never the
     // destructive rail or the red banner's ink.
-    expect(html).toContain("border-l-[#f0a020]");
-    expect(html).not.toContain("#e03131");
-    expect(html).not.toContain("#ff7777");
+    expect(html).toContain("border-l-warning");
+    expect(html).not.toContain("border-l-destructive");
+    expect(html).not.toContain("text-destructive-foreground");
   });
 
   test("only an unanswered request gets the destructive rail", () => {
     const html = render(resendVerificationOutcome(null));
-    expect(html).toContain("border-l-[#e03131]");
-    expect(html).not.toContain("#f0a020");
+    expect(html).toContain("border-l-destructive");
+    expect(html).not.toContain("border-l-warning");
   });
 
   test("a successful resend stays quiet: muted, no rail", () => {
