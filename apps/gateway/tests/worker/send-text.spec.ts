@@ -3,7 +3,8 @@ import { createExecutionContext, reset, runInDurableObject } from "cloudflare:te
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayRPC } from "../../src/rpc";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
-import { bootstrapAccount, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import type { EccosGateway } from "../../src/gateway";
+import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 /**
  * `sendText` — the conversation composer's free-text send.
@@ -238,6 +239,22 @@ function reaction(overrides: Record<string, unknown> = {}) {
 }
 
 describe("GatewayRPC.sendText as a reply", () => {
+  it("reads the conversation it answers, under the id Meta answered with", async () => {
+    mockSendOk();
+    const unread = () =>
+      runInDurableObject(gatewayStub(), async (i: EccosGateway) => i.listConversations().items[0]);
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([{ type: "reply", from: META_WA_ID, messageId: "wamid.IN1", text: "hola", at: 1000 }]);
+      i.markConversation({ waId: META_WA_ID, read: false });
+      i.ingest([{ type: "reply", from: META_WA_ID, messageId: "wamid.IN2", text: "sigo", at: 2000 }]);
+    });
+    expect(await unread()).toMatchObject({ waId: META_WA_ID, unreadCount: 1, markedUnread: true });
+
+    await makeRpc().sendText(input(), TEST_ACCOUNT_ID);
+
+    expect(await unread()).toMatchObject({ waId: META_WA_ID, unreadCount: 0, markedUnread: false });
+  });
+
   it("quotes the message as Meta's context, and stores the quoted id as the row's targetId", async () => {
     const fetchSpy = mockSendOk();
     await makeRpc().sendText(input({ replyToMessageId: "wamid.IN1" }), TEST_ACCOUNT_ID);

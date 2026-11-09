@@ -1193,6 +1193,9 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         input.phoneNumberId,
         result.waId,
       );
+      // Sent from the open thread, so its operator has read it, whatever the list showed.
+      // Best effort: the message is out, and a failed mark must not read as a failed send.
+      await stub.markConversation({ waId: result.waId ?? input.to, read: true }).catch(() => {});
       return { ok: true, messageId: result.id };
     });
   }
