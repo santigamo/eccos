@@ -19,6 +19,7 @@ import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
 import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
+import { runDailyCensus } from "./ops-census";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
 import { EccosGateway as Gateway } from "./gateway";
@@ -1172,6 +1173,7 @@ const worker = {
   fetch: app.fetch,
   scheduled: async (_controller: ScheduledController, env: Bindings): Promise<void> => {
     await reconcilePendingWabas(env);
+    await runDailyCensus(env).catch(() => console.warn(JSON.stringify({ level: "warn", area: "ops-census", event: "census-error" })));
   },
 };
 

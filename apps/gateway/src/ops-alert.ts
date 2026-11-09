@@ -31,15 +31,25 @@ export type OpsAlertResult = "disabled" | "sent" | "failed";
 
 const OPS_ALERT_TIMEOUT_MS = 5_000;
 
+function opsTarget(env: OpsAlertEnv): { token: string; chatId: string; threadId: number } | null {
+  const token = env.OPS_TELEGRAM_BOT_TOKEN?.trim();
+  const chatId = env.OPS_TELEGRAM_CHAT_ID?.trim();
+  const threadId = Number(env.OPS_TELEGRAM_THREAD_ID);
+  return token && chatId && Number.isInteger(threadId) && threadId > 0 ? { token, chatId, threadId } : null;
+}
+
+export function opsAlertsEnabled(env: OpsAlertEnv): boolean {
+  return opsTarget(env) !== null;
+}
+
 export async function sendOpsAlert(
   env: OpsAlertEnv,
   text: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<OpsAlertResult> {
-  const token = env.OPS_TELEGRAM_BOT_TOKEN?.trim();
-  const chatId = env.OPS_TELEGRAM_CHAT_ID?.trim();
-  const threadId = Number(env.OPS_TELEGRAM_THREAD_ID);
-  if (!token || !chatId || !Number.isInteger(threadId) || threadId <= 0) return "disabled";
+  const target = opsTarget(env);
+  if (!target) return "disabled";
+  const { token, chatId, threadId } = target;
 
   try {
     const res = await fetchImpl(`https://api.telegram.org/bot${token}/sendMessage`, {

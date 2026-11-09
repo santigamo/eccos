@@ -82,7 +82,7 @@ import {
   upsertScheduled,
 } from "./scheduled";
 import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-rate-limit";
-import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
+import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -1289,6 +1289,31 @@ export class EccosGateway extends DurableObject<Env> {
       inboundByType,
       outbound: byStatus("outbound_messages"),
       deliveries: byStatus("deliveries"),
+    };
+  }
+
+  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, and (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`. Index-only scans. */
+  getCensus(sinceMs: number): {
+    hasTarget: boolean;
+    deliveries: Record<string, number>;
+    recent: { delivered: number; failed: number };
+    heldEventCount: number;
+  } {
+    const deliveries: Record<string, number> = {};
+    for (const row of this.sql.exec("SELECT status, COUNT(*) AS c FROM deliveries GROUP BY status").toArray()) {
+      deliveries[row.status as string] = Number(row.c);
+    }
+    const recent = { delivered: 0, failed: 0 };
+    for (const row of this.sql
+      .exec("SELECT status, COUNT(*) AS c FROM deliveries WHERE created_at >= ? GROUP BY status", sinceMs)
+      .toArray()) {
+      if (row.status === "delivered" || row.status === "failed") recent[row.status] = Number(row.c);
+    }
+    return {
+      hasTarget: Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL")),
+      deliveries,
+      recent,
+      heldEventCount: heldEventCount(this.sql),
     };
   }
 

@@ -698,6 +698,11 @@ export class EccosControlPlane extends DurableObject<Env> {
         redirect_uri TEXT,
         return_to  TEXT
       );`);
+      // Operator-only bookkeeping (the daily census guard); never read by the console.
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );`);
       // Identity-plane link (docs/auth-tenancy-contract.md section 2): one Better
       // Auth organization <-> one Eccos account. PRIMARY KEY on organization_id +
       // UNIQUE on account_id enforce the one-to-one mapping at the storage layer;
@@ -1776,6 +1781,38 @@ export class EccosControlPlane extends DurableObject<Env> {
       );
     });
     return this.getWabaRecord(account, id);
+  }
+
+  /** Every account with its organization link and WABAs, credentials stripped. For the operator census. */
+  listCensusAccounts(): Array<{ accountId: string; name: string; organizationId: string | null; wabas: WabaAccess[] }> {
+    return this.sql
+      .exec(
+        `SELECT a.account_id, a.name, oa.organization_id FROM accounts a
+         LEFT JOIN organization_accounts oa ON oa.account_id = a.account_id ORDER BY a.created_at, a.account_id`,
+      )
+      .toArray()
+      .map((row) => ({
+        accountId: row.account_id as string,
+        name: row.name as string,
+        organizationId: (row.organization_id as string | null) ?? null,
+        wabas: this.listAccountResources(row.account_id as string).wabas,
+      }));
+  }
+
+  /** Whether the census of this UTC day (`YYYY-MM-DD`) or a later one was already claimed. Read-only. */
+  censusClaimed(day: string): boolean {
+    const last = this.sql.exec("SELECT value FROM ops_state WHERE key = 'census_day'").toArray()[0]?.value;
+    return last !== undefined && String(last) >= day;
+  }
+
+  /** True for the first caller of a UTC day; false once taken. Synchronous, so the single-threaded object makes it atomic. */
+  claimDailyCensus(day: string): boolean {
+    if (this.censusClaimed(day)) return false;
+    this.sql.exec(
+      "INSERT INTO ops_state (key, value) VALUES ('census_day', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      day,
+    );
+    return true;
   }
 
   /** Everything an account owns, with every credential stripped (no API-key
