@@ -102,6 +102,16 @@ export function useLiveRefresh(page: string): LiveRefresh {
   return { live, setLive, refreshing, refresh }
 }
 
+/**
+ * Always live, for a page that is an inbox: re-reads the page every
+ * `LIVE_INTERVAL_MS` while the tab is visible. No button and no stored choice.
+ */
+export function useAlwaysLive(): void {
+  const router = useRouter()
+  const refresh = useMemo(() => singleFlight(() => invalidatePage(router), () => {}), [router])
+  useEffect(() => pollWhileVisible(refresh, LIVE_INTERVAL_MS, document), [refresh])
+}
+
 const liveKey = (page: string) => `eccos.live.${page}`
 
 export function readLive(page: string): boolean {

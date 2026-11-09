@@ -314,15 +314,18 @@ export function Page({
   title,
   kicker = "Operator console",
   actions,
+  fill,
   children,
 }: {
   title: string
   kicker?: string
   actions?: ReactNode
+  /** Takes the shell's height instead of at least that, for panes that scroll inside it. */
+  fill?: boolean
   children: ReactNode
 }) {
   return (
-    <div className="flex min-h-full flex-col">
+    <div className={fill ? "flex min-h-0 flex-1 flex-col" : "flex min-h-full flex-col"}>
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-4">
         <div className="flex min-w-0 flex-col gap-1.5">
           {kicker ? (

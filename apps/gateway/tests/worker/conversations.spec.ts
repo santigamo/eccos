@@ -1,6 +1,8 @@
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EccosControlPlane } from "../../src/control-plane";
+import { getControlPlaneStub } from "../../src/control-plane-stub";
 import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import { TEST_ACCOUNT_ID, TEST_WABA_ID, bootstrapAccount, gatewayStub } from "./helpers";
@@ -10,6 +12,7 @@ const WA = "34600000001";
 const OTHER = "34600000002";
 const THIRD = "34600000003";
 const FOURTH = "34600000004";
+const BSUID = "US.13491208655302741918";
 const PHONE_NUMBER_ID = "PNID1";
 // A Brazilian-style number as typed, and the form Meta answers with (ninth digit dropped).
 const TYPED = "5511900000001";
@@ -109,6 +112,8 @@ describe("conversation store: live feed", () => {
           waId: WA,
           name: null,
           messageCount: 1,
+          unreadCount: 1,
+          markedUnread: false,
           lastMessage: { type: "text", text: "once", direction: "in", at: 1000 },
         },
       ]);
@@ -468,6 +473,31 @@ describe("conversation store: erasure and retention", () => {
   });
 });
 
+describe("conversation store: RPC read state and search", () => {
+  it("marks a conversation and filters the list through the organization's scope", async () => {
+    const ORG = "org_conversations";
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      cp.sql.exec(
+        "INSERT INTO organization_accounts (organization_id, account_id, status, created_at) VALUES (?, ?, 'active', ?)",
+        ORG,
+        TEST_ACCOUNT_ID,
+        Date.now(),
+      );
+    });
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([{ type: "reply", from: WA, messageId: "wamid.RR1", text: "rr", at: 1000, profileName: "Rosa" }]);
+    });
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+
+    await rpc.markConversation({ organizationId: ORG, wabaId: TEST_WABA_ID }, { waId: WA, read: false });
+    const flagged = await rpc.readConversations({ organizationId: ORG, wabaId: TEST_WABA_ID }, { q: "rosa" });
+    expect(flagged.data.items).toMatchObject([{ waId: WA, unreadCount: 0, markedUnread: true }]);
+    expect((await rpc.readConversations({ organizationId: ORG, wabaId: TEST_WABA_ID }, { q: "nobody" })).data.items).toEqual(
+      [],
+    );
+  });
+});
+
 describe("conversation store: RPC scoping", () => {
   it("reads through the account that owns the WABA and rejects a foreign account", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
@@ -484,5 +514,230 @@ describe("conversation store: RPC scoping", () => {
     await expect(rpc.getConversation({ wabaId: TEST_WABA_ID, waId: WA }, "foreign-account")).rejects.toThrow(
       /not owned/,
     );
+  });
+});
+
+describe("conversation store: read state", () => {
+  const unreadOf = (i: EccosGateway, waId: string) =>
+    i.listConversations().items.find((c) => c.waId === waId) ?? null;
+  const reply = (from: string, messageId: string, at: number) => ({
+    type: "reply" as const,
+    from,
+    messageId,
+    text: messageId,
+    at,
+  });
+
+  it("counts live inbound messages as unread until the conversation is read", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(WA, "wamid.U1", 1000), reply(WA, "wamid.U2", 2000)]);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 2, markedUnread: false });
+
+      i.markConversation({ waId: WA, read: true });
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 0, markedUnread: false });
+
+      i.ingest([reply(WA, "wamid.U3", 3000)]);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1 });
+    });
+  });
+
+  it("reactions, system notices, edits, revokes and imported history do not count", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([
+        { type: "message", from: WA, messageId: "wamid.R1", at: 1000, messageType: "reaction", reaction: { messageId: "x", emoji: "👍" } },
+        { type: "message", from: WA, messageId: "wamid.S1", at: 1100, messageType: "system", text: "joined" },
+        { type: "message", from: WA, messageId: "wamid.E1", at: 1200, messageType: "edit", originalMessageId: "x" },
+        { type: "message", from: WA, messageId: "wamid.V1", at: 1300, messageType: "revoke", originalMessageId: "x" },
+      ]);
+      i.sql.exec(
+        `INSERT INTO messages (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
+         VALUES ('wamid.H1', ?, 'in', 'history', 'text', 'old', NULL, 500, NULL, NULL, NULL, 500)`,
+        WA,
+      );
+      expect(unreadOf(i, WA)).toMatchObject({ messageCount: 5, unreadCount: 0 });
+    });
+  });
+
+  it("marking unread keeps the read point and sets the flag; reading clears it", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(WA, "wamid.M1", 1000)]);
+      i.markConversation({ waId: WA, read: true });
+      i.markConversation({ waId: WA, read: false });
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 0, markedUnread: true });
+
+      i.ingest([reply(WA, "wamid.M2", 2000)]);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1, markedUnread: true });
+
+      i.markConversation({ waId: "+34 600-000-001", read: true });
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 0, markedUnread: false });
+    });
+  });
+
+  it("marking a conversation with no messages does nothing", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.markConversation({ waId: WA, read: false });
+      expect(i.sql.exec(`SELECT COUNT(*) AS c FROM conversation_reads`).one().c).toBe(0);
+    });
+  });
+
+  it("a send through Eccos leaves the unread state alone: it may be a broadcast or a bot", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(WA, "wamid.X1", 1000)]);
+      i.markConversation({ waId: WA, read: true });
+      i.ingest([reply(WA, "wamid.X2", 2000)]);
+      i.markConversation({ waId: WA, read: false });
+      i.logOutbound("wamid.OUT9", WA, textSend(WA, "hola"), "sent", null, PHONE_NUMBER_ID);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1, markedUnread: true });
+    });
+  });
+
+  it("a reply from the Business app clears the unread state, and a duplicate of it moves nothing", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(WA, "wamid.X1", 1000)]);
+      i.markConversation({ waId: WA, read: false });
+      const echo = { type: "echo", to: WA, messageId: "wamid.E1", text: "hola", at: 1500 } as const;
+      i.ingest([echo]);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 0, markedUnread: false });
+
+      i.ingest([reply(WA, "wamid.X2", 2000)]);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1 });
+      i.ingest([echo]);
+      expect(unreadOf(i, WA)).toMatchObject({ unreadCount: 1 });
+    });
+  });
+
+  it("a BSUID conversation merges its read state into the phone's, and only the merged row survives", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(BSUID, "wamid.B1", 1000), reply(BSUID, "wamid.B2", 2000)]);
+      i.markConversation({ waId: BSUID, read: true });
+      i.ingest([{ type: "reply", from: WA, fromUserId: BSUID, messageId: "wamid.B3", text: "b3", at: 3000 }]);
+
+      expect(i.listConversations().items.map((c) => [c.waId, c.messageCount, c.unreadCount])).toEqual([[WA, 3, 1]]);
+      expect(i.sql.exec(`SELECT wa_id FROM conversation_reads`).toArray()).toEqual([{ wa_id: WA }]);
+    });
+  });
+
+  it("a BSUID conversation with no read row merges its unread messages into the phone's", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(BSUID, "wamid.N1", 1000)]);
+      i.ingest([{ type: "reply", from: WA, fromUserId: BSUID, messageId: "wamid.N2", text: "n2", at: 2000 }]);
+
+      expect(i.listConversations().items.map((c) => [c.waId, c.unreadCount, c.markedUnread])).toEqual([[WA, 2, false]]);
+      expect(i.sql.exec(`SELECT COUNT(*) AS c FROM conversation_reads`).one().c).toBe(0);
+    });
+  });
+
+  it("a BSUID marked unread keeps the flag once merged into the phone's conversation", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(BSUID, "wamid.F1", 1000)]);
+      i.markConversation({ waId: BSUID, read: false });
+      i.ingest([{ type: "reply", from: WA, fromUserId: BSUID, messageId: "wamid.F2", text: "f2", at: 2000 }]);
+
+      expect(i.listConversations().items.map((c) => [c.waId, c.markedUnread])).toEqual([[WA, true]]);
+    });
+  });
+
+  it("erasing a number removes its read state and leaves the others'", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(WA, "wamid.ER1", 1000), reply(OTHER, "wamid.ER2", 2000)]);
+      i.markConversation({ waId: WA, read: false });
+      i.markConversation({ waId: OTHER, read: true });
+
+      await i.eraseByPhone(WA);
+      expect(i.sql.exec(`SELECT wa_id FROM conversation_reads`).toArray()).toEqual([{ wa_id: OTHER }]);
+    });
+  });
+});
+
+describe("conversation store: search", () => {
+  const named = (from: string, messageId: string, profileName?: string) => ({
+    type: "reply" as const,
+    from,
+    messageId,
+    text: messageId,
+    at: 1000,
+    ...(profileName ? { profileName } : {}),
+  });
+
+  it("filters by contact name, and by a formatted phone number", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([named(WA, "wamid.S1", "Alice Smith"), named(OTHER, "wamid.S2"), named(THIRD, "wamid.S3", "Bob")]);
+
+      expect(i.listConversations({ q: "alice" }).items.map((c) => c.waId)).toEqual([WA]);
+      expect(i.listConversations({ q: "  +34 600-000-002 " }).items.map((c) => c.waId)).toEqual([OTHER]);
+      expect(i.listConversations({ q: "3460000000" }).items.map((c) => c.waId)).toEqual([THIRD, OTHER, WA]);
+    });
+  });
+
+  it("matches a BSUID as typed, and treats % and _ in the query literally", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([named(BSUID, "wamid.T1", "Ana_50%"), named(OTHER, "wamid.T2", "Anabel")]);
+
+      expect(i.listConversations({ q: "US.1349" }).items.map((c) => c.waId)).toEqual([BSUID]);
+      // Only the name that holds the literal character matches, never every row.
+      expect(i.listConversations({ q: "%" }).items.map((c) => c.waId)).toEqual([BSUID]);
+      expect(i.listConversations({ q: "_" }).items.map((c) => c.waId)).toEqual([BSUID]);
+      expect(i.listConversations({ q: "ana_50%" }).items.map((c) => c.waId)).toEqual([BSUID]);
+      expect(i.listConversations({ q: "anab_" }).items).toEqual([]);
+    });
+  });
+
+  it("blank query is no filter", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([named(WA, "wamid.B0"), named(OTHER, "wamid.B00")]);
+      expect(i.listConversations({ q: "   " }).items).toHaveLength(2);
+    });
+  });
+
+  it("pages the matches with the cursor", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([
+        named(WA, "wamid.P1", "Ana 1"),
+        named(OTHER, "wamid.P2", "Bob"),
+        named(THIRD, "wamid.P3", "Ana 3"),
+        named(FOURTH, "wamid.P4", "Ana 4"),
+      ]);
+
+      const first = i.listConversations({ q: "ana", limit: 2 });
+      expect(first.items.map((c) => c.waId)).toEqual([FOURTH, THIRD]);
+      const second = i.listConversations({ q: "ana", limit: 2, cursor: first.nextCursor! });
+      expect(second.items.map((c) => c.waId)).toEqual([WA]);
+      expect(second.nextCursor).toBeNull();
+    });
+  });
+});
+
+describe("conversation store: quoted messages", () => {
+  it("keeps the message a reply quotes as its targetId, both inbound and sent", async () => {
+    const now = Date.now();
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([{ type: "reply", from: WA, messageId: "wamid.Q1", text: "sí, a las 10", replyTo: "wamid.OUT1", at: now }]);
+      i.ingest([
+        {
+          type: "message",
+          from: WA,
+          messageId: "wamid.Q2",
+          at: now + 60_000,
+          messageType: "image",
+          media: { id: "MEDIA1", mimeType: "image/jpeg" },
+          replyTo: "wamid.OUT1",
+        },
+      ]);
+      i.logOutbound(
+        "wamid.OUT2",
+        WA,
+        JSON.stringify({ messaging_product: "whatsapp", to: WA, type: "text", text: { body: "ok" }, context: { message_id: "wamid.Q1" } }),
+        "sent",
+        null,
+        PHONE_NUMBER_ID,
+      );
+
+      const messages = i.getConversation({ waId: WA }).items;
+      expect(messages.map((m) => [m.id, m.type, m.text, m.targetId])).toEqual([
+        ["wamid.Q1", "text", "sí, a las 10", "wamid.OUT1"],
+        ["wamid.OUT2", "text", "ok", "wamid.Q1"],
+        ["wamid.Q2", "image", null, "wamid.OUT1"],
+      ]);
+    });
   });
 });

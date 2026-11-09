@@ -44,7 +44,7 @@ export function prefetchThread(wabaId: string | undefined, waId: string, _list?:
  * The open thread, read on its own so opening one never reloads the route and
  * the list stays on screen. `null` is the wait: the thread was just opened and
  * nothing is known yet; one read before shows at once and is re-read behind
- * it. `refreshed` changes when the route's loader re-ran (Refresh, Live, a
+ * it. `refreshed` changes when the route's loader re-ran (the page's poll, a
  * sent reply); the thread is then re-read, never served from the cache.
  */
 export function useThread(

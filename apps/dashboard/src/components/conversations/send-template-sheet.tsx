@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { failureCopy } from "../../lib/failure";
 import {
   analyzeTemplate,
@@ -16,29 +16,34 @@ import { GridEmptyState } from "../grid/empty-state";
 
 export interface SendTemplateProps {
   wabaId: string;
-  /** The customer's number, digits only. */
-  waId: string;
+  /** The customer's number, digits only. Absent: the form asks for the recipient. */
+  waId?: string;
   phoneNumberId: string;
   phones: SendTestPhone[];
-  onSent: () => void;
+  title?: string;
+  description?: string;
+  onSent: (recipient: string) => void;
 }
 
 /**
  * "Send a template" from a conversation, for a customer outside the 24-hour
  * window. It lists the approved templates, as /templates does, and the chosen
- * one opens the same "Send test" form, with this customer as the recipient and
- * this thread's number as the sender.
+ * one opens the same form: with this customer as the recipient when `waId` is
+ * given, otherwise asking for one, and with this thread's number as the sender.
  */
 export function SendTemplateSheet({
   open,
   onOpenChange,
+  title = "Send a template",
+  description,
   ...template
 }: SendTemplateProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
         <SheetHeader className="gap-2">
-          <SheetTitle>Send a template</SheetTitle>
+          <SheetTitle>{title}</SheetTitle>
+          {description ? <SheetDescription>{description}</SheetDescription> : null}
         </SheetHeader>
         <TemplateChoice {...template} />
       </SheetContent>
@@ -128,6 +133,7 @@ function TemplateChoice({ wabaId, waId, phoneNumberId, phones, onSent }: SendTem
           initialPhoneNumberId={phoneNumberId}
           recipient={waId}
           onSent={onSent}
+          sendLabel="Send"
           view={templateView(chosen)}
         />
       </div>

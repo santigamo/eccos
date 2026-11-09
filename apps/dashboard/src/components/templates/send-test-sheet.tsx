@@ -44,8 +44,10 @@ interface SendTestFormProps {
   initialPhoneNumberId?: string;
   /** The customer this send is for. Fixed when given: shown instead of a field. */
   recipient?: string;
-  /** Called once Meta has accepted the message, so the caller can refresh what it shows. */
-  onSent?: () => void;
+  /** Called once Meta has accepted the message, with the recipient it went to. */
+  onSent?: (recipient: string) => void;
+  /** The submit label. Real sends from a conversation say "Send"; the Templates page keeps "Send test message". */
+  sendLabel?: string;
   /** The template's parts, for the WhatsApp preview. Without it the preview is plain text. */
   view?: TemplateView | null;
 }
@@ -140,6 +142,7 @@ export function SendTestForm({
   initialPhoneNumberId,
   recipient: fixedRecipient,
   onSent,
+  sendLabel,
   view,
 }: SendTestFormProps) {
   const paramCount = sendability.kind === "ready" ? sendability.paramCount : 0;
@@ -193,7 +196,7 @@ export function SendTestForm({
           return false;
         }
         setNotice(noticeFor(result.data));
-        if (result.data.ok) onSent?.();
+        if (result.data.ok) onSent?.(recipient);
         return result.data.ok;
       });
     } catch {
@@ -403,7 +406,7 @@ export function SendTestForm({
 
       </fieldset>
 
-      <SendTestAction phase={phase} onSendAnother={sendAnother} />
+      <SendTestAction phase={phase} onSendAnother={sendAnother} label={sendLabel} />
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -425,12 +428,20 @@ export function SendTestForm({
  * click landed on a re-enabled submit. "Send another" sits on its own row
  * below, and unmounts on click, so no click lands on the submit after it.
  */
-export function SendTestAction({ phase, onSendAnother }: { phase: SendPhase; onSendAnother: () => void }) {
+export function SendTestAction({
+  phase,
+  onSendAnother,
+  label = "Send test message",
+}: {
+  phase: SendPhase;
+  onSendAnother: () => void;
+  label?: string;
+}) {
   const sending = phase === "sending";
   return (
     <div className="flex flex-col items-start gap-2">
       <Button type="submit" aria-busy={sending} disabled={phase !== "idle"}>
-        {phase === "sent" ? "Sent" : sending ? "Sending…" : "Send test message"}
+        {phase === "sent" ? "Sent" : sending ? "Sending…" : label}
       </Button>
       {phase === "sent" ? (
         <Button type="button" variant="outline" onClick={onSendAnother}>

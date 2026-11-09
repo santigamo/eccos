@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement, ReactNode } from "react";
@@ -15,8 +16,13 @@ import type { ReactElement, ReactNode } from "react";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
+// The DOM is registered for the `useAlwaysLive` case only, and removed after this file.
+GlobalRegistrator.register();
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 let loaderData: unknown;
 let rootData: unknown;
+let invalidations = 0;
 
 // SPREAD, not replaced — see tests/templates-screen.test.tsx.
 const routerModule = await import("@tanstack/react-router");
@@ -34,12 +40,18 @@ mock.module("@tanstack/react-router", () => ({
     </a>
   ),
   useLoaderData: () => rootData,
-  useRouter: () => ({ invalidate: () => Promise.resolve() }),
+  useRouter: () => ({
+    invalidate: () => {
+      invalidations++;
+      return Promise.resolve();
+    },
+  }),
 }));
 
-const { pollWhileVisible, singleFlight, readLive, writeLive } = await import(
-  "../src/hooks/use-live-refresh"
-);
+const { pollWhileVisible, singleFlight, readLive, writeLive, useAlwaysLive, LIVE_INTERVAL_MS } =
+  await import("../src/hooks/use-live-refresh");
+const { createRoot } = await import("react-dom/client");
+const { act } = await import("react");
 const { isNavigating } = await import("../src/components/dashboard/route-progress");
 const { loaderFailure } = await import("../src/lib/failure");
 const { RefreshControls } = await import("../src/components/logs/refresh-controls");
@@ -99,6 +111,44 @@ describe("pollWhileVisible", () => {
     await wait(40);
     expect(ticks).toBe(0);
     expect(doc.listeners.size).toBe(0);
+  });
+});
+
+afterAll(async () => {
+  delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  await GlobalRegistrator.unregister();
+});
+
+describe("useAlwaysLive", () => {
+  test("re-reads the page every interval while visible, with nothing to press", async () => {
+    // The interval is captured instead of waited for: the hook's own tick is what is pinned.
+    const realSetInterval = globalThis.setInterval;
+    const intervals: { tick: () => void; ms: number }[] = [];
+    globalThis.setInterval = ((tick: () => void, ms: number) => {
+      intervals.push({ tick, ms });
+      return 0;
+    }) as unknown as typeof setInterval;
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    invalidations = 0;
+    try {
+      const Probe = () => {
+        useAlwaysLive();
+        return null;
+      };
+      await act(async () => root.render(<Probe />));
+      expect(intervals.map((i) => i.ms)).toEqual([LIVE_INTERVAL_MS]);
+      expect(invalidations).toBe(0);
+
+      intervals[0]!.tick();
+      expect(invalidations).toBe(1);
+      expect(host.innerHTML).toBe("");
+    } finally {
+      await act(async () => root.unmount());
+      globalThis.setInterval = realSetInterval;
+      host.remove();
+    }
   });
 });
 

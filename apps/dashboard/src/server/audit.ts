@@ -71,6 +71,13 @@ export type SensitiveAction =
    */
   | "text_send"
   /**
+   * One emoji reaction sent from the conversation composer (an empty emoji
+   * removes it). Same rule as `text_send`: the reacted-to message is content
+   * context and the recipient a phone number, so neither is logged. The record
+   * carries wabaId, phoneNumberId, the returned messageId and the failure code.
+   */
+  | "reaction_send"
+  /**
    * One message template authored from the console's "New template" sheet.
    *
    * NEVER carries the body text or any example value. Both are message

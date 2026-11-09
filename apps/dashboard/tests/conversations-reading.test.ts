@@ -8,6 +8,8 @@ import {
   mediaSrc,
   previewOf,
   relativeTime,
+  canActOn,
+  dividerBefore,
   senderLabelOf,
   threadEntries,
   uniqueBy,
@@ -154,6 +156,111 @@ describe("threadEntries", () => {
   });
 });
 
+describe("quotes and reactions in the thread", () => {
+  const TEXT = message({ id: "t-1", text: "Hola" });
+  const reply = (overrides: Partial<MessageRecord> = {}) =>
+    message({ id: "r-1", text: "Sí", targetId: "t-1", at: 2, ...overrides });
+  const react = (id: string, direction: MessageRecord["direction"], emoji: string) =>
+    message({
+      id,
+      type: "reaction",
+      direction,
+      targetId: "t-1",
+      at: 3,
+      content: JSON.stringify({ reaction: { messageId: "t-1", emoji } }),
+    });
+
+  test("a reply quotes its target: the customer by name, the business as You, with the target's text", () => {
+    expect(threadEntries([TEXT, reply()])[1]?.quoted).toEqual({ id: "t-1", found: true, sender: "Customer", preview: "Hola" });
+    const staff = message({ id: "t-2", direction: "out", text: "Mensaje nuestro", at: 1 });
+    expect(threadEntries([staff, reply({ targetId: "t-2" })])[1]?.quoted).toEqual({
+      id: "t-2",
+      found: true,
+      sender: "You",
+      preview: "Mensaje nuestro",
+    });
+  });
+
+  test("a target that is not in the thread is named as not loaded, with no sender", () => {
+    expect(threadEntries([reply()])[0]?.quoted).toEqual({
+      id: "t-1",
+      found: false,
+      sender: null,
+      preview: "Original message not loaded",
+    });
+  });
+
+  test("the quote reads the target after its edits, and says so when it was deleted", () => {
+    const edit = message({ id: "e-1", type: "edit", text: "Hola, ¿qué tal?", targetId: "t-1", at: 1 });
+    expect(threadEntries([TEXT, edit, reply()])[1]?.quoted).toMatchObject({ preview: "Hola, ¿qué tal?" });
+    const revoke = message({ id: "v-1", type: "revoke", targetId: "t-1", at: 1 });
+    expect(threadEntries([TEXT, revoke, reply()])[1]?.quoted).toMatchObject({ found: true, preview: "Message deleted" });
+  });
+
+  test("a target that is not text names its kind", () => {
+    const photo = message({ id: "i-1", type: "image", content: JSON.stringify({ media: { id: "m-1" } }) });
+    expect(threadEntries([photo, reply({ targetId: "i-1" })])[1]?.quoted).toEqual({
+      id: "i-1",
+      found: true,
+      sender: "Customer",
+      preview: "Photo",
+    });
+  });
+
+  test("a message without a target quotes nothing, and an act never quotes, even a missing target", () => {
+    expect(threadEntries([TEXT])[0]?.quoted).toBeNull();
+    const orphanEdit = message({ id: "e-9", type: "edit", text: "nuevo", targetId: "gone" });
+    expect(threadEntries([orphanEdit])[0]?.quoted).toBeNull();
+  });
+
+  test("myReaction is the business's own emoji, and an empty one removes it", () => {
+    expect(threadEntries([TEXT, react("x-1", "out", "👍")])[0]?.myReaction).toBe("👍");
+    expect(threadEntries([TEXT, react("x-1", "in", "❤️")])[0]?.myReaction).toBeNull();
+    expect(threadEntries([TEXT, react("x-1", "out", "👍"), react("x-2", "out", "")])[0]?.myReaction).toBeNull();
+  });
+
+  test("a reader can act on a message, but not on a deleted one, an act, or a notice", () => {
+    const entry = (overrides: Partial<MessageRecord> & Pick<MessageRecord, "id">) => threadEntries([message(overrides)])[0]!;
+    expect(canActOn(entry({ id: "a" }))).toBe(true);
+    expect(canActOn(entry({ id: "b", type: "image" }))).toBe(true);
+    for (const type of ["reaction", "edit", "revoke", "system", "unsupported", "media_placeholder"]) {
+      expect(canActOn(entry({ id: type, type }))).toBe(false);
+    }
+    const revoke = message({ id: "v-1", type: "revoke", targetId: "t-1" });
+    expect(canActOn(threadEntries([TEXT, revoke])[0]!)).toBe(false);
+  });
+});
+
+describe("date dividers", () => {
+  const DAY = 86_400_000;
+  const NOON = Date.UTC(2026, 10, 9, 12);
+  const at = (time: number) => threadEntries([message({ id: String(time), at: time })])[0]!;
+
+  test("no divider while the UTC day goes on", () => {
+    expect(dividerBefore(at(Date.UTC(2026, 10, 9, 1)), at(NOON), NOON)).toBeNull();
+  });
+
+  test("the first loaded entry gets its date, and is not a new conversation", () => {
+    expect(dividerBefore(undefined, at(NOON), NOON)).toEqual({ label: "Today", newConversation: false });
+  });
+
+  test("the day before reads Yesterday, and an older day gets its date", () => {
+    expect(dividerBefore(undefined, at(Date.UTC(2026, 10, 8, 20)), NOON)?.label).toBe("Yesterday");
+    expect(dividerBefore(undefined, at(Date.UTC(2026, 10, 1, 10)), NOON)?.label).toBe("1 Nov 2026");
+  });
+
+  test("days are UTC, so the divider agrees with the UTC timestamp under the message", () => {
+    const before = at(Date.UTC(2026, 10, 8, 23, 59));
+    expect(dividerBefore(before, at(Date.UTC(2026, 10, 9, 0, 1)), NOON)).toEqual({ label: "Today", newConversation: false });
+  });
+
+  test("a gap of a day or more starts a new conversation, and just under it does not", () => {
+    const start = Date.UTC(2026, 10, 1, 10);
+    expect(dividerBefore(at(start), at(start + DAY), NOON)).toMatchObject({ newConversation: true });
+    expect(dividerBefore(at(start), at(start + DAY - 1), NOON)).toMatchObject({ newConversation: false });
+  });
+});
+
 describe("previews and times", () => {
   test("the list's preview marks the staff's own sends and names a deletion", () => {
     expect(previewOf({ type: "text", text: "Hola", direction: "in", at: 1 })).toBe("Hola");
@@ -214,6 +321,32 @@ describe("conversations URL", () => {
       waId: "US.13491208655302741918",
       wabaId: undefined,
     });
+  });
+
+  test("the search is trimmed, and a blank one is no search", () => {
+    expect(conversationsSearch({ q: "  Ana  " }).q).toBe("Ana");
+    expect(conversationsSearch({ q: "   " }).q).toBeUndefined();
+    expect(conversationsSearch({ q: "" }).q).toBeUndefined();
+    expect(conversationsSearch({}).q).toBeUndefined();
+  });
+
+  test("a numeric search is read as the digits the router parsed", () => {
+    expect(conversationsSearch({ q: 600 }).q).toBe("600");
+    expect(conversationsSearch({ q: 600111222 }).q).toBe("600111222");
+  });
+
+  test("a search longer than 100 characters is cut to 100", () => {
+    expect(conversationsSearch({ q: "a".repeat(150) }).q).toBe("a".repeat(100));
+  });
+
+  test("a search cut mid-word does not keep a trailing space", () => {
+    const cut = conversationsSearch({ q: `${"a".repeat(99)} b` }).q;
+    expect(cut).toBe("a".repeat(99));
+  });
+
+  test("a non-text search is no search", () => {
+    expect(conversationsSearch({ q: { text: "Ana" } }).q).toBeUndefined();
+    expect(conversationsSearch({ q: ["Ana"] }).q).toBeUndefined();
   });
 });
 

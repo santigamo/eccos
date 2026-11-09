@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
-import { senderLabelOf, type ThreadEntry } from "../../lib/conversations";
+import { canActOn, dividerBefore, senderLabelOf, type ThreadEntry } from "../../lib/conversations";
 import { fmtTs, fmtTsShort } from "../../ui";
 import { GridEmptyState } from "../grid/empty-state";
+import { MessageActions } from "./message-actions";
 import { MessageBody } from "./message-body";
 
 export interface ConversationThreadProps {
@@ -17,6 +18,16 @@ export interface ConversationThreadProps {
   onLoadOlder: () => void;
   /** The reply box, pinned under the messages. Absent for a viewer. */
   composer?: ReactNode;
+  /** The search the list was under, kept by the back link. */
+  query?: string;
+  /** Present only for a member who may send: the header offers "Mark unread". */
+  onMarkUnread?: () => void;
+  /** Absent: no Reply affordance on any message. */
+  onReply?: (entry: ThreadEntry) => void;
+  /** Absent: no React affordance on any message. An empty emoji removes the business's reaction. */
+  onReact?: (entry: ThreadEntry, emoji: string) => void;
+  /** The clock the date dividers are read against. */
+  now: number;
 }
 
 /**
@@ -33,6 +44,11 @@ export function ConversationThread({
   olderFailed,
   onLoadOlder,
   composer,
+  query,
+  onMarkUnread,
+  onReply,
+  onReact,
+  now,
 }: ConversationThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -81,10 +97,19 @@ export function ConversationThread({
   return (
     <section aria-label={`Conversation with ${title}`} className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-(--line) px-4 py-3">
-        <Link to="/conversations" search={{ wabaId }} className="shrink-0 text-sm underline underline-offset-4 md:hidden">
+        <Link
+          to="/conversations"
+          search={{ wabaId, q: query }}
+          className="shrink-0 text-sm underline underline-offset-4 md:hidden"
+        >
           ← Conversations
         </Link>
         <h2 className="truncate text-base font-medium text-foreground">{title}</h2>
+        {onMarkUnread ? (
+          <Button type="button" variant="outline" size="sm" className="ml-auto rounded-none" onClick={onMarkUnread}>
+            Mark unread
+          </Button>
+        ) : null}
       </header>
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div ref={contentRef}>
@@ -116,9 +141,26 @@ export function ConversationThread({
                 ) : null}
               </div>
               <ol aria-label="Messages" className="m-0 flex list-none flex-col gap-3 p-0">
-                {entries.map((entry) => (
-                  <MessageBubble key={entry.message.id} entry={entry} wabaId={wabaId} />
-                ))}
+                {entries.map((entry, i) => {
+                  const divider = dividerBefore(entries[i - 1], entry, now);
+                  return (
+                    <Fragment key={entry.message.id}>
+                      {divider ? (
+                        // biome-ignore lint/a11y/useFocusableInteractive: the separator is not interactive and takes no focus
+                        <li
+                          // biome-ignore lint/a11y/useSemanticElements: a date divider is a separator in the list, by design
+                          // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: the list item carries the separator role
+                          role="separator"
+                          className="flex items-center gap-3 text-[11px] font-medium tracking-wider text-muted-foreground uppercase before:h-px before:flex-1 before:bg-(--line) after:h-px after:flex-1 after:bg-(--line)"
+                        >
+                          {divider.label}
+                          {divider.newConversation ? " · New conversation" : null}
+                        </li>
+                      ) : null}
+                      <MessageBubble entry={entry} wabaId={wabaId} onReply={onReply} onReact={onReact} />
+                    </Fragment>
+                  );
+                })}
               </ol>
             </>
           )}
@@ -135,39 +177,59 @@ export function ConversationThread({
  * exact time, what Meta last said about an outgoing message, and whether the
  * row was imported from history rather than seen live.
  */
-function MessageBubble({ entry, wabaId }: { entry: ThreadEntry; wabaId?: string }) {
+function MessageBubble({
+  entry,
+  wabaId,
+  onReply,
+  onReact,
+}: {
+  entry: ThreadEntry;
+  wabaId?: string;
+  onReply?: (entry: ThreadEntry) => void;
+  onReact?: (entry: ThreadEntry, emoji: string) => void;
+}) {
   const { message, edited, reactions } = entry;
   const outgoing = message.direction !== "in";
   const emojis = [...new Set(reactions)];
   return (
-    <li className={outgoing ? "flex flex-col items-end gap-1" : "flex flex-col items-start gap-1"}>
-      <article
-        className={
-          outgoing
-            ? "max-w-[min(34rem,88%)] border border-(--tag-live-edge) bg-(--tag-live-bg) px-3 py-2 text-sm"
-            : "max-w-[min(34rem,88%)] border border-(--line-strong) bg-muted/40 px-3 py-2 text-sm"
-        }
-      >
-        <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-          {senderLabelOf(message)}
-        </p>
-        <div className="mt-1.5 break-words text-foreground">
-          <MessageBody entry={entry} wabaId={wabaId} />
-        </div>
-        <footer className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-          <time dateTime={fmtTs(message.at)} title={fmtTs(message.at)} className="tabular-nums">
-            {fmtTsShort(message.at)}
-          </time>
-          {outgoing && message.status ? (
-            <span className={message.status === "failed" ? "text-destructive-foreground" : undefined}>
-              {message.status}
-              {message.status === "failed" && message.error ? `: ${message.error}` : ""}
-            </span>
-          ) : null}
-          {edited ? <span>Edited</span> : null}
-          {message.origin === "history" ? <span>Imported history</span> : null}
-        </footer>
-      </article>
+    <li
+      id={`message-${message.id}`}
+      className={outgoing ? "group flex flex-col items-end gap-1" : "group flex flex-col items-start gap-1"}
+    >
+      {/* The row is full width, so the bubble's own max-width still measures against the thread. */}
+      <div className={`flex w-full items-center gap-1 ${outgoing ? "flex-row-reverse" : ""}`}>
+        <article
+          className={
+            outgoing
+              ? "max-w-[min(34rem,88%)] border border-(--tag-live-edge) bg-(--tag-live-bg) px-3 py-2 text-sm"
+              : "max-w-[min(34rem,88%)] border border-(--line-strong) bg-muted/40 px-3 py-2 text-sm"
+          }
+        >
+          <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+            {senderLabelOf(message)}
+          </p>
+          <div className="mt-1.5 break-words text-foreground">
+            {entry.quoted ? <QuoteBlock quoted={entry.quoted} /> : null}
+            <MessageBody entry={entry} wabaId={wabaId} />
+          </div>
+          <footer className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            <time dateTime={fmtTs(message.at)} title={fmtTs(message.at)} className="tabular-nums">
+              {fmtTsShort(message.at)}
+            </time>
+            {outgoing && message.status ? (
+              <span className={message.status === "failed" ? "text-destructive-foreground" : undefined}>
+                {message.status}
+                {message.status === "failed" && message.error ? `: ${message.error}` : ""}
+              </span>
+            ) : null}
+            {edited ? <span>Edited</span> : null}
+            {message.origin === "history" ? <span>Imported history</span> : null}
+          </footer>
+        </article>
+        {canActOn(entry) && (onReply || onReact) ? (
+          <MessageActions entry={entry} onReply={onReply} onReact={onReact} />
+        ) : null}
+      </div>
       {emojis.length > 0 ? (
         <ul aria-label="Reactions" className="m-0 flex list-none gap-1 p-0 text-sm">
           {emojis.map((emoji) => {
@@ -182,5 +244,26 @@ function MessageBubble({ entry, wabaId }: { entry: ThreadEntry; wabaId?: string 
         </ul>
       ) : null}
     </li>
+  );
+}
+
+/** The message a reply quotes. When it is in the thread, the quote scrolls to it; when not, it only says so. */
+function QuoteBlock({ quoted }: { quoted: NonNullable<ThreadEntry["quoted"]> }) {
+  const line = "mb-1.5 border-l-2 border-(--line-strong) pl-2 text-xs";
+  const body = (
+    <>
+      {quoted.sender ? <span className="block font-medium">{quoted.sender}</span> : null}
+      <span className="block truncate text-muted-foreground">{quoted.preview}</span>
+    </>
+  );
+  if (!quoted.found) return <div className={line}>{body}</div>;
+  return (
+    <button
+      type="button"
+      className={`${line} block w-full cursor-pointer text-left`}
+      onClick={() => document.getElementById(`message-${quoted.id}`)?.scrollIntoView({ block: "center" })}
+    >
+      {body}
+    </button>
   );
 }

@@ -2,9 +2,11 @@ import { useRouter } from "@tanstack/react-router";
 import { invalidatePage } from "../../lib/invalidate";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
+import { XIcon } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { composerWindowOf, isSendKey, SERVICE_WINDOW_MS } from "../../lib/conversations";
+import { composerWindowOf, isSendKey, SERVICE_WINDOW_MS, type ReplyTarget } from "../../lib/conversations";
 import { failureCopy, sendTextFailureCopy } from "../../lib/failure";
 import type { Result, SendTextResult } from "../../server/gateway";
 import { sendText } from "../../server/gateway";
@@ -14,7 +16,14 @@ import { SendTemplateSheet } from "./send-template-sheet";
 
 /** The server function the composer sends through, typed as the composer calls it. */
 type SendText = (input: {
-  data: { wabaId: string; phoneNumberId: string; to: string; text: string; idempotencyKey: string };
+  data: {
+    wabaId: string;
+    phoneNumberId: string;
+    to: string;
+    text: string;
+    idempotencyKey: string;
+    replyToMessageId?: string;
+  };
 }) => Promise<Result<SendTextResult>>;
 
 export type ReplyOutcome =
@@ -28,12 +37,13 @@ export type ReplyOutcome =
  */
 export async function submitReply(
   send: SendText,
-  target: { wabaId: string; phoneNumberId: string; waId: string },
+  target: { wabaId: string; phoneNumberId: string; waId: string; replyToMessageId?: string },
   text: string,
   gate: SendGate = { phase: "idle" },
 ): Promise<ReplyOutcome> {
-  const { wabaId, phoneNumberId, waId } = target;
-  const result = await sendKeyed(gate, { wabaId, phoneNumberId, to: waId, text }, (data) => send({ data }));
+  const { wabaId, phoneNumberId, waId, replyToMessageId } = target;
+  const payload = { wabaId, phoneNumberId, to: waId, text, ...(replyToMessageId ? { replyToMessageId } : {}) };
+  const result = await sendKeyed(gate, payload, (data) => send({ data }));
   if (!result.ok) {
     const copy = failureCopy(result);
     return { sent: false, title: copy.title, detail: copy.detail, secondary: null, windowClosed: false };
@@ -62,6 +72,9 @@ export interface ConversationComposerProps {
   /** The customer's newest inbound message, or null when none was found. */
   lastInboundAt: number | null;
   now: number;
+  /** The message the next free-text send replies to. */
+  replyTo?: ReplyTarget | null;
+  onClearReply?: () => void;
 }
 
 /**
@@ -70,7 +83,7 @@ export interface ConversationComposerProps {
  * box; outside it, free text is refused by WhatsApp, so the box gives way to
  * "Send a template".
  */
-export function ConversationComposer({ lastInboundAt, now, ...thread }: ConversationComposerProps) {
+export function ConversationComposer({ lastInboundAt, now, replyTo, onClearReply, ...thread }: ConversationComposerProps) {
   const router = useRouter();
   const [refusedAt, setRefusedAt] = useState<number | null>(null);
   const clock = useWindowClock(lastInboundAt, now);
@@ -83,7 +96,16 @@ export function ConversationComposer({ lastInboundAt, now, ...thread }: Conversa
   if (!service.open) {
     return <TemplateOnlyReply label={service.label} onSent={onSent} {...thread} />;
   }
-  return <FreeTextReply label={service.label} onSent={onSent} onWindowClosed={onWindowClosed} {...thread} />;
+  return (
+    <FreeTextReply
+      label={service.label}
+      onSent={onSent}
+      onWindowClosed={onWindowClosed}
+      replyTo={replyTo}
+      onClearReply={onClearReply}
+      {...thread}
+    />
+  );
 }
 
 /**
@@ -110,7 +132,9 @@ function FreeTextReply({
   phoneNumberId,
   onSent,
   onWindowClosed,
-}: Pick<ConversationComposerProps, "wabaId" | "waId" | "phoneNumberId"> & {
+  replyTo,
+  onClearReply,
+}: Pick<ConversationComposerProps, "wabaId" | "waId" | "phoneNumberId" | "replyTo" | "onClearReply"> & {
   label: string;
   onSent: () => void;
   onWindowClosed: () => void;
@@ -121,6 +145,13 @@ function FreeTextReply({
   const textarea = useRef<HTMLTextAreaElement>(null);
   const gate = useRef<SendGate>({ phase: "idle" });
 
+  // A new target is a new payload, so a send that succeeded for the last one no longer holds the gate.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a change of target matters, not its text
+  useEffect(() => {
+    if (gate.current.phase === "sent") gate.current.phase = "idle";
+    if (replyTo) textarea.current?.focus();
+  }, [replyTo?.id]);
+
   async function send() {
     const body = text.trim();
     if (!body) return;
@@ -128,9 +159,11 @@ function FreeTextReply({
       setSending(true);
       setNotice(null);
       try {
-        const outcome = await submitReply(sendText, { wabaId, phoneNumberId, waId }, body, gate.current);
+        const target = { wabaId, phoneNumberId, waId, replyToMessageId: replyTo?.id };
+        const outcome = await submitReply(sendText, target, body, gate.current);
         if (outcome.sent) {
           setText("");
+          onClearReply?.();
           onSent();
         } else if (outcome.windowClosed) {
           onWindowClosed();
@@ -165,6 +198,17 @@ function FreeTextReply({
       className="flex flex-col gap-2 border-t border-(--line) px-4 py-3"
     >
       <p className={`m-0 ${LABEL}`}>{label}</p>
+      {replyTo ? (
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1 border-l-2 border-(--line-strong) pl-2 text-xs">
+            <span className="block font-medium">{replyTo.sender}</span>
+            <span className="block truncate text-muted-foreground">{replyTo.preview}</span>
+          </div>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="Cancel reply" onClick={onClearReply}>
+            <XIcon />
+          </Button>
+        </div>
+      ) : null}
       <label htmlFor="conversation-reply" className="sr-only">
         Reply
       </label>

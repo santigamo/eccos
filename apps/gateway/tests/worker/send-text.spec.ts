@@ -225,3 +225,96 @@ describe("GatewayRPC.sendText", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+function reaction(overrides: Record<string, unknown> = {}) {
+  return {
+    wabaId: TEST_WABA_ID,
+    phoneNumberId: "PNID1",
+    to: TYPED_TO,
+    messageId: "wamid.IN1",
+    emoji: "👍",
+    ...overrides,
+  } as Parameters<GatewayRPC["sendReaction"]>[0];
+}
+
+describe("GatewayRPC.sendText as a reply", () => {
+  it("quotes the message as Meta's context, and stores the quoted id as the row's targetId", async () => {
+    const fetchSpy = mockSendOk();
+    await makeRpc().sendText(input({ replyToMessageId: "wamid.IN1" }), TEST_ACCOUNT_ID);
+
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toEqual({
+      messaging_product: "whatsapp",
+      to: TYPED_TO,
+      type: "text",
+      text: { body: "Hello from the inbox", preview_url: false },
+      context: { message_id: "wamid.IN1" },
+    });
+
+    const thread = await makeRpc().getConversation({ wabaId: TEST_WABA_ID, waId: META_WA_ID }, TEST_ACCOUNT_ID);
+    expect(thread.items[0]).toMatchObject({ id: "wamid.TEXT_SENT", type: "text", targetId: "wamid.IN1" });
+  });
+});
+
+describe("GatewayRPC.sendReaction", () => {
+  it("posts a reaction to the message and stores it the way an inbound reaction is read", async () => {
+    const fetchSpy = mockSendOk();
+    const result = await makeRpc().sendReaction(reaction(), TEST_ACCOUNT_ID);
+    expect(result).toEqual({ ok: true, messageId: "wamid.TEXT_SENT" });
+
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toMatch(/\/PNID1\/messages$/);
+    expect(JSON.parse(String(init?.body))).toEqual({
+      messaging_product: "whatsapp",
+      to: TYPED_TO,
+      type: "reaction",
+      reaction: { message_id: "wamid.IN1", emoji: "👍" },
+    });
+
+    const thread = await makeRpc().getConversation({ wabaId: TEST_WABA_ID, waId: META_WA_ID }, TEST_ACCOUNT_ID);
+    expect(thread.items).toEqual([
+      expect.objectContaining({ id: "wamid.TEXT_SENT", direction: "out", type: "reaction", text: null, targetId: "wamid.IN1" }),
+    ]);
+    expect(JSON.parse(thread.items[0]!.content!)).toEqual({ reaction: { messageId: "wamid.IN1", emoji: "👍" } });
+  });
+
+  it("an empty emoji removes the reaction: the stored row carries no emoji", async () => {
+    mockSendOk();
+    await makeRpc().sendReaction(reaction({ emoji: "" }), TEST_ACCOUNT_ID);
+    const thread = await makeRpc().getConversation({ wabaId: TEST_WABA_ID, waId: META_WA_ID }, TEST_ACCOUNT_ID);
+    expect(JSON.parse(thread.items[0]!.content!)).toEqual({ reaction: { messageId: "wamid.IN1", emoji: null } });
+  });
+
+  it("refuses a missing message id or an oversized emoji before Meta is called", async () => {
+    const fetchSpy = mockSendOk();
+    for (const bad of [{ messageId: "" }, { emoji: "x".repeat(33) }]) {
+      const error = await makeRpc()
+        .sendReaction(reaction(bad), TEST_ACCOUNT_ID)
+        .then(() => null, (reason) => reason);
+      expect(error, JSON.stringify(bad)).not.toBeNull();
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("shares the send rules: a duplicate key sends once, and a key reused for another emoji is refused", async () => {
+    const fetchSpy = mockSendOk();
+    const first = await makeRpc().sendReaction(reaction({ idempotencyKey: "react-1" }), TEST_ACCOUNT_ID);
+    expect(await makeRpc().sendReaction(reaction({ idempotencyKey: "react-1" }), TEST_ACCOUNT_ID)).toEqual(first);
+    expect(await makeRpc().sendReaction(reaction({ idempotencyKey: "react-1", emoji: "❤️" }), TEST_ACCOUNT_ID)).toEqual({
+      ok: false,
+      code: "key_reused",
+      detail: null,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps Meta's refusal the way a text send does, and logs the refused reaction as failed", async () => {
+    mockSendError(131047, "outside the window");
+    const result = await makeRpc().sendReaction(reaction(), TEST_ACCOUNT_ID);
+    expect(result).toEqual({ ok: false, code: "window_closed", detail: "outside the window" });
+
+    const rows = await makeRpc().listOutbound({ wabaId: TEST_WABA_ID }, TEST_ACCOUNT_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "failed", recipient: TYPED_TO, phone_number_id: "PNID1" });
+  });
+});

@@ -518,6 +518,7 @@ export class EccosGateway extends DurableObject<Env> {
         this.sql.exec(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`, name).toArray().length > 0;
       const hasConversations = hasTable("messages");
       const hasCustomerIds = hasTable("customer_ids");
+      const hasReads = hasTable("conversation_reads");
       this.ctx.storage.transactionSync(() => {
         this.sql.exec(`CREATE TABLE IF NOT EXISTS contacts (
           wa_id      TEXT PRIMARY KEY,
@@ -541,6 +542,13 @@ export class EccosGateway extends DurableObject<Env> {
           created_at      INTEGER NOT NULL
         );`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_at ON messages (wa_id, at);`);
+        // Read state per conversation: inbound live messages with rowid above read_seq are unread.
+        // marked_unread is the operator's flag. Created before the backfills, which write it.
+        this.sql.exec(`CREATE TABLE IF NOT EXISTS conversation_reads (
+          wa_id         TEXT PRIMARY KEY,
+          read_seq      INTEGER NOT NULL,
+          marked_unread INTEGER NOT NULL DEFAULT 0
+        );`);
         // The phone number each known BSUID belongs to (eccos-yx0v): Meta withholds the
         // number for a while, and the BSUID alone must still find the phone's conversation.
         this.sql.exec(`CREATE TABLE IF NOT EXISTS customer_ids (
@@ -573,6 +581,14 @@ export class EccosGateway extends DurableObject<Env> {
         // half-filled store that looks complete.
         if (!hasConversations) this.backfillConversations();
         else if (!hasCustomerIds) this.backfillCustomerIds();
+        // Conversations that exist on deploy start read: only later messages are unread.
+        if (!hasReads) {
+          this.sql.exec(
+            `INSERT INTO conversation_reads (wa_id, read_seq, marked_unread)
+             SELECT wa_id, MAX(rowid), 0 FROM messages WHERE origin = 'live' GROUP BY wa_id
+             ON CONFLICT(wa_id) DO UPDATE SET read_seq = excluded.read_seq, marked_unread = 0`,
+          );
+        }
       });
     });
   }
@@ -1018,12 +1034,14 @@ export class EccosGateway extends DurableObject<Env> {
    * cannot be answered from an index alone. That is fine at single-WABA volumes;
    * a per-conversation summary table is the fix if it stops being fine.
    */
-  listConversations(opts: { limit?: number; cursor?: string } = {}): CursorPage<ConversationSummary> {
+  listConversations(opts: { limit?: number; cursor?: string; q?: string } = {}): CursorPage<ConversationSummary> {
     const limit = clampPage(opts.limit);
     const after = decodeCursor(opts.cursor);
+    const search = conversationSearch(opts.q);
     const rows = this.sql
       .exec(
-        `SELECT t.wa_id, t.type, t.text, t.direction, t.at, t.seq, t.message_count, c.name
+        `SELECT t.wa_id, t.type, t.text, t.direction, t.at, t.seq, t.message_count, c.name,
+                COALESCE(u.unread, 0) AS unread_count, COALESCE(rd.marked_unread, 0) AS marked_unread
          FROM (
            SELECT wa_id, type, text, direction, at, rowid AS seq,
                   ROW_NUMBER() OVER (PARTITION BY wa_id ORDER BY at DESC, rowid DESC) AS rn,
@@ -1031,12 +1049,21 @@ export class EccosGateway extends DurableObject<Env> {
            FROM messages
          ) t
          LEFT JOIN contacts c ON c.wa_id = t.wa_id
-         WHERE t.rn = 1 AND (t.at < ? OR (t.at = ? AND t.seq < ?))
+         LEFT JOIN (
+           SELECT m.wa_id, COUNT(*) AS unread FROM messages m
+           LEFT JOIN conversation_reads r ON r.wa_id = m.wa_id
+           WHERE m.direction = 'in' AND m.origin = 'live' AND m.type NOT IN ('system', 'reaction', 'edit', 'revoke')
+             AND m.rowid > COALESCE(r.read_seq, 0)
+           GROUP BY m.wa_id
+         ) u ON u.wa_id = t.wa_id
+         LEFT JOIN conversation_reads rd ON rd.wa_id = t.wa_id
+         WHERE t.rn = 1 AND (t.at < ? OR (t.at = ? AND t.seq < ?))${search.sql}
          ORDER BY t.at DESC, t.seq DESC
          LIMIT ?`,
         after.at,
         after.at,
         after.seq,
+        ...search.params,
         limit + 1,
       )
       .toArray();
@@ -1044,6 +1071,8 @@ export class EccosGateway extends DurableObject<Env> {
       waId: row.wa_id as string,
       name: (row.name as string | null) ?? null,
       messageCount: Number(row.message_count),
+      unreadCount: Number(row.unread_count),
+      markedUnread: Number(row.marked_unread) === 1,
       lastMessage: {
         type: row.type as string,
         text: (row.text as string | null) ?? null,
@@ -1104,6 +1133,29 @@ export class EccosGateway extends DurableObject<Env> {
         ? { phoneNumberId: inboundNumber, lastInboundAt: Number(inbound.at) }
         : { phoneNumberId: newestNumber, lastInboundAt: null },
     };
+  }
+
+  /** Marks a conversation read through its newest live message, or unread (`marked_unread`)
+   * and keeps the read point. A conversation with no messages has nothing to mark. */
+  markConversation(opts: { waId: string; read: boolean }): void {
+    const waId = this.customerKey(waIdOf(opts.waId));
+    if (this.sql.exec(`SELECT 1 FROM messages WHERE wa_id = ? LIMIT 1`, waId).toArray().length === 0) return;
+    const newest = `COALESCE((SELECT MAX(rowid) FROM messages WHERE wa_id = ? AND origin = 'live'), 0)`;
+    if (opts.read) {
+      this.sql.exec(
+        `INSERT INTO conversation_reads (wa_id, read_seq, marked_unread) VALUES (?, ${newest}, 0)
+         ON CONFLICT(wa_id) DO UPDATE SET read_seq = excluded.read_seq, marked_unread = 0`,
+        waId,
+        waId,
+      );
+    } else {
+      this.sql.exec(
+        `INSERT INTO conversation_reads (wa_id, read_seq, marked_unread) VALUES (?, ${newest}, 1)
+         ON CONFLICT(wa_id) DO UPDATE SET marked_unread = 1`,
+        waId,
+        waId,
+      );
+    }
   }
 
   /**
@@ -2201,6 +2253,7 @@ export class EccosGateway extends DurableObject<Env> {
       counts.contactsDeleted = this.sql
         .exec(`DELETE FROM contacts WHERE wa_id IN (${placeholders}) RETURNING wa_id`, ...waIds)
         .toArray().length;
+      this.sql.exec(`DELETE FROM conversation_reads WHERE wa_id IN (${placeholders})`, ...waIds);
       this.tombstoneUnreferencedMedia(mediaIds);
     });
     // The R2 objects go in the same request, so a successful erasure has deleted
@@ -2262,6 +2315,7 @@ export class EccosGateway extends DurableObject<Env> {
    * A live message replaces a history row with the same id (history never replaces a live row). */
   private storeMessage(message: NewMessage, createdAt: number, profileName: string | null = null): void {
     const waId = this.customerKey(message.waId);
+    const existing = this.sql.exec(`SELECT origin FROM messages WHERE id = ?`, message.id).toArray()[0];
     this.sql.exec(
       `INSERT INTO messages
          (id, wa_id, direction, origin, type, text, content, at, status, target_id, phone_number_id, created_at)
@@ -2296,6 +2350,18 @@ export class EccosGateway extends DurableObject<Env> {
       profileName,
       createdAt,
     );
+    // A reply from the Business app means the staff read the conversation. A send through
+    // Eccos does not: it may be a broadcast, a schedule or a bot, and the console marks what it opens.
+    // MAX: a history row replaced by a live one keeps its old rowid, which must not move the read point back.
+    if (existing?.origin !== "live" && message.origin === "live" && message.direction === "echo") {
+      this.sql.exec(
+        `INSERT INTO conversation_reads (wa_id, read_seq, marked_unread)
+         SELECT ?, rowid, 0 FROM messages WHERE id = ?
+         ON CONFLICT(wa_id) DO UPDATE SET read_seq = MAX(read_seq, excluded.read_seq), marked_unread = 0`,
+        waId,
+        message.id,
+      );
+    }
   }
 
   /** Builds the conversation store from the rows retention still holds (at most
@@ -2369,6 +2435,16 @@ export class EccosGateway extends DurableObject<Env> {
       pair.userId,
     );
     this.sql.exec(`DELETE FROM contacts WHERE wa_id = ?`, pair.userId);
+    this.sql.exec(
+      `INSERT INTO conversation_reads (wa_id, read_seq, marked_unread)
+       SELECT ?, read_seq, marked_unread FROM conversation_reads WHERE wa_id = ?
+       ON CONFLICT(wa_id) DO UPDATE SET
+         read_seq = MAX(conversation_reads.read_seq, excluded.read_seq),
+         marked_unread = MAX(conversation_reads.marked_unread, excluded.marked_unread)`,
+      pair.waId,
+      pair.userId,
+    );
+    this.sql.exec(`DELETE FROM conversation_reads WHERE wa_id = ?`, pair.userId);
   }
 
   async alarm(): Promise<void> {
@@ -2806,6 +2882,7 @@ export class EccosGateway extends DurableObject<Env> {
     let payloads = 0;
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(`DELETE FROM messages WHERE origin = 'history'`);
+      this.sql.exec(`DELETE FROM conversation_reads WHERE wa_id NOT IN (SELECT wa_id FROM messages)`);
       this.sql.exec(`DELETE FROM history_media`);
       this.sql.exec(`DELETE FROM contacts WHERE source = 'history' AND wa_id NOT IN (SELECT wa_id FROM messages)`);
       this.sql.exec(`UPDATE contacts SET name = NULL WHERE source = 'app_state'`);
@@ -2983,6 +3060,7 @@ export class EccosGateway extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       const mediaIds = this.mediaIdsOf(`at < ?`, cutoff);
       this.sql.exec(`DELETE FROM messages WHERE at < ?`, cutoff);
+      this.sql.exec(`DELETE FROM conversation_reads WHERE wa_id NOT IN (SELECT wa_id FROM messages)`);
       this.sql.exec(`DELETE FROM history_media WHERE at < ?`, cutoff);
       this.sql.exec(
         `DELETE FROM contacts WHERE source != 'app_state' AND wa_id NOT IN (SELECT wa_id FROM messages)`,
@@ -3443,6 +3521,22 @@ function toMessageRecord(row: Record<string, unknown>): MessageRecord {
     targetId: (row.target_id as string | null) ?? null,
     phoneNumberId: (row.phone_number_id as string | null) ?? null,
   };
+}
+
+/** The `q` filter of the conversation list: a contact name or a customer id. A phone-like
+ * query matches the id by its digits; any other text matches the id as typed (a BSUID). */
+function conversationSearch(q: string | undefined): { sql: string; params: string[] } {
+  const text = q?.trim() ?? "";
+  if (!text) return { sql: "", params: [] };
+  const like = (needle: string) => `%${needle.replace(/[\\%_]/g, "\\$&")}%`;
+  const waNeedle = /^[+\d\s()-]+$/.test(text) ? text.replace(/\D/g, "") : text;
+  const terms = ["c.name LIKE ? ESCAPE '\\'"];
+  const params = [like(text)];
+  if (waNeedle) {
+    terms.push("t.wa_id LIKE ? ESCAPE '\\'");
+    params.push(like(waNeedle));
+  }
+  return { sql: ` AND (${terms.join(" OR ")})`, params };
 }
 
 function clampPage(limit?: number): number {

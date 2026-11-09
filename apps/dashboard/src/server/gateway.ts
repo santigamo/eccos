@@ -65,6 +65,7 @@ import type {
   ScopedRead,
   SendTemplateTestInput,
   SendTemplateTestResult,
+  SendReactionInput,
   SendTextInput,
   SendTextResult,
   TemplateHeaderMedia,
@@ -360,6 +361,19 @@ function optionalCursorToken(value: unknown): string | undefined {
   return value;
 }
 
+const MAX_CONVERSATION_QUERY_LENGTH = 100;
+
+/** The inbox search: a name or a customer id, trimmed. Blank means no filter. */
+function optionalConversationQuery(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error("q must be a string");
+  const q = value.trim();
+  if (q.length > MAX_CONVERSATION_QUERY_LENGTH) {
+    throw new Error(`q must be at most ${MAX_CONVERSATION_QUERY_LENGTH} characters`);
+  }
+  return q || undefined;
+}
+
 export function validateConversationListInput(
   input: unknown,
 ): (DashboardConversationListOpts & DashboardScopeInput) | undefined {
@@ -368,11 +382,23 @@ export function validateConversationListInput(
   const wabaId = optionalWabaId(record.wabaId);
   const limit = optionalCursor(record.limit, "limit");
   const cursor = optionalCursorToken(record.cursor);
+  const q = optionalConversationQuery(record.q);
   return {
     ...(wabaId ? { wabaId } : {}),
     ...(limit !== undefined ? { limit } : {}),
     ...(cursor !== undefined ? { cursor } : {}),
+    ...(q !== undefined ? { q } : {}),
   };
+}
+
+/** Marking a conversation read or unread: the customer's number or BSUID, and the flag. */
+export function validateMarkConversationInput(input: unknown): { wabaId?: string; waId: string; read: boolean } {
+  const record = inputRecord(input);
+  const waId = normalizeCustomerId(record.waId);
+  if (!waId) throw new Error("waId must be a phone number or a BSUID");
+  if (typeof record.read !== "boolean") throw new Error("read must be true or false");
+  const wabaId = optionalWabaId(record.wabaId);
+  return { ...(wabaId ? { wabaId } : {}), waId, read: record.read };
 }
 
 /** A thread read needs the customer's number (digits or formatted) or BSUID. */
@@ -683,6 +709,25 @@ function idempotencyKey(value: unknown): { idempotencyKey?: string } {
 
 /** Meta's ceiling for a free-text body. */
 const MAX_TEXT_LENGTH = 4096;
+/** A Meta message id (`wamid.…`): the charset Meta uses, bounded before it reaches Meta. */
+const MESSAGE_ID_PATTERN = /^[A-Za-z0-9.+/=_:-]{1,256}$/;
+/** One emoji, as an operator types it: a single grapheme, which is bounded in code units too. */
+const MAX_EMOJI_LENGTH = 32;
+const EMOJI_GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function messageId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim();
+  return MESSAGE_ID_PATTERN.test(id) ? id : null;
+}
+
+/** The quoted message of a reply; optional, so a plain send carries none. */
+function replyToMessageId(value: unknown): { replyToMessageId?: string } {
+  if (value === undefined) return {};
+  const id = messageId(value);
+  if (!id) throw new Error("replyToMessageId is not a valid message id");
+  return { replyToMessageId: id };
+}
 
 /**
  * The composer's one free-text message. The body is trimmed, because a message
@@ -701,7 +746,44 @@ export function validateSendTextInput(input: unknown): SendTextInput {
   const text = record.text.trim();
   if (!text) throw new Error("message text is required");
   if (text.length > MAX_TEXT_LENGTH) throw new Error("message text is too long");
-  return { wabaId, phoneNumberId: record.phoneNumberId.trim(), to, text, ...idempotencyKey(record.idempotencyKey) };
+  return {
+    wabaId,
+    phoneNumberId: record.phoneNumberId.trim(),
+    to,
+    text,
+    ...replyToMessageId(record.replyToMessageId),
+    ...idempotencyKey(record.idempotencyKey),
+  };
+}
+
+/**
+ * The composer's reaction. `emoji` is one grapheme, or "" to remove the reaction:
+ * the gateway passes it to Meta as typed, so this is where a second emoji or a
+ * word is refused.
+ */
+export function validateSendReactionInput(input: unknown): SendReactionInput {
+  const record = inputRecord(input);
+  const wabaId = optionalWabaId(record.wabaId);
+  if (!wabaId) throw new Error("wabaId is required");
+  if (typeof record.phoneNumberId !== "string" || !PHONE_NUMBER_ID_PATTERN.test(record.phoneNumberId.trim())) {
+    throw new Error("phoneNumberId is required");
+  }
+  const to = validateRecipient(record.to);
+  const reactedTo = messageId(record.messageId);
+  if (!reactedTo) throw new Error("messageId is required");
+  if (typeof record.emoji !== "string") throw new Error("emoji must be a string");
+  const emoji = record.emoji;
+  if (emoji.length > MAX_EMOJI_LENGTH || (emoji !== "" && [...EMOJI_GRAPHEMES.segment(emoji)].length !== 1)) {
+    throw new Error("emoji must be one emoji, or empty to remove the reaction");
+  }
+  return {
+    wabaId,
+    phoneNumberId: record.phoneNumberId.trim(),
+    to,
+    messageId: reactedTo,
+    emoji,
+    ...idempotencyKey(record.idempotencyKey),
+  };
 }
 
 /**
@@ -1745,6 +1827,19 @@ export const getThreadView = createServerFn({ method: "GET" })
     ),
   );
 
+/**
+ * Marks a conversation read or unread for the whole workspace. `operate`: the read
+ * state belongs to the team, so a viewer may not change it. Not audited: it is not
+ * a sensitive action.
+ */
+export const markConversation = createServerFn({ method: "POST" })
+  .validator(validateMarkConversationInput)
+  .handler(({ data }): Promise<Result<void>> =>
+    withScopedData({ action: "operate", wabaId: data.wabaId }, (gateway, org) =>
+      gateway.markConversation(org, { waId: data.waId, read: data.read }),
+    ),
+  );
+
 export const listTemplates = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
   .handler(({ data }): Promise<Result<TemplatesResult>> =>
@@ -1865,23 +1960,47 @@ export const sendText = createServerFn({ method: "POST" })
         const actor = await requireActor("operate");
         const scope = await resolveScope(gateway, data.wabaId, true);
         const result = await gateway.sendText({ ...data, wabaId: scope.wabaId }, scope.accountId);
-        // No recipient, no body. See `SensitiveAction`'s "text_send" doc comment.
-        auditEvent({
-          action: "text_send",
-          actorUserId: actor.session.userId,
-          organizationId: actor.organizationId,
-          accountId: scope.accountId,
-          resource: {
-            wabaId: scope.wabaId,
-            phoneNumberId: data.phoneNumberId,
-            ...(result.ok ? { messageId: result.messageId } : {}),
-          },
-          outcome: result.ok ? "success" : "failed",
-          ...(result.ok ? {} : { detail: result.code }),
-        });
+        auditSend("text_send", actor, scope, data.phoneNumberId, result);
         return result;
       }),
   );
+
+/** One emoji reaction from the composer's message menu. `operate`, as `sendText`. */
+export const sendReaction = createServerFn({ method: "POST" })
+  .validator(validateSendReactionInput)
+  .handler(
+    ({ data }): Promise<Result<SendTextResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("operate");
+        const scope = await resolveScope(gateway, data.wabaId, true);
+        const result = await gateway.sendReaction({ ...data, wabaId: scope.wabaId }, scope.accountId);
+        auditSend("reaction_send", actor, scope, data.phoneNumberId, result);
+        return result;
+      }),
+  );
+
+/** The audit line of a console send: ids and the failure code only, never the recipient or the body. */
+function auditSend(
+  action: "text_send" | "reaction_send",
+  actor: ActorContext,
+  scope: { wabaId: string; accountId: string },
+  phoneNumberId: string,
+  result: SendTextResult,
+): void {
+  auditEvent({
+    action,
+    actorUserId: actor.session.userId,
+    organizationId: actor.organizationId,
+    accountId: scope.accountId,
+    resource: {
+      wabaId: scope.wabaId,
+      phoneNumberId,
+      ...(result.ok ? { messageId: result.messageId } : {}),
+    },
+    outcome: result.ok ? "success" : "failed",
+    ...(result.ok ? {} : { detail: result.code }),
+  });
+}
 
 /**
  * Create one message template ("New template").
