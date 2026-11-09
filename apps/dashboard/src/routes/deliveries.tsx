@@ -17,6 +17,7 @@ import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { HeldNotice } from "../components/logs/held-notice";
 import { LogPager } from "../components/logs/log-pager";
+import { normalizeSearchTrail, pageOfRows, type PageTrail } from "../lib/page-trail";
 import { RetryFailedSheet } from "../components/logs/retry-failed-sheet";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
@@ -72,7 +73,7 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "failed",
 };
 
-type DeliveriesSearch = { status?: string; before?: number; wabaId?: string };
+type DeliveriesSearch = { status?: string; before?: number; trail?: PageTrail; wabaId?: string };
 
 export const Route = createFileRoute("/deliveries")({
   staleTime: LIVE_STALE_MS,
@@ -80,11 +81,11 @@ export const Route = createFileRoute("/deliveries")({
     const status = normalizeSearchStatus(search.status);
     const before = normalizeSearchBefore(search.before);
     const wabaId = normalizeSearchWabaId(search.wabaId);
-    return { status, before, wabaId };
+    return { status, before, trail: normalizeSearchTrail(search.trail, before), wabaId };
   },
   loaderDeps: ({ search }) => ({ status: search.status, before: search.before, wabaId: search.wabaId }),
   loader: ({ deps }) =>
-    listDeliveries({ data: { status: deps.status, before: deps.before, wabaId: deps.wabaId } }),
+    listDeliveries({ data: { status: deps.status, before: deps.before, wabaId: deps.wabaId, limit: PAGE_SIZE + 1 } }),
   component: DeliveriesPage,
   // Past `defaultPendingMs` the previous page's rows are replaced by this
   // page's structure, instead of lingering under the new sidebar highlight.
@@ -223,14 +224,17 @@ const MOMENT_WORD: Record<"finished" | "next" | "held" | "unknown", string> = {
 
 function DeliveriesPage() {
   const result = Route.useLoaderData();
-  const { status, before, wabaId } = Route.useSearch();
+  const { status, before, trail, wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
   const router = useRouter();
   const [retrying, setRetrying] = useState<number | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [retryWindowOpen, setRetryWindowOpen] = useState(false);
-  const rows = useMemo(() => (result.ok ? result.data : []), [result]);
+  const { rows, nextCursor } = useMemo(
+    () => pageOfRows(result.ok ? result.data : [], PAGE_SIZE),
+    [result],
+  );
 
   if (!result.ok) {
     return (
@@ -256,8 +260,6 @@ function DeliveriesPage() {
     ]),
   ).sort();
 
-  const oldestId = rows.at(-1)?.id;
-  const canLoadOlder = rows.length === PAGE_SIZE && oldestId !== undefined;
 
   async function onRetry(id: number) {
     setRetrying(id);
@@ -428,20 +430,14 @@ function DeliveriesPage() {
       />
       {retryError ? <p className="mb-4 border-l-2 border-destructive px-3 py-2 text-sm text-destructive-foreground" role="alert">{retryError}</p> : null}
       <LogGrid
+        key={before ?? "first"}
         columns={deliveriesColumns}
         data={rows}
         emptyMessage={emptyState}
         getRowId={(row) => String(row.id)}
       />
 
-      <LogPager
-        canLoadOlder={canLoadOlder}
-        hasCursor={before !== undefined}
-        onLatest={() => navigate({ search: (prev) => ({ ...prev, before: undefined }) })}
-        onOlder={() =>
-          oldestId !== undefined && navigate({ search: (prev) => ({ ...prev, before: oldestId }) })
-        }
-      />
+      <LogPager cursor={before} trail={trail} nextCursor={nextCursor} />
 
       {/* Mounted whenever a WABA is selected, NOT whenever the button shows: a
           successful replay empties the failed count, the button goes with it,

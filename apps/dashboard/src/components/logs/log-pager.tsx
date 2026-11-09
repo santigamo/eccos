@@ -1,53 +1,85 @@
+import { Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
+
 import { Button } from "@/components/ui/button";
+import { pagerState, type PageCursor, type PageTarget, type PageTrail } from "@/lib/page-trail";
+
+const CONTROL = { variant: "outline", size: "sm", className: "rounded-none" } as const;
+
+function PageLink({ param, target, children }: { param: string; target: PageTarget; children: ReactNode }) {
+  return (
+    <Button
+      {...CONTROL}
+      nativeButton={false}
+      render={
+        <Link
+          to="."
+          search={(prev: Record<string, unknown>) => ({ ...prev, [param]: target.cursor, trail: target.trail })}
+        />
+      }
+    >
+      {children}
+    </Button>
+  );
+}
 
 /**
  * The cursor pager every log carries.
  *
- * `before` is an EXCLUSIVE row id, not an offset: rows arrive constantly, and
- * an offset page-2 would silently re-show rows that page 1 had already pushed
- * down. The id is stable — page 2 of a log is the same fifty rows whenever it
- * is loaded.
+ * The cursor is an EXCLUSIVE position, not an offset: rows arrive constantly,
+ * and an offset page 2 would silently re-show rows page 1 had already pushed
+ * down. Cursors only walk older, so Previous comes from the trail in the URL.
  *
- * Shared because two of the three logs had no pagination at all and simply
- * showed the newest fifty, with row fifty-one unreachable by any means. A log
- * whose oldest visible row is an accident of volume is not a log.
- *
- * "Load older" disables rather than hides when there is nothing more: the
- * control's presence is what tells an operator the page is complete, and a
- * control that vanishes reads as a layout shift.
+ * Previous and Next disable rather than hide: the control's presence is what
+ * tells an operator the page is complete, and one that vanishes reads as a
+ * layout shift.
  */
 export function LogPager({
-  canLoadOlder,
-  hasCursor,
-  onLatest,
-  onOlder,
-  labels = { first: "← Latest", next: "Load older →" },
+  param = "before",
+  cursor,
+  trail,
+  nextCursor,
+  firstLabel = "Latest",
 }: {
-  canLoadOlder: boolean;
-  /** Whether the view is already past the newest page. */
-  hasCursor: boolean;
-  onLatest: () => void;
-  onOlder: () => void;
-  /** For a log read oldest-first, where "latest" and "older" would mislead. */
-  labels?: { first: string; next: string };
+  /** The search param that carries this log's cursor. */
+  param?: string;
+  cursor: PageCursor | undefined;
+  trail: PageTrail | undefined;
+  nextCursor: PageCursor | null;
+  /** For a log read oldest-first, where "Latest" would mislead. */
+  firstLabel?: string;
 }) {
+  const { page, previous, next } = pagerState(cursor, trail, nextCursor);
+  const showFirst = cursor !== undefined && (page === undefined || page > 2);
+
   return (
-    <div className="mt-3 flex justify-end gap-2">
-      {hasCursor ? (
-        <Button type="button" variant="outline" size="sm" className="rounded-none" onClick={onLatest}>
-          {labels.first}
-        </Button>
+    <nav aria-label="Pagination" className="mt-3 flex items-center justify-end gap-2">
+      {showFirst ? (
+        <PageLink param={param} target={{ cursor: undefined, trail: undefined }}>
+          {firstLabel}
+        </PageLink>
       ) : null}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="rounded-none"
-        disabled={!canLoadOlder}
-        onClick={onOlder}
-      >
-        {labels.next}
-      </Button>
-    </div>
+      {previous ? (
+        <PageLink param={param} target={previous}>
+          ← Previous
+        </PageLink>
+      ) : (
+        <Button {...CONTROL} disabled>
+          ← Previous
+        </Button>
+      )}
+      {page !== undefined ? (
+        <span className="px-1 text-xs text-muted-foreground tabular-nums">Page {page}</span>
+      ) : null}
+      {next ? (
+        <PageLink param={param} target={next}>
+          Next →
+        </PageLink>
+      ) : (
+        <Button {...CONTROL} disabled>
+          Next →
+        </Button>
+      )}
+    </nav>
   );
 }

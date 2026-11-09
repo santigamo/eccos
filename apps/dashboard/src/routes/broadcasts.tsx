@@ -6,6 +6,7 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { LogPager } from "../components/logs/log-pager";
+import { normalizeSearchTrail, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
@@ -26,13 +27,14 @@ import { COUNT_LINK, Page, StatusTag, fmtTs } from "../ui";
  * receipts for the messages that were sent.
  */
 
-type BroadcastsSearch = { wabaId?: string; cursor?: string };
+type BroadcastsSearch = { wabaId?: string; cursor?: string; trail?: PageTrail };
 
 export const Route = createFileRoute("/broadcasts")({
   staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): BroadcastsSearch => ({
     wabaId: normalizeSearchWabaId(search.wabaId),
     cursor: normalizeBroadcastId(search.cursor),
+    trail: normalizeSearchTrail(search.trail, search.cursor),
   }),
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, cursor: search.cursor }),
   loader: ({ deps }) => listBroadcasts({ data: deps }).catch(loaderFailure),
@@ -164,7 +166,7 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
 
 function BroadcastsPage() {
   const result = Route.useLoaderData();
-  const { wabaId, cursor } = Route.useSearch();
+  const { wabaId, cursor, trail } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
   const liveRefresh = useLiveRefresh("broadcasts");
@@ -188,6 +190,7 @@ function BroadcastsPage() {
   return (
     <Page title="Broadcasts" kicker="Sending" actions={refreshControls}>
       <LogGrid
+        key={cursor ?? "first"}
         columns={broadcastColumns(selectedWabaId, phones.length > 1)}
         data={rows}
         emptyMessage={
@@ -215,12 +218,7 @@ function BroadcastsPage() {
           })
         }
       />
-      <LogPager
-        canLoadOlder={nextCursor !== null}
-        hasCursor={cursor !== undefined}
-        onLatest={() => navigate({ search: (prev) => ({ ...prev, cursor: undefined }) })}
-        onOlder={() => nextCursor !== null && navigate({ search: (prev) => ({ ...prev, cursor: nextCursor }) })}
-      />
+      <LogPager param="cursor" cursor={cursor} trail={trail} nextCursor={nextCursor} />
     </Page>
   );
 }

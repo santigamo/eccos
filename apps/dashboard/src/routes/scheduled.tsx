@@ -9,6 +9,7 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { LogPager } from "../components/logs/log-pager";
+import { normalizeSearchTrail, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { CancelScheduledDialog } from "../components/scheduled/cancel-scheduled-dialog";
@@ -36,7 +37,7 @@ import { Page, fmtTs } from "../ui";
  * Outcomes speak the Eccos → Meta hop.
  */
 
-type ScheduledSearch = { wabaId?: string; status?: ScheduledStatus; cursor?: string };
+type ScheduledSearch = { wabaId?: string; status?: ScheduledStatus; cursor?: string; trail?: PageTrail };
 
 export const Route = createFileRoute("/scheduled")({
   staleTime: LIVE_STALE_MS,
@@ -44,6 +45,7 @@ export const Route = createFileRoute("/scheduled")({
     wabaId: normalizeSearchWabaId(search.wabaId),
     status: normalizeScheduledStatus(search.status),
     cursor: normalizeScheduleKey(search.cursor),
+    trail: normalizeSearchTrail(search.trail, search.cursor),
   }),
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, status: search.status, cursor: search.cursor }),
   loader: ({ deps }) => listScheduled({ data: deps }).catch(loaderFailure),
@@ -172,7 +174,7 @@ function scheduledColumns(opts: { showPhone?: boolean; onCancel?: (row: Schedule
 
 function ScheduledPage() {
   const result = Route.useLoaderData();
-  const { wabaId, status = "pending", cursor } = Route.useSearch();
+  const { wabaId, status = "pending", cursor, trail } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
   const navigate = Route.useNavigate();
@@ -244,6 +246,7 @@ function ScheduledPage() {
     <Page title="Scheduled" kicker="Sending" actions={refreshControls}>
       <ScheduledStatusTabs counts={result.data.counts} status={status} wabaId={wabaId} />
       <LogGrid
+        key={cursor ?? "first"}
         columns={scheduledColumns({
           showPhone: phones.length > 1,
           onCancel: status === "pending" ? setCancelling : undefined,
@@ -253,11 +256,11 @@ function ScheduledPage() {
         getRowId={(row) => row.key}
       />
       <LogPager
-        canLoadOlder={nextCursor !== null}
-        hasCursor={cursor !== undefined}
-        onLatest={goFirst}
-        onOlder={() => nextCursor !== null && navigate({ search: (prev) => ({ ...prev, cursor: nextCursor }) })}
-        labels={readsSoonestFirst(status) ? { first: "← Soonest", next: "Later →" } : undefined}
+        param="cursor"
+        cursor={cursor}
+        trail={trail}
+        nextCursor={nextCursor}
+        firstLabel={readsSoonestFirst(status) ? "Soonest" : undefined}
       />
       {cancelling && selectedWabaId ? (
         <CancelScheduledDialog

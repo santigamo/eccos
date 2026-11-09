@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { conversationTitle, previewOf, relativeTime } from "../../lib/conversations";
+import { useLoadOnScroll } from "../../hooks/use-load-on-scroll";
+import { CONVERSATION_THREAD_ID, conversationTitle, previewOf, relativeTime } from "../../lib/conversations";
 import { fmtTs, fmtTsShort } from "../../ui";
 import type { ConversationSummary } from "../../server/gateway";
 import { GridEmptyState } from "../grid/empty-state";
@@ -71,8 +72,27 @@ export function ConversationList({
   olderFailed,
   onLoadOlder,
 }: ConversationListProps) {
+  const { root, sentinel } = useLoadOnScroll<HTMLOListElement, HTMLLIElement>(
+    canLoadOlder && !olderFailed,
+    onLoadOlder,
+    items.length,
+  );
+
   return (
     <section aria-label="Conversations" className="flex min-h-0 flex-1 flex-col">
+      {selectedWaId ? (
+        <a
+          href={`#${CONVERSATION_THREAD_ID}`}
+          onClick={(event) => {
+            event.preventDefault();
+            document.getElementById(CONVERSATION_THREAD_ID)?.focus();
+          }}
+          className="sr-only focus:not-sr-only focus:p-2 focus:text-sm"
+        >
+          Skip to the open conversation
+        </a>
+      ) : null}
+      <output className="sr-only">{loadingOlder ? "Loading older conversations" : ""}</output>
       {items.length === 0 ? (
         <div className="flex flex-1 items-center justify-center p-6">
           {query ? (
@@ -87,7 +107,7 @@ export function ConversationList({
       ) : (
         <>
           {/* relative: the rows' sr-only text is absolutely positioned, and would otherwise escape this scroller and stretch the page. */}
-          <ol className="relative m-0 min-h-0 flex-1 list-none overflow-y-auto p-0">
+          <ol ref={root} className="relative m-0 min-h-0 flex-1 list-none overflow-y-auto p-0">
             {items.map((conversation) => (
               <ConversationRow
                 key={conversation.waId}
@@ -99,27 +119,28 @@ export function ConversationList({
                 now={now}
               />
             ))}
-          </ol>
-          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-(--line) p-3">
-            {olderFailed ? (
-              <p role="alert" className="mr-auto text-sm text-destructive-foreground">
-                Older conversations did not load. Try again.
-              </p>
-            ) : null}
             {canLoadOlder || loadingOlder ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-none"
-                disabled={!canLoadOlder || loadingOlder}
-                aria-busy={loadingOlder}
-                onClick={onLoadOlder}
+              <li
+                ref={sentinel}
+                aria-hidden="true"
+                className="flex h-10 items-center justify-center text-xs text-muted-foreground"
               >
-                Load older →
-              </Button>
+                {loadingOlder ? "Loading…" : null}
+              </li>
             ) : null}
-          </div>
+          </ol>
+          {olderFailed ? (
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-(--line) p-3">
+              <p role="alert" className="mr-auto text-sm text-destructive-foreground">
+                Older conversations did not load.
+              </p>
+              {canLoadOlder ? (
+                <Button type="button" variant="outline" size="sm" className="rounded-none" onClick={onLoadOlder}>
+                  Try again
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </>
       )}
     </section>

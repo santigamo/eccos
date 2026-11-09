@@ -341,11 +341,13 @@ function validateInboundInput(input: unknown): (DashboardInboundOpts & Dashboard
   const wabaId = optionalWabaId(record.wabaId);
   const type = optionalFilter(record.type, "type");
   const deliveryStatus = optionalFilter(record.deliveryStatus, "deliveryStatus");
+  const limit = optionalCursor(record.limit, "limit");
   const before = optionalCursor(record.before, "before");
   return {
     ...(wabaId ? { wabaId } : {}),
     ...(type !== undefined ? { type } : {}),
     ...(deliveryStatus !== undefined ? { deliveryStatus } : {}),
+    ...(limit !== undefined ? { limit } : {}),
     ...(before !== undefined ? { before } : {}),
   };
 }

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, type ReactNode } from "re
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
-import { canActOn, dividerBefore, senderLabelOf, type ThreadEntry } from "../../lib/conversations";
+import { canActOn, CONVERSATION_THREAD_ID, dividerBefore, senderLabelOf, type ThreadEntry } from "../../lib/conversations";
 import { fmtTs, fmtTsShort } from "../../ui";
 import { GridEmptyState } from "../grid/empty-state";
 import { MessageActions } from "./message-actions";
@@ -95,7 +95,12 @@ export function ConversationThread({
   };
 
   return (
-    <section aria-label={`Conversation with ${title}`} className="flex min-h-0 flex-1 flex-col">
+    <section
+      id={CONVERSATION_THREAD_ID}
+      tabIndex={-1}
+      aria-label={`Conversation with ${title}`}
+      className="flex min-h-0 flex-1 flex-col outline-none"
+    >
       <header className="flex items-center gap-3 border-b border-(--line) px-4 py-3">
         <Link
           to="/conversations"

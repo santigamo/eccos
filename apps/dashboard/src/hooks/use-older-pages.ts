@@ -25,6 +25,7 @@ export function useOlderPages<T>(newest: CursorPage<T>, { key, fetchOlder, oldes
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const synced = useRef(newest);
+  const inFlight = useRef(false);
 
   const fetchOlderWalk = async (cursor: string): Promise<Result<CursorPage<T>>> => {
     const result = await fetchOlder(cursor);
@@ -59,7 +60,8 @@ export function useOlderPages<T>(newest: CursorPage<T>, { key, fetchOlder, oldes
   }, [newest]);
 
   const loadOlder = async () => {
-    if (walk.cursor === null || loading) return;
+    if (walk.cursor === null || inFlight.current) return;
+    inFlight.current = true;
     setLoading(true);
     setFailed(false);
     let result: Result<CursorPage<T>> | null = null;
@@ -68,6 +70,7 @@ export function useOlderPages<T>(newest: CursorPage<T>, { key, fetchOlder, oldes
     } catch {
       result = null;
     }
+    inFlight.current = false;
     setLoading(false);
     if (!result || !result.ok) {
       setFailed(true);

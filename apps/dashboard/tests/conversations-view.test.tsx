@@ -408,13 +408,21 @@ describe("ConversationList", () => {
     expect(html).not.toContain("Load older");
   });
 
-  test("Load older is shown only while there is an older page, or one is loading", () => {
+  test("older conversations load on scroll: no button unless a load failed", () => {
     const more = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} />);
-    expect(more).not.toMatch(/<button[^>]* disabled=""[^>]*>Load older →/);
+    expect(more).toContain('aria-hidden="true" class="flex h-10');
+    expect(more).not.toContain("Try again");
     const loading = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} canLoadOlder={false} loadingOlder />);
-    expect(loading).toMatch(/<button[^>]* disabled=""[^>]*>Load older →/);
+    expect(loading).toContain("Loading older conversations");
+    const failed = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} olderFailed />);
+    expect(failed).toContain("Try again");
     const done = renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} canLoadOlder={false} />);
-    expect(done).not.toContain("Load older");
+    expect(done).not.toContain('class="flex h-10');
+  });
+
+  test("the skip link appears only when a conversation is open", () => {
+    expect(renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} selectedWaId={SUMMARY.waId} />)).toContain("Skip to the open conversation");
+    expect(renderToStaticMarkup(<ConversationList {...listProps} items={[SUMMARY]} selectedWaId={undefined} />)).not.toContain("Skip to the open conversation");
   });
 
   test("every state of the list honours the design contract", () => {
