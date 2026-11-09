@@ -1,6 +1,6 @@
 /**
- * eccos-brqz: webhooks of a registered WABA that is pending (provisioning or a re-run
- * Embedded Signup) are held in its Durable Object and forwarded once it is active again.
+ * eccos-brqz: webhooks of a registered WABA that is not active (pending: provisioning or a re-run
+ * Embedded Signup; or failed) are held in its Durable Object and forwarded once it is active again.
  */
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
@@ -11,7 +11,7 @@ import type { EccosGateway } from "../../src/gateway";
 import type { EccosControlPlane } from "../../src/control-plane";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { HELD_MAX_AGE_MS, HELD_MAX_EVENTS } from "../../src/held-webhooks";
-import { provisionWaba } from "../../src/provisioning";
+import { provisionWaba, reconcileWaba } from "../../src/provisioning";
 import { GatewayRPC } from "../../src/rpc";
 import { alarmOf, bootstrapAccount, gatewayStub, holdAlarms, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
@@ -85,6 +85,12 @@ function reprovision() {
   );
 }
 
+/** Leaves the test WABA `failed`, as a terminal provisioning failure does (with a sealed token, so it can be retried). */
+async function fail() {
+  await reprovision();
+  return cp((instance) => instance.sql.exec("UPDATE wabas SET status = 'failed' WHERE waba_id = ?", TEST_WABA_ID));
+}
+
 describe("held webhooks", () => {
   it("holds events while a WABA re-provisions and forwards them once it is active", async () => {
     await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
@@ -147,24 +153,77 @@ describe("held webhooks", () => {
     expect(await inboundCount()).toBe(0);
   });
 
-  it("keeps ignoring failed and unknown WABAs", async () => {
-    await cp((instance) =>
-      instance.registerWaba({
-        accountId: TEST_ACCOUNT_ID,
-        wabaId: "WABA_FAILED",
-        metaAccessToken: "failed-token",
-        provisioningStatus: "failed",
-        phones: [{ phoneNumberId: "PN_FAILED" }],
-      }),
-    );
-    expect((await post("WABA_FAILED", "wamid.F", "PN_FAILED")).status).toBe(200);
+  it("keeps ignoring unknown WABAs", async () => {
     expect((await post("WABA_UNKNOWN", "wamid.U", "PN_UNKNOWN")).status).toBe(200);
-
     expect(lines("webhook_held")).toEqual([]);
-    expect(lines("webhook_ignored").map((line) => [line.wabaId, line.reason])).toEqual([
-      ["WABA_FAILED", "inactive_waba"],
-      ["WABA_UNKNOWN", "unknown_waba"],
-    ]);
+    expect(lines("webhook_ignored").map((line) => [line.wabaId, line.reason])).toEqual([["WABA_UNKNOWN", "unknown_waba"]]);
+  });
+
+  it("holds events of a failed WABA and forwards them once a re-check activates it", async () => {
+    await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
+    await fail();
+
+    const response = await post(TEST_WABA_ID, "wamid.FAILED_HELD");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, received: 0 });
+    expect(await heldRows()).toBe(1);
+    expect(lines("webhook_held")).toEqual([expect.objectContaining({ wabaId: TEST_WABA_ID, eventCount: 1 })]);
+    expect(lines("webhook_ignored")).toEqual([]);
+
+    const forwarded: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) === SUBSCRIBER_URL) forwarded.push(String(init?.body));
+      return new Response("ok", { status: 200 });
+    });
+    const run = await reconcileWaba(env, TEST_ACCOUNT_ID, TEST_WABA_ID);
+    expect(run.waba?.status).toBe("active");
+
+    expect(await heldRows()).toBe(0);
+    expect(await inboundCount()).toBe(1);
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => alarmOf(instance));
+    expect(forwarded[0]).toContain("wamid.FAILED_HELD");
+  });
+
+  it("releases a hold of a failed WABA that became active before the hold landed", async () => {
+    await fail();
+    await cp((instance) => {
+      const proto = Object.getPrototypeOf(instance) as EccosControlPlane;
+      const getWabaById = proto.getWabaById;
+      vi.spyOn(proto, "getWabaById").mockImplementationOnce(function (this: EccosControlPlane, wabaId: string) {
+        const waba = getWabaById.call(this, wabaId);
+        this.sql.exec("UPDATE wabas SET status = 'active' WHERE waba_id = ?", wabaId);
+        return waba;
+      });
+    });
+    expect((await post(TEST_WABA_ID, "wamid.FAILED_RACE")).status).toBe(200);
+    await vi.waitFor(async () => expect(await inboundCount()).toBe(1));
+    expect(await heldRows()).toBe(0);
+  });
+
+  it("refuses to hold a failed WABA past the event cap", async () => {
+    await fail();
+    const filler: WhatsAppCallbackEvent[] = Array.from({ length: HELD_MAX_EVENTS }, (_, i) => ({
+      type: "reply",
+      from: "34600000000",
+      messageId: `wamid.FFILL${i}`,
+      text: "x",
+      at: 1_700_000_000_000,
+    }));
+    expect(await gatewayStub().hold("PNID1", filler)).toMatchObject({ held: true });
+    expect((await post(TEST_WABA_ID, "wamid.FOVER")).status).toBe(200);
+    expect(lines("webhook_ignored")).toEqual([expect.objectContaining({ reason: "hold_full", wabaId: TEST_WABA_ID })]);
+    expect(await heldRows()).toBe(1);
+  });
+
+  it("expires events held for a failed WABA on the retention sweep", async () => {
+    await fail();
+    await post(TEST_WABA_ID, "wamid.FAILED_OLD");
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+      instance.sql.exec("UPDATE held_webhooks SET held_at = ?", Date.now() - HELD_MAX_AGE_MS - 1);
+      await alarmOf(instance);
+    });
+    expect(await heldRows()).toBe(0);
+    expect(lines("held_expired")).toEqual([expect.objectContaining({ wabaId: TEST_WABA_ID, eventCount: 1 })]);
   });
 
   it("refuses to hold past the event cap", async () => {

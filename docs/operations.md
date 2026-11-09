@@ -308,6 +308,10 @@ binding (each call, including a refused reset, is logged with its ids):
   customer that their contacts or history will not arrive.
 - `GatewayRPC.diagnoseWaba(wabaId, accountId)` returns Meta's read-only view of the token, WABA and number.
 
+While a WABA is `failed`, Meta's webhooks for it are held (up to 5000 events, 3 days), not dropped. They
+are ingested and forwarded when the WABA becomes `active`, after a `reconcileWaba` or a new Embedded
+Signup. Past 3 days they are deleted.
+
 ### A number that turned out not to be a coexistence number
 
 A third outcome is **not** a failure and needs no remedy. When the verification above says the
