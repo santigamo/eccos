@@ -55,10 +55,10 @@ function subscribe(listener: () => void): () => void {
 export function syncThemeColor(): void {
   const attr = document.documentElement.getAttribute("data-theme")
   const forced = attr === "light" || attr === "dark" ? attr : undefined
-  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((meta) => {
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
     const scheme: EffectiveTheme = meta.media === LIGHT_QUERY ? "light" : "dark"
     meta.content = THEME_COLOR[forced ?? scheme]
-  })
+  }
 }
 
 export function setThemeMode(mode: ThemeMode): void {
@@ -72,7 +72,7 @@ export function setThemeMode(mode: ThemeMode): void {
     // Storage is unavailable: the override still holds for this page.
   }
   syncThemeColor()
-  listeners.forEach((listener) => listener())
+  for (const listener of listeners) listener()
 }
 
 export function useTheme(): ThemeState {

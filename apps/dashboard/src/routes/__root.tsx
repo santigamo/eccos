@@ -253,6 +253,7 @@ function RootDocument({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant from module code; no request data reaches it. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         <HeadContent />
         <AnalyticsScripts analytics={analytics} />
