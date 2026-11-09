@@ -8,6 +8,7 @@ import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
+import { connectAudit } from "../lib/connect-result";
 import type { SessionEvent } from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
@@ -1376,10 +1377,9 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
           organizationId: actor.organizationId,
           accountId,
           resource: result.ok
-            ? { wabaId: result.waba_id, connected: result.connected.length }
+            ? { wabaId: result.waba_id, connected: result.connected.length, status: result.status }
             : { code: result.code },
-          outcome: result.ok ? "success" : "failed",
-          ...(result.ok ? {} : { detail: result.error }),
+          ...connectAudit(result),
         });
         return result;
       }),
