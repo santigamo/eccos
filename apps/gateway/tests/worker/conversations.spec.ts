@@ -606,6 +606,16 @@ describe("conversation store: read state", () => {
     });
   });
 
+  it("a merge flags the conversation when the merged read point would hide an unread message", async () => {
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.ingest([reply(BSUID, "wamid.H1", 1000), reply(WA, "wamid.H2", 2000)]);
+      i.markConversation({ waId: WA, read: true });
+      i.ingest([{ type: "reply", from: WA, fromUserId: BSUID, messageId: "wamid.H3", text: "h3", at: 3000 }]);
+
+      expect(unreadOf(i, WA)).toMatchObject({ messageCount: 3, unreadCount: 1, markedUnread: true });
+    });
+  });
+
   it("a BSUID conversation merges its read state into the phone's, and only the merged row survives", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       i.ingest([reply(BSUID, "wamid.B1", 1000), reply(BSUID, "wamid.B2", 2000)]);

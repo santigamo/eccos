@@ -1052,8 +1052,7 @@ export class EccosGateway extends DurableObject<Env> {
          LEFT JOIN (
            SELECT m.wa_id, COUNT(*) AS unread FROM messages m
            LEFT JOIN conversation_reads r ON r.wa_id = m.wa_id
-           WHERE m.direction = 'in' AND m.origin = 'live' AND m.type NOT IN ('system', 'reaction', 'edit', 'revoke')
-             AND m.rowid > COALESCE(r.read_seq, 0)
+           WHERE ${UNREAD_INBOUND} AND m.rowid > COALESCE(r.read_seq, 0)
            GROUP BY m.wa_id
          ) u ON u.wa_id = t.wa_id
          LEFT JOIN conversation_reads rd ON rd.wa_id = t.wa_id
@@ -2422,6 +2421,21 @@ export class EccosGateway extends DurableObject<Env> {
     const known = this.sql.exec(`SELECT wa_id FROM customer_ids WHERE user_id = ?`, pair.userId).toArray()[0];
     if (known?.wa_id === pair.waId) return;
     this.sql.exec(`INSERT OR REPLACE INTO customer_ids (user_id, wa_id) VALUES (?, ?)`, pair.userId, pair.waId);
+    // The merged conversation has one read point, the higher. A message unread on either
+    // side below it would drop out of the count, so the conversation is flagged instead.
+    const hidesUnread =
+      this.sql
+        .exec(
+          `SELECT 1 FROM messages m LEFT JOIN conversation_reads r ON r.wa_id = m.wa_id
+           WHERE m.wa_id IN (?, ?) AND ${UNREAD_INBOUND} AND m.rowid > COALESCE(r.read_seq, 0)
+             AND m.rowid <= (SELECT COALESCE(MAX(read_seq), 0) FROM conversation_reads WHERE wa_id IN (?, ?))
+           LIMIT 1`,
+          pair.waId,
+          pair.userId,
+          pair.waId,
+          pair.userId,
+        )
+        .toArray().length > 0;
     this.sql.exec(`UPDATE messages SET wa_id = ? WHERE wa_id = ?`, pair.waId, pair.userId);
     // The phone's contact keeps its name; the BSUID's fills it only when it has none.
     this.sql.exec(
@@ -2445,6 +2459,7 @@ export class EccosGateway extends DurableObject<Env> {
       pair.userId,
     );
     this.sql.exec(`DELETE FROM conversation_reads WHERE wa_id = ?`, pair.userId);
+    if (hidesUnread) this.sql.exec(`UPDATE conversation_reads SET marked_unread = 1 WHERE wa_id = ?`, pair.waId);
   }
 
   async alarm(): Promise<void> {
@@ -3505,6 +3520,9 @@ function lastPosition(rows: Record<string, unknown>[], limit: number): Position 
   const row = rows[limit - 1];
   return { at: Number(row?.at), seq: Number(row?.seq) };
 }
+
+/** The messages that count as unread once past a conversation's read point; `m` is `messages`. */
+const UNREAD_INBOUND = "m.direction = 'in' AND m.origin = 'live' AND m.type NOT IN ('system', 'reaction', 'edit', 'revoke')";
 
 function toMessageRecord(row: Record<string, unknown>): MessageRecord {
   return {
