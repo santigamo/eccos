@@ -17,6 +17,7 @@ import { LogGrid } from "../components/grid/log-grid";
 import { EventSheet } from "../components/logs/event-sheet";
 import { HeldNotice } from "../components/logs/held-notice";
 import { LogPager } from "../components/logs/log-pager";
+import { normalizeSearchTrail, pageOfRows, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
@@ -78,6 +79,7 @@ type EventsSearch = {
   kind?: string;
   forward?: string;
   before?: number;
+  trail?: PageTrail;
   event?: number;
   wabaId?: string;
 };
@@ -93,6 +95,7 @@ export const Route = createFileRoute("/events")({
       // translation to send.
       forward: forward && forward in FORWARD_FILTERS ? forward : undefined,
       before: normalizeSearchRowId(search.before),
+      trail: normalizeSearchTrail(search.trail, search.before),
       event: normalizeSearchRowId(search.event),
       wabaId: normalizeSearchWabaId(search.wabaId),
     };
@@ -112,6 +115,7 @@ export const Route = createFileRoute("/events")({
         type: deps.kind,
         deliveryStatus: deps.forward ? FORWARD_FILTERS[deps.forward] : undefined,
         before: deps.before,
+        limit: PAGE_SIZE + 1,
       },
     }).catch(loaderFailure),
   component: EventsPage,
@@ -305,14 +309,17 @@ function eventColumns(options?: {
 
 function EventsPage() {
   const result = Route.useLoaderData();
-  const { kind, forward, before, event, wabaId } = Route.useSearch();
+  const { kind, forward, before, trail, event, wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
   const liveRefresh = useLiveRefresh("events");
   const refreshControls = <RefreshControls {...liveRefresh} />;
   const [retrying, setRetrying] = useState<number | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const rows = useMemo(() => (result.ok ? result.data : []), [result]);
+  const { rows, nextCursor } = useMemo(
+    () => pageOfRows(result.ok ? result.data : [], PAGE_SIZE),
+    [result],
+  );
 
   if (!result.ok) {
     return (
@@ -404,8 +411,6 @@ function EventsPage() {
     actionColumn,
   ];
 
-  const oldestId = rows.at(-1)?.id;
-  const canLoadOlder = rows.length === PAGE_SIZE && oldestId !== undefined;
   const isNarrowed = kind !== undefined || forward !== undefined || before !== undefined;
   const activeForward = forward ?? "all";
 
@@ -499,20 +504,14 @@ function EventsPage() {
         </p>
       ) : null}
       <LogGrid
+        key={before ?? "first"}
         columns={columns}
         data={rows}
         emptyMessage={emptyState}
         getRowId={(row) => String(row.id)}
         onRowClick={openEvent}
       />
-      <LogPager
-        canLoadOlder={canLoadOlder}
-        hasCursor={before !== undefined}
-        onLatest={() => navigate({ search: (prev) => ({ ...prev, before: undefined }) })}
-        onOlder={() =>
-          oldestId !== undefined && navigate({ search: (prev) => ({ ...prev, before: oldestId }) })
-        }
-      />
+      <LogPager cursor={before} trail={trail} nextCursor={nextCursor} />
       {event !== undefined ? (
         <EventSheet
           // Remounted per row, so one event's payload never renders over

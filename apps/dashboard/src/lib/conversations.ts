@@ -17,6 +17,9 @@ const MEDIA_TYPES = new Set(["image", "sticker", "audio", "video", "document"]);
  * JSON number the router makes of it (`?waId=34600111222`), so both forms select the same thread.
  * The id normalizes first, so a bad `?waId=` never reaches the gateway as a refusal that would read as an outage.
  */
+/** The open thread, as the skip link in the list addresses it. */
+export const CONVERSATION_THREAD_ID = "conversation-thread";
+
 export function conversationsSearch(search: Record<string, unknown>): { wabaId?: string; waId?: string; q?: string } {
   const asText = (value: unknown) => (typeof value === "number" ? String(value) : value);
   const q = asText(search.q);

@@ -18,6 +18,7 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { LogPager } from "../components/logs/log-pager";
+import { normalizeSearchTrail, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
@@ -44,7 +45,7 @@ import { FactCell, FactsStrip, Page, StatusTag, fmtTs } from "../ui";
  * of them is the same page whenever it is loaded. Cancel is the one act.
  */
 
-type BroadcastSearch = { wabaId?: string; status?: string; cursor?: string };
+type BroadcastSearch = { wabaId?: string; status?: string; cursor?: string; trail?: PageTrail };
 
 export const Route = createFileRoute("/broadcasts_/$broadcastId")({
   staleTime: LIVE_STALE_MS,
@@ -52,6 +53,7 @@ export const Route = createFileRoute("/broadcasts_/$broadcastId")({
     wabaId: normalizeSearchWabaId(search.wabaId),
     status: normalizeRecipientStatus(search.status),
     cursor: normalizeSeqCursor(search.cursor),
+    trail: normalizeSearchTrail(search.trail, search.cursor),
   }),
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, status: search.status, cursor: search.cursor }),
   loader: ({ deps, params }) => {
@@ -125,7 +127,7 @@ function recipientColumns() {
 
 function BroadcastPage() {
   const result = Route.useLoaderData();
-  const { wabaId, status, cursor } = Route.useSearch();
+  const { wabaId, status, cursor, trail } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
   const router = useRouter();
@@ -289,18 +291,13 @@ function BroadcastPage() {
         {filter}
       </div>
       <LogGrid
+        key={cursor ?? "first"}
         columns={recipientColumns()}
         data={rows}
         emptyMessage={emptyState}
         getRowId={(row) => String(row.seq)}
       />
-      <LogPager
-        canLoadOlder={nextCursor !== null}
-        hasCursor={cursor !== undefined}
-        labels={{ first: "← First", next: "Next →" }}
-        onLatest={() => navigate({ search: (prev) => ({ ...prev, cursor: undefined }) })}
-        onOlder={() => nextCursor !== null && navigate({ search: (prev) => ({ ...prev, cursor: nextCursor }) })}
-      />
+      <LogPager param="cursor" cursor={cursor} trail={trail} nextCursor={nextCursor} firstLabel="First" />
 
       {cancelOpen && selectedWabaId ? (
         <CancelBroadcastDialog

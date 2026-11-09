@@ -83,7 +83,7 @@ export function MastheadBreadcrumb() {
   function selectWaba(wabaId: string) {
     const next = new URL(location.href, "https://dashboard.invalid")
     next.searchParams.set("wabaId", wabaId)
-    next.searchParams.delete("before")
+    for (const param of ["before", "cursor", "trail"]) next.searchParams.delete(param)
     void router.navigate({ href: `${next.pathname}${next.search}${next.hash}` })
   }
 

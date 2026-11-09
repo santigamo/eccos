@@ -7,6 +7,7 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { LogPager } from "../components/logs/log-pager";
+import { normalizeSearchTrail, pageOfRows, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
 import { MessageSheet } from "../components/logs/message-sheet";
@@ -52,13 +53,14 @@ const PAGE_SIZE = 50;
  * words on a workspace that has only ever seen one of them. */
 const META_STATUSES = ["sent", "failed"] as const;
 
-type MessagesSearch = { status?: string; before?: number; message?: number; wabaId?: string };
+type MessagesSearch = { status?: string; before?: number; trail?: PageTrail; message?: number; wabaId?: string };
 
 export const Route = createFileRoute("/messages")({
   staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): MessagesSearch => ({
     status: normalizeSearchStatus(search.status),
     before: normalizeSearchRowId(search.before),
+    trail: normalizeSearchTrail(search.trail, search.before),
     message: normalizeSearchRowId(search.message),
     wabaId: normalizeSearchWabaId(search.wabaId),
   }),
@@ -70,7 +72,7 @@ export const Route = createFileRoute("/messages")({
     before: search.before,
     wabaId: search.wabaId,
   }),
-  loader: ({ deps }) => listOutbound({ data: deps }).catch(loaderFailure),
+  loader: ({ deps }) => listOutbound({ data: { ...deps, limit: PAGE_SIZE + 1 } }).catch(loaderFailure),
   component: MessagesPage,
   pendingComponent: () => (
     <GridPending title="Messages" kicker="Logs" columns={messageColumns()} />
@@ -227,12 +229,15 @@ function messageColumns(onOpen?: (row: OutboundRow) => void, showPhone = true) {
 
 function MessagesPage() {
   const result = Route.useLoaderData();
-  const { status, before, message, wabaId } = Route.useSearch();
+  const { status, before, trail, message, wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
   const liveRefresh = useLiveRefresh("messages");
   const refreshControls = <RefreshControls {...liveRefresh} />;
-  const rows = useMemo(() => (result.ok ? result.data : []), [result]);
+  const { rows, nextCursor } = useMemo(
+    () => pageOfRows(result.ok ? result.data : [], PAGE_SIZE),
+    [result],
+  );
 
   if (!result.ok) {
     return (
@@ -259,8 +264,6 @@ function MessagesPage() {
     new Set<string>([...META_STATUSES, ...rows.map((row) => row.status), ...(status ? [status] : [])]),
   ).sort();
 
-  const oldestId = rows.at(-1)?.id;
-  const canLoadOlder = rows.length === PAGE_SIZE && oldestId !== undefined;
   const isNarrowed = status !== undefined || before !== undefined;
 
   const filterControl = (
@@ -332,6 +335,7 @@ function MessagesPage() {
       <StatusCounts label="messages" counts={counts} target="messages" wabaId={selectedWabaId} />
       <div className="mt-4">
         <LogGrid
+          key={before ?? "first"}
           columns={columns}
           data={rows}
           emptyMessage={emptyState}
@@ -339,14 +343,7 @@ function MessagesPage() {
           onRowClick={openMessage}
         />
       </div>
-      <LogPager
-        canLoadOlder={canLoadOlder}
-        hasCursor={before !== undefined}
-        onLatest={() => navigate({ search: (prev) => ({ ...prev, before: undefined }) })}
-        onOlder={() =>
-          oldestId !== undefined && navigate({ search: (prev) => ({ ...prev, before: oldestId }) })
-        }
-      />
+      <LogPager cursor={before} trail={trail} nextCursor={nextCursor} />
       {message !== undefined ? (
         <MessageSheet
           // Remounted per row, so one message's trail never renders over
