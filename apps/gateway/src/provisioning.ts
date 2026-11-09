@@ -129,8 +129,8 @@ function metaFailure(error: unknown): ProvisioningFailure {
  * almost nothing here is retryable (eccos-vss).
  *
  * Meta allows each sync exactly once per phone number; a duplicate is error
- * `2593107` whose remedy is offboarding the customer. A 5xx or a timeout does
- * not prove Meta failed to process the request, so "retry the sync" is not a
+ * `2593107`, which only offboarding and a new onboarding can redo. A 5xx or a
+ * timeout does not prove Meta failed to process the request, so "retry the sync" is not a
  * safe operation *at all* once the request has left. The saga therefore does not
  * back off into a second attempt: it fails terminally and tells the operator the
  * one thing that does work, which is to offboard and onboard again.

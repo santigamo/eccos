@@ -17,11 +17,14 @@
  * WABA an operator has to act on, and it must never be indistinguishable from a
  * fully provisioned one.
  *
- * Meta also allows each sync **exactly once** per phone number, and answers a
- * duplicate with error `2593107` — whose remedy is, again, offboarding. That
- * turns the usual saga instinct on its head: the dangerous move here is not
- * giving up too early but trying again, so the states below distinguish "issued"
- * from "confirmed", and an issued-but-unanswered sync is terminal.
+ * Meta also allows each sync **exactly once** per phone number. A duplicate is
+ * error `2593107`: Meta says only that the maximum number of syncs was exceeded
+ * and that repeating one needs the customer to offboard and onboard again. It
+ * does not break the onboarding; Eccos settles it as `already_synced` (below).
+ * What a retry does destroy is the knowledge of whether the first sync ran, so
+ * the dangerous move is trying again rather than giving up too early. The states
+ * below distinguish "issued" from "confirmed", and an issued-but-unanswered sync
+ * is terminal.
  *
  * A sync Meta *refuses* with a documented reason is different: already spent
  * (`2593107`, e.g. a number that coexisted with another provider first) or
@@ -159,9 +162,10 @@ export type CoexistenceSyncStatus =
  *
  * The two timestamps are `*StartedAt`, not `*SyncedAt`, and the distinction is
  * the whole safety property. Meta allows each sync exactly once per phone
- * number; a second attempt is error `2593107`, which Meta documents as needing
- * offboarding to redo. So the moment Eccos is *about to* call is the moment it records —
- * before the request goes out — and a recorded start is never re-attempted,
+ * number; a second attempt is error `2593107` (maximum syncs exceeded), which
+ * Meta says can only be redone through offboarding and a new onboarding. So
+ * the moment Eccos is *about to* call is the moment it records — before the
+ * request goes out — and a recorded start is never re-attempted,
  * whatever the response was or failed to be. Acceptance is the separate fact,
  * carried by the request id Meta returns.
  */
@@ -242,8 +246,8 @@ export function historySyncTimeRemainingMs(
 
 /**
  * The one message an operator has to be able to act on: the window is gone and
- * Meta's remedy is offboarding. Kept as an exported constant so the console, the
- * tests and the runbook all quote the same words.
+ * Meta's remedy is offboarding. Kept as an exported constant so the tests and
+ * the runbook quote the same words. The console does not show it to customers.
  */
 export const HISTORY_SYNC_EXPIRED_ERROR =
   "coexistence message-history sync window expired (24h); Meta requires offboarding this customer and onboarding it again";
@@ -410,8 +414,8 @@ const UNAVAILABLE_BECAUSE: Record<SyncUnavailableReason, string> = {
 
 /**
  * Operator-facing wording for the syncs Meta refused, or null when it refused
- * none. Names each unavailable sync and why, so the console can say "history
- * not available" rather than leave someone waiting for it.
+ * none. Names each unavailable sync and why; the console builds its own
+ * customer wording from the request ids instead.
  */
 export function syncUnavailableError(requestIds: {
   contactsRequestId: string | null;

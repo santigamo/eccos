@@ -18,9 +18,9 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `webhook_ingested` | One per stored batch (WABA + phone) | `wabaId`, `phoneNumberId`, `eventCount`, `received`, one `n_<type>` count per event type: `n_reply`, `n_echo`, `n_status_sent` / `_delivered` / `_read` / `_failed`, `n_message_<messageType>`, `n_message_echo_<messageType>` |
 | `webhook_ignored` | A batch was parsed but not stored, or the webhook parsed to no event | `reason`, plus `wabaId`, `phoneNumberId`, `eventCount` for a batch, or `wabaIds`, `bodyBytes`, `shape` for `no_events` and `sync_only` |
 | `webhook_dropped` | Messages or echoes of a WABA parsed to no event | `wabaId`, `dropped` (count), `missing` (required fields absent, e.g. `from`; empty when they only carried nothing), `types` (`text+reaction`, `echo_text`), `keys` (their top-level key names) |
-| `webhook_held` | A batch of a `pending` WABA (provisioning or a re-run Embedded Signup) was held in its Durable Object, to be ingested once it is active | `wabaId`, `phoneNumberId`, `eventCount`, `heldEvents` (total now held for the WABA) |
+| `webhook_held` | A batch of a WABA that is not active (`pending`: provisioning or a re-run Embedded Signup; or `failed`) was held in its Durable Object, to be ingested once it is active | `wabaId`, `phoneNumberId`, `eventCount`, `heldEvents` (total now held for the WABA) |
 | `webhook_ingest_failed` | The Durable Object write failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
-| `webhook_hold_failed` | Holding a pending WABA's batch failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
+| `webhook_hold_failed` | Holding the batch of a WABA that is not active failed (answered 503, Meta retries) | `wabaIds`, `bodyBytes`, `errorType` |
 | `webhook_sync_captured` | A coexistence sync payload was stored | `wabaId`, `fields`, and what was stored |
 
 `webhook_ignored.reason`:
@@ -30,8 +30,7 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 | `no_events` | Nothing in the webhook maps to an event (a field Eccos does not forward, or every message dropped: see `webhook_dropped` and `shape`) |
 | `sync_only` | A coexistence sync webhook (`history`, `smb_app_state_sync`): stored (see `webhook_sync_captured`), nothing to forward live. Expected in bulk while a number imports its history |
 | `unknown_waba` | The WABA is not registered in the control plane |
-| `inactive_waba` | Registered but `failed` (a `pending` WABA's batches are held instead: `webhook_held`) |
-| `hold_full` | The WABA is `pending` and already holds 5000 events |
+| `hold_full` | The WABA is `pending` or `failed` and already holds 5000 events |
 | `phone_not_registered` | The WABA is active but the phone number id is not registered under it |
 | `invalid_waba_id` | The entry id is not a WABA id |
 | `lookup_failed` | The control plane lookup threw |
@@ -51,7 +50,7 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 | `ingested` | `ingest` | `wabaId`, `eventCount`, `inserted` (new rows; the rest were duplicates). Ties a `$workers.durableObjectId` to its WABA |
 | `delivered` | `forward` | `wabaId`, `phoneNumberId`, `deliveryId`, `attempt`, `httpStatus`, `durationMs` (subscriber response time), `lagMs` (time since the webhook was stored) |
 | `attempt-failed` / `delivery-failed` | `forward` | Same as `delivered`, plus `error`. `delivery-failed` means it exhausted every retry |
-| `held_released` | `ingest` | `wabaId`, `released`, `discarded` (events of a phone the active WABA does not register). Runs when provisioning activates the WABA, or on its next webhook if activation raced a hold |
+| `held_released` | `ingest` | `wabaId`, `released`, `discarded` (events of a phone the active WABA does not register). Runs when provisioning activates the WABA (from `pending`, or from `failed` through a retry or re-check), or on its next webhook if activation raced a hold |
 | `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
 | `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
 | `outbound_send` | `rpc` | A console send: `source` (`send_test` for a template test, `send_text` for the composer), then the same fields as the worker's `outbound_send` (no `invalid_target`) |
@@ -67,8 +66,29 @@ reported in the next alert.
 - **Inbound messages are being dropped:** an active WABA's messages lack a field the parser needs,
   so Meta changed a shape and that customer's messages are neither stored nor forwarded. Matching
   logs: `webhook_dropped`.
-- **Held webhooks expired:** events held for a WABA that never became active (e.g. a failed
-  provisioning) were deleted after 3 days, never forwarded. Matching logs: `held_expired`.
+- **Held webhooks expired:** events held for a WABA that never became active (e.g. a provisioning
+  that stayed `failed`) were deleted after 3 days, never forwarded. It keeps recurring (at most hourly)
+  while a WABA Meta still sends webhooks for stays `failed`. Matching logs: `held_expired`.
+
+### Daily census (Telegram HQ, "Eccos ops")
+
+Once per UTC day, on the first cron tick at or after 07:00 UTC, the gateway posts a census to the
+same topic. It lists each account (with its organization id), its WABAs with status, onboarding
+type (and coexistence sync state), whether a forwarding target is set, and counts: pending,
+"held: no forwarding target" (deliveries waiting for a target), failed (those still within `DELIVERY_RETENTION_DAYS`, default 90), delivered among
+the deliveries queued in the last 24 h, and "held: WABA not active" (webhooks held for a WABA that
+is not active yet). A "Needs attention" block comes first:
+
+- a WABA whose provisioning failed, or is still pending and was registered over 24 h ago;
+- deliveries that failed in the last 24 h (older failures stay in the totals only);
+- events held for lack of a forwarding target, or because the WABA is not active;
+- a coexistence sync that ended `unconfirmed` or `expired`;
+- a WABA whose data plane did not answer within 10 s.
+
+It carries ids, names and counts only: no phone numbers, message content or secrets. Like the
+alerts, it is off unless the `OPS_TELEGRAM_*` secrets are set. The day is claimed just before the
+send and a rejected send is not retried, so a missed census shows up as no message that day; look
+for `area = ops-alert` and `area = ops-census` warnings.
 
 ## Queries
 

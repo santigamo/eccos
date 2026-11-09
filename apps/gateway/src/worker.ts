@@ -19,6 +19,7 @@ import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
 import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
+import { runDailyCensus } from "./ops-census";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
 import { EccosGateway as Gateway } from "./gateway";
@@ -235,14 +236,14 @@ app.get("/webhooks/meta", (c) => {
 type BatchRoute = { action: "ingest"; phoneNumberIds: string[] } | { action: "hold" } | { action: "ignore"; reason: string };
 
 /** Ingest when the WABA and phone are registered and active; hold while the WABA is
- * pending (provisioning or re-provisioning), so its messages are not lost; else ignore. */
+ * pending (provisioning or re-provisioning) or failed (an operator can still recover it),
+ * so its messages are not lost; else ignore. */
 async function routeBatch(cp: ReturnType<typeof getControlPlane>, batch: MetaWebhookBatch): Promise<BatchRoute> {
   if (!WABA_ID_PATTERN.test(batch.wabaId)) return { action: "ignore", reason: "invalid_waba_id" };
   try {
     const waba = await cp.getWabaById(batch.wabaId);
     if (!waba) return { action: "ignore", reason: "unknown_waba" };
-    if (waba.status === "pending") return { action: "hold" };
-    if (waba.status !== "active") return { action: "ignore", reason: "inactive_waba" };
+    if (waba.status !== "active") return { action: "hold" };
     const phoneNumberIds = waba.phones.map((p) => p.phoneNumberId);
     if (batch.phoneNumberId !== null && !phoneNumberIds.includes(batch.phoneNumberId)) {
       return { action: "ignore", reason: "phone_not_registered" };
@@ -1172,6 +1173,7 @@ const worker = {
   fetch: app.fetch,
   scheduled: async (_controller: ScheduledController, env: Bindings): Promise<void> => {
     await reconcilePendingWabas(env);
+    await runDailyCensus(env).catch(() => console.warn(JSON.stringify({ level: "warn", area: "ops-census", event: "census-error" })));
   },
 };
 
