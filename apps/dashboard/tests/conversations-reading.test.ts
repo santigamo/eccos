@@ -135,6 +135,15 @@ describe("threadEntries", () => {
     expect(entries[0]?.reactions).toEqual([]);
   });
 
+  test("a reaction Meta later refused does not land, and leaves the earlier one in place", () => {
+    const reaction = (id: string, emoji: string, status: "sent" | "failed") =>
+      message({ id, type: "reaction", direction: "out", status, targetId: "t-1", content: JSON.stringify({ reaction: { messageId: "t-1", emoji } }) });
+    const entries = threadEntries([TEXT, reaction("x-1", "👍", "sent"), reaction("x-2", "❤️", "failed")]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.reactions).toEqual(["👍"]);
+    expect(entries[0]?.myReaction).toBe("👍");
+  });
+
   test("one reaction per sender per message: the latest wins", () => {
     const first = message({ id: "x-1", type: "reaction", content: JSON.stringify({ reaction: { messageId: "t-1", emoji: "👍" } }), targetId: "t-1", at: 2 });
     const second = message({ id: "x-2", type: "reaction", content: JSON.stringify({ reaction: { messageId: "t-1", emoji: "❤️" } }), targetId: "t-1", at: 3 });

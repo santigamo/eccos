@@ -177,8 +177,11 @@ export function threadEntries(messages: MessageRecord[]): ThreadEntry[] {
       // The customer is one sender; the business (sent or echoed from its app) is the other.
       const sender = message.direction === "in" ? "customer" : "business";
       const emoji = reactionEmojiOf(message);
-      if (emoji) target.reactedBy.set(sender, emoji);
-      else target.reactedBy.delete(sender);
+      // A reaction Meta refused after accepting the send never reached the message.
+      if (message.status !== "failed") {
+        if (emoji) target.reactedBy.set(sender, emoji);
+        else target.reactedBy.delete(sender);
+      }
     } else {
       continue;
     }

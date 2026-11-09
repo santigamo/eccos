@@ -43,7 +43,7 @@ export function useConversationSearch(
         if (!current) return;
         // A failed re-read of the same query keeps what is on screen; the next poll retries it.
         setRead((prev) =>
-          !result.ok && prev?.waba === waba && prev.search.q === q && prev.search.result.ok
+          !result.ok && !isDenial(result) && prev?.waba === waba && prev.search.q === q && prev.search.result.ok
             ? prev
             : { waba, search: { q, result } },
         );
