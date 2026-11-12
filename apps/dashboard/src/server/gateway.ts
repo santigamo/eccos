@@ -6,6 +6,8 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
+import { billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
+import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
 import { connectAudit } from "../lib/connect-result";
@@ -163,6 +165,7 @@ export interface Failure {
 export type Result<T> = { ok: true; data: T } | Failure;
 
 export type { ForbiddenReason, Membership } from "../auth/tenant";
+export type { BillingState } from "../billing/account";
 
 /**
  * Identity-plane access (contract §1/§5): every server function resolves the
@@ -2166,6 +2169,41 @@ export const setConversationRetention = createServerFn({ method: "POST" })
         return stored;
       }),
   );
+
+function requireBilling(): Billing {
+  const billing = billingFor(env);
+  if (!billing) throw new Error("Billing is not enabled");
+  return billing;
+}
+
+/** The workspace's billing state; null when billing is off. */
+export const getBilling = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<BillingState | null>> =>
+    withGateway(async (gateway) => {
+      if (!billingFor(env)) return null;
+      const { accountId } = await adminActorAccount(gateway);
+      return billingState(gateway, accountId);
+    }),
+);
+
+export const startCheckout = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<{ url: string }>> =>
+    withGateway(async (gateway) => {
+      const billing = requireBilling();
+      const { actor, accountId } = await adminActorAccount(gateway);
+      const successUrl = new URL("/settings", new URL(getRequest().url).origin).href;
+      return { url: await checkoutUrl(billing, { accountId, email: actor.session.email, successUrl }) };
+    }),
+);
+
+export const openPortal = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<{ url: string }>> =>
+    withGateway(async (gateway) => {
+      const billing = requireBilling();
+      const { accountId } = await adminActorAccount(gateway);
+      return { url: await portalUrl(billing, accountId) };
+    }),
+);
 
 export const getSubscriberConfig = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
