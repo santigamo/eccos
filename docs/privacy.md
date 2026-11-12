@@ -144,14 +144,14 @@ Third parties that see this data, and why:
   (`VITE_SENTRY_DSN`): error message, stack trace, request method and path. Headers, bodies, query
   strings, cookies and user identity are turned off (`dataCollection` in `apps/gateway/src/sentry.ts`
   and `apps/dashboard/src/lib/sentry.ts`). Nothing is sent unless a DSN is set; Eccos Cloud sets both.
-- **Telegram** (gateway, opt-in) — operator alerts and the daily census (`apps/gateway/src/ops-alert.ts`,
+- **Telegram** (gateway, opt-in): operator alerts and the daily census (`apps/gateway/src/ops-alert.ts`,
   `ops-census.ts`): account names, organization, WABA and phone number ids, counts, and the last
   delivery error truncated to 200 characters. No message content and no end-user numbers. Off
   unless the three `OPS_TELEGRAM_*` secrets are set; Eccos Cloud sets them.
-- **Mail provider** (console) — verification, password reset and invitation emails go through the
+- **Mail provider** (console): verification, password reset and invitation emails go through the
   configured `MailSender` (`apps/dashboard/src/auth/mail-reccado.ts`): recipient address and
   template variables.
-- **Fallback proxy** (Eccos Cloud only, not in this repo) — while Spanish operators block
+- **Fallback proxy** (Eccos Cloud only, not in this repo): while Spanish operators block
   Cloudflare addresses, the Eccos Cloud hostnames resolve to a Caddy proxy on a Hetzner server in
   Germany that terminates TLS and forwards to the Cloudflare edge, so console, API and Meta
   webhook traffic is decrypted in memory there. It keeps no access logs for those hostnames. The
