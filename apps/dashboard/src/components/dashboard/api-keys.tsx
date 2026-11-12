@@ -7,6 +7,7 @@ import {
   type Result,
 } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { followStepUp } from "../../lib/step-up";
 import { fmtTsShort } from "../../ui";
 import {
   Frame,
@@ -63,6 +64,7 @@ export function ApiKeysPanel({
     try {
       const res = await issueApiKey({ data: { label } });
       if (!res.ok) {
+        if (followStepUp(res)) return;
         setError(failureCopy(res).detail);
         return;
       }
@@ -242,6 +244,7 @@ function RevokeKeyDialog({
     try {
       const res = await revokeApiKey({ data: { keyId: target.keyId } });
       if (!res.ok) {
+        if (followStepUp(res)) return;
         setError(failureCopy(res).detail);
         return;
       }

@@ -15,6 +15,8 @@ import {
 import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billing-panel";
 import { ApiKeysPanel } from "../components/dashboard/api-keys";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
+import { TwoFactorPanel } from "../components/dashboard/two-factor";
+import { safeRedirectTarget } from "../auth/redirect-target";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Frame,
@@ -26,7 +28,8 @@ import {
 import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
- * Settings — the workspace's own identifiers, its API keys and its conversation history window.
+ * Settings — the workspace's own identifiers, its API keys, its conversation
+ * history window, and the signed-in user's two-factor authentication.
  *
  * It used to carry the forwarding target, the re-subscribe handshake and the
  * pasted-token panel. All three left, and each for its own reason: the first
@@ -40,6 +43,13 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
  * not wait on a number. API keys are account-level too.
  */
 export const Route = createFileRoute("/settings")({
+  // Where a step-up refusal came from, to return to once two-factor is set up.
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
+    const redirect = safeRedirectTarget(
+      typeof search.redirect === "string" ? search.redirect : undefined,
+    );
+    return redirect ? { redirect } : {};
+  },
   staleTime: CONFIG_STALE_MS,
   // Creem returns the customer here with the subscription it created.
   validateSearch: (search: Record<string, unknown>): { billing?: "success"; subscription_id?: string } => ({
@@ -61,7 +71,8 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
-  const [keys, retention, gatewayOrigin, billing] = Route.useLoaderData();
+  const [keys, retention, gatewayOrigin] = Route.useLoaderData();
+  const { redirect: returnTo } = Route.useSearch();
   const router = useRouter();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -98,8 +109,8 @@ function SettingsPage() {
       retention={retention}
       wabaId={wabaId}
       gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
-      billing={billing.ok ? billing.data : null}
-      billingReturned={returned}
+      twoFactorEnabled={scope.user?.twoFactorEnabled}
+      returnTo={returnTo}
       onKeysChanged={() => void invalidatePage(router)}
     />
   );
@@ -115,8 +126,8 @@ export function SettingsView({
   retention,
   wabaId,
   gatewayOrigin,
-  billing,
-  billingReturned,
+  twoFactorEnabled,
+  returnTo,
   onKeysChanged,
 }: {
   accountId?: string;
@@ -124,14 +135,21 @@ export function SettingsView({
   retention?: Result<number | null>;
   wabaId?: string;
   gatewayOrigin?: string | null;
-  /** Null while billing is off, and for a role that may not administer it. */
-  billing?: BillingState | null;
-  billingReturned?: CheckoutReturn | null;
+  twoFactorEnabled?: boolean;
+  returnTo?: string;
   onKeysChanged?: () => void;
 }) {
+  const twoFactor =
+    twoFactorEnabled === undefined ? null : (
+      <div className="lg:col-span-2">
+        <TwoFactorPanel enabled={twoFactorEnabled} returnTo={returnTo} />
+      </div>
+    );
   return (
     <Page title="Settings" kicker="Configuration">
       <div className="grid items-start gap-4 lg:grid-cols-2">
+        {/* First when it is why the operator is here, last otherwise. */}
+        {returnTo ? twoFactor : null}
         {accountId ? <WorkspacePanel accountId={accountId} /> : null}
         {accountId && retention ? (
           <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
@@ -142,6 +160,7 @@ export function SettingsView({
             <ApiKeysPanel keys={keys} wabaId={wabaId} gatewayOrigin={gatewayOrigin} onChanged={onKeysChanged} />
           </div>
         ) : null}
+        {returnTo ? null : twoFactor}
       </div>
     </Page>
   );

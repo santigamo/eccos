@@ -49,23 +49,47 @@ gateway layer and the D1-level `429` behavior tested in
 
 ### Two-factor authentication (TOTP)
 
-- `twoFactor()` plugin enabled; enrollment via `POST /api/auth/two-factor/enable`
-  with password (returns `otpauth://` URI + one-time backup codes).
-- **Not enforced yet (`eccos-eyel`).** The policy in the contract (§4/§8) is that
-  owner/admin must enroll TOTP before sensitive actions (connect, API keys,
-  export, erasure, membership/role changes, subscriber config write). Today the
-  console has no enrollment screen, and `requirePermission`
-  (`apps/dashboard/src/auth/tenant.ts`) checks only the role. Do not describe
-  TOTP as a control to customers until `eccos-eyel` lands.
-- Backup codes are shown once at enrollment; they are hashed at rest like
-  passwords and can be regenerated through the two-factor endpoints.
+- `twoFactor()` plugin enabled. Enrollment is the Two-factor authentication
+  panel on `/settings` (`src/components/dashboard/two-factor.tsx`): password,
+  then a QR code and key for an authenticator app, then the first code. Backup
+  codes are shown once after that code verifies; they are stored encrypted.
+- Sign-in for an enrolled account stops after the password and asks for the
+  code (or a backup code) before any session exists
+  (`src/components/blocks/auth-13/components/two-factor-form.tsx`).
+- There is no console control to turn TOTP off or regenerate backup codes yet;
+  a user who loses both the authenticator and the codes needs an operator.
+
+### Step-up enforcement (contract §4/§8)
+
+`stepUpRefusal` in `src/auth/step-up.ts` is the one rule: the user has TOTP
+enrolled, and the session was created within `STEP_UP_WINDOW_SECONDS` (15
+minutes, the same value as `freshAge`). It is enforced in two places:
+
+| Matrix row | Where |
+|---|---|
+| Embedded Signup start and code exchange, token attach | `startConnect`, `exchangeConnectCode`, `connectWithToken` |
+| API key issue and revoke | `issueApiKey`, `revokeApiKey` |
+| Subscriber config write, resubscribe | `setSubscriberConfig`, `resubscribe` |
+| Invitations and member role changes | `stepUpGuard` (`src/auth/step-up-guard.ts`), a Better Auth `before` hook on `invite-member`, `cancel-invitation`, `update-member-role`, `remove-member` |
+
+Export and erasure have no console path: they are reachable only with an
+account API key, so there is nothing for a session step-up to gate. A console
+action for either must call `requireStepUp`.
+
+The role check runs first, so a role that lacks the action is told that rather
+than asked to enroll. A refusal is a typed `forbidden` failure with reason
+`totp-required` or `reauth-required`; the console follows it
+(`src/lib/step-up.ts`) to `/settings?redirect=…` to enroll, or signs the stale
+session out and goes to `/signin?reauth=1&redirect=…`, and both return to the
+page the action was on. Verifying the first code re-issues the session, so
+enrolling also satisfies the window.
 
 ### Session freshness (step-up)
 
 - Session expiry: 7 days; session refresh (`updateAge`): daily.
-- `freshAge: 900` (15 minutes) is configured, matching the contract's step-up
-  window, but it is **not applied** to the console's server functions yet
-  (`eccos-eyel`): a sensitive action does not require a recent sign-in today.
+- `freshAge: 900` (15 minutes) — a sensitive action requires a sign-in within
+  the last 15 minutes, matching the contract's step-up window. Freshness is the
+  session's creation time, so signing in again is the step-up.
 - Revocation is immediate: sessions are looked up in the auth D1 on every
   request; a revoked/deleted session fails closed on the next protected
   request (no cached claims).

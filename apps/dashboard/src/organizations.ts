@@ -381,6 +381,7 @@ export const listMyInvitations = createServerFn({ method: "GET" }).handler(
 export interface SessionUserView {
   name: string;
   email: string;
+  twoFactorEnabled: boolean;
   /**
    * The organizations this user belongs to, for the shell's workspace control.
    * Display data: the list an operator may CHOOSE from, never proof they hold
@@ -420,6 +421,7 @@ export const getSessionUser = createServerFn({ method: "GET" }).handler(
       return {
         name: session.name,
         email: session.email,
+        twoFactorEnabled: session.twoFactorEnabled,
         workspaces,
         activeWorkspaceId: activeWorkspace(workspaces, session.activeOrganizationId)?.id ?? null,
       };

@@ -82,6 +82,18 @@ function forbiddenCopy(failure: Failure): FailureCopy {
         detail:
           "Your role in this workspace does not allow this. Ask an owner or an admin to widen it.",
       };
+    case "totp-required":
+      return {
+        title: "Two-factor authentication needed",
+        detail:
+          "This action is protected. Set up two-factor authentication on your account, then try again.",
+      };
+    case "reauth-required":
+      return {
+        title: "Confirm it's you",
+        detail:
+          "This action needs a sign-in from the last 15 minutes. Sign in again, then try again.",
+      };
     default:
       // A refusal with no reason code of its own: report it as the refusal it
       // is, using the server's own words rather than inventing a cause.

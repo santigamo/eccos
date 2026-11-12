@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { setSubscriberConfig, type SubscriberConfig } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { followStepUp } from "../../lib/step-up";
 import {
   Frame,
   FramePanel,
@@ -98,7 +99,7 @@ export function ForwardingTargetPanel({
         setConfirmingRemove(false);
         setNotice({ ok: true, text: done });
         onSaved?.();
-      } else {
+      } else if (!followStepUp(res)) {
         setNotice({ ok: false, text: failureCopy(res).detail });
       }
     } finally {

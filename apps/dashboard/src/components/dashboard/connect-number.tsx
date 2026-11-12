@@ -23,6 +23,7 @@ import {
 } from "../../lib/embedded-signup";
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
+import { followStepUp } from "../../lib/step-up";
 import {
   CONNECT_CANCELLED_MESSAGE,
   CONNECT_POPUP_BLOCKED_MESSAGE,
@@ -267,6 +268,7 @@ export function ConnectNumberChoices({
             leave(CONNECT_RETURN_PATH);
             return;
           }
+          if (followStepUp(result)) return;
           setError(failureCopy(result).detail);
           prepareNext();
           return;
@@ -318,6 +320,7 @@ export function ConnectNumberChoices({
         takeHandoff(),
       ]);
       if (!handoff.ok) {
+        if (followStepUp(handoff)) return;
         setError(failureCopy(handoff).detail);
         return;
       }

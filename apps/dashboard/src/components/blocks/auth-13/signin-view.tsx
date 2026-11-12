@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { authClient } from "@/auth/auth-client";
 import { AuthSplitShell } from "./components/auth";
 import { LoginForm, type FormSubmitEvent } from "./components/login-form";
+import { TwoFactorForm } from "./components/two-factor-form";
 import { authErrorMessage } from "@/components/auth/auth-page";
 import { validateEmail } from "./components/validation";
 import { track } from "@/lib/analytics";
@@ -14,14 +15,18 @@ import { track } from "@/lib/analytics";
 export function SignInView({
   redirectTo,
   searchError,
+  reauth = false,
 }: {
   redirectTo: string;
   searchError: string | null;
+  /** Arrived from a sensitive action that needs a recent sign-in. */
+  reauth?: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(searchError);
   const [pending, setPending] = useState(false);
+  const [challenged, setChallenged] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
@@ -67,19 +72,40 @@ export function SignInView({
       setError(authErrorMessage(result.error, "Could not sign in"));
       return;
     }
+    if ((result.data as { twoFactorRedirect?: boolean } | null)?.twoFactorRedirect) {
+      setChallenged(true);
+      return;
+    }
     if ((result.data as { token?: string | null } | null)?.token === null) {
       setError("Verify your email address first, then sign in again.");
       return;
     }
-    // Full navigation so the root loader re-resolves the fresh session; a
-    // full URL assignment preserves query-string targets like /inbound?wabaId=.
+    enter();
+  }
+
+  // Full navigation so the root loader re-resolves the fresh session; a full
+  // URL assignment preserves query-string targets like /inbound?wabaId=.
+  function enter() {
     window.location.assign(redirectTo || "/");
+  }
+
+  if (challenged) {
+    return (
+      <AuthSplitShell>
+        <TwoFactorForm onVerified={enter} />
+      </AuthSplitShell>
+    );
   }
 
   return (
     <AuthSplitShell>
       <LoginForm
         onSubmit={onSubmit}
+        notice={
+          reauth
+            ? "Confirm it's you. The action you started needs a sign-in from the last 15 minutes; you will go back to where you were."
+            : null
+        }
         error={error}
         pending={pending}
         email={email}
