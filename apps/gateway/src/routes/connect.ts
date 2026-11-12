@@ -516,13 +516,13 @@ export async function registerWabasForToken(
 
     // An account that may not add numbers registers only what it already had.
     const registered = registrations.map((registration) => {
-      const refused = new Set(registration.refusedPhones.map((phone) => phone.phoneNumberId));
+      const refused = new Set(registration.refusedPhones?.map((phone) => phone.phoneNumberId));
       const match = availableMatches.find((candidate) => candidate.wabaId === registration.waba.wabaId);
       return { wabaId: registration.waba.wabaId, phones: (match?.phones ?? []).filter((phone) => !refused.has(phone.id)) };
     });
     const subscriptionRequired =
       registrations.length < availableMatches.length ||
-      registrations.some((registration) => registration.refusedPhones.length > 0);
+      registrations.some((registration) => registration.refusedPhones !== undefined);
     const primary = registered[0];
     if (!primary) return { ok: false, error: "WABA registration failed", code: "failed" };
 

@@ -149,8 +149,8 @@ export interface RegisterWabaInput {
 export interface RegisterWabaResult {
   waba: AccountWaba;
   phones: PhoneRecord[];
-  /** Named phones left out because the account may not add numbers. */
-  refusedPhones: PhoneRecord[];
+  /** Named phones left out because the account may not add numbers. Absent when none were. */
+  refusedPhones?: PhoneRecord[];
 }
 
 export type ProvisioningFailureKind =
@@ -1243,7 +1243,8 @@ export class EccosControlPlane extends DurableObject<Env> {
     return Promise.all(kept.map(async (item) => {
       const waba = await this.getWabaRecord(item.accountId, item.wabaId);
       if (!waba) throw new Error(`WABA registration failed for "${item.wabaId}"`);
-      return { waba, phones: waba.phones, refusedPhones: refused.get(item.wabaId) ?? [] };
+      const refusedPhones = refused.get(item.wabaId);
+      return { waba, phones: waba.phones, ...(refusedPhones ? { refusedPhones } : {}) };
     }));
   }
 
@@ -1366,7 +1367,8 @@ export class EccosControlPlane extends DurableObject<Env> {
     return Promise.all(kept.map(async (item) => {
       const waba = await this.getWabaRecord(item.accountId, item.wabaId);
       if (!waba) throw new Error(`WABA provisioning failed for "${item.wabaId}"`);
-      return { waba, phones: waba.phones, refusedPhones: refused.get(item.wabaId) ?? [] };
+      const refusedPhones = refused.get(item.wabaId);
+      return { waba, phones: waba.phones, ...(refusedPhones ? { refusedPhones } : {}) };
     }));
   }
 

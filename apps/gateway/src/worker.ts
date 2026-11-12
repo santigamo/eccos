@@ -625,7 +625,7 @@ async function registerWabaRoute(c: AppContext) {
         provisioningError: result.waba.provisioningError,
         phones: result.phones,
       },
-      ...(result.refusedPhones.length > 0 ? { refusedPhones: result.refusedPhones, code: "subscription_required" } : {}),
+      ...(result.refusedPhones ? { refusedPhones: result.refusedPhones, code: "subscription_required" } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
     }, responseStatus);
   } catch (err) {

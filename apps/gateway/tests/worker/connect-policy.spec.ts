@@ -170,7 +170,7 @@ describe("connect policy closed", () => {
         provisioningStatus: "active",
       });
       expect(result.phones.map((phone) => phone.phoneNumberId)).toEqual(["PNID1"]);
-      expect(result.refusedPhones.map((phone) => phone.phoneNumberId)).toEqual(["PNID2"]);
+      expect(result.refusedPhones?.map((phone) => phone.phoneNumberId)).toEqual(["PNID2"]);
       expect(result.waba.metaAccessToken).toBe("fresh-token");
     });
     await expectNothingNew();
@@ -179,7 +179,7 @@ describe("connect policy closed", () => {
   it("a reconnect that swaps the number for a new one keeps the old one and adds nothing", async () => {
     await cp(async (i) => {
       const result = await i.beginWabaProvisioning(pendingInput(TEST_WABA_ID, ["PN_SWAP"]));
-      expect(result.refusedPhones.map((phone) => phone.phoneNumberId)).toEqual(["PN_SWAP"]);
+      expect(result.refusedPhones?.map((phone) => phone.phoneNumberId)).toEqual(["PN_SWAP"]);
     });
     await expectNothingNew();
   });
