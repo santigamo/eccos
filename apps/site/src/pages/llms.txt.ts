@@ -49,13 +49,14 @@ its own conversations, with that business's own payment method.
 ${tariff()}
 - Messages: unlimited, on every plan
 
-Eccos Cloud is in early access: anyone can create an account today, free and
-without a card, and nothing is billed while early access lasts. Self-hosting is
-free under the ${SITE.license} licence.
+Prices exclude VAT. Creating an account is free; connecting a number starts a
+${PRICING.trialDays}-day free trial that asks for a card. Cancel at any time, effective at the
+end of the period. Payment and invoices are handled by Creem, the merchant of
+record. Self-hosting is free under the ${SITE.license} licence.
 
 ## Data handling (Eccos Cloud)
 
-- Conversation history is kept forever by default, or for a window you set between ${DATA_TERMS.conversationRetentionMinDays} and ${DATA_TERMS.conversationRetentionMaxDays} days
+- Conversation history, with its media files, is kept forever by default, or for a window you set between ${DATA_TERMS.conversationRetentionMinDays} and ${DATA_TERMS.conversationRetentionMaxDays} days
 - The forwarding buffer keeps message content ${DATA_TERMS.contentRetentionDays} days by default, configured by the operator between ${DATA_TERMS.contentRetentionMinDays} and ${DATA_TERMS.contentRetentionMaxDays} days
 - Storage is pinned to ${DATA_TERMS.jurisdiction}
 - Never cross-referenced between businesses, never sold or shared with data brokers, never used for advertising or to train models

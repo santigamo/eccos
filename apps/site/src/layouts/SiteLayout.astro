@@ -2,6 +2,7 @@
 import { getAbsoluteLocaleUrl, getRelativeLocaleUrl } from "astro:i18n";
 import { ClientRouter } from "astro:transitions";
 import LandingSchema from "../components/LandingSchema.astro";
+import { SITE } from "../data/product";
 
 type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate";
 
@@ -34,7 +35,7 @@ const enUrl = getAbsoluteLocaleUrl("en");
 const hasPixelPreload = landing || notFound;
 const hasMigrationLink = landing || active === "migrate";
 const ogDescription = es
-  ? "Uno o cincuenta números, tuyos o de tus clientes. Precio por número, sin cargos de Eccos por mensaje. Self-hosted o Cloud en acceso anticipado."
+  ? "Uno o cincuenta números, tuyos o de tus clientes. Precio por número, sin cargos de Eccos por mensaje. Autoalójalo o deja que lo operemos por ti."
   : "Numbers stay answerable from the phone while your automation sends through the API. Priced per connected number, messages unlimited. Self-host it, or let us run it.";
 const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 ---
@@ -182,7 +183,7 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
         <nav class="foot-col" aria-label={es ? "Contacto" : "Connect"}>
           <p class="label">{es ? "Contacto" : "Connect"}</p>
           <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
-          <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>
+          <a href={`mailto:${SITE.email}`}>{SITE.email}</a>
         </nav>
       </div>
     </div>

@@ -142,7 +142,7 @@ interpolates across a theme flip.
 **Material moves per component** (all tokenized — see `--tag-live-*`,
 `--table-rule`, `--hatch-*`, `--dg-*`, `--nav-bg`, `--foot-*` in
 `styles.css`): machine-voice kickers re-ink to `--ink-green`; "Available
-now" inverts into a solid green stamp with dark text; "Early access" becomes
+now" inverts into a solid green stamp with dark text; `tag-soon` becomes
 an ink outline; the data table goes print-convention (2px `--text` top
 rule); hatch bands and rails read as ink on paper; diagrams get white nodes
 with ink wires and `#0f9d58` marks; the footer keeps the silk under a paper
@@ -180,7 +180,7 @@ favicon stay dark — dark is the canonical brand rendering.
   one action we actually want per band; everything else is ghost.
 - **Tags** (`.tag`): machine voice, square, `5px 10px`, line-height 1.1.
   `tag-live` green tint, `tag-soon` neutral. Availability wording on the mode
-  tags ("Available now" / "Early access") is load-bearing legal copy.
+  tags ("Available now" on both modes) is load-bearing legal copy.
 - **Cards**: no floating cards — cells share rails/rules with the grid (trio
   cards are rail-separated columns; mode cards split the band at the centre
   rail). Trio cards: image on top (generated glass render, square corners,
@@ -277,13 +277,14 @@ last run: Higgsfield `nano_banana_2` @2K), never lifted from references.
 These outrank aesthetics. Before shipping any site change, verify:
 
 1. **Facts that must stay on the landing**: provider name + Manresa
-   (Barcelona), Spain + `hello@imsanti.dev` with links to the aviso legal and
+   (Barcelona), Spain + `hello@eccos.chat` with links to the aviso legal and
    /privacy (the **full** identity — NIF, street address, phone — lives on
    /privacy and the aviso legal and must never leave *those*); what the
    service does (receive/forward with retry; send messages, templates,
    media); Embedded Signup + "pay Meta directly"; both modes with exact
-   wording ("Available now" / "Early access" / "Not yet generally
-   available"); the data guarantees (never cross-referenced / sold to
+   wording ("Available now"; Eccos Cloud with its 14-day trial, card
+   required, and cancellation at period end); prices exclusive of VAT and
+   Creem as merchant of record; the data guarantees (never cross-referenced / sold to
    brokers / used for ads or training; "30 days by default, configurable
    7–90"; Cloudflare EU jurisdiction); links to /privacy, /terms,
    /data-deletion, aviso legal; the Meta non-affiliation disclaimer.
