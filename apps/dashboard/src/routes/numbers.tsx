@@ -10,6 +10,7 @@ import {
   ConnectNumberPanel,
 } from "../components/dashboard/connect-number";
 import { NumbersTable } from "../components/dashboard/numbers-table";
+import { SubscriptionNotice } from "../components/dashboard/subscription-notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -87,7 +88,11 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
-            <ConnectNumberPanel heading="Meta Embedded Signup" />
+            {resources?.account?.connectPolicy === "closed" ? (
+              <SubscriptionNotice />
+            ) : (
+              <ConnectNumberPanel heading="Meta Embedded Signup" />
+            )}
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -155,6 +160,7 @@ export function NumbersView({
    * it is supposed to be refused.
    */
   const [busy, setBusy] = useState(false);
+  const closed = resources.account?.connectPolicy === "closed";
   const outcome = (
     <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} />
   );
@@ -162,9 +168,10 @@ export function NumbersView({
     <Page
       title="Numbers"
       kicker="Connection"
-      actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
+      actions={<AddNumberButton expanded={adding} onToggle={setAdding} disabled={closed} />}
     >
       {outcome}
+      {closed ? <SubscriptionNotice /> : null}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
@@ -271,13 +278,17 @@ function AddNumberDialog({
 export function AddNumberButton({
   expanded,
   onToggle,
+  disabled,
 }: {
   expanded: boolean;
   onToggle: (expanded: boolean) => void;
+  /** The workspace may not add numbers (`SubscriptionNotice` says why). */
+  disabled?: boolean;
 }) {
   return (
     <Button
       type="button"
+      disabled={disabled}
       aria-haspopup="dialog"
       aria-expanded={expanded}
       onClick={() => onToggle(true)}

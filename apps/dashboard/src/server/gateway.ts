@@ -6,7 +6,8 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
-import { billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
+import { billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
+import { syncSubscription } from "../billing/webhook";
 import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
@@ -2180,18 +2181,40 @@ function requireBilling(): Billing {
 export const getBilling = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<BillingState | null>> =>
     withGateway(async (gateway) => {
-      if (!billingFor(env)) return null;
+      const billing = billingFor(env);
+      if (!billing) return null;
       const { accountId } = await adminActorAccount(gateway);
-      return billingState(gateway, accountId);
+      return billingState(billing, accountId);
     }),
 );
+
+export function validateConfirmCheckoutInput(input: unknown): { subscriptionId: string } {
+  const subscriptionId = inputRecord(input).subscriptionId;
+  if (typeof subscriptionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(subscriptionId)) {
+    throw new Error("subscriptionId is malformed");
+  }
+  return { subscriptionId };
+}
+
+/** The checkout return: reads the subscription from Creem now instead of waiting for its webhook. */
+export const confirmCheckout = createServerFn({ method: "POST" })
+  .validator(validateConfirmCheckoutInput)
+  .handler(
+    ({ data }): Promise<Result<null>> =>
+      withGateway(async (gateway) => {
+        const billing = requireBilling();
+        const { accountId } = await adminActorAccount(gateway);
+        await syncSubscription(billing, data.subscriptionId, accountId);
+        return null;
+      }),
+  );
 
 export const startCheckout = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<{ url: string }>> =>
     withGateway(async (gateway) => {
       const billing = requireBilling();
       const { actor, accountId } = await adminActorAccount(gateway);
-      const successUrl = new URL("/settings", new URL(getRequest().url).origin).href;
+      const successUrl = billingReturnUrl(env.BETTER_AUTH_URL, getRequest().url);
       return { url: await checkoutUrl(billing, { accountId, email: actor.session.email, successUrl }) };
     }),
 );

@@ -23,15 +23,33 @@ function subscriptionIdOf(event: unknown): string | null {
   return typeof id === "string" && id ? id : null;
 }
 
+type Sync = Pick<Billing, "creem"> & {
+  gateway: Pick<Billing["gateway"], "getAccountBilling" | "setAccountBilling">;
+};
+
 /**
- * An event is only a signal: the subscription is read again from Creem and its
- * current state is stored, so duplicates and late events end in the same place.
+ * Stores what Creem says about a subscription now. An event or a checkout return
+ * is only a signal to look, so duplicates and late ones end in the same place.
+ * `accountId` limits the write to that account.
  */
+export async function syncSubscription({ creem, gateway }: Sync, subscriptionId: string, accountId?: string): Promise<void> {
+  const subscription = await creem.subscription(subscriptionId);
+  if (!subscription.accountId || (accountId && subscription.accountId !== accountId)) return;
+  const connectPolicy = policyForStatus(subscription.status);
+  const stored = await gateway.getAccountBilling(subscription.accountId);
+  // A dead subscription that is not the stored one must not close the account.
+  const foreign = stored.subscriptionId !== null && stored.subscriptionId !== subscription.id;
+  if (foreign && connectPolicy === "closed") return;
+  await gateway.setAccountBilling(subscription.accountId, {
+    connectPolicy,
+    customerId: subscription.customerId,
+    subscriptionId: subscription.id,
+  });
+}
+
 export async function handleBillingWebhook(
   request: Request,
-  { config, creem, gateway }: Pick<Billing, "config" | "creem"> & {
-    gateway: Pick<Billing["gateway"], "getAccountBilling" | "setAccountBilling">;
-  },
+  { config, creem, gateway }: Pick<Billing, "config"> & Sync,
 ): Promise<Response> {
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
   const raw = await request.text();
@@ -45,20 +63,6 @@ export async function handleBillingWebhook(
   } catch {
     return new Response(null, { status: 400 });
   }
-  if (!subscriptionId) return new Response(null, { status: 200 });
-
-  const subscription = await creem.subscription(subscriptionId);
-  if (!subscription.accountId) return new Response(null, { status: 200 });
-  const connectPolicy = policyForStatus(subscription.status);
-  const stored = await gateway.getAccountBilling(subscription.accountId);
-  // A dead subscription that is not the stored one must not close the account.
-  const foreign = stored.subscriptionId !== null && stored.subscriptionId !== subscription.id;
-  if (foreign && connectPolicy === "closed") return new Response(null, { status: 200 });
-
-  await gateway.setAccountBilling(subscription.accountId, {
-    connectPolicy,
-    customerId: subscription.customerId,
-    subscriptionId: subscription.id,
-  });
+  if (subscriptionId) await syncSubscription({ creem, gateway }, subscriptionId);
   return new Response(null, { status: 200 });
 }

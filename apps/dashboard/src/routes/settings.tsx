@@ -2,12 +2,16 @@ import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-route
 import { invalidatePage } from "../lib/invalidate";
 import { Page } from "../ui";
 import {
+  confirmCheckout,
+  getBilling,
   getConversationRetention,
   getGatewayOrigin,
   listApiKeys,
   type AccountKeyResource,
+  type BillingState,
   type Result,
 } from "../server/gateway";
+import { BillingPanel } from "../components/dashboard/billing-panel";
 import { ApiKeysPanel } from "../components/dashboard/api-keys";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,7 +40,21 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
  */
 export const Route = createFileRoute("/settings")({
   staleTime: CONFIG_STALE_MS,
-  loader: () => Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin()]),
+  // Creem returns the customer here with the subscription it created.
+  validateSearch: (search: Record<string, unknown>): { billing?: "success"; subscription_id?: string } => ({
+    billing: search.billing === "success" ? "success" : undefined,
+    subscription_id: typeof search.subscription_id === "string" ? search.subscription_id : undefined,
+  }),
+  loaderDeps: ({ search }) => ({
+    subscriptionId: search.billing === "success" ? search.subscription_id : undefined,
+  }),
+  loader: async ({ deps }) => {
+    // The webhook may land after the redirect, so the return asks Creem itself.
+    if (deps.subscriptionId) {
+      await confirmCheckout({ data: { subscriptionId: deps.subscriptionId } }).catch(() => null);
+    }
+    return Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin(), getBilling()]);
+  },
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
@@ -51,7 +69,8 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
-  const [keys, retention, gatewayOrigin] = Route.useLoaderData();
+  const [keys, retention, gatewayOrigin, billing] = Route.useLoaderData();
+  const { billing: billingReturn } = Route.useSearch();
   const router = useRouter();
   // Both post-organization stages carry the account, in two shapes. Reachable
   // before any WABA exists, which is exactly why nothing here may need one.
@@ -67,6 +86,8 @@ function SettingsPage() {
       retention={retention}
       wabaId={wabaId}
       gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
+      billing={billing.ok ? billing.data : null}
+      billingReturned={billingReturn === "success"}
       onKeysChanged={() => void invalidatePage(router)}
     />
   );
@@ -82,6 +103,8 @@ export function SettingsView({
   retention,
   wabaId,
   gatewayOrigin,
+  billing,
+  billingReturned,
   onKeysChanged,
 }: {
   accountId?: string;
@@ -89,6 +112,9 @@ export function SettingsView({
   retention?: Result<number | null>;
   wabaId?: string;
   gatewayOrigin?: string | null;
+  /** Null while billing is off, and for a role that may not administer it. */
+  billing?: BillingState | null;
+  billingReturned?: boolean;
   onKeysChanged?: () => void;
 }) {
   return (
@@ -98,6 +124,7 @@ export function SettingsView({
         {accountId && retention ? (
           <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
         ) : null}
+        {accountId && billing ? <BillingPanel billing={billing} returned={billingReturned} /> : null}
         {accountId && keys ? (
           <div className="lg:col-span-2">
             <ApiKeysPanel keys={keys} wabaId={wabaId} gatewayOrigin={gatewayOrigin} onChanged={onKeysChanged} />

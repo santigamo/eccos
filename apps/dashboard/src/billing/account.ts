@@ -8,6 +8,15 @@ export interface BillingState {
   numbers: number;
   monthlyEuros: number;
   hasCustomer: boolean;
+  /** The subscription's status at Creem; null without one, or when Creem did not answer. */
+  status: string | null;
+}
+
+export const BILLING_RETURN_PATH = "/settings?billing=success";
+
+/** Where Creem sends the customer back: the console's own origin, never the request's. */
+export function billingReturnUrl(consoleOrigin: string | undefined, requestUrl: string): string {
+  return new URL(BILLING_RETURN_PATH, consoleOrigin?.trim() || new URL(requestUrl).origin).href;
 }
 
 async function billableNumbers(gateway: GatewayApi, accountId: string): Promise<number> {
@@ -15,12 +24,19 @@ async function billableNumbers(gateway: GatewayApi, accountId: string): Promise<
   return wabas.filter((waba) => waba.status === "active").reduce((sum, waba) => sum + waba.phones.length, 0);
 }
 
-export async function billingState(gateway: GatewayApi, accountId: string): Promise<BillingState> {
+export async function billingState({ creem, gateway }: Billing, accountId: string): Promise<BillingState> {
   const [billing, numbers] = await Promise.all([
     gateway.getAccountBilling(accountId),
     billableNumbers(gateway, accountId),
   ]);
+  const status = billing.subscriptionId
+    ? await creem.subscription(billing.subscriptionId).then(
+        (subscription) => subscription.status,
+        () => null,
+      )
+    : null;
   return {
+    status,
     connectPolicy: billing.connectPolicy,
     numbers,
     monthlyEuros: monthlyPriceEuros(numbers),

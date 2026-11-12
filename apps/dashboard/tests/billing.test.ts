@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { signPayload } from "@eccos/core/signature";
 import type { AccountBilling, AccountBillingInput, GatewayApi } from "@eccos/gateway-contract";
-import { checkoutUrl } from "../src/billing/account";
+import { billingReturnUrl, billingState, checkoutUrl } from "../src/billing/account";
 import { billingConfig } from "../src/billing/config";
 import { billingFor } from "../src/billing/context";
 import { creemClient, type Creem, type Subscription } from "../src/billing/creem";
 import { monthlyPriceEuros, policyForStatus } from "../src/billing/plan";
 import { reconcileBilling } from "../src/billing/reconcile";
-import { BILLING_WEBHOOK_PATH, billingWebhook, handleBillingWebhook } from "../src/billing/webhook";
+import { BILLING_WEBHOOK_PATH, billingWebhook, handleBillingWebhook, syncSubscription } from "../src/billing/webhook";
 
 const ENV = { CREEM_API_KEY: "creem_test_key", CREEM_WEBHOOK_SECRET: "whsec", CREEM_PRODUCT_ID: "prod_1" };
 const config = billingConfig(ENV);
@@ -293,5 +293,33 @@ describe("checkout", () => {
     expect(await checkoutUrl({ config, creem: ended.creem, gateway: fakeGateway(stored).gateway }, input)).toBe(
       "https://creem.test/checkout/acc_1/0",
     );
+  });
+});
+
+describe("checkout return", () => {
+  test("returns to the console origin, not to wherever the request came from", () => {
+    expect(billingReturnUrl("https://app.eccos.chat", "https://other.test/_serverFn/x")).toBe(
+      "https://app.eccos.chat/settings?billing=success",
+    );
+    expect(billingReturnUrl(undefined, "http://localhost:3000/_serverFn/x")).toBe(
+      "http://localhost:3000/settings?billing=success",
+    );
+  });
+
+  test("confirming a return stores the subscription without its webhook, for the caller's account only", async () => {
+    const { creem } = fakeCreem([subscription({ status: "trialing" })]);
+    const { gateway, stored } = fakeGateway();
+    await syncSubscription({ creem, gateway }, "sub_1", "acc_other");
+    expect(stored).toEqual({});
+    await syncSubscription({ creem, gateway }, "sub_1", "acc_1");
+    expect(stored.acc_1).toEqual({ connectPolicy: "open", customerId: "cust_1", subscriptionId: "sub_1" });
+  });
+
+  test("the billing state carries the status Creem reports, and survives Creem not answering", async () => {
+    const billing = { acc_1: { connectPolicy: "open" as const, customerId: "cust_1", subscriptionId: "sub_1" } };
+    const { gateway } = fakeGateway(billing, { acc_1: 5 });
+    const state = await billingState({ config, creem: fakeCreem([subscription({ status: "trialing" })]).creem, gateway }, "acc_1");
+    expect(state).toEqual({ connectPolicy: "open", numbers: 5, monthlyEuros: 17, hasCustomer: true, status: "trialing" });
+    expect((await billingState({ config, creem: fakeCreem([]).creem, gateway }, "acc_1")).status).toBeNull();
   });
 });
