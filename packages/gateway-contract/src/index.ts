@@ -510,8 +510,12 @@ export interface AccountBilling {
 
 export interface AccountBillingInput {
   connectPolicy: ConnectPolicy;
+  /** Omitted keeps the stored id. */
   customerId?: string;
-  subscriptionId?: string;
+  /** Omitted keeps the stored id; null clears it. */
+  subscriptionId?: string | null;
+  /** Write only while the stored subscription id is still this one. */
+  ifSubscriptionId?: string | null;
 }
 
 /** One account with a stored subscription. `billableNumbers` counts phones on active WABAs. */
@@ -712,6 +716,8 @@ export type ConnectExchangeResult =
       status: ProvisioningStatus;
       /** WABAs the token could see but that belong to another account. */
       warnings?: string[];
+      /** Some numbers were new and the account may not add numbers; they were left out. */
+      subscriptionRequired?: true;
     }
   | { ok: false; error: string; code: ConnectFailureCode };
 
@@ -804,6 +810,8 @@ export type ManualConnectResult =
       status: ProvisioningStatus;
       /** WABAs the token could see but that belong to another account. */
       warnings?: string[];
+      /** Some numbers were new and the account may not add numbers; they were left out. */
+      subscriptionRequired?: true;
     }
   | {
       ok: false;
@@ -1337,8 +1345,9 @@ export interface GatewayApi {
    * follows this setting; the short relay buffer keeps its own windows. */
   setConversationRetention(accountId: string, days: number | null): Promise<number | null>;
 
-  getAccountBilling(accountId: string): Promise<AccountBilling>;
-  /** Stores the connect policy; an omitted id keeps the stored one. */
+  /** Null for an account that does not exist. */
+  getAccountBilling(accountId: string): Promise<AccountBilling | null>;
+  /** Returns the billing state after the call, written or not (`ifSubscriptionId`). */
   setAccountBilling(accountId: string, billing: AccountBillingInput): Promise<AccountBilling>;
   listBilledAccounts(): Promise<BilledAccount[]>;
 }

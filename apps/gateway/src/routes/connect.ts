@@ -106,6 +106,7 @@ export type MultiExchangeResult =
       connected: ConnectedPhone[];
       status: ProvisioningStatus;
       warnings?: string[];
+      subscriptionRequired?: true;
     }
   | { ok: false; error: string; code: ConnectFailureCode };
 
@@ -513,7 +514,16 @@ export async function registerWabasForToken(
       })),
     );
 
-    const primary = availableMatches[0];
+    // An account that may not add numbers registers only what it already had.
+    const registered = registrations.map((registration) => {
+      const refused = new Set(registration.refusedPhones.map((phone) => phone.phoneNumberId));
+      const match = availableMatches.find((candidate) => candidate.wabaId === registration.waba.wabaId);
+      return { wabaId: registration.waba.wabaId, phones: (match?.phones ?? []).filter((phone) => !refused.has(phone.id)) };
+    });
+    const subscriptionRequired =
+      registrations.length < availableMatches.length ||
+      registrations.some((registration) => registration.refusedPhones.length > 0);
+    const primary = registered[0];
     if (!primary) return { ok: false, error: "WABA registration failed", code: "failed" };
 
     // The pending rows are durable now, so run provisioning here instead of
@@ -538,7 +548,7 @@ export async function registerWabasForToken(
       phone_number_id: primary.phones[0]?.id ?? "",
       display_phone_number: primary.phones[0]?.display_phone_number ?? "",
       status,
-      connected: availableMatches.flatMap((m) =>
+      connected: registered.flatMap((m) =>
         m.phones.map((p) => ({
           waba_id: m.wabaId,
           phone_number_id: p.id,
@@ -546,6 +556,7 @@ export async function registerWabasForToken(
         })),
       ),
       ...(warnings.length > 0 ? { warnings } : {}),
+      ...(subscriptionRequired ? { subscriptionRequired: true as const } : {}),
     };
   } catch (e) {
     const message = errorMessage(e);
@@ -637,7 +648,10 @@ export function connectRoutes() {
       const skipped = result.warnings?.length ?? 0;
       return finish(
         returnTo,
-        skipped > 0 ? { connectSkipped: String(skipped) } : {},
+        {
+          ...(skipped > 0 ? { connectSkipped: String(skipped) } : {}),
+          ...(result.subscriptionRequired ? { connectError: "subscription_required" } : {}),
+        },
         result,
         result.status === "active" ? 200 : 202,
       );

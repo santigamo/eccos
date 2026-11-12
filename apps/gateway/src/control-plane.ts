@@ -149,6 +149,8 @@ export interface RegisterWabaInput {
 export interface RegisterWabaResult {
   waba: AccountWaba;
   phones: PhoneRecord[];
+  /** Named phones left out because the account may not add numbers. */
+  refusedPhones: PhoneRecord[];
 }
 
 export type ProvisioningFailureKind =
@@ -951,33 +953,50 @@ export class EccosControlPlane extends DurableObject<Env> {
     return effectiveConnectPolicy(row?.connect_policy, this.env.CONNECT_POLICY_DEFAULT);
   }
 
-  private phoneCountOf(accountId: string): number {
-    const row = this.sql
-      .exec(
-        "SELECT COUNT(*) AS n FROM phones p JOIN wabas w ON w.waba_id = p.waba_id WHERE w.account_id = ?",
-        accountId,
-      )
-      .one();
-    return Number(row.n);
-  }
-
-  /** Runs `write` in one transaction and rolls it back when it added a phone to a closed account. */
-  private guardedTransaction(accountIds: string[], write: () => void): void {
-    this.ctx.storage.transactionSync(() => {
-      const closed = [...new Set(accountIds)].filter((id) => this.connectPolicyOf(id) === "closed");
-      const before = closed.map((id) => this.phoneCountOf(id));
-      write();
-      for (const [index, id] of closed.entries()) {
-        if (this.phoneCountOf(id) > Number(before[index])) throw new Error(SUBSCRIPTION_REQUIRED_ERROR);
+  /**
+   * For an account that may not add numbers: drops every WABA it does not already
+   * own and every phone it does not already have, so what it has can still be
+   * re-registered. Runs inside the registration transaction. Throws when nothing
+   * is left to register.
+   */
+  private refuseNewNumbers(prepared: PreparedWaba[]): { kept: PreparedWaba[]; refused: Map<string, PhoneRecord[]> } {
+    const refused = new Map<string, PhoneRecord[]>();
+    let refusedAny = false;
+    const kept = prepared.filter((item) => {
+      if (this.connectPolicyOf(item.accountId) !== "closed") return true;
+      const owned = this.sql
+        .exec("SELECT 1 FROM wabas WHERE waba_id = ? AND account_id = ?", item.wabaId, item.accountId)
+        .toArray().length > 0;
+      if (!owned) {
+        refusedAny = true;
+        return false;
       }
+      const has = (phone: PhoneRecord) =>
+        this.sql
+          .exec(
+            "SELECT 1 FROM phones p JOIN wabas w ON w.waba_id = p.waba_id WHERE p.phone_number_id = ? AND w.account_id = ?",
+            phone.phoneNumberId,
+            item.accountId,
+          )
+          .toArray().length > 0;
+      const refusedPhones = item.phones.filter((phone) => !has(phone));
+      if (refusedPhones.length > 0) {
+        refusedAny = true;
+        refused.set(item.wabaId, refusedPhones);
+        item.phones = item.phones.filter(has);
+      }
+      return true;
     });
+    if (kept.length === 0 && refusedAny) throw new Error(SUBSCRIPTION_REQUIRED_ERROR);
+    return { kept, refused };
   }
 
-  getAccountBilling(accountId: string): AccountBilling {
-    const id = this.requireAccount(accountId);
+  getAccountBilling(accountId: string): AccountBilling | null {
+    const id = validateAccountId(accountId);
     const row = this.sql
       .exec("SELECT billing_customer_id, billing_subscription_id FROM accounts WHERE account_id = ?", id)
-      .one();
+      .toArray()[0];
+    if (!row) return null;
     return {
       connectPolicy: this.connectPolicyOf(id),
       customerId: (row.billing_customer_id as string | null) ?? null,
@@ -990,17 +1009,16 @@ export class EccosControlPlane extends DurableObject<Env> {
     if (billing.connectPolicy !== "open" && billing.connectPolicy !== "closed") {
       throw new Error('invalid connectPolicy: expected "open" or "closed"');
     }
+    const stored = this.getAccountBilling(id) as AccountBilling;
+    if (billing.ifSubscriptionId !== undefined && billing.ifSubscriptionId !== stored.subscriptionId) return stored;
     this.sql.exec(
-      `UPDATE accounts SET connect_policy = ?,
-         billing_customer_id = COALESCE(?, billing_customer_id),
-         billing_subscription_id = COALESCE(?, billing_subscription_id)
-       WHERE account_id = ?`,
+      "UPDATE accounts SET connect_policy = ?, billing_customer_id = ?, billing_subscription_id = ? WHERE account_id = ?",
       billing.connectPolicy,
-      billing.customerId ?? null,
-      billing.subscriptionId ?? null,
+      billing.customerId || stored.customerId,
+      billing.subscriptionId === undefined ? stored.subscriptionId : billing.subscriptionId || null,
       id,
     );
-    return this.getAccountBilling(id);
+    return this.getAccountBilling(id) as AccountBilling;
   }
 
   listBilledAccounts(): BilledAccount[] {
@@ -1159,9 +1177,10 @@ export class EccosControlPlane extends DurableObject<Env> {
     const prepared = await this.prepareWabas(inputs);
     if (prepared.length === 0) return [];
     const registeredAt = Date.now();
-    this.guardedTransaction(prepared.map((item) => item.accountId), () => {
+    const { kept, refused } = this.ctx.storage.transactionSync(() => {
       this.assertWabaOwnership(prepared);
-      for (const item of prepared) {
+      const outcome = this.refuseNewNumbers(prepared);
+      for (const item of outcome.kept) {
         this.sql.exec(
           `INSERT INTO wabas
              (account_id, waba_id, meta_access_token, callback_url, created_at, status,
@@ -1219,11 +1238,12 @@ export class EccosControlPlane extends DurableObject<Env> {
           );
         }
       }
+      return outcome;
     });
-    return Promise.all(prepared.map(async (item) => {
+    return Promise.all(kept.map(async (item) => {
       const waba = await this.getWabaRecord(item.accountId, item.wabaId);
       if (!waba) throw new Error(`WABA registration failed for "${item.wabaId}"`);
-      return { waba, phones: waba.phones };
+      return { waba, phones: waba.phones, refusedPhones: refused.get(item.wabaId) ?? [] };
     }));
   }
 
@@ -1256,10 +1276,11 @@ export class EccosControlPlane extends DurableObject<Env> {
       ),
     );
     const now = Date.now();
-    this.guardedTransaction(prepared.map((item) => item.accountId), () => {
+    const { kept, refused } = this.ctx.storage.transactionSync(() => {
       this.assertWabaOwnership(prepared);
-      for (const [index, item] of prepared.entries()) {
-        const fingerprint = fingerprints[index];
+      const outcome = this.refuseNewNumbers(prepared);
+      for (const item of outcome.kept) {
+        const fingerprint = fingerprints[prepared.indexOf(item)];
         if (!fingerprint) throw new Error(`WABA provisioning fingerprint failed for "${item.wabaId}"`);
         const existing = this.sql
           .exec(
@@ -1340,11 +1361,12 @@ export class EccosControlPlane extends DurableObject<Env> {
           );
         }
       }
+      return outcome;
     });
-    return Promise.all(prepared.map(async (item) => {
+    return Promise.all(kept.map(async (item) => {
       const waba = await this.getWabaRecord(item.accountId, item.wabaId);
       if (!waba) throw new Error(`WABA provisioning failed for "${item.wabaId}"`);
-      return { waba, phones: waba.phones };
+      return { waba, phones: waba.phones, refusedPhones: refused.get(item.wabaId) ?? [] };
     }));
   }
 

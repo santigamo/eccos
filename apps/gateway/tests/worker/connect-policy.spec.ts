@@ -163,13 +163,68 @@ describe("connect policy closed", () => {
     await expectNothingNew();
   });
 
-  it("registerWabas refuses a new phone on an existing WABA", async () => {
+  it("a new phone on an existing WABA is left out, and the phone it had is re-registered", async () => {
     await cp(async (i) => {
-      await expect(
-        i.registerWaba({ ...pendingInput(TEST_WABA_ID, ["PNID1", "PNID2"]), provisioningStatus: "active" }),
-      ).rejects.toThrow("subscription required");
+      const result = await i.registerWaba({
+        ...pendingInput(TEST_WABA_ID, ["PNID1", "PNID2"], "fresh-token"),
+        provisioningStatus: "active",
+      });
+      expect(result.phones.map((phone) => phone.phoneNumberId)).toEqual(["PNID1"]);
+      expect(result.refusedPhones.map((phone) => phone.phoneNumberId)).toEqual(["PNID2"]);
+      expect(result.waba.metaAccessToken).toBe("fresh-token");
     });
     await expectNothingNew();
+  });
+
+  it("a reconnect that swaps the number for a new one keeps the old one and adds nothing", async () => {
+    await cp(async (i) => {
+      const result = await i.beginWabaProvisioning(pendingInput(TEST_WABA_ID, ["PN_SWAP"]));
+      expect(result.refusedPhones.map((phone) => phone.phoneNumberId)).toEqual(["PN_SWAP"]);
+    });
+    await expectNothingNew();
+  });
+
+  it("a new WABA with no phone is refused too", async () => {
+    await cp(async (i) => {
+      await expect(i.beginWabaProvisioning(pendingInput(NEW_WABA, []))).rejects.toThrow("subscription required");
+    });
+    await expectNothingNew();
+  });
+
+  it("a token that sees the existing WABA and a new one refreshes the first and leaves out the second", async () => {
+    const graph = mockGraph();
+    graph.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/oauth/access_token")) {
+        return new Response(JSON.stringify({ access_token: "refreshed-token" }), { status: 200 });
+      }
+      if (url.includes("/debug_token")) {
+        return new Response(
+          JSON.stringify({
+            data: { granular_scopes: [{ scope: "whatsapp_business_management", target_ids: [TEST_WABA_ID, NEW_WABA] }] },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes(`/${TEST_WABA_ID}/phone_numbers`)) {
+        return new Response(JSON.stringify({ data: [{ id: "PNID1", display_phone_number: "+34600000000" }] }), { status: 200 });
+      }
+      if (url.includes(`/${NEW_WABA}/phone_numbers`)) {
+        return new Response(JSON.stringify({ data: [{ id: "PN_NEW", display_phone_number: "+34600000001" }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    });
+    const { url, state } = await rpc().startConnectForAccountId(TEST_ACCOUNT_ID, "https://app.eccos.chat/numbers");
+    const handoff = await exports.default.fetch(url, { redirect: "manual" });
+    const res = await exports.default.fetch(
+      `https://gateway.example/connect?code=oauth-code&state=${encodeURIComponent(state)}`,
+      { headers: { cookie: handoff.headers.getSetCookie().join("; ") }, redirect: "manual" },
+    );
+    expect(new URL(res.headers.get("location") ?? "").searchParams.get("connectError")).toBe("subscription_required");
+    await expectNothingNew();
+    await cp(async (i) => {
+      expect((await i.getWabaRecord(TEST_ACCOUNT_ID, TEST_WABA_ID))?.metaAccessToken).toBe("refreshed-token");
+    });
   });
 
   it("re-registering an existing number succeeds", async () => {
@@ -182,7 +237,10 @@ describe("connect policy closed", () => {
 
   it("adoption adds nothing", async () => {
     await cp(async (i) => {
+      // Connected without a phone while the account could still add numbers.
+      i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open" });
       await i.beginWabaProvisioning(pendingInput(NEW_WABA, []));
+      i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed" });
       const claim = await i.claimWabaProvisioning(TEST_ACCOUNT_ID, NEW_WABA);
       if (!claim) throw new Error("expected a provisioning claim");
       const adopted = await i.adoptWabaPhones({
@@ -260,5 +318,26 @@ describe("connect policy default and billing state", () => {
     expect(await gateway.listBilledAccounts()).toEqual([
       { accountId: TEST_ACCOUNT_ID, subscriptionId: "sub_1", billableNumbers: 1 },
     ]);
+  });
+
+  it("writes only while the stored subscription is the expected one, never stores an empty id, and forgets an ended one", async () => {
+    const gateway = rpc();
+    const first = { connectPolicy: "open" as const, customerId: "cust_1", subscriptionId: "sub_1" };
+    await gateway.setAccountBilling(TEST_ACCOUNT_ID, first);
+    // A stale writer that read another subscription changes nothing.
+    expect(
+      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed", ifSubscriptionId: "sub_0" }),
+    ).toEqual(first);
+    expect(
+      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open", customerId: "", ifSubscriptionId: "sub_1" }),
+    ).toEqual(first);
+    expect(
+      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed", subscriptionId: null }),
+    ).toEqual({ connectPolicy: "closed", customerId: "cust_1", subscriptionId: null });
+    expect(await gateway.listBilledAccounts()).toEqual([]);
+  });
+
+  it("an account that does not exist has no billing", async () => {
+    expect(await rpc().getAccountBilling("acc-nobody")).toBeNull();
   });
 });

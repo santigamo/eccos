@@ -1278,7 +1278,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).setConversationRetentionDays(account, days);
   }
 
-  async getAccountBilling(accountId: string): Promise<AccountBilling> {
+  async getAccountBilling(accountId: string): Promise<AccountBilling | null> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).getAccountBilling(account);
   }
