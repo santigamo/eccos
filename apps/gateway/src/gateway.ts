@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
-import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
+import { metaErrorCodes, sendOutcomeUnknown } from "@eccos/core/send";
 import type { EventOrigin, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   ContactRecord,
@@ -85,7 +85,7 @@ import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-
 import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
-import { noteSendFailure, noteTokenRejected } from "./token-health";
+import { noteTokenRejected, sendWatched } from "./token-health";
 import { isPublicConfigKey } from "./private-config-keys";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
@@ -1761,7 +1761,7 @@ export class EccosGateway extends DurableObject<Env> {
       META_PHONE_NUMBER_ID: phoneNumberId,
       META_WABA_ID: this.wabaIdForOps(),
     };
-    const result = await sendMessage(cfg, body);
+    const result = await sendWatched(this.env, (work) => this.ctx.waitUntil(work), this.wabaIdForOps(), cfg, body);
     const now = Date.now();
     const attempts = Number(row.attempts) + 1;
     // False when the row was erased while its send was in flight: then nothing more is stored or emitted.
@@ -1791,7 +1791,6 @@ export class EccosGateway extends DurableObject<Env> {
       }
       return;
     }
-    this.ctx.waitUntil(noteSendFailure(this.env, this.wabaIdForOps(), result.error));
     const error = JSON.stringify(result.error);
     const verdict = classifySendFailure(result.status, sendOutcomeUnknown(result), metaErrorCodes(result.error), true);
     if (verdict === "throttled" && attempts < MAX_THROTTLED_ATTEMPTS) {
@@ -1936,7 +1935,7 @@ export class EccosGateway extends DurableObject<Env> {
     }
     const own = row.components === null ? null : (JSON.parse(String(row.components)) as unknown[]);
     const body = recipientMessage(String(broadcast.template_name), String(broadcast.language), recipient, own ?? defaults);
-    const result = await sendMessage(cfg, body);
+    const result = await sendWatched(this.env, (work) => this.ctx.waitUntil(work), this.wabaIdForOps(), cfg, body);
     const now = Date.now();
     // False when the recipient was erased while its send was in flight: then nothing more is stored.
     const settle = (status: RecipientStatus, messageId: string | null, error: string | null): boolean =>
@@ -1959,7 +1958,6 @@ export class EccosGateway extends DurableObject<Env> {
       }
       return { kind: "done" };
     }
-    this.ctx.waitUntil(noteSendFailure(this.env, this.wabaIdForOps(), result.error));
     const error = JSON.stringify(result.error);
     const codes = metaErrorCodes(result.error);
     const verdict = classifySendFailure(result.status, sendOutcomeUnknown(result), codes, own !== null);
@@ -2946,7 +2944,7 @@ export class EccosGateway extends DurableObject<Env> {
           if (this.dueMediaIds(Date.now()).length > 0) wakes.push(now);
         } catch (error) {
           if (!(error instanceof MediaTokenError)) throw error;
-          this.ctx.waitUntil(noteTokenRejected(this.env, this.wabaIdForOps()));
+          if (error.graphRejected) this.ctx.waitUntil(noteTokenRejected(this.env, this.wabaIdForOps()));
           wakes.push(now + MEDIA_RETRY_MS);
         }
       }

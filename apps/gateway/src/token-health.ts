@@ -1,63 +1,75 @@
-import { metaErrorCodes } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage, type SendResult } from "@eccos/core/send";
 import { getControlPlaneStub } from "./control-plane-stub";
-import { debugToken } from "./meta/waba-diagnostics";
+import { inspectToken, type TokenHealth } from "./meta/connect-api";
+
+export type { TokenHealth };
 
 export const TOKEN_WARN_MS = 14 * 24 * 3600_000;
+const REPORT_MEMO_MS = 3600_000;
 
-/** Unix ms; 0 means Meta says it never expires. */
-export interface TokenHealth {
-  valid: boolean;
-  expiresAt: number;
-  dataAccessExpiresAt: number;
-}
+type Cfg = Parameters<typeof inspectToken>[0];
+type Env = Parameters<typeof getControlPlaneStub>[0];
 
-type Cfg = Parameters<typeof debugToken>[0];
+/** Why a token could not be checked; `meta_no_answer` is the only one that blames Meta. */
+export type Unchecked = "no_app_id" | "no_token" | "token_unreadable" | "meta_no_answer";
+export type TokenCheck = { health: TokenHealth } | { unchecked: Unchecked };
 
-const ms = (seconds: unknown) => (typeof seconds === "number" && seconds > 0 ? seconds * 1000 : 0);
-
-/** The token's health from the `data` of a debug_token answer, or null when it carries no verdict. */
-export function healthFromDebugData(data: unknown): TokenHealth | null {
-  const d = data as Record<string, unknown> | null | undefined;
-  if (typeof d?.is_valid !== "boolean") return null;
-  return { valid: d.is_valid, expiresAt: ms(d.expires_at), dataAccessExpiresAt: ms(d.data_access_expires_at) };
-}
+export const formatDay = (at: number) => new Date(at).toISOString().slice(0, 10);
 
 /**
- * What Meta says about a token, or null when the call itself failed. An error on the call
+ * What Meta says about a token, or null when the call itself failed. A call-level error
  * (including a top-level 190, which can mean the APP token is bad) is never a verdict on the
  * WABA's token: only `data.is_valid` is.
  */
 export async function readTokenHealth(cfg: Cfg, token: string): Promise<TokenHealth | null> {
   try {
-    const answer = await debugToken(cfg, token);
-    return "value" in answer ? healthFromDebugData((answer.value as { data?: unknown }).data) : null;
+    const inspection = await inspectToken(cfg, token);
+    if (inspection.kind === "ok") return inspection.health;
+    return inspection.kind === "invalid_token" && inspection.error === null
+      ? { valid: false, expiresAt: 0, dataAccessExpiresAt: 0 }
+      : null;
   } catch {
     return null;
   }
 }
-
-const day = (at: number) => new Date(at).toISOString().slice(0, 10);
 
 export function tokenProblems(health: TokenHealth | null, now: number): string[] {
   if (!health) return [];
   if (!health.valid) return ["token invalid"];
   const soon = (at: number) => at > 0 && at - now < TOKEN_WARN_MS;
   return [
-    ...(soon(health.expiresAt) ? [`token expires ${day(health.expiresAt)}`] : []),
-    ...(soon(health.dataAccessExpiresAt) ? [`data access expires ${day(health.dataAccessExpiresAt)}`] : []),
+    ...(soon(health.expiresAt) ? [`token expires ${formatDay(health.expiresAt)}`] : []),
+    ...(soon(health.dataAccessExpiresAt) ? [`data access expires ${formatDay(health.dataAccessExpiresAt)}`] : []),
   ];
 }
 
-type Env = Parameters<typeof getControlPlaneStub>[0];
+const reportedAt = new Map<string, number>();
 
-/** Meta rejected the WABA's token: alerts once, never throws. Callers pass it to `waitUntil`. */
-export async function noteTokenRejected(env: Env, wabaId: string): Promise<void> {
-  try {
-    await getControlPlaneStub(env).reportRejectedToken(wabaId);
-  } catch {}
+export function forgetTokenReports(): void {
+  reportedAt.clear();
 }
 
-/** A failed send whose Graph error is 190. Callers pass it to `waitUntil`, never await it on the request path. */
-export function noteSendFailure(env: Env, wabaId: string, error: unknown): Promise<void> {
-  return metaErrorCodes(error).errorCode === 190 ? noteTokenRejected(env, wabaId) : Promise.resolve();
+/** Meta rejected the WABA's token: alerts once, never throws. The memo spares the control plane a call per 190. */
+export async function noteTokenRejected(env: Env, wabaId: string, now = Date.now()): Promise<void> {
+  const last = reportedAt.get(wabaId);
+  if (last !== undefined && now - last < REPORT_MEMO_MS) return;
+  reportedAt.set(wabaId, now);
+  try {
+    await getControlPlaneStub(env).reportRejectedToken(wabaId);
+  } catch {
+    reportedAt.delete(wabaId);
+  }
+}
+
+/** `sendMessage` that also reports a Graph 190 off the request path, so every send path watches the token. */
+export async function sendWatched(
+  env: Env,
+  waitUntil: (work: Promise<unknown>) => void,
+  wabaId: string,
+  cfg: Parameters<typeof sendMessage>[0],
+  body: Parameters<typeof sendMessage>[1],
+): Promise<SendResult> {
+  const result = await sendMessage(cfg, body);
+  if (!result.ok && metaErrorCodes(result.error).errorCode === 190) waitUntil(noteTokenRejected(env, wabaId));
+  return result;
 }

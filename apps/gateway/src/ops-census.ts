@@ -18,12 +18,14 @@ import { getControlPlaneStub } from "./control-plane-stub";
 import { runBoundedPool } from "./gateway";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { opsAlertsEnabled, sendOpsAlert } from "./ops-alert";
-import { type TokenHealth, tokenProblems } from "./token-health";
+import { formatDay, type TokenCheck, type TokenHealth, tokenProblems, type Unchecked } from "./token-health";
 
 const CENSUS_HOUR_UTC = 7;
 const DAY_MS = 24 * 3600_000;
 const CENSUS_CONCURRENCY = 5;
 const WABA_READ_TIMEOUT_MS = 10_000;
+// debug_token itself times out at 15 s.
+const TOKEN_CHECK_TIMEOUT_MS = 20_000;
 // Telegram rejects text over 4096 characters.
 const CHUNK_CHARS = 3800;
 
@@ -48,8 +50,8 @@ interface WabaLine {
   readable: boolean;
   /** Null when the WABA is not active or the check got no answer. */
   token: TokenHealth | null;
-  /** An active WABA whose token could not be checked. */
-  tokenUnchecked: boolean;
+  /** Why an active WABA's token could not be checked. */
+  tokenUnchecked: Unchecked | null;
 }
 
 interface AccountBlock {
@@ -62,11 +64,20 @@ interface AccountBlock {
 // Terminal sync states that need the operator. `unavailable` and `not_coexistence` are terminal non-failures.
 const SYNC_NEEDS_ACTION = new Set(["unconfirmed", "expired"]);
 
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function runDailyCensus(
   env: Env,
   now = Date.now(),
   fetchImpl: typeof fetch = fetch,
   readTimeoutMs = WABA_READ_TIMEOUT_MS,
+  tokenTimeoutMs = TOKEN_CHECK_TIMEOUT_MS,
 ): Promise<void> {
   if (!opsAlertsEnabled(env)) return;
   const date = new Date(now);
@@ -95,54 +106,70 @@ export async function runDailyCensus(
       stuckPending: w.status === "pending" && now - w.createdAt > DAY_MS,
       readable: true,
       token: null,
-      tokenUnchecked: false,
+      tokenUnchecked: null,
     })),
   }));
 
+  const readDataPlane = async (line: WabaLine) => {
+    try {
+      const census = await withTimeout(getGatewayStubForWaba(env, line.wabaId).getCensus(now - DAY_MS), readTimeoutMs);
+      const waiting = census.deliveries.pending ?? 0;
+      if (line.status === "active") line.hasTarget = census.hasTarget;
+      line.held = census.hasTarget ? 0 : waiting;
+      line.pending = census.hasTarget ? waiting : 0;
+      line.failed = census.deliveries.failed ?? 0;
+      line.recentFailed = census.recent.failed;
+      line.delivered24h = census.recent.delivered;
+      line.heldWebhooks = census.heldEventCount;
+    } catch {
+      line.readable = false;
+    }
+  };
+  // Independent of the data plane read: a slow debug_token never makes a WABA unreadable.
+  const checkToken = async (line: WabaLine) => {
+    if (line.status !== "active") return;
+    try {
+      const check = await withTimeout(control.checkTokenHealth(line.wabaId) as Promise<TokenCheck>, tokenTimeoutMs);
+      if ("health" in check) line.token = check.health;
+      else line.tokenUnchecked = check.unchecked;
+    } catch {
+      line.tokenUnchecked = "meta_no_answer";
+    }
+  };
+
   // A pending or failed WABA can hold webhooks, so every WABA is read.
-  await runBoundedPool(
-    blocks.flatMap((b) => b.wabas),
-    CENSUS_CONCURRENCY,
-    async (line) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const [census, token] = await Promise.race([
-          Promise.all([
-            getGatewayStubForWaba(env, line.wabaId).getCensus(now - DAY_MS),
-            line.status === "active" ? control.checkTokenHealth(line.wabaId).catch(() => null) : null,
-          ]),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error("timeout")), readTimeoutMs);
-          }),
-        ]);
-        line.token = token;
-        line.tokenUnchecked = line.status === "active" && !token;
-        const waiting = census.deliveries.pending ?? 0;
-        if (line.status === "active") line.hasTarget = census.hasTarget;
-        line.held = census.hasTarget ? 0 : waiting;
-        line.pending = census.hasTarget ? waiting : 0;
-        line.failed = census.deliveries.failed ?? 0;
-        line.recentFailed = census.recent.failed;
-        line.delivered24h = census.recent.delivered;
-        line.heldWebhooks = census.heldEventCount;
-      } catch {
-        line.readable = false;
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-  );
+  await runBoundedPool(blocks.flatMap((b) => b.wabas), CENSUS_CONCURRENCY, async (line) => {
+    await Promise.all([readDataPlane(line), checkToken(line)]);
+  });
 
   if (!(await control.claimDailyCensus(day))) return;
-  const tokenAlert = tokenAlertLines(blocks, now);
-  if (tokenAlert.length > 0) await sendOpsAlert(env, ["Eccos: WhatsApp tokens need attention", ...tokenAlert].join("\n"), fetchImpl);
-  const unchecked = blocks.flatMap((b) => b.wabas.filter((w) => w.tokenUnchecked).map((w) => w.wabaId));
-  if (unchecked.length > 0) {
-    await sendOpsAlert(env, ["Eccos: cannot check WhatsApp tokens (Meta debug_token gave no answer)", ...unchecked.map((id) => `WABA ${id}`)].join("\n"), fetchImpl);
+  const alerts = [
+    tokenAlertLines(blocks, now).length > 0 && ["Eccos: WhatsApp tokens need attention", ...tokenAlertLines(blocks, now)],
+    uncheckedAlertLines(blocks).length > 0 && ["Eccos: cannot check WhatsApp tokens", ...uncheckedAlertLines(blocks)],
+  ];
+  for (const lines of alerts) {
+    if (lines) for (const chunk of chunkLines(lines)) await sendOpsAlert(env, chunk, fetchImpl);
   }
   for (const chunk of chunkLines(formatCensus(day, blocks).split("\n"))) {
     if ((await sendOpsAlert(env, chunk, fetchImpl)) !== "sent") return;
   }
+}
+
+const UNCHECKED_REASON: Record<Unchecked, string> = {
+  no_app_id: "META_APP_ID is not set",
+  no_token: "no stored token",
+  token_unreadable: "stored token cannot be decrypted",
+  meta_no_answer: "Meta debug_token gave no answer",
+};
+
+/** A missing app id is one deployment-wide line; the other reasons name the WABA. */
+function uncheckedAlertLines(blocks: AccountBlock[]): string[] {
+  const lines = new Set<string>();
+  for (const w of blocks.flatMap((b) => b.wabas)) {
+    if (!w.tokenUnchecked) continue;
+    lines.add(w.tokenUnchecked === "no_app_id" ? "META_APP_ID is not set, tokens are not checked" : `WABA ${w.wabaId}: ${UNCHECKED_REASON[w.tokenUnchecked]}`);
+  }
+  return [...lines];
 }
 
 function tokenAlertLines(blocks: AccountBlock[], now: number): string[] {
@@ -155,9 +182,8 @@ function describeToken({ token: health, tokenUnchecked }: WabaLine): string {
   if (tokenUnchecked) return ", token unchecked";
   if (!health) return "";
   if (!health.valid) return ", token invalid";
-  const day = (at: number) => new Date(at).toISOString().slice(0, 10);
-  const expiry = health.expiresAt ? `expires ${day(health.expiresAt)}` : "never expires";
-  const access = health.dataAccessExpiresAt ? `, data access ${day(health.dataAccessExpiresAt)}` : "";
+  const expiry = health.expiresAt ? `expires ${formatDay(health.expiresAt)}` : "never expires";
+  const access = health.dataAccessExpiresAt ? `, data access ${formatDay(health.dataAccessExpiresAt)}` : "";
   return `, token ${expiry}${access}`;
 }
 

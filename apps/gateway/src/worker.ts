@@ -10,11 +10,11 @@ import {
   type MetaWebhookBatch,
 } from "@eccos/core/parser";
 import { isBsuid } from "@eccos/core/bsuid";
-import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
+import { metaErrorCodes, sendOutcomeUnknown } from "@eccos/core/send";
 import { listTemplates, TEMPLATE_FIELDS } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
-import { noteSendFailure } from "./token-health";
+import { sendWatched } from "./token-health";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
@@ -815,9 +815,8 @@ async function sendMessageRoute(c: AppContext) {
     if (key !== undefined) await stub.settleSendKey(account.accountId, key, JSON.stringify({ status, body }));
     return c.json(body, status);
   };
-  const result = await sendMessage(cfg, target.metaBody);
+  const result = await sendWatched(c.env, (work) => c.executionCtx.waitUntil(work), target.waba.wabaId, cfg, target.metaBody);
   if (!result.ok) {
-    c.executionCtx.waitUntil(noteSendFailure(c.env, target.waba.wabaId, result.error));
     logEvent("outbound_send", cid, 502, {
       ...ids,
       messageType,

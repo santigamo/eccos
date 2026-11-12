@@ -522,11 +522,6 @@ export async function registerWabasForToken(
       })),
     );
 
-    if (health) {
-      const known = health;
-      await Promise.all(registrations.map((r) => controlPlane.recordTokenHealth(r.waba.wabaId, known)));
-    }
-
     // An account that may not add numbers registers only what it already had.
     const registered = registrations.map((registration) => {
       const refused = new Set(registration.refusedPhones?.map((phone) => phone.phoneNumberId));
@@ -547,6 +542,12 @@ export async function registerWabasForToken(
       accountId,
       registrations.map((registration) => registration.waba.wabaId),
     );
+    if (health) {
+      const known = health;
+      await Promise.all(
+        registrations.map((r) => controlPlane.recordTokenHealth(r.waba.wabaId, known).catch(() => undefined)),
+      );
+    }
     const statuses = registrations.map(
       (registration) => kicked.get(registration.waba.wabaId) ?? registration.waba.status,
     );

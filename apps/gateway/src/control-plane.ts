@@ -28,7 +28,7 @@ import {
 } from "./token-crypto";
 import { sendOpsAlert } from "./ops-alert";
 import { getAppConfig } from "./tenant-config";
-import { readTokenHealth, type TokenHealth } from "./token-health";
+import { readTokenHealth, type TokenCheck, type TokenHealth } from "./token-health";
 import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
 
 /**
@@ -946,28 +946,44 @@ export class EccosControlPlane extends DurableObject<Env> {
   /**
    * Stores what Meta reported about a WABA's token. A valid reading also clears an earlier
    * rejection; an invalid one keeps the stored expiry, since 0 would read as "never expires".
+   * `sealed` is the stored token the reading is about: a reconnect that replaced it meanwhile
+   * is not overwritten with the old token's expiry.
    */
-  recordTokenHealth(wabaId: string, health: TokenHealth): void {
+  recordTokenHealth(wabaId: string, health: TokenHealth, sealed?: string): void {
     const id = validateWabaId(wabaId, "wabaId");
     if (!health.valid) return;
     this.sql.exec(
       `UPDATE wabas SET token_expires_at = ?, token_data_access_expires_at = ?, token_rejected_at = NULL
-       WHERE waba_id = ?`,
+       WHERE waba_id = ? AND (? IS NULL OR meta_access_token = ?)`,
       health.expiresAt,
       health.dataAccessExpiresAt,
       id,
+      sealed ?? null,
+      sealed ?? null,
     );
   }
 
   /**
    * Asks Meta about a WABA's token, stores the answer and returns it. The plaintext token never
-   * leaves this object. Null when Meta gave no usable answer: the stored values are then untouched.
+   * leaves this object. When it cannot be checked the stored values are untouched and the reason
+   * says why, so a missing app id or an unreadable token is not blamed on Meta.
    */
-  async checkTokenHealth(wabaId: string): Promise<TokenHealth | null> {
-    const token = await this.getMetaAccessTokenForWaba(wabaId);
-    const health = token ? await readTokenHealth(getAppConfig(this.env), token) : null;
-    if (health) this.recordTokenHealth(wabaId, health);
-    return health;
+  async checkTokenHealth(wabaId: string): Promise<TokenCheck> {
+    const id = validateWabaId(wabaId, "wabaId");
+    const cfg = getAppConfig(this.env);
+    if (!cfg.META_APP_ID) return { unchecked: "no_app_id" };
+    const row = this.sql.exec("SELECT account_id, meta_access_token FROM wabas WHERE waba_id = ?", id).toArray()[0];
+    if (!row) return { unchecked: "no_token" };
+    let token: string;
+    try {
+      token = await this.decryptStoredToken(row.account_id as string, id, row.meta_access_token);
+    } catch {
+      return { unchecked: "token_unreadable" };
+    }
+    const health = await readTokenHealth(cfg, token);
+    if (!health) return { unchecked: "meta_no_answer" };
+    this.recordTokenHealth(id, health, row.meta_access_token as string);
+    return { health };
   }
 
   /**

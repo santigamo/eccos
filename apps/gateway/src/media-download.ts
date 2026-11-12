@@ -18,6 +18,10 @@ export class MediaPermanentError extends Error {
  * the caller waits and retries once the token is fixed. */
 export class MediaTokenError extends Error {
   override name = "MediaTokenError";
+  /** Whether Meta answered with Graph error 190, as opposed to a bare 401. */
+  constructor(message: string, readonly graphRejected = false) {
+    super(message);
+  }
 }
 
 export interface DownloadMetaMediaInput {
@@ -68,7 +72,7 @@ export async function downloadMetaMedia(input: DownloadMetaMediaInput): Promise<
       throw new MediaPermanentError(`Meta no longer has media ${mediaId}`);
     }
     if (lookup.status === 401 || code === GRAPH_CODE_OAUTH) {
-      throw new MediaTokenError(`Meta rejected the token for media ${mediaId}`);
+      throw new MediaTokenError(`Meta rejected the token for media ${mediaId}`, code === GRAPH_CODE_OAUTH);
     }
     throw new Error(`media lookup failed with ${lookup.status}`);
   }

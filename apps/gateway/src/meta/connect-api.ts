@@ -1,5 +1,4 @@
 import { graphBaseUrl, type CoreConfig } from "@eccos/core/config-schema";
-import { healthFromDebugData, type TokenHealth } from "../token-health";
 
 type MetaAppConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_APP_SECRET" | "META_APP_ID">;
 type MetaGraphConfig = Pick<CoreConfig, "META_GRAPH_VERSION">;
@@ -8,6 +7,21 @@ type MetaSubscriptionConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_WEBH
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+/** Unix ms; 0 means Meta says it never expires. */
+export interface TokenHealth {
+  valid: boolean;
+  expiresAt: number;
+  dataAccessExpiresAt: number;
+}
+
+const ms = (seconds: unknown) => (typeof seconds === "number" && seconds > 0 ? seconds * 1000 : 0);
+
+/** The token's health from the `data` of a debug_token answer, or null when it carries no verdict. */
+function healthFromDebugData(data: Record<string, unknown> | null): TokenHealth | null {
+  if (typeof data?.is_valid !== "boolean") return null;
+  return { valid: data.is_valid, expiresAt: ms(data.expires_at), dataAccessExpiresAt: ms(data.data_access_expires_at) };
 }
 
 export class MetaGraphError extends Error {

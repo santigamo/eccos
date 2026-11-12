@@ -11,10 +11,10 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
-import { noteSendFailure, type TokenHealth } from "./token-health";
+import { sendWatched, type TokenHealth } from "./token-health";
 import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
-import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
+import { metaErrorCodes, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
@@ -1059,9 +1059,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTemplateTestResult> => {
-      const result = await sendMessage(cfg, metaBody);
+      const result = await sendWatched(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId, cfg, metaBody);
       logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
-      if (!result.ok) this.ctx.waitUntil(noteSendFailure(this.env, waba.wabaId, result.error));
 
       if (!result.ok) {
         // The data-plane log carries the full body, parameters included — it is
@@ -1171,9 +1170,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTextResult> => {
-      const result = await sendMessage(cfg, metaBody);
+      const result = await sendWatched(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId, cfg, metaBody);
       logSend(source, waba.wabaId, input.phoneNumberId, String(metaBody.type), result);
-      if (!result.ok) this.ctx.waitUntil(noteSendFailure(this.env, waba.wabaId, result.error));
 
       if (!result.ok) {
         await stub.logOutbound(
