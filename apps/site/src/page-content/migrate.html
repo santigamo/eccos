@@ -42,13 +42,17 @@
       </p>
     </div>
     <p>
-      Two more honest limitations. Message content ages out: on Cloud, <code>inbound_events</code>
+      Two more honest limitations. The forwarding buffer ages out: on Cloud, <code>inbound_events</code>
       and <code>outbound_messages</code> are deleted after the content window (default <strong>30 days</strong>),
       and terminal <code>deliveries</code> rows are <strong>redacted in place</strong> (payload emptied)
-      on the same schedule. So whatever older history a snapshot could capture is already gone or
-      payload-less. And because the gateway is a pass-through, <strong>your subscriber is the system of
-      record</strong>: if your backend already archived the forwarded events, the migration may not need
-      any message history at all — only the connection and subscriber configuration.
+      on the same schedule. Conversation history and its media files are different: Cloud keeps them,
+      forever by default or for the window set in Settings, and they do not follow you by themselves.
+      <strong>Export them before you leave</strong>: <code>GET /v1/wabas/&lt;WABA_ID&gt;/export</code>
+      returns the retained events, messages, contacts and non-secret configuration of a number. Media
+      files are not in that export; download the ones you need from the console. And an export is a
+      record, not a restore: <strong>your subscriber is the system of record</strong>. If your backend
+      already archived the forwarded events, the migration may not need any message history at all,
+      only the connection and subscriber configuration.
     </p>
   </section>
 
@@ -65,7 +69,8 @@
       <li>if you want a record of <strong>recent</strong> history, page through <code>listInbound</code>, <code>listOutbound</code>, and <code>listDeliveries</code> (cursor <code>before</code>, up to 200 rows per call) and save the JSON/JSONL to a file. This is a snapshot of what is still within retention, not a database, and <strong>there is no built-in path to replay it into a new deployment</strong> — treat it as an archive, not a restore mechanism.</li>
     </ul>
     <p>
-      There is deliberately no &ldquo;export all&rdquo; button or bulk-download endpoint today. If a full
+      The export endpoint above works per number, with the account's API key. Run it while Cloud is
+      still up: once the account is closed and its data deleted, nothing is left to export. If a full
       long-lived archive matters, your own subscriber, not the gateway, is where it should live.
     </p>
   </section>

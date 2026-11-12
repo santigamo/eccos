@@ -37,9 +37,9 @@
       <strong>Eccos Cloud.</strong> The hosted version, which we operate. For the
       WhatsApp conversations of each client business, Santiago García Monsalve
       acts as a <strong>data processor</strong> within the meaning of Article 28
-      GDPR. The client business remains the <strong>data controller</strong>. The
-      data processing agreement is an annex to the
-      <a href="/terms">Terms of Service</a>.
+      GDPR. The client business remains the <strong>data controller</strong>. A
+      data processing agreement under Article 28 is available on request at
+      <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>.
     </p>
     <p>
       <strong>Console accounts, billing and this website.</strong> For the data of
@@ -107,8 +107,12 @@
       <li><strong>Delivery records</strong> are then redacted: the message payload is removed and only delivery metadata (such as timestamps and delivery outcome) remains, for up to <strong>90 days</strong>.</li>
       <li><strong>Broadcasts and scheduled sends</strong> are deleted with the forwarding buffer once finished. Template values are deleted when the send is attempted. A scheduled send that is still pending is kept until it runs or expires, at most 97 days.</li>
       <li><strong>WhatsApp Business app sync payloads</strong> are <strong>not expired</strong>: Meta sends them once and they cannot be requested again. They are deleted when the number's whole storage is deleted, or on the client's request.</li>
+      <li><strong>Erased numbers.</strong> When a customer is erased, their phone number or Meta user identifier is kept, with the date, in a list of erased numbers, so a later reprocessing of the sync payloads does not import them again. The list holds nothing else. It is kept <strong>indefinitely</strong>, until the storage of the whole WhatsApp number is deleted.</li>
       <li><strong>Webhooks held</strong> for a number that is not active yet are deleted after 3 days.</li>
-      <li><strong>Console accounts</strong> are kept while the account exists. Sessions expire after 7 days.</li>
+      <li><strong>Console accounts</strong> are kept while the account exists. A session lasts 7 days and is renewed, at most once a day, each time it is used: it ends after 7 days without use, or when you sign out.</li>
+      <li><strong>Audit log.</strong> Kept in Cloudflare's log store for up to 7 days. We keep no other copy.</li>
+      <li><strong>Operational alerts</strong> stay in the Telegram group until we delete them. They are not deleted automatically.</li>
+      <li><strong>Creem identifiers</strong> (customer, subscription and its status) are kept with the workspace's account for as long as it exists.</li>
       <li><strong>Point-in-time recovery.</strong> The Cloudflare Durable Objects underlying the service keep a 30-day restorable history of their storage. The effective worst-case retention is therefore the configured retention <em>plus up to 30 days</em>. This is a backup mechanism operated by our infrastructure subprocessor; we prefer to declare it rather than round it away.</li>
       <li><strong>Correspondence</strong> with us is kept as ordinary business correspondence, for as long as the matter it concerns and any legal obligations require.</li>
     </ul>
@@ -193,10 +197,11 @@
       <li><strong>Cloudflare, Inc.</strong> Hosting infrastructure: Workers, Durable Objects, R2 (media files), D1 (console accounts), technical logs and the sending of console emails. <a href="https://www.cloudflare.com/privacypolicy/" rel="noreferrer">Privacy policy</a>.</li>
       <li><strong>Meta Platforms.</strong> The WhatsApp Cloud API through which all messages necessarily flow. Each business holds its own WhatsApp Business Account and its own contract with Meta. <a href="https://www.facebook.com/privacy/policy/" rel="noreferrer">Privacy policy</a>.</li>
       <li><strong>Functional Software, Inc. (Sentry).</strong> Error reporting for the gateway and the console, hosted in the United States. It receives technical error reports (error message, stack trace, request method and path); we turn off collection of request headers, bodies, query strings, cookies and user identity. <a href="https://sentry.io/privacy/" rel="noreferrer">Privacy policy</a>.</li>
-      <li><strong>Hetzner Online GmbH.</strong> The server in Germany that runs the fallback proxy described above, and our self-hosted Umami analytics. For Eccos Cloud it sees traffic in transit only. <a href="https://www.hetzner.com/legal/privacy-policy/" rel="noreferrer">Privacy policy</a>.</li>
+      <li><strong>Hetzner Online GmbH.</strong> The server in Germany that runs the fallback proxy described above. It sees traffic in transit only and stores none of it. <a href="https://www.hetzner.com/legal/privacy-policy/" rel="noreferrer">Privacy policy</a>.</li>
     </ul>
     <p>These providers receive no message content and no customer phone numbers:</p>
     <ul>
+      <li><strong>Hetzner Online GmbH</strong>, as host of our self-hosted Umami. That server stores the usage analytics of this website and of the console, including the pseudonymous account identifier described above.</li>
       <li><strong>Creem.</strong> Payment, invoicing and tax for Eccos Cloud subscriptions, as merchant of record. <a href="https://www.creem.io/privacy" rel="noreferrer">Privacy policy</a>.</li>
       <li><strong>Telegram.</strong> The channel for our operational alerts. <a href="https://telegram.org/privacy" rel="noreferrer">Privacy policy</a>.</li>
     </ul>
