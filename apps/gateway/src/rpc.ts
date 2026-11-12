@@ -11,7 +11,7 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
-import { noteSendFailure } from "./token-health";
+import { noteSendFailure, type TokenHealth } from "./token-health";
 import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
@@ -1061,7 +1061,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTemplateTestResult> => {
       const result = await sendMessage(cfg, metaBody);
       logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
-      if (!result.ok) await noteSendFailure(this.env, waba.wabaId, result.error);
+      if (!result.ok) this.ctx.waitUntil(noteSendFailure(this.env, waba.wabaId, result.error));
 
       if (!result.ok) {
         // The data-plane log carries the full body, parameters included — it is
@@ -1173,7 +1173,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTextResult> => {
       const result = await sendMessage(cfg, metaBody);
       logSend(source, waba.wabaId, input.phoneNumberId, String(metaBody.type), result);
-      if (!result.ok) await noteSendFailure(this.env, waba.wabaId, result.error);
+      if (!result.ok) this.ctx.waitUntil(noteSendFailure(this.env, waba.wabaId, result.error));
 
       if (!result.ok) {
         await stub.logOutbound(
@@ -1442,6 +1442,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
     const appConfig = getAppConfig(this.env);
     let discovered: Awaited<ReturnType<typeof wabaMatchesForTargetIds>>;
+    let health: TokenHealth | null = null;
     try {
       // Always first, selector or not: the two token verdicts gate every read,
       // and no id an operator types can make a foreign or dead token usable.
@@ -1452,6 +1453,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         // no detail travels — Meta's text here would only compete with it.
         return { ok: false, code: inspection.kind, detail: null };
       }
+      health = inspection.health;
       if (selector) {
         // Seed, not filter — see the method comment. `target_ids` is not
         // consulted at all here; Meta's answer to the read is the check.
@@ -1505,6 +1507,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       onboardingType: "standard",
       ...(selector ? { wabaSelector: selector } : {}),
       discovered,
+      health,
     });
     if (result.ok) {
       const { ok: _ok, ...rest } = result;

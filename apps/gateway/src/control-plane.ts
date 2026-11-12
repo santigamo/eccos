@@ -27,6 +27,8 @@ import {
   wabaTokenAad,
 } from "./token-crypto";
 import { sendOpsAlert } from "./ops-alert";
+import { getAppConfig } from "./tenant-config";
+import { readTokenHealth, type TokenHealth } from "./token-health";
 import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
 
 /**
@@ -941,32 +943,53 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.decryptStoredToken(row.account_id as string, id, row.meta_access_token);
   }
 
-  /** Stores what Meta reported about a WABA's token, and clears an earlier rejection when it is valid. */
-  recordTokenHealth(wabaId: string, health: { valid: boolean; expiresAt: number; dataAccessExpiresAt: number }): void {
+  /**
+   * Stores what Meta reported about a WABA's token. A valid reading also clears an earlier
+   * rejection; an invalid one keeps the stored expiry, since 0 would read as "never expires".
+   */
+  recordTokenHealth(wabaId: string, health: TokenHealth): void {
+    const id = validateWabaId(wabaId, "wabaId");
+    if (!health.valid) return;
     this.sql.exec(
-      `UPDATE wabas SET token_expires_at = ?, token_data_access_expires_at = ?,
-         token_rejected_at = CASE WHEN ? THEN NULL ELSE token_rejected_at END WHERE waba_id = ?`,
+      `UPDATE wabas SET token_expires_at = ?, token_data_access_expires_at = ?, token_rejected_at = NULL
+       WHERE waba_id = ?`,
       health.expiresAt,
       health.dataAccessExpiresAt,
-      health.valid ? 1 : 0,
-      validateWabaId(wabaId, "wabaId"),
+      id,
     );
   }
 
-  /** Meta rejected the WABA's token (Graph error 190): alerts the operator the first time only. */
+  /**
+   * Asks Meta about a WABA's token, stores the answer and returns it. The plaintext token never
+   * leaves this object. Null when Meta gave no usable answer: the stored values are then untouched.
+   */
+  async checkTokenHealth(wabaId: string): Promise<TokenHealth | null> {
+    const token = await this.getMetaAccessTokenForWaba(wabaId);
+    const health = token ? await readTokenHealth(getAppConfig(this.env), token) : null;
+    if (health) this.recordTokenHealth(wabaId, health);
+    return health;
+  }
+
+  /**
+   * Meta rejected the WABA's token (Graph error 190): alerts the operator the first time only.
+   * The WABA is claimed before the alert and released if the post failed, so concurrent reports
+   * send one alert and a failed post is retried by the next 190.
+   */
   async reportRejectedToken(wabaId: string): Promise<void> {
+    const id = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
         "UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND token_rejected_at IS NULL RETURNING account_id",
         Date.now(),
-        validateWabaId(wabaId, "wabaId"),
+        id,
       )
       .toArray()[0];
     if (!row) return;
-    await sendOpsAlert(
+    const sent = await sendOpsAlert(
       this.env,
-      `Eccos: Meta rejected a WABA token on send (Graph error 190)\nWABA ${wabaId} · account ${row.account_id}`,
+      `Eccos: Meta rejected a WABA token (Graph error 190)\nWABA ${id} · account ${row.account_id}`,
     );
+    if (sent === "failed") this.sql.exec("UPDATE wabas SET token_rejected_at = NULL WHERE waba_id = ?", id);
   }
 
   /** Stores the retention and returns it. */
@@ -1233,6 +1256,9 @@ export class EccosControlPlane extends DurableObject<Env> {
            ON CONFLICT(waba_id) DO UPDATE SET
              account_id = excluded.account_id,
              meta_access_token = excluded.meta_access_token,
+             token_expires_at = NULL,
+             token_data_access_expires_at = NULL,
+             token_rejected_at = NULL,
              callback_url = COALESCE(excluded.callback_url, wabas.callback_url),
              status = excluded.status,
              provisioning_error = NULL,
@@ -1347,6 +1373,9 @@ export class EccosControlPlane extends DurableObject<Env> {
            ON CONFLICT(waba_id) DO UPDATE SET
              account_id = excluded.account_id,
              meta_access_token = excluded.meta_access_token,
+             token_expires_at = NULL,
+             token_data_access_expires_at = NULL,
+             token_rejected_at = NULL,
              callback_url = excluded.callback_url,
              status = 'pending',
              provisioning_error = NULL,

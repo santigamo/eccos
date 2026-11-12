@@ -80,6 +80,15 @@ describe("inspectToken", () => {
     await expect(inspectToken(CFG, "token")).resolves.toEqual({
       kind: "ok",
       targetIds: ["WABA1"],
+      health: null,
+    });
+  });
+
+  it("returns the token's expiry from the same debug_token answer", async () => {
+    answer({ data: { app_id: "app-id", is_valid: true, expires_at: 1_800_000_000, data_access_expires_at: 0, granular_scopes: [] } });
+    await expect(inspectToken(CFG, "token")).resolves.toMatchObject({
+      kind: "ok",
+      health: { valid: true, expiresAt: 1_800_000_000_000, dataAccessExpiresAt: 0 },
     });
   });
 

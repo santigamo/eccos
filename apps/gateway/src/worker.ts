@@ -817,7 +817,7 @@ async function sendMessageRoute(c: AppContext) {
   };
   const result = await sendMessage(cfg, target.metaBody);
   if (!result.ok) {
-    await noteSendFailure(c.env, target.waba.wabaId, result.error);
+    c.executionCtx.waitUntil(noteSendFailure(c.env, target.waba.wabaId, result.error));
     logEvent("outbound_send", cid, 502, {
       ...ids,
       messageType,

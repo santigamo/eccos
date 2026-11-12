@@ -146,14 +146,18 @@ Embedded Signup configs exist at Meta:
 `META_ES_CONFIG_ID` selects the config. Tokens issued under the legacy one keep their 60-day expiry,
 so each stored token is checked rather than assumed.
 
-- **Connect** reads Meta's `debug_token` once and stores `expires_at` on the WABA row
-  (`token_expires_at`, Unix ms; `0` means it never expires, `NULL` means never read).
-- **Daily census** checks every active WABA the same way inside the Worker (the token never leaves
-  it), refreshes the stored expiry and lists validity and expiry on each WABA line. It sends a
-  separate alert, with WABA and account ids only, when a token is invalid or its token or data
-  access expires within 14 days. A `debug_token` call that gets no answer is not read as invalid.
-- **Sends**: the first time Meta answers a send with Graph error 190 for a WABA, the operator gets
-  one alert. Later 190s stay quiet until a census reads the token as valid again or the number is
+- **Connect** reads Meta's `debug_token` once (the same call that discovers the WABAs) and stores
+  `expires_at` on each WABA row (`token_expires_at`, Unix ms; `0` means it never expires, `NULL`
+  means never read). Registering a WABA again with a new token clears the stored values.
+- **Daily census** checks every active WABA inside the control plane (the token never leaves it),
+  refreshes the stored expiry and shows validity and expiry on each WABA line. It sends a separate
+  alert, with WABA and account ids only, when Meta reports a token invalid or its token or data
+  access expires within 14 days. If the `debug_token` call itself fails (a Graph error, including a
+  top-level 190 that can mean a bad `META_APP_SECRET`), that is one "cannot check WhatsApp tokens"
+  alert, and the stored values stay as they were.
+- **Sends and media downloads**: the first time Meta answers with Graph error 190 for a WABA, the
+  operator gets one alert, reported off the request path. A failed Telegram post is retried by the
+  next 190. Later 190s stay quiet until a census reads the token as valid again or the number is
   reconnected through Embedded Signup.
 
 To renew an expiring token, reconnect the number through Embedded Signup under the current config.

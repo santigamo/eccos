@@ -190,7 +190,7 @@ describe("daily census", () => {
     await runDailyCensus(opsEnv, NOON, fetchMock as unknown as typeof fetch, 50);
     const [text] = sentTexts(fetchMock);
     expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA ${TEST_WABA_ID}: data plane unreadable`);
-    expect(text).toContain(`WABA ${TEST_WABA_ID}, active, standard, token never expires: unreadable`);
+    expect(text).toContain(`WABA ${TEST_WABA_ID}, active, standard: unreadable`);
   });
 
   it("leaves the day open when gathering throws", async () => {
@@ -260,7 +260,7 @@ describe("daily census", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) =>
       String(input).includes("api.telegram.org")
         ? telegram(input, init)
-        : new Response(JSON.stringify({ success: true }), { status: 200 }),
+        : new Response(JSON.stringify({ success: true, data: { is_valid: true, expires_at: 0 } }), { status: 200 }),
     );
     try {
       await worker.scheduled!(createScheduledController({ scheduledTime: new Date(NOON) }), opsEnv, createExecutionContext());
@@ -316,9 +316,36 @@ describe("token expiry monitoring", () => {
     expect((await getControlPlaneStub(env).getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(0);
   });
 
-  it("does not read an unanswered debug_token as invalid", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("down", { status: 503 }));
-    expect(await census()).toHaveLength(1);
+  it.each([
+    ["a Graph 5xx", () => new Response("down", { status: 503 })],
+    ["a top-level 190, which can mean the app secret is bad", () =>
+      new Response(JSON.stringify({ error: { code: 190, message: "Invalid app secret" } }), { status: 400 })],
+  ])("keeps the stored expiry and sends one 'cannot check' alert on %s", async (_name, failure) => {
+    const control = getControlPlaneStub(env);
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => failure());
+    const texts = await census();
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain("cannot check WhatsApp tokens");
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID}`);
+    expect(texts.join("\n")).not.toContain("token invalid");
+    expect(texts[1]).toContain("token unchecked");
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(NOON + 40 * DAY);
+  });
+
+  it("keeps the stored expiry when the token is invalid", async () => {
+    const control = getControlPlaneStub(env);
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
+    mockDebugToken({ is_valid: false });
+    await census();
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(NOON + 40 * DAY);
+  });
+
+  it("forgets the stored expiry when the WABA is registered again with a new token", async () => {
+    const control = getControlPlaneStub(env);
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
+    await bootstrapAccount();
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBeNull();
   });
 });
 
@@ -335,6 +362,17 @@ describe("Graph error 190 on a send", () => {
     });
     expect(telegram).toHaveBeenCalledTimes(1);
     expect(sentTexts(telegram)[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}`);
+  });
+
+  it("retries the alert on the next 190 when the Telegram post failed", async () => {
+    const telegram = vi.fn(async () => new Response("down", { status: 502 }));
+    vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+      await cp.reportRejectedToken(TEST_WABA_ID);
+      await cp.reportRejectedToken(TEST_WABA_ID);
+    });
+    expect(telegram).toHaveBeenCalledTimes(2);
   });
 
   it("is triggered by error 190 only, and a valid token reading re-arms it", async () => {

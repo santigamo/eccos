@@ -15,39 +15,49 @@ type Cfg = Parameters<typeof debugToken>[0];
 
 const ms = (seconds: unknown) => (typeof seconds === "number" && seconds > 0 ? seconds * 1000 : 0);
 
-/** What Meta says about a token, or null when it did not give an answer (never read as invalid). */
+/** The token's health from the `data` of a debug_token answer, or null when it carries no verdict. */
+export function healthFromDebugData(data: unknown): TokenHealth | null {
+  const d = data as Record<string, unknown> | null | undefined;
+  if (typeof d?.is_valid !== "boolean") return null;
+  return { valid: d.is_valid, expiresAt: ms(d.expires_at), dataAccessExpiresAt: ms(d.data_access_expires_at) };
+}
+
+/**
+ * What Meta says about a token, or null when the call itself failed. An error on the call
+ * (including a top-level 190, which can mean the APP token is bad) is never a verdict on the
+ * WABA's token: only `data.is_valid` is.
+ */
 export async function readTokenHealth(cfg: Cfg, token: string): Promise<TokenHealth | null> {
   try {
     const answer = await debugToken(cfg, token);
-    if (!("value" in answer)) return answer.code === 190 ? { valid: false, expiresAt: 0, dataAccessExpiresAt: 0 } : null;
-    const data = (answer.value as { data?: Record<string, unknown> }).data;
-    if (typeof data?.is_valid !== "boolean") return null;
-    return {
-      valid: data.is_valid,
-      expiresAt: ms(data.expires_at),
-      dataAccessExpiresAt: ms(data.data_access_expires_at),
-    };
+    return "value" in answer ? healthFromDebugData((answer.value as { data?: unknown }).data) : null;
   } catch {
     return null;
   }
 }
+
+const day = (at: number) => new Date(at).toISOString().slice(0, 10);
 
 export function tokenProblems(health: TokenHealth | null, now: number): string[] {
   if (!health) return [];
   if (!health.valid) return ["token invalid"];
   const soon = (at: number) => at > 0 && at - now < TOKEN_WARN_MS;
   return [
-    ...(soon(health.expiresAt) ? [`token expires ${new Date(health.expiresAt).toISOString().slice(0, 10)}`] : []),
-    ...(soon(health.dataAccessExpiresAt)
-      ? [`data access expires ${new Date(health.dataAccessExpiresAt).toISOString().slice(0, 10)}`]
-      : []),
+    ...(soon(health.expiresAt) ? [`token expires ${day(health.expiresAt)}`] : []),
+    ...(soon(health.dataAccessExpiresAt) ? [`data access expires ${day(health.dataAccessExpiresAt)}`] : []),
   ];
 }
 
-/** On a failed send: Graph error 190 means Meta rejected the WABA's token. Alerts once per WABA, never throws. */
-export async function noteSendFailure(env: Parameters<typeof getControlPlaneStub>[0], wabaId: string, error: unknown): Promise<void> {
-  if (metaErrorCodes(error).errorCode !== 190) return;
+type Env = Parameters<typeof getControlPlaneStub>[0];
+
+/** Meta rejected the WABA's token: alerts once, never throws. Callers pass it to `waitUntil`. */
+export async function noteTokenRejected(env: Env, wabaId: string): Promise<void> {
   try {
     await getControlPlaneStub(env).reportRejectedToken(wabaId);
   } catch {}
+}
+
+/** A failed send whose Graph error is 190. Callers pass it to `waitUntil`, never await it on the request path. */
+export function noteSendFailure(env: Env, wabaId: string, error: unknown): Promise<void> {
+  return metaErrorCodes(error).errorCode === 190 ? noteTokenRejected(env, wabaId) : Promise.resolve();
 }

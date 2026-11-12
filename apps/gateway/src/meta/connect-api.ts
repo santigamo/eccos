@@ -1,4 +1,5 @@
 import { graphBaseUrl, type CoreConfig } from "@eccos/core/config-schema";
+import { healthFromDebugData, type TokenHealth } from "../token-health";
 
 type MetaAppConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_APP_SECRET" | "META_APP_ID">;
 type MetaGraphConfig = Pick<CoreConfig, "META_GRAPH_VERSION">;
@@ -200,7 +201,7 @@ export function extractTokenTargetIds(payload: unknown): string[] {
  * a failure detail built from it, and this refactor must not reword it.
  */
 export type TokenInspection =
-  | { kind: "ok"; targetIds: string[] }
+  | { kind: "ok"; targetIds: string[]; health: TokenHealth | null }
   /**
    * The token was issued by a DIFFERENT Meta app than this deployment's.
    *
@@ -255,7 +256,7 @@ export async function inspectToken(cfg: MetaAppConfig, token: string): Promise<T
     return { kind: "foreign_app", error: null };
   }
   if (data?.is_valid === false) return { kind: "invalid_token", error: null };
-  return { kind: "ok", targetIds: extractTokenTargetIds(json) };
+  return { kind: "ok", targetIds: extractTokenTargetIds(json), health: healthFromDebugData(data) };
 }
 
 /**
@@ -263,9 +264,9 @@ export async function inspectToken(cfg: MetaAppConfig, token: string): Promise<T
  * throw. It keeps that path's behaviour byte for byte — every non-`ok` verdict
  * was a thrown `MetaGraphError` before this seam existed, and still is.
  */
-async function listTokenTargetIds(cfg: MetaAppConfig, token: string): Promise<string[]> {
+async function inspectOrThrow(cfg: MetaAppConfig, token: string) {
   const inspection = await inspectToken(cfg, token);
-  if (inspection.kind === "ok") return inspection.targetIds;
+  if (inspection.kind === "ok") return inspection;
   throw inspection.error ?? new Error(`debug_token rejected the token: ${inspection.kind}`);
 }
 
@@ -281,7 +282,13 @@ export async function findWabaPhoneNumbersForToken(
   cfg: MetaAppConfig,
   token: string,
 ): Promise<Array<{ wabaId: string; phones: PhoneNumber[] }>> {
-  return wabaMatchesForTargetIds(cfg, await listTokenTargetIds(cfg, token), token);
+  return (await discoverWabasForToken(cfg, token)).matches;
+}
+
+/** {@link findWabaPhoneNumbersForToken} plus what the same `debug_token` call said about the token's expiry. */
+export async function discoverWabasForToken(cfg: MetaAppConfig, token: string) {
+  const inspection = await inspectOrThrow(cfg, token);
+  return { matches: await wabaMatchesForTargetIds(cfg, inspection.targetIds, token), health: inspection.health };
 }
 
 /**
