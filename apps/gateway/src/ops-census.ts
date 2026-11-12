@@ -53,6 +53,8 @@ interface WabaLine {
   token: TokenHealth | null;
   /** Why an active WABA's token could not be checked. */
   tokenUnchecked: Unchecked | null;
+  /** What the last successful check stored, for when today's check got no answer. */
+  storedToken: TokenHealth;
 }
 
 interface AccountBlock {
@@ -100,6 +102,7 @@ export async function runDailyCensus(
       readable: true,
       token: null,
       tokenUnchecked: null,
+      storedToken: { valid: true, expiresAt: w.tokenExpiresAt, dataAccessExpiresAt: w.tokenDataAccessExpiresAt },
     })),
   }));
 
@@ -136,24 +139,26 @@ export async function runDailyCensus(
   });
 
   if (!(await control.claimDailyCensus(day))) return;
+  const lost = await control.lostTokenAlerts();
   const problems = [
     ...tokenAlertLines(blocks, now),
-    ...(await control.takeLostTokenAlerts()).map(
-      ([wabaId, accountId]) => `WABA ${wabaId} · account ${accountId}: Meta rejected the token on send, the alert may not have arrived`,
-    ),
+    ...lost.map(({ wabaId, accountId }) => `WABA ${wabaId} · account ${accountId}: Meta rejected the token on send, the alert may not have arrived`),
   ];
   const unchecked = uncheckedAlertLines(blocks);
-  for (const lines of [
-    problems.length > 0 && ["Eccos: WhatsApp tokens need attention", ...problems],
-    unchecked.length > 0 && ["Eccos: cannot check WhatsApp tokens", ...unchecked],
-  ]) {
-    if (lines) for (const chunk of chunkLines(lines)) await sendOpsAlert(env, chunk, fetchImpl);
+  if (problems.length > 0 && (await sendChunked(env, ["Eccos: WhatsApp tokens need attention", ...problems], fetchImpl))) {
+    await control.markTokensAlerted(blocks.flatMap((b) => b.wabas.filter((w) => w.token?.valid === false).map((w) => w.wabaId)));
+    await control.clearLostTokenAlerts(lost.map((l) => l.wabaId));
   }
-  const invalid = blocks.flatMap((b) => b.wabas.filter((w) => w.token?.valid === false).map((w) => w.wabaId));
-  if (invalid.length > 0) await control.markTokensAlerted(invalid);
+  if (unchecked.length > 0) await sendChunked(env, ["Eccos: cannot check WhatsApp tokens", ...unchecked], fetchImpl);
   for (const chunk of chunkLines(formatCensus(day, blocks).split("\n"))) {
     if ((await sendOpsAlert(env, chunk, fetchImpl)) !== "sent") return;
   }
+}
+
+async function sendChunked(env: Env, lines: string[], fetchImpl: typeof fetch): Promise<boolean> {
+  let sent = true;
+  for (const chunk of chunkLines(lines)) sent = (await sendOpsAlert(env, chunk, fetchImpl)) === "sent" && sent;
+  return sent;
 }
 
 const UNCHECKED_REASON: Record<Unchecked, string> = {
@@ -177,7 +182,14 @@ function uncheckedAlertLines(blocks: AccountBlock[]): string[] {
 
 function tokenAlertLines(blocks: AccountBlock[], now: number): string[] {
   return blocks.flatMap((b) =>
-    b.wabas.flatMap((w) => tokenProblems(w.token, now).map((p) => `WABA ${w.wabaId} · account ${b.accountId}: ${p}`)),
+    b.wabas.flatMap((w) => {
+      const problems = w.token
+        ? tokenProblems(w.token, now)
+        : w.tokenUnchecked
+          ? tokenProblems(w.storedToken, now, true)
+          : [];
+      return problems.map((p) => `WABA ${w.wabaId} · account ${b.accountId}: ${p}`);
+    }),
   );
 }
 

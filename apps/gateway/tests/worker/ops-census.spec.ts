@@ -402,6 +402,44 @@ describe("token expiry monitoring", () => {
     expect((await control.getWabaById("WABA_NEW"))?.tokenExpiresAt).toBe(NOON + 9 * DAY);
   });
 
+  it("warns from the stored expiry when today's check got no answer, saying so", async () => {
+    await getControlPlaneStub(env).recordTokenHealth(TEST_WABA_ID, {
+      valid: true,
+      expiresAt: NOON + 5 * DAY,
+      dataAccessExpiresAt: NOON + 6 * DAY,
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("down", { status: 503 }));
+    const texts = await census();
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: token expiry from last check: 2026-11-13`);
+    expect(texts[0]).toContain("data access expiry from last check: 2026-11-14");
+  });
+
+  it("marks a token alerted and clears lost alerts only when the attention post went out", async () => {
+    const control = getControlPlaneStub(env);
+    await runInDurableObject(control, (cp: EccosControlPlane) => {
+      cp.sql.exec("UPDATE wabas SET token_alert_lost = 1 WHERE waba_id = ?", TEST_WABA_ID);
+    });
+    mockDebugToken({ is_valid: false });
+    const failing = vi.fn(async () => new Response("down", { status: 502 }));
+    await runDailyCensus(opsEnv, NOON, failing as unknown as typeof fetch);
+    const state = () =>
+      runInDurableObject(control, (cp: EccosControlPlane) =>
+        cp.sql.exec("SELECT token_rejected_at AS rejected, token_alert_lost AS lost FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0],
+      );
+    expect(await state()).toEqual({ rejected: null, lost: 1 });
+    await runDailyCensus(opsEnv, NOON + 24 * 3600_000, telegramOk() as unknown as typeof fetch);
+    expect(await state()).toEqual({ rejected: expect.any(Number), lost: null });
+  });
+
+  it("a re-registration also forgets a lost alert", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => {
+      cp.sql.exec("UPDATE wabas SET token_alert_lost = 1 WHERE waba_id = ?", TEST_WABA_ID);
+    });
+    await bootstrapAccount();
+    const lost = await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => cp.lostTokenAlerts());
+    expect(lost).toEqual([]);
+  });
+
   it("keeps the stored expiry when the token is invalid", async () => {
     const control = getControlPlaneStub(env);
     await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });

@@ -1,4 +1,4 @@
-import { metaErrorCodes } from "@eccos/core/send";
+import { GRAPH_CODE_OAUTH, metaErrorCodes } from "@eccos/core/send";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { inspectToken, type TokenHealth } from "./meta/connect-api";
 
@@ -39,13 +39,15 @@ export async function readTokenHealth(cfg: Cfg, token: string): Promise<TokenChe
   }
 }
 
-export function tokenProblems(health: TokenHealth | null, now: number): string[] {
+/** `lastCheck` labels expiries read from storage because today's check got no answer. */
+export function tokenProblems(health: TokenHealth | null, now: number, lastCheck = false): string[] {
   if (!health) return [];
   if (!health.valid) return ["token invalid"];
   const soon = (at: number | null): at is number => at !== null && at > 0 && at - now < TOKEN_WARN_MS;
+  const when = lastCheck ? "expiry from last check: " : "expires ";
   return [
-    ...(soon(health.expiresAt) ? [`token expires ${formatDay(health.expiresAt)}`] : []),
-    ...(soon(health.dataAccessExpiresAt) ? [`data access expires ${formatDay(health.dataAccessExpiresAt)}`] : []),
+    ...(soon(health.expiresAt) ? [`token ${when}${formatDay(health.expiresAt)}`] : []),
+    ...(soon(health.dataAccessExpiresAt) ? [`data access ${when}${formatDay(health.dataAccessExpiresAt)}`] : []),
   ];
 }
 
@@ -55,17 +57,13 @@ export function forgetTokenReports(): void {
   reportedAt.clear();
 }
 
-/**
- * Meta rejected the WABA's token: alerts once, never throws. The memo spares the control plane a
- * call per 190 and is dropped unless the control plane has the rejection on record.
- */
+/** Meta rejected the WABA's token: alerts once, never throws. The memo spares the control plane a call per 190. */
 export async function noteTokenRejected(env: Env, wabaId: string, now = Date.now()): Promise<void> {
   const last = reportedAt.get(wabaId);
   if (last !== undefined && now - last < REPORT_MEMO_MS) return;
   reportedAt.set(wabaId, now);
   try {
-    const outcome = await getControlPlaneStub(env).reportRejectedToken(wabaId);
-    if (outcome === "disabled" || outcome === "failed") reportedAt.delete(wabaId);
+    await getControlPlaneStub(env).reportRejectedToken(wabaId);
   } catch {
     reportedAt.delete(wabaId);
   }
@@ -86,7 +84,7 @@ export function watchGraph(
       const body = await Promise.resolve()
         .then(() => res.clone().json())
         .catch(() => null);
-      if (metaErrorCodes(body).errorCode === 190) waitUntil(noteTokenRejected(env, wabaId));
+      if (metaErrorCodes(body).errorCode === GRAPH_CODE_OAUTH) waitUntil(noteTokenRejected(env, wabaId));
     }
     return res;
   }) as typeof fetch;

@@ -55,6 +55,9 @@ export function sendOutcomeUnknown(result: SendResult): boolean {
   return !result.ok && (result.status === 0 || result.status >= 500 || result.status < 300);
 }
 
+/** Graph `error.code` for a rejected access token. */
+export const GRAPH_CODE_OAUTH = 190;
+
 export type MetaErrorCodes = { errorCode: number | null; errorSubcode: number | null; errorType: string | null };
 
 /** The codes of a failed send's Graph error envelope; never its free-text message, which can echo user data. */

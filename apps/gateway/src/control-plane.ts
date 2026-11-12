@@ -121,6 +121,7 @@ export interface WabaAccess {
   provisioningError: string | null;
   /** Unix ms of the Meta token's expiry as last read: 0 never expires, null never read. */
   tokenExpiresAt: number | null;
+  tokenDataAccessExpiresAt: number | null;
   phones: PhoneRecord[];
   coexistence: CoexistenceState;
 }
@@ -1000,12 +1001,17 @@ export class EccosControlPlane extends DurableObject<Env> {
     }
   }
 
-  /** WABAs whose 190 alert may not have reached Telegram, as `[wabaId, accountId]`; each is returned once. */
-  takeLostTokenAlerts(): Array<[string, string]> {
+  /** WABAs whose 190 alert may not have reached Telegram, . */
+  lostTokenAlerts(): Array<{ wabaId: string; accountId: string }> {
     return this.sql
-      .exec("UPDATE wabas SET token_alert_lost = NULL WHERE token_alert_lost = 1 RETURNING waba_id, account_id")
+      .exec("SELECT waba_id, account_id FROM wabas WHERE token_alert_lost = 1")
       .toArray()
-      .map((row) => [row.waba_id as string, row.account_id as string]);
+      .map((row) => ({ wabaId: row.waba_id as string, accountId: row.account_id as string }));
+  }
+
+  /** The census post that mentioned these went out. */
+  clearLostTokenAlerts(wabaIds: string[]): void {
+    for (const id of wabaIds) this.sql.exec("UPDATE wabas SET token_alert_lost = NULL WHERE waba_id = ?", id);
   }
 
   /**
@@ -1303,6 +1309,7 @@ export class EccosControlPlane extends DurableObject<Env> {
              token_expires_at = NULL,
              token_data_access_expires_at = NULL,
              token_rejected_at = NULL,
+             token_alert_lost = NULL,
              callback_url = COALESCE(excluded.callback_url, wabas.callback_url),
              status = excluded.status,
              provisioning_error = NULL,
@@ -1421,6 +1428,7 @@ export class EccosControlPlane extends DurableObject<Env> {
              token_expires_at = excluded.token_expires_at,
              token_data_access_expires_at = excluded.token_data_access_expires_at,
              token_rejected_at = NULL,
+             token_alert_lost = NULL,
              callback_url = excluded.callback_url,
              status = 'pending',
              provisioning_error = NULL,
@@ -1547,7 +1555,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaIdN = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
-        `SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error, token_expires_at, ${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ?`,
+        `SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error, token_expires_at, token_data_access_expires_at, ${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ?`,
         wabaIdN,
       )
       .toArray()[0];
@@ -1561,6 +1569,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
       tokenExpiresAt: (row.token_expires_at as number | null) ?? null,
+      tokenDataAccessExpiresAt: (row.token_data_access_expires_at as number | null) ?? null,
       phones: phonesOf(wabaIdN, this.sql),
       coexistence: coexistenceOf(row),
     };
@@ -2059,7 +2068,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaRows = this.sql
       .exec(
         `SELECT w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
-                w.token_expires_at, ${coexistenceColumnsFor("w")},
+                w.token_expires_at, w.token_data_access_expires_at, ${coexistenceColumnsFor("w")},
                 COALESCE(json_group_array(
                   json_object('phoneNumberId', p.phone_number_id,
                               'displayPhoneNumber', p.display_phone_number)), '[]') AS phones
@@ -2067,7 +2076,7 @@ export class EccosControlPlane extends DurableObject<Env> {
          LEFT JOIN phones p ON p.waba_id = w.waba_id
          WHERE w.account_id = ?
          GROUP BY w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
-                  w.token_expires_at, ${coexistenceColumnsFor("w")}
+                  w.token_expires_at, w.token_data_access_expires_at, ${coexistenceColumnsFor("w")}
          ORDER BY w.waba_id`,
         id,
       )
@@ -2081,6 +2090,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
       tokenExpiresAt: (row.token_expires_at as number | null) ?? null,
+      tokenDataAccessExpiresAt: (row.token_data_access_expires_at as number | null) ?? null,
       phones: parsePhonesJson((row.phones as string | null) ?? "[]"),
       coexistence: coexistenceOf(row),
     }));

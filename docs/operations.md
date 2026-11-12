@@ -153,15 +153,18 @@ so each stored token is checked rather than assumed.
 - **Daily census** checks every active WABA inside the control plane (the token never leaves it),
   refreshes the stored expiry and shows validity and expiry on each WABA line ("expiry unknown" when
   Meta gave none). It sends a separate alert, with WABA and account ids only, when Meta reports a
-  token invalid or its token or data access expires within 14 days. A token that cannot be checked
+  token invalid or its token or data access expires within 14 days. When the check got no answer,
+  the stored expiries are used instead and labelled "expiry from last check". A token that cannot be checked
   is one separate "cannot check WhatsApp tokens" alert with the reason: `META_APP_ID` unset, no
   stored token, a stored token that cannot be decrypted, a token issued by another Meta app, an
   answer without a validity verdict, or no usable answer from `debug_token` (a Graph error,
   including a top-level 190 that can mean a bad `META_APP_SECRET`, or a timeout). The stored values
   stay as they were, and a slow check never marks a WABA's data plane unreadable.
-- **Graph error 190 on any call made with a WABA's token** (sends, templates, media downloads,
-  provisioning): the first one gives the operator one alert, reported off the request path. A bare
-  401 on a media download does not count. Nothing is claimed while ops alerts are off. The post is
+- **Graph error 190 on a send, a template call or a media download** (including scheduled sends and
+  broadcasts): the first one gives the operator one alert, reported off the request path. Calls
+  that do not go through the WABA's watched `fetch` (provisioning, diagnostics, discovery, phone
+  number reads) are not watched; the census still catches their token. A bare 401 on a media
+  download does not count. Nothing is claimed while ops alerts are off. The post is
   one attempt, never retried: if it failed, the next census says once that the alert may not have
   arrived. A token the census already alerted as invalid stays quiet on sends until a valid reading,
   and so does one reconnected through Embedded Signup.

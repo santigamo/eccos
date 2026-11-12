@@ -745,6 +745,9 @@ function isSendRecipient(to: string): boolean {
   return /^\+?[0-9][0-9 ().-]*$/.test(to) && digits >= 5 && digits <= 15;
 }
 
+const watched = (c: AppContext, wabaId: string) =>
+  watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), wabaId);
+
 async function sendMessageRoute(c: AppContext) {
   const cid = correlationId(c);
   const account = c.get("account") ?? null;
@@ -771,7 +774,7 @@ async function sendMessageRoute(c: AppContext) {
     wabaId: target.waba.wabaId,
     phoneNumberId: target.phoneNumberId,
     metaAccessToken: target.metaAccessToken,
-    fetch: watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), target.waba.wabaId),
+    fetch: watched(c, target.waba.wabaId),
   });
   const { recipient } = target;
   const ids = { wabaId: target.waba.wabaId, phoneNumberId: target.phoneNumberId };
@@ -894,7 +897,7 @@ async function templatesRoute(c: AppContext) {
     wabaId: waba.wabaId,
     phoneNumberId: waba.phones[0]?.phoneNumberId ?? "",
     metaAccessToken: waba.metaAccessToken,
-    fetch: watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), waba.wabaId),
+    fetch: watched(c, waba.wabaId),
   });
   const result = await listTemplates(cfg, limit, { fields: TEMPLATE_FIELDS });
   if (!result.ok) {
@@ -927,7 +930,7 @@ async function templateRefusal(
     wabaId: waba.wabaId,
     phoneNumberId,
     metaAccessToken: waba.metaAccessToken,
-    fetch: watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), waba.wabaId),
+    fetch: watched(c, waba.wabaId),
   });
   const templates = await listTemplates(cfg, 100, { fields: ["name", "language", "status"], name });
   if (!templates.ok) {

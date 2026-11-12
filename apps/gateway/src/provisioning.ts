@@ -1,4 +1,3 @@
-import { noteTokenRejected } from "./token-health";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { releaseHeldBatches } from "./held-webhooks";
 import {
@@ -464,7 +463,6 @@ export async function runClaim(
     }
     return { waba, attempted: true, error: null };
   } catch (error) {
-    if (error instanceof MetaGraphError && error.code === 190) await noteTokenRejected(env, claim.wabaId);
     const failure = failureFor(stage, error, spend.issued);
     coexistence.error = stage === "coexistence" ? failureText(failure) : null;
     const waba = await controlPlane.completeWabaProvisioning({
@@ -546,7 +544,6 @@ export async function resubscribeWaba(
     });
     return { waba, attempted: true, error: null };
   } catch (error) {
-    if (error instanceof MetaGraphError && error.code === 190) await noteTokenRejected(env, waba.wabaId);
     return {
       waba,
       attempted: true,

@@ -1,3 +1,4 @@
+import { GRAPH_CODE_OAUTH } from "@eccos/core/send";
 import { putMedia } from "./media-store";
 
 /** Meta's largest media is a document at 100 MB. A bigger file is refused before any byte is read. */
@@ -6,8 +7,6 @@ const GRAPH_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 /** Graph subcode for "object does not exist", which is what an expired media id returns. */
 const GRAPH_SUBCODE_NONEXISTENT = 33;
-/** Graph code for an OAuth failure: the token is expired, revoked, or lacks the permission. */
-const GRAPH_CODE_OAUTH = 190;
 
 /** Retrying cannot succeed: Meta no longer has the id, or the file is over the limit. */
 export class MediaPermanentError extends Error {
@@ -18,10 +17,6 @@ export class MediaPermanentError extends Error {
  * the caller waits and retries once the token is fixed. */
 export class MediaTokenError extends Error {
   override name = "MediaTokenError";
-  /** Whether Meta answered with Graph error 190, as opposed to a bare 401. */
-  constructor(message: string, readonly graphRejected = false) {
-    super(message);
-  }
 }
 
 export interface DownloadMetaMediaInput {
@@ -72,7 +67,7 @@ export async function downloadMetaMedia(input: DownloadMetaMediaInput): Promise<
       throw new MediaPermanentError(`Meta no longer has media ${mediaId}`);
     }
     if (lookup.status === 401 || code === GRAPH_CODE_OAUTH) {
-      throw new MediaTokenError(`Meta rejected the token for media ${mediaId}`, code === GRAPH_CODE_OAUTH);
+      throw new MediaTokenError(`Meta rejected the token for media ${mediaId}`);
     }
     throw new Error(`media lookup failed with ${lookup.status}`);
   }

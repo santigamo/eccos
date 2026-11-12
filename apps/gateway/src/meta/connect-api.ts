@@ -1,4 +1,5 @@
 import { graphBaseUrl, type CoreConfig } from "@eccos/core/config-schema";
+import { GRAPH_CODE_OAUTH } from "@eccos/core/send";
 
 type MetaAppConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_APP_SECRET" | "META_APP_ID">;
 type MetaGraphConfig = Pick<CoreConfig, "META_GRAPH_VERSION">;
@@ -262,7 +263,7 @@ export async function inspectToken(cfg: MetaAppConfig, token: string): Promise<T
     const error = graphError("debug_token", res, json);
     const code = asRecord(asRecord(json)?.error)?.code;
     if (code === 100) return { kind: "foreign_app", error };
-    if (code === 190) return { kind: "invalid_token", error };
+    if (code === GRAPH_CODE_OAUTH) return { kind: "invalid_token", error };
     throw error;
   }
   const data = asRecord(asRecord(json)?.data);

@@ -345,6 +345,10 @@ function assertTemplateContent(input: Pick<CreateTemplateInput, "bodyText" | "bo
  * credentials come from the registry, never from global env secrets.
  */
 export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
+  private watchedFetch(wabaId: string): typeof fetch {
+    return watchGraph(this.env, (work) => this.ctx.waitUntil(work), wabaId);
+  }
+
   private stubFor(wabaId: string) {
     return getGatewayStubForWaba(this.env, wabaId);
   }
@@ -386,7 +390,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
-      fetch: watchGraph(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId),
+      fetch: this.watchedFetch(waba.wabaId),
     });
     return {
       stub: this.stubFor(wabaId),
@@ -1056,7 +1060,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
-      fetch: watchGraph(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId),
+      fetch: this.watchedFetch(waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
@@ -1168,7 +1172,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
-      fetch: watchGraph(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId),
+      fetch: this.watchedFetch(waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
