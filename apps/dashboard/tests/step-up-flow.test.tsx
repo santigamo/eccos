@@ -33,7 +33,7 @@ describe("stepUpHref", () => {
   test("enrollment and re-authentication each carry the way back", () => {
     expect(stepUpHref("totp-required", "/numbers")).toBe("/settings?redirect=%2Fnumbers");
     expect(stepUpHref("reauth-required", "/webhooks?wabaId=100")).toBe(
-      "/signin?reauth=1&redirect=%2Fwebhooks%3FwabaId%3D100",
+      "/signin?reauth=true&redirect=%2Fwebhooks%3FwabaId%3D100",
     );
   });
 
@@ -75,7 +75,7 @@ describe("followStepUp", () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    expect(n.log).toEqual(["signed out", "/signin?reauth=1&redirect=%2Fsettings"]);
+    expect(n.log).toEqual(["signed out", "/signin?reauth=true&redirect=%2Fsettings"]);
   });
 
   test("a failed sign-out still navigates", async () => {
@@ -83,7 +83,7 @@ describe("followStepUp", () => {
     n.signOut = () => Promise.reject(new Error("offline"));
     followStepUp(refusal("reauth-required"), n);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(n.log).toEqual(["/signin?reauth=1&redirect=%2Fsettings"]);
+    expect(n.log).toEqual(["/signin?reauth=true&redirect=%2Fsettings"]);
   });
 
   test("any other failure is left to the caller", () => {
@@ -147,6 +147,18 @@ describe("TwoFactorPanel", () => {
     expect(html).toContain('role="img"');
     expect(html).toContain('aria-label="QR"');
     expect(html).toMatch(/<path d="M\d+ \d+h1v1h-1z/);
+  });
+
+  test("the QR code is drawn upright, not mirrored across its diagonal", async () => {
+    const { encode } = await import("uqr");
+    const value = "otpauth://totp/Eccos:a?secret=JBSWY3DP";
+    const { data } = encode(value, { border: 2 });
+    // A module that is dark where its transposed twin is light tells the two apart.
+    const y = data.findIndex((row, r) => row.some((on, c) => on && !data[c]![r]));
+    const x = data[y]!.findIndex((on, c) => on && !data[c]![y]);
+    const html = renderToStaticMarkup(<QrCode value={value} label="QR" />);
+    expect(html).toContain(`M${x} ${y}h1v1h-1z`);
+    expect(html).not.toContain(`M${y} ${x}h1v1h-1z`);
   });
 });
 

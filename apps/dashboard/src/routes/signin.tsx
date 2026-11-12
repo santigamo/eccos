@@ -13,7 +13,7 @@ export const Route = createFileRoute("/signin")({
     return {
       ...(redirect ? { redirect } : {}),
       ...(error ? { error } : {}),
-      ...(search.reauth === 1 || search.reauth === "1" ? { reauth: true as const } : {}),
+      ...(search.reauth === true ? { reauth: true as const } : {}),
     };
   },
   component: SignInPage,

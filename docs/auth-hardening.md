@@ -80,7 +80,7 @@ The role check runs first, so a role that lacks the action is told that rather
 than asked to enroll. A refusal is a typed `forbidden` failure with reason
 `totp-required` or `reauth-required`; the console follows it
 (`src/lib/step-up.ts`) to `/settings?redirect=…` to enroll, or signs the stale
-session out and goes to `/signin?reauth=1&redirect=…`, and both return to the
+session out and goes to `/signin?reauth=true&redirect=…`, and both return to the
 page the action was on. Verifying the first code re-issues the session, so
 enrolling also satisfies the window.
 

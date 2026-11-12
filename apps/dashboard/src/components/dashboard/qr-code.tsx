@@ -7,7 +7,7 @@ import { encode } from "uqr";
 export function QrCode({ value, label }: { value: string; label: string }) {
   const { data, size } = encode(value, { border: 2 });
   const path = data
-    .flatMap((column, x) => column.map((on, y) => (on ? `M${x} ${y}h1v1h-1z` : "")))
+    .flatMap((row, y) => row.map((on, x) => (on ? `M${x} ${y}h1v1h-1z` : "")))
     .join("");
   return (
     <svg

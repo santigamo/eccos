@@ -12,6 +12,7 @@ import {
 } from "@/components/reui/frame";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 const ERROR_CLASS =
@@ -27,6 +28,7 @@ interface Setup {
  *
  * Sensitive actions require it (contract §4/§8). `returnTo` is the page a
  * refused action came from: the panel says so and goes back there when done.
+ * Every control is a ghost: the page's one primary is Create key.
  */
 export function TwoFactorPanel({ enabled, returnTo }: { enabled: boolean; returnTo?: string }) {
   const [setup, setSetup] = useState<Setup | null>(null);
@@ -65,7 +67,7 @@ function Enabled({ returnTo }: { returnTo?: string }) {
         Sign-ins to this account ask for a code from your authenticator app.
       </p>
       {returnTo ? (
-        <a href={returnTo} className={`mt-3 ${buttonVariants({ variant: "outline" })}`}>
+        <a href={returnTo} className={cn("mt-3", buttonVariants({ variant: "outline" }))}>
           Back to where you were
         </a>
       ) : null}
@@ -108,7 +110,7 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
         errorId={error ? "two-factor-error" : undefined}
       />
       <div>
-        <Button type="submit" disabled={busy || !password}>
+        <Button type="submit" variant="outline" disabled={busy || !password}>
           {busy ? "Starting…" : "Set up"}
         </Button>
       </div>
@@ -165,7 +167,7 @@ function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () =
           />
         </div>
         <div>
-          <Button type="submit" disabled={busy || !code.trim()}>
+          <Button type="submit" variant="outline" disabled={busy || !code.trim()}>
             {busy ? "Verifying…" : "Turn on"}
           </Button>
         </div>
@@ -206,7 +208,7 @@ export function BackupCodes({ codes, doneHref }: { codes: string[]; doneHref: st
           {copied ? "Copied" : "Copy"}
         </Button>
         {/* A full navigation: enrolling re-issued the session, so the loaders re-run. */}
-        <a href={doneHref} className={buttonVariants({ size: "sm" })}>
+        <a href={doneHref} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
           {doneHref === "/settings" ? "Done" : "Continue"}
         </a>
       </div>

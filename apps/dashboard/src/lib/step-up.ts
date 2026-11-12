@@ -5,7 +5,7 @@ import type { Failure } from "../server/gateway";
 export function stepUpHref(reason: Failure["reason"], returnTo: string): string | null {
   const back = encodeURIComponent(returnTo);
   if (reason === "totp-required") return `/settings?redirect=${back}`;
-  if (reason === "reauth-required") return `/signin?reauth=1&redirect=${back}`;
+  if (reason === "reauth-required") return `/signin?reauth=true&redirect=${back}`;
   return null;
 }
 
