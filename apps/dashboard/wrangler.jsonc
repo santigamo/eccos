@@ -42,6 +42,10 @@
     "META_GRAPH_VERSION": "v25.0"
   },
 
+  // Eccos Cloud billing (docs/deployment.md#billing). Off unless the CREEM_API_KEY and
+  // CREEM_WEBHOOK_SECRET secrets, a CREEM_PRODUCT_ID var and this daily trigger are set:
+  // "triggers": { "crons": ["0 4 * * *"] },
+
   // Dedicated auth D1 database (identity plane — docs/auth-tenancy-contract.md §3).
   // Local dev uses the local D1 (`bun run db:migrate:local`), which ignores the
   // placeholder id; put the id from `wrangler d1 create eccos-auth --jurisdiction eu`
