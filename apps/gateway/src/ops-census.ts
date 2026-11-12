@@ -8,12 +8,17 @@
  * Telegram rejected is not retried (a dropped connection can arrive after Telegram posted it),
  * so that day is skipped.
  *
+ * Every active WABA's token is checked against Meta's debug_token; a token that is invalid or
+ * close to expiry also gets its own alert, with WABA and account ids only.
+ *
  * Ids, names and counts only: no phone numbers, message content or tokens.
  */
 import { getControlPlaneStub } from "./control-plane-stub";
 import { runBoundedPool } from "./gateway";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { opsAlertsEnabled, sendOpsAlert } from "./ops-alert";
+import { readTokenHealth, type TokenHealth, tokenProblems } from "./token-health";
+import { getAppConfig } from "./tenant-config";
 
 const CENSUS_HOUR_UTC = 7;
 const DAY_MS = 24 * 3600_000;
@@ -41,9 +46,12 @@ interface WabaLine {
   heldWebhooks: number;
   stuckPending: boolean;
   readable: boolean;
+  /** Null when the WABA is not active or Meta gave no answer. */
+  token: TokenHealth | null;
 }
 
 interface AccountBlock {
+  accountId: string;
   name: string;
   organizationId: string | null;
   wabas: WabaLine[];
@@ -67,6 +75,7 @@ export async function runDailyCensus(
 
   const accounts = await control.listCensusAccounts();
   const blocks: AccountBlock[] = accounts.map((a) => ({
+    accountId: a.accountId,
     name: a.name || a.accountId,
     organizationId: a.organizationId,
     wabas: a.wabas.map((w) => ({
@@ -83,6 +92,7 @@ export async function runDailyCensus(
       heldWebhooks: 0,
       stuckPending: w.status === "pending" && now - w.createdAt > DAY_MS,
       readable: true,
+      token: null,
     })),
   }));
 
@@ -91,6 +101,7 @@ export async function runDailyCensus(
     blocks.flatMap((b) => b.wabas),
     CENSUS_CONCURRENCY,
     async (line) => {
+      if (line.status === "active") line.token = await checkToken(env, line.wabaId);
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const census = await Promise.race([
@@ -116,12 +127,41 @@ export async function runDailyCensus(
   );
 
   if (!(await control.claimDailyCensus(day))) return;
-  for (const chunk of chunkLines(formatCensus(day, blocks).split("\n"))) {
+  const tokenAlert = tokenAlertLines(blocks, now);
+  if (tokenAlert.length > 0) await sendOpsAlert(env, ["Eccos: WhatsApp tokens need attention", ...tokenAlert].join("\n"), fetchImpl);
+  for (const chunk of chunkLines(formatCensus(day, blocks, now).split("\n"))) {
     if ((await sendOpsAlert(env, chunk, fetchImpl)) !== "sent") return;
   }
 }
 
-export function formatCensus(day: string, blocks: AccountBlock[]): string {
+async function checkToken(env: Env, wabaId: string): Promise<TokenHealth | null> {
+  try {
+    const control = getControlPlaneStub(env);
+    const token = await control.getMetaAccessTokenForWaba(wabaId);
+    const health = token ? await readTokenHealth(getAppConfig(env), token) : null;
+    if (health) await control.recordTokenHealth(wabaId, health);
+    return health;
+  } catch {
+    return null;
+  }
+}
+
+function tokenAlertLines(blocks: AccountBlock[], now: number): string[] {
+  return blocks.flatMap((b) =>
+    b.wabas.flatMap((w) => tokenProblems(w.token, now).map((p) => `WABA ${w.wabaId} · account ${b.accountId}: ${p}`)),
+  );
+}
+
+function describeToken(health: TokenHealth | null): string {
+  if (!health) return "";
+  if (!health.valid) return ", token invalid";
+  const day = (at: number) => new Date(at).toISOString().slice(0, 10);
+  const expiry = health.expiresAt ? `expires ${day(health.expiresAt)}` : "never expires";
+  const access = health.dataAccessExpiresAt ? `, data access ${day(health.dataAccessExpiresAt)}` : "";
+  return `, token ${expiry}${access}`;
+}
+
+export function formatCensus(day: string, blocks: AccountBlock[], now = Date.now()): string {
   const wabas = blocks.flatMap((b) => b.wabas);
   const sum = (pick: (w: WabaLine) => number) => wabas.reduce((n, w) => n + pick(w), 0);
   const byStatus = ["active", "pending", "failed"]
@@ -143,6 +183,7 @@ export function formatCensus(day: string, blocks: AccountBlock[]): string {
       if (w.held > 0) attention.push(`${who}: ${events(w.held)} held: no forwarding target`);
       if (w.heldWebhooks > 0) attention.push(`${who}: ${events(w.heldWebhooks)} held: WABA not active`);
       if (SYNC_NEEDS_ACTION.has(w.sync)) attention.push(`${who}: coexistence sync ${w.sync}`);
+      for (const problem of tokenProblems(w.token, now)) attention.push(`${who}: ${problem}`);
     }
   }
 
@@ -164,7 +205,7 @@ export function formatCensus(day: string, blocks: AccountBlock[]): string {
       const counts = w.readable
         ? `: ${w.pending} pending, ${w.held} held: no forwarding target, ${w.failed} failed, ${w.delivered24h} delivered (queued 24 h), ${w.heldWebhooks} held: WABA not active`
         : ": unreadable";
-      lines.push(`  WABA ${w.wabaId}, ${w.status}, ${kind}${target}${counts}`);
+      lines.push(`  WABA ${w.wabaId}, ${w.status}, ${kind}${target}${describeToken(w.token)}${counts}`);
     }
   }
   return lines.join("\n");

@@ -14,6 +14,7 @@ import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/sen
 import { listTemplates, TEMPLATE_FIELDS } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
+import { noteSendFailure } from "./token-health";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
@@ -816,6 +817,7 @@ async function sendMessageRoute(c: AppContext) {
   };
   const result = await sendMessage(cfg, target.metaBody);
   if (!result.ok) {
+    await noteSendFailure(c.env, target.waba.wabaId, result.error);
     logEvent("outbound_send", cid, 502, {
       ...ids,
       messageType,

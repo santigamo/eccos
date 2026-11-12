@@ -11,6 +11,7 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
+import { noteSendFailure } from "./token-health";
 import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
@@ -1060,6 +1061,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTemplateTestResult> => {
       const result = await sendMessage(cfg, metaBody);
       logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
+      if (!result.ok) await noteSendFailure(this.env, waba.wabaId, result.error);
 
       if (!result.ok) {
         // The data-plane log carries the full body, parameters included — it is
@@ -1171,6 +1173,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTextResult> => {
       const result = await sendMessage(cfg, metaBody);
       logSend(source, waba.wabaId, input.phoneNumberId, String(metaBody.type), result);
+      if (!result.ok) await noteSendFailure(this.env, waba.wabaId, result.error);
 
       if (!result.ok) {
         await stub.logOutbound(

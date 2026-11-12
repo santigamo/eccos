@@ -18,7 +18,7 @@ const DEBUG_TOKEN_FIELDS = [
   "scopes", "granular_scopes",
 ];
 
-type Read = { value: unknown } | { status: number; code: unknown; subcode: unknown; message: unknown };
+export type Read = { value: unknown } | { status: number; code: unknown; subcode: unknown; message: unknown };
 
 /** Graph GET reduced to its answer or its error. `paging` is dropped: its URLs can carry tokens. */
 async function read(cfg: Cfg, path: string, auth: string): Promise<Read> {
@@ -46,13 +46,13 @@ async function readFields(cfg: Cfg, node: string, fields: string[], token: strin
   return Object.fromEntries(entries);
 }
 
+export function debugToken(cfg: Cfg, token: string): Promise<Read> {
+  return read(cfg, `debug_token?input_token=${encodeURIComponent(token)}`, `${cfg.META_APP_ID}|${cfg.META_APP_SECRET}`);
+}
+
 /** Read-only view of what Meta reports for a WABA, for diagnosing an onboarding. Never returns the token. */
 export async function diagnoseWaba(cfg: Cfg, wabaId: string, phoneNumberId: string | null, token: string) {
-  const debug = await read(
-    cfg,
-    `debug_token?input_token=${encodeURIComponent(token)}`,
-    `${cfg.META_APP_ID}|${cfg.META_APP_SECRET}`,
-  );
+  const debug = await debugToken(cfg, token);
   const data = "value" in debug ? (debug.value as { data?: Record<string, unknown> }).data ?? {} : null;
   return {
     token: data

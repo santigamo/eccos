@@ -135,6 +135,29 @@ census of every account and WABA to the Telegram ops topic (first tick at or aft
 needed. A self-host without those secrets does nothing. A census whose post failed is not
 retried: that day is simply skipped.
 
+### Meta token expiry
+
+Each WABA sends with the Embedded Signup business token stored encrypted in the control plane. Two
+Embedded Signup configs exist at Meta:
+
+- `974691108868341` (legacy): the token expires after 60 days.
+- `2132668137322605` (`Eccos ES v4 - Cloud API`, system user): the token never expires.
+
+`META_ES_CONFIG_ID` selects the config. Tokens issued under the legacy one keep their 60-day expiry,
+so each stored token is checked rather than assumed.
+
+- **Connect** reads Meta's `debug_token` once and stores `expires_at` on the WABA row
+  (`token_expires_at`, Unix ms; `0` means it never expires, `NULL` means never read).
+- **Daily census** checks every active WABA the same way inside the Worker (the token never leaves
+  it), refreshes the stored expiry and lists validity and expiry on each WABA line. It sends a
+  separate alert, with WABA and account ids only, when a token is invalid or its token or data
+  access expires within 14 days. A `debug_token` call that gets no answer is not read as invalid.
+- **Sends**: the first time Meta answers a send with Graph error 190 for a WABA, the operator gets
+  one alert. Later 190s stay quiet until a census reads the token as valid again or the number is
+  reconnected through Embedded Signup.
+
+To renew an expiring token, reconnect the number through Embedded Signup under the current config.
+
 ### Viewing logs
 
 ```bash

@@ -15,7 +15,7 @@ What an attacker would want, and where it lives:
 
 | Asset | What it is | Where it lives |
 |---|---|---|
-| `META_ACCESS_TOKEN` | Permanent Meta System User token — can send messages and read templates as its WABA | Workers: control-plane WABA storage, **AES-256-GCM encrypted at the application layer** under `ECCOS_TOKEN_ENCRYPTION_KEY` (`apps/gateway/src/token-crypto.ts`), never returned to callers. Bun: `.env`. |
+| `META_ACCESS_TOKEN` | Meta Embedded Signup business token — can send messages and read templates as its WABA. It never expires under the current Embedded Signup config, but expires after 60 days under the legacy one (see [operations.md](operations.md#meta-token-expiry)) | Workers: control-plane WABA storage, **AES-256-GCM encrypted at the application layer** under `ECCOS_TOKEN_ENCRYPTION_KEY` (`apps/gateway/src/token-crypto.ts`), never returned to callers. Bun: `.env`. |
 | `META_APP_SECRET` | Verifies inbound webhook signatures; also used server-side to exchange OAuth codes | Secret: `wrangler secret` / `.env` |
 | `META_WEBHOOK_VERIFY_TOKEN` | Shared value Meta echoes back on webhook subscription (`GET /webhooks/meta`) | Secret: `wrangler secret` / `.env` |
 | `ECCOS_API_KEY` | Bun-target bearer key gating the WABA-scoped send/template routes | Secret: `.env` (Bun target only); account API keys are stored as SHA-256 hashes in the control plane |

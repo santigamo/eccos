@@ -26,6 +26,7 @@ import {
   sealToken,
   wabaTokenAad,
 } from "./token-crypto";
+import { sendOpsAlert } from "./ops-alert";
 import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
 
 /**
@@ -116,6 +117,8 @@ export interface WabaAccess {
   provisionedAt: number | null;
   status: ProvisioningStatus;
   provisioningError: string | null;
+  /** Unix ms of the Meta token's expiry as last read: 0 never expires, null never read. */
+  tokenExpiresAt: number | null;
   phones: PhoneRecord[];
   coexistence: CoexistenceState;
 }
@@ -688,7 +691,10 @@ export class EccosControlPlane extends DurableObject<Env> {
         contacts_sync_started_at INTEGER,
         contacts_sync_request_id TEXT,
         history_sync_started_at INTEGER,
-        history_sync_request_id TEXT
+        history_sync_request_id TEXT,
+        token_expires_at INTEGER,
+        token_data_access_expires_at INTEGER,
+        token_rejected_at INTEGER
       );`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_wabas_account
         ON wabas (account_id);`);
@@ -753,6 +759,12 @@ export class EccosControlPlane extends DurableObject<Env> {
       }
       if (!wabaColumns.some((row) => row.name === "provisioning_fingerprint")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN provisioning_fingerprint TEXT");
+      }
+      // NULL means never read; 0 means Meta says it never expires.
+      for (const column of ["token_expires_at", "token_data_access_expires_at", "token_rejected_at"]) {
+        if (!wabaColumns.some((row) => row.name === column)) {
+          this.sql.exec(`ALTER TABLE wabas ADD COLUMN ${column} INTEGER`);
+        }
       }
       if (!wabaColumns.some((row) => row.name === "provisioned_at")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN provisioned_at INTEGER");
@@ -927,6 +939,34 @@ export class EccosControlPlane extends DurableObject<Env> {
       .toArray()[0];
     if (!row) return null;
     return this.decryptStoredToken(row.account_id as string, id, row.meta_access_token);
+  }
+
+  /** Stores what Meta reported about a WABA's token, and clears an earlier rejection when it is valid. */
+  recordTokenHealth(wabaId: string, health: { valid: boolean; expiresAt: number; dataAccessExpiresAt: number }): void {
+    this.sql.exec(
+      `UPDATE wabas SET token_expires_at = ?, token_data_access_expires_at = ?,
+         token_rejected_at = CASE WHEN ? THEN NULL ELSE token_rejected_at END WHERE waba_id = ?`,
+      health.expiresAt,
+      health.dataAccessExpiresAt,
+      health.valid ? 1 : 0,
+      validateWabaId(wabaId, "wabaId"),
+    );
+  }
+
+  /** Meta rejected the WABA's token (Graph error 190): alerts the operator the first time only. */
+  async reportRejectedToken(wabaId: string): Promise<void> {
+    const row = this.sql
+      .exec(
+        "UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND token_rejected_at IS NULL RETURNING account_id",
+        Date.now(),
+        validateWabaId(wabaId, "wabaId"),
+      )
+      .toArray()[0];
+    if (!row) return;
+    await sendOpsAlert(
+      this.env,
+      `Eccos: Meta rejected a WABA token on send (Graph error 190)\nWABA ${wabaId} · account ${row.account_id}`,
+    );
   }
 
   /** Stores the retention and returns it. */
@@ -1431,7 +1471,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaIdN = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
-        `SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error, ${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ?`,
+        `SELECT account_id, waba_id, callback_url, created_at, provisioned_at, status, provisioning_error, token_expires_at, ${COEXISTENCE_COLUMNS} FROM wabas WHERE waba_id = ?`,
         wabaIdN,
       )
       .toArray()[0];
@@ -1444,6 +1484,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       provisionedAt: (row.provisioned_at as number | null) ?? null,
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
+      tokenExpiresAt: (row.token_expires_at as number | null) ?? null,
       phones: phonesOf(wabaIdN, this.sql),
       coexistence: coexistenceOf(row),
     };
@@ -1942,7 +1983,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const wabaRows = this.sql
       .exec(
         `SELECT w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
-                ${coexistenceColumnsFor("w")},
+                w.token_expires_at, ${coexistenceColumnsFor("w")},
                 COALESCE(json_group_array(
                   json_object('phoneNumberId', p.phone_number_id,
                               'displayPhoneNumber', p.display_phone_number)), '[]') AS phones
@@ -1950,7 +1991,7 @@ export class EccosControlPlane extends DurableObject<Env> {
          LEFT JOIN phones p ON p.waba_id = w.waba_id
          WHERE w.account_id = ?
          GROUP BY w.waba_id, w.callback_url, w.created_at, w.provisioned_at, w.status, w.provisioning_error,
-                  ${coexistenceColumnsFor("w")}
+                  w.token_expires_at, ${coexistenceColumnsFor("w")}
          ORDER BY w.waba_id`,
         id,
       )
@@ -1963,6 +2004,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       provisionedAt: (row.provisioned_at as number | null) ?? null,
       status: (row.status as ProvisioningStatus) ?? "active",
       provisioningError: (row.provisioning_error as string | null) ?? null,
+      tokenExpiresAt: (row.token_expires_at as number | null) ?? null,
       phones: parsePhonesJson((row.phones as string | null) ?? "[]"),
       coexistence: coexistenceOf(row),
     }));

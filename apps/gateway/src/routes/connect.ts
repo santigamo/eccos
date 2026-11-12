@@ -8,6 +8,7 @@ import {
 import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
 import { getControlPlaneStub } from "../control-plane-stub";
+import { readTokenHealth } from "../token-health";
 import { kickWabaProvisioning } from "../provisioning";
 import { isSubscriptionRequired } from "../connect-policy";
 import { constantTimeEqual } from "@eccos/core/signature";
@@ -513,6 +514,11 @@ export async function registerWabasForToken(
         onboardingType,
       })),
     );
+
+    const health = await readTokenHealth(appConfig, businessToken);
+    if (health) {
+      for (const registration of registrations) await controlPlane.recordTokenHealth(registration.waba.wabaId, health);
+    }
 
     // An account that may not add numbers registers only what it already had.
     const registered = registrations.map((registration) => {

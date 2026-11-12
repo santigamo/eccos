@@ -85,6 +85,7 @@ import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-
 import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
+import { noteSendFailure } from "./token-health";
 import { isPublicConfigKey } from "./private-config-keys";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
@@ -1790,6 +1791,7 @@ export class EccosGateway extends DurableObject<Env> {
       }
       return;
     }
+    await noteSendFailure(this.env, this.wabaIdForOps(), result.error);
     const error = JSON.stringify(result.error);
     const verdict = classifySendFailure(result.status, sendOutcomeUnknown(result), metaErrorCodes(result.error), true);
     if (verdict === "throttled" && attempts < MAX_THROTTLED_ATTEMPTS) {
@@ -1957,6 +1959,7 @@ export class EccosGateway extends DurableObject<Env> {
       }
       return { kind: "done" };
     }
+    await noteSendFailure(this.env, this.wabaIdForOps(), result.error);
     const error = JSON.stringify(result.error);
     const codes = metaErrorCodes(result.error);
     const verdict = classifySendFailure(result.status, sendOutcomeUnknown(result), codes, own !== null);
