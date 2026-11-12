@@ -153,7 +153,7 @@ exposure, not an oversight; a CSP is separate work with its own blast radius.
 
 What bounds it today:
 
-- **Lazy and local.** The script is injected on click, from the Numbers page only. It is not in the
+- **Local.** The script is injected when the connect fork mounts (so the click can open Meta's window synchronously), from the Numbers page only. It is not in the
   base bundle and never loads on a page that renders message content, delivery payloads or keys.
 - **Nothing valuable is on the page.** The dashboard holds no account API key in the browser at all;
   the authorization code is posted to a session-authenticated server function within its 30-second

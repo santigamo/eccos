@@ -230,10 +230,127 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(live(host)).not.toContain("boom");
   });
 
-  test("mounting loads nothing and starts nothing", async () => {
+  test("mounting preloads the handoff and opens nothing", async () => {
     await mountChoices();
-    expect(handoffs).toBe(0);
+    expect(handoffs).toBe(1);
     expect(loginCalls).toBe(0);
+  });
+
+  test("the click calls FB.login in its own task, with nothing left to await", async () => {
+    const host = await mountChoices();
+    const before = handoffs;
+    // A synchronous act: no microtask or timer may run between click and login.
+    act(() => card(host, "A new number").click());
+    expect(loginCalls).toBe(1);
+    expect(handoffs).toBe(before);
+  });
+
+  test("the SDK is invoked before the click handler returns, even if the config is slow later", async () => {
+    const host = await mountChoices();
+    stubs.getEmbeddedSignupConfig = () => new Promise(() => {});
+    stubs.startConnect = () => new Promise(() => {});
+    act(() => card(host, "A new number").click());
+    expect(loginCalls).toBe(1);
+  });
+
+  test("an unready click shows Open Meta instead of awaiting, and that click logs in synchronously", async () => {
+    stubs.startConnect = async () => ({ ok: false, kind: "unreachable", error: "down" });
+    const host = await mountChoices();
+    stubs.startConnect = real.startConnect === stubs.startConnect ? stubs.startConnect : (async () => ({
+      ok: true,
+      data: { state: "state-late", url: "https://gateway.test/connect", expiresAt: Date.now() + 30 * 60_000 },
+    }));
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(0);
+    const open = [...host.querySelectorAll("button")].find((b) => b.textContent === "Open Meta");
+    expect(open).toBeDefined();
+
+    act(() => open?.click());
+    expect(loginCalls).toBe(1);
+    await act(async () => loginCallback?.(FINISHED));
+    await settle();
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-late" }]);
+  });
+
+  test("a window the browser refused is blocked at once, with the host and a way out", async () => {
+    const original = window.open;
+    window.open = () => null;
+    (window as unknown as { FB: { login: unknown } }).FB.login = (cb: LoginCallback) => {
+      loginCalls += 1;
+      loginCallback = cb;
+      window.open("https://www.facebook.com/", "_blank");
+    };
+    try {
+      const host = await mountChoices();
+      act(() => card(host, "A new number").click());
+      expect(live(host)).toContain("blocked");
+      expect(live(host)).toContain(window.location.host);
+      expect(live(host)).not.toContain("Start again");
+      expect(card(host, "A new number").disabled).toBe(false);
+    } finally {
+      window.open = original;
+    }
+  });
+
+  test("a window that did open is never flagged, however long it takes", async () => {
+    const original = window.open;
+    window.open = (() => ({ closed: false })) as unknown as typeof window.open;
+    (window as unknown as { FB: { login: unknown } }).FB.login = (cb: LoginCallback) => {
+      loginCalls += 1;
+      loginCallback = cb;
+      window.open("https://www.facebook.com/", "_blank");
+    };
+    try {
+      const host = await mountChoices(20);
+      act(() => card(host, "A new number").click());
+      await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 60))));
+      expect(live(host)).toBe("");
+    } finally {
+      window.open = original;
+    }
+  });
+
+  test("closing the window with no Meta message records where we know it stopped: nowhere", async () => {
+    const events: unknown[] = [];
+    const tracked: [string, unknown][] = [];
+    stubs.recordConnectSessionEvent = async (input: unknown) => {
+      events.push((input as { data: unknown }).data);
+      return { ok: true };
+    };
+    (window as unknown as { umami: unknown }).umami = { track: (n: string, d: unknown) => tracked.push([n, d]) };
+    const host = await mountChoices();
+    await runFlow(host, { authResponse: null });
+    expect(events).toEqual([{ event: "POPUP_CLOSED" }]);
+    expect(tracked.find(([n]) => n === "es_abandon")?.[1]).toEqual({ step: "none", events: 0, after: "<10s" });
+    delete (window as unknown as { umami?: unknown }).umami;
+  });
+
+  test("closing the window after Meta reported a step records that step", async () => {
+    const events: unknown[] = [];
+    const tracked: [string, unknown][] = [];
+    stubs.recordConnectSessionEvent = async (input: unknown) => {
+      events.push((input as { data: unknown }).data);
+      return { ok: true };
+    };
+    (window as unknown as { umami: unknown }).umami = { track: (n: string, d: unknown) => tracked.push([n, d]) };
+    const host = await mountChoices();
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: "https://www.facebook.com",
+          data: JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "CANCEL", data: { current_step: "PHONE_NUMBER_SETUP" } }),
+        }),
+      );
+    });
+    await act(async () => loginCallback?.({ authResponse: null }));
+    await settle();
+    expect(events).toContainEqual({ event: "CANCEL", currentStep: "PHONE_NUMBER_SETUP" });
+    expect(events).toContainEqual({ event: "POPUP_CLOSED", currentStep: "PHONE_NUMBER_SETUP" });
+    expect(tracked.find(([n]) => n === "es_abandon")?.[1]).toMatchObject({ step: "PHONE_NUMBER_SETUP", events: 1 });
+    delete (window as unknown as { umami?: unknown }).umami;
   });
 
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
@@ -261,7 +378,13 @@ describe("ConnectNumberChoices in a real DOM", () => {
     handoffTtlMs = 30 * 60_000;
     await act(async () => card(host, "A new number").click());
     await settle();
+    // Not usable, so the click waits and asks for a fresh one instead of opening.
     expect(handoffs).toBe(3);
+    expect(loginCalls).toBe(1);
+    const open = [...host.querySelectorAll("button")].find((b) => b.textContent === "Open Meta");
+    await act(async () => open?.click());
+    await settle();
+    expect(loginCalls).toBe(2);
     await act(async () => loginCallback?.(FINISHED));
     await settle();
     expect(exchanges).toEqual([{ code: "code-1", state: "state-3" }]);
@@ -274,24 +397,25 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(handoffs).toBe(2);
   });
 
-  test("a blocked popup shows a message and a Start again control, and changes nothing else", async () => {
+  test("an unobserved window that is slow gets a slow note, not a blocked verdict, and Start again", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("Allow pop-ups");
+    expect(live(host)).toContain("taking longer");
+    expect(live(host)).not.toContain("blocked");
     expect(live(host)).toContain("Start again");
     // Message only: the cards stay disabled until the customer resets.
     expect(card(host, "A new number").disabled).toBe(true);
     expect(navigated).toEqual([]);
   });
 
-  test("a false watchdog fire followed by a completed callback still exchanges and navigates", async () => {
+  test("a slow note followed by a completed callback still exchanges and navigates", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("Allow pop-ups");
+    expect(live(host)).toContain("taking longer");
 
     await act(async () => loginCallback?.(FINISHED));
     await settle();
@@ -386,7 +510,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(navigated).toEqual(["/numbers"]);
   });
 
-  test("a code arriving clears the blocked-popup message", async () => {
+  test("a code arriving clears the slow note", async () => {
     let release: (value: unknown) => void = () => {};
     stubs.exchangeConnectCode = () =>
       new Promise((resolve) => {
@@ -396,7 +520,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("Allow pop-ups");
+    expect(live(host)).toContain("taking longer");
 
     await act(async () => loginCallback?.(FINISHED));
     expect(live(host)).toBe("");
@@ -464,7 +588,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await settle();
     document.dispatchEvent(new Event("visibilitychange"));
     await wait(60);
-    expect(live(host)).toContain("Allow pop-ups");
+    expect(live(host)).toContain("taking longer");
   });
 
   test("a remounted panel cannot exchange a second code while the first is in flight", async () => {

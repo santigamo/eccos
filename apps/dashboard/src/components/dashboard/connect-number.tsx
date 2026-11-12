@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { followSignIn } from "../../lib/follow-sign-in";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CloudIcon, LoaderCircleIcon, SmartphoneIcon } from "lucide-react";
@@ -15,7 +16,7 @@ import {
   recordConnectSessionEvent,
   startConnect,
 } from "../../server/gateway";
-import { type FacebookSdk, loadFacebookSdk } from "../../lib/facebook-sdk";
+import { type FacebookSdk, captureWindowOpen, loadFacebookSdk } from "../../lib/facebook-sdk";
 import {
   type ConnectPath,
   loginOptions,
@@ -25,10 +26,12 @@ import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
 import {
   CONNECT_CANCELLED_MESSAGE,
-  CONNECT_POPUP_BLOCKED_MESSAGE,
   handoffUsable,
   judgeExchange,
+  popupBlockedMessage,
+  popupSlowMessage,
   returnPathFor,
+  secondsBucket,
   watchPopup,
 } from "../../lib/connect-result";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
@@ -97,6 +100,13 @@ export function resetConnectGuards(): void {
 
 type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
+type Prepared = { config: EsConfig; sdk: FacebookSdk | null; handoff: Handoff | null };
+/** What a click needs to open Meta with no awaiting. */
+type Ready = { sdk: FacebookSdk; configId: string; state: string };
+
+function handoffReady(handoff: Handoff | null): boolean {
+  return !!handoff?.ok && handoffUsable(handoff.data.expiresAt, Date.now());
+}
 
 /**
  * Shown when the customer picks the WhatsApp Business app path and the SDK is
@@ -157,7 +167,7 @@ export function ConnectNumberChoices({
   className?: string;
   /** Full navigation. A seam for tests. */
   navigate?: (path: string) => void;
-  /** How long Meta's window may take to steal focus before it counts as blocked. */
+  /** How long Meta's window may take to steal focus before we say it is slow. Only used when its opening could not be observed. */
   popupWatchdogMs?: number;
   /** Told whenever a flow opens or settles, so a container can refuse to be
    * dismissed under it. See the effect below. */
@@ -172,8 +182,10 @@ export function ConnectNumberChoices({
    */
   const [feedback, setFeedback] = useState<{
     text: string;
-    tone: "error" | "notice" | "blocked";
+    tone: "error" | "notice" | "blocked" | "slow";
   } | null>(null);
+  /** Set when the click found something unready and had to wait: Meta opens from a fresh click on "Open Meta". */
+  const [awaiting, setAwaiting] = useState<ConnectPath | null>(null);
   const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
@@ -186,12 +198,16 @@ export function ConnectNumberChoices({
     [navigate],
   );
   /**
-   * What a retry can skip. The SDK and its config are loaded on the first
-   * click, never on mount (docs/threat-model.md); `next` is the handoff
-   * requested in the background once a flow ended without leaving the page.
+   * Everything `FB.login` needs, prepared when the fork mounts so the click can
+   * call it in its own task. Browsers only let `window.open` through while the
+   * click's transient user activation lives, so nothing is awaited between the
+   * click and `sdk.login`.
    */
-  const loaded = useRef<{ config: EsConfig; sdk: FacebookSdk | null } | null>(null);
-  const next = useRef<{ handoff: Promise<Handoff> } | null>(null);
+  const prepared = useRef<Prepared | null>(null);
+  const preparing = useRef<Promise<Prepared & { handoff: Handoff }> | null>(null);
+  const pendingHandoff = useRef<Promise<Handoff | null> | null>(null);
+  /** What Meta posted since the popup opened, so an abandonment says where, or that nothing came. */
+  const session = useRef<{ count: number; step?: string; openedAt: number }>({ count: 0, openedAt: 0 });
 
   /**
    * Session logging (Meta's `message` listener).
@@ -206,6 +222,8 @@ export function ConnectNumberChoices({
     function onMessage(event: MessageEvent) {
       const parsed = parseSessionEvent(event.origin, event.data);
       if (!parsed) return;
+      session.current.count += 1;
+      if (parsed.currentStep) session.current.step = parsed.currentStep;
       trackSessionEvent(parsed);
       // Telemetry must never break the flow the operator is in the middle of.
       void recordConnectSessionEvent({ data: parsed }).catch(() => {});
@@ -233,16 +251,50 @@ export function ConnectNumberChoices({
     onBusyChange?.(starting !== null);
   }, [starting, onBusyChange]);
 
-  /** Request the next attempt's handoff while the SDK is already loaded. */
-  const prepareNext = useCallback(() => {
-    if (!loaded.current?.sdk) return;
-    const handoff = startConnect();
-    const entry = { handoff };
-    next.current = entry;
-    handoff.catch(() => {
-      if (next.current === entry) next.current = null;
-    });
+  /** Request the next attempt's handoff in the background, so the next click stays synchronous. */
+  const refreshHandoff = useCallback(() => {
+    if (!prepared.current?.sdk) return;
+    const request: Promise<Handoff | null> = startConnect()
+      .then((handoff) => {
+        if (prepared.current) prepared.current.handoff = handoff;
+        return handoff;
+      })
+      .catch(() => null)
+      .finally(() => {
+        if (pendingHandoff.current === request) pendingHandoff.current = null;
+      });
+    pendingHandoff.current = request;
   }, []);
+
+  /** Load config, SDK and a fresh handoff. Shared by the mount effect and the click's slow path. */
+  const prepare = useCallback((): Promise<Prepared & { handoff: Handoff }> => {
+    if (preparing.current) return preparing.current;
+    const run = (async () => {
+      const cached = prepared.current;
+      let handoff = cached?.handoff ?? null;
+      if (!handoffReady(handoff)) handoff = (await pendingHandoff.current) ?? null;
+      const [config, fresh] = await Promise.all([
+        cached?.config.ok ? cached.config : getEmbeddedSignupConfig(),
+        handoff && handoffReady(handoff) ? handoff : startConnect(),
+      ]);
+      let sdk = cached?.sdk ?? null;
+      if (!sdk && fresh.ok && config.ok && config.data) {
+        sdk = await loadFacebookSdk(config.data.appId, config.data.graphVersion).catch(() => null);
+      }
+      const next = { config, sdk, handoff: fresh };
+      prepared.current = next;
+      return next;
+    })().finally(() => {
+      preparing.current = null;
+    });
+    preparing.current = run;
+    return run;
+  }, []);
+
+  useEffect(() => {
+    // Best effort: a failure here is retried, and shown, by the click.
+    prepare().catch(() => {});
+  }, [prepare]);
 
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(
@@ -268,7 +320,7 @@ export function ConnectNumberChoices({
             return;
           }
           setError(failureCopy(result).detail);
-          prepareNext();
+          refreshHandoff();
           return;
         }
         // The server function audits every outcome. Only a failed exchange
@@ -277,7 +329,7 @@ export function ConnectNumberChoices({
         track("connect_outcome", { result: verdict.outcome });
         if (!verdict.navigate) {
           setError(verdict.message);
-          prepareNext();
+          refreshHandoff();
           return;
         }
         // The numbers table is a loader read; a reload is the honest way to
@@ -293,41 +345,107 @@ export function ConnectNumberChoices({
         guards.exchanging = false;
       }
     },
-    [leave, setError, prepareNext],
+    [leave, setError, refreshHandoff],
   );
 
-  /** A handoff prepared in the background, if its state has long enough left. */
-  async function takeHandoff(): Promise<Handoff> {
-    const prepared = next.current;
-    next.current = null;
-    const handoff = await prepared?.handoff.catch(() => null);
-    if (handoff?.ok && handoffUsable(handoff.data.expiresAt, Date.now())) return handoff;
-    return startConnect();
-  }
-
-  async function start(path: ConnectPath) {
-    track("connect_choice", { path });
+  /**
+   * Open Meta's window. SYNCHRONOUS up to and including `sdk.login`: it runs
+   * straight from a click, and an `await` before `window.open` can lose the
+   * click's user activation. Do not add one.
+   */
+  function launch(path: ConnectPath, ready: Ready) {
     const mine = ++attempt.current;
     setStarting(path);
+    setAwaiting(null);
     setFeedback(null);
-    let opened = false;
+    // A handoff's state is single use; the next attempt gets its own.
+    if (prepared.current) prepared.current.handoff = null;
+    session.current = { count: 0, openedAt: Date.now() };
+    track("es_popup_open");
+    const { state } = ready;
+    const onLogin = (response: { authResponse?: { code?: string } | null }) => {
+      if (guards.left) return;
+      stopWatch.current?.();
+      const code = response.authResponse?.code;
+      if (code) {
+        setFeedback((current) => (current?.tone === "blocked" || current?.tone === "slow" ? null : current));
+        void finish(code, state).finally(() => {
+          if (attempt.current === mine) setStarting(null);
+        });
+        return;
+      }
+      // Closing the popup before the final screen is a cancel, not a failure.
+      // Meta does not always post a CANCEL for a closed window, so what we did
+      // see (or that we saw nothing) is recorded here.
+      if (attempt.current !== mine) return;
+      const { count, step, openedAt } = session.current;
+      track("connect_outcome", { result: "cancelled" });
+      track("es_abandon", { step: step ?? "none", events: count, after: secondsBucket(Date.now() - openedAt) });
+      void recordConnectSessionEvent({
+        data: { event: "POPUP_CLOSED", ...(step ? { currentStep: step } : {}) },
+      }).catch(() => {});
+      setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
+      setStarting(null);
+      refreshHandoff();
+    };
+    let popup: Window | null | undefined;
     try {
-      const cached = loaded.current;
-      const [config, handoff] = await Promise.all([
-        cached ? cached.config : getEmbeddedSignupConfig(),
-        takeHandoff(),
-      ]);
+      popup = captureWindowOpen(() => ready.sdk.login(onLogin, loginOptions(ready.configId, path)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setStarting(null);
+      return;
+    }
+    if (popup === null) {
+      // The browser refused the window: definitive, nothing to wait for.
+      track("connect_outcome", { result: "popup_blocked" });
+      setFeedback({ text: popupBlockedMessage(window.location.host), tone: "blocked" });
+      setStarting(null);
+      refreshHandoff();
+      return;
+    }
+    if (popup === undefined) {
+      // The window could not be observed: only claim it is slow, never blocked.
+      stopWatch.current = watchPopup(() => {
+        track("connect_outcome", { result: "popup_slow" });
+        setFeedback({ text: popupSlowMessage(window.location.host), tone: "slow" });
+        refreshHandoff();
+      }, popupWatchdogMs);
+    }
+  }
+
+  /** Everything is loaded and the handoff is fresh: the click can open Meta itself. */
+  function readyNow(): Ready | null {
+    const p = prepared.current;
+    if (!p?.sdk || !p.config.ok || !p.config.data || !p.handoff?.ok) return null;
+    if (!handoffUsable(p.handoff.data.expiresAt, Date.now())) return null;
+    return { sdk: p.sdk, configId: p.config.data.configId, state: p.handoff.data.state };
+  }
+
+  function begin(path: ConnectPath) {
+    const ready = readyNow();
+    if (ready) launch(path, ready);
+    else void startSlow(path);
+  }
+
+  function start(path: ConnectPath) {
+    track("connect_choice", { path });
+    begin(path);
+  }
+
+  /** Something was not ready at the click: finish loading, then ask for a fresh click. */
+  async function startSlow(path: ConnectPath) {
+    const mine = ++attempt.current;
+    setStarting(path);
+    setAwaiting(null);
+    setFeedback(null);
+    try {
+      const { config, sdk, handoff } = await prepare();
+      if (attempt.current !== mine) return;
       if (!handoff.ok) {
         setError(failureCopy(handoff).detail);
         return;
       }
-
-      let sdk = cached?.sdk ?? null;
-      if (!sdk && config.ok && config.data) {
-        sdk = await loadFacebookSdk(config.data.appId, config.data.graphVersion).catch(() => null);
-      }
-      loaded.current = { config, sdk };
-
       // No SDK configured, or it would not load (blocked, offline, an
       // extension). The redirect still serves `new-number`; it CANNOT serve
       // `business-app`, so that one stops here rather than being handed the
@@ -340,44 +458,13 @@ export function ConnectNumberChoices({
         leave(handoff.data.url);
         return;
       }
-
-      // The callback owns this state: a late answer from a window the customer
-      // had given up on still exchanges the code it was issued with.
-      const { state } = handoff.data;
-      track("es_popup_open");
-      opened = true;
-      sdk.login((response) => {
-        if (guards.left) return;
-        stopWatch.current?.();
-        const code = response.authResponse?.code;
-        if (code) {
-          setFeedback((current) => (current?.tone === "blocked" ? null : current));
-          void finish(code, state).finally(() => {
-            if (attempt.current === mine) setStarting(null);
-          });
-          return;
-        }
-        // Closing the popup before the final screen is a cancel, not a
-        // failure — the session event already recorded which screen it was.
-        if (attempt.current !== mine) return;
-        track("connect_outcome", { result: "cancelled" });
-        setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
-        setStarting(null);
-        prepareNext();
-      }, loginOptions(config.data.configId, path));
-      // Message only: the window may still be coming up, so nothing is cleared
-      // and the cards stay disabled. "Start again" is the only reset.
-      stopWatch.current = watchPopup(() => {
-        track("connect_outcome", { result: "popup_blocked" });
-        setFeedback({ text: CONNECT_POPUP_BLOCKED_MESSAGE, tone: "blocked" });
-        prepareNext();
-      }, popupWatchdogMs);
+      // Awaiting spent the click's activation: Meta opens from the next one.
+      setAwaiting(path);
     } catch (err) {
       if (followSignIn(err)) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      // Only the SDK path leaves the popup open; its callback clears `starting`.
-      if (!opened) setStarting(null);
+      if (attempt.current === mine) setStarting(null);
     }
   }
 
@@ -385,6 +472,7 @@ export function ConnectNumberChoices({
     if (guards.exchanging) return;
     stopWatch.current?.();
     attempt.current += 1;
+    setAwaiting(null);
     setFeedback(null);
     setStarting(null);
   }
@@ -396,18 +484,27 @@ export function ConnectNumberChoices({
         className={cn(
           "block",
           feedback &&
-            (feedback.tone === "notice"
+            (feedback.tone === "notice" || feedback.tone === "slow"
               ? "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground"
               : AUTH_ERROR_BANNER_CLASS),
         )}
       >
         {feedback?.text}
-        {feedback?.tone === "blocked" ? (
+        {feedback?.tone === "slow" ? (
           <button type="button" onClick={startAgain} className="ml-2 underline underline-offset-2">
             Start again
           </button>
         ) : null}
       </output>
+
+      {awaiting ? (
+        <div className="flex flex-col gap-2">
+          <p className="m-0 text-sm text-muted-foreground">Ready. Meta opens in its own window.</p>
+          <Button type="button" onClick={() => begin(awaiting)} className="self-start">
+            Open Meta
+          </Button>
+        </div>
+      ) : null}
 
       {/* Each choice IS the action: there is nothing to configure between
             picking and launching, and a confirm step here would only add a

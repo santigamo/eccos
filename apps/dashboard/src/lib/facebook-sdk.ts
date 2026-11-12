@@ -15,11 +15,12 @@
  * but the exposure is real and is written down in docs/threat-model.md.
  *
  * The blast radius is kept as small as it can be without a CSP: the script is
- * loaded **lazily**, only when an operator actually clicks Connect, and only on
- * the one page that needs it — never as part of the base bundle, and never on a
- * page that renders message content or keys. If it fails to load for any reason
- * (blocked, offline, an extension), the caller falls back to the server-side
- * redirect, which needs no third-party script at all.
+ * loaded only on the one page that needs it, when the connect fork mounts (so
+ * the click can call `FB.login` synchronously and keep its user activation) —
+ * never as part of the base bundle, and never on a page that renders message
+ * content or keys. If it fails to load for any reason (blocked, offline, an
+ * extension), the caller falls back to the server-side redirect, which needs no
+ * third-party script at all.
  */
 
 /** The sliver of the SDK surface this console uses. */
@@ -106,4 +107,28 @@ export function loadFacebookSdk(appId: string, graphVersion: string): Promise<Fa
     document.head.appendChild(script);
   });
   return loading;
+}
+
+/**
+ * Run `fn` (the `FB.login` call) and report what `window.open` did inside it:
+ * a Window when the popup opened, `null` when the browser refused it, and
+ * `undefined` when the SDK did not open a window synchronously at all.
+ *
+ * `FB.login` does not return its window and never calls back when the browser
+ * blocks it, so this is the only reliable blocked-versus-opening signal. It
+ * works because the popup must be spawned in the click's own task anyway.
+ */
+export function captureWindowOpen(fn: () => void): Window | null | undefined {
+  const original = window.open;
+  let result: Window | null | undefined;
+  window.open = ((...args: Parameters<typeof window.open>) => {
+    result = original.apply(window, args);
+    return result;
+  }) as typeof window.open;
+  try {
+    fn();
+  } finally {
+    window.open = original;
+  }
+  return result;
 }

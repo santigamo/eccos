@@ -69,8 +69,10 @@ export interface AnalyticsEventMap {
   es_finish: undefined;
   es_cancel: { step?: string };
   es_error: { code?: string };
+  /** The popup closed with no code. `events` is how many Meta messages arrived: 0 means Meta posted nothing. */
+  es_abandon: { step: string; events: number; after: string };
   connect_outcome: {
-    result: "ok" | "skipped" | "cancelled" | "popup_blocked" | "unknown" | "no_number" | "provisioning_failed" | ConnectFailureCode;
+    result: "ok" | "skipped" | "cancelled" | "popup_blocked" | "popup_slow" | "unknown" | "no_number" | "provisioning_failed" | ConnectFailureCode;
   };
 }
 
