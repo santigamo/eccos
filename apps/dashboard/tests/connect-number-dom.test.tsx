@@ -116,18 +116,31 @@ afterAll(async () => {
 
 const settle = () => act(async () => void (await new Promise((resolve) => setTimeout(resolve, 5))));
 
+let rerender: (node: ReactNode) => void = () => {};
+
 async function mount(node: ReactNode): Promise<HTMLElement> {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   await act(async () => root.render(node));
+  rerender = (next) => root.render(next);
   unmount = () => root.unmount();
   await settle();
   return host;
 }
 
-const mountChoices = (popupWatchdogMs = 3_000) =>
-  mount(<ConnectNumberChoices navigate={(path) => navigated.push(path)} popupWatchdogMs={popupWatchdogMs} />);
+type Blocked = "reauth-required" | "missing-permission" | null;
+
+const choices = (popupWatchdogMs: number, blocked: Blocked) => (
+  <ConnectNumberChoices
+    navigate={(path) => navigated.push(path)}
+    popupWatchdogMs={popupWatchdogMs}
+    blocked={blocked}
+  />
+);
+
+const mountChoices = (popupWatchdogMs = 3_000, blocked: Blocked = null) =>
+  mount(choices(popupWatchdogMs, blocked));
 
 function card(host: HTMLElement, title: string): HTMLButtonElement {
   const found = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(title));
@@ -147,6 +160,67 @@ async function runFlow(host: HTMLElement, response: Parameters<LoginCallback>[0]
 }
 
 const FINISHED = { authResponse: { code: "code-1" } };
+
+describe("what stands before Meta's window", () => {
+  const owed = { ok: false, kind: "forbidden", reason: "reauth-required", error: "x" };
+
+  test("owed step-up is settled before any card can be pressed, so the press opens the window", async () => {
+    const { registerStepUpPrompt, settleStepUp } = await import("../src/lib/step-up");
+    const asked: (string | null)[] = [];
+    const unregister = registerStepUpPrompt((reason) => void asked.push(reason));
+    const host = await mountChoices(3_000, "reauth-required");
+
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("needs your two-factor code first");
+    expect(loginCalls).toBe(0);
+
+    await act(async () => card(host, "Confirm it's you").click());
+    expect(asked).toEqual(["reauth-required"]);
+    await act(async () => settleStepUp(true));
+    await settle();
+    expect(card(host, "A new number").disabled).toBe(false);
+    expect(loginCalls).toBe(0);
+
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(1);
+    unregister();
+  });
+
+  test("step-up that lapsed by the time of the click asks again instead of opening anything", async () => {
+    stubs.startConnect = async () => owed;
+    const host = await mountChoices();
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(0);
+    expect(navigated).toEqual([]);
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("Confirm it's you");
+  });
+
+  test("a role that may not connect is told so, and is never asked for a second factor", async () => {
+    const host = await mountChoices(3_000, "missing-permission");
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("Your role in this workspace does not allow this");
+    expect(host.textContent).not.toContain("two-factor");
+    expect(host.textContent).not.toContain("Confirm it's you");
+  });
+
+  test("a fresh read of what is owed waits for an open flow to end", async () => {
+    const host = await mountChoices();
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(1);
+
+    // The route re-read the session while Meta's window is open.
+    await act(async () => rerender(choices(3_000, "reauth-required")));
+    expect(host.textContent).not.toContain("Confirm it's you");
+
+    await act(async () => loginCallback?.({ authResponse: null }));
+    await settle();
+    expect(host.textContent).toContain("Confirm it's you");
+  });
+});
 
 describe("ConnectNumberChoices in a real DOM", () => {
   test("the live region is mounted empty and gets filled", async () => {

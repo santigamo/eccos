@@ -10,6 +10,7 @@
 
 import type { GatewayAction } from "./permissions";
 import { UnauthorizedError, type AuthLike } from "./session";
+import type { StepUpReason } from "./step-up";
 
 export type { GatewayAction };
 
@@ -34,6 +35,7 @@ export type ForbiddenReason =
   | "select-organization"
   | "not-a-member"
   | "missing-permission"
+  | StepUpReason
   | "other";
 
 /** Typed error for authenticated-but-forbidden requests. */

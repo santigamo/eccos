@@ -20,6 +20,8 @@ import {
   verifyMembership,
   type Membership,
 } from "./auth/tenant";
+import type { StepUpReason } from "@eccos/auth-baseline/step-up";
+import { stepUpReasonOfError } from "./auth/step-up-guard";
 import { activeWorkspace } from "./lib/workspaces";
 
 export interface OrganizationView {
@@ -270,7 +272,9 @@ const inviteInput = z
 export const inviteMember = createServerFn({ method: "POST" })
   .validator((input: unknown) => inviteInput.parse(input))
   .handler(
-    async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async ({
+      data,
+    }): Promise<{ ok: true } | { ok: false; error: string; reason?: StepUpReason }> => {
       try {
         const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "administer");
         if (organizationId !== data.organizationId) {
@@ -289,7 +293,14 @@ export const inviteMember = createServerFn({ method: "POST" })
         });
         return { ok: true };
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        // Step-up is judged inside `createInvitation`, by the organization
+        // hook; its refusal carries the reason `withStepUp` acts on.
+        const reason = stepUpReasonOfError(err);
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          ...(reason ? { reason } : {}),
+        };
       }
     },
   );
@@ -381,6 +392,7 @@ export const listMyInvitations = createServerFn({ method: "GET" }).handler(
 export interface SessionUserView {
   name: string;
   email: string;
+  twoFactorEnabled: boolean;
   /**
    * The organizations this user belongs to, for the shell's workspace control.
    * Display data: the list an operator may CHOOSE from, never proof they hold
@@ -420,6 +432,7 @@ export const getSessionUser = createServerFn({ method: "GET" }).handler(
       return {
         name: session.name,
         email: session.email,
+        twoFactorEnabled: session.twoFactorEnabled,
         workspaces,
         activeWorkspaceId: activeWorkspace(workspaces, session.activeOrganizationId)?.id ?? null,
       };

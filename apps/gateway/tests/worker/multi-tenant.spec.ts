@@ -398,6 +398,81 @@ describe("account-scoped control plane", () => {
     expect(bAfter).toHaveLength(1);
   });
 
+  it("refuses reactions, template edits and deletes, bulk retries, diagnosis and reconcile on another account's WABA", async () => {
+    const accA = await createAccount("acc-neg-a");
+    const accB = await createAccount("acc-neg-b");
+    await cp(async (i) => {
+      await i.registerWaba({
+        accountId: accA.accountId,
+        wabaId: "WABA_NEG_A",
+        metaAccessToken: "token-neg-a",
+        provisioningStatus: "active",
+        phones: [{ phoneNumberId: "PN_NEG_A", displayPhoneNumber: "+34 600 000 301" }],
+      });
+      await i.registerWaba({
+        accountId: accB.accountId,
+        wabaId: "WABA_NEG_B",
+        metaAccessToken: "token-neg-b",
+        provisioningStatus: "active",
+        phones: [{ phoneNumberId: "PN_NEG_B", displayPhoneNumber: "+34 600 000 302" }],
+      });
+    });
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA_NEG_B"), async (gateway: EccosGateway) => {
+      gateway.saveConfig({ META_WABA_ID: "WABA_NEG_B", META_PHONE_NUMBER_ID: "PN_NEG_B" });
+      gateway.ingest([
+        {
+          type: "reply",
+          from: "34600000302",
+          messageId: "wamid.NEG_B",
+          text: "B",
+          at: 1_700_000_000_000,
+          phoneNumberId: "PN_NEG_B",
+        },
+      ]);
+      gateway.sql.exec("UPDATE deliveries SET status='failed' WHERE id = 1");
+    });
+    const wabaB = () => cp((i) => i.getWabaRecord(accB.accountId, "WABA_NEG_B"));
+    const before = await wabaB();
+
+    const graph = mockGraph();
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const everything = { from: 0, to: Date.now() };
+    // Account A names B's WABA, and B's own phone and template, in every call.
+    const reaction = {
+      wabaId: "WABA_NEG_B",
+      phoneNumberId: "PN_NEG_B",
+      to: "34600000302",
+      messageId: "wamid.NEG_B",
+      emoji: "👍",
+    };
+    const template = { wabaId: "WABA_NEG_B", name: "order_update", templateId: "1234567890" };
+    const edit = { ...template, language: "en_US", bodyText: "Edited by another tenant" };
+
+    await expect(rpc.sendReaction(reaction, accA.accountId)).rejects.toThrow(/not owned/);
+    await expect(rpc.editTemplate(edit, accA.accountId)).rejects.toThrow(/not owned/);
+    await expect(rpc.deleteTemplate(template, accA.accountId)).rejects.toThrow(/not owned/);
+    await expect(rpc.retryFailedDeliveries(everything, "WABA_NEG_B", accA.accountId)).rejects.toThrow(/not owned/);
+    await expect(rpc.diagnoseWaba("WABA_NEG_B", accA.accountId)).rejects.toThrow(/not owned/);
+    expect(await rpc.reconcileWaba("WABA_NEG_B", accA.accountId)).toEqual({
+      ok: false,
+      error: expect.stringMatching(/not owned/),
+    });
+
+    // Nothing left the gateway under B's token, and B's state did not move.
+    expect(graph).not.toHaveBeenCalled();
+    expect(await wabaB()).toEqual(before);
+    await runInDurableObject(getGatewayStubForWaba(env, "WABA_NEG_B"), (gateway: EccosGateway) => {
+      expect(gateway.sql.exec("SELECT status FROM deliveries").toArray()).toEqual([{ status: "failed" }]);
+      expect(gateway.sql.exec("SELECT COUNT(*) AS n FROM outbound_messages").one()).toEqual({ n: 0 });
+    });
+
+    // The owner's own call works on the same fixture, so the refusals are about ownership.
+    expect(await rpc.retryFailedDeliveries(everything, "WABA_NEG_B", accB.accountId)).toEqual({
+      requeued: 1,
+      skippedRedacted: 0,
+    });
+  });
+
   it("bootstrapping an account never returns Meta credentials", async () => {
     const account = await cp((i) => i.createAccount({ accountId: "acc-boot", name: "Boot" }));
     const serialized = JSON.stringify(account);

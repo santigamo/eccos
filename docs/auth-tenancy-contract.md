@@ -102,16 +102,19 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Subscriber config write | admin | **Yes** | TOTP (owner/admin) + ≤15 min recent auth |
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |
 | API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
-| Embedded Signup `/connect` start + callback | admin | **Yes** | Account-bound OAuth state |
+| Embedded Signup `/connect` start | admin | **Yes** | Issues the account-bound OAuth state |
+| Embedded Signup callback / code exchange | admin | — (by design) | Must present the state the stepped-up start issued. Meta's code is single-use and lives 30 seconds, so a step-up refusal here would lose it and force the whole flow again |
+| Conversation retention write | admin | **Yes** | Shortening it purges history |
 | Export data | admin | **Yes** | |
 | GDPR erasure (`eraseByPhone`) | owner | **Yes** | Owner-only destructive action |
 | Invitations & member role changes | owner/admin (Better Auth defaults) | **Yes** | Verified email required (§7) |
 | Organization create | any verified user | — | Own new org only; allowlisted signup (§7) |
 | Organization delete | disabled in v1 | — | Rejected everywhere (§9) |
 
-"**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** a
-recent authentication within the step-up window (15 minutes); otherwise the server demands
-re-authentication before executing the action. Reads never require step-up.
+"**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** have
+proved that second factor within the step-up window (15 minutes); otherwise the server demands
+re-authentication before executing the action. A password alone never renews it, and neither does
+a session's age. Reads never require step-up.
 
 ## 5. Session & active-organization rules
 
@@ -168,11 +171,14 @@ re-authentication before executing the action. Reads never require step-up.
   eccos-0x0.11. Provider secrets live only in Worker secrets/bindings; the interface ships in
   eccos-0x0.2 so auth flows are testable with a stub sender.
 - **MFA policy**: TOTP is **required for owner/admin roles before sensitive actions** — connect,
-  API keys, export, erasure, membership/role changes, and subscriber config write (§4). eccos-0x0.7
-  implements enrollment and enforcement; this contract fixes the policy.
-- **Recent-authentication step-up window: 15 minutes.** A sensitive action requires an
-  authentication (fresh sign-in or step-up challenge) within the last 15 minutes; older sessions
-  must re-authenticate first.
+  API keys, export, erasure, membership/role changes, and subscriber config write (§4). Enrollment
+  and enforcement are implemented (`eccos-eyel`; docs/auth-hardening.md, "Step-up enforcement");
+  this contract fixes the policy. **Setting up TOTP requires a code mailed to the account's
+  verified address**, so the password alone never yields a second factor, and every change to
+  the second factor is notified by email.
+- **Recent-authentication step-up window: 15 minutes.** A sensitive action requires the second
+  factor to have been proved within the last 15 minutes, by a sign-in that included it or by the
+  step-up challenge on the current session; otherwise the code is asked for again first.
 - **Recovery** uses the email reset flow with **anti-enumeration generic responses** — identical
   responses and timing whether or not the address exists; reset links only work for verified,
   existing identities.

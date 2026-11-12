@@ -23,6 +23,9 @@ import {
 } from "../../lib/embedded-signup";
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
+import { Button } from "../ui/button";
+import { promptStepUp, STEP_UP_COPY, stepUpReason } from "../../lib/step-up";
+import type { ConnectBlock } from "../../server/connect-block";
 import {
   CONNECT_CANCELLED_MESSAGE,
   CONNECT_POPUP_BLOCKED_MESSAGE,
@@ -111,6 +114,18 @@ type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
 const SDK_REQUIRED_MESSAGE =
   "Connecting a number that is already on the WhatsApp Business app needs Meta's script, which did not load. Check for a blocker or an extension and try again. Do not use the other option: it would take the number off the app.";
 
+/** A neutral note above the cards: what stands before a connection may start. */
+const NOTICE_CLASS =
+  "m-0 border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground";
+
+/** The same words a refused connect start would get, shown before anything is pressed. */
+const MISSING_PERMISSION_COPY = failureCopy({
+  ok: false,
+  kind: "forbidden",
+  reason: "missing-permission",
+  error: "",
+}).detail;
+
 /**
  * The sentence that frames the fork, shared by both containers so they cannot
  * drift: the panel puts it in `FrameDescription` on first run, the dialog in
@@ -150,11 +165,14 @@ export const CONNECT_FORK_DESCRIPTION =
  */
 export function ConnectNumberChoices({
   className,
+  blocked = null,
   onBusyChange,
   navigate = (path) => window.location.assign(path),
   popupWatchdogMs = 3_000,
 }: {
   className?: string;
+  /** What stops the signed-in user connecting right now: the role, or a step-up owed. */
+  blocked?: ConnectBlock | null;
   /** Full navigation. A seam for tests. */
   navigate?: (path: string) => void;
   /** How long Meta's window may take to steal focus before it counts as blocked. */
@@ -175,6 +193,22 @@ export function ConnectNumberChoices({
     tone: "error" | "notice" | "blocked";
   } | null>(null);
   const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
+  /**
+   * What still stands before a connection may start, the role first. Known
+   * when the fork appears (`blocked`, from the route's own read of the
+   * session). A step-up is settled before any card is pressed: Meta's window
+   * only opens on the customer's own click, and a prompt in between would
+   * spend it. A role that may not connect is told so and never asked. A fresh
+   * read is applied once, and never onto a flow that is already open.
+   */
+  const [block, setBlock] = useState(blocked);
+  const applied = useRef(blocked);
+  useEffect(() => {
+    if (starting !== null || applied.current === blocked) return;
+    applied.current = blocked;
+    setBlock(blocked);
+  }, [blocked, starting]);
+  const stepUp = block === "missing-permission" ? null : block;
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
   const attempt = useRef(0);
@@ -318,6 +352,13 @@ export function ConnectNumberChoices({
         takeHandoff(),
       ]);
       if (!handoff.ok) {
+        // Lapsed since the fork appeared. Confirming takes longer than a click
+        // stays a click, so the customer confirms and then chooses again.
+        const lapsed = stepUpReason(handoff);
+        if (lapsed) {
+          setBlock(lapsed);
+          return;
+        }
         setError(failureCopy(handoff).detail);
         return;
       }
@@ -409,6 +450,22 @@ export function ConnectNumberChoices({
         ) : null}
       </output>
 
+      {block === "missing-permission" ? (
+        <p className={NOTICE_CLASS}>{MISSING_PERMISSION_COPY}</p>
+      ) : stepUp ? (
+        <div className={cn(NOTICE_CLASS, "flex flex-wrap items-center justify-between gap-3")}>
+          <span>{STEP_UP_COPY[stepUp].connect}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void promptStepUp(stepUp).then((ok) => ok && setBlock(null))}
+          >
+            {STEP_UP_COPY[stepUp].title}
+          </Button>
+        </div>
+      ) : null}
+
       {/* Each choice IS the action: there is nothing to configure between
             picking and launching, and a confirm step here would only add a
             click before Meta's own multi-screen flow, which is where backing
@@ -423,7 +480,7 @@ export function ConnectNumberChoices({
               <button
                 type="button"
                 onClick={() => start(path)}
-                disabled={starting !== null}
+                disabled={starting !== null || block !== null}
                 className={cn(
                   // INTERACTIVE anatomy, not structural. These rested on
                   // `--line` (7%, "structural hairlines") with no fill, which
@@ -530,7 +587,13 @@ export function ConnectNumberChoices({
  * panel inside a panel. That is why the split exists: one fork, two containers,
  * and the container is the only thing that differs.
  */
-export function ConnectNumberPanel({ heading }: { heading: string }) {
+export function ConnectNumberPanel({
+  heading,
+  blocked,
+}: {
+  heading: string;
+  blocked?: ConnectBlock | null;
+}) {
   return (
     <Frame variant="default" spacing="lg" className="max-w-3xl">
       <FramePanel fit>
@@ -544,7 +607,7 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
             {CONNECT_FORK_DESCRIPTION}
           </FrameDescription>
         </FrameHeader>
-        <ConnectNumberChoices className="pt-5" />
+        <ConnectNumberChoices className="pt-5" blocked={blocked} />
       </FramePanel>
     </Frame>
   );

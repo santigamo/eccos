@@ -129,6 +129,8 @@ let fakeSessionHeaders: Headers | null = null;
 let fakeMemberships: { id: string; name?: string }[] = [{ id: "org-fixture" }];
 /** Gateway actions the fake role does NOT hold, to drive the forbidden path. */
 let fakeDeniedActions = new Set<string>();
+/** Why the fake session fails step-up, or null when it passes. */
+let fakeStepUpRefusal: "totp-required" | "reauth-required" | null = null;
 
 
 const ORG_ID = "org-fixture";
@@ -140,6 +142,8 @@ const ORG_ID = "org-fixture";
 // re-published from the sync mock factory. This lets gateway.ts receive the
 // mocked resolveMemberships while permissions.test.ts (same bun process) keeps
 // working against the real requirePermission/verifyMembership/ForbiddenError.
+const { isStepUpRow, STEP_UP_ROWS } = await import("../src/auth/step-up");
+type Grant = Parameters<typeof isStepUpRow>[0];
 const realTenant = await import("../src/auth/tenant?real-module");
 const realServerAuth = await import("../src/auth/server-auth?real-module");
 
@@ -171,7 +175,9 @@ const fakeServerAuth = {
   UnauthorizedError,
   // Mirrors the real requirePermission's fail-closed ladder: no session,
   // no membership, ambiguous membership, then the capability check.
-  requireGatewayPermission: async (_auth: unknown, _request: Request, action: string) => {
+  // A step-up row resolves to its role action first, exactly as the real seam does.
+  requireGatewayPermission: async (_auth: unknown, _request: Request, grant: Grant) => {
+    const action = isStepUpRow(grant) ? STEP_UP_ROWS[grant] : grant;
     if (!fakeSessionHeaders) throw new UnauthorizedError();
     if (fakeMemberships.length === 0) {
       throw new ForbiddenError(
@@ -187,6 +193,9 @@ const fakeServerAuth = {
         `missing "${action}" permission in this organization`,
         "missing-permission",
       );
+    }
+    if (isStepUpRow(grant) && fakeStepUpRefusal) {
+      throw new ForbiddenError("step-up required", fakeStepUpRefusal);
     }
     return ORG_ID;
   },
@@ -246,11 +255,13 @@ const {
   canSendMessages,
   validateSendTestInput,
   createTemplate,
+  editTemplate,
   deleteTemplate,
   validateCreateTemplateInput,
   validateDeleteTemplateInput,
   validateEditTemplateInput,
   connectWithToken,
+  exchangeConnectCode,
   validateTokenConnectInput,
   listApiKeys,
   issueApiKey,
@@ -280,6 +291,7 @@ afterEach(() => {
   fakeSessionHeaders = null;
   fakeMemberships = [{ id: "org-fixture" }];
   fakeDeniedActions = new Set();
+  fakeStepUpRefusal = null;
 });
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
@@ -624,7 +636,11 @@ describe("session bootstrap (auth-aware state)", () => {
     const result = await startConnect();
     expect(result).toEqual({
       ok: true,
-      data: { url: "https://gateway.example/connect?state=one-time", state: "one-time", expiresAt: 2 },
+      data: {
+        url: "https://gateway.example/connect?state=one-time",
+        state: "one-time",
+        expiresAt: 2,
+      },
     });
     // eccos-5z9: the gateway owns Meta's callback, so it needs somewhere to send
     // the operator back to. The target is built from the request origin, which
@@ -2315,6 +2331,87 @@ describe("failure classification (authorization vs. transport)", () => {
   });
 });
 
+// --- Step-up (contract §4/§8) ---
+
+describe("step-up rows of the capability matrix", () => {
+  const steppedUp: Array<[string, () => Promise<{ ok: boolean }>]> = [
+    ["startConnect", () => startConnect()],
+    ["connectWithToken", () => connectWithToken({ data: { token: `EAAG${"x".repeat(60)}` } })],
+    ["issueApiKey", () => issueApiKey({ data: {} })],
+    ["revokeApiKey", () => revokeApiKey({ data: { keyId: "key_a1" } })],
+    ["setConversationRetention", () => setConversationRetention({ data: { days: 90 } })],
+    ["setSubscriberConfig", () => setSubscriberConfig({ data: { url: "https://new.example.com" } })],
+    ["resubscribe", () => resubscribe()],
+  ];
+
+  /** A binding where any mutation reaching the gateway is recorded. */
+  function mutationBinding(): string[] {
+    const reached: string[] = [];
+    const record = (name: string) => async () => {
+      reached.push(name);
+      return { ok: false, code: "fixture" };
+    };
+    withResources({
+      startConnectForAccountId: record("startConnect"),
+      exchangeConnectCodeForAccountId: record("exchangeConnectCode"),
+      connectWabaWithToken: record("connectWithToken"),
+      issueApiKey: record("issueApiKey"),
+      revokeApiKey: record("revokeApiKey"),
+      setConversationRetention: record("setConversationRetention"),
+      setSubscriberConfig: record("setSubscriberConfig"),
+      resubscribe: record("resubscribe"),
+      listApiKeys: async () => [],
+      getConversationRetention: async () => null,
+    });
+    return reached;
+  }
+
+  for (const reason of ["totp-required", "reauth-required"] as const) {
+    test(`${reason} refuses every step-up row before the gateway is reached`, async () => {
+      const reached = mutationBinding();
+      fakeStepUpRefusal = reason;
+      for (const [name, call] of steppedUp) {
+        expect([name, await call()]).toEqual([
+          name,
+          { ok: false, kind: "forbidden", reason, error: "step-up required" },
+        ]);
+      }
+      expect(reached).toEqual([]);
+    });
+  }
+
+  test("a role without the action is told so, not asked to step up", async () => {
+    mutationBinding();
+    fakeStepUpRefusal = "totp-required";
+    fakeDeniedActions = new Set(["configure", "administer"]);
+    for (const [name, call] of steppedUp) {
+      expect([name, await call()]).toMatchObject([name, { reason: "missing-permission" }]);
+    }
+  });
+
+  test("reads never require step-up", async () => {
+    mutationBinding();
+    fakeStepUpRefusal = "reauth-required";
+    expect((await listApiKeys()).ok).toBe(true);
+    expect((await getConversationRetention()).ok).toBe(true);
+  });
+
+  test("the code exchange asks for no step-up of its own: Meta's code is single-use", async () => {
+    // Step-up was settled at startConnect, which issued the account-bound state
+    // this call must present. Refusing here would burn the code for nothing.
+    const reached = mutationBinding();
+    fakeStepUpRefusal = "reauth-required";
+    await exchangeConnectCode({ data: { code: "code", state: "state" } });
+    expect(reached).toEqual(["exchangeConnectCode"]);
+  });
+
+  test("a stepped-up session reaches the gateway", async () => {
+    const reached = mutationBinding();
+    for (const [, call] of steppedUp) await call();
+    expect(reached).toEqual(steppedUp.map(([name]) => name));
+  });
+});
+
 // --- API keys (routes/settings.tsx) ---
 
 describe("listApiKeys / issueApiKey / revokeApiKey (Settings, API keys)", () => {
@@ -2869,4 +2966,41 @@ describe("validateEditTemplateInput", () => {
     expect(() => validateEditTemplateInput({ ...EDIT, templateId: "../555" })).toThrow("invalid template id");
     expect(() => validateEditTemplateInput({ ...EDIT, templateId: undefined })).toThrow("invalid template id");
   });
+});
+
+// The gateway refuses these too (apps/gateway/tests/worker/multi-tenant.spec.ts);
+// here the console refuses first, so a WABA the account does not own is never
+// named in an RPC at all (eccos-tdrm).
+describe("a WABA the account does not own is refused before the gateway", () => {
+  const FOREIGN = "waba-foreign";
+  const calls: Array<[string, () => Promise<unknown>]> = [
+    [
+      "sendReaction",
+      () =>
+        sendReaction({
+          data: { wabaId: FOREIGN, phoneNumberId: "phone-a", to: "34600111222", messageId: "wamid.IN1", emoji: "👍" },
+        }),
+    ],
+    [
+      "editTemplate",
+      () =>
+        editTemplate({
+          data: { wabaId: FOREIGN, templateId: "555", name: "order_update", language: "en_US", bodyText: "Hi" },
+        }),
+    ],
+    ["deleteTemplate", () => deleteTemplate({ data: { wabaId: FOREIGN, name: "order_update", templateId: "555" } })],
+  ];
+
+  for (const [name, call] of calls) {
+    test(name, async () => {
+      let reached = false;
+      const touch = async () => {
+        reached = true;
+        return { ok: true };
+      };
+      withResources({ sendReaction: touch, editTemplate: touch, deleteTemplate: touch });
+      expect(await call()).toEqual(unreachable('WABA "waba-foreign" is not owned by account "account-a"'));
+      expect(reached).toBe(false);
+    });
+  }
 });

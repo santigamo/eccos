@@ -2,6 +2,8 @@ import { isRedirect } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { setConversationRetention, type Result } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { withStepUp } from "../../lib/step-up";
+import { ERROR_CLASS, MACHINE_CLASS } from "../../ui";
 import {
   Frame,
   FrameDescription,
@@ -17,10 +19,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
-const ERROR_CLASS =
-  "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs";
 
 const KEEP_FOREVER = "forever";
 
@@ -90,7 +88,7 @@ export function ConversationRetentionPanel({
     setError(null);
     try {
       const outcome = await saveRetentionChoice(choice, (days) =>
-        setConversationRetention({ data: { days } }),
+        withStepUp(() => setConversationRetention({ data: { days } })),
       );
       if (!outcome.ok) {
         setError(outcome.error);

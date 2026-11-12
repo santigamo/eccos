@@ -27,6 +27,7 @@ import {
   requireGatewayPermission,
   UnauthorizedError,
 } from "../auth/server-auth";
+import type { Grant } from "../auth/step-up";
 import { ForbiddenError, resolveMemberships } from "../auth/tenant";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
@@ -187,13 +188,13 @@ interface ActorContext {
   session: { userId: string; email: string };
 }
 
-async function requireActor(action: "view" | "operate" | "configure" | "administer" | "erase"): Promise<ActorContext> {
+async function requireActor(grant: Grant): Promise<ActorContext> {
   // One auth instance and one Request per actor resolution; the request-scoped
   // session memo (request-memo.ts) additionally dedupes the underlying
   // `auth.api.getSession` to a single D1 read per request (eccos-ya5).
   const auth = requestAuth();
   const request = getRequest();
-  const organizationId = await requireGatewayPermission(auth, request, action);
+  const organizationId = await requireGatewayPermission(auth, request, grant);
   const { session } = await requireAuthContext(auth, request);
   return { organizationId, session };
 }
@@ -1044,7 +1045,7 @@ function validateSetupInput(input: unknown): { name?: string } | undefined {
  */
 async function withGateway<T>(
   fn: (gateway: GatewayApi, organizationId: string | undefined) => Promise<T>,
-  action?: GatewayAction,
+  grant?: Grant,
 ): Promise<Result<T>> {
   const gateway = env.GATEWAY;
   if (!gateway) {
@@ -1054,8 +1055,8 @@ async function withGateway<T>(
     // The permission check runs INSIDE the boundary on purpose: an
     // authorization refusal must come back classified as one, not escape as a
     // thrown server-function error (or, worse, get reported as a dead gateway).
-    const organizationId = action
-      ? await requireGatewayPermission(requestAuth(), getRequest(), action)
+    const organizationId = grant
+      ? await requireGatewayPermission(requestAuth(), getRequest(), grant)
       : undefined;
     return { ok: true, data: await fn(timedProxy(getRequest().headers, gateway, "rpc-"), organizationId) };
   } catch (err) {
@@ -1191,8 +1192,8 @@ function withoutWaba<T extends { wabaId?: string }>(opts: T | undefined): Omit<T
 
 /** What a scoped server function needs from its caller. */
 interface ScopedOptions {
-  /** Permission the operation requires, checked inside the failure boundary. */
-  action: GatewayAction;
+  /** What the operation requires, checked inside the failure boundary. */
+  action: Grant;
   /** WABA the operator asked about; the account is never theirs to pick. */
   wabaId?: string;
   /** Refuse a WABA the account does not own instead of falling back to its first. */
@@ -1332,12 +1333,14 @@ function connectReturnTo(request: Request): string {
   return new URL(CONNECT_RETURN_PATH, new URL(request.url).origin).href;
 }
 
+
 export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
-      // Embedded Signup is an admin+ mutation (contract §4): step-up policy is
-      // enforced by eccos-0x0.7; the account comes from the organization link.
-      const actor = await requireActor("administer");
+      // Embedded Signup is an admin+ step-up mutation (contract §4); the
+      // account comes from the organization link. The step-up authorizes the
+      // start: the state it issues then lives its normal 30 minutes.
+      const actor = await requireActor("connect");
       const returnTo = connectReturnTo(getRequest());
       let link = await gateway.getOrganizationAccountLink(actor.organizationId);
       if (!link) {
@@ -1403,12 +1406,13 @@ export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler
  * Resolve the caller's Eccos account for an `administer` action (Embedded
  * Signup, token attach, API keys), creating the link if this is the
  * organization's first one. Shared so those actions cannot drift on who is
- * allowed to perform them.
+ * allowed to perform them. The ones that write name their step-up row.
  */
 async function adminActorAccount(
   gateway: GatewayApi,
+  grant: Grant = "administer",
 ): Promise<{ actor: ActorContext; accountId: string }> {
-  const actor = await requireActor("administer");
+  const actor = await requireActor(grant);
   let link = await gateway.getOrganizationAccountLink(actor.organizationId);
   if (!link) {
     const ensured = await gateway.ensureOrganizationAccount(actor.organizationId);
@@ -1450,6 +1454,10 @@ function validateConnectExchangeInput(input: unknown): {
  * Meta's code lives **30 seconds**, so this path stays deliberately short:
  * validate, resolve the account, forward. Nothing is queued or retried, because
  * a retry would arrive with an expired code and an already-consumed state.
+ *
+ * No step-up of its own, for the same reason: the code is single-use and a
+ * refusal here would lose it. The account-bound state it must present was
+ * issued by `startConnect`, which is the step-up row, minutes earlier.
  */
 export const exchangeConnectCode = createServerFn({ method: "POST" })
   .validator(validateConnectExchangeInput)
@@ -1531,7 +1539,7 @@ export const connectWithToken = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<ManualConnectResult>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, "connect");
         const result = await gateway.connectWabaWithToken(accountId, data.token, data.wabaId);
         // NO token, and nothing derived from one. `candidates` is counted, not
         // listed, because the count is what makes the line legible; the WABA
@@ -1667,7 +1675,7 @@ export const issueApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<IssuedApiKey>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, "api-keys");
         const issued = await gateway.issueApiKey(accountId, data.label);
         auditEvent({
           action: "api_key_issue",
@@ -1687,7 +1695,7 @@ export const revokeApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<boolean>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, "api-keys");
         const revoked = await gateway.revokeApiKey(accountId, data.keyId);
         auditEvent({
           action: "api_key_revoke",
@@ -2161,7 +2169,7 @@ export const setConversationRetention = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<number | null>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, "conversation-retention");
         const stored = await gateway.setConversationRetention(accountId, data.days);
         auditEvent({
           action: "conversation_retention_set",
@@ -2275,7 +2283,7 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
         // `scope: "any"`, for the same reason as the read: a subscriber URL
         // written in the awaiting-a-phone state survives provisioning, because
         // the saga's own `saveConfig` only ever writes META_*/CONNECTED_AT keys.
-        { action: "configure", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
+        { action: "subscriber-config", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
         (gateway, scope) => {
           const { wabaId: _wabaId, ...input } = data;
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);
@@ -2292,7 +2300,7 @@ export const resubscribe = createServerFn({ method: "POST" })
   .validator(validateScopeInput)
   .handler(({ data }): Promise<Result<ResubscribeResult>> =>
     withScopedGateway(
-      { action: "configure", wabaId: data?.wabaId, rejectUnknown: true },
+      { action: "resubscribe", wabaId: data?.wabaId, rejectUnknown: true },
       (gateway, scope) => gateway.resubscribe(scope.wabaId, scope.accountId),
     ),
   );

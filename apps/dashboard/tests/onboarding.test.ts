@@ -16,6 +16,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
+import { enrollTotp } from "./helpers/step-up";
 
 /**
  * The Worker bindings the server functions read.
@@ -159,6 +160,7 @@ describe("organization onboarding (identity plane)", () => {
     expect(signIn.status).toBe(200);
     const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
     const headers = new Headers({ cookie });
+    enrollTotp(db, "owner@corp.test");
 
     const org = (await auth.api.createOrganization({
       body: { name: "Acme", slug: mintSlug() },
@@ -223,6 +225,7 @@ describe("organization onboarding (identity plane)", () => {
     };
 
     const ownerHeaders = await mk("owner2@corp.test");
+    enrollTotp(db, "owner2@corp.test");
     const org = (await auth.api.createOrganization({
       body: { name: "Globex", slug: mintSlug() },
       headers: ownerHeaders,
@@ -258,6 +261,29 @@ describe("organization server functions", () => {
     const result = await createOrganization({ data: { name: "Acme" } });
     expect(result.ok).toBe(false);
     expect(calls.length).toBe(0);
+  });
+
+  test("inviteMember is refused until the caller has stepped up", async () => {
+    const { auth, db } = await createServerFnAuth();
+    await signInAsServerFnCaller(auth, db, "owner3@corp.test");
+    fakeEnv.GATEWAY = {
+      ensureOrganizationAccount: async () => ({ accountId: "acc_1", status: "active" as const }),
+    };
+    const created = await createOrganization({ data: { name: "Acme" } });
+    if (!created.ok) throw new Error(created.error);
+    const invite = () =>
+      inviteMember({
+        data: { email: "new@corp.test", role: "viewer", organizationId: created.data.organizationId },
+      });
+    const sent = () => db.query("SELECT COUNT(*) AS n FROM invitation").get();
+
+    // The reason is what `withStepUp` acts on once a console form calls this.
+    expect(await invite()).toMatchObject({ ok: false, reason: "totp-required" });
+    db.query('UPDATE user SET "twoFactorEnabled" = 1').run();
+    expect(await invite()).toMatchObject({ ok: false, reason: "reauth-required" });
+    expect(sent()).toEqual({ n: 0 });
+    enrollTotp(db, "owner3@corp.test");
+    expect(await invite()).toEqual({ ok: true });
   });
 });
 

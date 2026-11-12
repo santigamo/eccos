@@ -14,6 +14,7 @@ import { CaptureMailSender } from "../src/auth/mail";
 import { requirePermission, verifyMembership } from "../src/auth/tenant";
 import { ForbiddenError } from "../src/auth/tenant";
 import { UnauthorizedError } from "../src/auth/session";
+import { enrollTotp } from "./helpers/step-up";
 
 const BASE_URL = "http://localhost:3000";
 
@@ -91,6 +92,7 @@ const mintSlug = () => crypto.randomUUID();
 /** Seed: one org, one member per role. Returns headers per role + orgId. */
 async function seedOrganization(auth: ReturnType<typeof createAuth>, db: Database) {
   const ownerHeaders = await signInHeaders(auth, db, "owner@corp.test");
+  enrollTotp(db, "owner@corp.test");
   const org = (await auth.api.createOrganization({
     body: { name: "Acme", slug: mintSlug() },
     headers: ownerHeaders,

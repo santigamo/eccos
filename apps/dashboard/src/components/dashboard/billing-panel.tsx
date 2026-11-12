@@ -4,8 +4,8 @@ import { openPortal, startCheckout, type BillingState, type Result } from "../..
 import { failureCopy } from "../../lib/failure";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
+import { MACHINE_CLASS } from "../../ui";
 
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 const ROW_CLASS = "flex items-center justify-between gap-4 px-(--frame-panel-px) py-2.5";
 const NOTE_CLASS = "mt-4 mb-0 block border-l-2 px-3 py-2 text-sm text-foreground";
 

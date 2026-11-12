@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { CONNECT_RETURN_PATH, connectWithToken } from "../../server/gateway";
 import type { TokenWabaCandidate } from "../../server/gateway";
 import { failureCopy, tokenConnectFailureCopy } from "../../lib/failure";
+import { withStepUp } from "../../lib/step-up";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import {
   Frame,
@@ -87,9 +88,9 @@ export function TokenConnectPanel() {
     setBusy(true);
     setError(null);
     try {
-      const res = await connectWithToken({
-        data: { token, ...(selector ? { wabaId: selector } : {}) },
-      });
+      const res = await withStepUp(() =>
+        connectWithToken({ data: { token, ...(selector ? { wabaId: selector } : {}) } }),
+      );
       if (!res.ok) {
         setError(failureCopy(res).detail);
         return;

@@ -49,23 +49,162 @@ gateway layer and the D1-level `429` behavior tested in
 
 ### Two-factor authentication (TOTP)
 
-- `twoFactor()` plugin enabled; enrollment via `POST /api/auth/two-factor/enable`
-  with password (returns `otpauth://` URI + one-time backup codes).
-- **Not enforced yet (`eccos-eyel`).** The policy in the contract (§4/§8) is that
-  owner/admin must enroll TOTP before sensitive actions (connect, API keys,
-  export, erasure, membership/role changes, subscriber config write). Today the
-  console has no enrollment screen, and `requirePermission`
-  (`apps/dashboard/src/auth/tenant.ts`) checks only the role. Do not describe
-  TOTP as a control to customers until `eccos-eyel` lands.
-- Backup codes are shown once at enrollment; they are hashed at rest like
-  passwords and can be regenerated through the two-factor endpoints.
+- `twoFactor()` plugin enabled. Enrollment is the Two-factor authentication
+  panel on `/settings` (`src/components/dashboard/two-factor.tsx`): password,
+  then a code mailed to the account's address, then a QR code and key for an
+  authenticator app, then the first code. Backup codes are shown once after
+  that code verifies; they are stored encrypted.
+- **Enrollment needs proof of inbox control** (`src/auth/enrollment-proof.ts`).
+  `two-factor/enable` is refused (`EMAIL_CODE_REQUIRED`) without the code that
+  `two-factor/send-enable-code` mailed to the account's verified address, over
+  HTTP and server-side alike. A stolen cookie plus the password therefore
+  cannot enroll the thief's authenticator on an account that has none. The
+  code is 8 characters, lives 10 minutes, is stored hashed, and is consumed
+  atomically before it is compared: one guess per code. A right code is put
+  back if Better Auth then refuses the request for a reason of its own (a
+  wrong password, say), so only a setup that started spends it.
+  A send needs the password, is refused within a minute of the last one for
+  that user, and is capped at 10 per hour per caller. The minute is one
+  insert of a marker keyed on the account, so sends arriving together leave
+  one mail and one code; a send that fails removes its marker and starts no
+  wait. A pending enrollment's
+  secret (`two-factor/get-totp-uri`) is never returned for the password alone.
+- **A mail goes out whenever the second factor changes**: turned on, turned
+  off, backup codes regenerated (`two-factor-changed`). It follows a change
+  that already happened, so a send that fails is logged and never fails it.
+- Sign-in for an enrolled account stops after the password and asks for the
+  code (or a backup code) before any session exists
+  (`src/components/auth/two-factor-code-form.tsx`).
+- There is no console control to turn TOTP off or regenerate backup codes yet;
+  a user who loses both the authenticator and the codes needs an operator.
 
-### Session freshness (step-up)
+### Step-up enforcement (contract §4/§8)
+
+`stepUpRefusal` in `src/auth/step-up.ts` is the one rule: the user has TOTP
+enrolled, and `session.stepUpAt` is within `STEP_UP_WINDOW_SECONDS` (15
+minutes).
+
+**What counts as fresh.** `stepUpAt` is stamped in exactly two ways, and never
+from the session's age:
+
+- by `stepUpGuard` (`src/auth/step-up-guard.ts`) when a second-factor
+  verification MINTS the session: the code step of a sign-in, or the first code
+  of an enrollment. An enrollment only exists after the mailed code, so that
+  stamp stands for the inbox plus the new authenticator, never the password
+  alone;
+- by the step-up challenge (`confirmStepUp`, `src/auth/step-up-confirm.ts`),
+  which checks an authenticator or backup code against the CURRENT session and
+  stamps that same row. It mints nothing: the cookie, the active organization
+  and the user's other sessions are untouched, and a trusted-device cookie is
+  never consulted.
+
+Better Auth mints sessions on endpoints that ask for the password alone
+(`change-password` with `revokeOtherSessions`, `two-factor/disable`) and on the
+email-verification link, so a stolen cookie plus the password could otherwise
+renew itself; those sessions carry no stamp of their own and never pass.
+
+**Used codes.** Better Auth accepts a TOTP code for three time-steps and keeps
+no record of the one it accepted. `claimTotpStep` (`src/auth/totp-step.ts`)
+records the newest accepted step on the `twoFactor` row (`lastTotpStep`), with
+one conditional write, at sign-in, at enrollment and at step-up. The challenge
+refuses a code for that step or an older one (`used`), so a code seen being
+typed, at sign-in or anywhere else, cannot step a session up; the replay
+counts as a failed attempt.
+
+**Wrong codes.** The challenge spends Better Auth's own account lockout on the
+`twoFactor` row (`failedVerificationCount` / `lockedUntil`; limits read from
+the two-factor plugin's `accountLockout` options, 10 attempts then 15 minutes
+by default), so sign-in and step-up share one budget. The plugin's `enabled`
+switch is deliberately NOT honoured for step-up: with the lockout off an
+existing session would have no limit at all. The wait the console shows after
+a lock is the server's own remaining time. Each attempt is RESERVED before its code is checked,
+by one conditional atomic increment that only lands while budget is left: a
+parallel burst cannot verify more codes than remain. A right code clears the
+count. Only a genuine wrong-code answer keeps its reservation: any other
+failure hands it back (never below zero, so a refund cannot buy attempts), is
+reported to Sentry and shown as "try again". Better
+Auth applies that lockout only to a sign-in's challenge, so its
+`two-factor/verify-totp` and `verify-backup-code` are refused over HTTP
+(`USE_STEP_UP`) for an enrolled, signed-in caller; they stay open to a
+sign-in's challenge and to a first enrollment. The challenge refuses an
+account that is not fully enrolled before checking any code: verifying against
+a pending enrollment would run Better Auth's enrollment branch, which replaces
+the session.
+
+**Where it is enforced.**
+
+| Matrix row | Where |
+|---|---|
+| Embedded Signup start, token attach | `STEP_UP_ROWS.connect`: `startConnect`, `connectWithToken` |
+| API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
+| Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
+| Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
+| Invitations and member role changes | `stepUpOrganizationHooks`, Better Auth's `organizationHooks` (`beforeCreateInvitation`, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`). `inviteMember` reaches the first through `createInvitation` and returns the refusal's reason |
+| Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`, once the account has a second factor: `change-password`, `change-email`, `two-factor/enable`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`. An account with no TOTP can still change its password, and enroll with the mailed code; `get-totp-uri` is refused for it |
+
+`STEP_UP_ROWS` is the single table for the Eccos server functions: a function
+names its row, and `requireGatewayPermission` checks the row's role and then
+the step-up. The role always comes first, in Better Auth's endpoints too, so a
+role that lacks the action gets a permission error rather than a prompt to
+enroll.
+
+The Embedded Signup code exchange (`exchangeConnectCode`) has no step-up of
+its own: Meta's code is single-use and lives 30 seconds, so a refusal there
+would lose it. The account-bound state it must present was issued by
+`startConnect`, the step-up row, moments earlier.
+
+Export and erasure have no console path: they are reachable only with an
+account API key, so there is nothing for a session step-up to gate. A console
+action for either must add its row to `STEP_UP_ROWS`.
+
+The organization hooks run after Better Auth has resolved the target
+organization and checked the caller's role there, so nothing in Eccos
+re-derives either, and a role that lacks the action gets Better Auth's own
+permission error. The hooks are handed no session; it is read from the
+request's context (`getCurrentAuthEndpointContext` in `@better-auth/core/context`, pinned to the same exact
+version as `better-auth`, and bumped with it).
+
+One branch never reaches a hook: `invite-member` with `resend: true` returns
+before `beforeCreateInvitation`. A `before` hook gates it instead, resolving
+the organization as Better Auth does and skipping step-up only for a member
+whose every role is known and none grants invitations. An unknown, padded or
+empty role string does not skip it.
+
+**What the operator sees.** A refusal is a typed `forbidden` failure with
+reason `totp-required` or `reauth-required` (`StepUpReason`, defined once in
+`@eccos/auth-baseline/step-up`). `withStepUp` (`src/lib/step-up.ts`) opens the
+step-up sheet (`src/components/dashboard/step-up-sheet.tsx`) beside the page:
+the code, or enrollment for an account with none. On success the action runs
+again. Nothing navigates and no session changes, so the form the operator was
+filling in is untouched, and closing the sheet only declines. A dialog that
+hosts a sensitive action (add a number, revoke a key) mounts its own sheet
+inside itself, so there the prompt opens as that dialog's nested surface
+rather than as a second modal beside it.
+
+Connecting a number settles what it needs ahead of the click, role first: the
+Numbers route's loader (`src/server/connect-block.ts`) says whether the
+signed-in user may connect at all and what step-up they owe, judged as
+`startConnect` judges it. A role that may not connect sees that, and is never
+asked for a second factor. Otherwise the cards stay disabled until the step-up
+is confirmed, because Meta's window only opens on the customer's own click and
+a prompt in between would spend it. A fresh read of that state is never
+applied onto a flow that is already open. The step-up authorizes the start;
+the state then lives its normal 30 minutes, so the customer has Meta's whole
+window to finish.
+
+One-time backup codes are not shown by the surface that enrolled. They are
+held at the app's root (`src/lib/backup-codes.ts`) and shown by one sheet
+mounted in the shell (`backup-codes-sheet.tsx`), which only Done closes: a
+dialog that unmounts mid-enrollment cannot take them with it.
+
+### Session freshness
 
 - Session expiry: 7 days; session refresh (`updateAge`): daily.
-- `freshAge: 900` (15 minutes) is configured, matching the contract's step-up
-  window, but it is **not applied** to the console's server functions yet
-  (`eccos-eyel`): a sensitive action does not require a recent sign-in today.
+- `freshAge: 900` (15 minutes) governs Better Auth's own fresh-session checks.
+  Eccos step-up does not use it; see "What counts as fresh" above.
+- `session.stepUpAt` is migration `0004_session_step_up.sql` and
+  `twoFactor.lastTotpStep` is `0005_two_factor_last_totp_step.sql`. Apply both
+  before deploying the code that reads and writes them.
 - Revocation is immediate: sessions are looked up in the auth D1 on every
   request; a revoked/deleted session fails closed on the next protected
   request (no cached claims).

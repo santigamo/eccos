@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { setSubscriberConfig, type SubscriberConfig } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { MACHINE_CLASS } from "../../ui";
+import { withStepUp } from "../../lib/step-up";
 import {
   Frame,
   FramePanel,
@@ -52,7 +54,6 @@ function NoticeBox({ notice }: { notice: Notice | null }) {
 
 /** The machine voice: Inter, 11px, uppercase, wide tracking (the design
  * contract's functional register — panel titles, form labels, captions). */
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 const LABEL_CLASS = `mb-1 block ${MACHINE_CLASS}`;
 
 /** 32 bytes as hex, minted in the browser. The server never proposes a secret:
@@ -88,7 +89,7 @@ export function ForwardingTargetPanel({
     setSaving(true);
     setNotice(null);
     try {
-      const res = await setSubscriberConfig({ data: { ...input, wabaId } });
+      const res = await withStepUp(() => setSubscriberConfig({ data: { ...input, wabaId } }));
       if (res.ok) {
         // The field empties on success and stays empty: what is stored is not
         // readable, so keeping the typed value on screen would be the console

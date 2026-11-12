@@ -24,8 +24,11 @@ import {
   type MailTemplate,
   type SendOutcome,
 } from "./mail";
+import { enrollmentProof, type TwoFactorChange, type TwoFactorMail } from "./enrollment-proof";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
+import { STEP_UP_WINDOW_SECONDS } from "./step-up";
+import { stepUpGuard, stepUpOrganizationHooks } from "./step-up-guard";
 
 /**
  * Build the accept-invitation link for the dashboard UI.
@@ -216,6 +219,45 @@ function assertValidConfig(config: AuthConfig): void {
   }
 }
 
+/** What the notification mail says happened, one sentence each. */
+const TWO_FACTOR_CHANGES: Record<TwoFactorChange, string> = {
+  enabled: "Two-factor authentication was turned on.",
+  disabled: "Two-factor authentication was turned off.",
+  "backup-codes": "New backup codes were generated, and the old ones no longer work.",
+};
+
+/**
+ * Both go to the account's own verified address. A code that cannot arrive is
+ * surfaced, as a verification mail's is: the setup cannot go on without it. A
+ * notification follows a change that already happened, so it is only logged.
+ * The key never carries the code itself.
+ */
+function twoFactorMail(mail: MailSender): TwoFactorMail {
+  const send = async (
+    template: "two-factor-code" | "two-factor-changed",
+    to: string,
+    variables: Record<string, string>,
+    unique: string,
+    policy: typeof applyVerificationSendPolicy,
+  ) => {
+    const idempotencyKey = await deriveIdempotencyKey(template, to, unique);
+    const outcome = await mail.sendTemplate({ template, to, variables, idempotencyKey });
+    policy(outcome, { template, to, idempotencyKey });
+  };
+  return {
+    code: (user, code, unique) =>
+      send("two-factor-code", user.email, { name: user.name, code }, unique, applyVerificationSendPolicy),
+    changed: (user, change) =>
+      send(
+        "two-factor-changed",
+        user.email,
+        { name: user.name, change: TWO_FACTOR_CHANGES[change] },
+        `${change}:${crypto.randomUUID()}`,
+        applyResetSendPolicy,
+      ),
+  };
+}
+
 export function createAuth(config: AuthConfig) {
   assertValidConfig(config);
 
@@ -279,7 +321,7 @@ export function createAuth(config: AuthConfig) {
     session: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
-      freshAge: 60 * 15,
+      freshAge: STEP_UP_WINDOW_SECONDS,
     },
     // Distributed rate limiting (contract §8), shared with
     // @eccos/auth-baseline. Counters key on caller IP + path, never on the
@@ -324,11 +366,10 @@ export function createAuth(config: AuthConfig) {
       //
       // NOT to be extended to `emailAndPassword.autoSignIn` (a session BEFORE
       // verification), which contradicts `requireEmailVerification` above and
-      // contract §7. And a caveat for when TOTP enrollment ships: this path
-      // calls `internalAdapter.createSession` directly, so it does not pass
-      // through the twoFactor plugin's sign-in hook. Harmless today — the
-      // account is seconds old and cannot have a second factor — but a
-      // re-verification flow on an enrolled account would step around it.
+      // contract §7. This path calls `internalAdapter.createSession` directly,
+      // so it never passes through the twoFactor sign-in hook: the session it
+      // mints carries no `stepUpAt` and therefore never passes step-up
+      // (`step-up.ts`), whatever the account's enrollment.
       autoSignInAfterVerification: true,
       sendVerificationEmail: async (data: MailCallbackData) => {
         const { user, url, token } = data;
@@ -356,12 +397,18 @@ export function createAuth(config: AuthConfig) {
     },
     plugins: [
       signupOrphanGuard(),
-      // TOTP for owner/admin step-up before sensitive actions (contract §8);
-      // enrollment UI ships with the eccos-0x0.7 dashboard pass.
-      twoFactor(),
+      // TOTP for owner/admin step-up before sensitive actions (contract §8).
+      // The issuer is the account name an authenticator app shows.
+      twoFactor({ issuer: "Eccos" }),
+      stepUpGuard(),
+      // After the guard: an enrolled caller is asked for step-up first.
+      enrollmentProof(twoFactorMail(config.mail)),
       organization({
         ac,
         roles: { owner, admin, operator, viewer },
+        // Step-up on invitations and member changes (contract §4), after
+        // Better Auth's own organization and role checks.
+        organizationHooks: stepUpOrganizationHooks,
         // Organization deletion is disabled in v1 (contract §4/§9): no
         // offboarding saga exists yet, so /organization/delete is rejected.
         disableOrganizationDeletion: true,

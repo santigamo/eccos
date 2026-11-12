@@ -1,4 +1,5 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
+import { STEP_UP_COPY } from "./step-up";
 import type {
   CreateTemplateFailureCode,
   EditTemplateFailureCode,
@@ -82,6 +83,11 @@ function forbiddenCopy(failure: Failure): FailureCopy {
         detail:
           "Your role in this workspace does not allow this. Ask an owner or an admin to widen it.",
       };
+    case "totp-required":
+    case "reauth-required": {
+      const { title, refused } = STEP_UP_COPY[failure.reason];
+      return { title, detail: refused };
+    }
     default:
       // A refusal with no reason code of its own: report it as the refusal it
       // is, using the server's own words rather than inventing a cause.

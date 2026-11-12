@@ -123,6 +123,13 @@ const COUNT_INK: Record<string, string> = {
   degraded: "text-warning-foreground",
 }
 
+/** The functional micro-label: Inter uppercase, 11px (DASHBOARD-DESIGN.md, "Two voices"). */
+export const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
+
+/** An inline error under a form in a panel. */
+export const ERROR_CLASS =
+  "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs";
+
 /** Quiet at rest, underlined on hover — a count that admits it is a door. */
 export const COUNT_LINK =
   "underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"

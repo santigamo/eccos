@@ -15,6 +15,7 @@ import {
 import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billing-panel";
 import { ApiKeysPanel } from "../components/dashboard/api-keys";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
+import { TwoFactorPanel } from "../components/dashboard/two-factor";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Frame,
@@ -26,7 +27,8 @@ import {
 import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
- * Settings — the workspace's own identifiers, its API keys and its conversation history window.
+ * Settings — the workspace's own identifiers, its API keys, its conversation
+ * history window, and the signed-in user's two-factor authentication.
  *
  * It used to carry the forwarding target, the re-subscribe handshake and the
  * pasted-token panel. All three left, and each for its own reason: the first
@@ -98,6 +100,7 @@ function SettingsPage() {
       retention={retention}
       wabaId={wabaId}
       gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
+      twoFactorEnabled={scope.user?.twoFactorEnabled}
       billing={billing.ok ? billing.data : null}
       billingReturned={returned}
       onKeysChanged={() => void invalidatePage(router)}
@@ -115,6 +118,7 @@ export function SettingsView({
   retention,
   wabaId,
   gatewayOrigin,
+  twoFactorEnabled,
   billing,
   billingReturned,
   onKeysChanged,
@@ -124,6 +128,7 @@ export function SettingsView({
   retention?: Result<number | null>;
   wabaId?: string;
   gatewayOrigin?: string | null;
+  twoFactorEnabled?: boolean;
   /** Null while billing is off, and for a role that may not administer it. */
   billing?: BillingState | null;
   billingReturned?: CheckoutReturn | null;
@@ -142,6 +147,11 @@ export function SettingsView({
             <ApiKeysPanel keys={keys} wabaId={wabaId} gatewayOrigin={gatewayOrigin} onChanged={onKeysChanged} />
           </div>
         ) : null}
+        {twoFactorEnabled === undefined ? null : (
+          <div className="lg:col-span-2">
+            <TwoFactorPanel enabled={twoFactorEnabled} />
+          </div>
+        )}
       </div>
     </Page>
   );

@@ -13,16 +13,17 @@ const BASE_URL = "http://localhost:3000";
 
 async function createTestAuth() {
   const db = new Database(":memory:");
+  const mail = new CaptureMailSender();
   const auth = createAuth({
     database: db,
     secret: "test-secret-32-chars-minimum-length!!",
     baseURL: BASE_URL,
     trustedOrigins: [BASE_URL],
-    mail: new CaptureMailSender(),
+    mail,
   });
   const { runMigrations } = await getMigrations(auth.options);
   await runMigrations();
-  return { auth, db };
+  return { auth, db, mail };
 }
 
 async function signInHeaders(auth: ReturnType<typeof createAuth>, db: Database, email: string): Promise<Headers> {
@@ -46,10 +47,13 @@ async function signInHeaders(auth: ReturnType<typeof createAuth>, db: Database, 
 
 describe("two-factor (TOTP)", () => {
   test("enabling TOTP returns a URI and backup codes and marks the user", async () => {
-    const { auth, db } = await createTestAuth();
+    const { auth, db, mail } = await createTestAuth();
     const headers = await signInHeaders(auth, db, "mfa@corp.test");
+    // Setup needs the code mailed to the account's address (enrollment-proof.ts).
+    await auth.api.sendTwoFactorEnableCode({ body: { password: "correct-horse-battery" }, headers });
+    const emailCode = mail.sent.at(-1)!.variables.code;
     const enabled = (await auth.api.enableTwoFactor({
-      body: { method: "totp", password: "correct-horse-battery" },
+      body: { method: "totp", password: "correct-horse-battery", emailCode } as never,
       headers,
     })) as { totpURI?: string; backupCodes?: string[] };
     expect(enabled.totpURI).toContain("otpauth://totp");
