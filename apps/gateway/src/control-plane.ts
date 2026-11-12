@@ -28,7 +28,7 @@ import {
 } from "./token-crypto";
 import { opsAlertsEnabled, sendOpsAlert } from "./ops-alert";
 import { getAppConfig } from "./tenant-config";
-import { readTokenHealth, type TokenCheck, type TokenHealth } from "./token-health";
+import { readTokenHealth, type TokenCheck, type TokenHealth, tokenFingerprint } from "./token-health";
 import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
 
 /**
@@ -990,14 +990,21 @@ export class EccosControlPlane extends DurableObject<Env> {
       return { unchecked: "token_unreadable" };
     }
     const check = await readTokenHealth(cfg, token);
-    if ("health" in check) this.recordTokenHealth(id, check.health, row.meta_access_token as string);
-    return check;
+    if (!("health" in check)) return check;
+    const sealed = row.meta_access_token as string;
+    this.recordTokenHealth(id, check.health, sealed);
+    return { health: check.health, sealed };
   }
 
-  /** The census just alerted these tokens as invalid: a send 190 must not alert again until a valid reading. */
-  markTokensAlerted(wabaIds: string[]): void {
-    for (const id of wabaIds) {
-      this.sql.exec("UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND token_rejected_at IS NULL", Date.now(), id);
+  /** The census just alerted these tokens as invalid: a send 190 must not alert again until a valid reading. Only for the token it checked. */
+  markTokensAlerted(tokens: Array<{ wabaId: string; sealed: string }>): void {
+    for (const { wabaId, sealed } of tokens) {
+      this.sql.exec(
+        "UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND meta_access_token = ? AND token_rejected_at IS NULL",
+        Date.now(),
+        wabaId,
+        sealed,
+      );
     }
   }
 
@@ -1020,14 +1027,24 @@ export class EccosControlPlane extends DurableObject<Env> {
    * post is one attempt, never retried (ops-alert contract): a failed post is recorded in
    * `token_alert_lost` for the next census to mention once.
    */
-  async reportRejectedToken(wabaId: string): Promise<"sent" | "already" | "disabled" | "failed"> {
+  async reportRejectedToken(wabaId: string, fingerprint: string): Promise<"sent" | "already" | "stale" | "disabled" | "failed"> {
     const id = validateWabaId(wabaId, "wabaId");
     if (!opsAlertsEnabled(this.env)) return "disabled";
+    const stored = this.sql.exec("SELECT account_id, meta_access_token FROM wabas WHERE waba_id = ?", id).toArray()[0];
+    if (!stored) return "stale";
+    try {
+      const current = await this.decryptStoredToken(stored.account_id as string, id, stored.meta_access_token);
+      if ((await tokenFingerprint(current)) !== fingerprint) return "stale";
+    } catch {
+      return "stale";
+    }
     const row = this.sql
       .exec(
-        "UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND token_rejected_at IS NULL RETURNING account_id",
+        `UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND meta_access_token = ? AND token_rejected_at IS NULL
+         RETURNING account_id`,
         Date.now(),
         id,
+        stored.meta_access_token as string,
       )
       .toArray()[0];
     if (!row) return "already";

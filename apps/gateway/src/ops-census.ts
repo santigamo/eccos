@@ -53,6 +53,8 @@ interface WabaLine {
   token: TokenHealth | null;
   /** Why an active WABA's token could not be checked. */
   tokenUnchecked: Unchecked | null;
+  /** The stored token the check was about. */
+  tokenSealed?: string;
   /** What the last successful check stored, for when today's check got no answer. */
   storedToken: TokenHealth;
 }
@@ -126,7 +128,10 @@ export async function runDailyCensus(
     if (line.status !== "active") return;
     try {
       const check = await withTimeout(control.checkTokenHealth(line.wabaId) as Promise<TokenCheck>, tokenTimeoutMs);
-      if ("health" in check) line.token = check.health;
+      if ("health" in check) {
+        line.token = check.health;
+        line.tokenSealed = check.sealed;
+      }
       else line.tokenUnchecked = check.unchecked;
     } catch {
       line.tokenUnchecked = "meta_no_answer";
@@ -146,7 +151,11 @@ export async function runDailyCensus(
   ];
   const unchecked = uncheckedAlertLines(blocks);
   if (problems.length > 0 && (await sendChunked(env, ["Eccos: WhatsApp tokens need attention", ...problems], fetchImpl))) {
-    await control.markTokensAlerted(blocks.flatMap((b) => b.wabas.filter((w) => w.token?.valid === false).map((w) => w.wabaId)));
+    await control.markTokensAlerted(
+      blocks.flatMap((b) =>
+        b.wabas.flatMap((w) => (w.token?.valid === false && w.tokenSealed ? [{ wabaId: w.wabaId, sealed: w.tokenSealed }] : [])),
+      ),
+    );
     await control.clearLostTokenAlerts(lost.map((l) => l.wabaId));
   }
   if (unchecked.length > 0) await sendChunked(env, ["Eccos: cannot check WhatsApp tokens", ...unchecked], fetchImpl);

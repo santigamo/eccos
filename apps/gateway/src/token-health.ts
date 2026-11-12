@@ -6,6 +6,7 @@ export type { TokenHealth };
 
 export const TOKEN_WARN_MS = 14 * 24 * 3600_000;
 const REPORT_MEMO_MS = 3600_000;
+const DAY_MS = 24 * 3600_000;
 
 type Cfg = Parameters<typeof inspectToken>[0];
 type Env = Parameters<typeof getControlPlaneStub>[0];
@@ -18,7 +19,13 @@ export type Unchecked =
   | "foreign_app"
   | "no_verdict"
   | "meta_no_answer";
-export type TokenCheck = { health: TokenHealth } | { unchecked: Unchecked };
+/** `sealed` is the stored token the health is about, to guard writes against a reconnect meanwhile. */
+export type TokenCheck = { health: TokenHealth; sealed?: string } | { unchecked: Unchecked };
+
+export async function tokenFingerprint(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export const formatDay = (at: number) => new Date(at).toISOString().slice(0, 10);
 
@@ -39,14 +46,21 @@ export async function readTokenHealth(cfg: Cfg, token: string): Promise<TokenChe
   }
 }
 
-/** `lastCheck` labels expiries read from storage because today's check got no answer. */
+/**
+ * `lastCheck` labels expiries read from storage because today's check got no answer. A token
+ * expiry that passed within the last day is reported once as expired (the census runs daily);
+ * older ones are the invalid-token alert's business, and past data access is ignored.
+ */
 export function tokenProblems(health: TokenHealth | null, now: number, lastCheck = false): string[] {
   if (!health) return [];
   if (!health.valid) return ["token invalid"];
-  const soon = (at: number | null): at is number => at !== null && at > 0 && at - now < TOKEN_WARN_MS;
+  const soon = (at: number | null): at is number => at !== null && at > now && at - now < TOKEN_WARN_MS;
   const when = lastCheck ? "expiry from last check: " : "expires ";
+  const { expiresAt } = health;
+  const expired = expiresAt !== null && expiresAt > 0 && expiresAt <= now && now - expiresAt < DAY_MS;
   return [
-    ...(soon(health.expiresAt) ? [`token ${when}${formatDay(health.expiresAt)}`] : []),
+    ...(expired ? [`token expired ${formatDay(expiresAt)}`] : []),
+    ...(soon(expiresAt) ? [`token ${when}${formatDay(expiresAt)}`] : []),
     ...(soon(health.dataAccessExpiresAt) ? [`data access ${when}${formatDay(health.dataAccessExpiresAt)}`] : []),
   ];
 }
@@ -57,15 +71,19 @@ export function forgetTokenReports(): void {
   reportedAt.clear();
 }
 
-/** Meta rejected the WABA's token: alerts once, never throws. The memo spares the control plane a call per 190. */
-export async function noteTokenRejected(env: Env, wabaId: string, now = Date.now()): Promise<void> {
-  const last = reportedAt.get(wabaId);
+/**
+ * Meta rejected `fingerprint`'s token for the WABA: alerts once, never throws. The control plane
+ * ignores it if the WABA holds another token by now. The memo spares it a call per 190.
+ */
+export async function noteTokenRejected(env: Env, wabaId: string, fingerprint: string, now = Date.now()): Promise<void> {
+  const key = `${wabaId}:${fingerprint}`;
+  const last = reportedAt.get(key);
   if (last !== undefined && now - last < REPORT_MEMO_MS) return;
-  reportedAt.set(wabaId, now);
+  reportedAt.set(key, now);
   try {
-    await getControlPlaneStub(env).reportRejectedToken(wabaId);
+    await getControlPlaneStub(env).reportRejectedToken(wabaId, fingerprint);
   } catch {
-    reportedAt.delete(wabaId);
+    reportedAt.delete(key);
   }
 }
 
@@ -84,7 +102,10 @@ export function watchGraph(
       const body = await Promise.resolve()
         .then(() => res.clone().json())
         .catch(() => null);
-      if (metaErrorCodes(body).errorCode === GRAPH_CODE_OAUTH) waitUntil(noteTokenRejected(env, wabaId));
+      const token = new Headers(init?.headers).get("authorization")?.replace(/^Bearer /, "");
+      if (token && metaErrorCodes(body).errorCode === GRAPH_CODE_OAUTH) {
+        waitUntil(tokenFingerprint(token).then((fingerprint) => noteTokenRejected(env, wabaId, fingerprint)));
+      }
     }
     return res;
   }) as typeof fetch;

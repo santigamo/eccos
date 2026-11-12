@@ -12,7 +12,7 @@ import { EccosControlPlane } from "../../src/control-plane";
 import { EccosGateway } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { chunkLines, formatCensus, runDailyCensus } from "../../src/ops-census";
-import { forgetTokenReports, noteTokenRejected, watchGraph } from "../../src/token-health";
+import { forgetTokenReports, noteTokenRejected, tokenFingerprint, watchGraph } from "../../src/token-health";
 import worker from "../../src/worker";
 import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
@@ -56,6 +56,7 @@ async function seedDeliveries(wabaId: string, rows: Array<[status: string, creat
   });
 }
 
+let FP = "";
 const SECONDS = (ms: number) => Math.floor(ms / 1000);
 
 /** Meta's debug_token answer for every token; anything else the code under test fetches is a failure. */
@@ -74,6 +75,7 @@ afterEach(async () => {
 });
 
 beforeEach(async () => {
+  FP = await tokenFingerprint("tenant-token");
   forgetTokenReports();
   await bootstrapAccount();
   mockDebugToken({ is_valid: true, expires_at: 0, data_access_expires_at: 0 });
@@ -440,6 +442,19 @@ describe("token expiry monitoring", () => {
     expect(lost).toEqual([]);
   });
 
+  it("reports a token expiry that just passed once, and ignores past data access", async () => {
+    mockDebugToken({ is_valid: true, expires_at: SECONDS(NOON - 3600_000), data_access_expires_at: SECONDS(NOON - 2 * DAY) });
+    const [alert] = await census();
+    expect(alert).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: token expired 2026-11-08`);
+    expect(alert).not.toContain("data access");
+    mockDebugToken({ is_valid: true, expires_at: SECONDS(NOON - 3 * DAY), data_access_expires_at: 0 });
+    await reset();
+    await bootstrapAccount();
+    const texts = await census();
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).not.toContain("expired");
+  });
+
   it("keeps the stored expiry when the token is invalid", async () => {
     const control = getControlPlaneStub(env);
     await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
@@ -464,8 +479,8 @@ describe("Graph error 190 on a send", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
       Object.assign(cp, { env: opsEnv });
-      await cp.reportRejectedToken(TEST_WABA_ID);
-      await cp.reportRejectedToken(TEST_WABA_ID);
+      await cp.reportRejectedToken(TEST_WABA_ID, FP);
+      await cp.reportRejectedToken(TEST_WABA_ID, FP);
     });
     expect(telegram).toHaveBeenCalledTimes(1);
     expect(sentTexts(telegram)[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}`);
@@ -476,8 +491,8 @@ describe("Graph error 190 on a send", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
       Object.assign(cp, { env: opsEnv });
-      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("failed");
-      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("already");
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("failed");
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("already");
     });
     expect(telegram).toHaveBeenCalledTimes(1);
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("down", { status: 503 }));
@@ -487,7 +502,7 @@ describe("Graph error 190 on a send", () => {
 
   it("claims nothing while ops alerts are off, so a later configuration still alerts", async () => {
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
-      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("disabled");
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("disabled");
       expect(cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at).toBeNull();
     });
   });
@@ -499,7 +514,7 @@ describe("Graph error 190 on a send", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
       Object.assign(cp, { env: opsEnv });
-      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("already");
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("already");
     });
     expect(telegram).not.toHaveBeenCalled();
   });
@@ -512,7 +527,7 @@ describe("Graph error 190 on a send", () => {
     await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => {
       Object.assign(cp, { env: opsEnv });
     });
-    const cfg = { META_GRAPH_VERSION: "v25.0", META_PHONE_NUMBER_ID: "PNID1", META_ACCESS_TOKEN: "t" } as never;
+    const cfg = { META_GRAPH_VERSION: "v25.0", META_PHONE_NUMBER_ID: "PNID1", META_ACCESS_TOKEN: "tenant-token" } as never;
     const pending: Promise<unknown>[] = [];
     const send = async (error: unknown) => {
       vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(error), { status: 400 }));
@@ -534,7 +549,7 @@ describe("Graph error 190 on a send", () => {
     });
     const pending: Promise<unknown>[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(rejected), { status: 401 }));
-    const cfg = { META_GRAPH_VERSION: "v25.0", META_ACCESS_TOKEN: "t", META_WABA_ID: TEST_WABA_ID, fetch: watchGraph(env, (work) => pending.push(work), TEST_WABA_ID) };
+    const cfg = { META_GRAPH_VERSION: "v25.0", META_ACCESS_TOKEN: "tenant-token", META_WABA_ID: TEST_WABA_ID, fetch: watchGraph(env, (work) => pending.push(work), TEST_WABA_ID) };
     await listTemplates(cfg as never, 5);
     await Promise.all(pending);
     const row = await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
@@ -543,10 +558,37 @@ describe("Graph error 190 on a send", () => {
     expect(row?.at).not.toBeNull();
   });
 
+  it("ignores a 190 for a token that a reconnect already replaced", async () => {
+    const control = getControlPlaneStub(env);
+    await runInDurableObject(control, async (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+      const telegram = telegramOk();
+      vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, await tokenFingerprint("old-token"))).toBe("stale");
+      expect(telegram).not.toHaveBeenCalled();
+      expect(cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at).toBeNull();
+    });
+  });
+
+  it("markTokensAlerted only touches the token the census checked", async () => {
+    const control = getControlPlaneStub(env);
+    const sealed = (await runInDurableObject(control, (cp: EccosControlPlane) =>
+      cp.sql.exec("SELECT meta_access_token AS t FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.t,
+    )) as string;
+    await control.markTokensAlerted([{ wabaId: TEST_WABA_ID, sealed: "ecs1.another-token" }]);
+    const at = () =>
+      runInDurableObject(control, (cp: EccosControlPlane) =>
+        cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at,
+      );
+    expect(await at()).toBeNull();
+    await control.markTokensAlerted([{ wabaId: TEST_WABA_ID, sealed }]);
+    expect(await at()).not.toBeNull();
+  });
+
   it("does not call the control plane again for a WABA it just reported", async () => {
     const reportRejectedToken = vi.spyOn(EccosControlPlane.prototype, "reportRejectedToken").mockResolvedValue();
-    await noteTokenRejected(env, TEST_WABA_ID);
-    await noteTokenRejected(env, TEST_WABA_ID);
+    await noteTokenRejected(env, TEST_WABA_ID, FP);
+    await noteTokenRejected(env, TEST_WABA_ID, FP);
     expect(reportRejectedToken).toHaveBeenCalledTimes(1);
   });
 });
