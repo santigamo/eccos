@@ -10,6 +10,7 @@ import {
   ConnectNumberPanel,
 } from "../components/dashboard/connect-number";
 import { NumbersTable } from "../components/dashboard/numbers-table";
+import { SubscriptionNotice } from "../components/dashboard/subscription-notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -59,6 +60,7 @@ function NumbersPage() {
     );
   }
   const resources = resourcesFor(root.data);
+  const billing = "billing" in root.data && root.data.billing === true;
   const wabas = resources?.wabas ?? [];
 
   // No account registry, or no number yet: both land on the connect flow, and
@@ -66,7 +68,7 @@ function NumbersPage() {
   // registry.
   if (!resources || wabas.length === 0) {
     const outcome = (
-      <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} />
+      <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
     );
     return (
       <Page title="Connect WhatsApp" kicker="First run">
@@ -87,6 +89,7 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
+            {resources?.account?.connectPolicy === "closed" ? <SubscriptionNotice billing={billing} /> : null}
             <ConnectNumberPanel heading="Meta Embedded Signup" />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
@@ -105,6 +108,7 @@ function NumbersPage() {
   return (
     <NumbersView
       resources={resources}
+      billing={billing}
       connectError={connectError}
       connectSkipped={connectSkipped}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
@@ -135,11 +139,14 @@ function NumbersPage() {
  */
 export function NumbersView({
   resources,
+  billing = false,
   connectError,
   connectSkipped,
   onRefresh,
 }: {
   resources: AccountResources;
+  /** Whether this console has billing on, so a closed workspace can be pointed at it. */
+  billing?: boolean;
   connectError?: ConnectFailureCode;
   connectSkipped?: number;
   /** Re-read the loader after the table's re-check changed something. */
@@ -155,8 +162,9 @@ export function NumbersView({
    * it is supposed to be refused.
    */
   const [busy, setBusy] = useState(false);
+  const closed = resources.account?.connectPolicy === "closed";
   const outcome = (
-    <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} />
+    <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
   );
   return (
     <Page
@@ -165,6 +173,7 @@ export function NumbersView({
       actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
     >
       {outcome}
+      {closed ? <SubscriptionNotice billing={billing} /> : null}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}

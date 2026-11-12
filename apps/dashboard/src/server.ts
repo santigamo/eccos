@@ -19,6 +19,9 @@ import { absolutizeUnfurlTags } from "./server/unfurl";
 import { beginTiming, finishTiming, logPerf } from "./server/timing";
 import { withSigueClientIp, type SigueProxyEnv } from "./server/sigue-proxy";
 import { sentryOptions } from "./lib/sentry";
+import { billingFor } from "./billing/context";
+import { reconcileBilling } from "./billing/reconcile";
+import { billingWebhook } from "./billing/webhook";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -65,6 +68,9 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
       media.mediaId,
     );
   }
+  // Before the session gate: Creem signs the request instead. Off, the path is not handled.
+  const billingResponse = billingWebhook(request, pathname, env);
+  if (billingResponse) return billingResponse;
   if (pathname.startsWith("/api/auth/")) {
     // Refused BEFORE the auth instance is even built: these endpoints answer
     // questions about the globally-unique organization slug, and `create`
@@ -102,4 +108,12 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
   return response;
 };
 
-export default Sentry.withSentry(() => sentryOptions, createServerEntry({ fetch: handleFetch }));
+async function scheduled(): Promise<void> {
+  const billing = billingFor(env);
+  if (billing) await reconcileBilling(billing);
+}
+
+export default Sentry.withSentry(() => sentryOptions, {
+  ...createServerEntry({ fetch: handleFetch }),
+  scheduled,
+});

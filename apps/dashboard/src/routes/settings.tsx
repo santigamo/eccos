@@ -1,13 +1,18 @@
+import { useEffect, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { invalidatePage } from "../lib/invalidate";
 import { Page } from "../ui";
 import {
+  confirmCheckout,
+  getBilling,
   getConversationRetention,
   getGatewayOrigin,
   listApiKeys,
   type AccountKeyResource,
+  type BillingState,
   type Result,
 } from "../server/gateway";
+import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billing-panel";
 import { ApiKeysPanel } from "../components/dashboard/api-keys";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,7 +41,12 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
  */
 export const Route = createFileRoute("/settings")({
   staleTime: CONFIG_STALE_MS,
-  loader: () => Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin()]),
+  // Creem returns the customer here with the subscription it created.
+  validateSearch: (search: Record<string, unknown>): { billing?: "success"; subscription_id?: string } => ({
+    billing: search.billing === "success" ? "success" : undefined,
+    subscription_id: typeof search.subscription_id === "string" ? search.subscription_id : undefined,
+  }),
+  loader: () => Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin(), getBilling()]),
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
@@ -51,8 +61,29 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
-  const [keys, retention, gatewayOrigin] = Route.useLoaderData();
+  const [keys, retention, gatewayOrigin, billing] = Route.useLoaderData();
   const router = useRouter();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [returned, setReturned] = useState<CheckoutReturn | null>(null);
+  // The webhook may land after Creem's redirect, so the return asks Creem itself.
+  // Once: the parameters then leave the URL, and a reload does not ask again.
+  useEffect(() => {
+    if (search.billing !== "success") return;
+    let current = true;
+    void (async () => {
+      const confirmed = search.subscription_id
+        ? await confirmCheckout({ data: { subscriptionId: search.subscription_id } }).catch(() => null)
+        : null;
+      if (!current) return;
+      setReturned({ status: confirmed?.ok ? confirmed.data : null });
+      await navigate({ search: {}, replace: true });
+      await invalidatePage(router);
+    })();
+    return () => {
+      current = false;
+    };
+  }, [search.billing, search.subscription_id, navigate, router]);
   // Both post-organization stages carry the account, in two shapes. Reachable
   // before any WABA exists, which is exactly why nothing here may need one.
   const ready = scope.ok && scope.data.stage === "ready" ? scope.data.scope : null;
@@ -67,6 +98,8 @@ function SettingsPage() {
       retention={retention}
       wabaId={wabaId}
       gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
+      billing={billing.ok ? billing.data : null}
+      billingReturned={returned}
       onKeysChanged={() => void invalidatePage(router)}
     />
   );
@@ -82,6 +115,8 @@ export function SettingsView({
   retention,
   wabaId,
   gatewayOrigin,
+  billing,
+  billingReturned,
   onKeysChanged,
 }: {
   accountId?: string;
@@ -89,6 +124,9 @@ export function SettingsView({
   retention?: Result<number | null>;
   wabaId?: string;
   gatewayOrigin?: string | null;
+  /** Null while billing is off, and for a role that may not administer it. */
+  billing?: BillingState | null;
+  billingReturned?: CheckoutReturn | null;
   onKeysChanged?: () => void;
 }) {
   return (
@@ -98,6 +136,7 @@ export function SettingsView({
         {accountId && retention ? (
           <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
         ) : null}
+        {accountId && billing ? <BillingPanel billing={billing} returned={billingReturned} /> : null}
         {accountId && keys ? (
           <div className="lg:col-span-2">
             <ApiKeysPanel keys={keys} wabaId={wabaId} gatewayOrigin={gatewayOrigin} onChanged={onKeysChanged} />
