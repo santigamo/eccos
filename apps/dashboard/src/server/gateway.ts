@@ -25,6 +25,7 @@ import { normalizeCustomerId } from "../lib/customer-id";
 import {
   requireAuthContext,
   requireGatewayPermission,
+  requireStepUp,
   UnauthorizedError,
 } from "../auth/server-auth";
 import { ForbiddenError, resolveMemberships } from "../auth/tenant";
@@ -196,6 +197,14 @@ async function requireActor(action: "view" | "operate" | "configure" | "administ
   const organizationId = await requireGatewayPermission(auth, request, action);
   const { session } = await requireAuthContext(auth, request);
   return { organizationId, session };
+}
+
+/**
+ * The step-up rows of the capability matrix (contract §4). Called after the
+ * role check, so a role that lacks the action is told that instead.
+ */
+function stepUp(): Promise<void> {
+  return requireStepUp(requestAuth(), getRequest());
 }
 
 /**
@@ -1199,6 +1208,8 @@ interface ScopedOptions {
   rejectUnknown?: boolean;
   /** Whether a not-yet-active WABA is acceptable. Defaults to `"active"`. */
   scope?: ScopeMode;
+  /** A step-up row of the capability matrix (contract §4). */
+  stepUp?: boolean;
 }
 
 async function withScopedGateway<T>(
@@ -1206,6 +1217,7 @@ async function withScopedGateway<T>(
   fn: (gateway: GatewayApi, scope: ResolvedScope) => Promise<T>,
 ): Promise<Result<T>> {
   return withGateway(async (gateway) => {
+    if (options.stepUp) await stepUp();
     const scope = await resolveScope(
       gateway,
       options.wabaId,
@@ -1335,9 +1347,10 @@ function connectReturnTo(request: Request): string {
 export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
-      // Embedded Signup is an admin+ mutation (contract §4): step-up policy is
-      // enforced by eccos-0x0.7; the account comes from the organization link.
+      // Embedded Signup is an admin+ step-up mutation (contract §4); the
+      // account comes from the organization link.
       const actor = await requireActor("administer");
+      await stepUp();
       const returnTo = connectReturnTo(getRequest());
       let link = await gateway.getOrganizationAccountLink(actor.organizationId);
       if (!link) {
@@ -1403,12 +1416,14 @@ export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler
  * Resolve the caller's Eccos account for an `administer` action (Embedded
  * Signup, token attach, API keys), creating the link if this is the
  * organization's first one. Shared so those actions cannot drift on who is
- * allowed to perform them.
+ * allowed to perform them. `stepUp` is set by the ones that write.
  */
 async function adminActorAccount(
   gateway: GatewayApi,
+  options: { stepUp?: boolean } = {},
 ): Promise<{ actor: ActorContext; accountId: string }> {
   const actor = await requireActor("administer");
+  if (options.stepUp) await stepUp();
   let link = await gateway.getOrganizationAccountLink(actor.organizationId);
   if (!link) {
     const ensured = await gateway.ensureOrganizationAccount(actor.organizationId);
@@ -1456,7 +1471,7 @@ export const exchangeConnectCode = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<ConnectExchangeResult>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, { stepUp: true });
         const result = await gateway.exchangeConnectCodeForAccountId(
           accountId,
           data.code,
@@ -1531,7 +1546,7 @@ export const connectWithToken = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<ManualConnectResult>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, { stepUp: true });
         const result = await gateway.connectWabaWithToken(accountId, data.token, data.wabaId);
         // NO token, and nothing derived from one. `candidates` is counted, not
         // listed, because the count is what makes the line legible; the WABA
@@ -1667,7 +1682,7 @@ export const issueApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<IssuedApiKey>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, { stepUp: true });
         const issued = await gateway.issueApiKey(accountId, data.label);
         auditEvent({
           action: "api_key_issue",
@@ -1687,7 +1702,7 @@ export const revokeApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<boolean>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway);
+        const { actor, accountId } = await adminActorAccount(gateway, { stepUp: true });
         const revoked = await gateway.revokeApiKey(accountId, data.keyId);
         auditEvent({
           action: "api_key_revoke",
@@ -2275,7 +2290,7 @@ export const setSubscriberConfig = createServerFn({ method: "POST" })
         // `scope: "any"`, for the same reason as the read: a subscriber URL
         // written in the awaiting-a-phone state survives provisioning, because
         // the saga's own `saveConfig` only ever writes META_*/CONNECTED_AT keys.
-        { action: "configure", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
+        { action: "configure", wabaId: data.wabaId, rejectUnknown: true, scope: "any", stepUp: true },
         (gateway, scope) => {
           const { wabaId: _wabaId, ...input } = data;
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);
@@ -2292,7 +2307,7 @@ export const resubscribe = createServerFn({ method: "POST" })
   .validator(validateScopeInput)
   .handler(({ data }): Promise<Result<ResubscribeResult>> =>
     withScopedGateway(
-      { action: "configure", wabaId: data?.wabaId, rejectUnknown: true },
+      { action: "configure", wabaId: data?.wabaId, rejectUnknown: true, stepUp: true },
       (gateway, scope) => gateway.resubscribe(scope.wabaId, scope.accountId),
     ),
   );

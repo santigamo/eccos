@@ -16,6 +16,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
+import { enrollTotp } from "./helpers/step-up";
 
 /**
  * The Worker bindings the server functions read.
@@ -159,6 +160,7 @@ describe("organization onboarding (identity plane)", () => {
     expect(signIn.status).toBe(200);
     const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
     const headers = new Headers({ cookie });
+    enrollTotp(db, "owner@corp.test");
 
     const org = (await auth.api.createOrganization({
       body: { name: "Acme", slug: mintSlug() },
@@ -223,6 +225,7 @@ describe("organization onboarding (identity plane)", () => {
     };
 
     const ownerHeaders = await mk("owner2@corp.test");
+    enrollTotp(db, "owner2@corp.test");
     const org = (await auth.api.createOrganization({
       body: { name: "Globex", slug: mintSlug() },
       headers: ownerHeaders,

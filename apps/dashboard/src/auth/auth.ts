@@ -26,6 +26,8 @@ import {
 } from "./mail";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
+import { STEP_UP_WINDOW_SECONDS } from "./step-up";
+import { stepUpGuard } from "./step-up-guard";
 
 /**
  * Build the accept-invitation link for the dashboard UI.
@@ -279,7 +281,7 @@ export function createAuth(config: AuthConfig) {
     session: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
-      freshAge: 60 * 15,
+      freshAge: STEP_UP_WINDOW_SECONDS,
     },
     // Distributed rate limiting (contract §8), shared with
     // @eccos/auth-baseline. Counters key on caller IP + path, never on the
@@ -356,9 +358,10 @@ export function createAuth(config: AuthConfig) {
     },
     plugins: [
       signupOrphanGuard(),
-      // TOTP for owner/admin step-up before sensitive actions (contract §8);
-      // enrollment UI ships with the eccos-0x0.7 dashboard pass.
-      twoFactor(),
+      // TOTP for owner/admin step-up before sensitive actions (contract §8).
+      // The issuer is the account name an authenticator app shows.
+      twoFactor({ issuer: "Eccos" }),
+      stepUpGuard(),
       organization({
         ac,
         roles: { owner, admin, operator, viewer },

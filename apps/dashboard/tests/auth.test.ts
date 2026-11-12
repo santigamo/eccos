@@ -24,6 +24,7 @@ import {
   CaptureMailSender,
 } from "../src/auth/mail";
 import { authConfigFromEnv } from "../src/auth/config";
+import { enrollTotp } from "./helpers/step-up";
 
 const SECRET = "test-secret-32-chars-minimum-length!!";
 const BASE_URL = "http://localhost:3000";
@@ -138,6 +139,7 @@ describe("invitation accept link (eccos-omv)", () => {
     const mail = new CaptureMailSender();
     const { auth, db } = await createTestAuth(mail);
     const cookie = await verifiedSessionCookie(auth, db, "inviter@example.com");
+    enrollTotp(db, "inviter@example.com");
 
     const org = (await auth.api.createOrganization({
       body: { name: "Acme", slug: "acme" },

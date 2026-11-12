@@ -28,6 +28,7 @@ import {
 } from "../src/auth/mail";
 import { ReccadoMailSender } from "../src/auth/mail-reccado";
 import { mailUndeliverableMessage } from "../src/components/auth/auth-page";
+import { enrollTotp } from "./helpers/step-up";
 
 const SECRET = "test-secret-32-chars-minimum-length!!";
 const BASE_URL = "http://localhost:3000";
@@ -421,6 +422,7 @@ describe("the three call sites send the declared variables", () => {
       }),
     );
     const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
+    enrollTotp(db, "owner@example.com");
     const org = (await auth.api.createOrganization({
       body: { name: "Acme", slug: mintSlug() },
       headers: new Headers({ cookie }),

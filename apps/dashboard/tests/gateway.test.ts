@@ -129,6 +129,8 @@ let fakeSessionHeaders: Headers | null = null;
 let fakeMemberships: { id: string; name?: string }[] = [{ id: "org-fixture" }];
 /** Gateway actions the fake role does NOT hold, to drive the forbidden path. */
 let fakeDeniedActions = new Set<string>();
+/** Why the fake session fails step-up, or null when it passes. */
+let fakeStepUpRefusal: "totp-required" | "reauth-required" | null = null;
 
 
 const ORG_ID = "org-fixture";
@@ -190,6 +192,10 @@ const fakeServerAuth = {
     }
     return ORG_ID;
   },
+  // Mirrors the real step-up refusal: same typed error, same reason codes.
+  requireStepUp: async () => {
+    if (fakeStepUpRefusal) throw new ForbiddenError("step-up required", fakeStepUpRefusal);
+  },
   resolveMemberships: async () => fakeMemberships,
   requireAuthContext: async (_auth: unknown, _request: Request) => {
     if (!fakeSessionHeaders) throw new UnauthorizedError();
@@ -204,6 +210,8 @@ mock.module("../src/auth/server-auth", () => ({
     fakesActive ? fakeServerAuth.resolveMemberships() : realTenant.resolveMemberships(...args),
   requireAuthContext: (...args: Parameters<typeof realServerAuth.requireAuthContext>) =>
     fakesActive ? fakeServerAuth.requireAuthContext(...args) : realServerAuth.requireAuthContext(...args),
+  requireStepUp: (...args: Parameters<typeof realServerAuth.requireStepUp>) =>
+    fakesActive ? fakeServerAuth.requireStepUp() : realServerAuth.requireStepUp(...args),
 }));
 
 installServerFnMocks({
@@ -251,6 +259,7 @@ const {
   validateDeleteTemplateInput,
   validateEditTemplateInput,
   connectWithToken,
+  exchangeConnectCode,
   validateTokenConnectInput,
   listApiKeys,
   issueApiKey,
@@ -280,6 +289,7 @@ afterEach(() => {
   fakeSessionHeaders = null;
   fakeMemberships = [{ id: "org-fixture" }];
   fakeDeniedActions = new Set();
+  fakeStepUpRefusal = null;
 });
 
 const UNCONFIGURED_ERROR = "GATEWAY service binding is not configured";
@@ -2312,6 +2322,75 @@ describe("failure classification (authorization vs. transport)", () => {
     });
     const res = await getGatewayStatus();
     expect(res).toEqual(unreachable("Durable Object reset"));
+  });
+});
+
+// --- Step-up (contract §4/§8) ---
+
+describe("step-up rows of the capability matrix", () => {
+  const steppedUp: Array<[string, () => Promise<{ ok: boolean }>]> = [
+    ["startConnect", () => startConnect()],
+    ["exchangeConnectCode", () => exchangeConnectCode({ data: { code: "code", state: "state" } })],
+    ["connectWithToken", () => connectWithToken({ data: { token: `EAAG${"x".repeat(60)}` } })],
+    ["issueApiKey", () => issueApiKey({ data: {} })],
+    ["revokeApiKey", () => revokeApiKey({ data: { keyId: "key_a1" } })],
+    ["setSubscriberConfig", () => setSubscriberConfig({ data: { url: "https://new.example.com" } })],
+    ["resubscribe", () => resubscribe()],
+  ];
+
+  /** A binding where any mutation reaching the gateway is recorded. */
+  function mutationBinding(): string[] {
+    const reached: string[] = [];
+    const record = (name: string) => async () => {
+      reached.push(name);
+      return { ok: false, code: "fixture" };
+    };
+    withResources({
+      startConnectForAccountId: record("startConnect"),
+      exchangeConnectCodeForAccountId: record("exchangeConnectCode"),
+      connectWabaWithToken: record("connectWithToken"),
+      issueApiKey: record("issueApiKey"),
+      revokeApiKey: record("revokeApiKey"),
+      setSubscriberConfig: record("setSubscriberConfig"),
+      resubscribe: record("resubscribe"),
+      listApiKeys: async () => [],
+    });
+    return reached;
+  }
+
+  for (const reason of ["totp-required", "reauth-required"] as const) {
+    test(`${reason} refuses every step-up row before the gateway is reached`, async () => {
+      const reached = mutationBinding();
+      fakeStepUpRefusal = reason;
+      for (const [name, call] of steppedUp) {
+        expect([name, await call()]).toEqual([
+          name,
+          { ok: false, kind: "forbidden", reason, error: "step-up required" },
+        ]);
+      }
+      expect(reached).toEqual([]);
+    });
+  }
+
+  test("a role without the action is told so, not asked to step up", async () => {
+    mutationBinding();
+    fakeStepUpRefusal = "totp-required";
+    fakeDeniedActions = new Set(["configure", "administer"]);
+    for (const [name, call] of steppedUp) {
+      expect([name, await call()]).toMatchObject([name, { reason: "missing-permission" }]);
+    }
+  });
+
+  test("reads never require step-up", async () => {
+    mutationBinding();
+    fakeStepUpRefusal = "reauth-required";
+    expect((await listApiKeys()).ok).toBe(true);
+  });
+
+  test("a stepped-up session reaches the gateway", async () => {
+    const reached = mutationBinding();
+    for (const [, call] of steppedUp) await call();
+    expect(reached).toEqual(steppedUp.map(([name]) => name));
   });
 });
 

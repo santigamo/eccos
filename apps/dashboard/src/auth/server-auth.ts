@@ -20,6 +20,7 @@
 
 import { requirePermission, type GatewayAction } from "./tenant";
 import { resolveSession, UnauthorizedError, type SessionUser } from "./session";
+import { requireStepUp as requireSessionStepUp } from "./step-up";
 import type { Auth } from "./auth";
 
 export { UnauthorizedError, type SessionUser };
@@ -31,6 +32,11 @@ export async function requireGatewayPermission(
   action: GatewayAction,
 ): Promise<string> {
   return requirePermission(auth, request.headers, undefined, action);
+}
+
+/** Step-up rows of the capability matrix (contract §4): TOTP plus a recent sign-in. */
+export function requireStepUp(auth: Auth, request: Request): Promise<void> {
+  return requireSessionStepUp(auth, request.headers);
 }
 
 /** Authenticated server-function context: throws UnauthorizedError when absent. */

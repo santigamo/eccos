@@ -31,6 +31,8 @@ export type ForbiddenReason =
   | "select-organization"
   | "not-a-member"
   | "missing-permission"
+  | "totp-required"
+  | "reauth-required"
   | "other";
 
 /** Typed error for authenticated-but-forbidden requests (used by route guards
