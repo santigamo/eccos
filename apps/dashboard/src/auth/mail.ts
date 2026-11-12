@@ -19,6 +19,8 @@
  * adapter's job is to report the outcome faithfully — not to decide.
  */
 
+import { sha256Hex } from "../lib/sha256";
+
 /** The transactional templates registered with the provider. */
 export type MailTemplate =
   | "verify-email"
@@ -272,11 +274,7 @@ export async function deriveIdempotencyKey(
   to: string,
   unique: string,
 ): Promise<string> {
-  const data = new TextEncoder().encode(`${template}:${to}:${unique}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return sha256Hex(`${template}:${to}:${unique}`);
 }
 
 /**

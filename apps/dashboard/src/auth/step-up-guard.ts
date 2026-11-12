@@ -37,7 +37,9 @@ const VERIFY_PATHS: ReadonlySet<string> = new Set([
 
 const ERROR_CODES: Record<StepUpReason, string> = {
   "totp-required": "TOTP_REQUIRED",
-  "reauth-required": "SESSION_NOT_FRESH",
+  // Not Better Auth's SESSION_NOT_FRESH: that is its own freshness refusal,
+  // which a two-factor code does not answer.
+  "reauth-required": "STEP_UP_REQUIRED",
 };
 
 /** The step-up one of this module's refusals was thrown for, if `error` is one. */

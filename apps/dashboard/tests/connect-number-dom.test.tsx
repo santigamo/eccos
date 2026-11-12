@@ -302,6 +302,24 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(exchanges).toEqual([{ code: "code-1", state: "state-2" }]);
   });
 
+  test("only the attempt right after a cancel waits behind Open Meta", async () => {
+    stubs.exchangeConnectCode = async () => ({ ok: true, data: { ok: false, code: "failed", error: "x" } });
+    const host = await mountChoices();
+    await runFlow(host, { authResponse: null });
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await act(async () => card(host, "Open Meta").click());
+    await act(async () => loginCallback?.(FINISHED));
+    await settle();
+    expect(loginCalls).toBe(2);
+
+    // That window opened and ran: the next attempt opens on the card's click.
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(3);
+    expect(host.textContent).not.toContain("Open Meta");
+  });
+
   test("after a blocked popup, Start again and a card lead to Open Meta too", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());

@@ -12,7 +12,8 @@ import { createAuth } from "../src/auth/auth";
 import { CaptureMailSender } from "../src/auth/mail";
 import { requireStepUp, STEP_UP_WINDOW_SECONDS, stepUpRefusal } from "../src/auth/step-up";
 import { confirmStepUp } from "../src/auth/step-up-confirm";
-import { STEP_UP_ACCOUNT_PATHS } from "../src/auth/step-up-guard";
+import { STEP_UP_ACCOUNT_PATHS, stepUpReasonOfError } from "../src/auth/step-up-guard";
+import { APIError } from "better-auth/api";
 import { ForbiddenError } from "../src/auth/tenant";
 import { enrollTotp } from "./helpers/step-up";
 
@@ -117,7 +118,7 @@ async function refusal(response: Response): Promise<[number, string | undefined]
   return [response.status, ((await response.json()) as { code?: string }).code];
 }
 
-const STALE = [403, "SESSION_NOT_FRESH"] as const;
+const STALE = [403, "STEP_UP_REQUIRED"] as const;
 
 describe("stepUpRefusal", () => {
   const now = Date.parse("2026-11-12T12:00:00Z");
@@ -297,6 +298,41 @@ describe("attack: a stale stolen cookie plus the password", () => {
     expect(budget()).toEqual({ failed: 0, locked: null });
   });
 
+  test("the lockout step-up mirrors is still Better Auth's own: same columns, 10 failures, 15 minutes", async () => {
+    // Step-up spends this budget itself (`step-up-confirm.ts`), with Better
+    // Auth's defaults written out. Here Better Auth alone runs it, at sign-in:
+    // an upgrade that renames a column or moves a default fails this test.
+    const { auth, db, cookie, code } = await enrolled();
+    const budget = () =>
+      db.query('SELECT "failedVerificationCount" AS failed, "lockedUntil" AS locked FROM "twoFactor"').get() as {
+        failed: number;
+        locked: string | null;
+      };
+    const wrongCodeAtSignIn = async () => {
+      const signIn = await auth.api.signInEmail({
+        body: { email: EMAIL, password: PASSWORD },
+        returnHeaders: true,
+      });
+      const challenge = signIn.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+      await auth.api
+        .verifyTOTP({ body: { code: "000000" }, headers: new Headers({ cookie: challenge }) })
+        .catch(() => null);
+    };
+
+    for (let i = 0; i < 9; i++) await wrongCodeAtSignIn();
+    expect(budget()).toEqual({ failed: 9, locked: null });
+
+    await wrongCodeAtSignIn();
+    const locked = new Date(budget().locked ?? 0).getTime();
+    expect(Math.abs(locked - (Date.now() + 900_000))).toBeLessThan(10_000);
+    // And step-up reads that same lock.
+    expect(await confirmStepUp(auth, new Headers({ cookie }), { code: await code() })).toEqual({
+      ok: false,
+      code: "locked",
+      minutes: 15,
+    });
+  });
+
   test("a failure that is not a verdict on the code is thrown, and spends no attempt", async () => {
     const { auth, db, cookie } = await enrolled();
     goStale(db);
@@ -332,6 +368,13 @@ describe("attack: a stale stolen cookie plus the password", () => {
       code: "locked",
       minutes: 2,
     });
+  });
+
+  test("Better Auth's own freshness refusal is not read as a step-up", () => {
+    const code = (value: string) => new APIError("FORBIDDEN", { code: value, message: "x" });
+    expect(stepUpReasonOfError(code("SESSION_NOT_FRESH"))).toBeNull();
+    expect(stepUpReasonOfError(code("STEP_UP_REQUIRED"))).toBe("reauth-required");
+    expect(stepUpReasonOfError(code("TOTP_REQUIRED"))).toBe("totp-required");
   });
 
   test("every guarded account path is a real endpoint", async () => {
@@ -467,6 +510,20 @@ describe("attack: enrolling the thief's own authenticator", () => {
     expect(await refusal(await enable("WRONG000"))).toEqual([...NO_PROOF]);
     expect(await refusal(await enable(emailCode))).toEqual([...NO_PROOF]);
     expect(factors(ctx.db)).toEqual({ n: 0 });
+  });
+
+  test("the right code is not spent when Better Auth then refuses the request itself", async () => {
+    const ctx = await signedIn();
+    await ctx.post("/two-factor/send-enable-code", { password: PASSWORD }, ctx.cookie);
+    const emailCode = ctx.mail.sent.at(-1)!.variables.code;
+    const enable = (password: string) =>
+      ctx.post("/two-factor/enable", { password, emailCode }, ctx.cookie);
+
+    expect(await refusal(await enable("not-the-password"))).toEqual([400, "INVALID_PASSWORD"]);
+    expect(factors(ctx.db)).toEqual({ n: 0 });
+    expect((await enable(PASSWORD)).status).toBe(200);
+    // Spent by the setup that started.
+    expect(await refusal(await enable(PASSWORD))).toEqual([...NO_PROOF]);
   });
 
   test("a parallel burst with the right code starts one enrollment", async () => {
@@ -623,7 +680,7 @@ describe("Better Auth organization endpoints (invitations, role changes)", () =>
       ["/organization/remove-member", { memberIdOrEmail: EMAIL, organizationId: org.id }],
     ] as const) {
       const [status, code] = await refusal(await post(path, body, viewer));
-      expect([path, status >= 400, code === "TOTP_REQUIRED" || code === "SESSION_NOT_FRESH"]).toEqual([
+      expect([path, status >= 400, code === "TOTP_REQUIRED" || code === "STEP_UP_REQUIRED"]).toEqual([
         path,
         true,
         false,
@@ -758,11 +815,11 @@ describe("Better Auth organization endpoints (invitations, role changes)", () =>
     };
 
     // Known, and without the permission: Better Auth's own refusal, not step-up.
-    expect(await resendAs("viewer")).not.toBe("SESSION_NOT_FRESH");
-    expect(await resendAs("viewer,operator")).not.toBe("SESSION_NOT_FRESH");
+    expect(await resendAs("viewer")).not.toBe("STEP_UP_REQUIRED");
+    expect(await resendAs("viewer,operator")).not.toBe("STEP_UP_REQUIRED");
     // One role that invites, a padded name, an unknown role, or nothing at all.
     for (const role of ["viewer,admin", "viewer, admin", " viewer", "viewer,custom", ""]) {
-      expect([role, await resendAs(role)]).toEqual([role, "SESSION_NOT_FRESH"]);
+      expect([role, await resendAs(role)]).toEqual([role, "STEP_UP_REQUIRED"]);
     }
   });
 

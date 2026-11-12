@@ -124,11 +124,11 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
       return;
     }
     const code = (result?.error as { code?: string } | null | undefined)?.code;
-    // Every attempt spends the mailed code, whatever then refused it.
-    setSent(false);
-    setError(
-      startError(code, "Could not start the setup, and the code is used up. Email a new one to try again."),
-    );
+    // Back to the send step only when this code is spent (the server refused
+    // it) or the password has to be typed again. Anything else, a dropped
+    // connection or a rate limit, left the code good: it stays in the field.
+    if (code === "EMAIL_CODE_REQUIRED" || code === "INVALID_PASSWORD") setSent(false);
+    setError(startError(code, "Could not start the setup right now. Your code is still good: try again."));
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {

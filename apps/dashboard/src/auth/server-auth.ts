@@ -20,7 +20,6 @@
 
 import { requirePermission } from "./tenant";
 import { resolveSession, UnauthorizedError, type SessionUser } from "./session";
-import { getSessionOnce } from "./request-memo";
 import { isStepUpRow, requireStepUp, STEP_UP_ROWS, type Grant } from "./step-up";
 import type { Auth } from "./auth";
 

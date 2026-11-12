@@ -97,7 +97,6 @@ export function resetConnectGuards(): void {
   guards.left = false;
 }
 
-type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
 
 /**
@@ -110,6 +109,10 @@ type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
  * onboarding: the customer asked to keep their number on the app and would get
  * the flow that takes it off. Failing loudly is the only safe answer.
  */
+const SDK_REQUIRED_MESSAGE =
+  "Connecting a number that is already on the WhatsApp Business app needs Meta's script, which did not load. Check for a blocker or an extension and try again. Do not use the other option: it would take the number off the app.";
+
+/** A neutral note beside the cards: a cancel, a step-up owed, a window ready to open. */
 const NOTICE_CLASS =
   "m-0 border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground";
 
@@ -120,9 +123,6 @@ const MISSING_PERMISSION_COPY = failureCopy({
   reason: "missing-permission",
   error: "",
 }).detail;
-
-const SDK_REQUIRED_MESSAGE =
-  "Connecting a number that is already on the WhatsApp Business app needs Meta's script, which did not load. Check for a blocker or an extension and try again. Do not use the other option: it would take the number off the app.";
 
 /**
  * The sentence that frames the fork, shared by both containers so they cannot
@@ -362,6 +362,8 @@ export function ConnectNumberChoices({
       const { state } = handoff.data;
       const options = loginOptions(config.data.configId, path);
       const open = () => {
+        // This attempt is the retry: the one after it opens on its own click again.
+        retrying.current = false;
         setReady(null);
         track("es_popup_open");
         sdk.login((response) => {
@@ -420,9 +422,7 @@ export function ConnectNumberChoices({
         className={cn(
           "block",
           feedback &&
-            (feedback.tone === "notice"
-              ? "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground"
-              : AUTH_ERROR_BANNER_CLASS),
+            (feedback.tone === "notice" ? NOTICE_CLASS : AUTH_ERROR_BANNER_CLASS),
         )}
       >
         {feedback?.text}

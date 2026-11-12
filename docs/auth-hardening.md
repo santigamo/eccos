@@ -60,7 +60,9 @@ gateway layer and the D1-level `429` behavior tested in
   HTTP and server-side alike. A stolen cookie plus the password therefore
   cannot enroll the thief's authenticator on an account that has none. The
   code is 8 characters, lives 10 minutes, is stored hashed, and is consumed
-  atomically before it is compared: one attempt per code, right or wrong.
+  atomically before it is compared: one guess per code. A right code is put
+  back if Better Auth then refuses the request for a reason of its own (a
+  wrong password, say), so only a setup that started spends it.
   A send needs the password, is refused within a minute of the last one for
   that user, and is capped at 10 per hour per caller. The code is stored only
   after the mail went out, so a failed send starts no wait. A pending enrollment's

@@ -18,6 +18,7 @@ import {
 import { defineRequestState } from "@better-auth/core/context";
 import { generateRandomString } from "better-auth/crypto";
 import { z } from "zod";
+import { sha256Hex } from "../lib/sha256";
 
 export const ENABLE_CODE_TTL_SECONDS = 10 * 60;
 export const ENABLE_CODE_RESEND_SECONDS = 60;
@@ -46,6 +47,11 @@ const CHANGES: Record<string, TwoFactorChange> = {
   "/two-factor/generate-backup-codes": "backup-codes",
 };
 
+/** The mailed code an `enable` request presented, once it proved right. */
+const rightCode = defineRequestState<{ identifier: string; value: string; expiresAt: Date } | null>(
+  () => null,
+);
+
 /** The signed-in caller as a request to one of `CHANGES` found them, or null. */
 const callerBefore = defineRequestState<(Recipient & { twoFactorEnabled?: boolean | null }) | null>(
   () => null,
@@ -53,11 +59,8 @@ const callerBefore = defineRequestState<(Recipient & { twoFactorEnabled?: boolea
 
 const identifierOf = (userId: string) => `two-factor-enable-${userId}`;
 
-async function digest(userId: string, code: string): Promise<string> {
-  const data = new TextEncoder().encode(`${userId}:${code.trim().toUpperCase()}`);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
+const digest = (userId: string, code: string) =>
+  sha256Hex(`${userId}:${code.trim().toUpperCase()}`);
 
 export function enrollmentProof(mail: TwoFactorMail) {
   return {
@@ -110,12 +113,12 @@ export function enrollmentProof(mail: TwoFactorMail) {
             // No session: the endpoint's own middleware answers 401.
             if (!session) return;
             const code: unknown = ctx.body?.emailCode;
-            // Consumed before it is compared, so a code gets exactly one attempt.
+            const identifier = identifierOf(session.user.id);
+            // Taken before it is compared, so a code gets exactly one guess
+            // however many arrive at once.
             const sent =
               typeof code === "string"
-                ? await ctx.context.internalAdapter.consumeVerificationValue(
-                    identifierOf(session.user.id),
-                  )
+                ? await ctx.context.internalAdapter.consumeVerificationValue(identifier)
                 : null;
             if (
               typeof code !== "string" ||
@@ -128,6 +131,7 @@ export function enrollmentProof(mail: TwoFactorMail) {
                 message: "setting up two-factor authentication needs the code sent to your email",
               });
             }
+            await rightCode.set({ identifier, value: sent.value, expiresAt: sent.expiresAt });
           }),
         },
         {
@@ -138,6 +142,17 @@ export function enrollmentProof(mail: TwoFactorMail) {
         },
       ],
       after: [
+        {
+          // The right code is spent by a setup that started. If Better Auth
+          // then refused the request for a reason of its own, it is put back.
+          matcher: (ctx) => ctx.path === "/two-factor/enable",
+          handler: createAuthMiddleware(async (ctx) => {
+            const taken = await rightCode.get();
+            if (taken && ctx.context.returned instanceof Error) {
+              await ctx.context.internalAdapter.createVerificationValue(taken);
+            }
+          }),
+        },
         {
           matcher: (ctx) => Object.hasOwn(CHANGES, ctx.path ?? ""),
           handler: createAuthMiddleware(async (ctx) => {

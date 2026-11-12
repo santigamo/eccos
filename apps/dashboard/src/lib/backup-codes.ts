@@ -22,7 +22,10 @@ export function showBackupCodes(codes: string[]): Promise<void> {
     const held: Held = {
       codes,
       confirm: () => {
-        queue.splice(queue.indexOf(held), 1);
+        const at = queue.indexOf(held);
+        // Confirmed twice (a double click): there is nothing left to remove.
+        if (at === -1) return;
+        queue.splice(at, 1);
         changed();
         resolve();
       },
