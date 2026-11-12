@@ -548,6 +548,7 @@ export function ConnectNumberChoices({
       setAwaiting(path);
     } catch (err) {
       if (followSignIn(err)) return;
+      if (attempt.current !== mine) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (attempt.current === mine) setStarting(null);
