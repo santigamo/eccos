@@ -36,9 +36,12 @@ stability and watch the repository for advisories.
 - **Forwarded events** are signed with `X-Eccos-Signature: sha256=<hex>` using
   `SUBSCRIBER_SECRET` so your subscriber can verify they came from Eccos.
 - **Secrets** live only in `.env` (Bun target, gitignored), as `wrangler secret` values, or in
-  Cloudflare-encrypted control-plane storage for tenant Meta tokens. Tenant Meta tokens are not
-  application-encrypted and are never returned by operator APIs, committed to the repository, or
-  written to logs. Account API keys are stored only as SHA-256 hashes and are returned once at issue.
+  control-plane storage for tenant Meta tokens. On the Workers target tenant Meta tokens are
+  application-encrypted before they are stored: AES-256-GCM, with a key derived from the
+  `ECCOS_TOKEN_ENCRYPTION_KEY` Worker secret and bound to the account and WABA
+  (`apps/gateway/src/token-crypto.ts`), on top of Cloudflare's encryption at rest. They are never
+  returned by operator APIs, committed to the repository, or written to logs. Account API keys are
+  stored only as SHA-256 hashes and are returned once at issue.
 
 ## Data handling & logging
 
@@ -51,8 +54,9 @@ stability and watch the repository for advisories.
 
 ## Hardening notes
 
-- Always set a strong, random `META_WEBHOOK_VERIFY_TOKEN`, `ECCOS_ADMIN_API_KEY` (Workers), and
-  `SUBSCRIBER_SECRET` (`ECCOS_API_KEY` on the Bun target).
+- Always set a strong, random `META_WEBHOOK_VERIFY_TOKEN`, `ECCOS_ADMIN_API_KEY` and
+  `ECCOS_TOKEN_ENCRYPTION_KEY` (Workers), and `SUBSCRIBER_SECRET` (`ECCOS_API_KEY` on the Bun
+  target).
 - Serve Eccos over HTTPS (the Workers target gives you a stable HTTPS URL for free).
 - On Workers, per-account Meta tokens are stored in the control plane — rotate a WABA's token by
   re-registering the WABA if one is suspected exposed.

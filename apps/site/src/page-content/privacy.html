@@ -13,7 +13,7 @@
     <dl class="identity">
       <dt>Name</dt><dd>Santiago García Monsalve</dd>
       <dt>Tax ID (NIF)</dt><dd>21105416H</dd>
-      <dt>Address</dt><dd>Passeig del Riu, 54, planta 1º, puerta 2ª — 08241 Manresa (Barcelona), Spain</dd>
+      <dt>Address</dt><dd>Passeig del Riu, 54, planta 1º, puerta 2ª, 08241 Manresa (Barcelona), Spain</dd>
       <dt>Phone</dt><dd>+34 697 98 18 79</dd>
       <dt>Email</dt><dd><a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a></dd>
     </dl>
@@ -30,31 +30,35 @@
       businesses can deploy it entirely on their own Cloudflare account. In that
       case we process no personal data at all: the deployment talks to Meta
       directly, nothing is ever sent to us, and we have no access to it. This
-      policy simply does not apply to data handled by a self-hosted deployment —
-      the business operating it is responsible for its own deployment.
+      policy does not apply to data handled by a self-hosted deployment. The
+      business operating it is responsible for its own deployment.
     </p>
     <p>
-      <strong>Eccos Cloud.</strong> The hosted version, which we operate (currently
-      in early access, not yet generally available). Here Santiago García Monsalve
+      <strong>Eccos Cloud.</strong> The hosted version, which we operate. For the
+      WhatsApp conversations of each client business, Santiago García Monsalve
       acts as a <strong>data processor</strong> within the meaning of Article 28
-      GDPR, on behalf of each client business, which remains the
-      <strong>data controller</strong> for its own conversations. A data processing
-      agreement is put in place with each Eccos Cloud client.
+      GDPR. The client business remains the <strong>data controller</strong>. A
+      data processing agreement under Article 28 is available on request at
+      <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>.
     </p>
     <p>
-      <strong>This website.</strong> For data you send to us directly — for example
-      when you email us — Santiago García Monsalve is the data controller.
+      <strong>Console accounts, billing and this website.</strong> For the data of
+      the people who sign in to the console, for billing, and for data you send
+      to us directly (for example when you email us), Santiago García Monsalve is
+      the data controller.
     </p>
   </section>
 
   <section>
-    <h2>Data processed in Eccos Cloud</h2>
-    <p>The gateway stores four kinds of records for each connected WhatsApp Business Account:</p>
+    <h2>Data processed in Eccos Cloud on behalf of clients</h2>
+    <p>The gateway stores these records for each connected WhatsApp Business Account:</p>
     <ul>
-      <li><strong>Configuration</strong> — the client's gateway settings: account identifiers and the endpoint events are forwarded to.</li>
-      <li><strong>Inbound events</strong> — incoming messages and status events received from the WhatsApp Cloud API, including message content and the sender's phone number.</li>
-      <li><strong>Outbound messages</strong> — messages the client asks the gateway to send, with their delivery status.</li>
-      <li><strong>Delivery queue</strong> — pending forwards to the client's endpoint; each entry also contains the full message payload until it is redacted (see retention below).</li>
+      <li><strong>Configuration.</strong> Account, WhatsApp Business Account and phone number identifiers, the endpoint events are forwarded to and its signing secret, and the Meta access token, encrypted with AES-256-GCM under a key kept outside the storage.</li>
+      <li><strong>Conversation history.</strong> Every message in and out with its content, the customer's phone number and Meta user identifier, the contact's name when Meta supplies it, delivery and read status, and the workspace's read position.</li>
+      <li><strong>Media files.</strong> The images, audio, video, documents and stickers sent or received, downloaded from Meta and stored in a private bucket. They are served only to signed-in members of the workspace that owns the number.</li>
+      <li><strong>Forwarding buffer.</strong> Incoming events, outgoing messages and the delivery queue, each with the full message payload until it is deleted or redacted (see retention below).</li>
+      <li><strong>Broadcasts and scheduled sends.</strong> The recipients' phone numbers, the template, its values and the outcome of each send.</li>
+      <li><strong>WhatsApp Business app sync.</strong> When a number that already used the WhatsApp Business app is connected (coexistence), Meta sends its past chats and its contacts (names and phone numbers) once. We store those payloads as received and build conversation history and contacts from them.</li>
     </ul>
     <p>
       This data is processed for one purpose only: delivering each business its own
@@ -62,39 +66,68 @@
       businesses, never sold, rented, or shared with data brokers, and never used
       for advertising or to train models.
     </p>
+    <p>
+      As the operator we have the technical ability to read stored data. We access
+      message content only to provide or maintain the service, to handle a support
+      request from the client, to resolve an incident, or to comply with a legal
+      obligation.
+    </p>
+  </section>
+
+  <section>
+    <h2>Data we handle as controller</h2>
+    <ul>
+      <li><strong>Console accounts.</strong> Name, email address, a hash of the password, sessions (with the IP address and browser of each sign-in), invitations, verification codes and, where a second factor is enrolled, its secret. They live in a database separate from WhatsApp data.</li>
+      <li><strong>Sign-in protection.</strong> Counters of authentication attempts per IP address, to stop abuse.</li>
+      <li><strong>Audit log.</strong> A record of sensitive console actions: who acted (user identifier and email), in which workspace, on which resource, and the outcome. It never contains message content, customer phone numbers or secrets. It is written to our Cloudflare logs.</li>
+      <li><strong>Console emails.</strong> Verification, password reset and invitation emails are sent with our own mail software, which runs on our Cloudflare account and sends through Cloudflare's email service. It processes the recipient's address and the content of the email.</li>
+      <li><strong>Billing.</strong> Subscriptions are sold by Creem, which acts as merchant of record. When a subscription is started we send Creem the email address of the user who starts it and the identifier of the workspace's account. Card details, billing address and tax data are entered on Creem's pages and never reach us; Creem handles them as a controller under its own privacy policy. We store only Creem's customer and subscription identifiers and the subscription status.</li>
+      <li><strong>Operational alerts.</strong> Alerts about failing deliveries and a daily status summary are sent to a private Telegram group that only we read. They carry workspace names, account and number identifiers, counts and a truncated technical error. They never carry message content or customer phone numbers. A workspace name can be personal data when the client is a natural person.</li>
+      <li><strong>Email to us.</strong> Your address and the content of your message.</li>
+    </ul>
   </section>
 
   <section>
     <h2>Purpose and legal basis</h2>
     <ul>
-      <li><strong>Eccos Cloud:</strong> we process data only on the documented instructions of the client, under the data processing agreement (Article 28 GDPR). The client, as controller, is responsible for its own legal basis towards the people it messages.</li>
-      <li><strong>Email to us:</strong> we process your address and the content of your message to respond to you — steps taken at your request prior to a contract (Article 6(1)(b) GDPR) and our legitimate interest in handling correspondence (Article 6(1)(f)).</li>
-      <li><strong>This website:</strong> these pages are static files served from Cloudflare's edge, and they set no cookies. Visits are measured with Umami, a privacy-focused analytics tool that we run on our own infrastructure rather than a third party's: it uses no cookies, collects no personally identifiable information, and does not track visitors across sites. Cloudflare processes the request metadata inherent in serving any web page, as described in its own privacy policy.</li>
-      <li><strong>The Eccos Cloud console (app.eccos.chat):</strong> we measure how the console is used — pages visited and the steps of signing up and connecting a number — with the same self-hosted Umami, under our legitimate interest in understanding and improving the product (Article 6(1)(f) GDPR). A signed-in account is identified only by a pseudonymous identifier (a one-way hash of its account id); no email address, name, phone number or message content is sent to analytics, and query parameters other than campaign tags are removed before anything is sent. Browsers that send Do Not Track are not measured. Analytics sets no cookies; the console uses only the cookies needed to keep you signed in.</li>
+      <li><strong>Client conversations in Eccos Cloud:</strong> we process them only on the documented instructions of the client, under the data processing agreement (Article 28 GDPR). The client, as controller, is responsible for its own legal basis towards the people it messages.</li>
+      <li><strong>Console accounts and billing:</strong> performance of the contract with the client (Article 6(1)(b) GDPR). Sign-in protection, the audit log and operational alerts rest on our legitimate interest in keeping the service secure and running (Article 6(1)(f)).</li>
+      <li><strong>Email to us:</strong> we process your address and the content of your message to respond to you: steps taken at your request prior to a contract (Article 6(1)(b) GDPR) and our legitimate interest in handling correspondence (Article 6(1)(f)).</li>
+      <li><strong>This website:</strong> these pages are static files served from Cloudflare's edge, and they set no cookies. Visits are measured with Umami, a privacy-focused analytics tool that we run on our own server rather than a third party's: it uses no cookies, collects no personally identifiable information, and does not track visitors across sites. Cloudflare processes the request metadata inherent in serving any web page, as described in its own privacy policy.</li>
+      <li><strong>The Eccos Cloud console (app.eccos.chat):</strong> we measure how the console is used (pages visited and the steps of signing up and connecting a number) with the same self-hosted Umami, under our legitimate interest in understanding and improving the product (Article 6(1)(f) GDPR). A signed-in account is identified only by a pseudonymous identifier (a one-way hash of its account id); no email address, name, phone number or message content is sent to analytics, and query parameters other than campaign tags are removed before anything is sent. Browsers that send Do Not Track are not measured. Analytics sets no cookies; the console uses only the cookies needed to keep you signed in.</li>
     </ul>
   </section>
 
   <section>
     <h2>Retention</h2>
     <ul>
-      <li><strong>Conversation history</strong> — messages and contacts — is kept until a number is erased or the window set for the workspace passes. It is kept forever by default; each client can set a window between 30 and 3650 days.</li>
-      <li><strong>Forwarding buffer</strong> — inbound events, outbound messages, and the payload stored in the delivery queue — keeps message content for <strong>30 days</strong> by default. The operator configures this between 7 and 90 days.</li>
+      <li><strong>Conversation history</strong> (messages and contacts) is kept until a number is erased or the window set for the workspace passes. It is <strong>kept forever by default</strong>; each client can set a window between 30 and 3650 days in Settings.</li>
+      <li><strong>Media files</strong> follow their message: a file is deleted when the last message that uses it is deleted.</li>
+      <li><strong>Forwarding buffer</strong> (incoming events, outgoing messages, and the payload stored in the delivery queue) keeps message content for <strong>30 days</strong> by default. The operator configures this between 7 and 90 days.</li>
       <li><strong>Delivery records</strong> are then redacted: the message payload is removed and only delivery metadata (such as timestamps and delivery outcome) remains, for up to <strong>90 days</strong>.</li>
+      <li><strong>Broadcasts and scheduled sends</strong> are deleted with the forwarding buffer once finished. Template values are deleted when the send is attempted. A scheduled send that is still pending is kept until it runs or expires, at most 97 days.</li>
+      <li><strong>WhatsApp Business app sync payloads</strong> are <strong>not expired</strong>: Meta sends them once and they cannot be requested again. They are deleted when the number's whole storage is deleted, or on the client's request.</li>
+      <li><strong>Erased numbers.</strong> When a customer is erased, their phone number or Meta user identifier is kept, with the date, in a list of erased numbers, so a later reprocessing of the sync payloads does not import them again. The list holds nothing else. It is kept <strong>indefinitely</strong>, until the storage of the whole WhatsApp number is deleted.</li>
+      <li><strong>Webhooks held</strong> for a number that is not active yet are deleted after 3 days.</li>
+      <li><strong>Console accounts</strong> are kept while the account exists. A session lasts 7 days and is renewed, at most once a day, each time it is used: it ends after 7 days without use, or when you sign out.</li>
+      <li><strong>Audit log.</strong> Kept in Cloudflare's log store for up to 7 days. We keep no other copy.</li>
+      <li><strong>Operational alerts</strong> stay in the Telegram group until we delete them. They are not deleted automatically.</li>
+      <li><strong>Creem identifiers</strong> (customer, subscription and its status) are kept with the workspace's account for as long as it exists.</li>
       <li><strong>Point-in-time recovery.</strong> The Cloudflare Durable Objects underlying the service keep a 30-day restorable history of their storage. The effective worst-case retention is therefore the configured retention <em>plus up to 30 days</em>. This is a backup mechanism operated by our infrastructure subprocessor; we prefer to declare it rather than round it away.</li>
       <li><strong>Correspondence</strong> with us is kept as ordinary business correspondence, for as long as the matter it concerns and any legal obligations require.</li>
     </ul>
   </section>
 
   <section>
-    <h2>A gateway, not a system of record</h2>
+    <h2>Keep your own records</h2>
     <p>
-      Eccos is a pass-through gateway. The authoritative copy of every conversation
-      lives in the systems behind the endpoint each business connects, not in the
-      gateway. Retention inside Eccos Cloud exists only so messages can be delivered
-      reliably, retried when an endpoint is down, and recent problems diagnosed. If
-      your business needs an archive of its WhatsApp conversations — for example for
-      clinical or customer records — you must keep it in your own systems; the
-      gateway will not keep one for you.
+      Eccos Cloud keeps conversation history so the console can show it, by default
+      with no time limit. It is still not a backup or an archive service: a
+      retention window or an erasure deletes it for good, and we make no promise
+      to restore it. The authoritative copy of every conversation belongs in the
+      systems behind the endpoint each business connects. If your business needs
+      an archive of its WhatsApp conversations, for example for clinical or
+      customer records, keep it in your own systems.
     </p>
   </section>
 
@@ -103,12 +136,11 @@
     <p>
       Message content is whatever end users choose to type. Businesses in fields
       such as healthcare may therefore receive special-category data (Article 9
-      GDPR) through their conversations — a patient describing symptoms to a clinic,
+      GDPR) through their conversations, a patient describing symptoms to a clinic
       for instance. Eccos Cloud treats all message content as opaque: it is
-      forwarded and briefly stored for delivery, not inspected or classified. It
-      remains the client's responsibility, as controller, to have a lawful basis for
-      processing such data and to judge whether WhatsApp is an appropriate channel
-      for it.
+      stored and forwarded, not inspected or classified. It remains the client's
+      responsibility, as controller, to have a lawful basis for processing such
+      data and to judge whether WhatsApp is an appropriate channel for it.
     </p>
     <p>
       To be explicit about what we do not offer: Eccos Cloud currently holds no
@@ -120,22 +152,35 @@
   <section>
     <h2>Where the data lives; international transfers</h2>
     <p>
-      Eccos Cloud runs on Cloudflare Workers and Durable Objects. The Durable
-      Objects that store gateway data are pinned to Cloudflare's European Union
-      jurisdiction, so <strong>message content at rest is confined to the EU</strong>.
+      Eccos Cloud runs on Cloudflare. The Durable Objects that store gateway data,
+      the R2 bucket that stores media files and the D1 database that stores console
+      accounts are all pinned to Cloudflare's European Union jurisdiction, so
+      <strong>message content at rest is confined to the EU</strong>.
       We deliberately do not call this &ldquo;total data residency&rdquo;, because it
       is not: Workers execute globally at Cloudflare's edge, and the Durable Object
       identifier is registered outside the jurisdiction for billing purposes.
     </p>
     <p>
+      <strong>Fallback proxy in Germany.</strong> Spanish network operators block
+      ranges of Cloudflare addresses during football broadcasts, under court orders
+      against piracy. During those windows the Eccos hostnames (this site,
+      app.eccos.chat and api.eccos.chat) resolve to a proxy we run on a Hetzner
+      server in Germany, which forwards the traffic to Cloudflare. The proxy decrypts and re-encrypts the
+      traffic in memory, so console sessions, API calls and Meta's webhooks pass
+      through it in transit. It stores none of it and keeps no access logs for
+      Eccos hostnames.
+    </p>
+    <p>
       Separately, the WhatsApp Cloud API itself processes messages in Meta's data
-      centers — by default in the United States — unless the business enables Meta's
+      centers, by default in the United States, unless the business enables Meta's
       Local Storage feature, which confines message content to a chosen region.
       Pinning the gateway to the EU does not confine what passes through Meta.
     </p>
     <p>
       Error reports go to Sentry in the United States. They carry technical
       information about the failure, not message content or request data.
+      Operational alerts go to Telegram, whose servers may be outside the European
+      Economic Area.
     </p>
     <p>
       Where data leaves the European Economic Area, the transfers rely on the
@@ -147,10 +192,18 @@
 
   <section>
     <h2>Subprocessors</h2>
+    <p>These providers process client conversation data on our behalf:</p>
     <ul>
-      <li><strong>Cloudflare, Inc.</strong> — hosting infrastructure (Workers, Durable Objects, storage). <a href="https://www.cloudflare.com/privacypolicy/" rel="noreferrer">Privacy policy</a>.</li>
-      <li><strong>Meta Platforms</strong> — the WhatsApp Cloud API through which all messages necessarily flow. <a href="https://www.facebook.com/privacy/policy/" rel="noreferrer">Privacy policy</a>.</li>
-      <li><strong>Functional Software, Inc. (Sentry)</strong> — error reporting for the gateway and the console, hosted in the United States. It receives technical error reports (error message, stack trace, request method and path); we turn off collection of request headers, bodies, query strings, cookies and user identity. <a href="https://sentry.io/privacy/" rel="noreferrer">Privacy policy</a>.</li>
+      <li><strong>Cloudflare, Inc.</strong> Hosting infrastructure: Workers, Durable Objects, R2 (media files), D1 (console accounts), technical logs and the sending of console emails. <a href="https://www.cloudflare.com/privacypolicy/" rel="noreferrer">Privacy policy</a>.</li>
+      <li><strong>Meta Platforms.</strong> The WhatsApp Cloud API through which all messages necessarily flow. Each business holds its own WhatsApp Business Account and its own contract with Meta. <a href="https://www.facebook.com/privacy/policy/" rel="noreferrer">Privacy policy</a>.</li>
+      <li><strong>Functional Software, Inc. (Sentry).</strong> Error reporting for the gateway and the console, hosted in the United States. It receives technical error reports (error message, stack trace, request method and path); we turn off collection of request headers, bodies, query strings, cookies and user identity. <a href="https://sentry.io/privacy/" rel="noreferrer">Privacy policy</a>.</li>
+      <li><strong>Hetzner Online GmbH.</strong> The server in Germany that runs the fallback proxy described above. It sees traffic in transit only and stores none of it. <a href="https://www.hetzner.com/legal/privacy-policy/" rel="noreferrer">Privacy policy</a>.</li>
+    </ul>
+    <p>These providers receive no message content and no customer phone numbers:</p>
+    <ul>
+      <li><strong>Hetzner Online GmbH</strong>, as host of our self-hosted Umami. That server stores the usage analytics of this website and of the console, including the pseudonymous account identifier described above.</li>
+      <li><strong>Creem.</strong> Payment, invoicing and tax for Eccos Cloud subscriptions, as merchant of record. <a href="https://www.creem.io/privacy" rel="noreferrer">Privacy policy</a>.</li>
+      <li><strong>Telegram.</strong> The channel for our operational alerts. <a href="https://telegram.org/privacy" rel="noreferrer">Privacy policy</a>.</li>
     </ul>
     <p>Eccos Cloud uses no other subprocessors.</p>
   </section>
@@ -164,7 +217,7 @@
     <ul>
       <li>
         <strong>We check that it is lawful.</strong> Every request is reviewed for
-        legal validity before anything is disclosed — the authority making it, its
+        legal validity before anything is disclosed: the authority making it, its
         jurisdiction over us, the legal basis cited, and whether the process used is
         the one that basis actually requires.
       </li>
@@ -202,8 +255,8 @@
       information to identify you and your request.
     </p>
     <p>
-      If you are an end user of a business that uses Eccos Cloud — for example, a
-      customer or patient who messaged that business on WhatsApp — that business is
+      If you are an end user of a business that uses Eccos Cloud (for example, a
+      customer or patient who messaged that business on WhatsApp), that business is
       the controller of your data, and your request should go to it. See
       <a href="/data-deletion">Data deletion</a> for how deletion works in practice.
       As processor, we assist each controller in responding to such requests, as
@@ -226,6 +279,6 @@
     </p>
   </section>
 
-  <p class="updated">Last updated: October 2026</p>
+  <p class="updated">Last updated: November 2026</p>
 
 </main>

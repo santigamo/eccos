@@ -24,10 +24,11 @@ export const SITE = {
   licenseUrl: "https://github.com/santigamo/eccos/blob/main/LICENSE",
 } as const;
 
-/** Eccos Cloud tariff. One metric: the connected number. Messages are never billed. */
+/** Eccos Cloud tariff, exclusive of VAT. One metric: the connected number. Messages are never billed. */
 export const PRICING = {
   currency: "EUR",
   firstNumber: 5,
+  trialDays: 14,
   tiers: [
     { numbers: "1", monthly: 5 },
     { numbers: "2–5", monthly: 3, per: "number" },
@@ -36,6 +37,8 @@ export const PRICING = {
     { numbers: "51+", monthly: 49, plusPerNumber: 1 },
   ],
 } as const;
+
+const [first, extra, mid, high, beyond] = PRICING.tiers;
 
 /** Retention and jurisdiction, as published in the landing's data table. */
 export const DATA_TERMS = {
@@ -75,7 +78,7 @@ export const COPY: Record<Locale, Copy> = {
       "Eccos is not a message reseller: it never meters or marks up messages, and Meta bills each business directly for its own conversations.",
       "Eccos does not use WhatsApp Web or any reverse-engineered client, unlike Evolution API, WAHA or OpenWA. It calls Meta's official Cloud API.",
       "Eccos is not a chatbot builder and has no visual flow editor: it is a gateway, and your application owns the conversation logic.",
-      "Eccos is not a shared team inbox or a CRM. The operator console exists for operational visibility, not for day-to-day customer chat.",
+      "Eccos is not a CRM or a helpdesk. The console has an inbox where a workspace reads its conversations and replies or reacts to them, but there are no tickets, assignments or customer records: that logic belongs to your application.",
       "Eccos is an independent project, not affiliated with, endorsed by or sponsored by Meta Platforms.",
     ],
     faq: [
@@ -89,7 +92,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "What does Eccos cost, and what do I pay Meta?",
-        a: "Eccos Cloud is priced per connected number: 5 € a month for the first number, +3 € for numbers 2 to 5, 19 € flat for 6 to 15 and 49 € flat for 16 to 50. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for its own conversations, with that business's own payment method. Eccos Cloud is in early access, so accounts are free and nothing is billed while that lasts, and self-hosting is free under the MIT licence.",
+        a: `Eccos Cloud is priced per connected number: ${first.monthly} € a month for the first number, +${extra.monthly} € for numbers 2 to 5, ${mid.monthly} € flat for 6 to 15, ${high.monthly} € flat for 16 to 50 and +${beyond.plusPerNumber} € per number past 50, VAT not included. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for its own conversations, with that business's own payment method. Creating an account is free; subscribing, which you do before adding a number, starts a ${PRICING.trialDays}-day free trial that asks for a card, and you can cancel at any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of record. Self-hosting is free under the MIT licence.`,
       },
       {
         q: "Can I self-host Eccos, or move from Eccos Cloud to my own server?",
@@ -97,7 +100,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "Do you store my messages?",
-        a: "On Eccos Cloud, conversation history is kept forever by default, or for a window you set between 30 and 3650 days. The short forwarding buffer deletes message content after 30 days by default; the operator configures it between 7 and 90 days. Storage is pinned to Cloudflare's European jurisdiction. Data is never cross-referenced between businesses, never sold or shared with data brokers, and never used for advertising or to train models; per-number erasure is available through the API. Self-hosted, none of it reaches us at all.",
+        a: "On Eccos Cloud, conversation history is kept forever by default, or for a window you set between 30 and 3650 days. Media files are kept with their messages. The short forwarding buffer deletes message content after 30 days by default; the operator configures it between 7 and 90 days. Storage is pinned to Cloudflare's European jurisdiction. Data is never cross-referenced between businesses, never sold or shared with data brokers, and never used for advertising or to train models; per-number erasure is available through the API. Self-hosted, none of it reaches us at all.",
       },
       {
         q: "Do I need my own Meta app, or to become a Tech Provider?",
@@ -123,7 +126,7 @@ export const COPY: Record<Locale, Copy> = {
       "Eccos no revende mensajes: nunca los cuenta ni les aplica margen, y Meta factura a cada empresa directamente sus propias conversaciones.",
       "Eccos no usa WhatsApp Web ni ningún cliente de ingeniería inversa, al contrario que Evolution API, WAHA u OpenWA. Llama a la Cloud API oficial de Meta.",
       "Eccos no es un constructor de chatbots ni tiene editor visual de flujos: es un gateway, y la lógica de la conversación es de tu aplicación.",
-      "Eccos no es un buzón compartido ni un CRM. La consola de operador existe para visibilidad operativa, no para atender el día a día.",
+      "Eccos no es un CRM ni un helpdesk. La consola tiene una bandeja donde el equipo lee sus conversaciones y responde o reacciona a ellas, pero no hay tickets, asignaciones ni fichas de cliente: esa lógica es de tu aplicación.",
       "Eccos es un proyecto independiente y no está afiliado, respaldado ni patrocinado por Meta Platforms.",
     ],
     faq: [
@@ -137,7 +140,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "¿Cuánto cuesta Eccos y qué le pago a Meta?",
-        a: "Eccos Cloud se cobra por número conectado: 5 € al mes el primero, +3 € los números 2 a 5, 19 € fijos de 6 a 15 y 49 € fijos de 16 a 50. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente sus propias conversaciones, con el método de pago de esa empresa. Eccos Cloud está en acceso anticipado, así que las cuentas son gratis y no se factura nada mientras dure, y autoalojarlo es gratis bajo licencia MIT.",
+        a: `Eccos Cloud se cobra por número conectado: ${first.monthly} € al mes el primero, +${extra.monthly} € los números 2 a 5, ${mid.monthly} € fijos de 6 a 15, ${high.monthly} € fijos de 16 a 50 y +${beyond.plusPerNumber} € por número a partir del 51, IVA no incluido. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente sus propias conversaciones, con el método de pago de esa empresa. Crear la cuenta es gratis; suscribirte, que es el paso previo a añadir un número, inicia una prueba gratuita de ${PRICING.trialDays} días que pide tarjeta, y puedes cancelar cuando quieras, con efecto al final del periodo. El pago y las facturas los gestiona Creem, que actúa como vendedor oficial (merchant of record). Autoalojarlo es gratis bajo licencia MIT.`,
       },
       {
         q: "¿Puedo autoalojar Eccos o pasar de Eccos Cloud a mi propio servidor?",
@@ -145,7 +148,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "¿Guardáis mis mensajes?",
-        a: "En Eccos Cloud el historial de conversaciones se conserva para siempre por defecto, o durante una ventana de entre 30 y 3650 días que tú eliges. El buffer de reenvío elimina el contenido de los mensajes a los 30 días por defecto; el operador lo configura entre 7 y 90 días, con el almacenamiento fijado a la jurisdicción europea de Cloudflare. Los datos no se cruzan nunca entre empresas, no se venden ni se comparten con intermediarios de datos y no se usan para publicidad ni para entrenar modelos; hay borrado por número a través de la API. Autoalojado, nada de eso llega a nosotros.",
+        a: "En Eccos Cloud el historial de conversaciones se conserva para siempre por defecto, o durante una ventana de entre 30 y 3650 días que tú eliges. Los archivos multimedia se conservan con sus mensajes. El buffer de reenvío elimina el contenido de los mensajes a los 30 días por defecto; el operador lo configura entre 7 y 90 días, con el almacenamiento fijado a la jurisdicción europea de Cloudflare. Los datos no se cruzan nunca entre empresas, no se venden ni se comparten con intermediarios de datos y no se usan para publicidad ni para entrenar modelos; hay borrado por número a través de la API. Autoalojado, nada de eso llega a nosotros.",
       },
       {
         q: "¿Necesito mi propia app de Meta o ser Tech Provider?",
@@ -183,7 +186,7 @@ export const PAGES: { url: string; title: string; answers: string }[] = [
   {
     url: "https://eccos.chat/terms",
     title: "Terms of service",
-    answers: "The terms Eccos Cloud is offered under, including the early-access status.",
+    answers: `The terms Eccos Cloud is offered under: pricing, the ${PRICING.trialDays}-day trial, payment through Creem, cancellation and the data processing agreement.`,
   },
   {
     url: "https://eccos.chat/data-deletion",

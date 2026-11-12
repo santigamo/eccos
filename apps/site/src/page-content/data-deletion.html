@@ -10,12 +10,12 @@
   <section>
     <h2>Retention windows</h2>
     <p>
-      Eccos Cloud is a pass-through gateway, not an archive. Conversation history is
-      kept forever by default, or for a window the workspace sets in Settings (30 to
-      3650 days). The forwarding buffer is separate: message content in it — incoming
-      messages, outgoing messages, and the payloads in the delivery queue — is deleted
-      automatically after <strong>30 days</strong> by default (the operator configures
-      this between 7 and 90 days). Delivery records are then redacted, keeping only
+      Conversation history, with its media files, is kept forever by default, or
+      for a window the workspace sets in Settings (30 to 3650 days). The forwarding
+      buffer is separate: message content in it (incoming messages, outgoing
+      messages, and the payloads in the delivery queue) is deleted automatically
+      after <strong>30 days</strong> by default (the operator configures this
+      between 7 and 90 days). Delivery records are then redacted, keeping only
       delivery metadata for up to <strong>90 days</strong>.
       Details are in the <a href="/privacy">Privacy Policy</a>. The instructions
       below are for deleting data <em>before</em> those windows elapse, or for
@@ -26,8 +26,8 @@
   <section>
     <h2>If you messaged a business on WhatsApp</h2>
     <p>
-      If you are an end user — for example, a customer or patient who exchanged
-      WhatsApp messages with a business that uses Eccos Cloud — the controller of
+      If you are an end user, for example a customer or patient who exchanged
+      WhatsApp messages with a business that uses Eccos Cloud, the controller of
       your data is <strong>that business</strong>, not us. Please send your deletion
       request to the business you messaged; under the GDPR it must handle it, and we
       will carry out any deletion it instructs us to perform.
@@ -42,14 +42,21 @@
   <section>
     <h2>If you are a business using Eccos Cloud</h2>
     <p>
-      Email
+      You can erase one customer yourself through the API:
+      <code>POST /v1/wabas/&lt;WABA_ID&gt;/privacy/erasure</code> with the customer's
+      phone number in the body. It answers with the count of deleted records as
+      evidence. You can also set a retention window for conversation history in
+      Settings.
+    </p>
+    <p>
+      To have us do it, or to delete everything, email
       <a href="mailto:hello@imsanti.dev?subject=Eccos%20data%20deletion%20request">hello@imsanti.dev</a>
       with the subject &ldquo;Eccos data deletion request&rdquo;, from the contact
       address registered with your account, and include:
     </p>
     <ul>
       <li>The WhatsApp Business phone number connected to Eccos Cloud.</li>
-      <li>The end-user phone number(s) whose data should be deleted, in international format (e.g. +34…) — or state that <em>all</em> stored data should be deleted.</li>
+      <li>The end-user phone number(s) whose data should be deleted, in international format (e.g. +34…), or state that <em>all</em> stored data should be deleted.</li>
       <li>Whether your account configuration should also be deleted (full account closure).</li>
     </ul>
     <p>
@@ -61,26 +68,48 @@
   <section>
     <h2>What deletion covers</h2>
     <p>
-      For the phone numbers concerned, we delete all stored inbound events, outbound
-      messages, and delivery records, including the redacted delivery metadata. On
-      full account closure we also delete the account configuration.
+      For the phone numbers concerned, we delete the conversation history and
+      contacts, the media files of those messages, the stored inbound events and
+      outbound messages, their entries in the delivery queue, and their rows in
+      broadcasts and scheduled sends. On full account closure we also delete the
+      account configuration, the stored Meta access token, the API keys, and the
+      workspace with its users.
+    </p>
+    <p>
+      Deletion covers what Eccos Cloud stores. Events already forwarded to your
+      endpoint live in your own systems, and what Meta keeps is governed by your
+      agreement with Meta.
     </p>
   </section>
 
   <section>
-    <h2>Timelines, and one honest caveat</h2>
+    <h2>Timelines, and three honest caveats</h2>
     <p>
       We acknowledge valid requests without undue delay and complete the deletion
       within 30 days of receiving them.
     </p>
     <div class="note">
       <p>
-        One caveat, declared rather than hidden: the Cloudflare storage underlying
+        The first, declared rather than hidden: the Cloudflare storage underlying
         Eccos Cloud keeps a 30-day point-in-time recovery history. Data removed from
         the live system can therefore persist inside that recovery mechanism for up
         to 30 further days before it becomes unrecoverable. During that window the
         historical copies exist only within the infrastructure provider's backup
         system; they are not part of the live gateway.
+      </p>
+      <p>
+        The second concerns numbers that were connected while already in use in the
+        WhatsApp Business app. The raw sync payloads Meta sent at that moment (past
+        chats and contacts) still contain an erased phone number until the storage of
+        the whole WhatsApp number is deleted. The history and contacts built from them
+        are deleted, and an erased number is never loaded from them again. Ask us if
+        you need those payloads deleted too.
+      </p>
+      <p>
+        The third is what makes that possible. The erased phone number or Meta user
+        identifier is itself kept, with the date of the erasure and nothing else, in a
+        list of erased numbers. That list is kept indefinitely, until the storage of
+        the whole WhatsApp number is deleted.
       </p>
     </div>
   </section>
@@ -105,6 +134,6 @@
     </p>
   </section>
 
-  <p class="updated">Last updated: August 2026</p>
+  <p class="updated">Last updated: November 2026</p>
 
 </main>

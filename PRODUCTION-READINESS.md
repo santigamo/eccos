@@ -35,7 +35,7 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 | # | Gate | Status | Notes |
 |---|------|--------|-------|
 | 1 | Change control / CI | ✅ | Dashboard covered in CI (`eccos-a5r`), least-privilege `permissions`, **Biome lint blocking and green** (`eccos-bwr`). No automated prod-deploy gate (manual by design). |
-| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). Customer auth is **Better Auth + Organizations on a dedicated auth D1** (`eccos-0x0.1–.7`): sessions, verified-email signup, invitations, org→account mapping, RBAC matrix, audit events, distributed rate limiting, TOTP 2FA (docs/auth-tenancy-contract.md). Residual: production deploy + smoke evidence (`eccos-0x0.9`), email provider DNS (`eccos-0x0.11`). |
+| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). Customer auth is **Better Auth + Organizations on a dedicated auth D1** (`eccos-0x0.1–.7`): sessions, verified-email signup, invitations, org→account mapping, RBAC matrix, audit events, distributed rate limiting (docs/auth-tenancy-contract.md). TOTP and the 15-minute step-up are configured but not enforced yet (`eccos-eyel`). Residual: production deploy + smoke evidence (`eccos-0x0.9`), email provider DNS (`eccos-0x0.11`). |
 | 3 | Operational readiness | 🟡 | `/ready` deep check + structured JSON logging w/ correlation IDs + `docs/operations.md` (`eccos-ggy`). Residual: alerting/monitoring not wired. |
 | 4 | Packaging contract | ➖ | **N/A.** `@eccos/core` and `@eccos/gateway-contract` are internal `workspace:*` packages with no publish intent for v1 (`eccos-1js`, decided). Re-open if they become public SDKs. |
 | 5 | Data lifecycle | 🟡 | Configurable split content/delivery retention on Workers, `RETENTION_DAYS` on the Bun target, Bun-target pruning parity, `docs/data-lifecycle.md` (`eccos-rv2`). Residual: scripted backup/export + a real restore drill. |
@@ -84,14 +84,30 @@ drill. The gateway deploy and live post-deploy smoke are recorded above.
 | `eccos-v80` | Production-shaped two-number acceptance, migration/rollback evidence, and the remaining technical half of the first-paid-customer gate (see [First paid Eccos Cloud customer gate](#first-paid-eccos-cloud-customer-gate)) |
 | `eccos-mmq` | End-to-end isolation matrix plus migration/rollback evidence |
 | `eccos-49b` | The Meta-facing origins moved to `api.eccos.chat` (OAuth redirect, JS SDK domain, webhook callback, `GATEWAY_PUBLIC_URL`), and the first external number connected and has been receiving webhooks through it since 2026-10-28. Remaining: retire the `workers.dev` origin ([cutover step 8](./docs/deployment.md#cutover--moving-the-meta-facing-origin-to-a-custom-domain)) |
-| `eccos-8yy` | DPA and processor onboarding package |
+| `eccos-8yy` | DPA and processor onboarding package. On hold; a non-blocking follow-up since the 2026-11-12 owner decision |
+| `eccos-9hiq` | Operator path to retire the three orphaned WABA Durable Objects found by the 2026-11-12 audit. Non-blocking follow-up |
 | `eccos-jf7` / `eccos-s3i` | Replace temporary subscriber; validate permanent System User token |
 | `eccos-u9x` | Resolve the production failed-delivery incident |
 
 ## First paid Eccos Cloud customer gate
 
-**Canonical.** Eccos may be self-hosted and dogfooded (Physeo) at any time, but **Eccos Cloud
-must not charge a third party — or start a paid third-party trial — until multi-tenant
+**Owner decision, 2026-11-12: the gate is cleared and charging starts.** Santi decided to switch
+billing on in production and open Eccos Cloud to paying third parties, with the gate adjusted as
+follows:
+
+- **Isolation evidence** is the production isolation audit of 2026-11-12 plus the two fixes it
+  produced: TOTP and step-up enforcement on sensitive console actions (`eccos-eyel`) and the
+  negative cross-tenant tests for the paths that had none (`eccos-tdrm`), both in PR #78.
+- **`eccos-8yy` (DPA)** stays open and on hold. It no longer blocks charging: an Article 28
+  agreement is offered on request, and none is published.
+- **`eccos-9hiq` (orphaned WABA Durable Objects)** stays open as a non-blocking follow-up: three
+  objects that belong to no account and that no customer can reach.
+
+The rest of this section is the gate as it was written before that decision. It is kept as the
+record of the bar; where it says charging is blocked, the decision above supersedes it.
+
+**As written before 2026-11-12.** Eccos may be self-hosted and dogfooded (Physeo) at any time, but
+**Eccos Cloud must not charge a third party — or start a paid third-party trial — until multi-tenant
 product isolation is complete.** This section is the single source of truth for that
 commercial gate. It is distinct from, and narrower than, the technical `PRODUCTION-READY`
 claim below and from any later business/billing work.

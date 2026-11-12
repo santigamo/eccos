@@ -30,9 +30,9 @@ and get **normalized events** forwarded to your backend.
 > **Status: v0 / first customer wave.** The Workers target is **account-scoped by default**: a
 > durable account → WABA → phone registry, hashed account keys, per-WABA credentials, and
 > account-bound Embedded Signup. Each WABA routes to its own Durable Object for data-plane
-> sharding. **Eccos Cloud remains early access**: we do not charge third parties (nor start paid
-> third-party trials) until the complete isolation, Meta, legal, Access, and operations gate in
-> [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) is clear.
+> sharding. **Eccos Cloud is generally available**: a paid subscription per connected number,
+> with a 14-day trial ([eccos.chat](https://eccos.chat)). The gate it opened on, and the
+> follow-ups still open, are in [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md).
 
 ## ✨ Why Eccos
 
