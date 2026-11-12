@@ -612,6 +612,8 @@ export interface AccountWabaResource {
   provisionedAt: number | null;
   status: ProvisioningStatus;
   provisioningError: string | null;
+  /** Unix ms of the Meta token's expiry as last read: 0 never expires, null never read. */
+  tokenExpiresAt: number | null;
   phones: Omit<AccountPhoneResource, "wabaId">[];
   /** Coexistence state (eccos-vss). Already travelled over the binding before it
    * was declared here; declaring it is what lets the console read it. */

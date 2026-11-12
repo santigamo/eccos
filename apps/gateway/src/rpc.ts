@@ -11,6 +11,7 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
+import { type TokenHealth, watchGraph } from "./token-health";
 import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
@@ -344,6 +345,10 @@ function assertTemplateContent(input: Pick<CreateTemplateInput, "bodyText" | "bo
  * credentials come from the registry, never from global env secrets.
  */
 export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
+  private watchedFetch(wabaId: string): typeof fetch {
+    return watchGraph(this.env, (work) => this.ctx.waitUntil(work), wabaId);
+  }
+
   private stubFor(wabaId: string) {
     return getGatewayStubForWaba(this.env, wabaId);
   }
@@ -385,6 +390,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: this.watchedFetch(waba.wabaId),
     });
     return {
       stub: this.stubFor(wabaId),
@@ -1054,6 +1060,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: this.watchedFetch(waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
@@ -1165,6 +1172,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: this.watchedFetch(waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
@@ -1439,6 +1447,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
     const appConfig = getAppConfig(this.env);
     let discovered: Awaited<ReturnType<typeof wabaMatchesForTargetIds>>;
+    let health: TokenHealth | null = null;
     try {
       // Always first, selector or not: the two token verdicts gate every read,
       // and no id an operator types can make a foreign or dead token usable.
@@ -1449,6 +1458,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         // no detail travels — Meta's text here would only compete with it.
         return { ok: false, code: inspection.kind, detail: null };
       }
+      health = inspection.health;
       if (selector) {
         // Seed, not filter — see the method comment. `target_ids` is not
         // consulted at all here; Meta's answer to the read is the check.
@@ -1502,6 +1512,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       onboardingType: "standard",
       ...(selector ? { wabaSelector: selector } : {}),
       discovered,
+      health,
     });
     if (result.ok) {
       const { ok: _ok, ...rest } = result;

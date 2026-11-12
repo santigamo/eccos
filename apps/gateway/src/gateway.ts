@@ -85,6 +85,7 @@ import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-
 import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
+import { watchGraph } from "./token-health";
 import { isPublicConfigKey } from "./private-config-keys";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
@@ -1759,6 +1760,7 @@ export class EccosGateway extends DurableObject<Env> {
       META_ACCESS_TOKEN: token,
       META_PHONE_NUMBER_ID: phoneNumberId,
       META_WABA_ID: this.wabaIdForOps(),
+      fetch: this.watchedFetch(),
     };
     const result = await sendMessage(cfg, body);
     const now = Date.now();
@@ -1885,6 +1887,7 @@ export class EccosGateway extends DurableObject<Env> {
         META_ACCESS_TOKEN: token,
         META_PHONE_NUMBER_ID: String(broadcast.phone_number_id),
         META_WABA_ID: this.wabaIdForOps(),
+        fetch: this.watchedFetch(),
       };
       const defaults =
         broadcast.default_components === null ? null : (JSON.parse(String(broadcast.default_components)) as unknown[]);
@@ -3029,6 +3032,7 @@ export class EccosGateway extends DurableObject<Env> {
         mediaId,
         token,
         graphVersion: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
+        fetch: this.watchedFetch(),
       });
     } catch (error) {
       // A rejected token is the WABA's fault, not the media's: nothing is recorded and no attempt counted.
@@ -3403,6 +3407,11 @@ export class EccosGateway extends DurableObject<Env> {
         `Last error: ${error?.slice(0, 200) ?? "unknown"}`,
       ].join("\n"),
     );
+  }
+
+  /** The `fetch` for this WABA's Graph calls: a Graph 190 answer alerts the operator once (token-health.ts). */
+  private watchedFetch(): typeof fetch {
+    return watchGraph(this.env, (work) => this.ctx.waitUntil(work), this.wabaIdForOps());
   }
 
   /** The WABA this object serves, read off its idFromName name (gateway-stub.ts). */
