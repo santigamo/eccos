@@ -2,12 +2,13 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
   exchangeCodeForToken,
-  findWabaPhoneNumbersForToken,
+  discoverWabasForToken,
   type PhoneNumber,
 } from "../meta/connect-api";
 import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
 import { getControlPlaneStub } from "../control-plane-stub";
+import type { TokenHealth } from "../token-health";
 import { kickWabaProvisioning } from "../provisioning";
 import { isSubscriptionRequired } from "../connect-policy";
 import { constantTimeEqual } from "@eccos/core/signature";
@@ -456,13 +457,20 @@ export async function registerWabasForToken(
     wabaSelector?: string;
     /** Discovery result, when the caller already has one. */
     discovered?: Array<{ wabaId: string; phones: PhoneNumber[] }>;
+    /** What the caller's `debug_token` call said about the token, stored with each registration. */
+    health?: TokenHealth | null;
   },
 ): Promise<MultiExchangeResult> {
   const { accountId, businessToken, callbackOrigin, onboardingType, wabaSelector } = input;
   try {
     const appConfig = getAppConfig(env);
-    const discovered =
-      input.discovered ?? (await findWabaPhoneNumbersForToken(appConfig, businessToken));
+    let health = input.health ?? null;
+    let discovered = input.discovered;
+    if (!discovered) {
+      const found = await discoverWabasForToken(appConfig, businessToken);
+      discovered = found.matches;
+      health = found.health;
+    }
     if (discovered.length === 0) {
       return { ok: false, error: "could not infer WABA from token", code: "no_waba" };
     }
@@ -511,6 +519,7 @@ export async function registerWabasForToken(
           displayPhoneNumber: p.display_phone_number ?? "",
         })),
         onboardingType,
+        ...(health ? { tokenHealth: health } : {}),
       })),
     );
 

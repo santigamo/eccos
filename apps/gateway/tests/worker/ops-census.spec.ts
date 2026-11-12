@@ -5,11 +5,14 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext, createScheduledController, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sendMessage } from "@eccos/core/send";
+import { listTemplates } from "@eccos/core/templates";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { EccosControlPlane } from "../../src/control-plane";
 import { EccosGateway } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { chunkLines, formatCensus, runDailyCensus } from "../../src/ops-census";
+import { forgetTokenReports, noteTokenRejected, tokenFingerprint, watchGraph } from "../../src/token-health";
 import worker from "../../src/worker";
 import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
@@ -33,6 +36,12 @@ function sentTexts(fetchMock: ReturnType<typeof vi.fn>): string[] {
   return fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string).text as string);
 }
 
+async function census() {
+  const fetchMock = telegramOk();
+  await runDailyCensus(opsEnv, NOON, fetchMock as unknown as typeof fetch);
+  return sentTexts(fetchMock);
+}
+
 async function seedDeliveries(wabaId: string, rows: Array<[status: string, createdAt: number]>, target?: string) {
   await runInDurableObject(getGatewayStubForWaba(env, wabaId), (i: EccosGateway) => {
     if (target) i.sql.exec("INSERT OR REPLACE INTO config (key, value) VALUES ('SUBSCRIBER_WEBHOOK_URL', ?)", target);
@@ -47,13 +56,29 @@ async function seedDeliveries(wabaId: string, rows: Array<[status: string, creat
   });
 }
 
+let FP = "";
+const SECONDS = (ms: number) => Math.floor(ms / 1000);
+
+/** Meta's debug_token answer for every token; anything else the code under test fetches is a failure. */
+function mockDebugToken(data: Record<string, unknown>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("/debug_token")) {
+      return new Response(JSON.stringify({ data: { app_id: "test-app-id", ...data } }), { status: 200 });
+    }
+    throw new Error("unexpected fetch");
+  });
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   await reset();
 });
 
 beforeEach(async () => {
+  FP = await tokenFingerprint("tenant-token");
+  forgetTokenReports();
   await bootstrapAccount();
+  mockDebugToken({ is_valid: true, expires_at: 0, data_access_expires_at: 0 });
 });
 
 describe("daily census", () => {
@@ -134,14 +159,14 @@ describe("daily census", () => {
     expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_BROKEN: 3 events held: WABA not active`);
     expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_STUCK: still pending, registered over 24 h ago`);
     expect(text).toContain(
-      `WABA ${TEST_WABA_ID}, active, standard, target set: 1 pending, 0 held: no forwarding target, 2 failed, 1 delivered (queued 24 h), 0 held: WABA not active`,
+      `WABA ${TEST_WABA_ID}, active, standard, target set, token never expires: 1 pending, 0 held: no forwarding target, 2 failed, 1 delivered (queued 24 h), 0 held: WABA not active`,
     );
-    expect(text).toMatch(/WABA WABA_NOTARGET, active, coexistence, sync \w+, no target: 0 pending, 2 held: no forwarding target/);
+    expect(text).toMatch(/WABA WABA_NOTARGET, active, coexistence, sync \w+, no target, token never expires: 0 pending, 2 held: no forwarding target/);
     // Neither an old failure alone nor a fresh pending registration is flagged.
     const attention = text.slice(text.indexOf("Needs attention"), text.indexOf("\n\n", text.indexOf("Needs attention")));
     expect(attention).not.toContain("WABA_OLDFAIL");
     expect(attention).not.toContain("WABA_FRESH");
-    expect(text).toContain("WABA WABA_OLDFAIL, active, standard, target set: 0 pending, 0 held: no forwarding target, 1 failed");
+    expect(text).toContain("WABA WABA_OLDFAIL, active, standard, target set, token never expires: 0 pending, 0 held: no forwarding target, 1 failed");
     // No numbers, tokens or secrets.
     expect(text).not.toMatch(/\+34|600|test-bot-token|tenant-token|subscriber\.example/);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -152,10 +177,11 @@ describe("daily census", () => {
   it("flags only the coexistence syncs that need the operator", () => {
     const line = (wabaId: string, sync: string) => ({
       wabaId, status: "active", onboarding: "coexistence", sync, hasTarget: true, pending: 0, held: 0, failed: 0,
-      recentFailed: 0, delivered24h: 0, heldWebhooks: 0, stuckPending: false, readable: true,
+      recentFailed: 0, delivered24h: 0, heldWebhooks: 0, stuckPending: false, readable: true, token: null,
     });
     const text = formatCensus("2026-11-08", [
       {
+        accountId: "acct_acme",
         name: "Acme",
         organizationId: null,
         wabas: [line("W_UNCONF", "unconfirmed"), line("W_EXPIRED", "expired"), line("W_UNAVAIL", "unavailable"), line("W_NOTCOEX", "not_coexistence")],
@@ -175,7 +201,7 @@ describe("daily census", () => {
     await runDailyCensus(opsEnv, NOON, fetchMock as unknown as typeof fetch, 50);
     const [text] = sentTexts(fetchMock);
     expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA ${TEST_WABA_ID}: data plane unreadable`);
-    expect(text).toContain(`WABA ${TEST_WABA_ID}, active, standard: unreadable`);
+    expect(text).toContain(`WABA ${TEST_WABA_ID}, active, standard, token never expires: unreadable`);
   });
 
   it("leaves the day open when gathering throws", async () => {
@@ -185,6 +211,7 @@ describe("daily census", () => {
     const fetchMock = telegramOk();
     await expect(runDailyCensus(opsEnv, NOON, fetchMock as unknown as typeof fetch)).rejects.toThrow();
     vi.restoreAllMocks();
+    mockDebugToken({ is_valid: true, expires_at: 0, data_access_expires_at: 0 });
     await runDailyCensus(opsEnv, NOON + 300_000, fetchMock as unknown as typeof fetch);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -244,7 +271,7 @@ describe("daily census", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) =>
       String(input).includes("api.telegram.org")
         ? telegram(input, init)
-        : new Response(JSON.stringify({ success: true }), { status: 200 }),
+        : new Response(JSON.stringify({ success: true, data: { is_valid: true, expires_at: 0 } }), { status: 200 }),
     );
     try {
       await worker.scheduled!(createScheduledController({ scheduledTime: new Date(NOON) }), opsEnv, createExecutionContext());
@@ -252,5 +279,316 @@ describe("daily census", () => {
       vi.useRealTimers();
     }
     expect(telegram).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("token expiry monitoring", () => {
+  const DAY = 24 * 3600_000;
+
+  it("alerts with ids only when a token expires within 14 days, and stores the expiry", async () => {
+    const expiresAt = NOON + 5 * DAY;
+    mockDebugToken({ is_valid: true, expires_at: SECONDS(expiresAt), data_access_expires_at: 0 });
+    const [alert, report] = await census();
+    expect(alert).toContain("Eccos: WhatsApp tokens need attention");
+    expect(alert).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: token expires 2026-11-13`);
+    expect(alert).not.toContain("data access");
+    expect(report).toContain(`WABA ${TEST_WABA_ID}, active, standard, no target, token expires 2026-11-13`);
+    const waba = await getControlPlaneStub(env).getWabaById(TEST_WABA_ID);
+    expect(waba?.tokenExpiresAt).toBe(SECONDS(expiresAt) * 1000);
+  });
+
+  it("alerts when data access expires within 14 days", async () => {
+    mockDebugToken({ is_valid: true, expires_at: 0, data_access_expires_at: SECONDS(NOON + 3 * DAY) });
+    const [alert] = await census();
+    expect(alert).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: data access expires 2026-11-11`);
+  });
+
+  it("alerts when Meta says the token is invalid, without leaking the token or an account name", async () => {
+    mockDebugToken({ is_valid: false });
+    const texts = await census();
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: token invalid`);
+    expect(texts[0]).not.toContain("Test Account");
+    const token = await getControlPlaneStub(env).getMetaAccessTokenForWaba(TEST_WABA_ID);
+    expect(texts.join("\n")).not.toContain(token as string);
+  });
+
+  it("sends no token alert for a token that never expires (expires_at 0) or expires later", async () => {
+    mockDebugToken({ is_valid: true, expires_at: 0, data_access_expires_at: SECONDS(NOON + 60 * DAY) });
+    const texts = await census();
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).toContain("Nothing needs attention");
+    expect(texts[0]).toContain("token never expires");
+    expect((await getControlPlaneStub(env).getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(0);
+  });
+
+  it.each([
+    ["a Graph 5xx", () => new Response("down", { status: 503 })],
+    ["a top-level 190, which can mean the app secret is bad", () =>
+      new Response(JSON.stringify({ error: { code: 190, message: "Invalid app secret" } }), { status: 400 })],
+  ])("keeps the stored expiry and sends one 'cannot check' alert on %s", async (_name, failure) => {
+    const control = getControlPlaneStub(env);
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => failure());
+    const texts = await census();
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain("cannot check WhatsApp tokens");
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID}`);
+    expect(texts.join("\n")).not.toContain("token invalid");
+    expect(texts[1]).toContain("token unchecked");
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(NOON + 40 * DAY);
+  });
+
+  it("bounds a hung debug_token on its own: the WABA stays readable and is reported as unchecked", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise(() => {}));
+    const fetchMock = telegramOk();
+    await runDailyCensus(opsEnv, NOON, fetchMock as unknown as typeof fetch, 10_000, 50);
+    const texts = sentTexts(fetchMock);
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID}: Meta debug_token gave no answer`);
+    expect(texts[1]).not.toContain("unreadable");
+    expect(texts[1]).toContain("token unchecked");
+  });
+
+  it("says why a token could not be checked instead of blaming Meta", async () => {
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      expect(await cp.checkTokenHealth("WABA_NONE")).toEqual({ unchecked: "no_token" });
+      Object.assign(cp, { env: { ...env, META_APP_ID: undefined } });
+      expect(await cp.checkTokenHealth(TEST_WABA_ID)).toEqual({ unchecked: "no_app_id" });
+      Object.assign(cp, { env });
+      cp.sql.exec("UPDATE wabas SET meta_access_token = 'garbage' WHERE waba_id = ?", TEST_WABA_ID);
+      expect(await cp.checkTokenHealth(TEST_WABA_ID)).toEqual({ unchecked: "token_unreadable" });
+    });
+  });
+
+  it("does not overwrite a reconnect that replaced the token while debug_token was in flight", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      await bootstrapAccount();
+      return new Response(JSON.stringify({ data: { app_id: "test-app-id", is_valid: true, expires_at: SECONDS(NOON + DAY) } }));
+    });
+    const check = await getControlPlaneStub(env).checkTokenHealth(TEST_WABA_ID);
+    expect("health" in check).toBe(true);
+    expect((await getControlPlaneStub(env).getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBeNull();
+  });
+
+  it("says expiry unknown, not never, when Meta gives no expires_at, and keeps a stored expiry", async () => {
+    const control = getControlPlaneStub(env);
+    mockDebugToken({ is_valid: true });
+    const [report] = await census();
+    expect(report).toContain("token expiry unknown");
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBeNull();
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: null });
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: null, dataAccessExpiresAt: null });
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(NOON + 40 * DAY);
+  });
+
+  it.each([
+    ["a token from another app", { app_id: "someone-else", is_valid: true }, "token was issued by another Meta app"],
+    ["an answer without is_valid", {}, "debug_token did not say whether the token is valid"],
+  ])("names the reason for %s", async (_name, data, reason) => {
+    mockDebugToken(data);
+    const [alert] = await census();
+    expect(alert).toContain(`WABA ${TEST_WABA_ID}: ${reason}`);
+  });
+
+  it("stores the connect-time expiry in the same upsert that stores the token", async () => {
+    const control = getControlPlaneStub(env);
+    await control.beginWabaProvisioningBatch([
+      {
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_NEW",
+        metaAccessToken: "fresh-token",
+        callbackUrl: "https://gateway.example/webhooks/meta",
+        phones: [{ phoneNumberId: "PN_NEW", displayPhoneNumber: "+34 600 000 009" }],
+        tokenHealth: { valid: true, expiresAt: NOON + 9 * DAY, dataAccessExpiresAt: 0 },
+      },
+    ]);
+    expect((await control.getWabaById("WABA_NEW"))?.tokenExpiresAt).toBe(NOON + 9 * DAY);
+  });
+
+  it("warns from the stored expiry when today's check got no answer, saying so", async () => {
+    await getControlPlaneStub(env).recordTokenHealth(TEST_WABA_ID, {
+      valid: true,
+      expiresAt: NOON + 5 * DAY,
+      dataAccessExpiresAt: NOON + 6 * DAY,
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("down", { status: 503 }));
+    const texts = await census();
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: token expiry from last check: 2026-11-13`);
+    expect(texts[0]).toContain("data access expiry from last check: 2026-11-14");
+  });
+
+  it("marks a token alerted and clears lost alerts only when the attention post went out", async () => {
+    const control = getControlPlaneStub(env);
+    await runInDurableObject(control, (cp: EccosControlPlane) => {
+      cp.sql.exec("UPDATE wabas SET token_alert_lost = 1 WHERE waba_id = ?", TEST_WABA_ID);
+    });
+    mockDebugToken({ is_valid: false });
+    const failing = vi.fn(async () => new Response("down", { status: 502 }));
+    await runDailyCensus(opsEnv, NOON, failing as unknown as typeof fetch);
+    const state = () =>
+      runInDurableObject(control, (cp: EccosControlPlane) =>
+        cp.sql.exec("SELECT token_rejected_at AS rejected, token_alert_lost AS lost FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0],
+      );
+    expect(await state()).toEqual({ rejected: null, lost: 1 });
+    await runDailyCensus(opsEnv, NOON + 24 * 3600_000, telegramOk() as unknown as typeof fetch);
+    expect(await state()).toEqual({ rejected: expect.any(Number), lost: null });
+  });
+
+  it("a re-registration also forgets a lost alert", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => {
+      cp.sql.exec("UPDATE wabas SET token_alert_lost = 1 WHERE waba_id = ?", TEST_WABA_ID);
+    });
+    await bootstrapAccount();
+    const lost = await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => cp.lostTokenAlerts());
+    expect(lost).toEqual([]);
+  });
+
+  it("reports a token expiry that just passed once, and ignores past data access", async () => {
+    mockDebugToken({ is_valid: true, expires_at: SECONDS(NOON - 3600_000), data_access_expires_at: SECONDS(NOON - 2 * DAY) });
+    const [alert] = await census();
+    expect(alert).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: token expired 2026-11-08`);
+    expect(alert).not.toContain("data access");
+    mockDebugToken({ is_valid: true, expires_at: SECONDS(NOON - 3 * DAY), data_access_expires_at: 0 });
+    await reset();
+    await bootstrapAccount();
+    const texts = await census();
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).not.toContain("expired");
+  });
+
+  it("keeps the stored expiry when the token is invalid", async () => {
+    const control = getControlPlaneStub(env);
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
+    mockDebugToken({ is_valid: false });
+    await census();
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(NOON + 40 * DAY);
+  });
+
+  it("forgets the stored expiry when the WABA is registered again with a new token", async () => {
+    const control = getControlPlaneStub(env);
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
+    await bootstrapAccount();
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBeNull();
+  });
+});
+
+describe("Graph error 190 on a send", () => {
+  const rejected = { error: { code: 190, type: "OAuthException", message: "Error validating access token" } };
+
+  it("alerts the operator once per WABA, with ids only", async () => {
+    const telegram = telegramOk();
+    vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+      await cp.reportRejectedToken(TEST_WABA_ID, FP);
+      await cp.reportRejectedToken(TEST_WABA_ID, FP);
+    });
+    expect(telegram).toHaveBeenCalledTimes(1);
+    expect(sentTexts(telegram)[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}`);
+  });
+
+  it("sends one attempt only: a failed post is not retried, the next census mentions it once", async () => {
+    const telegram = vi.fn(async () => new Response("down", { status: 502 }));
+    vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("failed");
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("already");
+    });
+    expect(telegram).toHaveBeenCalledTimes(1);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("down", { status: 503 }));
+    const texts = await census();
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: Meta rejected the token on send, the alert may not have arrived`);
+  });
+
+  it("claims nothing while ops alerts are off, so a later configuration still alerts", async () => {
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("disabled");
+      expect(cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at).toBeNull();
+    });
+  });
+
+  it("stays quiet on a send 190 after the census already alerted the token as invalid", async () => {
+    mockDebugToken({ is_valid: false });
+    await census();
+    const telegram = telegramOk();
+    vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, FP)).toBe("already");
+    });
+    expect(telegram).not.toHaveBeenCalled();
+  });
+
+  it("is triggered by a failed send with error 190 only, and a valid token reading re-arms it", async () => {
+    const rejectedAt = () =>
+      runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
+        cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at,
+      );
+    await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+    });
+    const cfg = { META_GRAPH_VERSION: "v25.0", META_PHONE_NUMBER_ID: "PNID1", META_ACCESS_TOKEN: "tenant-token" } as never;
+    const pending: Promise<unknown>[] = [];
+    const send = async (error: unknown) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(error), { status: 400 }));
+      const watched = { ...cfg, fetch: watchGraph(env, (work) => pending.push(work), TEST_WABA_ID) };
+      await sendMessage(watched, { type: "text" });
+      await Promise.all(pending);
+    };
+    await send({ error: { code: 131047 } });
+    expect(await rejectedAt()).toBeNull();
+    await send(rejected);
+    expect(await rejectedAt()).not.toBeNull();
+    await getControlPlaneStub(env).recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: 0, dataAccessExpiresAt: 0 });
+    expect(await rejectedAt()).toBeNull();
+  });
+
+  it("reports a 190 from a template call too, through the same config fetch", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+    });
+    const pending: Promise<unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(rejected), { status: 401 }));
+    const cfg = { META_GRAPH_VERSION: "v25.0", META_ACCESS_TOKEN: "tenant-token", META_WABA_ID: TEST_WABA_ID, fetch: watchGraph(env, (work) => pending.push(work), TEST_WABA_ID) };
+    await listTemplates(cfg as never, 5);
+    await Promise.all(pending);
+    const row = await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
+      cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0],
+    );
+    expect(row?.at).not.toBeNull();
+  });
+
+  it("ignores a 190 for a token that a reconnect already replaced", async () => {
+    const control = getControlPlaneStub(env);
+    await runInDurableObject(control, async (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+      const telegram = telegramOk();
+      vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
+      expect(await cp.reportRejectedToken(TEST_WABA_ID, await tokenFingerprint("old-token"))).toBe("stale");
+      expect(telegram).not.toHaveBeenCalled();
+      expect(cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at).toBeNull();
+    });
+  });
+
+  it("markTokensAlerted only touches the token the census checked", async () => {
+    const control = getControlPlaneStub(env);
+    const sealed = (await runInDurableObject(control, (cp: EccosControlPlane) =>
+      cp.sql.exec("SELECT meta_access_token AS t FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.t,
+    )) as string;
+    await control.markTokensAlerted([{ wabaId: TEST_WABA_ID, sealed: "ecs1.another-token" }]);
+    const at = () =>
+      runInDurableObject(control, (cp: EccosControlPlane) =>
+        cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at,
+      );
+    expect(await at()).toBeNull();
+    await control.markTokensAlerted([{ wabaId: TEST_WABA_ID, sealed }]);
+    expect(await at()).not.toBeNull();
+  });
+
+  it("does not call the control plane again for a WABA it just reported", async () => {
+    const reportRejectedToken = vi.spyOn(EccosControlPlane.prototype, "reportRejectedToken").mockResolvedValue();
+    await noteTokenRejected(env, TEST_WABA_ID, FP);
+    await noteTokenRejected(env, TEST_WABA_ID, FP);
+    expect(reportRejectedToken).toHaveBeenCalledTimes(1);
   });
 });

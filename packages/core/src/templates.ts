@@ -25,7 +25,7 @@ export async function listTemplates(
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await (cfg.fetch ?? fetch)(url, {
       headers: { authorization: `Bearer ${cfg.META_ACCESS_TOKEN}` },
       signal: AbortSignal.timeout(15_000),
     });
@@ -94,7 +94,7 @@ export async function createTemplate(
 
   let res: Response;
   try {
-    res = await fetch(`${graphBaseUrl(cfg)}/${wabaId}/message_templates`, {
+    res = await (cfg.fetch ?? fetch)(`${graphBaseUrl(cfg)}/${wabaId}/message_templates`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${cfg.META_ACCESS_TOKEN}`,
@@ -166,7 +166,7 @@ export async function editTemplate(
 
   let res: Response;
   try {
-    res = await fetch(`${graphBaseUrl(cfg)}/${encodeURIComponent(templateId)}`, {
+    res = await (cfg.fetch ?? fetch)(`${graphBaseUrl(cfg)}/${encodeURIComponent(templateId)}`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${cfg.META_ACCESS_TOKEN}`,
@@ -204,7 +204,7 @@ export async function deleteTemplate(
 
   let res: Response;
   try {
-    res = await fetch(`${graphBaseUrl(cfg)}/${wabaId}/message_templates?${query}`, {
+    res = await (cfg.fetch ?? fetch)(`${graphBaseUrl(cfg)}/${wabaId}/message_templates?${query}`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${cfg.META_ACCESS_TOKEN}` },
       signal: AbortSignal.timeout(15_000),
