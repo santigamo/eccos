@@ -14,15 +14,26 @@ type Open = (reason: StepUpReason | null) => void;
  * than opened as a second modal beside it.
  */
 const hosts: Open[] = [];
-let waiting: { host: Open; resolve: (ok: boolean) => void } | null = null;
+let waiting: { host: Open; resolve: (ok: boolean) => void; held: boolean } | null = null;
 
-/** Answer the prompt that is waiting, if one is, and close its sheet. */
+/**
+ * Answer the prompt that is waiting, if one is, and close its sheet. A held
+ * prompt (see `holdStepUp`) is not declined: it stays until it is confirmed.
+ */
 export function settleStepUp(ok: boolean): void {
   const asked = waiting;
+  if (!asked || (asked.held && !ok)) return;
   waiting = null;
-  if (!asked) return;
   asked.host(null);
   asked.resolve(ok);
+}
+
+/**
+ * The sheet is showing something that cannot be shown again (one-time backup
+ * codes). Until the operator confirms, nothing else may close or replace it.
+ */
+export function holdStepUp(): void {
+  if (waiting) waiting.held = true;
 }
 
 /**
@@ -32,20 +43,28 @@ export function settleStepUp(ok: boolean): void {
 export function registerStepUpPrompt(show: Open): () => void {
   hosts.push(show);
   return () => {
-    if (waiting?.host === show) settleStepUp(false);
+    // The sheet itself is going away: nothing is left to hold open.
+    if (waiting?.host === show) {
+      waiting.held = false;
+      settleStepUp(false);
+    }
     const at = hosts.lastIndexOf(show);
     if (at !== -1) hosts.splice(at, 1);
   };
 }
 
-/** Ask the operator to enroll or confirm. A newer request declines an older one. */
+/**
+ * Ask the operator to enroll or confirm. A newer request declines an older
+ * one, unless the older one is held, in which case the newer is declined.
+ */
 export function promptStepUp(reason: StepUpReason): Promise<boolean> {
+  if (waiting?.held) return Promise.resolve(false);
   settleStepUp(false);
   const host = hosts.at(-1);
   if (!host) return Promise.resolve(false);
   host(reason);
   return new Promise<boolean>((resolve) => {
-    waiting = { host, resolve };
+    waiting = { host, resolve, held: false };
   });
 }
 

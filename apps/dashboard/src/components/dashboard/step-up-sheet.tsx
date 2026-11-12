@@ -2,7 +2,7 @@ import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useState, type RefObject } from "react";
 import { invalidateRoutes, rootRouteId } from "../../lib/invalidate";
-import { registerStepUpPrompt, settleStepUp } from "../../lib/step-up";
+import { holdStepUp, registerStepUpPrompt, settleStepUp } from "../../lib/step-up";
 import { twoFactorErrorMessage } from "../../lib/two-factor";
 import { confirmStepUpCode } from "../../server/step-up";
 import { TwoFactorCodeForm } from "../auth/two-factor-code-form";
@@ -74,10 +74,10 @@ export function StepUpSheet({
     [],
   );
 
-  function enrolled() {
-    // The shell's own view of the user (enrolled or not) is now out of date.
-    void invalidateRoutes(router, rootRouteId);
-    settleStepUp(true);
+  function settle(ok: boolean) {
+    // The shell's view of the user (enrolled, stepped up) is now out of date.
+    if (ok) void invalidateRoutes(router, rootRouteId);
+    settleStepUp(ok);
   }
 
   const copy = reason ? COPY[reason] : null;
@@ -85,7 +85,7 @@ export function StepUpSheet({
     <Sheet
       open={reason !== null}
       onOpenChange={(open) => {
-        if (!open && !locked) settleStepUp(false);
+        if (!open && !locked) settle(false);
       }}
     >
       <SheetContent
@@ -100,9 +100,15 @@ export function StepUpSheet({
         </SheetHeader>
         <div className="px-4 pb-4">
           {reason === "totp-required" ? (
-            <TwoFactorSetup onEnrolled={() => setLocked(true)} onDone={enrolled} />
+            <TwoFactorSetup
+              onEnrolled={() => {
+                setLocked(true);
+                holdStepUp();
+              }}
+              onDone={() => settle(true)}
+            />
           ) : reason ? (
-            <TwoFactorCodeForm verify={verifyOnSession} onVerified={() => settleStepUp(true)} />
+            <TwoFactorCodeForm verify={verifyOnSession} onVerified={() => settle(true)} />
           ) : null}
         </div>
       </SheetContent>

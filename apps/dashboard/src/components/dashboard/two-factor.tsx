@@ -3,6 +3,7 @@ import { authClient } from "../../auth/auth-client";
 import { totpSecret, twoFactorErrorMessage } from "../../lib/two-factor";
 import { ERROR_CLASS, MACHINE_CLASS } from "../../ui";
 import { PasswordField } from "../auth/password-field";
+import { TwoFactorCodeForm } from "../auth/two-factor-code-form";
 import { QrCode } from "./qr-code";
 import {
   Frame,
@@ -12,7 +13,6 @@ import {
   FrameTitle,
 } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 interface Setup {
   totpURI: string;
@@ -131,61 +131,24 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
   );
 }
 
+/** Check the first code of an enrollment, which turns the factor on. */
+async function verifyFirstCode(code: string): Promise<string | null> {
+  const result = await authClient.twoFactor.verifyTotp({ code }).catch(() => null);
+  if (!result) return "Could not verify the code right now. Please try again.";
+  return result.error ? twoFactorErrorMessage(result.error.code) : null;
+}
+
 function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () => void }) {
-  const id = useId();
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    const result = await authClient.twoFactor.verifyTotp({ code: code.trim() }).catch(() => null);
-    setBusy(false);
-    if (!result || result.error) {
-      setError(
-        result
-          ? twoFactorErrorMessage(result.error?.code)
-          : "Could not verify the code right now. Please try again.",
-      );
-      return;
-    }
-    onVerified();
-  }
-
   return (
     <div className="flex flex-wrap items-start gap-5">
       <QrCode value={totpURI} label="QR code for your authenticator app" />
-      <form onSubmit={onSubmit} aria-busy={busy} className="flex min-w-0 max-w-sm flex-1 flex-col gap-3">
+      <div className="flex min-w-0 max-w-sm flex-1 flex-col gap-3">
         <p className="m-0 text-sm text-pretty text-muted-foreground">
           Scan the code with an authenticator app, or enter this key by hand.
         </p>
         <code className="font-mono text-xs break-all text-foreground">{totpSecret(totpURI)}</code>
-        <div>
-          <label htmlFor={id} className={`mb-1 block ${MACHINE_CLASS}`}>
-            6-digit code
-          </label>
-          <Input
-            id={id}
-            autoComplete="one-time-code"
-            inputMode="numeric"
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-            aria-invalid={error ? true : undefined}
-          />
-        </div>
-        <div>
-          <Button type="submit" variant="outline" disabled={busy || !code.trim()}>
-            {busy ? "Verifying…" : "Turn on"}
-          </Button>
-        </div>
-        {error ? (
-          <output aria-live="polite" className={ERROR_CLASS}>
-            {error}
-          </output>
-        ) : null}
-      </form>
+        <TwoFactorCodeForm enrolling verify={verifyFirstCode} onVerified={onVerified} />
+      </div>
     </div>
   );
 }
@@ -212,12 +175,13 @@ export function BackupCodes({ codes, onDone }: { codes: string[]; onDone: () => 
           type="button"
           variant="outline"
           size="sm"
-          onClick={() =>
-            void navigator.clipboard.writeText(codes.join("\n")).then(
-              () => setCopy("copied"),
-              () => setCopy("failed"),
-            )
-          }
+          onClick={() => {
+            // Absent outside a secure context, and it can refuse: both end in
+            // the hint to copy by hand.
+            const written = navigator.clipboard?.writeText(codes.join("\n"));
+            if (!written) setCopy("failed");
+            else void written.then(() => setCopy("copied"), () => setCopy("failed"));
+          }}
         >
           {copy === "copied" ? "Copied" : "Copy"}
         </Button>

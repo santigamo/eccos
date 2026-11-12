@@ -9,7 +9,6 @@ import {
   FrameTitle,
 } from "../reui/frame";
 import {
-  canStartConnect,
   CONNECT_RETURN_PATH,
   exchangeConnectCode,
   getEmbeddedSignupConfig,
@@ -165,11 +164,14 @@ export const CONNECT_FORK_DESCRIPTION =
  */
 export function ConnectNumberChoices({
   className,
+  owedStepUp = null,
   onBusyChange,
   navigate = (path) => window.location.assign(path),
   popupWatchdogMs = 3_000,
 }: {
   className?: string;
+  /** The step-up the signed-in user owes right now, if any. */
+  owedStepUp?: StepUpReason | null;
   /** Full navigation. A seam for tests. */
   navigate?: (path: string) => void;
   /** How long Meta's window may take to steal focus before it counts as blocked. */
@@ -191,20 +193,13 @@ export function ConnectNumberChoices({
   } | null>(null);
   const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
   /**
-   * The step-up still owed before a connection may start. Asked for when the
-   * fork appears and settled before any card is pressed: Meta's window only
-   * opens on the customer's own click, and a prompt in between would spend it.
+   * The step-up still owed before a connection may start. Known when the
+   * fork appears (`owedStepUp`, from the shell's own read of the session) and
+   * settled before any card is pressed: Meta's window only opens on the
+   * customer's own click, and a prompt in between would spend it.
    */
-  const [stepUp, setStepUp] = useState<StepUpReason | null>(null);
-  useEffect(() => {
-    let current = true;
-    void canStartConnect()
-      .then((res) => current && setStepUp(stepUpReason(res)))
-      .catch(() => {});
-    return () => {
-      current = false;
-    };
-  }, []);
+  const [stepUp, setStepUp] = useState(owedStepUp);
+  useEffect(() => setStepUp(owedStepUp), [owedStepUp]);
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
   const attempt = useRef(0);
@@ -331,7 +326,12 @@ export function ConnectNumberChoices({
     const prepared = next.current;
     next.current = null;
     const handoff = await prepared?.handoff.catch(() => null);
-    if (handoff?.ok && handoffUsable(handoff.data.expiresAt, Date.now())) return handoff;
+    // Usable only while its state has long enough left AND the step-up it was
+    // issued under still holds; otherwise the server is asked again.
+    const now = Date.now();
+    if (handoff?.ok && handoffUsable(handoff.data.expiresAt, now) && now < handoff.data.stepUpUntil) {
+      return handoff;
+    }
     return startConnect();
   }
 
@@ -581,7 +581,13 @@ export function ConnectNumberChoices({
  * panel inside a panel. That is why the split exists: one fork, two containers,
  * and the container is the only thing that differs.
  */
-export function ConnectNumberPanel({ heading }: { heading: string }) {
+export function ConnectNumberPanel({
+  heading,
+  owedStepUp,
+}: {
+  heading: string;
+  owedStepUp?: StepUpReason | null;
+}) {
   return (
     <Frame variant="default" spacing="lg" className="max-w-3xl">
       <FramePanel fit>
@@ -595,7 +601,7 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
             {CONNECT_FORK_DESCRIPTION}
           </FrameDescription>
         </FrameHeader>
-        <ConnectNumberChoices className="pt-5" />
+        <ConnectNumberChoices className="pt-5" owedStepUp={owedStepUp} />
       </FramePanel>
     </Frame>
   );

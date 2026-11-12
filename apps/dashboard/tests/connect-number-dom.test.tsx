@@ -17,7 +17,6 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const gateway = await import("../src/server/gateway");
 const real = {
-  canStartConnect: gateway.canStartConnect as () => Promise<unknown>,
   getEmbeddedSignupConfig: gateway.getEmbeddedSignupConfig as () => Promise<unknown>,
   startConnect: gateway.startConnect as () => Promise<unknown>,
   exchangeConnectCode: gateway.exchangeConnectCode as (input: unknown) => Promise<unknown>,
@@ -28,7 +27,6 @@ const real = {
 let stubs = { ...real };
 mock.module("../src/server/gateway", () => ({
   ...gateway,
-  canStartConnect: () => stubs.canStartConnect(),
   getEmbeddedSignupConfig: () => stubs.getEmbeddedSignupConfig(),
   startConnect: () => stubs.startConnect(),
   exchangeConnectCode: (input: unknown) => stubs.exchangeConnectCode(input),
@@ -61,6 +59,7 @@ let loginCallback: LoginCallback | null = null;
 let loginCalls = 0;
 let handoffs = 0;
 let handoffTtlMs = 30 * 60_000;
+let stepUpLeftMs = 15 * 60_000;
 let exchanges: { code: string; state: string }[] = [];
 
 beforeEach(() => {
@@ -70,10 +69,10 @@ beforeEach(() => {
   loginCalls = 0;
   handoffs = 0;
   handoffTtlMs = 30 * 60_000;
+  stepUpLeftMs = 15 * 60_000;
   exchanges = [];
   stubs = {
     ...real,
-    canStartConnect: async () => ({ ok: true, data: true }),
     getEmbeddedSignupConfig: async () => ({
       ok: true,
       data: { appId: "app", configId: "cfg", graphVersion: "v25.0" },
@@ -86,6 +85,7 @@ beforeEach(() => {
           state: `state-${handoffs}`,
           url: "https://gateway.test/connect",
           expiresAt: Date.now() + handoffTtlMs,
+          stepUpUntil: Date.now() + stepUpLeftMs,
         },
       };
     },
@@ -129,8 +129,14 @@ async function mount(node: ReactNode): Promise<HTMLElement> {
   return host;
 }
 
-const mountChoices = (popupWatchdogMs = 3_000) =>
-  mount(<ConnectNumberChoices navigate={(path) => navigated.push(path)} popupWatchdogMs={popupWatchdogMs} />);
+const mountChoices = (popupWatchdogMs = 3_000, owedStepUp: "reauth-required" | null = null) =>
+  mount(
+    <ConnectNumberChoices
+      navigate={(path) => navigated.push(path)}
+      popupWatchdogMs={popupWatchdogMs}
+      owedStepUp={owedStepUp}
+    />,
+  );
 
 function card(host: HTMLElement, title: string): HTMLButtonElement {
   const found = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(title));
@@ -155,11 +161,10 @@ describe("step-up before Meta's window", () => {
   const owed = { ok: false, kind: "forbidden", reason: "reauth-required", error: "x" };
 
   test("owed step-up is settled before any card can be pressed, so the press opens the window", async () => {
-    stubs.canStartConnect = async () => owed;
     const { registerStepUpPrompt, settleStepUp } = await import("../src/lib/step-up");
     const asked: (string | null)[] = [];
     const unregister = registerStepUpPrompt((reason) => void asked.push(reason));
-    const host = await mountChoices();
+    const host = await mountChoices(3_000, "reauth-required");
 
     expect(card(host, "A new number").disabled).toBe(true);
     expect(host.textContent).toContain("needs your two-factor code first");
@@ -187,6 +192,30 @@ describe("step-up before Meta's window", () => {
     expect(navigated).toEqual([]);
     expect(card(host, "A new number").disabled).toBe(true);
     expect(host.textContent).toContain("Confirm it's you");
+  });
+});
+
+describe("a handoff prepared ahead of the click", () => {
+  const CANCELLED = { authResponse: null };
+
+  test("is used while the step-up it was issued under still holds", async () => {
+    const host = await mountChoices();
+    await runFlow(host, CANCELLED);
+    expect(handoffs).toBe(2);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(handoffs).toBe(2);
+    expect(loginCalls).toBe(2);
+  });
+
+  test("is dropped once that step-up has run out, and the server is asked again", async () => {
+    stepUpLeftMs = -1;
+    const host = await mountChoices();
+    await runFlow(host, CANCELLED);
+    expect(handoffs).toBe(2);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(handoffs).toBe(3);
   });
 });
 

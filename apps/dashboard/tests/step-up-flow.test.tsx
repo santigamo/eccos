@@ -12,7 +12,9 @@ import type { Failure } from "../src/server/gateway";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { promptStepUp, registerStepUpPrompt, settleStepUp, withStepUp } = await import("../src/lib/step-up");
+const { holdStepUp, promptStepUp, registerStepUpPrompt, settleStepUp, withStepUp } = await import(
+  "../src/lib/step-up"
+);
 const { BackupCodes, TwoFactorPanel } = await import("../src/components/dashboard/two-factor");
 const { QrCode } = await import("../src/components/dashboard/qr-code");
 const { SettingsView } = await import("../src/routes/settings");
@@ -111,6 +113,22 @@ describe("withStepUp", () => {
     expect(shell).toEqual(["totp-required"]);
     settleStepUp(true);
     expect(await onPage).toBe(true);
+  });
+
+  test("a sheet showing one-time backup codes is held until the operator confirms", async () => {
+    const shown: (string | null)[] = [];
+    unregister = registerStepUpPrompt((reason) => void shown.push(reason));
+    const enrolling = promptStepUp("totp-required");
+    holdStepUp();
+
+    // Neither a dismissal nor another action's prompt may take the codes away.
+    settleStepUp(false);
+    expect(await promptStepUp("reauth-required")).toBe(false);
+    expect(shown).toEqual(["totp-required"]);
+
+    settleStepUp(true);
+    expect(await enrolling).toBe(true);
+    expect(shown).toEqual(["totp-required", null]);
   });
 
   test("a prompt still waiting when the sheet unmounts is declined, not lost", async () => {
