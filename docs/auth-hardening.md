@@ -51,8 +51,22 @@ gateway layer and the D1-level `429` behavior tested in
 
 - `twoFactor()` plugin enabled. Enrollment is the Two-factor authentication
   panel on `/settings` (`src/components/dashboard/two-factor.tsx`): password,
-  then a QR code and key for an authenticator app, then the first code. Backup
-  codes are shown once after that code verifies; they are stored encrypted.
+  then a code mailed to the account's address, then a QR code and key for an
+  authenticator app, then the first code. Backup codes are shown once after
+  that code verifies; they are stored encrypted.
+- **Enrollment needs proof of inbox control** (`src/auth/enrollment-proof.ts`).
+  `two-factor/enable` is refused (`EMAIL_CODE_REQUIRED`) without the code that
+  `two-factor/send-enable-code` mailed to the account's verified address, over
+  HTTP and server-side alike. A stolen cookie plus the password therefore
+  cannot enroll the thief's authenticator on an account that has none. The
+  code is 8 characters, lives 10 minutes, is stored hashed, and is consumed
+  atomically before it is compared: one attempt per code, right or wrong.
+  A send needs the password, is refused within a minute of the last one for
+  that user, and is capped at 10 per hour per caller. A pending enrollment's
+  secret (`two-factor/get-totp-uri`) is never returned for the password alone.
+- **A mail goes out whenever the second factor changes**: turned on, turned
+  off, backup codes regenerated (`two-factor-changed`). It follows a change
+  that already happened, so a send that fails is logged and never fails it.
 - Sign-in for an enrolled account stops after the password and asks for the
   code (or a backup code) before any session exists
   (`src/components/auth/two-factor-code-form.tsx`).
@@ -70,7 +84,9 @@ from the session's age:
 
 - by `stepUpGuard` (`src/auth/step-up-guard.ts`) when a second-factor
   verification MINTS the session: the code step of a sign-in, or the first code
-  of an enrollment;
+  of an enrollment. An enrollment only exists after the mailed code, so that
+  stamp stands for the inbox plus the new authenticator, never the password
+  alone;
 - by the step-up challenge (`confirmStepUp`, `src/auth/step-up-confirm.ts`),
   which checks an authenticator or backup code against the CURRENT session and
   stamps that same row. It mints nothing: the cookie, the active organization
@@ -110,8 +126,8 @@ the session.
 | API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
 | Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
 | Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
-| Invitations and member role changes | `stepUpOrganizationHooks`, Better Auth's `organizationHooks` (`beforeCreateInvitation`, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`). `inviteMember` reaches the first through `createInvitation` and passes the refusal's reason on |
-| Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`, once the account has a second factor: `change-password`, `change-email`, `two-factor/enable`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`. An account with no TOTP can still change its password and enroll |
+| Invitations and member role changes | `stepUpOrganizationHooks`, Better Auth's `organizationHooks` (`beforeCreateInvitation`, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`). `inviteMember` reaches the first through `createInvitation` |
+| Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`, once the account has a second factor: `change-password`, `change-email`, `two-factor/enable`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`. An account with no TOTP can still change its password, and enroll with the mailed code; `get-totp-uri` is refused for it |
 
 `STEP_UP_ROWS` is the single table for the Eccos server functions: a function
 names its row, and `requireGatewayPermission` checks the row's role and then
@@ -156,8 +172,11 @@ Connecting a number settles step-up ahead of the click: the fork knows what
 the signed-in user owes from the shell's own read of the session, and keeps
 its cards disabled until that is confirmed, because Meta's window only opens
 on the customer's own click and a prompt in between would spend it. A connect
-start also says how long the step-up behind it holds, so a handoff prepared
-ahead of a retry is dropped, and the server asked again, once that has passed.
+start is refused (`reauth-required`) when less than 10 minutes of the step-up
+are left, and the state it issues is capped by the gateway at the moment the
+step-up ends (`startConnectForAccountId`'s `expiresBy`): the state never
+outlives the step-up it was authorized by, and every flow that opens has at
+least 10 minutes to finish. Nothing is prepared ahead of a click.
 
 While the sheet shows one-time backup codes it is held: no dismissal and no
 other prompt can close it until the operator confirms.

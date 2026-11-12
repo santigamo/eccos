@@ -4,7 +4,6 @@ import {
   CONNECT_CANCELLED_MESSAGE,
   CONNECT_POPUP_BLOCKED_MESSAGE,
   connectAudit,
-  handoffUsable,
   judgeExchange,
   returnPathFor,
 } from "../src/lib/connect-result";
@@ -88,15 +87,5 @@ describe("connectAudit", () => {
       outcome: "failed",
       detail: "taken",
     });
-  });
-});
-
-describe("handoffUsable", () => {
-  test("needs at least 25 minutes of life left", () => {
-    const now = 1_000_000;
-    expect(handoffUsable(now + 30 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000 - 1, now)).toBe(false);
-    expect(handoffUsable(now - 1, now)).toBe(false);
   });
 });

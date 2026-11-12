@@ -29,7 +29,6 @@ import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import {
   CONNECT_CANCELLED_MESSAGE,
   CONNECT_POPUP_BLOCKED_MESSAGE,
-  handoffUsable,
   judgeExchange,
   returnPathFor,
   watchPopup,
@@ -201,11 +200,9 @@ export function ConnectNumberChoices({
   );
   /**
    * What a retry can skip. The SDK and its config are loaded on the first
-   * click, never on mount (docs/threat-model.md); `next` is the handoff
-   * requested in the background once a flow ended without leaving the page.
+   * click, never on mount (docs/threat-model.md).
    */
   const loaded = useRef<{ config: EsConfig; sdk: FacebookSdk | null } | null>(null);
-  const next = useRef<{ handoff: Promise<Handoff> } | null>(null);
 
   /**
    * Session logging (Meta's `message` listener).
@@ -247,17 +244,6 @@ export function ConnectNumberChoices({
     onBusyChange?.(starting !== null);
   }, [starting, onBusyChange]);
 
-  /** Request the next attempt's handoff while the SDK is already loaded. */
-  const prepareNext = useCallback(() => {
-    if (!loaded.current?.sdk) return;
-    const handoff = startConnect();
-    const entry = { handoff };
-    next.current = entry;
-    handoff.catch(() => {
-      if (next.current === entry) next.current = null;
-    });
-  }, []);
-
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(
     async (code: string, state: string) => {
@@ -282,7 +268,6 @@ export function ConnectNumberChoices({
             return;
           }
           setError(failureCopy(result).detail);
-          prepareNext();
           return;
         }
         // The server function audits every outcome. Only a failed exchange
@@ -291,7 +276,6 @@ export function ConnectNumberChoices({
         track("connect_outcome", { result: verdict.outcome });
         if (!verdict.navigate) {
           setError(verdict.message);
-          prepareNext();
           return;
         }
         // The numbers table is a loader read; a reload is the honest way to
@@ -307,22 +291,8 @@ export function ConnectNumberChoices({
         guards.exchanging = false;
       }
     },
-    [leave, setError, prepareNext],
+    [leave, setError],
   );
-
-  /** A handoff prepared in the background, if its state has long enough left. */
-  async function takeHandoff(): Promise<Handoff> {
-    const prepared = next.current;
-    next.current = null;
-    const handoff = await prepared?.handoff.catch(() => null);
-    // Usable only while its state has long enough left AND the step-up it was
-    // issued under still holds; otherwise the server is asked again.
-    const now = Date.now();
-    if (handoff?.ok && handoffUsable(handoff.data.expiresAt, now) && now < handoff.data.stepUpUntil) {
-      return handoff;
-    }
-    return startConnect();
-  }
 
   async function start(path: ConnectPath) {
     track("connect_choice", { path });
@@ -334,7 +304,7 @@ export function ConnectNumberChoices({
       const cached = loaded.current;
       const [config, handoff] = await Promise.all([
         cached ? cached.config : getEmbeddedSignupConfig(),
-        takeHandoff(),
+        startConnect(),
       ]);
       if (!handoff.ok) {
         // Lapsed since the fork appeared. Confirming takes longer than a click
@@ -389,14 +359,12 @@ export function ConnectNumberChoices({
         track("connect_outcome", { result: "cancelled" });
         setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
         setStarting(null);
-        prepareNext();
       }, loginOptions(config.data.configId, path));
       // Message only: the window may still be coming up, so nothing is cleared
       // and the cards stay disabled. "Start again" is the only reset.
       stopWatch.current = watchPopup(() => {
         track("connect_outcome", { result: "popup_blocked" });
         setFeedback({ text: CONNECT_POPUP_BLOCKED_MESSAGE, tone: "blocked" });
-        prepareNext();
       }, popupWatchdogMs);
     } catch (err) {
       if (followSignIn(err)) return;

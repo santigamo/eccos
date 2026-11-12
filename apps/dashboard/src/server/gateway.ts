@@ -1335,17 +1335,19 @@ function connectReturnTo(request: Request): string {
 }
 
 /**
- * A connect start, plus how long the step-up behind it still holds: a handoff
- * prepared ahead of a click must not open Meta's window after that.
+ * The least step-up a connect start needs left. The state it issues dies with
+ * the step-up, and Meta's single-use code is lost if that happens mid-flow, so
+ * a customer with less than this confirms again before Meta's window opens.
  */
-export type ConnectHandoff = ConnectStartResult & { stepUpUntil: number };
+const CONNECT_STEP_UP_FLOOR_MS = 10 * 60_000;
 
 export const startConnect = createServerFn({ method: "POST" }).handler(
-  (): Promise<Result<ConnectHandoff>> =>
+  (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
       // Embedded Signup is an admin+ step-up mutation (contract §4); the
       // account comes from the organization link.
       const actor = await requireActor("connect");
+      const until = await stepUpUntil(requestAuth(), getRequest(), CONNECT_STEP_UP_FLOOR_MS);
       const returnTo = connectReturnTo(getRequest());
       let link = await gateway.getOrganizationAccountLink(actor.organizationId);
       if (!link) {
@@ -1355,7 +1357,7 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
       if (!link || link.status !== "active") {
         throw new Error("This organization is not linked to an Eccos account");
       }
-      const result = await gateway.startConnectForAccountId(link.accountId, returnTo);
+      const result = await gateway.startConnectForAccountId(link.accountId, returnTo, until);
       auditEvent({
         action: "connect_start",
         actorUserId: actor.session.userId,
@@ -1363,7 +1365,7 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
         accountId: link.accountId,
         outcome: "success",
       });
-      return { ...result, stepUpUntil: await stepUpUntil(requestAuth(), getRequest()) };
+      return result;
     }),
 );
 

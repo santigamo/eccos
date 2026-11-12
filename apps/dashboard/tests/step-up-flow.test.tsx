@@ -171,9 +171,10 @@ describe("TwoFactorPanel", () => {
   test("not enrolled asks for the password; enrolled says so and offers nothing to set up", () => {
     const off = renderToStaticMarkup(<TwoFactorPanel enabled={false} />);
     expect(off).toContain("Your password");
-    expect(off).toContain("Set up");
+    // The password first; the mailed code is asked for before any secret exists.
+    expect(off).toContain("Email me a code");
     const on = renderToStaticMarkup(<TwoFactorPanel enabled />);
-    expect(on).not.toContain("Set up");
+    expect(on).not.toContain("Email me a code");
     expect(on).toContain("ask for a code");
   });
 

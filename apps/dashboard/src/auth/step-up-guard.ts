@@ -18,7 +18,8 @@ import { stepUpMessage, stepUpRefusal } from "./step-up";
  * Endpoints that change or reveal a factor and otherwise ask only for the
  * password. Gated once the account HAS a second factor: before that there is
  * nothing for a password to bypass, and a user without TOTP must still be able
- * to change their password or enroll.
+ * to change their password or enroll (`enrollment-proof.ts` asks for a mailed
+ * code there). The one exception is `get-totp-uri`, gated always.
  */
 export const STEP_UP_ACCOUNT_PATHS: ReadonlySet<string> = new Set([
   "/change-password",
@@ -127,7 +128,10 @@ export function stepUpGuard() {
           handler: createAuthMiddleware(async (ctx) => {
             const session = await getSessionFromCtx(ctx);
             // No session: the endpoint's own middleware answers 401.
-            if (!session?.user.twoFactorEnabled) return;
+            if (!session) return;
+            // A pending enrollment's secret is not handed out for the password
+            // alone: whoever reads it can finish the enrollment.
+            if (!session.user.twoFactorEnabled && ctx.path !== "/two-factor/get-totp-uri") return;
             refuseUnlessSteppedUp(session);
           }),
         },

@@ -13,6 +13,8 @@ import {
   FrameTitle,
 } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 
 interface Setup {
   totpURI: string;
@@ -53,9 +55,9 @@ export function TwoFactorPanel({ enabled }: { enabled: boolean }) {
 }
 
 /**
- * Enrollment: password, then the QR code and the first code, then the backup
- * codes. `onEnrolled` fires once the codes are on screen and cannot be shown
- * again; `onDone` when the operator has dealt with them.
+ * Enrollment: password and a mailed code, then the QR code and the first
+ * code, then the backup codes. `onEnrolled` fires once the codes are on screen
+ * and cannot be shown again; `onDone` when the operator has dealt with them.
  */
 export function TwoFactorSetup({
   onEnrolled,
@@ -81,46 +83,103 @@ export function TwoFactorSetup({
   return <BackupCodes codes={setup.backupCodes} onDone={onDone} />;
 }
 
+const START_ERRORS: Record<string, string> = {
+  INVALID_PASSWORD: twoFactorErrorMessage("INVALID_PASSWORD"),
+  ENABLE_CODE_JUST_SENT: "A code was sent less than a minute ago. Check your email, or wait and try again.",
+  EMAIL_CODE_REQUIRED: "That code is not right or has expired. Send a new one.",
+};
+
+function startError(code: string | undefined, fallback: string): string {
+  return (code && START_ERRORS[code]) || fallback;
+}
+
+/** The password, then the code mailed to the account's address, before any secret exists. */
 function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
   // Not fixed ids: the panel and the step-up sheet can be mounted together.
   const id = useId();
   const [password, setPassword] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function sendCode() {
     setBusy(true);
     setError(null);
-    const result = await authClient.twoFactor.enable({ password }).catch(() => null);
+    const result = await authClient.twoFactor.sendEnableCode({ password }).catch(() => null);
     setBusy(false);
-    const data = result?.data;
-    if (data?.method !== "totp") {
-      setError(
-        result?.error?.code === "INVALID_PASSWORD"
-          ? twoFactorErrorMessage("INVALID_PASSWORD")
-          : "Could not start the setup right now. Please try again.",
-      );
+    if (result && !result.error) {
+      setEmailCode("");
+      setSent(true);
       return;
     }
-    onStarted({ totpURI: data.totpURI, backupCodes: data.backupCodes });
+    setError(startError(result?.error?.code, "Could not send the code right now. Please try again."));
+  }
+
+  async function enable() {
+    setBusy(true);
+    setError(null);
+    const result = await authClient
+      .$fetch<Setup>("/two-factor/enable", { method: "POST", body: { password, emailCode } })
+      .catch(() => null);
+    setBusy(false);
+    if (result?.data?.totpURI) {
+      onStarted(result.data);
+      return;
+    }
+    const code = (result?.error as { code?: string } | null | undefined)?.code;
+    // Every attempt spends the code, so a refused one needs a new send.
+    if (code === "EMAIL_CODE_REQUIRED") setSent(false);
+    setError(startError(code, "Could not start the setup right now. Please try again."));
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void (sent ? enable() : sendCode());
   }
 
   return (
     <form onSubmit={onSubmit} aria-busy={busy} className="flex max-w-sm flex-col gap-3">
-      <PasswordField
-        id={`${id}-password`}
-        label="Your password"
-        value={password}
-        onChange={setPassword}
-        autoComplete="current-password"
-        hasError={Boolean(error)}
-        errorId={error ? `${id}-error` : undefined}
-      />
-      <div>
-        <Button type="submit" variant="outline" disabled={busy || !password}>
-          {busy ? "Starting…" : "Set up"}
+      {sent ? (
+        <Field className="gap-2">
+          <FieldLabel htmlFor={`${id}-email-code`} className={MACHINE_CLASS}>
+            Code from your email
+          </FieldLabel>
+          <Input
+            id={`${id}-email-code`}
+            value={emailCode}
+            onChange={(event) => setEmailCode(event.target.value)}
+            autoComplete="one-time-code"
+            autoCapitalize="characters"
+            spellCheck={false}
+            className="font-mono"
+            autoFocus
+            aria-describedby={error ? `${id}-error` : `${id}-hint`}
+          />
+          <p id={`${id}-hint`} className="m-0 text-xs text-pretty text-muted-foreground">
+            We sent a code to your email address. It works once, for 10 minutes.
+          </p>
+        </Field>
+      ) : (
+        <PasswordField
+          id={`${id}-password`}
+          label="Your password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+          hasError={Boolean(error)}
+          errorId={error ? `${id}-error` : undefined}
+        />
+      )}
+      <div className="flex gap-2">
+        <Button type="submit" variant="outline" disabled={busy || !(sent ? emailCode.trim() : password)}>
+          {sent ? (busy ? "Starting…" : "Continue") : busy ? "Sending…" : "Email me a code"}
         </Button>
+        {sent ? (
+          <Button type="button" variant="ghost" disabled={busy} onClick={() => void sendCode()}>
+            Send a new code
+          </Button>
+        ) : null}
       </div>
       {error ? (
         <output id={`${id}-error`} aria-live="polite" className={ERROR_CLASS}>

@@ -19,8 +19,13 @@
  * adapter's job is to report the outcome faithfully — not to decide.
  */
 
-/** The three transactional templates registered with the provider. */
-export type MailTemplate = "verify-email" | "reset-password" | "invite-member";
+/** The transactional templates registered with the provider. */
+export type MailTemplate =
+  | "verify-email"
+  | "reset-password"
+  | "invite-member"
+  | "two-factor-code"
+  | "two-factor-changed";
 
 /**
  * Declared variable sets, ONE CONSTANT PER TEMPLATE.
@@ -52,11 +57,18 @@ export const INVITE_MEMBER_VARIABLES = [
   "workspace",
 ] as const;
 
+/** The code that proves inbox control before two-factor setup. */
+export const TWO_FACTOR_CODE_VARIABLES = ["code", "name"] as const;
+/** `change` is one sentence saying what changed on the account's second factor. */
+export const TWO_FACTOR_CHANGED_VARIABLES = ["change", "name"] as const;
+
 /** The declared set for a template, by name. */
 export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
   "verify-email": VERIFY_EMAIL_VARIABLES,
   "reset-password": RESET_PASSWORD_VARIABLES,
   "invite-member": INVITE_MEMBER_VARIABLES,
+  "two-factor-code": TWO_FACTOR_CODE_VARIABLES,
+  "two-factor-changed": TWO_FACTOR_CHANGED_VARIABLES,
 };
 
 /**

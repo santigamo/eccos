@@ -10,6 +10,7 @@ import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { createAuth } from "../src/auth/auth";
 import { CaptureMailSender } from "../src/auth/mail";
+import { stepUpUntil } from "../src/auth/server-auth";
 import { requireStepUp, STEP_UP_WINDOW_SECONDS, stepUpRefusal } from "../src/auth/step-up";
 import { confirmStepUp } from "../src/auth/step-up-confirm";
 import { STEP_UP_ACCOUNT_PATHS } from "../src/auth/step-up-guard";
@@ -73,10 +74,20 @@ function rawSecret(totpURI: string): string {
   return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
+/** Starts an enrollment as the console does: the mailed code, then `enable` with it. */
+async function startEnrollment(
+  ctx: { post: Post; mail: CaptureMailSender; cookie: string },
+  password = PASSWORD,
+): Promise<Response> {
+  await ctx.post("/two-factor/send-enable-code", { password }, ctx.cookie);
+  const emailCode = ctx.mail.sent.at(-1)!.variables.code;
+  return ctx.post("/two-factor/enable", { password, emailCode }, ctx.cookie);
+}
+
 /** A user enrolled through the real endpoints, holding the session enrollment minted. */
 async function enrolled() {
   const ctx = await signedIn();
-  const enable = await ctx.post("/two-factor/enable", { password: PASSWORD }, ctx.cookie);
+  const enable = await startEnrollment(ctx);
   const secret = rawSecret(((await enable.json()) as { totpURI: string }).totpURI);
   const code = async () => (await ctx.auth.api.generateTOTP({ body: { secret } })).code;
   const verify = await ctx.post("/two-factor/verify-totp", { code: await code() }, ctx.cookie);
@@ -136,6 +147,24 @@ describe("stepUpRefusal", () => {
   });
 });
 
+describe("stepUpUntil", () => {
+  const MINUTE = 60_000;
+  const request = (cookie: string) => new Request(BASE_URL, { headers: { cookie } });
+
+  test("says when the step-up ends, and refuses when less than the floor is left", async () => {
+    const { auth, db, cookie } = await enrolled();
+    const stamp = (agoMs: number) =>
+      db.query('UPDATE session SET "stepUpAt" = ?').run(new Date(Date.now() - agoMs).toISOString());
+
+    stamp(4 * MINUTE);
+    const until = await stepUpUntil(auth, request(cookie), 10 * MINUTE);
+    expect(Math.abs(until - (Date.now() + 11 * MINUTE))).toBeLessThan(5_000);
+
+    stamp(6 * MINUTE);
+    expect(await reasonOf(stepUpUntil(auth, request(cookie), 10 * MINUTE))).toBe("reauth-required");
+  });
+});
+
 describe("requireStepUp", () => {
   test("a session without TOTP is told to enroll", async () => {
     const { auth, headers } = await signedIn();
@@ -147,7 +176,7 @@ describe("requireStepUp", () => {
     await expect(requireStepUp(auth, new Headers())).rejects.toThrow("authentication required");
   });
 
-  test("verifying the first code enrolls and leaves a stepped-up session", async () => {
+  test("the mailed code plus the first authenticator code enrolls and leaves a stepped-up session", async () => {
     const { auth, headers } = await enrolled();
     await requireStepUp(auth, headers());
   });
@@ -179,7 +208,7 @@ describe("requireStepUp", () => {
 
   test("a backup code at sign-in steps up as well", async () => {
     const ctx = await signedIn();
-    const enable = await ctx.post("/two-factor/enable", { password: PASSWORD }, ctx.cookie);
+    const enable = await startEnrollment(ctx);
     const { totpURI, backupCodes } = (await enable.json()) as { totpURI: string; backupCodes: string[] };
     const { code } = await ctx.auth.api.generateTOTP({ body: { secret: rawSecret(totpURI) } });
     await ctx.post("/two-factor/verify-totp", { code }, ctx.cookie);
@@ -358,7 +387,7 @@ describe("the step-up challenge on the current session", () => {
 
   test("a backup code steps up too, and is spent", async () => {
     const ctx = await signedIn();
-    const enable = await ctx.post("/two-factor/enable", { password: PASSWORD }, ctx.cookie);
+    const enable = await startEnrollment(ctx);
     const { totpURI, backupCodes } = (await enable.json()) as { totpURI: string; backupCodes: string[] };
     const { code } = await ctx.auth.api.generateTOTP({ body: { secret: rawSecret(totpURI) } });
     const cookie = cookiesOf(await ctx.post("/two-factor/verify-totp", { code }, ctx.cookie));
@@ -377,7 +406,8 @@ describe("the step-up challenge on the current session", () => {
   });
 
   test("an account that is not fully enrolled is refused before any code is checked", async () => {
-    const { auth, db, post, cookie } = await signedIn();
+    const ctx = await signedIn();
+    const { auth, db, cookie } = ctx;
     const sessions = () => db.query("SELECT id, token FROM session").all();
     const confirm = (code: string) => confirmStepUp(auth, new Headers({ cookie }), { code });
 
@@ -385,7 +415,7 @@ describe("the step-up challenge on the current session", () => {
 
     // A PENDING enrollment: the right code here must not run Better Auth's
     // enrollment branch, which would replace the session behind the caller.
-    const enable = await post("/two-factor/enable", { password: PASSWORD }, cookie);
+    const enable = await startEnrollment(ctx);
     const secret = rawSecret(((await enable.json()) as { totpURI: string }).totpURI);
     const before = sessions();
     const { code } = await auth.api.generateTOTP({ body: { secret } });
@@ -413,14 +443,148 @@ describe("sessions minted without a second factor", () => {
   });
 
   test("an account with no second factor can still change its password and enroll", async () => {
-    const { post, cookie } = await signedIn();
-    const change = await post(
+    const ctx = await signedIn();
+    const change = await ctx.post(
       "/change-password",
       { currentPassword: PASSWORD, newPassword: "a-new-long-password" },
-      cookie,
+      ctx.cookie,
     );
     expect(change.status).toBe(200);
-    expect((await post("/two-factor/enable", { password: "a-new-long-password" }, cookie)).status).toBe(200);
+    expect((await startEnrollment(ctx, "a-new-long-password")).status).toBe(200);
+  });
+});
+
+/**
+ * The same attacker, against an account with NO second factor: the cookie and
+ * the password, but not the inbox.
+ */
+describe("attack: enrolling the thief's own authenticator", () => {
+  const NO_PROOF = [403, "EMAIL_CODE_REQUIRED"] as const;
+  const factors = (db: Database) => db.query('SELECT count(*) AS n FROM "twoFactor"').get();
+
+  test("the password alone cannot start an enrollment, over HTTP or server-side", async () => {
+    const { auth, db, post, cookie, headers } = await signedIn();
+    expect(await refusal(await post("/two-factor/enable", { password: PASSWORD }, cookie))).toEqual([...NO_PROOF]);
+    expect(await refusal(await post("/two-factor/enable", { password: PASSWORD, emailCode: "AAAAAAAA" }, cookie))).toEqual([...NO_PROOF]);
+    await expect(
+      auth.api.enableTwoFactor({ body: { password: PASSWORD }, headers: headers() }),
+    ).rejects.toMatchObject({ body: { code: "EMAIL_CODE_REQUIRED" } });
+    expect(factors(db)).toEqual({ n: 0 });
+    expect(await reasonOf(requireStepUp(auth, headers()))).toBe("totp-required");
+  });
+
+  test("a mailed code gets one attempt: a wrong guess spends it, and so does using it", async () => {
+    const ctx = await signedIn();
+    await ctx.post("/two-factor/send-enable-code", { password: PASSWORD }, ctx.cookie);
+    const emailCode = ctx.mail.sent.at(-1)!.variables.code!;
+    expect(emailCode).toMatch(/^[A-Z0-9]{8}$/);
+    // Stored hashed, and never the provider's idempotency key.
+    expect(JSON.stringify(ctx.db.query("SELECT * FROM verification").all())).not.toContain(emailCode);
+    expect(ctx.mail.sent.at(-1)!.idempotencyKey).not.toContain(emailCode);
+
+    const enable = (code: string) => ctx.post("/two-factor/enable", { password: PASSWORD, emailCode: code }, ctx.cookie);
+    expect(await refusal(await enable("WRONG000"))).toEqual([...NO_PROOF]);
+    expect(await refusal(await enable(emailCode))).toEqual([...NO_PROOF]);
+    expect(factors(ctx.db)).toEqual({ n: 0 });
+  });
+
+  test("a parallel burst with the right code starts one enrollment", async () => {
+    const ctx = await signedIn();
+    await ctx.post("/two-factor/send-enable-code", { password: PASSWORD }, ctx.cookie);
+    const emailCode = ctx.mail.sent.at(-1)!.variables.code;
+    const answers = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        ctx.post("/two-factor/enable", { password: PASSWORD, emailCode }, ctx.cookie),
+      ),
+    );
+    expect(answers.filter((r) => r.status === 200)).toHaveLength(1);
+  });
+
+  test("an expired code and another account's code are refused", async () => {
+    const ctx = await signedIn();
+    await ctx.post("/two-factor/send-enable-code", { password: PASSWORD }, ctx.cookie);
+    const emailCode = ctx.mail.sent.at(-1)!.variables.code;
+    ctx.db.query('UPDATE verification SET "expiresAt" = ?').run(new Date(Date.now() - 1000).toISOString());
+    expect(
+      await refusal(await ctx.post("/two-factor/enable", { password: PASSWORD, emailCode }, ctx.cookie)),
+    ).toEqual([...NO_PROOF]);
+
+    await ctx.post("/sign-up/email", { email: "other@corp.test", password: PASSWORD, name: "Other" });
+    ctx.db.query('UPDATE user SET "emailVerified" = 1').run();
+    const other = cookiesOf(await ctx.post("/sign-in/email", { email: "other@corp.test", password: PASSWORD }));
+    await ctx.post("/two-factor/send-enable-code", { password: PASSWORD }, other);
+    const theirs = ctx.mail.sent.at(-1)!.variables.code;
+    expect(
+      await refusal(await ctx.post("/two-factor/enable", { password: PASSWORD, emailCode: theirs }, ctx.cookie)),
+    ).toEqual([...NO_PROOF]);
+  });
+
+  test("the code is mailed only for the right password, to the account's address, once a minute", async () => {
+    const { mail, post, cookie } = await signedIn();
+    const sends = () => mail.sent.filter((m) => m.template === "two-factor-code");
+    expect((await post("/two-factor/send-enable-code", { password: "not-the-password" }, cookie)).status).toBe(400);
+    expect(sends()).toHaveLength(0);
+
+    expect((await post("/two-factor/send-enable-code", { password: PASSWORD }, cookie)).status).toBe(200);
+    expect(sends().map((m) => m.to)).toEqual([EMAIL]);
+    expect(await refusal(await post("/two-factor/send-enable-code", { password: PASSWORD }, cookie))).toEqual([
+      429,
+      "ENABLE_CODE_JUST_SENT",
+    ]);
+    expect(sends()).toHaveLength(1);
+  });
+
+  test("a pending enrollment's secret is not read with the password alone", async () => {
+    const ctx = await signedIn();
+    await startEnrollment(ctx);
+    expect(
+      await refusal(await ctx.post("/two-factor/get-totp-uri", { password: PASSWORD }, ctx.cookie)),
+    ).toEqual([403, "TOTP_REQUIRED"]);
+  });
+});
+
+describe("a mail whenever the second factor changes", () => {
+  const changes = (mail: CaptureMailSender) =>
+    mail.sent.filter((m) => m.template === "two-factor-changed").map((m) => [m.to, m.variables.change]);
+
+  test("turned on, backup codes regenerated, turned off: one mail each", async () => {
+    const { mail, post, cookie } = await enrolled();
+    expect(changes(mail)).toEqual([[EMAIL, "Two-factor authentication was turned on."]]);
+
+    expect((await post("/two-factor/generate-backup-codes", { password: PASSWORD }, cookie)).status).toBe(200);
+    expect(changes(mail).at(-1)?.[1]).toContain("backup codes");
+
+    expect((await post("/two-factor/disable", { password: PASSWORD }, cookie)).status).toBe(200);
+    expect(changes(mail).map(([, change]) => change)).toEqual([
+      "Two-factor authentication was turned on.",
+      "New backup codes were generated, and the old ones no longer work.",
+      "Two-factor authentication was turned off.",
+    ]);
+  });
+
+  test("a sign-in's code, a step-up, a wrong code and a refused change send nothing", async () => {
+    const { auth, db, mail, post, cookie, code } = await enrolled();
+    const before = changes(mail).length;
+
+    const signIn = await post("/sign-in/email", { email: EMAIL, password: PASSWORD });
+    await post("/two-factor/verify-totp", { code: await code() }, cookiesOf(signIn));
+    await confirmStepUp(auth, new Headers({ cookie }), { code: await code() });
+    await confirmStepUp(auth, new Headers({ cookie }), { code: "000000" });
+    goStale(db);
+    await post("/two-factor/disable", { password: PASSWORD }, cookie);
+
+    expect(changes(mail)).toHaveLength(before);
+  });
+
+  test("a notification that cannot be sent does not fail the change", async () => {
+    const ctx = await signedIn();
+    const enable = await startEnrollment(ctx);
+    const secret = rawSecret(((await enable.json()) as { totpURI: string }).totpURI);
+    const { code } = await ctx.auth.api.generateTOTP({ body: { secret } });
+    ctx.mail.outcome = { status: "undeliverable", reason: "permanent_failure" };
+    const verify = await ctx.post("/two-factor/verify-totp", { code }, ctx.cookie);
+    expect(verify.status).toBe(200);
+    await requireStepUp(ctx.auth, new Headers({ cookie: cookiesOf(verify) }));
   });
 });
 

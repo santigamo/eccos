@@ -24,6 +24,7 @@ import {
   type MailTemplate,
   type SendOutcome,
 } from "./mail";
+import { enrollmentProof, type TwoFactorChange, type TwoFactorMail } from "./enrollment-proof";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
 import { STEP_UP_WINDOW_SECONDS } from "./step-up";
@@ -218,6 +219,45 @@ function assertValidConfig(config: AuthConfig): void {
   }
 }
 
+/** What the notification mail says happened, one sentence each. */
+const TWO_FACTOR_CHANGES: Record<TwoFactorChange, string> = {
+  enabled: "Two-factor authentication was turned on.",
+  disabled: "Two-factor authentication was turned off.",
+  "backup-codes": "New backup codes were generated, and the old ones no longer work.",
+};
+
+/**
+ * Both go to the account's own verified address. A code that cannot arrive is
+ * surfaced, as a verification mail's is: the setup cannot go on without it. A
+ * notification follows a change that already happened, so it is only logged.
+ * The key never carries the code itself.
+ */
+function twoFactorMail(mail: MailSender): TwoFactorMail {
+  const send = async (
+    template: "two-factor-code" | "two-factor-changed",
+    to: string,
+    variables: Record<string, string>,
+    unique: string,
+    policy: typeof applyVerificationSendPolicy,
+  ) => {
+    const idempotencyKey = await deriveIdempotencyKey(template, to, unique);
+    const outcome = await mail.sendTemplate({ template, to, variables, idempotencyKey });
+    policy(outcome, { template, to, idempotencyKey });
+  };
+  return {
+    code: (user, code, unique) =>
+      send("two-factor-code", user.email, { name: user.name, code }, unique, applyVerificationSendPolicy),
+    changed: (user, change) =>
+      send(
+        "two-factor-changed",
+        user.email,
+        { name: user.name, change: TWO_FACTOR_CHANGES[change] },
+        `${change}:${crypto.randomUUID()}`,
+        applyResetSendPolicy,
+      ),
+  };
+}
+
 export function createAuth(config: AuthConfig) {
   assertValidConfig(config);
 
@@ -361,6 +401,8 @@ export function createAuth(config: AuthConfig) {
       // The issuer is the account name an authenticator app shows.
       twoFactor({ issuer: "Eccos" }),
       stepUpGuard(),
+      // After the guard: an enrolled caller is asked for step-up first.
+      enrollmentProof(twoFactorMail(config.mail)),
       organization({
         ac,
         roles: { owner, admin, operator, viewer },

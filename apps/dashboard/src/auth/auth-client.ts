@@ -9,7 +9,15 @@
 
 import { createAuthClient } from "better-auth/react";
 import { organizationClient, twoFactorClient } from "better-auth/client/plugins";
+import type { BetterAuthClientPlugin } from "better-auth/client";
+import type { enrollmentProof } from "./enrollment-proof";
 import { ac, owner, admin, operator, viewer } from "./permissions";
+
+/** Types `authClient.twoFactor.sendEnableCode` from the server plugin. */
+const enrollmentProofClient = {
+  id: "enrollment-proof",
+  $InferServerPlugin: {} as ReturnType<typeof enrollmentProof>,
+} satisfies BetterAuthClientPlugin;
 
 export const authClient = createAuthClient({
   baseURL: typeof window !== "undefined" ? window.location.origin : undefined,
@@ -19,5 +27,6 @@ export const authClient = createAuthClient({
       roles: { owner, admin, operator, viewer },
     }),
     twoFactorClient(),
+    enrollmentProofClient,
   ],
 });

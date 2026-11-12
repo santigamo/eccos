@@ -83,13 +83,6 @@ export function connectAudit(result: ConnectExchangeResult): {
   return { outcome: "failed", detail: result.ok ? verdict.outcome : result.error };
 }
 
-/** A handoff is reused only if its state still has this long to live. */
-export const HANDOFF_MIN_REMAINING_MS = 25 * 60_000;
-
-export function handoffUsable(expiresAt: number, now: number): boolean {
-  return expiresAt - now >= HANDOFF_MIN_REMAINING_MS;
-}
-
 /**
  * Calls `onBlocked` unless this window is left within `ms`: Meta's popup takes
  * focus (`blur`), or opens as a tab and hides this page.

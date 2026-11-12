@@ -58,8 +58,6 @@ let navigated: string[] = [];
 let loginCallback: LoginCallback | null = null;
 let loginCalls = 0;
 let handoffs = 0;
-let handoffTtlMs = 30 * 60_000;
-let stepUpLeftMs = 15 * 60_000;
 let exchanges: { code: string; state: string }[] = [];
 
 beforeEach(() => {
@@ -68,8 +66,6 @@ beforeEach(() => {
   loginCallback = null;
   loginCalls = 0;
   handoffs = 0;
-  handoffTtlMs = 30 * 60_000;
-  stepUpLeftMs = 15 * 60_000;
   exchanges = [];
   stubs = {
     ...real,
@@ -84,8 +80,7 @@ beforeEach(() => {
         data: {
           state: `state-${handoffs}`,
           url: "https://gateway.test/connect",
-          expiresAt: Date.now() + handoffTtlMs,
-          stepUpUntil: Date.now() + stepUpLeftMs,
+          expiresAt: Date.now() + 15 * 60_000,
         },
       };
     },
@@ -195,30 +190,6 @@ describe("step-up before Meta's window", () => {
   });
 });
 
-describe("a handoff prepared ahead of the click", () => {
-  const CANCELLED = { authResponse: null };
-
-  test("is used while the step-up it was issued under still holds", async () => {
-    const host = await mountChoices();
-    await runFlow(host, CANCELLED);
-    expect(handoffs).toBe(2);
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(handoffs).toBe(2);
-    expect(loginCalls).toBe(2);
-  });
-
-  test("is dropped once that step-up has run out, and the server is asked again", async () => {
-    stepUpLeftMs = -1;
-    const host = await mountChoices();
-    await runFlow(host, CANCELLED);
-    expect(handoffs).toBe(2);
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(handoffs).toBe(3);
-  });
-});
-
 describe("ConnectNumberChoices in a real DOM", () => {
   test("the live region is mounted empty and gets filled", async () => {
     const host = await mountChoices();
@@ -309,10 +280,10 @@ describe("ConnectNumberChoices in a real DOM", () => {
 
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
-  test("a retry after a cancel logs in with the handoff prepared in the background", async () => {
+  test("a retry after a cancel asks the server for a fresh state", async () => {
     const host = await mountChoices();
     await runFlow(host, { authResponse: null });
-    expect(handoffs).toBe(2);
+    expect(handoffs).toBe(1);
 
     await act(async () => card(host, "A new number").click());
     await settle();
@@ -321,28 +292,6 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => loginCallback?.(FINISHED));
     await settle();
     expect(exchanges).toEqual([{ code: "code-1", state: "state-2" }]);
-  });
-
-  test("a prepared handoff with too little life left is not reused", async () => {
-    const host = await mountChoices();
-    handoffTtlMs = 10 * 60_000;
-    await runFlow(host, { authResponse: null });
-    expect(handoffs).toBe(2);
-
-    handoffTtlMs = 30 * 60_000;
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(handoffs).toBe(3);
-    await act(async () => loginCallback?.(FINISHED));
-    await settle();
-    expect(exchanges).toEqual([{ code: "code-1", state: "state-3" }]);
-  });
-
-  test("a failure code also prepares the next attempt", async () => {
-    stubs.exchangeConnectCode = async () => ({ ok: true, data: { ok: false, code: "failed", error: "x" } });
-    const host = await mountChoices();
-    await runFlow(host, FINISHED);
-    expect(handoffs).toBe(2);
   });
 
   test("a blocked popup shows a message and a Start again control, and changes nothing else", async () => {
@@ -518,15 +467,6 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => stale?.({ authResponse: null }));
     expect(live(host)).toBe("");
     expect(card(host, "A new number").disabled).toBe(true);
-  });
-
-  test("the watchdog prepares the next attempt", async () => {
-    const host = await mountChoices(20);
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(handoffs).toBe(1);
-    await wait(60);
-    expect(handoffs).toBe(2);
   });
 
   test("a visibilitychange while the page is still visible does not stop the watchdog", async () => {

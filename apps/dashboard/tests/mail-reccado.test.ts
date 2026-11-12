@@ -378,6 +378,8 @@ describe("variable sets are exact in both directions", () => {
     expect(Object.keys(TEMPLATE_VARIABLES).sort()).toEqual([
       "invite-member",
       "reset-password",
+      "two-factor-changed",
+      "two-factor-code",
       "verify-email",
     ]);
   });

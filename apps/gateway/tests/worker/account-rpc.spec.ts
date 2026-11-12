@@ -112,6 +112,17 @@ describe("GatewayRPC organization account bootstrap", () => {
     expect(first.accountId).not.toBe(second.accountId);
   });
 
+  it("a connect state lives no longer than the caller's cap, and never longer than the default", async () => {
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const { accountId } = await rpc.ensureOrganizationAccount("org_connect_cap", "Capped workspace");
+
+    const cap = Date.now() + 10 * 60_000;
+    expect((await rpc.startConnectForAccountId(accountId, undefined, cap)).expiresAt).toBe(cap);
+
+    const far = await rpc.startConnectForAccountId(accountId, undefined, Date.now() + 24 * 3_600_000);
+    expect(far.expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 60_000);
+  });
+
   it("starts an Embedded Signup handoff for the linked organization account", async () => {
     const rpc = new GatewayRPC(createExecutionContext(), env);
     const { accountId } = await rpc.ensureOrganizationAccount("org_connect", "Connect workspace");

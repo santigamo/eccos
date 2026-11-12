@@ -173,7 +173,9 @@ a session's age. Reads never require step-up.
 - **MFA policy**: TOTP is **required for owner/admin roles before sensitive actions** — connect,
   API keys, export, erasure, membership/role changes, and subscriber config write (§4). Enrollment
   and enforcement are implemented (`eccos-eyel`; docs/auth-hardening.md, "Step-up enforcement");
-  this contract fixes the policy.
+  this contract fixes the policy. **Setting up TOTP requires a code mailed to the account's
+  verified address**, so the password alone never yields a second factor, and every change to
+  the second factor is notified by email.
 - **Recent-authentication step-up window: 15 minutes.** A sensitive action requires the second
   factor to have been proved within the last 15 minutes, by a sign-in that included it or by the
   step-up challenge on the current session; otherwise the code is asked for again first.

@@ -643,15 +643,14 @@ describe("session bootstrap (auth-aware state)", () => {
         url: "https://gateway.example/connect?state=one-time",
         state: "one-time",
         expiresAt: 2,
-        // How long the step-up behind it holds: a prepared handoff must not outlive it.
-        stepUpUntil: FAKE_STEP_UP_UNTIL,
       },
     });
     // eccos-5z9: the gateway owns Meta's callback, so it needs somewhere to send
     // the operator back to. The target is built from the request origin, which
     // the server entry has already narrowed to the canonical host — never from
     // anything the browser supplies.
-    expect(calls).toEqual([["account-a", "http://localhost:3000/numbers"]]);
+    // The third argument caps the state's life at the end of the step-up.
+    expect(calls).toEqual([["account-a", "http://localhost:3000/numbers", FAKE_STEP_UP_UNTIL]]);
   });
 });
 
