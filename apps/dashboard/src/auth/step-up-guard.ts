@@ -1,41 +1,118 @@
 /**
- * Step-up for the Better Auth organization endpoints the capability matrix
- * marks sensitive (contract §4/§9): invitations and member role changes.
+ * Step-up inside Better Auth (contract §4/§8/§9).
  *
- * A `before` hook, so it covers a direct HTTP call and a server-side
- * `auth.api.*` call alike. The Eccos server functions enforce the same policy
- * through `requireStepUp`.
+ * Stamps `session.stepUpAt` when a session is minted by a second-factor
+ * verification, and refuses the endpoints that would otherwise let a password
+ * alone change a factor or act on members. Hooks, so a direct HTTP call and a
+ * server-side `auth.api.*` call are covered alike.
  */
 
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
-import { stepUpMessage, stepUpRefusal } from "./step-up";
+import { roles } from "./permissions";
+import { stepUpMessage, stepUpRefusal, type StepUpReason } from "./step-up";
 
-export const STEP_UP_AUTH_PATHS: ReadonlySet<string> = new Set([
-  "/organization/invite-member",
-  "/organization/cancel-invitation",
-  "/organization/update-member-role",
-  "/organization/remove-member",
+/** Member management, with the permission Better Auth itself goes on to check. */
+export const STEP_UP_ORGANIZATION_PATHS: Record<string, Record<string, string[]>> = {
+  "/organization/invite-member": { invitation: ["create"] },
+  "/organization/cancel-invitation": { invitation: ["cancel"] },
+  "/organization/update-member-role": { member: ["update"] },
+  "/organization/remove-member": { member: ["delete"] },
+};
+
+/** Endpoints that change or reveal a factor and otherwise ask only for the password. */
+export const STEP_UP_ACCOUNT_PATHS: ReadonlySet<string> = new Set([
+  "/change-password",
+  "/change-email",
+  "/two-factor/disable",
+  "/two-factor/generate-backup-codes",
+  "/two-factor/get-totp-uri",
 ]);
+
+/** Open to an account with no second factor yet; step-up once it has one. */
+const ENROLL_PATH = "/two-factor/enable";
+
+const VERIFY_PATHS: ReadonlySet<string> = new Set([
+  "/two-factor/verify-totp",
+  "/two-factor/verify-backup-code",
+]);
+
+function refuse(reason: StepUpReason): never {
+  throw new APIError("FORBIDDEN", {
+    code: reason === "totp-required" ? "TOTP_REQUIRED" : "SESSION_NOT_FRESH",
+    message: stepUpMessage(reason),
+  });
+}
+
+function roleHolds(role: unknown, permission: Record<string, string[]>): boolean {
+  return String(role ?? "")
+    .split(",")
+    .some(
+      (name) =>
+        Object.hasOwn(roles, name) &&
+        roles[name as keyof typeof roles].authorize(permission as never).success === true,
+    );
+}
 
 export function stepUpGuard() {
   return {
     id: "step-up-guard",
+    schema: {
+      session: {
+        fields: { stepUpAt: { type: "date", required: false, input: false } },
+      },
+    },
     hooks: {
       before: [
         {
-          matcher: (ctx) => STEP_UP_AUTH_PATHS.has(ctx.path ?? ""),
+          matcher: (ctx) => Object.hasOwn(STEP_UP_ORGANIZATION_PATHS, ctx.path ?? ""),
           handler: createAuthMiddleware(async (ctx) => {
             const session = await getSessionFromCtx(ctx);
             // No session: the endpoint's own middleware answers 401.
             if (!session) return;
+            // The role first: one that lacks the action gets Better Auth's own
+            // permission error, not an invitation to enroll.
+            const organizationId =
+              ctx.body?.organizationId ?? session.session.activeOrganizationId;
+            if (!organizationId) return;
+            const member = await ctx.context.adapter.findOne<{ role?: unknown }>({
+              model: "member",
+              where: [
+                { field: "userId", value: session.user.id },
+                { field: "organizationId", value: organizationId },
+              ],
+            });
+            const permission = STEP_UP_ORGANIZATION_PATHS[ctx.path];
+            if (!permission || !roleHolds(member?.role, permission)) return;
             const refusal = stepUpRefusal(session);
-            if (refusal) {
-              throw new APIError("FORBIDDEN", {
-                code: refusal === "totp-required" ? "TOTP_REQUIRED" : "SESSION_NOT_FRESH",
-                message: stepUpMessage(refusal),
-              });
-            }
+            if (refusal) refuse(refusal);
+          }),
+        },
+        {
+          matcher: (ctx) =>
+            STEP_UP_ACCOUNT_PATHS.has(ctx.path ?? "") || ctx.path === ENROLL_PATH,
+          handler: createAuthMiddleware(async (ctx) => {
+            const session = await getSessionFromCtx(ctx);
+            if (!session) return;
+            if (ctx.path === ENROLL_PATH && !session.user.twoFactorEnabled) return;
+            const refusal = stepUpRefusal(session);
+            if (refusal) refuse(refusal);
+          }),
+        },
+      ],
+      after: [
+        {
+          matcher: (ctx) => VERIFY_PATHS.has(ctx.path ?? ""),
+          handler: createAuthMiddleware(async (ctx) => {
+            // Set only when this verification minted the session: a sign-in's
+            // second step, or the first code of an enrollment. Verifying a code
+            // on an existing session mints nothing and stamps nothing, because
+            // that path has no attempt limit.
+            const minted = ctx.context.newSession;
+            if (!minted) return;
+            await ctx.context.internalAdapter.updateSession(minted.session.token, {
+              stepUpAt: new Date(),
+            });
           }),
         },
       ],

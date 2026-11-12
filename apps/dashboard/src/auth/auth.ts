@@ -326,11 +326,10 @@ export function createAuth(config: AuthConfig) {
       //
       // NOT to be extended to `emailAndPassword.autoSignIn` (a session BEFORE
       // verification), which contradicts `requireEmailVerification` above and
-      // contract §7. And a caveat for when TOTP enrollment ships: this path
-      // calls `internalAdapter.createSession` directly, so it does not pass
-      // through the twoFactor plugin's sign-in hook. Harmless today — the
-      // account is seconds old and cannot have a second factor — but a
-      // re-verification flow on an enrolled account would step around it.
+      // contract §7. This path calls `internalAdapter.createSession` directly,
+      // so it never passes through the twoFactor sign-in hook: the session it
+      // mints carries no `stepUpAt` and therefore never passes step-up
+      // (`step-up.ts`), whatever the account's enrollment.
       autoSignInAfterVerification: true,
       sendVerificationEmail: async (data: MailCallbackData) => {
         const { user, url, token } = data;

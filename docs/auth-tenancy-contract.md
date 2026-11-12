@@ -103,15 +103,17 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |
 | API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
 | Embedded Signup `/connect` start + callback | admin | **Yes** | Account-bound OAuth state |
+| Conversation retention write | admin | **Yes** | Shortening it purges history |
 | Export data | admin | **Yes** | |
 | GDPR erasure (`eraseByPhone`) | owner | **Yes** | Owner-only destructive action |
 | Invitations & member role changes | owner/admin (Better Auth defaults) | **Yes** | Verified email required (§7) |
 | Organization create | any verified user | — | Own new org only; allowlisted signup (§7) |
 | Organization delete | disabled in v1 | — | Rejected everywhere (§9) |
 
-"**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** a
-recent authentication within the step-up window (15 minutes); otherwise the server demands
-re-authentication before executing the action. Reads never require step-up.
+"**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** have
+proved that second factor within the step-up window (15 minutes); otherwise the server demands
+re-authentication before executing the action. A password alone never renews it, and neither does
+a session's age. Reads never require step-up.
 
 ## 5. Session & active-organization rules
 

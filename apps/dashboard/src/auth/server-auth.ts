@@ -18,25 +18,31 @@
  * next request always re-resolves (contract §5).
  */
 
-import { requirePermission, type GatewayAction } from "./tenant";
+import { requirePermission } from "./tenant";
 import { resolveSession, UnauthorizedError, type SessionUser } from "./session";
-import { requireStepUp as requireSessionStepUp } from "./step-up";
+import { isStepUpRow, requireStepUp, STEP_UP_ROWS, type Grant } from "./step-up";
 import type { Auth } from "./auth";
 
 export { UnauthorizedError, type SessionUser };
 
-/** Require a session plus a `gateway` permission; returns the validated org id. */
+/**
+ * Authorize one grant and return the validated org id. A step-up row checks
+ * its role first, so a role that lacks the action is told that instead.
+ */
 export async function requireGatewayPermission(
   auth: Auth,
   request: Request,
-  action: GatewayAction,
+  grant: Grant,
 ): Promise<string> {
-  return requirePermission(auth, request.headers, undefined, action);
-}
-
-/** Step-up rows of the capability matrix (contract §4): TOTP plus a recent sign-in. */
-export function requireStepUp(auth: Auth, request: Request): Promise<void> {
-  return requireSessionStepUp(auth, request.headers);
+  const stepUp = isStepUpRow(grant);
+  const organizationId = await requirePermission(
+    auth,
+    request.headers,
+    undefined,
+    stepUp ? STEP_UP_ROWS[grant] : grant,
+  );
+  if (stepUp) await requireStepUp(auth, request.headers);
+  return organizationId;
 }
 
 /** Authenticated server-function context: throws UnauthorizedError when absent. */

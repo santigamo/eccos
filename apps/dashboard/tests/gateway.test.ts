@@ -142,6 +142,8 @@ const ORG_ID = "org-fixture";
 // re-published from the sync mock factory. This lets gateway.ts receive the
 // mocked resolveMemberships while permissions.test.ts (same bun process) keeps
 // working against the real requirePermission/verifyMembership/ForbiddenError.
+const { isStepUpRow, STEP_UP_ROWS } = await import("../src/auth/step-up");
+type Grant = Parameters<typeof isStepUpRow>[0];
 const realTenant = await import("../src/auth/tenant?real-module");
 const realServerAuth = await import("../src/auth/server-auth?real-module");
 
@@ -173,7 +175,9 @@ const fakeServerAuth = {
   UnauthorizedError,
   // Mirrors the real requirePermission's fail-closed ladder: no session,
   // no membership, ambiguous membership, then the capability check.
-  requireGatewayPermission: async (_auth: unknown, _request: Request, action: string) => {
+  // A step-up row resolves to its role action first, exactly as the real seam does.
+  requireGatewayPermission: async (_auth: unknown, _request: Request, grant: Grant) => {
+    const action = isStepUpRow(grant) ? STEP_UP_ROWS[grant] : grant;
     if (!fakeSessionHeaders) throw new UnauthorizedError();
     if (fakeMemberships.length === 0) {
       throw new ForbiddenError(
@@ -190,11 +194,10 @@ const fakeServerAuth = {
         "missing-permission",
       );
     }
+    if (isStepUpRow(grant) && fakeStepUpRefusal) {
+      throw new ForbiddenError("step-up required", fakeStepUpRefusal);
+    }
     return ORG_ID;
-  },
-  // Mirrors the real step-up refusal: same typed error, same reason codes.
-  requireStepUp: async () => {
-    if (fakeStepUpRefusal) throw new ForbiddenError("step-up required", fakeStepUpRefusal);
   },
   resolveMemberships: async () => fakeMemberships,
   requireAuthContext: async (_auth: unknown, _request: Request) => {
@@ -210,8 +213,6 @@ mock.module("../src/auth/server-auth", () => ({
     fakesActive ? fakeServerAuth.resolveMemberships() : realTenant.resolveMemberships(...args),
   requireAuthContext: (...args: Parameters<typeof realServerAuth.requireAuthContext>) =>
     fakesActive ? fakeServerAuth.requireAuthContext(...args) : realServerAuth.requireAuthContext(...args),
-  requireStepUp: (...args: Parameters<typeof realServerAuth.requireStepUp>) =>
-    fakesActive ? fakeServerAuth.requireStepUp() : realServerAuth.requireStepUp(...args),
 }));
 
 installServerFnMocks({
@@ -2331,10 +2332,10 @@ describe("failure classification (authorization vs. transport)", () => {
 describe("step-up rows of the capability matrix", () => {
   const steppedUp: Array<[string, () => Promise<{ ok: boolean }>]> = [
     ["startConnect", () => startConnect()],
-    ["exchangeConnectCode", () => exchangeConnectCode({ data: { code: "code", state: "state" } })],
     ["connectWithToken", () => connectWithToken({ data: { token: `EAAG${"x".repeat(60)}` } })],
     ["issueApiKey", () => issueApiKey({ data: {} })],
     ["revokeApiKey", () => revokeApiKey({ data: { keyId: "key_a1" } })],
+    ["setConversationRetention", () => setConversationRetention({ data: { days: 90 } })],
     ["setSubscriberConfig", () => setSubscriberConfig({ data: { url: "https://new.example.com" } })],
     ["resubscribe", () => resubscribe()],
   ];
@@ -2352,9 +2353,11 @@ describe("step-up rows of the capability matrix", () => {
       connectWabaWithToken: record("connectWithToken"),
       issueApiKey: record("issueApiKey"),
       revokeApiKey: record("revokeApiKey"),
+      setConversationRetention: record("setConversationRetention"),
       setSubscriberConfig: record("setSubscriberConfig"),
       resubscribe: record("resubscribe"),
       listApiKeys: async () => [],
+      getConversationRetention: async () => null,
     });
     return reached;
   }
@@ -2386,6 +2389,16 @@ describe("step-up rows of the capability matrix", () => {
     mutationBinding();
     fakeStepUpRefusal = "reauth-required";
     expect((await listApiKeys()).ok).toBe(true);
+    expect((await getConversationRetention()).ok).toBe(true);
+  });
+
+  test("the code exchange asks for no step-up of its own: Meta's code is single-use", async () => {
+    // Step-up was settled at startConnect, which issued the account-bound state
+    // this call must present. Refusing here would burn the code for nothing.
+    const reached = mutationBinding();
+    fakeStepUpRefusal = "reauth-required";
+    await exchangeConnectCode({ data: { code: "code", state: "state" } });
+    expect(reached).toEqual(["exchangeConnectCode"]);
   });
 
   test("a stepped-up session reaches the gateway", async () => {

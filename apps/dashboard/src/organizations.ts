@@ -18,6 +18,7 @@ import {
   ForbiddenError,
   resolveMemberships,
   verifyMembership,
+  type ForbiddenReason,
   type Membership,
 } from "./auth/tenant";
 import { activeWorkspace } from "./lib/workspaces";
@@ -270,9 +271,11 @@ const inviteInput = z
 export const inviteMember = createServerFn({ method: "POST" })
   .validator((input: unknown) => inviteInput.parse(input))
   .handler(
-    async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async ({
+      data,
+    }): Promise<{ ok: true } | { ok: false; error: string; reason?: ForbiddenReason }> => {
       try {
-        const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "administer");
+        const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "members");
         if (organizationId !== data.organizationId) {
           throw new ForbiddenError("organization mismatch");
         }
@@ -289,7 +292,12 @@ export const inviteMember = createServerFn({ method: "POST" })
         });
         return { ok: true };
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          // The code a caller follows for step-up (`lib/step-up.ts`).
+          ...(err instanceof ForbiddenError ? { reason: err.reason } : {}),
+        };
       }
     },
   );

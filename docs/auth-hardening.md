@@ -55,41 +55,67 @@ gateway layer and the D1-level `429` behavior tested in
   codes are shown once after that code verifies; they are stored encrypted.
 - Sign-in for an enrolled account stops after the password and asks for the
   code (or a backup code) before any session exists
-  (`src/components/blocks/auth-13/components/two-factor-form.tsx`).
+  (`src/components/auth/two-factor-code-form.tsx`).
 - There is no console control to turn TOTP off or regenerate backup codes yet;
   a user who loses both the authenticator and the codes needs an operator.
 
 ### Step-up enforcement (contract §4/§8)
 
 `stepUpRefusal` in `src/auth/step-up.ts` is the one rule: the user has TOTP
-enrolled, and the session was created within `STEP_UP_WINDOW_SECONDS` (15
-minutes, the same value as `freshAge`). It is enforced in two places:
+enrolled, and `session.stepUpAt` is within `STEP_UP_WINDOW_SECONDS` (15
+minutes).
+
+**What counts as fresh.** `stepUpAt` is stamped by `stepUpGuard`
+(`src/auth/step-up-guard.ts`) only when a second-factor verification MINTS the
+session: the code step of a sign-in, or the first code of an enrollment. It is
+never the session's age. Better Auth mints sessions on endpoints that ask for
+the password alone (`change-password` with `revokeOtherSessions`,
+`two-factor/disable`) and on the email-verification link, so a stolen cookie
+plus the password could otherwise renew itself; those sessions carry no stamp
+of their own and never pass. Verifying a code on an existing session stamps
+nothing either, because that path has no attempt limit; only the sign-in path
+counts wrong codes and locks.
+
+**Where it is enforced.**
 
 | Matrix row | Where |
 |---|---|
-| Embedded Signup start and code exchange, token attach | `startConnect`, `exchangeConnectCode`, `connectWithToken` |
-| API key issue and revoke | `issueApiKey`, `revokeApiKey` |
-| Subscriber config write, resubscribe | `setSubscriberConfig`, `resubscribe` |
-| Invitations and member role changes | `stepUpGuard` (`src/auth/step-up-guard.ts`), a Better Auth `before` hook on `invite-member`, `cancel-invitation`, `update-member-role`, `remove-member` |
+| Embedded Signup start, token attach | `STEP_UP_ROWS.connect`: `startConnect`, `connectWithToken` |
+| API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
+| Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
+| Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
+| Invitations and member role changes | `STEP_UP_ROWS.members` (`inviteMember`) and, inside Better Auth, `STEP_UP_ORGANIZATION_PATHS`: `invite-member`, `cancel-invitation`, `update-member-role`, `remove-member` |
+| Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`: `change-password`, `change-email`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`; `two-factor/enable` once the account is enrolled (first enrollment stays open) |
+
+`STEP_UP_ROWS` is the single table for the Eccos server functions: a function
+names its row, and `requireGatewayPermission` checks the row's role and then
+the step-up. The role always comes first, in Better Auth's endpoints too, so a
+role that lacks the action gets a permission error rather than a prompt to
+enroll.
+
+The Embedded Signup code exchange (`exchangeConnectCode`) has no step-up of
+its own: Meta's code is single-use and lives 30 seconds, so a refusal there
+would lose it. The account-bound state it must present was issued by
+`startConnect`, the step-up row, moments earlier.
 
 Export and erasure have no console path: they are reachable only with an
 account API key, so there is nothing for a session step-up to gate. A console
-action for either must call `requireStepUp`.
+action for either must add its row to `STEP_UP_ROWS`.
 
-The role check runs first, so a role that lacks the action is told that rather
-than asked to enroll. A refusal is a typed `forbidden` failure with reason
-`totp-required` or `reauth-required`; the console follows it
-(`src/lib/step-up.ts`) to `/settings?redirect=…` to enroll, or signs the stale
-session out and goes to `/signin?reauth=true&redirect=…`, and both return to the
-page the action was on. Verifying the first code re-issues the session, so
-enrolling also satisfies the window.
+**What the operator sees.** A refusal is a typed `forbidden` failure with
+reason `totp-required` or `reauth-required`. `withStepUp` (`src/lib/step-up.ts`)
+opens the step-up sheet (`src/components/dashboard/step-up-sheet.tsx`) beside
+the page: enrollment, or the password and then the code, which is a full
+sign-in in place. On success the action runs again. Nothing navigates, so the
+form the operator was filling in is untouched.
 
-### Session freshness (step-up)
+### Session freshness
 
 - Session expiry: 7 days; session refresh (`updateAge`): daily.
-- `freshAge: 900` (15 minutes) — a sensitive action requires a sign-in within
-  the last 15 minutes, matching the contract's step-up window. Freshness is the
-  session's creation time, so signing in again is the step-up.
+- `freshAge: 900` (15 minutes) governs Better Auth's own fresh-session checks.
+  Eccos step-up does not use it; see "What counts as fresh" above.
+- `session.stepUpAt` is migration `0004_session_step_up.sql`. Apply it before
+  deploying the code that reads and writes it.
 - Revocation is immediate: sessions are looked up in the auth D1 on every
   request; a revoked/deleted session fails closed on the next protected
   request (no cached claims).

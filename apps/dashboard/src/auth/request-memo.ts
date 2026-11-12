@@ -38,7 +38,11 @@ export type SessionResult = {
     name?: string;
     twoFactorEnabled?: boolean | null;
   };
-  session?: { id?: string; activeOrganizationId?: string | null; createdAt?: Date | string };
+  session?: {
+    id?: string;
+    activeOrganizationId?: string | null;
+    stepUpAt?: Date | string | null;
+  };
 } | null;
 
 const sessionsByRequest = new WeakMap<Headers, Promise<SessionResult>>();
