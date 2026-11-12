@@ -38,6 +38,8 @@ export const PRICING = {
   ],
 } as const;
 
+const [first, extra, mid, high, beyond] = PRICING.tiers;
+
 /** Retention and jurisdiction, as published in the landing's data table. */
 export const DATA_TERMS = {
   contentRetentionDays: 30,
@@ -76,7 +78,7 @@ export const COPY: Record<Locale, Copy> = {
       "Eccos is not a message reseller: it never meters or marks up messages, and Meta bills each business directly for its own conversations.",
       "Eccos does not use WhatsApp Web or any reverse-engineered client, unlike Evolution API, WAHA or OpenWA. It calls Meta's official Cloud API.",
       "Eccos is not a chatbot builder and has no visual flow editor: it is a gateway, and your application owns the conversation logic.",
-      "Eccos is not a shared team inbox or a CRM. The operator console exists for operational visibility, not for day-to-day customer chat.",
+      "Eccos is not a CRM or a helpdesk. The console has an inbox where a workspace reads its conversations and replies or reacts to them, but there are no tickets, assignments or customer records: that logic belongs to your application.",
       "Eccos is an independent project, not affiliated with, endorsed by or sponsored by Meta Platforms.",
     ],
     faq: [
@@ -90,7 +92,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "What does Eccos cost, and what do I pay Meta?",
-        a: "Eccos Cloud is priced per connected number: 5 € a month for the first number, +3 € for numbers 2 to 5, 19 € flat for 6 to 15, 49 € flat for 16 to 50 and +1 € per number past 50, VAT not included. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for its own conversations, with that business's own payment method. Connecting a number starts a 14-day free trial that asks for a card, and you can cancel at any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of record. Self-hosting is free under the MIT licence.",
+        a: `Eccos Cloud is priced per connected number: ${first.monthly} € a month for the first number, +${extra.monthly} € for numbers 2 to 5, ${mid.monthly} € flat for 6 to 15, ${high.monthly} € flat for 16 to 50 and +${beyond.plusPerNumber} € per number past 50, VAT not included. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for its own conversations, with that business's own payment method. Creating an account is free; subscribing, which you do before adding a number, starts a ${PRICING.trialDays}-day free trial that asks for a card, and you can cancel at any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of record. Self-hosting is free under the MIT licence.`,
       },
       {
         q: "Can I self-host Eccos, or move from Eccos Cloud to my own server?",
@@ -124,7 +126,7 @@ export const COPY: Record<Locale, Copy> = {
       "Eccos no revende mensajes: nunca los cuenta ni les aplica margen, y Meta factura a cada empresa directamente sus propias conversaciones.",
       "Eccos no usa WhatsApp Web ni ningún cliente de ingeniería inversa, al contrario que Evolution API, WAHA u OpenWA. Llama a la Cloud API oficial de Meta.",
       "Eccos no es un constructor de chatbots ni tiene editor visual de flujos: es un gateway, y la lógica de la conversación es de tu aplicación.",
-      "Eccos no es un buzón compartido ni un CRM. La consola de operador existe para visibilidad operativa, no para atender el día a día.",
+      "Eccos no es un CRM ni un helpdesk. La consola tiene una bandeja donde el equipo lee sus conversaciones y responde o reacciona a ellas, pero no hay tickets, asignaciones ni fichas de cliente: esa lógica es de tu aplicación.",
       "Eccos es un proyecto independiente y no está afiliado, respaldado ni patrocinado por Meta Platforms.",
     ],
     faq: [
@@ -138,7 +140,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "¿Cuánto cuesta Eccos y qué le pago a Meta?",
-        a: "Eccos Cloud se cobra por número conectado: 5 € al mes el primero, +3 € los números 2 a 5, 19 € fijos de 6 a 15, 49 € fijos de 16 a 50 y +1 € por número a partir del 51, IVA no incluido. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente sus propias conversaciones, con el método de pago de esa empresa. Conectar un número inicia una prueba gratuita de 14 días que pide tarjeta, y puedes cancelar cuando quieras, con efecto al final del periodo. El pago y las facturas los gestiona Creem, que actúa como vendedor oficial (merchant of record). Autoalojarlo es gratis bajo licencia MIT.",
+        a: `Eccos Cloud se cobra por número conectado: ${first.monthly} € al mes el primero, +${extra.monthly} € los números 2 a 5, ${mid.monthly} € fijos de 6 a 15, ${high.monthly} € fijos de 16 a 50 y +${beyond.plusPerNumber} € por número a partir del 51, IVA no incluido. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente sus propias conversaciones, con el método de pago de esa empresa. Crear la cuenta es gratis; suscribirte, que es el paso previo a añadir un número, inicia una prueba gratuita de ${PRICING.trialDays} días que pide tarjeta, y puedes cancelar cuando quieras, con efecto al final del periodo. El pago y las facturas los gestiona Creem, que actúa como vendedor oficial (merchant of record). Autoalojarlo es gratis bajo licencia MIT.`,
       },
       {
         q: "¿Puedo autoalojar Eccos o pasar de Eccos Cloud a mi propio servidor?",
@@ -184,7 +186,7 @@ export const PAGES: { url: string; title: string; answers: string }[] = [
   {
     url: "https://eccos.chat/terms",
     title: "Terms of service",
-    answers: "The terms Eccos Cloud is offered under: pricing, the 14-day trial, payment through Creem, cancellation and the data processing agreement.",
+    answers: `The terms Eccos Cloud is offered under: pricing, the ${PRICING.trialDays}-day trial, payment through Creem, cancellation and the data processing agreement.`,
   },
   {
     url: "https://eccos.chat/data-deletion",

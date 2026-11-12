@@ -109,8 +109,6 @@
   --tag-live-bg: rgba(37, 211, 102, 0.13);
   --tag-live-ink: var(--glow);
   --tag-live-edge: rgba(37, 211, 102, 0.3);
-  --tag-soon-bg: rgba(255, 255, 255, 0.06);
-  --tag-soon-edge: var(--line-strong);
 
   /* marks: green that is a *shape*, not type — ticks, bullets, icons */
   --mark: var(--green);
@@ -245,8 +243,6 @@
     --tag-live-bg: var(--green);
     --tag-live-ink: #06120c;
     --tag-live-edge: #1cb857;
-    --tag-soon-bg: transparent;
-    --tag-soon-edge: rgba(11, 20, 26, 0.34);
 
     --mark: #0f9d58;
     --tick-mark: linear-gradient(135deg, #0f9d58, var(--ink-teal));
@@ -351,8 +347,6 @@
   --tag-live-bg: var(--green);
   --tag-live-ink: #06120c;
   --tag-live-edge: #1cb857;
-  --tag-soon-bg: transparent;
-  --tag-soon-edge: rgba(11, 20, 26, 0.34);
 
   --mark: #0f9d58;
   --tick-mark: linear-gradient(135deg, #0f9d58, var(--ink-teal));
@@ -650,7 +644,6 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
    under near-black, the way a price tag is printed. The neutral tag keeps its
    register and becomes a plain ink outline. */
 .tag-live { background: var(--tag-live-bg); color: var(--tag-live-ink); border: 1px solid var(--tag-live-edge); }
-.tag-soon { background: var(--tag-soon-bg); color: var(--muted); border: 1px solid var(--tag-soon-edge); }
 
 .ticks { margin: 0; padding: 0; list-style: none; }
 .ticks li {

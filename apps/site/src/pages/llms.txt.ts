@@ -49,9 +49,9 @@ its own conversations, with that business's own payment method.
 ${tariff()}
 - Messages: unlimited, on every plan
 
-Prices exclude VAT. Creating an account is free; connecting a number starts a
-${PRICING.trialDays}-day free trial that asks for a card. Cancel at any time, effective at the
-end of the period. Payment and invoices are handled by Creem, the merchant of
+Prices exclude VAT. Creating an account is free; subscribing, which comes before
+adding a number, starts a ${PRICING.trialDays}-day free trial that asks for a card. Cancel at
+any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of
 record. Self-hosting is free under the ${SITE.license} licence.
 
 ## Data handling (Eccos Cloud)
