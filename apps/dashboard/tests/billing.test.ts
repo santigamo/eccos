@@ -36,20 +36,23 @@ function fakeCreem(subscriptions: Subscription[]) {
   return { creem, updates };
 }
 
-function fakeGateway(initial: Record<string, AccountBilling> = {}, numbers: Record<string, number> = {}) {
+const UNSUBSCRIBED: AccountBilling = { connectPolicy: "closed", customerId: null, subscriptionId: null };
+
+/** The control plane's billing rows. `acc_1` exists unless `initial` says otherwise. */
+function fakeGateway(initial: Record<string, AccountBilling> = { acc_1: UNSUBSCRIBED }, numbers: Record<string, number> = {}) {
   const stored: Record<string, AccountBilling> = { ...initial };
-  const read = (accountId: string) =>
-    stored[accountId] ?? { connectPolicy: "closed" as const, customerId: null, subscriptionId: null };
   const gateway = {
-    getAccountBilling: async (accountId: string) => read(accountId),
+    getAccountBilling: async (accountId: string) => stored[accountId] ?? null,
     setAccountBilling: async (accountId: string, input: AccountBillingInput) => {
-      const before = read(accountId);
+      const before = stored[accountId];
+      if (!before) throw new Error(`account "${accountId}" does not exist`);
+      if (input.ifSubscriptionId !== undefined && input.ifSubscriptionId !== before.subscriptionId) return before;
       stored[accountId] = {
         connectPolicy: input.connectPolicy,
-        customerId: input.customerId ?? before.customerId,
-        subscriptionId: input.subscriptionId ?? before.subscriptionId,
+        customerId: input.customerId || before.customerId,
+        subscriptionId: input.subscriptionId === undefined ? before.subscriptionId : input.subscriptionId,
       };
-      return read(accountId);
+      return stored[accountId];
     },
     listBilledAccounts: async () =>
       Object.entries(stored).flatMap(([accountId, billing]) =>
@@ -159,6 +162,13 @@ describe("creem client", () => {
     });
   });
 
+  test("a subscription without a customer has none, and the portal refuses an empty id", async () => {
+    const { creem, calls } = client({ id: "sub_1", status: "active", items: [] });
+    expect((await creem.subscription("sub_1")).customerId).toBeNull();
+    await expect(creem.portalUrl("")).rejects.toThrow("customer id");
+    expect(calls).toHaveLength(1);
+  });
+
   test("reads a subscription, whether the customer is an object or an id", async () => {
     const body = { id: "sub_1", status: "trialing", items: [{ id: "item_1", units: 8 }], metadata: { accountId: "acc_1" } };
     const expected = subscription({ status: "trialing", units: 8 });
@@ -199,7 +209,7 @@ describe("billing webhook", () => {
     const { gateway, stored } = fakeGateway();
     const response = await handleBillingWebhook(await event(subscriptionEvent("active"), "wrong"), { config, creem, gateway });
     expect(response.status).toBe(401);
-    expect(stored).toEqual({});
+    expect(stored.acc_1).toEqual(UNSUBSCRIBED);
   });
 
   test("stores what Creem says now", async () => {
@@ -228,24 +238,56 @@ describe("billing webhook", () => {
     }
   });
 
-  test("a cancellation closes the account", async () => {
+  test("a cancellation closes the account and forgets the subscription, keeping the customer", async () => {
     const { creem } = fakeCreem([subscription({ status: "canceled" })]);
     const { gateway, stored } = fakeGateway({ acc_1: { connectPolicy: "open", customerId: "cust_1", subscriptionId: "sub_1" } });
     await handleBillingWebhook(await event(subscriptionEvent("canceled")), { config, creem, gateway });
-    expect(stored.acc_1?.connectPolicy).toBe("closed");
+    expect(stored.acc_1).toEqual({ connectPolicy: "closed", customerId: "cust_1", subscriptionId: null });
+    // A late copy of the same event finds nothing to change.
+    await handleBillingWebhook(await event(subscriptionEvent("canceled")), { config, creem, gateway });
+    expect(stored.acc_1?.subscriptionId).toBeNull();
   });
 
-  test("a dead subscription that is not the stored one is ignored; a live one replaces it", async () => {
-    const { creem } = fakeCreem([
-      subscription({ id: "sub_old", status: "canceled" }),
-      subscription({ id: "sub_new", status: "active", customerId: "cust_2" }),
-    ]);
+  test("an ended subscription that is not the stored one is ignored", async () => {
+    const { creem } = fakeCreem([subscription(), subscription({ id: "sub_old", status: "canceled" })]);
     const current = { connectPolicy: "open" as const, customerId: "cust_1", subscriptionId: "sub_1" };
     const { gateway, stored } = fakeGateway({ acc_1: current });
     await handleBillingWebhook(await event(subscriptionEvent("canceled", "sub_old")), { config, creem, gateway });
     expect(stored.acc_1).toEqual(current);
+  });
+
+  test("a second live subscription for an account that has one is not stored: the first stays", async () => {
+    const { creem } = fakeCreem([subscription(), subscription({ id: "sub_dup", customerId: "cust_2" })]);
+    const current = { connectPolicy: "open" as const, customerId: "cust_1", subscriptionId: "sub_1" };
+    const { gateway, stored } = fakeGateway({ acc_1: current });
+    const response = await handleBillingWebhook(await event(subscriptionEvent("active", "sub_dup")), { config, creem, gateway });
+    expect(response.status).toBe(200);
+    expect(stored.acc_1).toEqual(current);
+  });
+
+  test("a new subscription replaces a stored one that has ended at Creem", async () => {
+    const { creem } = fakeCreem([
+      subscription({ status: "canceled" }),
+      subscription({ id: "sub_new", customerId: "cust_2" }),
+    ]);
+    const { gateway, stored } = fakeGateway({ acc_1: { connectPolicy: "closed", customerId: "cust_1", subscriptionId: "sub_1" } });
     await handleBillingWebhook(await event(subscriptionEvent("active", "sub_new")), { config, creem, gateway });
     expect(stored.acc_1).toEqual({ connectPolicy: "open", customerId: "cust_2", subscriptionId: "sub_new" });
+  });
+
+  test("an account that does not exist here is acknowledged, so Creem stops retrying", async () => {
+    const { creem } = fakeCreem([subscription({ accountId: "acc_gone" })]);
+    const { gateway, stored } = fakeGateway();
+    const response = await handleBillingWebhook(await event(subscriptionEvent("active")), { config, creem, gateway });
+    expect(response.status).toBe(200);
+    expect(stored).toEqual({ acc_1: UNSUBSCRIBED });
+  });
+
+  test("a subscription without a customer never stores an empty id", async () => {
+    const { creem } = fakeCreem([subscription({ customerId: null })]);
+    const { gateway, stored } = fakeGateway();
+    await handleBillingWebhook(await event(subscriptionEvent("active")), { config, creem, gateway });
+    expect(stored.acc_1).toEqual({ connectPolicy: "open", customerId: null, subscriptionId: "sub_1" });
   });
 
   test("a subscription Eccos did not start is acknowledged and ignored", async () => {
@@ -253,7 +295,7 @@ describe("billing webhook", () => {
     const { gateway, stored } = fakeGateway();
     const response = await handleBillingWebhook(await event(subscriptionEvent("active")), { config, creem, gateway });
     expect(response.status).toBe(200);
-    expect(stored).toEqual({});
+    expect(stored.acc_1).toEqual(UNSUBSCRIBED);
   });
 });
 
@@ -280,8 +322,55 @@ describe("billing reconcile", () => {
     expect(stored.acc_trial?.connectPolicy).toBe("open");
     expect(stored.acc_a?.connectPolicy).toBe("open");
     expect(stored.acc_b?.connectPolicy).toBe("closed");
+    expect(stored.acc_b?.subscriptionId).toBe("sub_b");
     // Creem failing for one account neither stops the run nor changes that account.
     expect(stored.acc_gone?.connectPolicy).toBe("open");
+  });
+});
+
+describe("billing reconcile races and endings", () => {
+  test("an ended subscription is forgotten, so it is not read again", async () => {
+    const { creem } = fakeCreem([subscription({ status: "canceled" })]);
+    const { gateway, stored } = fakeGateway({ acc_1: { connectPolicy: "open", customerId: "cust_1", subscriptionId: "sub_1" } });
+    await reconcileBilling({ creem, gateway });
+    expect(stored.acc_1).toEqual({ connectPolicy: "closed", customerId: "cust_1", subscriptionId: null });
+    expect(await gateway.listBilledAccounts()).toEqual([]);
+  });
+
+  test("a webhook that moved the account to another subscription meanwhile is not overwritten", async () => {
+    const { gateway, stored } = fakeGateway({ acc_1: { connectPolicy: "open", customerId: "cust_1", subscriptionId: "sub_1" } });
+    const moved = { connectPolicy: "open" as const, customerId: "cust_2", subscriptionId: "sub_2" };
+    const { creem } = fakeCreem([subscription({ status: "canceled" })]);
+    const racing: Creem = {
+      ...creem,
+      subscription: async (id) => {
+        stored.acc_1 = moved;
+        return creem.subscription(id);
+      },
+    };
+    await reconcileBilling({ creem: racing, gateway });
+    expect(stored.acc_1).toEqual(moved);
+  });
+
+  test("runs a bounded number of accounts at a time", async () => {
+    const billed: Record<string, AccountBilling> = {};
+    for (let i = 0; i < 12; i++) billed[`acc_${i}`] = { connectPolicy: "open", customerId: "c", subscriptionId: "sub_1" };
+    const { gateway } = fakeGateway(billed);
+    const { creem } = fakeCreem([subscription()]);
+    let running = 0;
+    let peak = 0;
+    const slow: Creem = {
+      ...creem,
+      subscription: async (id) => {
+        peak = Math.max(peak, ++running);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        running--;
+        return creem.subscription(id);
+      },
+    };
+    await reconcileBilling({ creem: slow, gateway });
+    expect(peak).toBeLessThanOrEqual(5);
+    expect(peak).toBeGreaterThan(1);
   });
 });
 
@@ -290,7 +379,7 @@ describe("checkout", () => {
 
   test("a workspace with no subscription gets a checkout priced for its numbers", async () => {
     const { creem } = fakeCreem([]);
-    const { gateway } = fakeGateway({}, { acc_1: 3 });
+    const { gateway } = fakeGateway(undefined, { acc_1: 3 });
     expect(await checkoutUrl({ config, creem, gateway }, input)).toBe("https://creem.test/checkout/acc_1/3");
   });
 
@@ -320,17 +409,20 @@ describe("checkout return", () => {
   test("confirming a return stores the subscription without its webhook, for the caller's account only", async () => {
     const { creem } = fakeCreem([subscription({ status: "trialing" })]);
     const { gateway, stored } = fakeGateway();
-    await syncSubscription({ creem, gateway }, "sub_1", "acc_other");
-    expect(stored).toEqual({});
-    await syncSubscription({ creem, gateway }, "sub_1", "acc_1");
+    expect(await syncSubscription({ creem, gateway }, "sub_1", "acc_other")).toBeNull();
+    expect(stored.acc_1).toEqual(UNSUBSCRIBED);
+    expect((await syncSubscription({ creem, gateway }, "sub_1", "acc_1"))?.status).toBe("trialing");
     expect(stored.acc_1).toEqual({ connectPolicy: "open", customerId: "cust_1", subscriptionId: "sub_1" });
   });
 
-  test("the billing state carries the status Creem reports, and survives Creem not answering", async () => {
+  test("the billing state is read from the control plane, never from Creem", async () => {
     const billing = { acc_1: { connectPolicy: "open" as const, customerId: "cust_1", subscriptionId: "sub_1" } };
     const { gateway } = fakeGateway(billing, { acc_1: 5 });
-    const state = await billingState({ config, creem: fakeCreem([subscription({ status: "trialing" })]).creem, gateway }, "acc_1");
-    expect(state).toEqual({ connectPolicy: "open", numbers: 5, monthlyEuros: 17, hasCustomer: true, status: "trialing" });
-    expect((await billingState({ config, creem: fakeCreem([]).creem, gateway }, "acc_1")).status).toBeNull();
+    expect(await billingState(gateway, "acc_1")).toEqual({
+      connectPolicy: "open",
+      numbers: 5,
+      monthlyEuros: 17,
+      hasCustomer: true,
+    });
   });
 });

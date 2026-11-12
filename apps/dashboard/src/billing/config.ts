@@ -11,6 +11,10 @@ export interface BillingConfig {
   apiUrl: string;
 }
 
+export function billingEnabled(env: BillingEnv): boolean {
+  return Boolean(env.CREEM_API_KEY?.trim());
+}
+
 /** Null when billing is off, which is the default: no CREEM_API_KEY. */
 export function billingConfig(env: BillingEnv): BillingConfig | null {
   const apiKey = env.CREEM_API_KEY?.trim();

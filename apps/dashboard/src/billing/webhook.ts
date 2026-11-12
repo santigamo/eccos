@@ -1,6 +1,8 @@
 import { constantTimeEqual, signPayload } from "@eccos/core/signature";
+import * as Sentry from "@sentry/cloudflare";
 import { billingFor, type Billing } from "./context";
-import { policyForStatus } from "./plan";
+import type { Subscription } from "./creem";
+import { policyForStatus, subscriptionEnded } from "./plan";
 
 export const BILLING_WEBHOOK_PATH = "/api/billing/webhook";
 
@@ -28,23 +30,42 @@ type Sync = Pick<Billing, "creem"> & {
 };
 
 /**
- * Stores what Creem says about a subscription now. An event or a checkout return
- * is only a signal to look, so duplicates and late ones end in the same place.
- * `accountId` limits the write to that account.
+ * Stores what Creem says about a subscription now, and returns it; null when it
+ * was not stored. An event or a checkout return is only a signal to look, so
+ * duplicates and late ones end in the same place. `accountId` limits the write
+ * to that account.
  */
-export async function syncSubscription({ creem, gateway }: Sync, subscriptionId: string, accountId?: string): Promise<void> {
+export async function syncSubscription(
+  { creem, gateway }: Sync,
+  subscriptionId: string,
+  accountId?: string,
+): Promise<Subscription | null> {
   const subscription = await creem.subscription(subscriptionId);
-  if (!subscription.accountId || (accountId && subscription.accountId !== accountId)) return;
-  const connectPolicy = policyForStatus(subscription.status);
+  if (!subscription.accountId || (accountId && subscription.accountId !== accountId)) return null;
   const stored = await gateway.getAccountBilling(subscription.accountId);
-  // A dead subscription that is not the stored one must not close the account.
-  const foreign = stored.subscriptionId !== null && stored.subscriptionId !== subscription.id;
-  if (foreign && connectPolicy === "closed") return;
+  if (!stored) {
+    console.warn("billing: unknown account", { accountId: subscription.accountId, subscriptionId });
+    return null;
+  }
+  const ended = subscriptionEnded(subscription.status);
+  if (stored.subscriptionId !== subscription.id) {
+    // A late event of a subscription that is over says nothing about the account now.
+    if (ended) return null;
+    if (stored.subscriptionId && !subscriptionEnded((await creem.subscription(stored.subscriptionId)).status)) {
+      // Two checkouts for one account: the first stays, the second needs a refund by hand.
+      Sentry.captureMessage(
+        `billing: account ${subscription.accountId} has subscription ${stored.subscriptionId}; ignored ${subscription.id}`,
+      );
+      return null;
+    }
+  }
   await gateway.setAccountBilling(subscription.accountId, {
-    connectPolicy,
-    customerId: subscription.customerId,
-    subscriptionId: subscription.id,
+    connectPolicy: policyForStatus(subscription.status),
+    ...(subscription.customerId ? { customerId: subscription.customerId } : {}),
+    subscriptionId: ended ? null : subscription.id,
+    ifSubscriptionId: stored.subscriptionId,
   });
+  return subscription;
 }
 
 export async function handleBillingWebhook(

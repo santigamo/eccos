@@ -8,8 +8,6 @@ export interface BillingState {
   numbers: number;
   monthlyEuros: number;
   hasCustomer: boolean;
-  /** The subscription's status at Creem; null without one, or when Creem did not answer. */
-  status: string | null;
 }
 
 export const BILLING_RETURN_PATH = "/settings?billing=success";
@@ -24,19 +22,19 @@ async function billableNumbers(gateway: GatewayApi, accountId: string): Promise<
   return wabas.filter((waba) => waba.status === "active").reduce((sum, waba) => sum + waba.phones.length, 0);
 }
 
-export async function billingState({ creem, gateway }: Billing, accountId: string): Promise<BillingState> {
+async function storedBilling(gateway: GatewayApi, accountId: string) {
+  const stored = await gateway.getAccountBilling(accountId);
+  if (!stored) throw new Error(`account "${accountId}" does not exist`);
+  return stored;
+}
+
+/** Read from the control plane only: Settings never waits on Creem. */
+export async function billingState(gateway: GatewayApi, accountId: string): Promise<BillingState> {
   const [billing, numbers] = await Promise.all([
-    gateway.getAccountBilling(accountId),
+    storedBilling(gateway, accountId),
     billableNumbers(gateway, accountId),
   ]);
-  const status = billing.subscriptionId
-    ? await creem.subscription(billing.subscriptionId).then(
-        (subscription) => subscription.status,
-        () => null,
-      )
-    : null;
   return {
-    status,
     connectPolicy: billing.connectPolicy,
     numbers,
     monthlyEuros: monthlyPriceEuros(numbers),
@@ -49,7 +47,7 @@ export async function checkoutUrl(
   { creem, gateway }: Billing,
   input: { accountId: string; email: string; successUrl: string },
 ): Promise<string> {
-  const stored = await gateway.getAccountBilling(input.accountId);
+  const stored = await storedBilling(gateway, input.accountId);
   if (stored.subscriptionId && stored.customerId) {
     const subscription = await creem.subscription(stored.subscriptionId);
     if (!subscriptionEnded(subscription.status)) return creem.portalUrl(stored.customerId);
@@ -58,7 +56,7 @@ export async function checkoutUrl(
 }
 
 export async function portalUrl({ creem, gateway }: Billing, accountId: string): Promise<string> {
-  const { customerId } = await gateway.getAccountBilling(accountId);
+  const { customerId } = await storedBilling(gateway, accountId);
   if (!customerId) throw new Error("This workspace has no billing account yet");
   return creem.portalUrl(customerId);
 }

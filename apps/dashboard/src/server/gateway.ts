@@ -8,6 +8,7 @@ import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
 import { billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
 import { syncSubscription } from "../billing/webhook";
+import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
@@ -224,8 +225,8 @@ export type DashboardOverviewResult = Result<DashboardOverview>;
 export type DashboardState =
   | { stage: "unassigned" }
   | { stage: "no-organization" }
-  | { stage: "account-ready"; resources: AccountResources }
-  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope };
+  | { stage: "account-ready"; resources: AccountResources; billing?: true }
+  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: true };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1289,11 +1290,14 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // on EVERY page, /numbers included, where the note explaining the state
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
-        if (!state.status) return { stage: "account-ready", resources: state.resources };
+        // Present only while billing is on, so the console knows whether to point at it.
+        const billing = billingEnabled(env) ? { billing: true as const } : {};
+        if (!state.status) return { stage: "account-ready", resources: state.resources, ...billing };
         return {
           stage: "ready",
           status: state.status.data,
           scope: dashboardScope(state.status.scope),
+          ...billing,
         };
       }),
   );
@@ -2181,10 +2185,9 @@ function requireBilling(): Billing {
 export const getBilling = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<BillingState | null>> =>
     withGateway(async (gateway) => {
-      const billing = billingFor(env);
-      if (!billing) return null;
+      if (!billingEnabled(env)) return null;
       const { accountId } = await adminActorAccount(gateway);
-      return billingState(billing, accountId);
+      return billingState(gateway, accountId);
     }),
 );
 
@@ -2196,16 +2199,18 @@ export function validateConfirmCheckoutInput(input: unknown): { subscriptionId: 
   return { subscriptionId };
 }
 
-/** The checkout return: reads the subscription from Creem now instead of waiting for its webhook. */
+/**
+ * The checkout return: reads the subscription from Creem now instead of waiting
+ * for its webhook. Answers its status, or null when it is not this account's.
+ */
 export const confirmCheckout = createServerFn({ method: "POST" })
   .validator(validateConfirmCheckoutInput)
   .handler(
-    ({ data }): Promise<Result<null>> =>
+    ({ data }): Promise<Result<string | null>> =>
       withGateway(async (gateway) => {
         const billing = requireBilling();
         const { accountId } = await adminActorAccount(gateway);
-        await syncSubscription(billing, data.subscriptionId, accountId);
-        return null;
+        return (await syncSubscription(billing, data.subscriptionId, accountId))?.status ?? null;
       }),
   );
 

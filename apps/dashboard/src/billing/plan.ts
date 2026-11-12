@@ -11,7 +11,7 @@ export function monthlyPriceEuros(numbers: number): number {
 
 const OPEN_STATUSES = new Set(["trialing", "active", "paid", "scheduled_cancel"]);
 
-/** A subscription that still exists at the provider is managed in its portal, never paid for twice. */
+/** An ended subscription is forgotten; one that still exists is managed in its portal, never paid for twice. */
 export function subscriptionEnded(status: string): boolean {
   return status === "canceled" || status === "expired";
 }

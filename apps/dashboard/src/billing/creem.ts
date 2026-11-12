@@ -4,7 +4,7 @@ import { monthlyPriceEuros } from "./plan";
 export interface Subscription {
   id: string;
   status: string;
-  customerId: string;
+  customerId: string | null;
   /** From the checkout metadata; null on a subscription Eccos did not start. */
   accountId: string | null;
   itemId: string;
@@ -19,16 +19,11 @@ export interface Creem {
   setNumbers(subscription: Subscription, numbers: number): Promise<boolean>;
 }
 
-/** One product at 1 EUR per unit: the units of a subscription are its monthly price in euros. */
-function unitsFor(numbers: number): number {
-  return monthlyPriceEuros(numbers);
-}
-
 type Json = Record<string, unknown>;
 
-function idOf(value: unknown): string {
-  if (typeof value === "string") return value;
-  return String((value as Json | null)?.id ?? "");
+function idOf(value: unknown): string | null {
+  const id = typeof value === "string" ? value : (value as Json | null)?.id;
+  return typeof id === "string" && id ? id : null;
 }
 
 function subscriptionOf(body: Json): Subscription {
@@ -61,7 +56,8 @@ export function creemClient(config: BillingConfig, fetcher: typeof fetch = fetch
     async checkoutUrl({ accountId, email, numbers, successUrl }) {
       const checkout = await call("POST", "/v1/checkouts", {
         product_id: config.productId,
-        units: unitsFor(numbers),
+        // One product at 1 EUR per unit: the units are the monthly price in euros.
+        units: monthlyPriceEuros(numbers),
         customer: { email },
         success_url: successUrl,
         metadata: { accountId },
@@ -69,6 +65,7 @@ export function creemClient(config: BillingConfig, fetcher: typeof fetch = fetch
       return String(checkout.checkout_url);
     },
     async portalUrl(customerId) {
+      if (!customerId) throw new Error("a customer id is required for the billing portal");
       const portal = await call("POST", "/v1/customers/billing", { customer_id: customerId });
       return String(portal.customer_portal_link);
     },
@@ -76,7 +73,7 @@ export function creemClient(config: BillingConfig, fetcher: typeof fetch = fetch
       return subscriptionOf(await call("GET", `/v1/subscriptions?subscription_id=${encodeURIComponent(id)}`));
     },
     async setNumbers(subscription, numbers) {
-      const units = unitsFor(numbers);
+      const units = monthlyPriceEuros(numbers);
       if (units === subscription.units) return false;
       try {
         await call("POST", `/v1/subscriptions/${encodeURIComponent(subscription.id)}`, {
