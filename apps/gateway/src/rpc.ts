@@ -26,7 +26,10 @@ import type {
   BroadcastListOpts,
   BroadcastOpts,
   BroadcastSummary,
+  AccountBilling,
+  AccountBillingInput,
   AccountResources,
+  BilledAccount,
   ConnectExchangeResult,
   ConnectStartResult,
   ConversationListOpts,
@@ -1275,6 +1278,20 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).setConversationRetentionDays(account, days);
   }
 
+  async getAccountBilling(accountId: string): Promise<AccountBilling> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).getAccountBilling(account);
+  }
+
+  async setAccountBilling(accountId: string, billing: AccountBillingInput): Promise<AccountBilling> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).setAccountBilling(account, billing);
+  }
+
+  async listBilledAccounts(): Promise<BilledAccount[]> {
+    return getControlPlaneStub(this.env).listBilledAccounts();
+  }
+
   /** Idempotent organization→account provisioning (contract §2). Creates no API
    * key; concurrent/retried calls converge to one account and one link. */
   async ensureOrganizationAccount(
@@ -1496,7 +1513,9 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     // unreachable by construction — `discovered` is never empty when we get
     // here — and stays mapped as defence, not as a live branch.
     const code =
-      result.code === "no_waba" || result.code === "owned" ? result.code : "failed";
+      result.code === "no_waba" || result.code === "owned" || result.code === "subscription_required"
+        ? result.code
+        : "failed";
     return { ok: false, code, detail: result.error };
   }
 }

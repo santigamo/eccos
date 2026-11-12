@@ -315,6 +315,11 @@ export function tokenConnectFailureCopy(
         detail:
           "This WhatsApp Business Account belongs to another Eccos workspace. It has to be disconnected there before it can be attached here.",
       };
+    case "subscription_required":
+      return {
+        title: "Subscription needed",
+        detail: "Adding a number needs an active subscription. Start one in Settings, then attach again.",
+      };
     default:
       return {
         title: "Meta refused the connection",

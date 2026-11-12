@@ -491,10 +491,34 @@ export type EraseByPhoneResult =
 
 // --- Account resources (account-scoped operator surface) --------------------
 
+/** Whether an account may add numbers. Messaging never depends on it. */
+export type ConnectPolicy = "open" | "closed";
+
 export interface AccountSummary {
   accountId: string;
   name: string;
   createdAt: number;
+  connectPolicy: ConnectPolicy;
+}
+
+/** Billing state of one account. The ids belong to the billing provider; the gateway only stores them. */
+export interface AccountBilling {
+  connectPolicy: ConnectPolicy;
+  customerId: string | null;
+  subscriptionId: string | null;
+}
+
+export interface AccountBillingInput {
+  connectPolicy: ConnectPolicy;
+  customerId?: string;
+  subscriptionId?: string;
+}
+
+/** One account with a stored subscription. `billableNumbers` counts phones on active WABAs. */
+export interface BilledAccount {
+  accountId: string;
+  subscriptionId: string;
+  billableNumbers: number;
 }
 
 export interface AccountKeyResource {
@@ -645,6 +669,8 @@ export type ConnectFailureCode =
   | "owned"
   /** The Meta login exposed no WhatsApp Business Account at all. */
   | "no_waba"
+  /** The account may not add numbers; nothing new was registered. */
+  | "subscription_required"
   /** Anything else, including Graph failures during the exchange. */
   | "failed";
 
@@ -752,6 +778,8 @@ export type ManualConnectFailureCode =
   | "multiple"
   /** The chosen WABA already belongs to a different Eccos account. */
   | "owned"
+  /** The account may not add numbers; nothing new was registered. */
+  | "subscription_required"
   /** Anything else, including Graph failures during discovery or registration. */
   | "failed";
 
@@ -1308,4 +1336,9 @@ export interface GatewayApi {
    * 30 to 3650 days). Returns the stored value. Only the conversation history
    * follows this setting; the short relay buffer keeps its own windows. */
   setConversationRetention(accountId: string, days: number | null): Promise<number | null>;
+
+  getAccountBilling(accountId: string): Promise<AccountBilling>;
+  /** Stores the connect policy; an omitted id keeps the stored one. */
+  setAccountBilling(accountId: string, billing: AccountBillingInput): Promise<AccountBilling>;
+  listBilledAccounts(): Promise<BilledAccount[]>;
 }

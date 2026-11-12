@@ -1,7 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
+  AccountBilling,
+  AccountBillingInput,
+  BilledAccount,
+  ConnectPolicy,
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
+import { effectiveConnectPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
 import {
   coexistenceSyncStatus,
   historySyncDeadline,
@@ -68,6 +73,7 @@ export interface AccountRecord {
   accountId: string;
   name: string;
   createdAt: number;
+  connectPolicy: ConnectPolicy;
 }
 
 /** Stored API-key row. `hash` is SHA-256 of the raw key — never the key itself. */
@@ -115,7 +121,7 @@ export interface WabaAccess {
 }
 
 export interface CreateAccountResult {
-  account: AccountRecord;
+  account: Omit<AccountRecord, "connectPolicy">;
   apiKey: string;
   keyId: string;
 }
@@ -718,6 +724,12 @@ export class EccosControlPlane extends DurableObject<Env> {
       if (!accountColumns.some((row) => row.name === "conversation_retention_days")) {
         this.sql.exec("ALTER TABLE accounts ADD COLUMN conversation_retention_days INTEGER");
       }
+      // connect_policy NULL follows CONNECT_POLICY_DEFAULT. The billing ids are stored, never interpreted.
+      for (const column of ["connect_policy", "billing_customer_id", "billing_subscription_id"]) {
+        if (!accountColumns.some((row) => row.name === column)) {
+          this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} TEXT`);
+        }
+      }
       const wabaColumns = this.sql.exec("PRAGMA table_info(wabas)").toArray();
       if (!wabaColumns.some((row) => row.name === "status")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
@@ -934,6 +946,79 @@ export class EccosControlPlane extends DurableObject<Env> {
     return (row?.days as number | null) ?? null;
   }
 
+  private connectPolicyOf(accountId: string): ConnectPolicy {
+    const row = this.sql.exec("SELECT connect_policy FROM accounts WHERE account_id = ?", accountId).toArray()[0];
+    return effectiveConnectPolicy(row?.connect_policy, this.env.CONNECT_POLICY_DEFAULT);
+  }
+
+  private phoneCountOf(accountId: string): number {
+    const row = this.sql
+      .exec(
+        "SELECT COUNT(*) AS n FROM phones p JOIN wabas w ON w.waba_id = p.waba_id WHERE w.account_id = ?",
+        accountId,
+      )
+      .one();
+    return Number(row.n);
+  }
+
+  /** Runs `write` in one transaction and rolls it back when it added a phone to a closed account. */
+  private guardedTransaction(accountIds: string[], write: () => void): void {
+    this.ctx.storage.transactionSync(() => {
+      const closed = [...new Set(accountIds)].filter((id) => this.connectPolicyOf(id) === "closed");
+      const before = closed.map((id) => this.phoneCountOf(id));
+      write();
+      for (const [index, id] of closed.entries()) {
+        if (this.phoneCountOf(id) > Number(before[index])) throw new Error(SUBSCRIPTION_REQUIRED_ERROR);
+      }
+    });
+  }
+
+  getAccountBilling(accountId: string): AccountBilling {
+    const id = this.requireAccount(accountId);
+    const row = this.sql
+      .exec("SELECT billing_customer_id, billing_subscription_id FROM accounts WHERE account_id = ?", id)
+      .one();
+    return {
+      connectPolicy: this.connectPolicyOf(id),
+      customerId: (row.billing_customer_id as string | null) ?? null,
+      subscriptionId: (row.billing_subscription_id as string | null) ?? null,
+    };
+  }
+
+  setAccountBilling(accountId: string, billing: AccountBillingInput): AccountBilling {
+    const id = this.requireAccount(accountId);
+    if (billing.connectPolicy !== "open" && billing.connectPolicy !== "closed") {
+      throw new Error('invalid connectPolicy: expected "open" or "closed"');
+    }
+    this.sql.exec(
+      `UPDATE accounts SET connect_policy = ?,
+         billing_customer_id = COALESCE(?, billing_customer_id),
+         billing_subscription_id = COALESCE(?, billing_subscription_id)
+       WHERE account_id = ?`,
+      billing.connectPolicy,
+      billing.customerId ?? null,
+      billing.subscriptionId ?? null,
+      id,
+    );
+    return this.getAccountBilling(id);
+  }
+
+  listBilledAccounts(): BilledAccount[] {
+    return this.sql
+      .exec(
+        `SELECT a.account_id, a.billing_subscription_id,
+                (SELECT COUNT(*) FROM phones p JOIN wabas w ON w.waba_id = p.waba_id
+                  WHERE w.account_id = a.account_id AND w.status = 'active') AS numbers
+         FROM accounts a WHERE a.billing_subscription_id IS NOT NULL ORDER BY a.account_id`,
+      )
+      .toArray()
+      .map((row) => ({
+        accountId: row.account_id as string,
+        subscriptionId: row.billing_subscription_id as string,
+        billableNumbers: Number(row.numbers),
+      }));
+  }
+
   /** Key metadata of one account; the hash never leaves this method. */
   listApiKeys(accountId: string): ApiKeySummary[] {
     return this.keysOf(this.requireAccount(accountId));
@@ -1074,7 +1159,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     const prepared = await this.prepareWabas(inputs);
     if (prepared.length === 0) return [];
     const registeredAt = Date.now();
-    this.ctx.storage.transactionSync(() => {
+    this.guardedTransaction(prepared.map((item) => item.accountId), () => {
       this.assertWabaOwnership(prepared);
       for (const item of prepared) {
         this.sql.exec(
@@ -1171,7 +1256,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       ),
     );
     const now = Date.now();
-    this.ctx.storage.transactionSync(() => {
+    this.guardedTransaction(prepared.map((item) => item.accountId), () => {
       this.assertWabaOwnership(prepared);
       for (const [index, item] of prepared.entries()) {
         const fingerprint = fingerprints[index];
@@ -1496,6 +1581,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         )
         .toArray();
       if (owned.length !== 1) return [];
+      if (this.connectPolicyOf(account) === "closed") return [];
       // Gap-filling only: a WABA that already has numbers is not this method's
       // business.
       if (phonesOf(id, this.sql).length > 0) return [];
@@ -1861,6 +1947,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         accountId: id,
         name: account.name as string,
         createdAt: account.created_at as number,
+        connectPolicy: this.connectPolicyOf(id),
       },
       keys,
       wabas,

@@ -9,6 +9,7 @@ import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
 import { getControlPlaneStub } from "../control-plane-stub";
 import { kickWabaProvisioning } from "../provisioning";
+import { isSubscriptionRequired } from "../connect-policy";
 import { constantTimeEqual } from "@eccos/core/signature";
 import type {
   ConnectFailureCode,
@@ -548,7 +549,7 @@ export async function registerWabasForToken(
     };
   } catch (e) {
     const message = errorMessage(e);
-    return { ok: false, error: message, code: "failed" };
+    return { ok: false, error: message, code: isSubscriptionRequired(e) ? "subscription_required" : "failed" };
   }
 }
 

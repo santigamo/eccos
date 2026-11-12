@@ -10,6 +10,7 @@ export const CONNECT_FAILURES: Record<ConnectFailureCode, string> = {
   denied: "Meta ended the connection before a number was attached. Nothing changed here.",
   owned: "That WhatsApp Business Account is already connected to another Eccos workspace.",
   no_waba: "That Meta login has no WhatsApp Business Account yet. Create one, then connect again.",
+  subscription_required: "Adding a number needs an active subscription. Start one in Settings, then connect again.",
   // Also covers our own storage errors, so it does not blame Meta.
   failed: "The connection could not be completed. Try again.",
 };

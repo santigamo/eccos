@@ -20,6 +20,7 @@ const CONNECT_FAILURE_CODES = new Set<string>([
   "denied",
   "owned",
   "no_waba",
+  "subscription_required",
   "failed",
 ]);
 
