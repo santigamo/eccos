@@ -4,7 +4,7 @@ import { afterAll, expect, test } from "bun:test";
 GlobalRegistrator.register();
 afterAll(() => GlobalRegistrator.unregister());
 
-const { loadFacebookSdk } = await import("../src/lib/facebook-sdk.ts?fresh-module-state");
+const { currentFacebookSdk, loadFacebookSdk } = await import("../src/lib/facebook-sdk.ts?fresh-module-state");
 
 test("a script that fails to load is removed, so the next call really reloads", async () => {
   const scripts: HTMLScriptElement[] = [];
@@ -55,4 +55,18 @@ test("an SDK that finished loading after a failure is initialised and used", asy
   expect(await loadFacebookSdk("1", "v25.0")).toBe(fb as never);
   await loadFacebookSdk("1", "v25.0");
   expect(inits).toBe(1);
+});
+
+test("the click uses the current window.FB, initialised, after Meta's loader replaced it", async () => {
+  const calls: string[] = [];
+  const stub = { init: () => calls.push("stub.init"), login: () => calls.push("stub.login") };
+  (window as unknown as { FB: unknown }).FB = stub;
+  const loaded = await loadFacebookSdk("1", "v25.0");
+  const real = { init: () => calls.push("real.init"), login: () => calls.push("real.login") };
+  (window as unknown as { FB: unknown }).FB = real;
+  currentFacebookSdk()?.login(() => {}, {});
+  expect(loaded).toBe(stub as never);
+  expect(calls).toEqual(["stub.init", "real.init", "real.login"]);
+  currentFacebookSdk();
+  expect(calls.filter((c) => c === "real.init")).toHaveLength(1);
 });

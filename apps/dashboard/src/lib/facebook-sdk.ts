@@ -53,9 +53,26 @@ const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 const SDK_LOAD_TIMEOUT_MS = 8_000;
 
 let loading: Promise<FacebookSdk> | null = null;
-let initialised = false;
+/** Meta's loader replaces `window.FB` once its bundle runs, so a reference
+ * taken during loading can be a stale object whose `login` does nothing.
+ * Each object is initialised once, and the click reads the current global. */
+const initialised = new WeakSet<FacebookSdk>();
+let settings: { appId: string; graphVersion: string } | null = null;
 /** Which load is current, so a late failure of an old one cannot null a newer one. */
 let loads = 0;
+
+function initOnce(sdk: FacebookSdk): FacebookSdk {
+  if (settings && !initialised.has(sdk)) {
+    sdk.init({ appId: settings.appId, autoLogAppEvents: true, xfbml: true, version: settings.graphVersion });
+    initialised.add(sdk);
+  }
+  return sdk;
+}
+
+/** The SDK object to call at click time: the current global, initialised. */
+export function currentFacebookSdk(): FacebookSdk | null {
+  return typeof window !== "undefined" && window.FB ? initOnce(window.FB) : null;
+}
 
 /**
  * Load and initialise the SDK once per page, resolving with the initialised
@@ -71,11 +88,8 @@ export function loadFacebookSdk(appId: string, graphVersion: string): Promise<Fa
   // `autoLogAppEvents` is Meta's documented default for this flow; `xfbml`
   // parses their social plugins, of which this page renders none, but the
   // sample sets it and deviating buys nothing.
-  const init = (sdk: FacebookSdk) => {
-    if (!initialised) sdk.init({ appId, autoLogAppEvents: true, xfbml: true, version: graphVersion });
-    initialised = true;
-    return sdk;
-  };
+  settings = { appId, graphVersion };
+  const init = initOnce;
   // Also covers a script that finished after an earlier call gave up.
   if (window.FB) return Promise.resolve(init(window.FB));
   if (loading) return loading;

@@ -17,7 +17,7 @@ import {
   recordConnectSessionEvent,
   startConnect,
 } from "../../server/gateway";
-import { type FacebookSdk, captureWindowOpen, loadFacebookSdk } from "../../lib/facebook-sdk";
+import { type FacebookSdk, captureWindowOpen, currentFacebookSdk, loadFacebookSdk } from "../../lib/facebook-sdk";
 import {
   type ConnectPath,
   loginOptions,
@@ -442,7 +442,7 @@ export function ConnectNumberChoices({
     let popup: Window | null | undefined;
     try {
       popup = captureWindowOpen(
-        () => ready.sdk.login(onLogin, loginOptions(ready.configId, path)),
+        () => (currentFacebookSdk() ?? ready.sdk).login(onLogin, loginOptions(ready.configId, path)),
         (opened) => {
           refused = opened === null;
         },
