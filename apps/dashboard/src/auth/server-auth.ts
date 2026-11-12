@@ -20,7 +20,8 @@
 
 import { requirePermission } from "./tenant";
 import { resolveSession, UnauthorizedError, type SessionUser } from "./session";
-import { isStepUpRow, requireStepUp, STEP_UP_ROWS, type Grant } from "./step-up";
+import { getSessionOnce } from "./request-memo";
+import { isStepUpRow, requireStepUp, STEP_UP_ROWS, stepUpDeadline, type Grant } from "./step-up";
 import type { Auth } from "./auth";
 
 export { UnauthorizedError, type SessionUser };
@@ -43,6 +44,11 @@ export async function requireGatewayPermission(
   );
   if (stepUp) await requireStepUp(auth, request.headers);
   return organizationId;
+}
+
+/** When the caller's step-up runs out (epoch ms), for work prepared ahead of its use. */
+export async function stepUpUntil(auth: Auth, request: Request): Promise<number> {
+  return stepUpDeadline((await getSessionOnce(auth, request)) ?? {});
 }
 
 /** Authenticated server-function context: throws UnauthorizedError when absent. */

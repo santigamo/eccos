@@ -35,7 +35,7 @@ Legend: ✅ PASS · 🟡 PARTIAL (deliverable landed, residual follow-up) · ⛔
 | # | Gate | Status | Notes |
 |---|------|--------|-------|
 | 1 | Change control / CI | ✅ | Dashboard covered in CI (`eccos-a5r`), least-privilege `permissions`, **Biome lint blocking and green** (`eccos-bwr`). No automated prod-deploy gate (manual by design). |
-| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). Customer auth is **Better Auth + Organizations on a dedicated auth D1** (`eccos-0x0.1–.7`): sessions, verified-email signup, invitations, org→account mapping, RBAC matrix, audit events, distributed rate limiting (docs/auth-tenancy-contract.md). TOTP and the 15-minute step-up are configured but not enforced yet (`eccos-eyel`). Residual: production deploy + smoke evidence (`eccos-0x0.9`), email provider DNS (`eccos-0x0.11`). |
+| 2 | Setup & auth surfaces | 🟡 | `/connect` is account-bound and fail-closed (`eccos-13d`). Customer auth is **Better Auth + Organizations on a dedicated auth D1** (`eccos-0x0.1–.7`): sessions, verified-email signup, invitations, org→account mapping, RBAC matrix, audit events, distributed rate limiting (docs/auth-tenancy-contract.md). TOTP and the 15-minute step-up are **enforced** on the sensitive rows of the capability matrix (`eccos-eyel`): connect, API keys, conversation retention, subscriber config, resubscribe, invitations and member changes need an enrolled second factor proved in the last 15 minutes, and a password alone can neither renew that nor change a factor (docs/auth-hardening.md, "Step-up enforcement"). Enrollment is self-service in the console; each owner is prompted on their first sensitive action. Residual: production deploy + smoke evidence (`eccos-0x0.9`), email provider DNS (`eccos-0x0.11`). |
 | 3 | Operational readiness | 🟡 | `/ready` deep check + structured JSON logging w/ correlation IDs + `docs/operations.md` (`eccos-ggy`). Residual: alerting/monitoring not wired. |
 | 4 | Packaging contract | ➖ | **N/A.** `@eccos/core` and `@eccos/gateway-contract` are internal `workspace:*` packages with no publish intent for v1 (`eccos-1js`, decided). Re-open if they become public SDKs. |
 | 5 | Data lifecycle | 🟡 | Configurable split content/delivery retention on Workers, `RETENTION_DAYS` on the Bun target, Bun-target pruning parity, `docs/data-lifecycle.md` (`eccos-rv2`). Residual: scripted backup/export + a real restore drill. |
@@ -74,7 +74,9 @@ drill. The gateway deploy and live post-deploy smoke are recorded above.
 - ~~W-1 — Dashboard edge auth~~ **CLOSED by `eccos-0x0.4`** (customer-auth clean cut): the Access
   gate was deleted, replaced by Better Auth sessions + the canonical-host allowlist
   (`app.eccos.chat` only, now read from `BETTER_AUTH_URL`; `workers.dev` disabled). Customer-auth hardening landed with
-  `eccos-0x0.7` (rate limiting, TOTP, audit). Remaining condition: production deploy and smoke
+  `eccos-0x0.7` (rate limiting, audit) and `eccos-eyel` (TOTP enrollment and step-up, enforced on
+  sensitive actions; auth D1 migration `0004_session_step_up.sql` must be applied before that
+  deploy). Remaining condition: production deploy and smoke
   evidence via `eccos-0x0.9` before customer traffic.
 
 ## Remaining gaps (open beads)

@@ -11,6 +11,7 @@ import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import { getCurrentAuthContext } from "@better-auth/core/context";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import { roles } from "./permissions";
 import { stepUpMessage, stepUpRefusal } from "./step-up";
 
 /**
@@ -68,6 +69,16 @@ function refuseUnlessSteppedUp(session: Parameters<typeof stepUpRefusal>[0] | nu
   if (refusal) refuse(refusal);
 }
 
+function mayInvite(role: unknown): boolean {
+  return String(role ?? "")
+    .split(",")
+    .some(
+      (name) =>
+        Object.hasOwn(roles, name) &&
+        roles[name as keyof typeof roles].authorize({ invitation: ["create"] }).success === true,
+    );
+}
+
 export const stepUpOrganizationHooks = {
   beforeCreateInvitation: requireMemberStepUp,
   beforeCancelInvitation: requireMemberStepUp,
@@ -85,6 +96,32 @@ export function stepUpGuard() {
     },
     hooks: {
       before: [
+        {
+          // A RESEND returns from Better Auth before `beforeCreateInvitation`
+          // is ever called, so that one branch is gated here instead. The
+          // organization is resolved as Better Auth resolves it, and step-up
+          // is skipped only for a member KNOWN to lack the permission, who
+          // then gets Better Auth's own error. Anything unresolved does not skip.
+          matcher: (ctx) => ctx.path === "/organization/invite-member",
+          handler: createAuthMiddleware(async (ctx) => {
+            if (!ctx.body?.resend) return;
+            const session = await getSessionFromCtx(ctx);
+            if (!session) return;
+            const organizationId =
+              ctx.body.organizationId || session.session.activeOrganizationId;
+            const member = organizationId
+              ? await ctx.context.adapter.findOne<{ role?: unknown }>({
+                  model: "member",
+                  where: [
+                    { field: "userId", value: session.user.id },
+                    { field: "organizationId", value: organizationId },
+                  ],
+                })
+              : null;
+            if (member && !mayInvite(member.role)) return;
+            refuseUnlessSteppedUp(session);
+          }),
+        },
         {
           matcher: (ctx) => STEP_UP_ACCOUNT_PATHS.has(ctx.path ?? ""),
           handler: createAuthMiddleware(async (ctx) => {
@@ -115,10 +152,14 @@ export function stepUpGuard() {
         {
           matcher: (ctx) => VERIFY_PATHS.has(ctx.path ?? ""),
           handler: createAuthMiddleware(async (ctx) => {
-            // Set only when this verification minted the session: a sign-in's
-            // second step, or the first code of an enrollment.
+            // Set only when this verification SUCCEEDED and minted a session
+            // for the user it verified: a sign-in's second step, or the first
+            // code of an enrollment. A session left on the context by a call
+            // that then failed, or one for anybody else, is not stamped.
             const minted = ctx.context.newSession;
-            if (!minted) return;
+            const answer = ctx.context.returned as { user?: { id?: unknown } } | undefined;
+            if (!minted || !answer || answer instanceof Error) return;
+            if (answer.user?.id !== minted.session.userId) return;
             await ctx.context.internalAdapter.updateSession(minted.session.token, {
               stepUpAt: new Date(),
             });

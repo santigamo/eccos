@@ -129,6 +129,7 @@ let fakeSessionHeaders: Headers | null = null;
 let fakeMemberships: { id: string; name?: string }[] = [{ id: "org-fixture" }];
 /** Gateway actions the fake role does NOT hold, to drive the forbidden path. */
 let fakeDeniedActions = new Set<string>();
+const FAKE_STEP_UP_UNTIL = 1_800_000_000_000;
 /** Why the fake session fails step-up, or null when it passes. */
 let fakeStepUpRefusal: "totp-required" | "reauth-required" | null = null;
 
@@ -213,6 +214,8 @@ mock.module("../src/auth/server-auth", () => ({
     fakesActive ? fakeServerAuth.resolveMemberships() : realTenant.resolveMemberships(...args),
   requireAuthContext: (...args: Parameters<typeof realServerAuth.requireAuthContext>) =>
     fakesActive ? fakeServerAuth.requireAuthContext(...args) : realServerAuth.requireAuthContext(...args),
+  stepUpUntil: (...args: Parameters<typeof realServerAuth.stepUpUntil>) =>
+    fakesActive ? Promise.resolve(FAKE_STEP_UP_UNTIL) : realServerAuth.stepUpUntil(...args),
 }));
 
 installServerFnMocks({
@@ -234,7 +237,6 @@ const {
   getDashboardOverview,
   getDashboardState,
   getAccountResources,
-  canStartConnect,
   startConnect,
   listDeliveries,
   listInbound,
@@ -637,7 +639,13 @@ describe("session bootstrap (auth-aware state)", () => {
     const result = await startConnect();
     expect(result).toEqual({
       ok: true,
-      data: { url: "https://gateway.example/connect?state=one-time", state: "one-time", expiresAt: 2 },
+      data: {
+        url: "https://gateway.example/connect?state=one-time",
+        state: "one-time",
+        expiresAt: 2,
+        // How long the step-up behind it holds: a prepared handoff must not outlive it.
+        stepUpUntil: FAKE_STEP_UP_UNTIL,
+      },
     });
     // eccos-5z9: the gateway owns Meta's callback, so it needs somewhere to send
     // the operator back to. The target is built from the request origin, which
@@ -2384,13 +2392,6 @@ describe("step-up rows of the capability matrix", () => {
     for (const [name, call] of steppedUp) {
       expect([name, await call()]).toMatchObject([name, { reason: "missing-permission" }]);
     }
-  });
-
-  test("the connect fork can ask ahead of the click, and gets the same refusal", async () => {
-    mutationBinding();
-    expect(await canStartConnect()).toEqual({ ok: true, data: true });
-    fakeStepUpRefusal = "reauth-required";
-    expect(await canStartConnect()).toMatchObject({ ok: false, reason: "reauth-required" });
   });
 
   test("reads never require step-up", async () => {

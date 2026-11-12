@@ -5,11 +5,11 @@
  * the cookie, the active organization and every other session stay as they
  * were, and a trusted-device cookie plays no part.
  *
- * Wrong codes spend Better Auth's own account lockout on the `twoFactor` row
- * (`failedVerificationCount` / `lockedUntil`), with its atomic increments, so
- * sign-in and step-up share one budget and parallel guesses cannot undercount.
- * Better Auth applies that lockout only to a sign-in's challenge; on an
- * existing session it is applied here.
+ * Attempts spend Better Auth's own account lockout on the `twoFactor` row
+ * (`failedVerificationCount` / `lockedUntil`), so sign-in and step-up share
+ * one budget. Each attempt is RESERVED before its code is checked, with one
+ * conditional atomic increment: a parallel burst cannot verify more codes
+ * than the budget has left. A right code clears the count.
  */
 
 import type { Auth } from "./auth";
@@ -53,20 +53,44 @@ export async function confirmStepUp(
   }
   const byId = [{ field: "id", value: factor.id }];
   const lockout = (getPlugin("two-factor")?.options as
-    | { accountLockout?: { maxFailedAttempts?: number; durationSeconds?: number } }
+    | { accountLockout?: { enabled?: boolean; maxFailedAttempts?: number; durationSeconds?: number } }
     | undefined)?.accountLockout;
+  // Better Auth's own switch and defaults (`resolveAccountLockoutConfig`).
+  const limited = lockout?.enabled ?? true;
   const maxFailedAttempts = lockout?.maxFailedAttempts ?? 10;
-  const lockMs = (lockout?.durationSeconds ?? 900) * 1000;
-
-  if (factor.lockedUntil) {
-    if (new Date(factor.lockedUntil).getTime() > Date.now()) return { ok: false, code: "locked" };
-    // An expired lock is cleared before the next attempt is counted.
-    await adapter.incrementOne({
+  const lock = () =>
+    adapter.incrementOne({
       model: "twoFactor",
-      where: [...byId, { field: "lockedUntil", operator: "lte", value: new Date() }],
+      where: [...byId, { field: "failedVerificationCount", operator: "gte", value: maxFailedAttempts }],
       increment: {},
-      set: { failedVerificationCount: 0, lockedUntil: null },
+      set: { lockedUntil: new Date(Date.now() + (lockout?.durationSeconds ?? 900) * 1000) },
     });
+
+  let reserved = 0;
+  if (limited) {
+    if (factor.lockedUntil) {
+      if (new Date(factor.lockedUntil).getTime() > Date.now()) return { ok: false, code: "locked" };
+      // An expired lock is cleared before the next attempt is reserved.
+      await adapter.incrementOne({
+        model: "twoFactor",
+        where: [...byId, { field: "lockedUntil", operator: "lte", value: new Date() }],
+        increment: {},
+        set: { failedVerificationCount: 0, lockedUntil: null },
+      });
+    }
+    // The reservation: it only lands while budget is left, and a row with no
+    // counter at all fails closed rather than verifying unlimited codes.
+    const slot = await adapter.incrementOne<{ failedVerificationCount?: number }>({
+      model: "twoFactor",
+      where: [...byId, { field: "failedVerificationCount", operator: "lt", value: maxFailedAttempts }],
+      increment: { failedVerificationCount: 1 },
+    });
+    if (!slot) {
+      // Spent. Make sure the lock stands, so the budget comes back on its own.
+      await lock();
+      return { ok: false, code: "locked" };
+    }
+    reserved = slot.failedVerificationCount ?? maxFailedAttempts;
   }
 
   try {
@@ -75,28 +99,28 @@ export async function confirmStepUp(
     else await auth.api.verifyTOTP({ body: { code: input.code }, headers });
   } catch (error) {
     const code = (error as { body?: { code?: unknown } } | null)?.body?.code;
-    if (typeof code !== "string" || !WRONG_CODE.has(code)) throw error;
-    const counted = await adapter.incrementOne<{ failedVerificationCount?: number }>({
-      model: "twoFactor",
-      where: byId,
-      increment: { failedVerificationCount: 1 },
-    });
-    if ((counted?.failedVerificationCount ?? 0) >= maxFailedAttempts) {
-      await adapter.incrementOne({
-        model: "twoFactor",
-        where: [...byId, { field: "failedVerificationCount", operator: "gte", value: maxFailedAttempts }],
-        increment: {},
-        set: { lockedUntil: new Date(Date.now() + lockMs) },
-      });
+    if (typeof code !== "string" || !WRONG_CODE.has(code)) {
+      // Not a verdict on the code: hand the reservation back.
+      if (limited) {
+        await adapter.incrementOne({
+          model: "twoFactor",
+          where: byId,
+          increment: { failedVerificationCount: -1 },
+        });
+      }
+      throw error;
     }
+    if (reserved >= maxFailedAttempts) await lock();
     return { ok: false, code: "invalid" };
   }
 
-  await adapter.update({
-    model: "twoFactor",
-    where: byId,
-    update: { failedVerificationCount: 0, lockedUntil: null },
-  });
+  if (limited) {
+    await adapter.update({
+      model: "twoFactor",
+      where: byId,
+      update: { failedVerificationCount: 0, lockedUntil: null },
+    });
+  }
   await internalAdapter.updateSession(token, { stepUpAt: new Date() });
   return { ok: true };
 }

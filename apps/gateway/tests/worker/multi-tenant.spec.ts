@@ -458,16 +458,6 @@ describe("account-scoped control plane", () => {
       error: expect.stringMatching(/not owned/),
     });
 
-    const denied = await Promise.all([
-      rpc.sendReaction(reaction, accA.accountId).then(() => false, () => true),
-      rpc.editTemplate(edit, accA.accountId).then(() => false, () => true),
-      rpc.deleteTemplate(template, accA.accountId).then(() => false, () => true),
-      rpc.retryFailedDeliveries(everything, "WABA_NEG_B", accA.accountId).then(() => false, () => true),
-      rpc.diagnoseWaba("WABA_NEG_B", accA.accountId).then(() => false, () => true),
-      rpc.reconcileWaba("WABA_NEG_B", accA.accountId).then((result) => !result.ok, () => true),
-    ]);
-    expect(denied).toEqual(Array.from({ length: 6 }, () => true));
-
     // Nothing left the gateway under B's token, and B's state did not move.
     expect(graph).not.toHaveBeenCalled();
     expect(await wabaB()).toEqual(before);

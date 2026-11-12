@@ -21,6 +21,9 @@ import {
   type ForbiddenReason,
   type Membership,
 } from "./auth/tenant";
+import type { StepUpReason } from "@eccos/auth-baseline/step-up";
+import { getSessionOnce } from "./auth/request-memo";
+import { stepUpRefusal } from "./auth/step-up";
 import { stepUpReasonOf } from "./auth/step-up-guard";
 import { activeWorkspace } from "./lib/workspaces";
 
@@ -397,6 +400,8 @@ export interface SessionUserView {
   name: string;
   email: string;
   twoFactorEnabled: boolean;
+  /** The step-up a sensitive action would be refused for right now, if any. */
+  stepUp: StepUpReason | null;
   /**
    * The organizations this user belongs to, for the shell's workspace control.
    * Display data: the list an operator may CHOOSE from, never proof they hold
@@ -437,6 +442,7 @@ export const getSessionUser = createServerFn({ method: "GET" }).handler(
         name: session.name,
         email: session.email,
         twoFactorEnabled: session.twoFactorEnabled,
+        stepUp: stepUpRefusal((await getSessionOnce(auth, request)) ?? {}),
         workspaces,
         activeWorkspaceId: activeWorkspace(workspaces, session.activeOrganizationId)?.id ?? null,
       };

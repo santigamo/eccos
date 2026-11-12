@@ -83,17 +83,20 @@ email-verification link, so a stolen cookie plus the password could otherwise
 renew itself; those sessions carry no stamp of their own and never pass.
 
 **Wrong codes.** The challenge spends Better Auth's own account lockout on the
-`twoFactor` row (`failedVerificationCount` / `lockedUntil`, 10 wrong codes,
-then 15 minutes), with its atomic increments. Sign-in and step-up therefore
-share one budget, parallel guesses all count, and a right code clears it. Only
-a genuine wrong-code answer is counted: any other failure is reported to
-Sentry, shown as "try again", and spends nothing. Better Auth applies that
-lockout only to a sign-in's challenge, so its `two-factor/verify-totp` and
-`verify-backup-code` are refused over HTTP (`USE_STEP_UP`) for an enrolled,
-signed-in caller; they stay open to a sign-in's challenge and to a first
-enrollment. The challenge refuses an account that is not fully enrolled before
-checking any code: verifying against a pending enrollment would run Better
-Auth's enrollment branch, which replaces the session.
+`twoFactor` row (`failedVerificationCount` / `lockedUntil`, 10 attempts, then
+15 minutes; honoured when `accountLockout.enabled` is off), so sign-in and
+step-up share one budget. Each attempt is RESERVED before its code is checked,
+by one conditional atomic increment that only lands while budget is left: a
+parallel burst cannot verify more codes than remain. A right code clears the
+count. Only a genuine wrong-code answer keeps its reservation: any other
+failure hands it back, is reported to Sentry and shown as "try again". Better
+Auth applies that lockout only to a sign-in's challenge, so its
+`two-factor/verify-totp` and `verify-backup-code` are refused over HTTP
+(`USE_STEP_UP`) for an enrolled, signed-in caller; they stay open to a
+sign-in's challenge and to a first enrollment. The challenge refuses an
+account that is not fully enrolled before checking any code: verifying against
+a pending enrollment would run Better Auth's enrollment branch, which replaces
+the session.
 
 **Where it is enforced.**
 
@@ -128,6 +131,11 @@ permission error. The hooks are handed no session; it is read from the
 request's context (`@better-auth/core/context`, pinned to the same exact
 version as `better-auth`, and bumped with it).
 
+One branch never reaches a hook: `invite-member` with `resend: true` returns
+before `beforeCreateInvitation`. A `before` hook gates it instead, resolving
+the organization as Better Auth does and skipping step-up only for a member
+known to lack the permission.
+
 **What the operator sees.** A refusal is a typed `forbidden` failure with
 reason `totp-required` or `reauth-required` (`StepUpReason`, defined once in
 `@eccos/auth-baseline/step-up`). `withStepUp` (`src/lib/step-up.ts`) opens the
@@ -139,9 +147,15 @@ hosts a sensitive action (add a number, revoke a key) mounts its own sheet
 inside itself, so there the prompt opens as that dialog's nested surface
 rather than as a second modal beside it.
 
-Connecting a number asks ahead of the click (`canStartConnect`, when the fork
-appears): Meta's window only opens on the customer's own click, and a prompt
-in between would spend it. The cards stay disabled until step-up is settled.
+Connecting a number settles step-up ahead of the click: the fork knows what
+the signed-in user owes from the shell's own read of the session, and keeps
+its cards disabled until that is confirmed, because Meta's window only opens
+on the customer's own click and a prompt in between would spend it. A connect
+start also says how long the step-up behind it holds, so a handoff prepared
+ahead of a retry is dropped, and the server asked again, once that has passed.
+
+While the sheet shows one-time backup codes it is held: no dismissal and no
+other prompt can close it until the operator confirms.
 
 ### Session freshness
 

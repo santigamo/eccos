@@ -48,15 +48,20 @@ const MESSAGES: Record<StepUpReason, string> = {
   "reauth-required": "this action needs your two-factor code from the last 15 minutes",
 };
 
-/** Why this session may not perform a sensitive action, or null when it may. */
-export function stepUpRefusal(session: StepUpSession, now = Date.now()): StepUpReason | null {
-  if (!session.user?.twoFactorEnabled) return "totp-required";
+/** When this session's step-up runs out, as epoch ms; 0 for one that never proved a factor. */
+export function stepUpDeadline(session: StepUpSession): number {
   const stamp = session.session?.stepUpAt;
   const verifiedAt =
     stamp instanceof Date || typeof stamp === "string" || typeof stamp === "number"
       ? new Date(stamp).getTime()
       : Number.NaN;
-  return now - verifiedAt < STEP_UP_WINDOW_SECONDS * 1000 ? null : "reauth-required";
+  return Number.isNaN(verifiedAt) ? 0 : verifiedAt + STEP_UP_WINDOW_SECONDS * 1000;
+}
+
+/** Why this session may not perform a sensitive action, or null when it may. */
+export function stepUpRefusal(session: StepUpSession, now = Date.now()): StepUpReason | null {
+  if (!session.user?.twoFactorEnabled) return "totp-required";
+  return now < stepUpDeadline(session) ? null : "reauth-required";
 }
 
 export function stepUpMessage(reason: StepUpReason): string {

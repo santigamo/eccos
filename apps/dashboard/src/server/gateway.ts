@@ -25,6 +25,7 @@ import { normalizeCustomerId } from "../lib/customer-id";
 import {
   requireAuthContext,
   requireGatewayPermission,
+  stepUpUntil,
   UnauthorizedError,
 } from "../auth/server-auth";
 import type { Grant } from "../auth/step-up";
@@ -1334,16 +1335,13 @@ function connectReturnTo(request: Request): string {
 }
 
 /**
- * Whether the caller may start a connection right now, step-up included. The
- * fork asks before any card is pressed, because the press itself has to be
- * what opens Meta's window.
+ * A connect start, plus how long the step-up behind it still holds: a handoff
+ * prepared ahead of a click must not open Meta's window after that.
  */
-export const canStartConnect = createServerFn({ method: "GET" }).handler(
-  (): Promise<Result<true>> => withGateway(async () => true as const, "connect"),
-);
+export type ConnectHandoff = ConnectStartResult & { stepUpUntil: number };
 
 export const startConnect = createServerFn({ method: "POST" }).handler(
-  (): Promise<Result<ConnectStartResult>> =>
+  (): Promise<Result<ConnectHandoff>> =>
     withGateway(async (gateway) => {
       // Embedded Signup is an admin+ step-up mutation (contract §4); the
       // account comes from the organization link.
@@ -1365,7 +1363,7 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
         accountId: link.accountId,
         outcome: "success",
       });
-      return result;
+      return { ...result, stepUpUntil: await stepUpUntil(requestAuth(), getRequest()) };
     }),
 );
 

@@ -166,6 +166,17 @@ describe("requireStepUp", () => {
     await requireStepUp(auth, new Headers({ cookie: cookiesOf(verify) }));
   });
 
+  test("a wrong code at sign-in mints nothing and stamps nothing", async () => {
+    const { db, post } = await enrolled();
+    goStale(db);
+    const stamped = () => db.query('SELECT id, "stepUpAt" FROM session').all();
+    const before = stamped();
+    const signIn = await post("/sign-in/email", { email: EMAIL, password: PASSWORD });
+    const wrong = await post("/two-factor/verify-totp", { code: "000000" }, cookiesOf(signIn));
+    expect(wrong.status).toBe(401);
+    expect(stamped()).toEqual(before);
+  });
+
   test("a backup code at sign-in steps up as well", async () => {
     const ctx = await signedIn();
     const enable = await ctx.post("/two-factor/enable", { password: PASSWORD }, ctx.cookie);
@@ -246,9 +257,19 @@ describe("attack: a stale stolen cookie plus the password", () => {
         locked: string | null;
       };
 
-    // Ten at once: a read-check-write counter would count them as one.
-    const guesses = await Promise.all(Array.from({ length: 10 }, () => attempt("000000")));
-    expect(guesses).toEqual(Array.from({ length: 10 }, () => ({ ok: false, code: "invalid" })));
+    // Thirty at once, against a budget of ten. Each attempt is reserved before
+    // its code is checked, so the burst cannot all be verified ahead of the lock.
+    const verify = auth.api.verifyTOTP;
+    let verified = 0;
+    auth.api.verifyTOTP = ((...args: Parameters<typeof verify>) => {
+      verified += 1;
+      return verify(...args);
+    }) as typeof verify;
+    const guesses = await Promise.all(Array.from({ length: 30 }, () => attempt("000000")));
+    auth.api.verifyTOTP = verify;
+    expect(verified).toBe(10);
+    expect(guesses.filter((g) => !g.ok && g.code === "invalid")).toHaveLength(10);
+    expect(guesses.filter((g) => !g.ok && g.code === "locked")).toHaveLength(20);
     expect(budget().failed).toBe(10);
     expect(budget().locked).not.toBeNull();
 
@@ -513,6 +534,28 @@ describe("Better Auth organization endpoints (invitations, role changes)", () =>
     }
     expect(db.query("SELECT status FROM invitation WHERE id = ?").get(pending.id)).toEqual({ status: "pending" });
     void org;
+  });
+
+  test("re-sending an invitation needs step-up too, though Better Auth runs no hook for it", async () => {
+    const { auth, db, post, org, invite, cookie } = await withOrganization();
+    enrollTotp(db, EMAIL);
+    const sent = (await (await invite()).json()) as { id: string };
+    const expiry = () => db.query('SELECT "expiresAt" FROM invitation WHERE id = ?').get(sent.id);
+    const before = expiry();
+    const resend = (as: string, organizationId: string | undefined = org.id) =>
+      post("/organization/invite-member", { email: "invitee@corp.test", role: "viewer", organizationId, resend: true }, as);
+
+    goStale(db);
+    expect(await refusal(await resend(cookie))).toEqual([...STALE]);
+    // The same through the active organization, and with none to resolve at all.
+    await auth.api.setActiveOrganization({ body: { organizationId: org.id }, headers: new Headers({ cookie }) });
+    expect(await refusal(await resend(cookie, ""))).toEqual([...STALE]);
+    db.query('UPDATE session SET "activeOrganizationId" = NULL').run();
+    expect(await refusal(await resend(cookie, ""))).toEqual([...STALE]);
+    expect(expiry()).toEqual(before);
+
+    enrollTotp(db, EMAIL);
+    expect((await resend(cookie)).status).toBe(200);
   });
 
   test("an anonymous call still gets the endpoint's own 401", async () => {

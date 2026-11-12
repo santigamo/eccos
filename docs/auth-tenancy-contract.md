@@ -171,11 +171,12 @@ a session's age. Reads never require step-up.
   eccos-0x0.11. Provider secrets live only in Worker secrets/bindings; the interface ships in
   eccos-0x0.2 so auth flows are testable with a stub sender.
 - **MFA policy**: TOTP is **required for owner/admin roles before sensitive actions** — connect,
-  API keys, export, erasure, membership/role changes, and subscriber config write (§4). eccos-0x0.7
-  implements enrollment and enforcement; this contract fixes the policy.
-- **Recent-authentication step-up window: 15 minutes.** A sensitive action requires an
-  authentication (fresh sign-in or step-up challenge) within the last 15 minutes; older sessions
-  must re-authenticate first.
+  API keys, export, erasure, membership/role changes, and subscriber config write (§4). Enrollment
+  and enforcement are implemented (`eccos-eyel`; docs/auth-hardening.md, "Step-up enforcement");
+  this contract fixes the policy.
+- **Recent-authentication step-up window: 15 minutes.** A sensitive action requires the second
+  factor to have been proved within the last 15 minutes, by a sign-in that included it or by the
+  step-up challenge on the current session; otherwise the code is asked for again first.
 - **Recovery** uses the email reset flow with **anti-enumeration generic responses** — identical
   responses and timing whether or not the address exists; reset links only work for verified,
   existing identities.
