@@ -131,7 +131,13 @@ async function mount(node: ReactNode): Promise<HTMLElement> {
 }
 
 const mountChoices = (popupWatchdogMs = 3_000) =>
-  mount(<ConnectNumberChoices navigate={(path) => navigated.push(path)} popupWatchdogMs={popupWatchdogMs} />);
+  mount(
+    <ConnectNumberChoices
+      navigate={(path) => navigated.push(path)}
+      popupWatchdogMs={popupWatchdogMs}
+      abandonDelayMs={10}
+    />,
+  );
 
 function card(host: HTMLElement, title: string): HTMLButtonElement {
   const found = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(title));
@@ -368,6 +374,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     (window as unknown as { umami: unknown }).umami = { track: (n: string, d: unknown) => tracked.push([n, d]) };
     const host = await mountChoices();
     await runFlow(host, { authResponse: null });
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 40))));
     expect(events).toEqual([{ event: "POPUP_CLOSED" }]);
     expect(tracked.find(([n]) => n === "es_abandon")?.[1]).toEqual({ step: "none", events: 0, after: "<10s" });
     delete (window as unknown as { umami?: unknown }).umami;
@@ -393,7 +400,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
       );
     });
     await act(async () => loginCallback?.({ authResponse: null }));
-    await settle();
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 40))));
     expect(events).toContainEqual({ event: "CANCEL", currentStep: "PHONE_NUMBER_SETUP" });
     expect(events).toContainEqual({ event: "POPUP_CLOSED", currentStep: "PHONE_NUMBER_SETUP" });
     expect(tracked.find(([n]) => n === "es_abandon")?.[1]).toMatchObject({ step: "PHONE_NUMBER_SETUP", events: 1 });
@@ -415,13 +422,14 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(exchanges).toEqual([{ code: "code-1", state: "state-2" }]);
   });
 
-  test("an unobserved window that is slow gets the behind-this-window note, not a blocked verdict, and Start again", async () => {
+  test("a window that cannot be observed gets a neutral note that claims nothing, and Start again", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
     expect(live(host)).toContain("behind this one");
-    expect(live(host)).not.toContain("blocked");
+    expect(live(host)).toContain("If you do not see Meta's window");
+    expect(live(host)).not.toContain("should be open");
     expect(live(host)).toContain("Start again");
     // Message only: the cards stay disabled until the customer resets.
     expect(card(host, "A new number").disabled).toBe(true);
@@ -574,11 +582,34 @@ describe("ConnectNumberChoices in a real DOM", () => {
     return staleCallback;
   }
 
-  test("an old window's cancel after Start again changes nothing", async () => {
+  test("an old window's cancel after Start again changes nothing on screen but is still recorded", async () => {
+    const events: unknown[] = [];
+    stubs.recordConnectSessionEvent = async (input: unknown) => {
+      events.push((input as { data: unknown }).data);
+      return { ok: true };
+    };
     const host = await mountChoices(20);
     const stale = await blockThenStartAgain(host);
     await act(async () => stale?.({ authResponse: null }));
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 40))));
     expect(live(host)).toBe("");
+    expect(events).toEqual([{ event: "POPUP_CLOSED" }]);
+  });
+
+  test("an old window's cancel does not stop the watchdog of the newer attempt", async () => {
+    const host = await mountChoices(60);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    const stale = loginCallback;
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 100))));
+    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Start again");
+    // Reset by hand, then open a second window and let the first one report a cancel.
+    await act(async () => again?.click());
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await act(async () => stale?.({ authResponse: null }));
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 100))));
+    expect(live(host)).toContain("If you do not see Meta's window");
   });
 
   test("an old window's cancel does not re-enable the cards of a newer attempt", async () => {

@@ -102,6 +102,9 @@ export function loadFacebookSdk(appId: string, graphVersion: string): Promise<Fa
     script.addEventListener("error", () => {
       clearTimeout(timer);
       loading = null;
+      // A failed tag left in place would make the next call wait for a load
+      // that never comes. Removing it makes a retry a real reload.
+      script.remove();
       reject(new Error("the Facebook SDK could not be loaded"));
     });
     document.head.appendChild(script);

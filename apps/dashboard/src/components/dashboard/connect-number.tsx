@@ -29,6 +29,7 @@ import {
   judgeExchange,
   popupBlockedMessage,
   popupBehindMessage,
+  popupUnknownMessage,
   returnPathFor,
   secondsBucket,
   watchPopup,
@@ -99,6 +100,7 @@ export function resetConnectGuards(): void {
 
 type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
+type Session = { count: number; step?: string; openedAt: number };
 type Prepared = { config: EsConfig; sdk: FacebookSdk | null };
 /** What a click needs to open Meta with no awaiting. */
 type Ready = { sdk: FacebookSdk; configId: string };
@@ -163,12 +165,15 @@ export function ConnectNumberChoices({
   onBusyChange,
   navigate = (path) => window.location.assign(path),
   popupWatchdogMs = 3_000,
+  abandonDelayMs = 1_500,
 }: {
   className?: string;
   /** Full navigation. A seam for tests. */
   navigate?: (path: string) => void;
   /** How long Meta's window may stay out of sight before we say it may be behind this one. */
   popupWatchdogMs?: number;
+  /** How long a closed window waits for a racing CANCEL message before the abandonment is recorded. */
+  abandonDelayMs?: number;
   /** Told whenever a flow opens or settles, so a container can refuse to be
    * dismissed under it. See the effect below. */
   onBusyChange?: (busy: boolean) => void;
@@ -208,11 +213,8 @@ export function ConnectNumberChoices({
    */
   const prepared = useRef<Prepared | null>(null);
   const preparing = useRef<Promise<Prepared> | null>(null);
-  /** The current popup, and earlier ones whose late messages must not count for this attempt. */
-  const popupRef = useRef<Window | null>(null);
-  const retired = useRef<Window[]>([]);
-  /** What Meta posted since the popup opened, so an abandonment says where, or that nothing came. */
-  const session = useRef<{ count: number; step?: string; openedAt: number }>({ count: 0, openedAt: 0 });
+  /** What Meta posted during the current attempt, so an abandonment says where, or that nothing came. */
+  const session = useRef<Session>({ count: 0, openedAt: 0 });
 
   /**
    * Session logging (Meta's `message` listener).
@@ -227,7 +229,8 @@ export function ConnectNumberChoices({
     function onMessage(event: MessageEvent) {
       const parsed = parseSessionEvent(event.origin, event.data);
       if (!parsed) return;
-      if (event.source && retired.current.includes(event.source as Window)) return;
+      // Every message is recorded: the session id must never be lost. Only the
+      // step shown for the current attempt is a guess about which attempt it is.
       session.current.count += 1;
       if (parsed.currentStep) session.current.step = parsed.currentStep;
       trackSessionEvent(parsed);
@@ -342,32 +345,30 @@ export function ConnectNumberChoices({
    * the exchange that needs it. A page view or a blocked popup never creates one.
    */
   function launch(path: ConnectPath, ready: Ready) {
-    stopWatch.current?.();
-    const mine = ++attempt.current;
-    setStarting(path);
-    setAwaiting(null);
-    setFeedback(null);
-    if (popupRef.current) retired.current.push(popupRef.current);
-    popupRef.current = null;
-    session.current = { count: 0, openedAt: Date.now() };
+    const mine = beginAttempt(path);
+    const mySession: Session = { count: 0, openedAt: Date.now() };
+    session.current = mySession;
     let handoff: Promise<Handoff> | null = null;
+    // Set before `sdk.login` so a callback for a refused window is ignored.
+    let refused = false;
     const onLogin = (response: { authResponse?: { code?: string } | null }) => {
-      if (guards.left) return;
-      stopWatch.current?.();
+      if (guards.left || refused) return;
+      const current = attempt.current === mine;
+      if (current) stopWatch.current?.();
       const code = response.authResponse?.code;
       if (code) {
-        setFeedback((current) => (current?.tone === "slow" ? null : current));
+        if (current) setFeedback((now) => (now?.tone === "slow" ? null : now));
         void (async () => {
           try {
             const started = await (handoff ?? startConnect());
             if (!started.ok) {
-              setError(failureCopy(started).detail);
+              if (current) setError(failureCopy(started).detail);
               return;
             }
             await finish(code, started.data.state);
           } catch (err) {
             if (followSignIn(err)) return;
-            setError(err instanceof Error ? err.message : String(err));
+            if (current) setError(err instanceof Error ? err.message : String(err));
           } finally {
             if (attempt.current === mine) setStarting(null);
           }
@@ -375,15 +376,18 @@ export function ConnectNumberChoices({
         return;
       }
       // Closing the popup before the final screen is a cancel, not a failure.
-      // Meta does not always post a CANCEL for a closed window, so what we did
-      // see (or that we saw nothing) is recorded here.
-      if (attempt.current !== mine) return;
-      const { count, step, openedAt } = session.current;
+      // Meta does not always post a CANCEL for a closed window, and the one it
+      // posts can land just after this callback, so the abandonment is recorded
+      // after a short wait, for every closed window.
+      setTimeout(() => {
+        const { count, step, openedAt } = mySession;
+        track("es_abandon", { step: step ?? "none", events: count, after: secondsBucket(Date.now() - openedAt) });
+        void recordConnectSessionEvent({
+          data: { event: "POPUP_CLOSED", ...(step ? { currentStep: step } : {}) },
+        }).catch(() => {});
+      }, abandonDelayMs);
+      if (!current) return;
       track("connect_outcome", { result: "cancelled" });
-      track("es_abandon", { step: step ?? "none", events: count, after: secondsBucket(Date.now() - openedAt) });
-      void recordConnectSessionEvent({
-        data: { event: "POPUP_CLOSED", ...(step ? { currentStep: step } : {}) },
-      }).catch(() => {});
       setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
       setStarting(null);
     };
@@ -396,23 +400,36 @@ export function ConnectNumberChoices({
       return;
     }
     if (popup === null) {
-      // The browser refused the window: definitive. Bump the attempt so a late
-      // callback is not counted as a cancel.
-      attempt.current += 1;
+      // The browser refused the window: definitive, and nothing was opened.
+      refused = true;
       track("connect_outcome", { result: "popup_blocked" });
       setFeedback({ text: popupBlockedMessage(window.location.host), tone: "blocked" });
       setStarting(null);
       return;
     }
-    popupRef.current = popup ?? null;
-    track("es_popup_open");
+    // `undefined` means `window.open` was not observable: a window may exist.
+    if (popup) track("es_popup_open");
     handoff = startConnect();
     handoff.catch(() => {});
-    // A window that opened behind this one looks like nothing happening.
+    // A window that took no focus looks like nothing happening.
     stopWatch.current = watchPopup(() => {
       track("connect_outcome", { result: "popup_slow" });
-      setFeedback({ text: popupBehindMessage(window.location.host), tone: "slow" });
+      const host = window.location.host;
+      setFeedback({
+        text: popup ? popupBehindMessage(host) : popupUnknownMessage(host),
+        tone: "slow",
+      });
     }, popupWatchdogMs);
+  }
+
+  /** Reset the per-attempt state; the returned id tells later callbacks if they are still current. */
+  function beginAttempt(path: ConnectPath): number {
+    stopWatch.current?.();
+    const mine = ++attempt.current;
+    setStarting(path);
+    setAwaiting(null);
+    setFeedback(null);
+    return mine;
   }
 
   /** The SDK and its config are loaded: the click can open Meta itself. */
@@ -435,14 +452,14 @@ export function ConnectNumberChoices({
 
   /** The SDK was not loaded at the click: finish loading, then ask for a fresh click. */
   async function startSlow(path: ConnectPath) {
-    const mine = ++attempt.current;
-    setStarting(path);
-    setAwaiting(null);
-    setFeedback(null);
+    const mine = beginAttempt(path);
     try {
       // A load already in flight may reject; prepare() then starts a fresh one.
       await preparing.current?.catch(() => null);
-      const { config, sdk } = await prepare();
+      // A finished load that failed is not repeated for the redirect, which
+      // needs no SDK. The Business app path has no fallback, so it reloads.
+      const loaded = prepared.current;
+      const { config, sdk } = loaded && (loaded.sdk || path === "new-number") ? loaded : await prepare();
       if (attempt.current !== mine) return;
       // No SDK configured, or it would not load (blocked, offline, an
       // extension). The redirect still serves `new-number`; it CANNOT serve
