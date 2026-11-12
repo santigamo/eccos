@@ -28,12 +28,14 @@ import { failureCopy } from "../../lib/failure";
 import {
   CONNECT_CANCELLED_MESSAGE,
   CONNECT_CLOSE_AND_RETRY,
+  CONNECT_NOT_PREPARED,
   judgeExchange,
   popupBlockedMessage,
   popupHintMessage,
   returnPathFor,
   secondsBucket,
   watchPopup,
+  watchWindow,
 } from "../../lib/connect-result";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { cn } from "@/lib/utils";
@@ -280,8 +282,8 @@ export function ConnectNumberChoices({
    * First run passes nothing: there is no container to close.
    */
   useEffect(() => {
-    onBusyChange?.(locked);
-  }, [locked, onBusyChange]);
+    onBusyChange?.(starting !== null);
+  }, [starting, onBusyChange]);
 
   /** Load the config and the SDK. Shared by the mount effect and the click's slow path. */
   const prepare = useCallback((): Promise<Prepared> => {
@@ -311,7 +313,8 @@ export function ConnectNumberChoices({
     getConnectReadiness().then(
       (res) => {
         const reason = res.ok ? (res.data.ready ? null : res.data.reason) : res.kind === "unreachable" ? null : failureCopy(res).detail;
-        if (reason) {
+        // Too late to matter once a flow has started: it owns the cards and the feedback.
+        if (reason && attempt.current === 0) {
           setUnavailable(reason);
           setError(reason);
         }
@@ -386,11 +389,17 @@ export function ConnectNumberChoices({
     // Set inside `window.open`, before the SDK sees its result, so a callback
     // for a refused window (even a synchronous one) is ignored.
     let refused = false;
-    let started: Promise<Handoff | null> = Promise.resolve(null);
+    let started: Promise<Handoff | null> | null = null;
+    // A callback that arrives inside `sdk.login` itself.
+    let settled = false;
+    // Whether the handoff failure has been shown; a code that arrives for a
+    // failure nobody saw must not be dropped silently.
+    let shown = false;
     // The handoff fails while Meta's window is open: say so now, not after the
     // customer has been through the whole flow.
     const fail = (text: string) => {
       if (!isCurrent()) return;
+      shown = true;
       attempt.current += 1;
       stopWatch.current?.();
       setFeedback({ text: `${text} ${CONNECT_CLOSE_AND_RETRY}`, tone: "error" });
@@ -398,6 +407,7 @@ export function ConnectNumberChoices({
     };
     const onLogin = (response: { authResponse?: { code?: string } | null }) => {
       if (guards.left || refused) return;
+      settled = true;
       if (isCurrent()) stopWatch.current?.();
       const code = response.authResponse?.code;
       if (code) {
@@ -405,8 +415,8 @@ export function ConnectNumberChoices({
         void (async () => {
           try {
             const handoff = await started;
-            // Null: it failed, and `fail` already said so.
             if (handoff?.ok) await finish(code, handoff.data.state);
+            else if (!shown) setError(CONNECT_NOT_PREPARED);
           } finally {
             if (isCurrent()) setStarting(null);
           }
@@ -449,6 +459,8 @@ export function ConnectNumberChoices({
       setStarting(null);
       return;
     }
+    // A callback that came back inside `sdk.login` already ended this attempt.
+    if (settled) return;
     // `undefined` means `window.open` was not observable: a window may exist.
     if (popup) {
       sessions.current.set(popup, mySession);
@@ -466,10 +478,11 @@ export function ConnectNumberChoices({
       },
     );
     // A window that took no focus looks like nothing happening.
-    stopWatch.current = watchPopup(() => {
+    const hint = () => {
       track("connect_outcome", { result: "popup_slow" });
       setFeedback({ text: popupHintMessage(window.location.host), tone: "slow" });
-    }, popupWatchdogMs);
+    };
+    stopWatch.current = popup ? watchWindow(popup, hint, popupWatchdogMs) : watchPopup(hint, popupWatchdogMs);
   }
 
   /** Reset the per-attempt state; the returned id tells later callbacks if they are still current. */
@@ -574,7 +587,7 @@ export function ConnectNumberChoices({
         <div className="flex flex-col gap-2">
           <p className="m-0 text-sm text-muted-foreground">Ready. Meta opens in its own window.</p>
           <div className="flex items-center gap-3">
-            <Button type="button" onClick={() => begin(awaiting)}>
+            <Button type="button" onClick={() => begin(awaiting)} disabled={unavailable !== null}>
               {OPEN_META_LABEL[awaiting]}
             </Button>
             <button type="button" onClick={startAgain} className="text-sm underline underline-offset-2">

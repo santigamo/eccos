@@ -41,6 +41,9 @@ export function popupHintMessage(host: string): string {
   return `If you do not see Meta's window, it may be behind this one or blocked. Allow pop-ups for ${host} (look for the pop-up icon in the address bar), then start again.`;
 }
 
+/** Shown when Meta's window returns a code but the handoff behind it never existed. */
+export const CONNECT_NOT_PREPARED = "The connection could not be prepared. Close Meta's window and start again.";
+
 /** Appended when the handoff fails while Meta's window is already open. */
 export const CONNECT_CLOSE_AND_RETRY = "Close Meta's window and try again.";
 
@@ -111,7 +114,18 @@ export function secondsBucket(ms: number): string {
 }
 
 /**
- * Calls `onSlow` unless this window is left within `ms`: Meta's popup takes
+ * For a window we hold: after `ms`, calls `onBehind` if it is still open and
+ * this page still has focus, which means it opened behind this one.
+ */
+export function watchWindow(popup: Pick<Window, "closed">, onBehind: () => void, ms: number): () => void {
+  const timer = setTimeout(() => {
+    if (!popup.closed && document.hasFocus()) onBehind();
+  }, ms);
+  return () => clearTimeout(timer);
+}
+
+/**
+ * For a window we cannot see: calls `onSlow` unless this window is left within `ms`: Meta's popup takes
  * focus (`blur`), or opens as a tab and hides this page. It never says "blocked".
  */
 export function watchPopup(onSlow: () => void, ms: number): () => void {

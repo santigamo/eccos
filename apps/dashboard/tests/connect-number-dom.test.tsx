@@ -284,7 +284,8 @@ describe("ConnectNumberChoices in a real DOM", () => {
     const open = [...host.querySelectorAll("button")].find((b) => b.textContent === "Open Meta for a new number");
     expect(open).toBeDefined();
     expect(card(host, "A new number").disabled).toBe(true);
-    expect(busy.at(-1)).toBe(true);
+    // Waiting for the click that opens Meta is not a flow in flight: Escape still works.
+    expect(busy.at(-1)).toBe(false);
 
     act(() => open?.click());
     expect(loginCalls).toBe(1);
@@ -324,6 +325,56 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await settle();
     expect(exchanges).toEqual([]);
     expect(live(host)).toContain("down");
+  });
+
+  test("a handoff that fails after its attempt was replaced is not lost when its code arrives", async () => {
+    let rejectStart: (v: unknown) => void = () => {};
+    stubs.startConnect = () =>
+      new Promise((resolve) => {
+        rejectStart = resolve;
+      });
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    const first = loginCallback;
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 60))));
+    const again = [...host.querySelectorAll("button")].find((b) => b.textContent === "Start again");
+    await act(async () => again?.click());
+    await act(async () => rejectStart({ ok: false, kind: "unreachable", error: "down" }));
+    await settle();
+    expect(live(host)).toBe("");
+    await act(async () => first?.(FINISHED));
+    await settle();
+    expect(live(host)).toContain("could not be prepared");
+    expect(exchanges).toEqual([]);
+  });
+
+  test("a readiness answer that arrives after a flow started changes nothing", async () => {
+    let answer: (v: unknown) => void = () => {};
+    stubs.getConnectReadiness = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    const host = await mountChoices(5_000);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await act(async () => answer({ ok: true, data: { ready: false, reason: "No public address." } }));
+    expect(live(host)).toBe("");
+    expect(card(host, "A new number").disabled).toBe(true);
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(card(host, "A new number").disabled).toBe(false);
+  });
+
+  test("a callback inside FB.login with no code creates no handoff and arms no watchdog", async () => {
+    (window as unknown as { FB: { login: unknown } }).FB.login = (cb: LoginCallback) => {
+      loginCalls += 1;
+      cb({ authResponse: null });
+    };
+    const host = await mountChoices(20);
+    act(() => card(host, "A new number").click());
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 60))));
+    expect(handoffs).toBe(0);
+    expect(live(host)).toContain("Nothing changed");
   });
 
   test("a gateway that cannot connect disables the cards with the reason, without creating a state", async () => {
