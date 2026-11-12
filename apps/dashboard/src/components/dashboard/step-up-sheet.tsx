@@ -1,6 +1,6 @@
 import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { invalidateRoutes, rootRouteId } from "../../lib/invalidate";
 import { registerStepUpPrompt, settleStepUp, STEP_UP_COPY } from "../../lib/step-up";
 import { lockedMessage, twoFactorErrorMessage, VERIFY_UNAVAILABLE } from "../../lib/two-factor";
@@ -27,6 +27,8 @@ async function verifyOnSession(code: string, backup: boolean): Promise<string | 
       return lockedMessage(result.minutes);
     case "signed-out":
       return "This session is no longer signed in. Reload the page and sign in.";
+    case "used":
+      return "That code was already used. Wait for your authenticator to show a new one.";
     case "not-enrolled":
       return "Two-factor authentication is not set up on this account yet. Finish it under Settings.";
     default:
@@ -49,12 +51,23 @@ export function StepUpSheet({
 }) {
   const router = useRouter();
   const [reason, setReason] = useState<StepUpReason | null>(null);
+  // Enrolling here also stepped the session up. From then on the action that
+  // asked is confirmed, however the sheet comes to close.
+  const enrolled = useRef(false);
 
-  useEffect(() => registerStepUpPrompt(setReason), []);
+  useEffect(
+    () =>
+      registerStepUpPrompt((next) => {
+        enrolled.current = false;
+        setReason(next);
+      }),
+    [],
+  );
 
   function settle(ok: boolean) {
-    // The shell's view of the user (enrolled, stepped up) is now out of date.
-    if (ok) void invalidateRoutes(router, rootRouteId);
+    // What the shell and the Numbers page know of the user (enrolled,
+    // stepped up) is now out of date.
+    if (ok) void invalidateRoutes(router, rootRouteId, "/numbers");
     settleStepUp(ok);
   }
 
@@ -63,7 +76,7 @@ export function StepUpSheet({
     <Sheet
       open={reason !== null}
       onOpenChange={(open) => {
-        if (!open) settle(false);
+        if (!open) settle(enrolled.current);
       }}
     >
       <SheetContent
@@ -77,7 +90,12 @@ export function StepUpSheet({
         </SheetHeader>
         <div className="px-4 pb-4">
           {reason === "totp-required" ? (
-            <TwoFactorSetup onDone={() => settle(true)} />
+            <TwoFactorSetup
+              onEnrolled={() => {
+                enrolled.current = true;
+              }}
+              onDone={() => settle(true)}
+            />
           ) : reason ? (
             <TwoFactorCodeForm verify={verifyOnSession} onVerified={() => settle(true)} />
           ) : null}

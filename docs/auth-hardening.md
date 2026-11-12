@@ -64,8 +64,10 @@ gateway layer and the D1-level `429` behavior tested in
   back if Better Auth then refuses the request for a reason of its own (a
   wrong password, say), so only a setup that started spends it.
   A send needs the password, is refused within a minute of the last one for
-  that user, and is capped at 10 per hour per caller. The code is stored only
-  after the mail went out, so a failed send starts no wait. A pending enrollment's
+  that user, and is capped at 10 per hour per caller. The minute is one
+  insert of a marker keyed on the account, so sends arriving together leave
+  one mail and one code; a send that fails removes its marker and starts no
+  wait. A pending enrollment's
   secret (`two-factor/get-totp-uri`) is never returned for the password alone.
 - **A mail goes out whenever the second factor changes**: turned on, turned
   off, backup codes regenerated (`two-factor-changed`). It follows a change
@@ -100,6 +102,14 @@ Better Auth mints sessions on endpoints that ask for the password alone
 (`change-password` with `revokeOtherSessions`, `two-factor/disable`) and on the
 email-verification link, so a stolen cookie plus the password could otherwise
 renew itself; those sessions carry no stamp of their own and never pass.
+
+**Used codes.** Better Auth accepts a TOTP code for three time-steps and keeps
+no record of the one it accepted. `claimTotpStep` (`src/auth/totp-step.ts`)
+records the newest accepted step on the `twoFactor` row (`lastTotpStep`), with
+one conditional write, at sign-in, at enrollment and at step-up. The challenge
+refuses a code for that step or an older one (`used`), so a code seen being
+typed, at sign-in or anywhere else, cannot step a session up; the replay
+counts as a failed attempt.
 
 **Wrong codes.** The challenge spends Better Auth's own account lockout on the
 `twoFactor` row (`failedVerificationCount` / `lockedUntil`; limits read from
@@ -172,15 +182,15 @@ inside itself, so there the prompt opens as that dialog's nested surface
 rather than as a second modal beside it.
 
 Connecting a number settles what it needs ahead of the click, role first: the
-fork knows from the shell's own read of the session whether the signed-in user
-may connect at all and what step-up they owe. A role that may not connect sees
-that, and is never asked for a second factor. Otherwise the cards stay disabled
-until the step-up is confirmed, because Meta's window only opens on the
-customer's own click and a prompt in between would spend it. The step-up
-authorizes the start; the state then lives its normal 30 minutes, so the
-customer has Meta's whole window to finish. Nothing is prepared ahead of a
-click: after a cancelled or blocked popup, the next card click fetches a new
-state and an "Open Meta" button then opens the window from its own click.
+Numbers route's loader (`src/server/connect-block.ts`) says whether the
+signed-in user may connect at all and what step-up they owe, judged as
+`startConnect` judges it. A role that may not connect sees that, and is never
+asked for a second factor. Otherwise the cards stay disabled until the step-up
+is confirmed, because Meta's window only opens on the customer's own click and
+a prompt in between would spend it. A fresh read of that state is never
+applied onto a flow that is already open. The step-up authorizes the start;
+the state then lives its normal 30 minutes, so the customer has Meta's whole
+window to finish.
 
 One-time backup codes are not shown by the surface that enrolled. They are
 held at the app's root (`src/lib/backup-codes.ts`) and shown by one sheet
@@ -192,8 +202,9 @@ dialog that unmounts mid-enrollment cannot take them with it.
 - Session expiry: 7 days; session refresh (`updateAge`): daily.
 - `freshAge: 900` (15 minutes) governs Better Auth's own fresh-session checks.
   Eccos step-up does not use it; see "What counts as fresh" above.
-- `session.stepUpAt` is migration `0004_session_step_up.sql`. Apply it before
-  deploying the code that reads and writes it.
+- `session.stepUpAt` is migration `0004_session_step_up.sql` and
+  `twoFactor.lastTotpStep` is `0005_two_factor_last_totp_step.sql`. Apply both
+  before deploying the code that reads and writes them.
 - Revocation is immediate: sessions are looked up in the auth D1 on every
   request; a revoked/deleted session fails closed on the next protected
   request (no cached claims).

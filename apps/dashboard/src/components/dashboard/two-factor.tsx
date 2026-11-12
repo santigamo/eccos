@@ -61,7 +61,14 @@ export function TwoFactorPanel({ enabled }: { enabled: boolean }) {
  * (`backup-codes-sheet.tsx`), which outlives whatever hosts this; `onDone`
  * fires when the operator has dealt with them.
  */
-export function TwoFactorSetup({ onDone }: { onDone: () => void }) {
+export function TwoFactorSetup({
+  onEnrolled,
+  onDone,
+}: {
+  /** The first code verified: the account is enrolled, whatever happens next. */
+  onEnrolled?: () => void;
+  onDone: () => void;
+}) {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [verified, setVerified] = useState(false);
   if (!setup) return <StartStep onStarted={setSetup} />;
@@ -71,6 +78,7 @@ export function TwoFactorSetup({ onDone }: { onDone: () => void }) {
         totpURI={setup.totpURI}
         onVerified={() => {
           setVerified(true);
+          onEnrolled?.();
           void showBackupCodes(setup.backupCodes).then(onDone);
         }}
       />
@@ -124,16 +132,21 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
       return;
     }
     const code = (result?.error as { code?: string } | null | undefined)?.code;
-    // Back to the send step only when this code is spent (the server refused
-    // it) or the password has to be typed again. Anything else, a dropped
-    // connection or a rate limit, left the code good: it stays in the field.
+    // A refused code is spent: a new one has to be sent. A wrong password
+    // goes back to the password too, but the server put the code back, so it
+    // is kept and tried again with the next password. Anything else, a
+    // dropped connection or a rate limit, changes nothing on screen.
+    if (code === "EMAIL_CODE_REQUIRED") setEmailCode("");
     if (code === "EMAIL_CODE_REQUIRED" || code === "INVALID_PASSWORD") setSent(false);
     setError(startError(code, "Could not start the setup right now. Your code is still good: try again."));
   }
 
+  /** On the password step with a code still in hand, the password is all that is missing. */
+  const resuming = !sent && emailCode !== "";
+
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void (sent ? enable() : sendCode());
+    void (sent || resuming ? enable() : sendCode());
   }
 
   return (
@@ -171,7 +184,7 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
       )}
       <div className="flex gap-2">
         <Button type="submit" variant="outline" disabled={busy || !(sent ? emailCode.trim() : password)}>
-          {sent ? (busy ? "Starting…" : "Continue") : busy ? "Sending…" : "Email me a code"}
+          {sent || resuming ? (busy ? "Starting…" : "Continue") : busy ? "Sending…" : "Email me a code"}
         </Button>
         {sent ? (
           <Button type="button" variant="ghost" disabled={busy} onClick={() => void sendCode()}>

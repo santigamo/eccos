@@ -13,6 +13,7 @@ import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { roles } from "./permissions";
 import { stepUpMessage, stepUpRefusal } from "./step-up";
+import { claimTotpStep } from "./totp-step";
 
 /**
  * Endpoints that change or reveal a factor and otherwise ask only for the
@@ -102,6 +103,10 @@ export function stepUpGuard() {
       session: {
         fields: { stepUpAt: { type: "date", required: false, input: false } },
       },
+      // The newest TOTP time-step this account has had accepted (`totp-step.ts`).
+      twoFactor: {
+        fields: { lastTotpStep: { type: "number", required: true, defaultValue: 0, input: false } },
+      },
     },
     hooks: {
       before: [
@@ -175,6 +180,10 @@ export function stepUpGuard() {
             await ctx.context.internalAdapter.updateSession(minted.session.token, {
               stepUpAt: new Date(),
             });
+            // A code that signed in or enrolled is spent for step-up too.
+            if (ctx.path === "/two-factor/verify-totp" && typeof ctx.body?.code === "string") {
+              await claimTotpStep(ctx.context, minted.session.userId, ctx.body.code);
+            }
           }),
         },
       ],

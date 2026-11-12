@@ -73,10 +73,24 @@ export function enrollmentProof(mail: TwoFactorMail) {
           const { user } = ctx.context.session;
           await ctx.context.password.checkPassword(user.id, ctx);
           const identifier = identifierOf(user.id);
-          const { internalAdapter } = ctx.context;
-          const last = await internalAdapter.findVerificationValue(identifier);
-          const sentAt = last ? new Date(last.createdAt).getTime() : 0;
-          if (Date.now() - sentAt < ENABLE_CODE_RESEND_SECONDS * 1000) {
+          const { adapter, internalAdapter } = ctx.context;
+          // One send a minute per account, decided by a single insert: the
+          // marker's key is its identifier, so of any number of sends at once
+          // exactly one lands. A marker past its minute is cleared first.
+          const marker = `${identifier}-sent`;
+          await adapter.deleteMany({
+            model: "verification",
+            where: [
+              { field: "identifier", value: marker },
+              { field: "expiresAt", operator: "lt", value: new Date() },
+            ],
+          });
+          const mine = await internalAdapter.reserveVerificationValue({
+            identifier: marker,
+            value: "sent",
+            expiresAt: new Date(Date.now() + ENABLE_CODE_RESEND_SECONDS * 1000),
+          });
+          if (!mine) {
             throw new APIError("TOO_MANY_REQUESTS", {
               code: "ENABLE_CODE_JUST_SENT",
               message: "a code was sent less than a minute ago",
@@ -85,9 +99,13 @@ export function enrollmentProof(mail: TwoFactorMail) {
           const code = generateRandomString(ENABLE_CODE_LENGTH, "A-Z", "0-9");
           const value = await digest(user.id, code);
           await internalAdapter.deleteVerificationByIdentifier(identifier);
-          // Stored only once the mail is out: a send that failed leaves no
-          // code behind, so it starts no resend wait.
-          await mail.code(user, code, value);
+          try {
+            await mail.code(user, code, value);
+          } catch (error) {
+            // A send that failed starts no wait.
+            await internalAdapter.deleteVerificationByIdentifier(marker);
+            throw error;
+          }
           await internalAdapter.createVerificationValue({
             identifier,
             value,

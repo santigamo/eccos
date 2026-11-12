@@ -15,10 +15,12 @@
 
 import type { Auth } from "./auth";
 import { getSessionOnce } from "./request-memo";
+import { claimTotpStep } from "./totp-step";
 
 export type ConfirmStepUpResult =
   | { ok: true }
-  | { ok: false; code: "invalid" | "not-enrolled" | "signed-out" }
+  /** `used`: a right code that already signed in or stepped up once. */
+  | { ok: false; code: "invalid" | "used" | "not-enrolled" | "signed-out" }
   /** `minutes`: how long until the budget is back, for the operator's message. */
   | { ok: false; code: "locked"; minutes: number };
 
@@ -50,7 +52,8 @@ export async function confirmStepUp(
   const token = session?.session?.token;
   if (!user?.id || !token) return { ok: false, code: "signed-out" };
 
-  const { adapter, internalAdapter, getPlugin } = await auth.$context;
+  const context = await auth.$context;
+  const { adapter, internalAdapter, getPlugin } = context;
   const byUser = [{ field: "userId", value: user.id }];
   const factor = await adapter.findOne<TwoFactorRow>({ model: "twoFactor", where: byUser });
   // A pending enrollment is not a factor, and verifying a code against one
@@ -126,11 +129,18 @@ export async function confirmStepUp(
     return { ok: false, code: "invalid" };
   }
 
+  // Better Auth accepts a code for three time-steps and remembers none of
+  // them. One that already signed in or stepped up is refused here, and it
+  // keeps its reservation: a replay is a failed attempt.
+  if (!input.backup && !(await claimTotpStep(context, user.id, input.code))) {
+    return { ok: false, code: "used" };
+  }
   await adapter.update({
     model: "twoFactor",
     where: byId,
     update: { failedVerificationCount: 0, lockedUntil: null },
   });
-  await internalAdapter.updateSession(token, { stepUpAt: new Date() });
-  return { ok: true };
+  // The session can be gone by now (signed out elsewhere mid-request).
+  const stamped = await internalAdapter.updateSession(token, { stepUpAt: new Date() });
+  return stamped ? { ok: true } : { ok: false, code: "signed-out" };
 }

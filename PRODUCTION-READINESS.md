@@ -75,7 +75,7 @@ drill. The gateway deploy and live post-deploy smoke are recorded above.
   gate was deleted, replaced by Better Auth sessions + the canonical-host allowlist
   (`app.eccos.chat` only, now read from `BETTER_AUTH_URL`; `workers.dev` disabled). Customer-auth hardening landed with
   `eccos-0x0.7` (rate limiting, audit) and `eccos-eyel` (TOTP enrollment and step-up, enforced on
-  sensitive actions; auth D1 migration `0004_session_step_up.sql` must be applied before that
+  sensitive actions; auth D1 migrations `0004_session_step_up.sql` and `0005_two_factor_last_totp_step.sql` must be applied before that
   deploy). Remaining condition: production deploy and smoke
   evidence via `eccos-0x0.9` before customer traffic.
 

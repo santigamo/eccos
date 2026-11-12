@@ -58,6 +58,7 @@ let navigated: string[] = [];
 let loginCallback: LoginCallback | null = null;
 let loginCalls = 0;
 let handoffs = 0;
+let handoffTtlMs = 30 * 60_000;
 let exchanges: { code: string; state: string }[] = [];
 
 beforeEach(() => {
@@ -66,6 +67,7 @@ beforeEach(() => {
   loginCallback = null;
   loginCalls = 0;
   handoffs = 0;
+  handoffTtlMs = 30 * 60_000;
   exchanges = [];
   stubs = {
     ...real,
@@ -80,7 +82,7 @@ beforeEach(() => {
         data: {
           state: `state-${handoffs}`,
           url: "https://gateway.test/connect",
-          expiresAt: Date.now() + 15 * 60_000,
+          expiresAt: Date.now() + handoffTtlMs,
         },
       };
     },
@@ -114,27 +116,31 @@ afterAll(async () => {
 
 const settle = () => act(async () => void (await new Promise((resolve) => setTimeout(resolve, 5))));
 
+let rerender: (node: ReactNode) => void = () => {};
+
 async function mount(node: ReactNode): Promise<HTMLElement> {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   await act(async () => root.render(node));
+  rerender = (next) => root.render(next);
   unmount = () => root.unmount();
   await settle();
   return host;
 }
 
-const mountChoices = (
-  popupWatchdogMs = 3_000,
-  blocked: "reauth-required" | "missing-permission" | null = null,
-) =>
-  mount(
-    <ConnectNumberChoices
-      navigate={(path) => navigated.push(path)}
-      popupWatchdogMs={popupWatchdogMs}
-      blocked={blocked}
-    />,
-  );
+type Blocked = "reauth-required" | "missing-permission" | null;
+
+const choices = (popupWatchdogMs: number, blocked: Blocked) => (
+  <ConnectNumberChoices
+    navigate={(path) => navigated.push(path)}
+    popupWatchdogMs={popupWatchdogMs}
+    blocked={blocked}
+  />
+);
+
+const mountChoices = (popupWatchdogMs = 3_000, blocked: Blocked = null) =>
+  mount(choices(popupWatchdogMs, blocked));
 
 function card(host: HTMLElement, title: string): HTMLButtonElement {
   const found = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(title));
@@ -155,7 +161,7 @@ async function runFlow(host: HTMLElement, response: Parameters<LoginCallback>[0]
 
 const FINISHED = { authResponse: { code: "code-1" } };
 
-describe("step-up before Meta's window", () => {
+describe("what stands before Meta's window", () => {
   const owed = { ok: false, kind: "forbidden", reason: "reauth-required", error: "x" };
 
   test("owed step-up is settled before any card can be pressed, so the press opens the window", async () => {
@@ -189,6 +195,29 @@ describe("step-up before Meta's window", () => {
     expect(loginCalls).toBe(0);
     expect(navigated).toEqual([]);
     expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("Confirm it's you");
+  });
+
+  test("a role that may not connect is told so, and is never asked for a second factor", async () => {
+    const host = await mountChoices(3_000, "missing-permission");
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("Your role in this workspace does not allow this");
+    expect(host.textContent).not.toContain("two-factor");
+    expect(host.textContent).not.toContain("Confirm it's you");
+  });
+
+  test("a fresh read of what is owed waits for an open flow to end", async () => {
+    const host = await mountChoices();
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(1);
+
+    // The route re-read the session while Meta's window is open.
+    await act(async () => rerender(choices(3_000, "reauth-required")));
+    expect(host.textContent).not.toContain("Confirm it's you");
+
+    await act(async () => loginCallback?.({ authResponse: null }));
+    await settle();
     expect(host.textContent).toContain("Confirm it's you");
   });
 });
@@ -283,62 +312,40 @@ describe("ConnectNumberChoices in a real DOM", () => {
 
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
-  test("a retry after a cancel fetches a fresh state, then opens Meta from its own click", async () => {
+  test("a retry after a cancel logs in with the handoff prepared in the background", async () => {
     const host = await mountChoices();
     await runFlow(host, { authResponse: null });
-    expect(handoffs).toBe(1);
+    expect(handoffs).toBe(2);
 
     await act(async () => card(host, "A new number").click());
     await settle();
-    // Nothing was fetched ahead of the click, and no window opens after an await.
     expect(handoffs).toBe(2);
-    expect(loginCalls).toBe(1);
-
-    await act(async () => card(host, "Open Meta").click());
     expect(loginCalls).toBe(2);
-    expect(host.textContent).not.toContain("Open Meta");
     await act(async () => loginCallback?.(FINISHED));
     await settle();
     expect(exchanges).toEqual([{ code: "code-1", state: "state-2" }]);
   });
 
-  test("only the attempt right after a cancel waits behind Open Meta", async () => {
-    stubs.exchangeConnectCode = async () => ({ ok: true, data: { ok: false, code: "failed", error: "x" } });
+  test("a prepared handoff with too little life left is not reused", async () => {
     const host = await mountChoices();
+    handoffTtlMs = 10 * 60_000;
     await runFlow(host, { authResponse: null });
+    expect(handoffs).toBe(2);
+
+    handoffTtlMs = 30 * 60_000;
     await act(async () => card(host, "A new number").click());
     await settle();
-    await act(async () => card(host, "Open Meta").click());
+    expect(handoffs).toBe(3);
     await act(async () => loginCallback?.(FINISHED));
     await settle();
-    expect(loginCalls).toBe(2);
-
-    // That window opened and ran: the next attempt opens on the card's click.
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(loginCalls).toBe(3);
-    expect(host.textContent).not.toContain("Open Meta");
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-3" }]);
   });
 
-  test("after a blocked popup, Start again and a card lead to Open Meta too", async () => {
-    const host = await mountChoices(20);
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    await wait(60);
-    await act(async () => card(host, "Start again").click());
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(loginCalls).toBe(1);
-    await act(async () => card(host, "Open Meta").click());
-    expect(loginCalls).toBe(2);
-  });
-
-  test("a role that may not connect is told so, and is never asked for a second factor", async () => {
-    const host = await mountChoices(3_000, "missing-permission");
-    expect(card(host, "A new number").disabled).toBe(true);
-    expect(host.textContent).toContain("Your role in this workspace does not allow this");
-    expect(host.textContent).not.toContain("two-factor");
-    expect(host.textContent).not.toContain("Confirm it's you");
+  test("a failure code also prepares the next attempt", async () => {
+    stubs.exchangeConnectCode = async () => ({ ok: true, data: { ok: false, code: "failed", error: "x" } });
+    const host = await mountChoices();
+    await runFlow(host, FINISHED);
+    expect(handoffs).toBe(2);
   });
 
   test("a blocked popup shows a message and a Start again control, and changes nothing else", async () => {
@@ -514,6 +521,15 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => stale?.({ authResponse: null }));
     expect(live(host)).toBe("");
     expect(card(host, "A new number").disabled).toBe(true);
+  });
+
+  test("the watchdog prepares the next attempt", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(handoffs).toBe(1);
+    await wait(60);
+    expect(handoffs).toBe(2);
   });
 
   test("a visibilitychange while the page is still visible does not stop the watchdog", async () => {

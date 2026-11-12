@@ -93,7 +93,16 @@ async function enrolled() {
   const verify = await ctx.post("/two-factor/verify-totp", { code: await code() }, ctx.cookie);
   expect(verify.status).toBe(200);
   const cookie = cookiesOf(verify);
+  nextCode(ctx.db);
   return { ...ctx, cookie, code, headers: () => new Headers({ cookie }) };
+}
+
+/**
+ * As if the authenticator had moved on to its next code: the tests generate
+ * every code inside one 30-second step, and a code is accepted once.
+ */
+function nextCode(db: Database): void {
+  db.query('UPDATE "twoFactor" SET "lastTotpStep" = 0').run();
 }
 
 /**
@@ -409,6 +418,60 @@ describe("the step-up challenge on the current session", () => {
     await requireStepUp(auth, new Headers({ cookie }));
   });
 
+  test("a code is accepted once: not again for step-up, and not after it signed in", async () => {
+    const { auth, db, post, cookie, code } = await enrolled();
+    const confirm = async (value: string) => confirmStepUp(auth, new Headers({ cookie }), { code: value });
+    const stamp = () => db.query('SELECT "stepUpAt" AS at FROM session ORDER BY "createdAt"').all();
+
+    // Stepped up with it once: whoever saw it typed cannot use it again.
+    const used = await code();
+    expect(await confirm(used)).toEqual({ ok: true });
+    goStale(db);
+    const stale = stamp();
+    expect(await confirm(used)).toEqual({ ok: false, code: "used" });
+    expect(stamp()).toEqual(stale);
+    // A replay is a failed attempt, not a free one.
+    expect(db.query('SELECT "failedVerificationCount" AS failed FROM "twoFactor"').get()).toEqual({ failed: 1 });
+
+    // Signed in with it: the same code does not step up the stolen session.
+    nextCode(db);
+    const atSignIn = await code();
+    const signIn = await post("/sign-in/email", { email: EMAIL, password: PASSWORD });
+    expect((await post("/two-factor/verify-totp", { code: atSignIn }, cookiesOf(signIn))).status).toBe(200);
+    expect(await confirm(atSignIn)).toEqual({ ok: false, code: "used" });
+  });
+
+  test("the same code presented twice at once steps up once", async () => {
+    const { auth, cookie, code } = await enrolled();
+    const value = await code();
+    const answers = await Promise.all(
+      Array.from({ length: 4 }, () => confirmStepUp(auth, new Headers({ cookie }), { code: value })),
+    );
+    expect(answers.filter((a) => a.ok)).toHaveLength(1);
+    expect(answers.filter((a) => !a.ok && a.code === "used")).toHaveLength(3);
+  });
+
+  test("the code that enrolled is spent too", async () => {
+    const ctx = await signedIn();
+    const enable = await startEnrollment(ctx);
+    const secret = rawSecret(((await enable.json()) as { totpURI: string }).totpURI);
+    const { code } = await ctx.auth.api.generateTOTP({ body: { secret } });
+    const cookie = cookiesOf(await ctx.post("/two-factor/verify-totp", { code }, ctx.cookie));
+    goStale(ctx.db);
+    expect(await confirmStepUp(ctx.auth, new Headers({ cookie }), { code })).toEqual({ ok: false, code: "used" });
+  });
+
+  test("a session that is gone by the time it would be stamped is not reported as stepped up", async () => {
+    const { auth, db, cookie, code } = await enrolled();
+    goStale(db);
+    const { internalAdapter } = await auth.$context;
+    const update = internalAdapter.updateSession;
+    internalAdapter.updateSession = (async () => null) as typeof update;
+    const answer = await confirmStepUp(auth, new Headers({ cookie }), { code: await code() });
+    internalAdapter.updateSession = update;
+    expect(answer).toEqual({ ok: false, code: "signed-out" });
+  });
+
   test("a backup code steps up too, and is spent", async () => {
     const ctx = await signedIn();
     const enable = await startEnrollment(ctx);
@@ -570,6 +633,31 @@ describe("attack: enrolling the thief's own authenticator", () => {
       "ENABLE_CODE_JUST_SENT",
     ]);
     expect(sends()).toHaveLength(1);
+  });
+
+  test("sends at once leave one code and one mail; the next waits out the minute", async () => {
+    const { auth, db, mail, headers } = await signedIn();
+    const send = () =>
+      auth.api.sendTwoFactorEnableCode({ body: { password: PASSWORD }, headers: headers() }).then(
+        () => "sent",
+        (error: { body?: { code?: string } }) => error.body?.code,
+      );
+    const codes = () =>
+      db.query("SELECT count(*) AS n FROM verification WHERE identifier LIKE 'two-factor-enable-%' AND identifier NOT LIKE '%-sent'").get();
+
+    const burst = await Promise.all(Array.from({ length: 5 }, send));
+    expect(burst.filter((answer) => answer === "sent")).toHaveLength(1);
+    expect(burst.filter((answer) => answer === "ENABLE_CODE_JUST_SENT")).toHaveLength(4);
+    expect(mail.sent.filter((m) => m.template === "two-factor-code")).toHaveLength(1);
+    expect(codes()).toEqual({ n: 1 });
+
+    // A minute on, one more send goes out and replaces the code.
+    db.query("UPDATE verification SET \"expiresAt\" = ? WHERE identifier LIKE '%-sent'").run(
+      new Date(Date.now() - 1000).toISOString(),
+    );
+    expect(await send()).toBe("sent");
+    expect(await send()).toBe("ENABLE_CODE_JUST_SENT");
+    expect(codes()).toEqual({ n: 1 });
   });
 
   test("a send that fails stores no code, so the next one is not made to wait", async () => {

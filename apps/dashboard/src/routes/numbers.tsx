@@ -3,7 +3,7 @@ import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-route
 import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
-import type { ConnectBlock } from "../organizations";
+import { getConnectBlock, type ConnectBlock } from "../server/connect-block";
 import { StepUpSheet } from "../components/dashboard/step-up-sheet";
 import { FailureView } from "../components/dashboard/failure";
 import {
@@ -39,6 +39,8 @@ export const Route = createFileRoute("/numbers")({
     connectError: normalizeConnectError(search.connectError),
     connectSkipped: normalizeConnectSkipped(search.connectSkipped),
   }),
+  // What the connect fork owes (role, step-up), read with the page, not the shell.
+  loader: () => getConnectBlock(),
   component: NumbersPage,
 });
 
@@ -54,6 +56,7 @@ function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
   const { connectError, connectSkipped } = Route.useSearch();
+  const blocked = Route.useLoaderData();
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
@@ -92,7 +95,7 @@ function NumbersPage() {
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
             {resources?.account?.connectPolicy === "closed" ? <SubscriptionNotice billing={billing} /> : null}
-            <ConnectNumberPanel heading="Meta Embedded Signup" blocked={root.user?.connectBlock} />
+            <ConnectNumberPanel heading="Meta Embedded Signup" blocked={blocked} />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -113,7 +116,7 @@ function NumbersPage() {
       billing={billing}
       connectError={connectError}
       connectSkipped={connectSkipped}
-      blocked={root.user?.connectBlock}
+      blocked={blocked}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
     />
   );

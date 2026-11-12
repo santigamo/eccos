@@ -25,10 +25,11 @@ import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
 import { Button } from "../ui/button";
 import { promptStepUp, STEP_UP_COPY, stepUpReason } from "../../lib/step-up";
-import type { ConnectBlock } from "../../organizations";
+import type { ConnectBlock } from "../../server/connect-block";
 import {
   CONNECT_CANCELLED_MESSAGE,
   CONNECT_POPUP_BLOCKED_MESSAGE,
+  handoffUsable,
   judgeExchange,
   returnPathFor,
   watchPopup,
@@ -97,6 +98,7 @@ export function resetConnectGuards(): void {
   guards.left = false;
 }
 
+type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
 
 /**
@@ -112,7 +114,7 @@ type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
 const SDK_REQUIRED_MESSAGE =
   "Connecting a number that is already on the WhatsApp Business app needs Meta's script, which did not load. Check for a blocker or an extension and try again. Do not use the other option: it would take the number off the app.";
 
-/** A neutral note beside the cards: a cancel, a step-up owed, a window ready to open. */
+/** A neutral note above the cards: what stands before a connection may start. */
 const NOTICE_CLASS =
   "m-0 border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground";
 
@@ -193,21 +195,20 @@ export function ConnectNumberChoices({
   const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
   /**
    * What still stands before a connection may start, the role first. Known
-   * when the fork appears (`blocked`, from the shell's own read of the
+   * when the fork appears (`blocked`, from the route's own read of the
    * session). A step-up is settled before any card is pressed: Meta's window
    * only opens on the customer's own click, and a prompt in between would
-   * spend it. A role that may not connect is told so and never asked.
+   * spend it. A role that may not connect is told so and never asked. A fresh
+   * read is applied once, and never onto a flow that is already open.
    */
   const [block, setBlock] = useState(blocked);
-  useEffect(() => setBlock(blocked), [blocked]);
+  const applied = useRef(blocked);
+  useEffect(() => {
+    if (starting !== null || applied.current === blocked) return;
+    applied.current = blocked;
+    setBlock(blocked);
+  }, [blocked, starting]);
   const stepUp = block === "missing-permission" ? null : block;
-  /**
-   * A retry's Meta window, ready to open. After a cancelled or blocked popup
-   * the state is fetched on the card's click, and the window then opens from
-   * this button's own click, so no browser sees a popup without a gesture.
-   */
-  const [ready, setReady] = useState<{ open: () => void } | null>(null);
-  const retrying = useRef(false);
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
   const attempt = useRef(0);
@@ -220,9 +221,11 @@ export function ConnectNumberChoices({
   );
   /**
    * What a retry can skip. The SDK and its config are loaded on the first
-   * click, never on mount (docs/threat-model.md).
+   * click, never on mount (docs/threat-model.md); `next` is the handoff
+   * requested in the background once a flow ended without leaving the page.
    */
   const loaded = useRef<{ config: EsConfig; sdk: FacebookSdk | null } | null>(null);
+  const next = useRef<{ handoff: Promise<Handoff> } | null>(null);
 
   /**
    * Session logging (Meta's `message` listener).
@@ -264,6 +267,17 @@ export function ConnectNumberChoices({
     onBusyChange?.(starting !== null);
   }, [starting, onBusyChange]);
 
+  /** Request the next attempt's handoff while the SDK is already loaded. */
+  const prepareNext = useCallback(() => {
+    if (!loaded.current?.sdk) return;
+    const handoff = startConnect();
+    const entry = { handoff };
+    next.current = entry;
+    handoff.catch(() => {
+      if (next.current === entry) next.current = null;
+    });
+  }, []);
+
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(
     async (code: string, state: string) => {
@@ -288,6 +302,7 @@ export function ConnectNumberChoices({
             return;
           }
           setError(failureCopy(result).detail);
+          prepareNext();
           return;
         }
         // The server function audits every outcome. Only a failed exchange
@@ -296,6 +311,7 @@ export function ConnectNumberChoices({
         track("connect_outcome", { result: verdict.outcome });
         if (!verdict.navigate) {
           setError(verdict.message);
+          prepareNext();
           return;
         }
         // The numbers table is a loader read; a reload is the honest way to
@@ -311,8 +327,17 @@ export function ConnectNumberChoices({
         guards.exchanging = false;
       }
     },
-    [leave, setError],
+    [leave, setError, prepareNext],
   );
+
+  /** A handoff prepared in the background, if its state has long enough left. */
+  async function takeHandoff(): Promise<Handoff> {
+    const prepared = next.current;
+    next.current = null;
+    const handoff = await prepared?.handoff.catch(() => null);
+    if (handoff?.ok && handoffUsable(handoff.data.expiresAt, Date.now())) return handoff;
+    return startConnect();
+  }
 
   async function start(path: ConnectPath) {
     track("connect_choice", { path });
@@ -324,7 +349,7 @@ export function ConnectNumberChoices({
       const cached = loaded.current;
       const [config, handoff] = await Promise.all([
         cached ? cached.config : getEmbeddedSignupConfig(),
-        startConnect(),
+        takeHandoff(),
       ]);
       if (!handoff.ok) {
         // Lapsed since the fork appeared. Confirming takes longer than a click
@@ -360,43 +385,34 @@ export function ConnectNumberChoices({
       // The callback owns this state: a late answer from a window the customer
       // had given up on still exchanges the code it was issued with.
       const { state } = handoff.data;
-      const options = loginOptions(config.data.configId, path);
-      const open = () => {
-        // This attempt is the retry: the one after it opens on its own click again.
-        retrying.current = false;
-        setReady(null);
-        track("es_popup_open");
-        sdk.login((response) => {
-          if (guards.left) return;
-          stopWatch.current?.();
-          const code = response.authResponse?.code;
-          if (code) {
-            setFeedback((current) => (current?.tone === "blocked" ? null : current));
-            void finish(code, state).finally(() => {
-              if (attempt.current === mine) setStarting(null);
-            });
-            return;
-          }
-          // Closing the popup before the final screen is a cancel, not a
-          // failure — the session event already recorded which screen it was.
-          if (attempt.current !== mine) return;
-          track("connect_outcome", { result: "cancelled" });
-          retrying.current = true;
-          setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
-          setStarting(null);
-        }, options);
-        // Message only: the window may still be coming up, so nothing is cleared
-        // and the cards stay disabled. "Start again" is the only reset.
-        stopWatch.current = watchPopup(() => {
-          track("connect_outcome", { result: "popup_blocked" });
-          retrying.current = true;
-          setFeedback({ text: CONNECT_POPUP_BLOCKED_MESSAGE, tone: "blocked" });
-        }, popupWatchdogMs);
-      };
+      track("es_popup_open");
       opened = true;
-      if (attempt.current !== mine) return;
-      if (retrying.current) setReady({ open });
-      else open();
+      sdk.login((response) => {
+        if (guards.left) return;
+        stopWatch.current?.();
+        const code = response.authResponse?.code;
+        if (code) {
+          setFeedback((current) => (current?.tone === "blocked" ? null : current));
+          void finish(code, state).finally(() => {
+            if (attempt.current === mine) setStarting(null);
+          });
+          return;
+        }
+        // Closing the popup before the final screen is a cancel, not a
+        // failure — the session event already recorded which screen it was.
+        if (attempt.current !== mine) return;
+        track("connect_outcome", { result: "cancelled" });
+        setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
+        setStarting(null);
+        prepareNext();
+      }, loginOptions(config.data.configId, path));
+      // Message only: the window may still be coming up, so nothing is cleared
+      // and the cards stay disabled. "Start again" is the only reset.
+      stopWatch.current = watchPopup(() => {
+        track("connect_outcome", { result: "popup_blocked" });
+        setFeedback({ text: CONNECT_POPUP_BLOCKED_MESSAGE, tone: "blocked" });
+        prepareNext();
+      }, popupWatchdogMs);
     } catch (err) {
       if (followSignIn(err)) return;
       setError(err instanceof Error ? err.message : String(err));
@@ -411,7 +427,6 @@ export function ConnectNumberChoices({
     stopWatch.current?.();
     attempt.current += 1;
     setFeedback(null);
-    setReady(null);
     setStarting(null);
   }
 
@@ -422,7 +437,9 @@ export function ConnectNumberChoices({
         className={cn(
           "block",
           feedback &&
-            (feedback.tone === "notice" ? NOTICE_CLASS : AUTH_ERROR_BANNER_CLASS),
+            (feedback.tone === "notice"
+              ? "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground"
+              : AUTH_ERROR_BANNER_CLASS),
         )}
       >
         {feedback?.text}
@@ -445,15 +462,6 @@ export function ConnectNumberChoices({
             onClick={() => void promptStepUp(stepUp).then((ok) => ok && setBlock(null))}
           >
             {STEP_UP_COPY[stepUp].title}
-          </Button>
-        </div>
-      ) : null}
-
-      {ready ? (
-        <div className={cn(NOTICE_CLASS, "flex flex-wrap items-center justify-between gap-3")}>
-          <span>Meta's window is ready.</span>
-          <Button type="button" variant="outline" size="sm" onClick={ready.open}>
-            Open Meta
           </Button>
         </div>
       ) : null}
