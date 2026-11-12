@@ -8,6 +8,7 @@ import {
 } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
 import { withStepUp } from "../../lib/step-up";
+import { StepUpSheet } from "./step-up-sheet";
 import { fmtTsShort, ERROR_CLASS, MACHINE_CLASS } from "../../ui";
 import {
   Frame,
@@ -276,6 +277,8 @@ function RevokeKeyDialog({
             {busy ? "Revoking…" : "Revoke key"}
           </AlertDialogAction>
         </AlertDialogFooter>
+        {/* Nested: step-up for the revoke opens inside this dialog. */}
+        <StepUpSheet />
       </AlertDialogContent>
     </AlertDialog>
   );

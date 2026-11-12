@@ -8,37 +8,44 @@ import { isStepUpReason, type StepUpReason } from "@eccos/auth-baseline/step-up"
 
 type Open = (reason: StepUpReason | null) => void;
 
-let open: Open | null = null;
-let settle: ((ok: boolean) => void) | null = null;
+/**
+ * The mounted sheets, innermost last. A dialog mounts its own inside itself,
+ * so the prompt is nested in the surface the operator is already in rather
+ * than opened as a second modal beside it.
+ */
+const hosts: Open[] = [];
+let waiting: { host: Open; resolve: (ok: boolean) => void } | null = null;
 
-/** Answer the prompt that is waiting, if one is. */
+/** Answer the prompt that is waiting, if one is, and close its sheet. */
 export function settleStepUp(ok: boolean): void {
-  const waiting = settle;
-  settle = null;
-  open?.(null);
-  waiting?.(ok);
+  const asked = waiting;
+  waiting = null;
+  if (!asked) return;
+  asked.host(null);
+  asked.resolve(ok);
 }
 
 /**
- * The mounted sheet (`step-up-sheet.tsx`) registers how to show itself and
- * gets back its unregister, which declines whatever is still waiting.
+ * A sheet (`step-up-sheet.tsx`) registers how to show itself and gets back
+ * its unregister, which declines the prompt it is showing, if any.
  */
 export function registerStepUpPrompt(show: Open): () => void {
-  open = show;
+  hosts.push(show);
   return () => {
-    if (open !== show) return;
-    settleStepUp(false);
-    open = null;
+    if (waiting?.host === show) settleStepUp(false);
+    const at = hosts.lastIndexOf(show);
+    if (at !== -1) hosts.splice(at, 1);
   };
 }
 
 /** Ask the operator to enroll or confirm. A newer request declines an older one. */
 export function promptStepUp(reason: StepUpReason): Promise<boolean> {
-  if (settle) settleStepUp(false);
-  if (!open) return Promise.resolve(false);
-  open(reason);
+  settleStepUp(false);
+  const host = hosts.at(-1);
+  if (!host) return Promise.resolve(false);
+  host(reason);
   return new Promise<boolean>((resolve) => {
-    settle = resolve;
+    waiting = { host, resolve };
   });
 }
 

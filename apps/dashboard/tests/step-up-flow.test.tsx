@@ -96,6 +96,23 @@ describe("withStepUp", () => {
     expect(await second).toBe(true);
   });
 
+  test("a dialog's own sheet answers while it is mounted, and the shell's again once it is gone", async () => {
+    const shell: (string | null)[] = [];
+    const dialog: (string | null)[] = [];
+    unregister = registerStepUpPrompt((reason) => void shell.push(reason));
+    const closeDialog = registerStepUpPrompt((reason) => void dialog.push(reason));
+
+    const inDialog = promptStepUp("reauth-required");
+    expect([shell, dialog]).toEqual([[], ["reauth-required"]]);
+    closeDialog();
+    expect(await inDialog).toBe(false);
+
+    const onPage = promptStepUp("totp-required");
+    expect(shell).toEqual(["totp-required"]);
+    settleStepUp(true);
+    expect(await onPage).toBe(true);
+  });
+
   test("a prompt still waiting when the sheet unmounts is declined, not lost", async () => {
     const shown: (string | null)[] = [];
     const leave = registerStepUpPrompt((reason) => void shown.push(reason));

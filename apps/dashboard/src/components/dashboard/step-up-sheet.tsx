@@ -1,6 +1,6 @@
 import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { invalidateRoutes, rootRouteId } from "../../lib/invalidate";
 import { registerStepUpPrompt, settleStepUp } from "../../lib/step-up";
 import { twoFactorErrorMessage } from "../../lib/two-factor";
@@ -33,17 +33,33 @@ async function verifyOnSession(code: string, backup: boolean): Promise<string | 
   const result = await confirmStepUpCode({ data: { code, backup } }).catch(() => null);
   if (!result) return "Could not verify the code right now. Please try again.";
   if (result.ok) return null;
-  if (result.code === "locked") return twoFactorErrorMessage("ACCOUNT_TEMPORARILY_LOCKED");
-  if (result.code === "signed-out") return "This session is no longer signed in. Reload the page and sign in.";
-  return twoFactorErrorMessage("INVALID_CODE");
+  switch (result.code) {
+    case "unavailable":
+      return "Could not verify the code right now. Please try again.";
+    case "locked":
+      return twoFactorErrorMessage("ACCOUNT_TEMPORARILY_LOCKED");
+    case "signed-out":
+      return "This session is no longer signed in. Reload the page and sign in.";
+    case "not-enrolled":
+      return "Two-factor authentication is not set up on this account yet. Finish it under Settings.";
+    default:
+      return twoFactorErrorMessage("INVALID_CODE");
+  }
 }
 
 /**
  * The step-up prompt (task register): the form a refused sensitive action
- * needs, beside the page it was started on. Mounted once in the shell; call
- * sites reach it through `withStepUp`.
+ * needs, beside the page it was started on. Mounted once in the shell, and
+ * again INSIDE any dialog that hosts a sensitive action, so there it opens as
+ * that dialog's nested surface instead of a second modal beside it. Call sites
+ * reach the innermost one through `withStepUp`.
  */
-export function StepUpSheet() {
+export function StepUpSheet({
+  finalFocus,
+}: {
+  /** Where focus goes when the sheet closes, for a host whose trigger may be gone by then. */
+  finalFocus?: RefObject<HTMLElement | null>;
+}) {
   const router = useRouter();
   const [reason, setReason] = useState<StepUpReason | null>(null);
   // Backup codes are on screen and cannot be shown again: only Done leaves.
@@ -75,6 +91,7 @@ export function StepUpSheet() {
       <SheetContent
         side="right"
         showCloseButton={!locked}
+        finalFocus={finalFocus}
         className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
       >
         <SheetHeader className="gap-2">

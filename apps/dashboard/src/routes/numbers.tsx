@@ -3,6 +3,7 @@ import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-route
 import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
+import { StepUpSheet } from "../components/dashboard/step-up-sheet";
 import { FailureView } from "../components/dashboard/failure";
 import {
   CONNECT_FORK_DESCRIPTION,
@@ -250,6 +251,9 @@ function AddNumberDialog({
           </DialogDescription>
         </DialogHeader>
         <ConnectNumberChoices onBusyChange={onBusyChange} />
+        {/* Nested: step-up from the fork opens inside this dialog. The notice
+            that opened it is gone once it passes, so focus returns here. */}
+        <StepUpSheet finalFocus={description} />
       </DialogContent>
     </Dialog>
   );
