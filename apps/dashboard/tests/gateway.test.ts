@@ -254,6 +254,7 @@ const {
   canSendMessages,
   validateSendTestInput,
   createTemplate,
+  editTemplate,
   deleteTemplate,
   validateCreateTemplateInput,
   validateDeleteTemplateInput,
@@ -2948,4 +2949,41 @@ describe("validateEditTemplateInput", () => {
     expect(() => validateEditTemplateInput({ ...EDIT, templateId: "../555" })).toThrow("invalid template id");
     expect(() => validateEditTemplateInput({ ...EDIT, templateId: undefined })).toThrow("invalid template id");
   });
+});
+
+// The gateway refuses these too (apps/gateway/tests/worker/multi-tenant.spec.ts);
+// here the console refuses first, so a WABA the account does not own is never
+// named in an RPC at all (eccos-tdrm).
+describe("a WABA the account does not own is refused before the gateway", () => {
+  const FOREIGN = "waba-foreign";
+  const calls: Array<[string, () => Promise<unknown>]> = [
+    [
+      "sendReaction",
+      () =>
+        sendReaction({
+          data: { wabaId: FOREIGN, phoneNumberId: "phone-a", to: "34600111222", messageId: "wamid.IN1", emoji: "👍" },
+        }),
+    ],
+    [
+      "editTemplate",
+      () =>
+        editTemplate({
+          data: { wabaId: FOREIGN, templateId: "555", name: "order_update", language: "en_US", bodyText: "Hi" },
+        }),
+    ],
+    ["deleteTemplate", () => deleteTemplate({ data: { wabaId: FOREIGN, name: "order_update", templateId: "555" } })],
+  ];
+
+  for (const [name, call] of calls) {
+    test(name, async () => {
+      let reached = false;
+      const touch = async () => {
+        reached = true;
+        return { ok: true };
+      };
+      withResources({ sendReaction: touch, editTemplate: touch, deleteTemplate: touch });
+      expect(await call()).toEqual(unreachable('WABA "waba-foreign" is not owned by account "account-a"'));
+      expect(reached).toBe(false);
+    });
+  }
 });
