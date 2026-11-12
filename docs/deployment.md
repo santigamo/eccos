@@ -178,6 +178,27 @@ browser-supplied selector.
 > the dashboard deploy helper. Keep actual secrets out of the repository and set gateway secrets
 > with `wrangler secret put`.
 
+### Billing
+
+Off by default, and a self-hosted deployment never needs it. Eccos Cloud charges per connected
+number through [Creem](https://creem.io); the gateway only knows whether an account may add
+numbers, and an account that may not keeps sending, receiving and forwarding.
+
+| Where | Setting | Purpose |
+|---|---|---|
+| gateway var | `CONNECT_POLICY_DEFAULT` | `closed`: an account without a stored policy cannot add numbers (`subscription_required`). Unset means open |
+| dashboard secret | `CREEM_API_KEY` | Turns billing on. A `creem_test_` key talks to Creem's test API |
+| dashboard secret | `CREEM_WEBHOOK_SECRET` | Verifies `creem-signature` on `POST /api/billing/webhook` |
+| dashboard var | `CREEM_PRODUCT_ID` | The Creem product, e.g. `prod_XXXXXXXXXXXXXXXXXXXXXX`. Set it in the gitignored `wrangler.production.jsonc`, never in the template |
+| dashboard config | `"triggers": { "crons": ["0 4 * * *"] }` | Daily reconcile: prices each subscription for the account's connected numbers |
+
+The Creem product is a monthly subscription at 1 EUR per unit (a subscription's units are its
+monthly price in euros), with the free trial configured on the product and its default return URL
+set to `<console origin>/settings?billing=success`. Creem's customer portal takes no return URL.
+
+The preflight refuses a deploy with only one of `CREEM_PRODUCT_ID` and
+`CONNECT_POLICY_DEFAULT=closed`, or with billing on and no cron trigger.
+
 ## Deploy
 
 ```bash

@@ -20,6 +20,7 @@ import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDr
 import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { runDailyCensus } from "./ops-census";
+import { isSubscriptionRequired } from "./connect-policy";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
 import { EccosGateway as Gateway } from "./gateway";
@@ -624,10 +625,12 @@ async function registerWabaRoute(c: AppContext) {
         provisioningError: result.waba.provisioningError,
         phones: result.phones,
       },
+      ...(result.refusedPhones ? { refusedPhones: result.refusedPhones, code: "subscription_required" } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
     }, responseStatus);
   } catch (err) {
     const error = errorMessage(err);
+    if (isSubscriptionRequired(err)) return c.json({ ok: false, error, code: "subscription_required" }, 402);
     return c.json({ ok: false, error }, /already registered to another account/.test(error) ? 409 : 400);
   }
 }

@@ -10,9 +10,14 @@ export const CONNECT_FAILURES: Record<ConnectFailureCode, string> = {
   denied: "Meta ended the connection before a number was attached. Nothing changed here.",
   owned: "That WhatsApp Business Account is already connected to another Eccos workspace.",
   no_waba: "That Meta login has no WhatsApp Business Account yet. Create one, then connect again.",
+  subscription_required: "This workspace cannot add new numbers, so the new ones were left out.",
   // Also covers our own storage errors, so it does not blame Meta.
   failed: "The connection could not be completed. Try again.",
 };
+
+/** The same refusal on a console with billing on, where there is something to do about it. */
+export const SUBSCRIPTION_REQUIRED_MESSAGE =
+  "Adding a new number needs an active subscription, so the new ones were left out.";
 
 /** Shown when the customer closes Meta's window without finishing. Not an error. */
 export const CONNECT_CANCELLED_MESSAGE =
@@ -56,9 +61,13 @@ export function judgeExchange(result: ConnectExchangeResult): ConnectVerdict {
   return { navigate: true, outcome, skipped: result.warnings?.length ?? 0 };
 }
 
-/** Where a landed exchange goes: the numbers page, flagging skipped accounts. */
-export function returnPathFor(base: string, skipped: number): string {
-  return skipped > 0 ? `${base}?connectSkipped=${skipped}` : base;
+/** Where a landed exchange goes: the numbers page, flagging skipped accounts and refused new numbers. */
+export function returnPathFor(base: string, skipped: number, subscriptionRequired = false): string {
+  const params = [
+    ...(skipped > 0 ? [`connectSkipped=${skipped}`] : []),
+    ...(subscriptionRequired ? ["connectError=subscription_required"] : []),
+  ];
+  return params.length > 0 ? `${base}?${params.join("&")}` : base;
 }
 
 /**

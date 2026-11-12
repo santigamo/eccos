@@ -14,6 +14,10 @@ declare global {
     interface Env {
       META_APP_ID?: string;
       META_ES_CONFIG_ID?: string;
+      /** Eccos Cloud billing; all unset (the default) turns it off. */
+      CREEM_API_KEY?: string;
+      CREEM_WEBHOOK_SECRET?: string;
+      CREEM_PRODUCT_ID?: string;
       GATEWAY: Service<GatewayApi & Rpc.WorkerEntrypointBranded>;
     }
   }

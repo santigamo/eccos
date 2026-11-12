@@ -6,6 +6,10 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
+import { billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
+import { syncSubscription } from "../billing/webhook";
+import { billingEnabled } from "../billing/config";
+import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
 import { connectAudit } from "../lib/connect-result";
@@ -163,6 +167,7 @@ export interface Failure {
 export type Result<T> = { ok: true; data: T } | Failure;
 
 export type { ForbiddenReason, Membership } from "../auth/tenant";
+export type { BillingState } from "../billing/account";
 
 /**
  * Identity-plane access (contract §1/§5): every server function resolves the
@@ -220,8 +225,8 @@ export type DashboardOverviewResult = Result<DashboardOverview>;
 export type DashboardState =
   | { stage: "unassigned" }
   | { stage: "no-organization" }
-  | { stage: "account-ready"; resources: AccountResources }
-  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope };
+  | { stage: "account-ready"; resources: AccountResources; billing?: true }
+  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: true };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1285,11 +1290,14 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // on EVERY page, /numbers included, where the note explaining the state
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
-        if (!state.status) return { stage: "account-ready", resources: state.resources };
+        // Present only while billing is on, so the console knows whether to point at it.
+        const billing = billingEnabled(env) ? { billing: true as const } : {};
+        if (!state.status) return { stage: "account-ready", resources: state.resources, ...billing };
         return {
           stage: "ready",
           status: state.status.data,
           scope: dashboardScope(state.status.scope),
+          ...billing,
         };
       }),
   );
@@ -2166,6 +2174,64 @@ export const setConversationRetention = createServerFn({ method: "POST" })
         return stored;
       }),
   );
+
+function requireBilling(): Billing {
+  const billing = billingFor(env);
+  if (!billing) throw new Error("Billing is not enabled");
+  return billing;
+}
+
+/** The workspace's billing state; null when billing is off. */
+export const getBilling = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<BillingState | null>> =>
+    withGateway(async (gateway) => {
+      if (!billingEnabled(env)) return null;
+      const { accountId } = await adminActorAccount(gateway);
+      return billingState(gateway, accountId);
+    }),
+);
+
+export function validateConfirmCheckoutInput(input: unknown): { subscriptionId: string } {
+  const subscriptionId = inputRecord(input).subscriptionId;
+  if (typeof subscriptionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(subscriptionId)) {
+    throw new Error("subscriptionId is malformed");
+  }
+  return { subscriptionId };
+}
+
+/**
+ * The checkout return: reads the subscription from Creem now instead of waiting
+ * for its webhook. Answers its status, or null when it is not this account's.
+ */
+export const confirmCheckout = createServerFn({ method: "POST" })
+  .validator(validateConfirmCheckoutInput)
+  .handler(
+    ({ data }): Promise<Result<string | null>> =>
+      withGateway(async (gateway) => {
+        const billing = requireBilling();
+        const { accountId } = await adminActorAccount(gateway);
+        return (await syncSubscription(billing, data.subscriptionId, accountId))?.status ?? null;
+      }),
+  );
+
+export const startCheckout = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<{ url: string }>> =>
+    withGateway(async (gateway) => {
+      const billing = requireBilling();
+      const { actor, accountId } = await adminActorAccount(gateway);
+      const successUrl = billingReturnUrl(env.BETTER_AUTH_URL, getRequest().url);
+      return { url: await checkoutUrl(billing, { accountId, email: actor.session.email, successUrl }) };
+    }),
+);
+
+export const openPortal = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<{ url: string }>> =>
+    withGateway(async (gateway) => {
+      const billing = requireBilling();
+      const { accountId } = await adminActorAccount(gateway);
+      return { url: await portalUrl(billing, accountId) };
+    }),
+);
 
 export const getSubscriberConfig = createServerFn({ method: "GET" })
   .validator(validateScopeInput)

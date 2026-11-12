@@ -491,10 +491,38 @@ export type EraseByPhoneResult =
 
 // --- Account resources (account-scoped operator surface) --------------------
 
+/** Whether an account may add numbers. Messaging never depends on it. */
+export type ConnectPolicy = "open" | "closed";
+
 export interface AccountSummary {
   accountId: string;
   name: string;
   createdAt: number;
+  connectPolicy: ConnectPolicy;
+}
+
+/** Billing state of one account. The ids belong to the billing provider; the gateway only stores them. */
+export interface AccountBilling {
+  connectPolicy: ConnectPolicy;
+  customerId: string | null;
+  subscriptionId: string | null;
+}
+
+export interface AccountBillingInput {
+  connectPolicy: ConnectPolicy;
+  /** Omitted keeps the stored id. */
+  customerId?: string;
+  /** Omitted keeps the stored id; null clears it. */
+  subscriptionId?: string | null;
+  /** Write only while the stored subscription id is still this one. */
+  ifSubscriptionId?: string | null;
+}
+
+/** One account with a stored subscription. `billableNumbers` counts phones on active WABAs. */
+export interface BilledAccount {
+  accountId: string;
+  subscriptionId: string;
+  billableNumbers: number;
 }
 
 export interface AccountKeyResource {
@@ -645,6 +673,8 @@ export type ConnectFailureCode =
   | "owned"
   /** The Meta login exposed no WhatsApp Business Account at all. */
   | "no_waba"
+  /** The account may not add numbers; nothing new was registered. */
+  | "subscription_required"
   /** Anything else, including Graph failures during the exchange. */
   | "failed";
 
@@ -686,6 +716,8 @@ export type ConnectExchangeResult =
       status: ProvisioningStatus;
       /** WABAs the token could see but that belong to another account. */
       warnings?: string[];
+      /** Some numbers were new and the account may not add numbers; they were left out. */
+      subscriptionRequired?: true;
     }
   | { ok: false; error: string; code: ConnectFailureCode };
 
@@ -752,6 +784,8 @@ export type ManualConnectFailureCode =
   | "multiple"
   /** The chosen WABA already belongs to a different Eccos account. */
   | "owned"
+  /** The account may not add numbers; nothing new was registered. */
+  | "subscription_required"
   /** Anything else, including Graph failures during discovery or registration. */
   | "failed";
 
@@ -776,6 +810,8 @@ export type ManualConnectResult =
       status: ProvisioningStatus;
       /** WABAs the token could see but that belong to another account. */
       warnings?: string[];
+      /** Some numbers were new and the account may not add numbers; they were left out. */
+      subscriptionRequired?: true;
     }
   | {
       ok: false;
@@ -1308,4 +1344,10 @@ export interface GatewayApi {
    * 30 to 3650 days). Returns the stored value. Only the conversation history
    * follows this setting; the short relay buffer keeps its own windows. */
   setConversationRetention(accountId: string, days: number | null): Promise<number | null>;
+
+  /** Null for an account that does not exist. */
+  getAccountBilling(accountId: string): Promise<AccountBilling | null>;
+  /** Returns the billing state after the call, written or not (`ifSubscriptionId`). */
+  setAccountBilling(accountId: string, billing: AccountBillingInput): Promise<AccountBilling>;
+  listBilledAccounts(): Promise<BilledAccount[]>;
 }

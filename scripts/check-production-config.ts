@@ -41,6 +41,24 @@ if (gateway && dashboard && gateway.vars.META_GRAPH_VERSION !== dashboard.vars.M
   );
 }
 
+// Billing is two switches that only make sense together: Creem on the dashboard and
+// closed-by-default on the gateway. CREEM_API_KEY is a secret this script cannot see,
+// so the dashboard's CREEM_PRODUCT_ID var stands for it.
+if (gateway && dashboard) {
+  const billing = Boolean(dashboard.vars.CREEM_PRODUCT_ID);
+  const closed = gateway.vars.CONNECT_POLICY_DEFAULT === "closed";
+  if (billing !== closed) {
+    errors.push(
+      billing
+        ? "dashboard CREEM_PRODUCT_ID is set but gateway CONNECT_POLICY_DEFAULT is not \"closed\""
+        : "gateway CONNECT_POLICY_DEFAULT is \"closed\" but dashboard CREEM_PRODUCT_ID is not set",
+    );
+  }
+  if (billing && (dashboard.triggers.crons ?? []).length === 0) {
+    errors.push("dashboard billing is on but triggers.crons is empty: the daily reconcile would never run");
+  }
+}
+
 // Durable Object state and media live behind these; template drift must be deliberate.
 if (gateway && gatewayTemplate) {
   for (const key of ["durable_objects", "migrations", "r2_buckets", "ratelimits"] as const) {
