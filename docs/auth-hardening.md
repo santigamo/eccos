@@ -65,16 +65,30 @@ gateway layer and the D1-level `429` behavior tested in
 enrolled, and `session.stepUpAt` is within `STEP_UP_WINDOW_SECONDS` (15
 minutes).
 
-**What counts as fresh.** `stepUpAt` is stamped by `stepUpGuard`
-(`src/auth/step-up-guard.ts`) only when a second-factor verification MINTS the
-session: the code step of a sign-in, or the first code of an enrollment. It is
-never the session's age. Better Auth mints sessions on endpoints that ask for
-the password alone (`change-password` with `revokeOtherSessions`,
-`two-factor/disable`) and on the email-verification link, so a stolen cookie
-plus the password could otherwise renew itself; those sessions carry no stamp
-of their own and never pass. Verifying a code on an existing session stamps
-nothing either, because that path has no attempt limit; only the sign-in path
-counts wrong codes and locks.
+**What counts as fresh.** `stepUpAt` is stamped in exactly two ways, and never
+from the session's age:
+
+- by `stepUpGuard` (`src/auth/step-up-guard.ts`) when a second-factor
+  verification MINTS the session: the code step of a sign-in, or the first code
+  of an enrollment;
+- by the step-up challenge (`confirmStepUp`, `src/auth/step-up-confirm.ts`),
+  which checks an authenticator or backup code against the CURRENT session and
+  stamps that same row. It mints nothing: the cookie, the active organization
+  and the user's other sessions are untouched, and a trusted-device cookie is
+  never consulted.
+
+Better Auth mints sessions on endpoints that ask for the password alone
+(`change-password` with `revokeOtherSessions`, `two-factor/disable`) and on the
+email-verification link, so a stolen cookie plus the password could otherwise
+renew itself; those sessions carry no stamp of their own and never pass.
+
+**Wrong codes.** The challenge counts wrong codes per user in the auth D1's
+`rateLimit` table (key `step-up|<userId>`): 5 inside 15 minutes lock it for
+that user, on every session and from every address, until the window passes. A
+right code clears the count. Better Auth's own `two-factor/verify-totp` and
+`verify-backup-code` count nothing on an existing session, so over HTTP they
+are refused (`USE_STEP_UP`) for an enrolled, signed-in caller; they stay open
+to a sign-in's challenge and to a first enrollment.
 
 **Where it is enforced.**
 
@@ -102,12 +116,23 @@ Export and erasure have no console path: they are reachable only with an
 account API key, so there is nothing for a session step-up to gate. A console
 action for either must add its row to `STEP_UP_ROWS`.
 
+The organization endpoints resolve their target the way Better Auth does: the
+body's `organizationId` or, when it is empty, the session's active one; for
+`cancel-invitation`, the invitation's own. Step-up is skipped only when the
+caller's role is KNOWN to lack the permission there. An organization,
+invitation or membership that cannot be resolved does not skip it.
+
 **What the operator sees.** A refusal is a typed `forbidden` failure with
-reason `totp-required` or `reauth-required`. `withStepUp` (`src/lib/step-up.ts`)
-opens the step-up sheet (`src/components/dashboard/step-up-sheet.tsx`) beside
-the page: enrollment, or the password and then the code, which is a full
-sign-in in place. On success the action runs again. Nothing navigates, so the
-form the operator was filling in is untouched.
+reason `totp-required` or `reauth-required` (`StepUpReason`, defined once in
+`@eccos/auth-baseline/step-up`). `withStepUp` (`src/lib/step-up.ts`) opens the
+step-up sheet (`src/components/dashboard/step-up-sheet.tsx`) beside the page:
+the code, or enrollment for an account with none. On success the action runs
+again. Nothing navigates and no session changes, so the form the operator was
+filling in is untouched, and closing the sheet only declines.
+
+Connecting a number asks ahead of the click (`canStartConnect`, when the fork
+appears): Meta's window only opens on the customer's own click, and a prompt
+in between would spend it. The cards stay disabled until step-up is settled.
 
 ### Session freshness
 

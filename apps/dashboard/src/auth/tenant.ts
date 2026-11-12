@@ -15,6 +15,7 @@ export type { GatewayAction };
 import { UnauthorizedError } from "./session";
 import { getSessionOnce } from "./request-memo";
 import { getMembershipsOnce, roleAllows } from "./identity";
+import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 
 /**
  * Why an authorization check refused, as a code callers can branch on.
@@ -31,8 +32,7 @@ export type ForbiddenReason =
   | "select-organization"
   | "not-a-member"
   | "missing-permission"
-  | "totp-required"
-  | "reauth-required"
+  | StepUpReason
   | "other";
 
 /** Typed error for authenticated-but-forbidden requests (used by route guards

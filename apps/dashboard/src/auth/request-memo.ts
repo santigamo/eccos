@@ -40,6 +40,7 @@ export type SessionResult = {
   };
   session?: {
     id?: string;
+    token?: string;
     activeOrganizationId?: string | null;
     stepUpAt?: Date | string | null;
   };

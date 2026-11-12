@@ -8,6 +8,7 @@
  * age: Better Auth mints sessions on password-only endpoints too.
  */
 
+import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import type { Auth } from "./auth";
 import type { GatewayAction } from "./permissions";
 import { getSessionOnce } from "./request-memo";
@@ -37,8 +38,6 @@ export type Grant = GatewayAction | StepUpRow;
 export function isStepUpRow(grant: Grant): grant is StepUpRow {
   return Object.hasOwn(STEP_UP_ROWS, grant);
 }
-
-export type StepUpReason = "totp-required" | "reauth-required";
 
 interface StepUpSession {
   user?: Record<string, unknown>;

@@ -12,6 +12,11 @@ import { createAuth } from "../src/auth/auth";
 import { CaptureMailSender } from "../src/auth/mail";
 import { requireStepUp, STEP_UP_WINDOW_SECONDS, stepUpRefusal } from "../src/auth/step-up";
 import {
+  confirmStepUp,
+  STEP_UP_ATTEMPT_WINDOW_MS,
+  STEP_UP_MAX_ATTEMPTS,
+} from "../src/auth/step-up-confirm";
+import {
   STEP_UP_ACCOUNT_PATHS,
   STEP_UP_ORGANIZATION_PATHS,
 } from "../src/auth/step-up-guard";
@@ -224,14 +229,37 @@ describe("attack: a stale stolen cookie plus the password", () => {
     expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
   });
 
-  test("cannot step up by verifying codes on the stolen session, which has no attempt limit", async () => {
+  test("cannot use Better Auth's own verify endpoints as an unlimited oracle for codes", async () => {
     const { auth, db, post, cookie, code } = await enrolled();
     goStale(db);
-    // Even the RIGHT code: verifying on an existing session mints nothing and stamps nothing.
-    const verify = await post("/two-factor/verify-totp", { code: await code() }, cookie);
-    expect(verify.status).toBe(200);
-    expect(cookiesOf(verify)).not.toContain("session_token");
+    // Refused even with the RIGHT code: on an existing session those endpoints
+    // count no wrong guesses, so the only way to step up is the limited one.
+    for (const [path, body] of [
+      ["/two-factor/verify-totp", { code: await code() }],
+      ["/two-factor/verify-backup-code", { code: "aaaaa-bbbbb" }],
+    ] as const) {
+      expect([path, ...(await refusal(await post(path, body, cookie)))]).toEqual([path, 403, "USE_STEP_UP"]);
+    }
     expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
+  });
+
+  test("cannot guess the code: five wrong attempts lock step-up for the user, right code included", async () => {
+    const { auth, db, cookie, code } = await enrolled();
+    goStale(db);
+    const attempt = (value: string, now?: number) =>
+      confirmStepUp(auth, new Headers({ cookie }), { code: value }, now);
+
+    for (let i = 0; i < STEP_UP_MAX_ATTEMPTS; i++) {
+      expect(await attempt("000000")).toEqual({ ok: false, code: "invalid" });
+    }
+    expect(await attempt(await code())).toEqual({ ok: false, code: "locked" });
+    expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
+    // The count is per user, not per session or address: a second session is locked too.
+    expect(db.query('SELECT key, count FROM "rateLimit" WHERE key LIKE \'step-up|%\'').all()).toHaveLength(1);
+
+    // Once the window has passed, the right code works again.
+    const later = Date.now() + STEP_UP_ATTEMPT_WINDOW_MS + 1000;
+    expect(await attempt(await code(), later)).toEqual({ ok: true });
   });
 
   test("every guarded account path is a real endpoint", async () => {
@@ -240,6 +268,54 @@ describe("attack: a stale stolen cookie plus the password", () => {
     for (const path of [...STEP_UP_ACCOUNT_PATHS, ...Object.keys(STEP_UP_ORGANIZATION_PATHS)]) {
       expect([path, endpoints.has(path)]).toEqual([path, true]);
     }
+  });
+});
+
+describe("the step-up challenge on the current session", () => {
+  test("a right code stamps this session and changes nothing else about it", async () => {
+    const { auth, db, cookie, code, headers } = await enrolled();
+    const org = (await auth.api.createOrganization({
+      body: { name: "Acme", slug: crypto.randomUUID() },
+      headers: headers(),
+    })) as { id: string };
+    await auth.api.setActiveOrganization({ body: { organizationId: org.id }, headers: headers() });
+    goStale(db);
+    const row = () =>
+      db.query('SELECT id, token, "activeOrganizationId" AS org, "expiresAt" FROM session').all();
+    const before = row();
+    expect(before).toHaveLength(1);
+    expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
+
+    expect(await confirmStepUp(auth, new Headers({ cookie }), { code: await code() })).toEqual({ ok: true });
+
+    // Same row, same token, same active organization; the same cookie now passes.
+    expect(row()).toEqual(before);
+    expect((before[0] as { org: string }).org).toBe(org.id);
+    await requireStepUp(auth, new Headers({ cookie }));
+  });
+
+  test("a backup code steps up too, and is spent", async () => {
+    const ctx = await signedIn();
+    const enable = await ctx.post("/two-factor/enable", { password: PASSWORD }, ctx.cookie);
+    const { totpURI, backupCodes } = (await enable.json()) as { totpURI: string; backupCodes: string[] };
+    const { code } = await ctx.auth.api.generateTOTP({ body: { secret: rawSecret(totpURI) } });
+    const cookie = cookiesOf(await ctx.post("/two-factor/verify-totp", { code }, ctx.cookie));
+    goStale(ctx.db);
+    const spend = () =>
+      confirmStepUp(ctx.auth, new Headers({ cookie }), { code: backupCodes[0]!, backup: true });
+
+    expect(await spend()).toEqual({ ok: true });
+    goStale(ctx.db);
+    expect(await spend()).toEqual({ ok: false, code: "invalid" });
+  });
+
+  test("no session, or an account with no second factor, has nothing to confirm", async () => {
+    const { auth, cookie } = await signedIn();
+    expect(await confirmStepUp(auth, new Headers(), { code: "000000" })).toEqual({ ok: false, code: "signed-out" });
+    expect(await confirmStepUp(auth, new Headers({ cookie }), { code: "000000" })).toEqual({
+      ok: false,
+      code: "invalid",
+    });
   });
 });
 
@@ -315,6 +391,65 @@ describe("Better Auth organization endpoints (invitations, role changes)", () =>
         false,
       ]);
     }
+  });
+
+  test("an empty organizationId falls through to the active one, as Better Auth reads it", async () => {
+    const { auth, db, post, org, cookie, headers } = await withOrganization();
+    await auth.api.setActiveOrganization({ body: { organizationId: org.id }, headers: headers() });
+    enrollTotp(db, EMAIL);
+    goStale(db);
+    const body = { email: "x@corp.test", role: "viewer", organizationId: "" };
+    expect(await refusal(await post("/organization/invite-member", body, cookie))).toEqual([...STALE]);
+    expect(invitations(db)).toEqual({ n: 0 });
+  });
+
+  test("an organization that cannot be resolved does not skip step-up", async () => {
+    const { db, post, cookie } = await withOrganization();
+    enrollTotp(db, EMAIL);
+    goStale(db);
+    db.query('UPDATE session SET "activeOrganizationId" = NULL').run();
+    for (const [path, body] of [
+      ["/organization/invite-member", { email: "x@corp.test", role: "viewer" }],
+      ["/organization/update-member-role", { memberId: "any", role: "admin" }],
+      ["/organization/remove-member", { memberIdOrEmail: "x@corp.test" }],
+      ["/organization/cancel-invitation", { invitationId: "no-such-invitation" }],
+    ] as const) {
+      expect([path, ...(await refusal(await post(path, body, cookie)))]).toEqual([path, ...STALE]);
+    }
+  });
+
+  test("cancelling is judged on the invitation's organization, not the active one", async () => {
+    // The owner of Acme is only a viewer in Globex, and Globex is their active organization.
+    const { auth, db, post, org, invite, cookie, headers } = await withOrganization();
+    enrollTotp(db, EMAIL);
+    const pending = (await (await invite()).json()) as { id: string };
+
+    await post("/sign-up/email", { email: "other@corp.test", password: PASSWORD, name: "Other" });
+    db.query('UPDATE user SET "emailVerified" = 1').run();
+    const other = cookiesOf(await post("/sign-in/email", { email: "other@corp.test", password: PASSWORD }));
+    enrollTotp(db, "other@corp.test");
+    const globex = (await auth.api.createOrganization({
+      body: { name: "Globex", slug: crypto.randomUUID() },
+      headers: new Headers({ cookie: other }),
+    })) as { id: string };
+    const asViewer = (await auth.api.createInvitation({
+      body: { email: EMAIL, role: "viewer", organizationId: globex.id },
+      headers: new Headers({ cookie: other }),
+    })) as { id: string };
+    await auth.api.acceptInvitation({ body: { invitationId: asViewer.id }, headers: headers() });
+    await auth.api.setActiveOrganization({ body: { organizationId: globex.id }, headers: headers() });
+
+    goStale(db);
+    for (const active of [globex.id, null]) {
+      db.query('UPDATE session SET "activeOrganizationId" = ? WHERE token LIKE ?').run(
+        active,
+        `${decodeURIComponent(cookie.split("=")[1]!).split(".")[0]}%`,
+      );
+      const cancel = await post("/organization/cancel-invitation", { invitationId: pending.id }, cookie);
+      expect([active, ...(await refusal(cancel))]).toEqual([active, ...STALE]);
+    }
+    expect(db.query("SELECT status FROM invitation WHERE id = ?").get(pending.id)).toEqual({ status: "pending" });
+    void org;
   });
 
   test("an anonymous call still gets the endpoint's own 401", async () => {

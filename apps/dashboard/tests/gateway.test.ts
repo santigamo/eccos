@@ -234,6 +234,7 @@ const {
   getDashboardOverview,
   getDashboardState,
   getAccountResources,
+  canStartConnect,
   startConnect,
   listDeliveries,
   listInbound,
@@ -2383,6 +2384,13 @@ describe("step-up rows of the capability matrix", () => {
     for (const [name, call] of steppedUp) {
       expect([name, await call()]).toMatchObject([name, { reason: "missing-permission" }]);
     }
+  });
+
+  test("the connect fork can ask ahead of the click, and gets the same refusal", async () => {
+    mutationBinding();
+    expect(await canStartConnect()).toEqual({ ok: true, data: true });
+    fakeStepUpRefusal = "reauth-required";
+    expect(await canStartConnect()).toMatchObject({ ok: false, reason: "reauth-required" });
   });
 
   test("reads never require step-up", async () => {

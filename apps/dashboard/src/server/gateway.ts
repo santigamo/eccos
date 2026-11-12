@@ -1333,6 +1333,15 @@ function connectReturnTo(request: Request): string {
   return new URL(CONNECT_RETURN_PATH, new URL(request.url).origin).href;
 }
 
+/**
+ * Whether the caller may start a connection right now, step-up included. The
+ * fork asks before any card is pressed, because the press itself has to be
+ * what opens Meta's window.
+ */
+export const canStartConnect = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<true>> => withGateway(async () => true as const, "connect"),
+);
+
 export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
