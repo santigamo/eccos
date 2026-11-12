@@ -59,6 +59,7 @@ let loginCallback: LoginCallback | null = null;
 let loginCalls = 0;
 let handoffs = 0;
 let handoffTtlMs = 30 * 60_000;
+let order: string[] = [];
 let exchanges: { code: string; state: string }[] = [];
 
 beforeEach(() => {
@@ -68,6 +69,7 @@ beforeEach(() => {
   loginCalls = 0;
   handoffs = 0;
   handoffTtlMs = 30 * 60_000;
+  order = [];
   exchanges = [];
   stubs = {
     ...real,
@@ -77,6 +79,7 @@ beforeEach(() => {
     }),
     startConnect: async () => {
       handoffs += 1;
+      order.push("start");
       return {
         ok: true,
         data: {
@@ -96,6 +99,7 @@ beforeEach(() => {
     init: () => {},
     login: (cb: LoginCallback) => {
       loginCalls += 1;
+      order.push("login");
       loginCallback = cb;
     },
   };
@@ -230,19 +234,20 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(live(host)).not.toContain("boom");
   });
 
-  test("mounting preloads the handoff and opens nothing", async () => {
+  test("mounting loads nothing from the gateway and starts nothing", async () => {
     await mountChoices();
-    expect(handoffs).toBe(1);
+    expect(handoffs).toBe(0);
     expect(loginCalls).toBe(0);
   });
 
   test("the click calls FB.login in its own task, with nothing left to await", async () => {
     const host = await mountChoices();
-    const before = handoffs;
     // A synchronous act: no microtask or timer may run between click and login.
     act(() => card(host, "A new number").click());
     expect(loginCalls).toBe(1);
-    expect(handoffs).toBe(before);
+    // The handoff is requested only after the window exists, in parallel with it.
+    expect(handoffs).toBe(1);
+    expect(order).toEqual(["login", "start"]);
   });
 
   test("the SDK is invoked before the click handler returns, even if the config is slow later", async () => {
@@ -253,24 +258,59 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(loginCalls).toBe(1);
   });
 
-  test("an unready click shows Open Meta instead of awaiting, and that click logs in synchronously", async () => {
-    stubs.startConnect = async () => ({ ok: false, kind: "unreachable", error: "down" });
-    const host = await mountChoices();
-    stubs.startConnect = real.startConnect === stubs.startConnect ? stubs.startConnect : (async () => ({
+  test("a click before the SDK loaded shows Open Meta for the chosen path, keeps it selected, and that click logs in synchronously", async () => {
+    stubs.getEmbeddedSignupConfig = async () => {
+      throw new Error("offline");
+    };
+    const busy: boolean[] = [];
+    const host = await mount(<ConnectNumberChoices navigate={(path) => navigated.push(path)} onBusyChange={(b) => busy.push(b)} />);
+    stubs.getEmbeddedSignupConfig = real.getEmbeddedSignupConfig === stubs.getEmbeddedSignupConfig ? stubs.getEmbeddedSignupConfig : (async () => ({
       ok: true,
-      data: { state: "state-late", url: "https://gateway.test/connect", expiresAt: Date.now() + 30 * 60_000 },
+      data: { appId: "app", configId: "cfg", graphVersion: "v25.0" },
     }));
     await act(async () => card(host, "A new number").click());
     await settle();
     expect(loginCalls).toBe(0);
-    const open = [...host.querySelectorAll("button")].find((b) => b.textContent === "Open Meta");
+    expect(handoffs).toBe(0);
+    const open = [...host.querySelectorAll("button")].find((b) => b.textContent === "Open Meta for a new number");
     expect(open).toBeDefined();
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(busy.at(-1)).toBe(true);
 
     act(() => open?.click());
     expect(loginCalls).toBe(1);
     await act(async () => loginCallback?.(FINISHED));
     await settle();
-    expect(exchanges).toEqual([{ code: "code-1", state: "state-late" }]);
+    expect(exchanges).toEqual([{ code: "code-1", state: "state-1" }]);
+  });
+
+  test("a click during a mount load that rejects retries instead of reusing the rejection", async () => {
+    let calls = 0;
+    let rejectFirst: (e: Error) => void = () => {};
+    stubs.getEmbeddedSignupConfig = () => {
+      calls += 1;
+      if (calls === 1) return new Promise((_, reject) => {
+          rejectFirst = reject;
+        });
+      return Promise.resolve({ ok: true, data: { appId: "app", configId: "cfg", graphVersion: "v25.0" } });
+    };
+    const host = await mountChoices();
+    await act(async () => card(host, "A new number").click());
+    await act(async () => rejectFirst(new Error("offline")));
+    await settle();
+    expect(live(host)).toBe("");
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Open Meta for a new number")).toBe(true);
+  });
+
+  test("a failed handoff shows its error when Meta's window returns with a code", async () => {
+    const host = await mountChoices();
+    stubs.startConnect = async () => ({ ok: false, kind: "unreachable", error: "down" });
+    act(() => card(host, "A new number").click());
+    await act(async () => loginCallback?.(FINISHED));
+    await settle();
+    expect(exchanges).toEqual([]);
+    expect(live(host)).toBe("down");
+    expect(card(host, "A new number").disabled).toBe(false);
   });
 
   test("a window the browser refused is blocked at once, with the host and a way out", async () => {
@@ -288,12 +328,17 @@ describe("ConnectNumberChoices in a real DOM", () => {
       expect(live(host)).toContain(window.location.host);
       expect(live(host)).not.toContain("Start again");
       expect(card(host, "A new number").disabled).toBe(false);
+      // Nothing was requested from the gateway for a window that never opened.
+      expect(handoffs).toBe(0);
+      // A late callback from the refused attempt is not a cancel.
+      await act(async () => loginCallback?.({ authResponse: null }));
+      expect(live(host)).toContain("blocked");
     } finally {
       window.open = original;
     }
   });
 
-  test("a window that did open is never flagged, however long it takes", async () => {
+  test("a window that did open is never called blocked, however long it takes", async () => {
     const original = window.open;
     window.open = (() => ({ closed: false })) as unknown as typeof window.open;
     (window as unknown as { FB: { login: unknown } }).FB.login = (cb: LoginCallback) => {
@@ -305,7 +350,9 @@ describe("ConnectNumberChoices in a real DOM", () => {
       const host = await mountChoices(20);
       act(() => card(host, "A new number").click());
       await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 60))));
-      expect(live(host)).toBe("");
+      expect(live(host)).toContain("may be behind this one");
+      expect(live(host)).not.toContain("blocked");
+      expect(live(host)).toContain("Start again");
     } finally {
       window.open = original;
     }
@@ -355,54 +402,25 @@ describe("ConnectNumberChoices in a real DOM", () => {
 
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
-  test("a retry after a cancel logs in with the handoff prepared in the background", async () => {
+  test("a retry after a cancel logs in again and exchanges with its own handoff", async () => {
     const host = await mountChoices();
     await runFlow(host, { authResponse: null });
-    expect(handoffs).toBe(2);
+    expect(handoffs).toBe(1);
 
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(handoffs).toBe(2);
+    act(() => card(host, "A new number").click());
     expect(loginCalls).toBe(2);
     await act(async () => loginCallback?.(FINISHED));
     await settle();
+    expect(handoffs).toBe(2);
     expect(exchanges).toEqual([{ code: "code-1", state: "state-2" }]);
   });
 
-  test("a prepared handoff with too little life left is not reused", async () => {
-    const host = await mountChoices();
-    handoffTtlMs = 10 * 60_000;
-    await runFlow(host, { authResponse: null });
-    expect(handoffs).toBe(2);
-
-    handoffTtlMs = 30 * 60_000;
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    // Not usable, so the click waits and asks for a fresh one instead of opening.
-    expect(handoffs).toBe(3);
-    expect(loginCalls).toBe(1);
-    const open = [...host.querySelectorAll("button")].find((b) => b.textContent === "Open Meta");
-    await act(async () => open?.click());
-    await settle();
-    expect(loginCalls).toBe(2);
-    await act(async () => loginCallback?.(FINISHED));
-    await settle();
-    expect(exchanges).toEqual([{ code: "code-1", state: "state-3" }]);
-  });
-
-  test("a failure code also prepares the next attempt", async () => {
-    stubs.exchangeConnectCode = async () => ({ ok: true, data: { ok: false, code: "failed", error: "x" } });
-    const host = await mountChoices();
-    await runFlow(host, FINISHED);
-    expect(handoffs).toBe(2);
-  });
-
-  test("an unobserved window that is slow gets a slow note, not a blocked verdict, and Start again", async () => {
+  test("an unobserved window that is slow gets the behind-this-window note, not a blocked verdict, and Start again", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("taking longer");
+    expect(live(host)).toContain("behind this one");
     expect(live(host)).not.toContain("blocked");
     expect(live(host)).toContain("Start again");
     // Message only: the cards stay disabled until the customer resets.
@@ -410,12 +428,12 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(navigated).toEqual([]);
   });
 
-  test("a slow note followed by a completed callback still exchanges and navigates", async () => {
+  test("a behind-this-window note followed by a completed callback still exchanges and navigates", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("taking longer");
+    expect(live(host)).toContain("behind this one");
 
     await act(async () => loginCallback?.(FINISHED));
     await settle();
@@ -510,7 +528,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(navigated).toEqual(["/numbers"]);
   });
 
-  test("a code arriving clears the slow note", async () => {
+  test("a code arriving clears the behind-this-window note", async () => {
     let release: (value: unknown) => void = () => {};
     stubs.exchangeConnectCode = () =>
       new Promise((resolve) => {
@@ -520,7 +538,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("taking longer");
+    expect(live(host)).toContain("behind this one");
 
     await act(async () => loginCallback?.(FINISHED));
     expect(live(host)).toBe("");
@@ -573,22 +591,13 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(card(host, "A new number").disabled).toBe(true);
   });
 
-  test("the watchdog prepares the next attempt", async () => {
-    const host = await mountChoices(20);
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(handoffs).toBe(1);
-    await wait(60);
-    expect(handoffs).toBe(2);
-  });
-
   test("a visibilitychange while the page is still visible does not stop the watchdog", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
     document.dispatchEvent(new Event("visibilitychange"));
     await wait(60);
-    expect(live(host)).toContain("taking longer");
+    expect(live(host)).toContain("behind this one");
   });
 
   test("a remounted panel cannot exchange a second code while the first is in flight", async () => {

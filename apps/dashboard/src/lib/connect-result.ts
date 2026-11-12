@@ -33,11 +33,11 @@ export function popupBlockedMessage(host: string): string {
 }
 
 /**
- * Nothing confirmed the window yet, and nothing says it was refused. This is
- * NOT a blocked verdict: a slow window and a blocked one look the same from here.
+ * The window opened (or we could not see it) but nothing has taken focus. This
+ * is never a blocked verdict: a window behind this one looks the same.
  */
-export function popupSlowMessage(host: string): string {
-  return `Meta's window is taking longer than usual to open. Give it a few seconds. If it never shows, allow pop-ups for ${host} (look for the pop-up icon in the address bar), then start again.`;
+export function popupBehindMessage(host: string): string {
+  return `Meta's window should be open and may be behind this one. If you cannot find it, allow pop-ups for ${host} (look for the pop-up icon in the address bar), then start again.`;
 }
 
 /** What the connect view does with an Embedded Signup exchange. */
@@ -106,17 +106,9 @@ export function secondsBucket(ms: number): string {
   return "10m+";
 }
 
-/** A handoff is reused only if its state still has this long to live. */
-export const HANDOFF_MIN_REMAINING_MS = 25 * 60_000;
-
-export function handoffUsable(expiresAt: number, now: number): boolean {
-  return expiresAt - now >= HANDOFF_MIN_REMAINING_MS;
-}
-
 /**
- * Fallback for when `captureWindowOpen` could not see the window. Calls `onSlow`
- * unless this window is left within `ms`: Meta's popup takes focus (`blur`), or
- * opens as a tab and hides this page. It only says "slow", never "blocked".
+ * Calls `onSlow` unless this window is left within `ms`: Meta's popup takes
+ * focus (`blur`), or opens as a tab and hides this page. It never says "blocked".
  */
 export function watchPopup(onSlow: () => void, ms: number): () => void {
   const opened = () => {

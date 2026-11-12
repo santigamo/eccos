@@ -3,10 +3,9 @@ import type { ConnectExchangeResult } from "@eccos/gateway-contract";
 import {
   CONNECT_CANCELLED_MESSAGE,
   connectAudit,
-  handoffUsable,
   judgeExchange,
   popupBlockedMessage,
-  popupSlowMessage,
+  popupBehindMessage,
   returnPathFor,
   secondsBucket,
   watchPopup,
@@ -69,7 +68,7 @@ describe("judgeExchange", () => {
   });
 
   test("copy has no em dashes and never blames Meta for our own errors", () => {
-    for (const m of [CONNECT_CANCELLED_MESSAGE, popupBlockedMessage("app.eccos.chat"), popupSlowMessage("app.eccos.chat")]) {
+    for (const m of [CONNECT_CANCELLED_MESSAGE, popupBlockedMessage("app.eccos.chat"), popupBehindMessage("app.eccos.chat")]) {
       expect(m).not.toContain("—");
     }
     const failed = judgeExchange({ ok: false, error: "x", code: "failed" });
@@ -94,24 +93,14 @@ describe("connectAudit", () => {
   });
 });
 
-describe("handoffUsable", () => {
-  test("needs at least 25 minutes of life left", () => {
-    const now = 1_000_000;
-    expect(handoffUsable(now + 30 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000 - 1, now)).toBe(false);
-    expect(handoffUsable(now - 1, now)).toBe(false);
-  });
-});
-
 describe("popup copy", () => {
   test("the blocked message names the host and the way out", () => {
     const m = popupBlockedMessage("app.eccos.chat");
     expect(m).toContain("app.eccos.chat");
     expect(m).toContain("allow pop-ups");
   });
-  test("the slow message does not claim a block", () => {
-    expect(popupSlowMessage("app.eccos.chat")).not.toContain("blocked");
+  test("the behind-this-window message does not claim a block", () => {
+    expect(popupBehindMessage("app.eccos.chat")).not.toContain("blocked");
   });
 });
 
