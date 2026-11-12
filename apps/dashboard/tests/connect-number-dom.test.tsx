@@ -17,6 +17,7 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const gateway = await import("../src/server/gateway");
 const real = {
+  canStartConnect: gateway.canStartConnect as () => Promise<unknown>,
   getEmbeddedSignupConfig: gateway.getEmbeddedSignupConfig as () => Promise<unknown>,
   startConnect: gateway.startConnect as () => Promise<unknown>,
   exchangeConnectCode: gateway.exchangeConnectCode as (input: unknown) => Promise<unknown>,
@@ -27,6 +28,7 @@ const real = {
 let stubs = { ...real };
 mock.module("../src/server/gateway", () => ({
   ...gateway,
+  canStartConnect: () => stubs.canStartConnect(),
   getEmbeddedSignupConfig: () => stubs.getEmbeddedSignupConfig(),
   startConnect: () => stubs.startConnect(),
   exchangeConnectCode: (input: unknown) => stubs.exchangeConnectCode(input),
@@ -71,6 +73,7 @@ beforeEach(() => {
   exchanges = [];
   stubs = {
     ...real,
+    canStartConnect: async () => ({ ok: true, data: true }),
     getEmbeddedSignupConfig: async () => ({
       ok: true,
       data: { appId: "app", configId: "cfg", graphVersion: "v25.0" },
@@ -147,6 +150,45 @@ async function runFlow(host: HTMLElement, response: Parameters<LoginCallback>[0]
 }
 
 const FINISHED = { authResponse: { code: "code-1" } };
+
+describe("step-up before Meta's window", () => {
+  const owed = { ok: false, kind: "forbidden", reason: "reauth-required", error: "x" };
+
+  test("owed step-up is settled before any card can be pressed, so the press opens the window", async () => {
+    stubs.canStartConnect = async () => owed;
+    const { registerStepUpPrompt, settleStepUp } = await import("../src/lib/step-up");
+    const asked: (string | null)[] = [];
+    const unregister = registerStepUpPrompt((reason) => void asked.push(reason));
+    const host = await mountChoices();
+
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("needs your two-factor code first");
+    expect(loginCalls).toBe(0);
+
+    await act(async () => card(host, "Confirm it's you").click());
+    expect(asked).toEqual(["reauth-required"]);
+    await act(async () => settleStepUp(true));
+    await settle();
+    expect(card(host, "A new number").disabled).toBe(false);
+    expect(loginCalls).toBe(0);
+
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(1);
+    unregister();
+  });
+
+  test("step-up that lapsed by the time of the click asks again instead of opening anything", async () => {
+    stubs.startConnect = async () => owed;
+    const host = await mountChoices();
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(0);
+    expect(navigated).toEqual([]);
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("Confirm it's you");
+  });
+});
 
 describe("ConnectNumberChoices in a real DOM", () => {
   test("the live region is mounted empty and gets filled", async () => {

@@ -12,7 +12,7 @@ import type { Failure } from "../src/server/gateway";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { registerStepUpPrompt, withStepUp } = await import("../src/lib/step-up");
+const { promptStepUp, registerStepUpPrompt, settleStepUp, withStepUp } = await import("../src/lib/step-up");
 const { BackupCodes, TwoFactorPanel } = await import("../src/components/dashboard/two-factor");
 const { QrCode } = await import("../src/components/dashboard/qr-code");
 const { SettingsView } = await import("../src/routes/settings");
@@ -38,22 +38,29 @@ describe("withStepUp", () => {
     };
   }
 
-  test("a refusal is put to the operator, and the call runs again once they confirm", async () => {
-    const asked: string[] = [];
-    unregister = registerStepUpPrompt(async (reason) => {
-      asked.push(reason);
-      return true;
+  /** A mounted prompt that answers `answer` as soon as it is shown. */
+  function prompt(answer: boolean) {
+    const shown: string[] = [];
+    unregister = registerStepUpPrompt((reason) => {
+      if (!reason) return;
+      shown.push(reason);
+      queueMicrotask(() => settleStepUp(answer));
     });
+    return shown;
+  }
+
+  test("a refusal is put to the operator, and the call runs again once they confirm", async () => {
+    const shown = prompt(true);
     for (const reason of ["totp-required", "reauth-required"] as const) {
       const action = sensitive(reason);
       expect(await withStepUp(action.call)).toEqual({ ok: true, data: "done" });
       expect(action.calls()).toBe(2);
     }
-    expect(asked).toEqual(["totp-required", "reauth-required"]);
+    expect(shown).toEqual(["totp-required", "reauth-required"]);
   });
 
   test("a declined prompt hands back the refusal and does not retry", async () => {
-    unregister = registerStepUpPrompt(async () => false);
+    prompt(false);
     const action = sensitive("reauth-required");
     expect(await withStepUp(action.call)).toEqual(refusal("reauth-required"));
     expect(action.calls()).toBe(1);
@@ -65,23 +72,39 @@ describe("withStepUp", () => {
   });
 
   test("success and every other failure pass straight through, unasked", async () => {
-    let asked = false;
-    unregister = registerStepUpPrompt(async () => {
-      asked = true;
-      return true;
-    });
+    const shown = prompt(true);
     const denied = refusal("missing-permission");
     expect(await withStepUp(async () => denied)).toBe(denied);
     expect(await withStepUp(async () => ({ ok: true as const, data: 1 }))).toEqual({ ok: true, data: 1 });
-    expect(asked).toBe(false);
+    expect(shown).toEqual([]);
   });
 
   test("a result that only carries a reason code is followed too (inviteMember)", async () => {
-    unregister = registerStepUpPrompt(async () => true);
+    prompt(true);
     let calls = 0;
     const invite = async () =>
       ++calls === 1 ? { ok: false as const, error: "x", reason: "reauth-required" } : { ok: true as const };
     expect(await withStepUp(invite)).toEqual({ ok: true });
+  });
+
+  test("a second prompt declines the first instead of leaving it waiting", async () => {
+    unregister = registerStepUpPrompt(() => {});
+    const first = promptStepUp("reauth-required");
+    const second = promptStepUp("totp-required");
+    expect(await first).toBe(false);
+    settleStepUp(true);
+    expect(await second).toBe(true);
+  });
+
+  test("a prompt still waiting when the sheet unmounts is declined, not lost", async () => {
+    const shown: (string | null)[] = [];
+    const leave = registerStepUpPrompt((reason) => void shown.push(reason));
+    const waiting = promptStepUp("reauth-required");
+    leave();
+    expect(await waiting).toBe(false);
+    // Closed on the way out, and nothing is asked of a sheet that is gone.
+    expect(shown.at(-1)).toBeNull();
+    expect(await promptStepUp("reauth-required")).toBe(false);
   });
 });
 

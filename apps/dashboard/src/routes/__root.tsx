@@ -228,7 +228,7 @@ function RootComponent() {
         // signed in, so they must be able to see who they are and sign out.
         <>
           <AppShell />
-          {state.user ? <StepUpSheet email={state.user.email} /> : null}
+          <StepUpSheet />
         </>
       ) : (
         // Unauthenticated (or gateway-unreachable) root load: bare outlet so

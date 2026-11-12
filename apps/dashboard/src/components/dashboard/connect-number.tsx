@@ -9,6 +9,7 @@ import {
   FrameTitle,
 } from "../reui/frame";
 import {
+  canStartConnect,
   CONNECT_RETURN_PATH,
   exchangeConnectCode,
   getEmbeddedSignupConfig,
@@ -23,7 +24,9 @@ import {
 } from "../../lib/embedded-signup";
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
-import { withStepUp } from "../../lib/step-up";
+import { Button } from "../ui/button";
+import { promptStepUp, stepUpReason } from "../../lib/step-up";
+import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import {
   CONNECT_CANCELLED_MESSAGE,
   CONNECT_POPUP_BLOCKED_MESSAGE,
@@ -95,6 +98,17 @@ export function resetConnectGuards(): void {
   guards.exchanging = false;
   guards.left = false;
 }
+
+const STEP_UP_NOTICE: Record<StepUpReason, { text: string; action: string }> = {
+  "totp-required": {
+    text: "Connecting a number needs two-factor authentication on your account.",
+    action: "Set it up",
+  },
+  "reauth-required": {
+    text: "Connecting a number needs your two-factor code first.",
+    action: "Confirm it's you",
+  },
+};
 
 type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
@@ -176,6 +190,21 @@ export function ConnectNumberChoices({
     tone: "error" | "notice" | "blocked";
   } | null>(null);
   const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
+  /**
+   * The step-up still owed before a connection may start. Asked for when the
+   * fork appears and settled before any card is pressed: Meta's window only
+   * opens on the customer's own click, and a prompt in between would spend it.
+   */
+  const [stepUp, setStepUp] = useState<StepUpReason | null>(null);
+  useEffect(() => {
+    let current = true;
+    void canStartConnect()
+      .then((res) => current && setStepUp(stepUpReason(res)))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, []);
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
   const attempt = useRef(0);
@@ -316,11 +345,16 @@ export function ConnectNumberChoices({
       const cached = loaded.current;
       const [config, handoff] = await Promise.all([
         cached ? cached.config : getEmbeddedSignupConfig(),
-        // Step-up is settled here, before Meta's window: the code it returns
-        // is single-use, so the exchange after it asks for nothing more.
-        withStepUp(takeHandoff),
+        takeHandoff(),
       ]);
       if (!handoff.ok) {
+        // Lapsed since the fork appeared. Confirming takes longer than a click
+        // stays a click, so the customer confirms and then chooses again.
+        const lapsed = stepUpReason(handoff);
+        if (lapsed) {
+          setStepUp(lapsed);
+          return;
+        }
         setError(failureCopy(handoff).detail);
         return;
       }
@@ -412,6 +446,20 @@ export function ConnectNumberChoices({
         ) : null}
       </output>
 
+      {stepUp ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground">
+          <span>{STEP_UP_NOTICE[stepUp].text}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void promptStepUp(stepUp).then((ok) => ok && setStepUp(null))}
+          >
+            {STEP_UP_NOTICE[stepUp].action}
+          </Button>
+        </div>
+      ) : null}
+
       {/* Each choice IS the action: there is nothing to configure between
             picking and launching, and a confirm step here would only add a
             click before Meta's own multi-screen flow, which is where backing
@@ -426,7 +474,7 @@ export function ConnectNumberChoices({
               <button
                 type="button"
                 onClick={() => start(path)}
-                disabled={starting !== null}
+                disabled={starting !== null || stepUp !== null}
                 className={cn(
                   // INTERACTIVE anatomy, not structural. These rested on
                   // `--line` (7%, "structural hairlines") with no fill, which

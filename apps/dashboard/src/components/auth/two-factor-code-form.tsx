@@ -1,19 +1,24 @@
 import { useState, type FormEvent } from "react";
 
-import { authClient } from "@/auth/auth-client";
 import { AUTH_ERROR_BANNER_CLASS } from "@/components/auth/auth-page";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { twoFactorErrorMessage } from "@/lib/two-factor";
 import { MACHINE_CLASS } from "@/ui";
 import { ArrowRightIcon } from "lucide-react";
 
 /**
- * The second step of a sign-in: the authenticator code, or a backup code.
- * Shared by the sign-in page and the step-up sheet.
+ * The authenticator code, or a backup code. `verify` says what the code is
+ * checked against (a sign-in's challenge, or the current session for step-up)
+ * and returns the message to show, or null when it passed.
  */
-export function TwoFactorCodeForm({ onVerified }: { onVerified: () => void }) {
+export function TwoFactorCodeForm({
+  verify,
+  onVerified,
+}: {
+  verify: (code: string, backup: boolean) => Promise<string | null>;
+  onVerified: () => void;
+}) {
   const [code, setCode] = useState("");
   const [backup, setBackup] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,20 +28,10 @@ export function TwoFactorCodeForm({ onVerified }: { onVerified: () => void }) {
     event.preventDefault();
     setPending(true);
     setError(null);
-    const body = { code: code.trim() };
-    const result = await (
-      backup ? authClient.twoFactor.verifyBackupCode(body) : authClient.twoFactor.verifyTotp(body)
-    ).catch(() => null);
+    const refusal = await verify(code.trim(), backup);
     setPending(false);
-    if (!result) {
-      setError("Could not verify the code right now. Please try again.");
-      return;
-    }
-    if (result.error) {
-      setError(twoFactorErrorMessage(result.error.code));
-      return;
-    }
-    onVerified();
+    if (refusal) setError(refusal);
+    else onVerified();
   }
 
   return (

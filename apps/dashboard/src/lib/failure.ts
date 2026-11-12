@@ -92,7 +92,7 @@ function forbiddenCopy(failure: Failure): FailureCopy {
       return {
         title: "Confirm it's you",
         detail:
-          "This action needs your password and two-factor code again. Try it once more and confirm when asked.",
+          "This action needs your two-factor code again. Try it once more and confirm when asked.",
       };
     default:
       // A refusal with no reason code of its own: report it as the refusal it
