@@ -15,11 +15,12 @@
  * but the exposure is real and is written down in docs/threat-model.md.
  *
  * The blast radius is kept as small as it can be without a CSP: the script is
- * loaded **lazily**, only when an operator actually clicks Connect, and only on
- * the one page that needs it — never as part of the base bundle, and never on a
- * page that renders message content or keys. If it fails to load for any reason
- * (blocked, offline, an extension), the caller falls back to the server-side
- * redirect, which needs no third-party script at all.
+ * loaded only on the one page that needs it, when the connect fork mounts (so
+ * the click can call `FB.login` synchronously and keep its user activation) —
+ * never as part of the base bundle, and never on a page that renders message
+ * content or keys. If it fails to load for any reason (blocked, offline, an
+ * extension), the caller falls back to the server-side redirect, which needs no
+ * third-party script at all.
  */
 
 /** The sliver of the SDK surface this console uses. */
@@ -52,58 +53,102 @@ const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 const SDK_LOAD_TIMEOUT_MS = 8_000;
 
 let loading: Promise<FacebookSdk> | null = null;
+let initialised = false;
+/** Which load is current, so a late failure of an old one cannot null a newer one. */
+let loads = 0;
 
 /**
  * Load and initialise the SDK once per page, resolving with the initialised
  * global. Rejects when the script cannot load or does not initialise in time —
  * the caller is expected to fall back rather than to surface an error, because
- * a working alternative path exists.
+ * a working alternative path exists. A failed or timed-out tag is removed and
+ * its handlers detached, so a retry is a clean reload.
  */
 export function loadFacebookSdk(appId: string, graphVersion: string): Promise<FacebookSdk> {
   if (typeof window === "undefined") {
     return Promise.reject(new Error("the Facebook SDK needs a browser"));
   }
-  if (window.FB) return Promise.resolve(window.FB);
+  // `autoLogAppEvents` is Meta's documented default for this flow; `xfbml`
+  // parses their social plugins, of which this page renders none, but the
+  // sample sets it and deviating buys nothing.
+  const init = (sdk: FacebookSdk) => {
+    if (!initialised) sdk.init({ appId, autoLogAppEvents: true, xfbml: true, version: graphVersion });
+    initialised = true;
+    return sdk;
+  };
+  // Also covers a script that finished after an earlier call gave up.
+  if (window.FB) return Promise.resolve(init(window.FB));
   if (loading) return loading;
 
-  loading = new Promise<FacebookSdk>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      loading = null;
-      reject(new Error("the Facebook SDK did not load"));
-    }, SDK_LOAD_TIMEOUT_MS);
-
+  const mine = ++loads;
+  const pending = new Promise<FacebookSdk>((resolve, reject) => {
+    let done = false;
+    const script =
+      document.querySelector<HTMLScriptElement>(`script[src="${SDK_SRC}"]`) ?? document.createElement("script");
+    const detach = () => {
+      done = true;
+      clearTimeout(timer);
+      script.removeEventListener("load", settle);
+      script.removeEventListener("error", onError);
+    };
+    const fail = (message: string) => {
+      if (done) return;
+      detach();
+      script.remove();
+      if (loads === mine) loading = null;
+      reject(new Error(message));
+    };
     const settle = () => {
       const sdk = window.FB;
-      if (!sdk) return;
-      clearTimeout(timer);
-      // `autoLogAppEvents` is Meta's documented default for this flow; `xfbml`
-      // parses their social plugins, of which this page renders none, but the
-      // sample sets it and deviating buys nothing.
-      sdk.init({ appId, autoLogAppEvents: true, xfbml: true, version: graphVersion });
-      resolve(sdk);
+      if (done || !sdk) return;
+      detach();
+      resolve(init(sdk));
     };
+    const onError = () => fail("the Facebook SDK could not be loaded");
+    const timer = setTimeout(() => fail("the Facebook SDK did not load"), SDK_LOAD_TIMEOUT_MS);
 
-    // The SDK calls `fbAsyncInit` when it is ready; the `onload` handler covers
+    // The SDK calls `fbAsyncInit` when it is ready; the `load` handler covers
     // the case where it was already present and the callback never fires.
     window.fbAsyncInit = settle;
-    const existing = document.querySelector<HTMLScriptElement>(`script[src="${SDK_SRC}"]`);
-    if (existing) {
-      existing.addEventListener("load", settle, { once: true });
-      if (window.FB) settle();
-      return;
+    script.addEventListener("load", settle);
+    script.addEventListener("error", onError);
+    if (!script.isConnected) {
+      script.src = SDK_SRC;
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = "anonymous";
+      document.head.appendChild(script);
     }
-    const script = document.createElement("script");
-    script.src = SDK_SRC;
-    script.async = true;
-    script.defer = true;
-    script.crossOrigin = "anonymous";
-    script.addEventListener("load", settle, { once: true });
-    script.addEventListener("error", () => {
-      clearTimeout(timer);
-      loading = null;
-      reject(new Error("the Facebook SDK could not be loaded"));
-    });
-    document.head.appendChild(script);
   });
-  return loading;
+  loading = pending;
+  return pending;
+}
+
+/**
+ * Run `fn` (the `FB.login` call) and report what `window.open` did inside it:
+ * a Window when the popup opened, `null` when the browser refused it, and
+ * `undefined` when the SDK did not open a window synchronously at all.
+ *
+ * `FB.login` does not return its window and never calls back when the browser
+ * blocks it, so this is the only reliable blocked-versus-opening signal. It
+ * works because the popup must be spawned in the click's own task anyway.
+ */
+export function captureWindowOpen(
+  fn: () => void,
+  /** Called as soon as `window.open` returns, before the SDK sees the result. */
+  onOpen?: (opened: Window | null) => void,
+): Window | null | undefined {
+  const original = window.open;
+  let result: Window | null | undefined;
+  window.open = ((...args: Parameters<typeof window.open>) => {
+    result = original.apply(window, args);
+    onOpen?.(result);
+    return result;
+  }) as typeof window.open;
+  try {
+    fn();
+  } finally {
+    window.open = original;
+  }
+  return result;
 }

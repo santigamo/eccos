@@ -23,9 +23,29 @@ export const SUBSCRIPTION_REQUIRED_MESSAGE =
 export const CONNECT_CANCELLED_MESSAGE =
   "The Meta window was closed before a number was connected. Nothing changed. Start again when you are ready.";
 
-/** Meta's SDK never calls back when the browser blocks its popup. */
-export const CONNECT_POPUP_BLOCKED_MESSAGE =
-  "Meta's window did not open. Allow pop-ups for this site, then start again.";
+/**
+ * The browser refused Meta's window: `window.open` returned null. Chrome's
+ * address bar shows a blocked-pop-up icon at that moment; the way out is to
+ * allow pop-ups for this exact host, then click again.
+ */
+export function popupBlockedMessage(host: string): string {
+  return `Your browser blocked Meta's window. Click the blocked pop-up icon at the right of the address bar (or open the lock icon, then Site settings), allow pop-ups for ${host}, then click again.`;
+}
+
+/**
+ * Shown when nothing took focus after Meta's window should have opened. It says
+ * only what to check: a window behind this one and a blocked one look the same,
+ * and `window.open` is not always observable.
+ */
+export function popupHintMessage(host: string): string {
+  return `If you do not see Meta's window, it may be behind this one or blocked. Allow pop-ups for ${host} (look for the pop-up icon in the address bar), then start again.`;
+}
+
+/** Shown when Meta's window returns a code but the handoff behind it never existed. */
+export const CONNECT_NOT_PREPARED = "The connection could not be prepared. Close Meta's window and start again.";
+
+/** Appended when the handoff fails while Meta's window is already open. */
+export const CONNECT_CLOSE_AND_RETRY = "Close Meta's window and try again.";
 
 /** What the connect view does with an Embedded Signup exchange. */
 export type ConnectVerdict =
@@ -83,18 +103,32 @@ export function connectAudit(result: ConnectExchangeResult): {
   return { outcome: "failed", detail: result.ok ? verdict.outcome : result.error };
 }
 
-/** A handoff is reused only if its state still has this long to live. */
-export const HANDOFF_MIN_REMAINING_MS = 25 * 60_000;
-
-export function handoffUsable(expiresAt: number, now: number): boolean {
-  return expiresAt - now >= HANDOFF_MIN_REMAINING_MS;
+/** Rounded so the timing says "how long" without being a fingerprint. */
+export function secondsBucket(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 10) return "<10s";
+  if (s < 30) return "<30s";
+  if (s < 120) return "<2m";
+  if (s < 600) return "<10m";
+  return "10m+";
 }
 
 /**
- * Calls `onBlocked` unless this window is left within `ms`: Meta's popup takes
- * focus (`blur`), or opens as a tab and hides this page.
+ * For a window we hold: after `ms`, calls `onBehind` if it is still open and
+ * this page still has focus, which means it opened behind this one.
  */
-export function watchPopup(onBlocked: () => void, ms: number): () => void {
+export function watchWindow(popup: Pick<Window, "closed">, onBehind: () => void, ms: number): () => void {
+  const timer = setTimeout(() => {
+    if (!popup.closed && document.hasFocus()) onBehind();
+  }, ms);
+  return () => clearTimeout(timer);
+}
+
+/**
+ * For a window we cannot see: calls `onSlow` unless this window is left within `ms`: Meta's popup takes
+ * focus (`blur`), or opens as a tab and hides this page. It never says "blocked".
+ */
+export function watchPopup(onSlow: () => void, ms: number): () => void {
   const opened = () => {
     if (document.visibilityState === "hidden") stop();
   };
@@ -105,7 +139,7 @@ export function watchPopup(onBlocked: () => void, ms: number): () => void {
   };
   const timer = setTimeout(() => {
     stop();
-    onBlocked();
+    onSlow();
   }, ms);
   window.addEventListener("blur", stop);
   document.addEventListener("visibilitychange", opened);

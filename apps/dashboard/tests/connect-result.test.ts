@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import type { ConnectExchangeResult } from "@eccos/gateway-contract";
 import {
   CONNECT_CANCELLED_MESSAGE,
-  CONNECT_POPUP_BLOCKED_MESSAGE,
   connectAudit,
-  handoffUsable,
   judgeExchange,
+  popupBlockedMessage,
+  popupHintMessage,
   returnPathFor,
+  secondsBucket,
+  watchPopup,
 } from "../src/lib/connect-result";
 
 const phone = { waba_id: "100", phone_number_id: "200", display_phone_number: "+1 555 0100" };
@@ -66,7 +68,7 @@ describe("judgeExchange", () => {
   });
 
   test("copy has no em dashes and never blames Meta for our own errors", () => {
-    for (const m of [CONNECT_CANCELLED_MESSAGE, CONNECT_POPUP_BLOCKED_MESSAGE]) {
+    for (const m of [CONNECT_CANCELLED_MESSAGE, popupBlockedMessage("app.eccos.chat"), popupHintMessage("app.eccos.chat")]) {
       expect(m).not.toContain("—");
     }
     const failed = judgeExchange({ ok: false, error: "x", code: "failed" });
@@ -91,12 +93,24 @@ describe("connectAudit", () => {
   });
 });
 
-describe("handoffUsable", () => {
-  test("needs at least 25 minutes of life left", () => {
-    const now = 1_000_000;
-    expect(handoffUsable(now + 30 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000 - 1, now)).toBe(false);
-    expect(handoffUsable(now - 1, now)).toBe(false);
+describe("popup copy", () => {
+  test("the blocked message names the host and the way out", () => {
+    const m = popupBlockedMessage("app.eccos.chat");
+    expect(m).toContain("app.eccos.chat");
+    expect(m).toContain("allow pop-ups");
+  });
+  test("the hint claims neither a block nor an open window", () => {
+    expect(popupHintMessage("app.eccos.chat")).toContain("If you do not see");
+    expect(popupHintMessage("app.eccos.chat")).toContain("app.eccos.chat");
+  });
+});
+
+describe("secondsBucket", () => {
+  test("rounds to coarse buckets", () => {
+    expect(secondsBucket(3_000)).toBe("<10s");
+    expect(secondsBucket(20_000)).toBe("<30s");
+    expect(secondsBucket(114_000)).toBe("<2m");
+    expect(secondsBucket(4 * 60_000)).toBe("<10m");
+    expect(secondsBucket(3_600_000)).toBe("10m+");
   });
 });

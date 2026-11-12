@@ -405,7 +405,7 @@ with no console still connects a number with an API key and a browser, exactly a
 > Client OAuth toggles are all **Yes**, including **Login with the JavaScript SDK**.
 
 > **Third-party script.** `https://connect.facebook.net/en_US/sdk.js` is the first and only
-> third-party script in the console. It is loaded lazily, on click, on the Numbers page alone — but
+> third-party script in the console. It is loaded when the connect screen mounts (so the click can open Meta's window at once), on the Numbers page alone — but
 > there is no Content-Security-Policy in this repository to constrain it. See
 > [docs/threat-model.md](./threat-model.md).
 
