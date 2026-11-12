@@ -63,7 +63,7 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
-  const [keys, retention, gatewayOrigin] = Route.useLoaderData();
+  const [keys, retention, gatewayOrigin, billing] = Route.useLoaderData();
   const router = useRouter();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -101,6 +101,8 @@ function SettingsPage() {
       wabaId={wabaId}
       gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
       twoFactorEnabled={scope.user?.twoFactorEnabled}
+      billing={billing.ok ? billing.data : null}
+      billingReturned={returned}
       onKeysChanged={() => void invalidatePage(router)}
     />
   );
@@ -117,6 +119,8 @@ export function SettingsView({
   wabaId,
   gatewayOrigin,
   twoFactorEnabled,
+  billing,
+  billingReturned,
   onKeysChanged,
 }: {
   accountId?: string;
@@ -125,6 +129,9 @@ export function SettingsView({
   wabaId?: string;
   gatewayOrigin?: string | null;
   twoFactorEnabled?: boolean;
+  /** Null while billing is off, and for a role that may not administer it. */
+  billing?: BillingState | null;
+  billingReturned?: CheckoutReturn | null;
   onKeysChanged?: () => void;
 }) {
   return (
