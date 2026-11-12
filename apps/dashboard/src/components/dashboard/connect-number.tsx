@@ -12,6 +12,7 @@ import {
 import {
   CONNECT_RETURN_PATH,
   exchangeConnectCode,
+  getConnectReadiness,
   getEmbeddedSignupConfig,
   recordConnectSessionEvent,
   startConnect,
@@ -26,10 +27,10 @@ import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
 import {
   CONNECT_CANCELLED_MESSAGE,
+  CONNECT_CLOSE_AND_RETRY,
   judgeExchange,
   popupBlockedMessage,
-  popupBehindMessage,
-  popupUnknownMessage,
+  popupHintMessage,
   returnPathFor,
   secondsBucket,
   watchPopup,
@@ -92,10 +93,27 @@ const CONNECT_PATHS: ReadonlyArray<{
  */
 const guards = { exchanging: false, left: false };
 
+/** The config does not change within a page session: fetched once, and a failure is not kept. */
+let configRequest: Promise<EsConfig> | null = null;
+function loadConfig(): Promise<EsConfig> {
+  configRequest ??= getEmbeddedSignupConfig().then(
+    (config) => {
+      if (!config.ok) configRequest = null;
+      return config;
+    },
+    (err) => {
+      configRequest = null;
+      throw err;
+    },
+  );
+  return configRequest;
+}
+
 /** Test seam: module state must not leak between tests. */
 export function resetConnectGuards(): void {
   guards.exchanging = false;
   guards.left = false;
+  configRequest = null;
 }
 
 type Handoff = Awaited<ReturnType<typeof startConnect>>;
@@ -213,8 +231,10 @@ export function ConnectNumberChoices({
    */
   const prepared = useRef<Prepared | null>(null);
   const preparing = useRef<Promise<Prepared> | null>(null);
-  /** What Meta posted during the current attempt, so an abandonment says where, or that nothing came. */
-  const session = useRef<Session>({ count: 0, openedAt: 0 });
+  /** Each attempt's session, keyed by the window it opened, so a message counts for the attempt that posted it. */
+  const sessions = useRef(new WeakMap<object, Session>());
+  /** Why Connect cannot start at all, found on mount. */
+  const [unavailable, setUnavailable] = useState<string | null>(null);
 
   /**
    * Session logging (Meta's `message` listener).
@@ -230,9 +250,12 @@ export function ConnectNumberChoices({
       const parsed = parseSessionEvent(event.origin, event.data);
       if (!parsed) return;
       // Every message is recorded: the session id must never be lost. Only the
-      // step shown for the current attempt is a guess about which attempt it is.
-      session.current.count += 1;
-      if (parsed.currentStep) session.current.step = parsed.currentStep;
+      // abandonment summary needs to know which attempt's window posted it.
+      const mine = event.source ? sessions.current.get(event.source) : undefined;
+      if (mine) {
+        mine.count += 1;
+        if (parsed.currentStep) mine.step = parsed.currentStep;
+      }
       trackSessionEvent(parsed);
       // Telemetry must never break the flow the operator is in the middle of.
       void recordConnectSessionEvent({ data: parsed }).catch(() => {});
@@ -265,7 +288,7 @@ export function ConnectNumberChoices({
     if (prepared.current?.sdk) return Promise.resolve(prepared.current);
     if (preparing.current) return preparing.current;
     const run = (async () => {
-      const config = await getEmbeddedSignupConfig();
+      const config = await loadConfig();
       const sdk =
         config.ok && config.data
           ? await loadFacebookSdk(config.data.appId, config.data.graphVersion).catch(() => null)
@@ -283,7 +306,19 @@ export function ConnectNumberChoices({
   useEffect(() => {
     // Best effort: a failure here is retried, and shown, by the click.
     prepare().catch(() => {});
-  }, [prepare]);
+    // Creates no state and writes no audit. A transient failure is left to the
+    // click; only a definite "cannot connect" disables the cards.
+    getConnectReadiness().then(
+      (res) => {
+        const reason = res.ok ? (res.data.ready ? null : res.data.reason) : res.kind === "unreachable" ? null : failureCopy(res).detail;
+        if (reason) {
+          setUnavailable(reason);
+          setError(reason);
+        }
+      },
+      () => {},
+    );
+  }, [prepare, setError]);
 
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(
@@ -346,31 +381,34 @@ export function ConnectNumberChoices({
    */
   function launch(path: ConnectPath, ready: Ready) {
     const mine = beginAttempt(path);
+    const isCurrent = () => attempt.current === mine;
     const mySession: Session = { count: 0, openedAt: Date.now() };
-    session.current = mySession;
-    let handoff: Promise<Handoff> | null = null;
-    // Set before `sdk.login` so a callback for a refused window is ignored.
+    // Set inside `window.open`, before the SDK sees its result, so a callback
+    // for a refused window (even a synchronous one) is ignored.
     let refused = false;
+    let started: Promise<Handoff | null> = Promise.resolve(null);
+    // The handoff fails while Meta's window is open: say so now, not after the
+    // customer has been through the whole flow.
+    const fail = (text: string) => {
+      if (!isCurrent()) return;
+      attempt.current += 1;
+      stopWatch.current?.();
+      setFeedback({ text: `${text} ${CONNECT_CLOSE_AND_RETRY}`, tone: "error" });
+      setStarting(null);
+    };
     const onLogin = (response: { authResponse?: { code?: string } | null }) => {
       if (guards.left || refused) return;
-      const current = attempt.current === mine;
-      if (current) stopWatch.current?.();
+      if (isCurrent()) stopWatch.current?.();
       const code = response.authResponse?.code;
       if (code) {
-        if (current) setFeedback((now) => (now?.tone === "slow" ? null : now));
+        if (isCurrent()) setFeedback((now) => (now?.tone === "slow" ? null : now));
         void (async () => {
           try {
-            const started = await (handoff ?? startConnect());
-            if (!started.ok) {
-              if (current) setError(failureCopy(started).detail);
-              return;
-            }
-            await finish(code, started.data.state);
-          } catch (err) {
-            if (followSignIn(err)) return;
-            if (current) setError(err instanceof Error ? err.message : String(err));
+            const handoff = await started;
+            // Null: it failed, and `fail` already said so.
+            if (handoff?.ok) await finish(code, handoff.data.state);
           } finally {
-            if (attempt.current === mine) setStarting(null);
+            if (isCurrent()) setStarting(null);
           }
         })();
         return;
@@ -386,39 +424,51 @@ export function ConnectNumberChoices({
           data: { event: "POPUP_CLOSED", ...(step ? { currentStep: step } : {}) },
         }).catch(() => {});
       }, abandonDelayMs);
-      if (!current) return;
+      if (!isCurrent()) return;
       track("connect_outcome", { result: "cancelled" });
       setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
       setStarting(null);
     };
     let popup: Window | null | undefined;
     try {
-      popup = captureWindowOpen(() => ready.sdk.login(onLogin, loginOptions(ready.configId, path)));
+      popup = captureWindowOpen(
+        () => ready.sdk.login(onLogin, loginOptions(ready.configId, path)),
+        (opened) => {
+          refused = opened === null;
+        },
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStarting(null);
       return;
     }
-    if (popup === null) {
+    if (refused) {
       // The browser refused the window: definitive, and nothing was opened.
-      refused = true;
       track("connect_outcome", { result: "popup_blocked" });
       setFeedback({ text: popupBlockedMessage(window.location.host), tone: "blocked" });
       setStarting(null);
       return;
     }
     // `undefined` means `window.open` was not observable: a window may exist.
-    if (popup) track("es_popup_open");
-    handoff = startConnect();
-    handoff.catch(() => {});
+    if (popup) {
+      sessions.current.set(popup, mySession);
+      track("es_popup_open");
+    }
+    started = startConnect().then(
+      (handoff) => {
+        if (handoff.ok) return handoff;
+        fail(failureCopy(handoff).detail);
+        return null;
+      },
+      (err) => {
+        if (!followSignIn(err)) fail(err instanceof Error ? err.message : String(err));
+        return null;
+      },
+    );
     // A window that took no focus looks like nothing happening.
     stopWatch.current = watchPopup(() => {
       track("connect_outcome", { result: "popup_slow" });
-      const host = window.location.host;
-      setFeedback({
-        text: popup ? popupBehindMessage(host) : popupUnknownMessage(host),
-        tone: "slow",
-      });
+      setFeedback({ text: popupHintMessage(window.location.host), tone: "slow" });
     }, popupWatchdogMs);
   }
 
@@ -459,7 +509,9 @@ export function ConnectNumberChoices({
       // A finished load that failed is not repeated for the redirect, which
       // needs no SDK. The Business app path has no fallback, so it reloads.
       const loaded = prepared.current;
-      const { config, sdk } = loaded && (loaded.sdk || path === "new-number") ? loaded : await prepare();
+      // An SDK that finished loading after a failed attempt is used as it is.
+      const { config, sdk } =
+        loaded && (loaded.sdk || (path === "new-number" && !window.FB)) ? loaded : await prepare();
       if (attempt.current !== mine) return;
       // No SDK configured, or it would not load (blocked, offline, an
       // extension). The redirect still serves `new-number`; it CANNOT serve
@@ -546,7 +598,7 @@ export function ConnectNumberChoices({
               <button
                 type="button"
                 onClick={() => start(path)}
-                disabled={locked}
+                disabled={locked || unavailable !== null}
                 className={cn(
                   // INTERACTIVE anatomy, not structural. These rested on
                   // `--line` (7%, "structural hairlines") with no fill, which

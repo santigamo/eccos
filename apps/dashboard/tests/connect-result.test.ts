@@ -5,7 +5,7 @@ import {
   connectAudit,
   judgeExchange,
   popupBlockedMessage,
-  popupBehindMessage,
+  popupHintMessage,
   returnPathFor,
   secondsBucket,
   watchPopup,
@@ -68,7 +68,7 @@ describe("judgeExchange", () => {
   });
 
   test("copy has no em dashes and never blames Meta for our own errors", () => {
-    for (const m of [CONNECT_CANCELLED_MESSAGE, popupBlockedMessage("app.eccos.chat"), popupBehindMessage("app.eccos.chat")]) {
+    for (const m of [CONNECT_CANCELLED_MESSAGE, popupBlockedMessage("app.eccos.chat"), popupHintMessage("app.eccos.chat")]) {
       expect(m).not.toContain("—");
     }
     const failed = judgeExchange({ ok: false, error: "x", code: "failed" });
@@ -99,8 +99,9 @@ describe("popup copy", () => {
     expect(m).toContain("app.eccos.chat");
     expect(m).toContain("allow pop-ups");
   });
-  test("the behind-this-window message does not claim a block", () => {
-    expect(popupBehindMessage("app.eccos.chat")).not.toContain("blocked");
+  test("the hint claims neither a block nor an open window", () => {
+    expect(popupHintMessage("app.eccos.chat")).toContain("If you do not see");
+    expect(popupHintMessage("app.eccos.chat")).toContain("app.eccos.chat");
   });
 });
 

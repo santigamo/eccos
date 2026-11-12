@@ -33,20 +33,16 @@ export function popupBlockedMessage(host: string): string {
 }
 
 /**
- * The window opened (or we could not see it) but nothing has taken focus. This
- * is never a blocked verdict: a window behind this one looks the same.
+ * Shown when nothing took focus after Meta's window should have opened. It says
+ * only what to check: a window behind this one and a blocked one look the same,
+ * and `window.open` is not always observable.
  */
-export function popupBehindMessage(host: string): string {
-  return `Meta's window should be open and may be behind this one. If you cannot find it, allow pop-ups for ${host} (look for the pop-up icon in the address bar), then start again.`;
-}
-
-/**
- * `window.open` could not be observed, so nothing is known: not blocked, not
- * open. Says only what to check.
- */
-export function popupUnknownMessage(host: string): string {
+export function popupHintMessage(host: string): string {
   return `If you do not see Meta's window, it may be behind this one or blocked. Allow pop-ups for ${host} (look for the pop-up icon in the address bar), then start again.`;
 }
+
+/** Appended when the handoff fails while Meta's window is already open. */
+export const CONNECT_CLOSE_AND_RETRY = "Close Meta's window and try again.";
 
 /** What the connect view does with an Embedded Signup exchange. */
 export type ConnectVerdict =

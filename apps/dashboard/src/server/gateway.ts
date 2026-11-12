@@ -1400,6 +1400,27 @@ export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler
 );
 
 /**
+ * Whether Connect can start, checked without creating a state or writing an
+ * audit event: the caller may administer, the gateway answers, it has a public
+ * address for Meta's redirect, and the organization's account (if it has one
+ * yet) is active. `startConnect` fails on the same conditions, but only after
+ * the customer has been through Meta's window.
+ */
+export const getConnectReadiness = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<{ ready: true } | { ready: false; reason: string }>> =>
+    withGateway(async (gateway, organizationId) => {
+      if (!(await gateway.getPublicOrigin())) {
+        return { ready: false as const, reason: "Connecting is not set up on this gateway yet: it has no public address. Ask whoever runs it." };
+      }
+      const link = organizationId ? await gateway.getOrganizationAccountLink(organizationId) : null;
+      if (link && link.status !== "active") {
+        return { ready: false as const, reason: "This workspace's account is not active, so numbers cannot be connected." };
+      }
+      return { ready: true as const };
+    }, "administer"),
+);
+
+/**
  * Resolve the caller's Eccos account for an `administer` action (Embedded
  * Signup, token attach, API keys), creating the link if this is the
  * organization's first one. Shared so those actions cannot drift on who is
