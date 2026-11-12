@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/cloudflare";
 import { policyForStatus } from "./plan";
 import type { Billing } from "./context";
 
-/** Daily: each subscription is priced for the numbers its account has, and the policy re-derived. */
+/** Daily: each active subscription is priced for the numbers its account has, and every policy re-derived. */
 export async function reconcileBilling({
   creem,
   gateway,
@@ -13,7 +13,8 @@ export async function reconcileBilling({
     try {
       const subscription = await creem.subscription(account.subscriptionId);
       const connectPolicy = policyForStatus(subscription.status);
-      if (connectPolicy === "open") await creem.setNumbers(subscription, account.billableNumbers);
+      // Creem refuses every change to a subscription that is not active, a trial included.
+      if (subscription.status === "active") await creem.setNumbers(subscription, account.billableNumbers);
       await gateway.setAccountBilling(account.accountId, { connectPolicy });
     } catch (error) {
       Sentry.captureException(error);

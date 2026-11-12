@@ -8,6 +8,7 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 const { SettingsView } = await import("../src/routes/settings");
 const { NumbersView } = await import("../src/routes/numbers");
 const { billingStatusLabel, checkoutReturnNote } = await import("../src/components/dashboard/billing-panel");
+const { normalizeConnectError } = await import("../src/components/dashboard/connect-outcome");
 const { validateConfirmCheckoutInput } = await import("../src/server/gateway");
 
 const closed = { connectPolicy: "closed" as const, numbers: 2, monthlyEuros: 8, hasCustomer: false, status: null };
@@ -93,11 +94,22 @@ describe("billing on", () => {
     expect(renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} />)).not.toContain("trial has started");
   });
 
-  test("Numbers shows the banner and disables adding while closed", () => {
+  test("Numbers warns while closed and never blocks connecting", () => {
+    // A closed workspace must still be able to reconnect a number it already has.
     const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} />);
-    expect(html).toContain("Adding a number needs an active subscription");
+    expect(html).toContain("Adding a new number needs an active subscription");
     expect(html).toContain('href="/settings"');
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>\+ Add number/);
+    expect(html).toContain("+ Add number");
+    expect(html).not.toMatch(/<button[^>]*\sdisabled=/);
+  });
+
+  test("a refused new number says why and links to billing", () => {
+    const html = renderToStaticMarkup(
+      <NumbersView resources={resources("closed")} connectError="subscription_required" />,
+    );
+    expect(html).toContain("Adding a number needs an active subscription");
+    expect(html).toContain("Open billing</a>");
+    expect(normalizeConnectError("subscription_required")).toBe("subscription_required");
   });
 
   test("the checkout return only accepts an id-shaped subscription", () => {

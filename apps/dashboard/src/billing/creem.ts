@@ -15,7 +15,7 @@ export interface Creem {
   checkoutUrl(input: { accountId: string; email: string; numbers: number; successUrl: string }): Promise<string>;
   portalUrl(customerId: string): Promise<string>;
   subscription(id: string): Promise<Subscription>;
-  /** Moves the subscription to the price of `numbers`. False when it already was there. */
+  /** Moves the subscription to the price of `numbers`. False when nothing changed. */
   setNumbers(subscription: Subscription, numbers: number): Promise<boolean>;
 }
 
@@ -51,7 +51,9 @@ export function creemClient(config: BillingConfig, fetcher: typeof fetch = fetch
       headers: { "x-api-key": config.apiKey, "content-type": "application/json" },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    if (!response.ok) throw new Error(`Creem ${method} ${path.split("?")[0]} answered ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`Creem ${method} ${path.split("?")[0]} answered ${response.status}: ${await response.text()}`);
+    }
     return (await response.json()) as Json;
   }
 
@@ -76,10 +78,16 @@ export function creemClient(config: BillingConfig, fetcher: typeof fetch = fetch
     async setNumbers(subscription, numbers) {
       const units = unitsFor(numbers);
       if (units === subscription.units) return false;
-      await call("POST", `/v1/subscriptions/${encodeURIComponent(subscription.id)}`, {
-        items: [{ id: subscription.itemId, units }],
-        update_behavior: units > subscription.units ? "proration-charge" : "proration-none",
-      });
+      try {
+        await call("POST", `/v1/subscriptions/${encodeURIComponent(subscription.id)}`, {
+          items: [{ id: subscription.itemId, units }],
+          update_behavior: units > subscription.units ? "proration-charge" : "proration-none",
+        });
+      } catch (error) {
+        // It stopped being active since it was read; the next run prices it.
+        if (String(error).includes("subscription_not_active")) return false;
+        throw error;
+      }
       return true;
     },
   };

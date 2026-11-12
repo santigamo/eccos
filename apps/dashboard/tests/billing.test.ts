@@ -180,6 +180,13 @@ describe("creem client", () => {
     expect(calls[0]?.url).toBe("https://test-api.creem.io/v1/subscriptions/sub_1");
   });
 
+  test("a subscription that is not active any more is left for the next run", async () => {
+    const fetcher = (async () =>
+      new Response(JSON.stringify({ code: "subscription_not_active" }), { status: 400 })) as unknown as typeof fetch;
+    const creem = creemClient(config as NonNullable<typeof config>, fetcher);
+    expect(await creem.setNumbers(subscription({ units: 5 }), 6)).toBe(false);
+  });
+
   test("a refusal from Creem throws", async () => {
     const fetcher = (async () => new Response("no", { status: 401 })) as unknown as typeof fetch;
     await expect(creemClient(config as NonNullable<typeof config>, fetcher).subscription("sub_1")).rejects.toThrow("401");
@@ -251,22 +258,26 @@ describe("billing webhook", () => {
 });
 
 describe("billing reconcile", () => {
-  test("prices each live subscription for its numbers and re-derives every policy", async () => {
+  test("prices each active subscription for its numbers and re-derives every policy", async () => {
     const { creem, updates } = fakeCreem([
       subscription({ id: "sub_a", status: "active" }),
       subscription({ id: "sub_b", status: "past_due" }),
+      subscription({ id: "sub_trial", status: "trialing" }),
     ]);
     const { gateway, stored } = fakeGateway(
       {
         acc_a: { connectPolicy: "open", customerId: "c", subscriptionId: "sub_a" },
         acc_b: { connectPolicy: "open", customerId: "c", subscriptionId: "sub_b" },
+        acc_trial: { connectPolicy: "closed", customerId: "c", subscriptionId: "sub_trial" },
         acc_gone: { connectPolicy: "open", customerId: "c", subscriptionId: "sub_missing" },
         acc_free: { connectPolicy: "open", customerId: null, subscriptionId: null },
       },
-      { acc_a: 7, acc_b: 3 },
+      { acc_a: 7, acc_b: 3, acc_trial: 4 },
     );
     await reconcileBilling({ creem, gateway });
+    // Creem refuses changes to a trial, so it is never asked; its policy still follows its status.
     expect(updates).toEqual([{ id: "sub_a", numbers: 7 }]);
+    expect(stored.acc_trial?.connectPolicy).toBe("open");
     expect(stored.acc_a?.connectPolicy).toBe("open");
     expect(stored.acc_b?.connectPolicy).toBe("closed");
     // Creem failing for one account neither stops the run nor changes that account.

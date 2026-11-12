@@ -78,6 +78,14 @@ export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeS
       aria-live="polite"
     >
       {detail}
+      {connectError === "subscription_required" ? (
+        <>
+          {" "}
+          <a href="/settings" className="underline underline-offset-2">
+            Open billing
+          </a>
+        </>
+      ) : null}
     </output>
   );
 }

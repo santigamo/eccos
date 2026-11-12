@@ -88,11 +88,8 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
-            {resources?.account?.connectPolicy === "closed" ? (
-              <SubscriptionNotice />
-            ) : (
-              <ConnectNumberPanel heading="Meta Embedded Signup" />
-            )}
+            {resources?.account?.connectPolicy === "closed" ? <SubscriptionNotice /> : null}
+            <ConnectNumberPanel heading="Meta Embedded Signup" />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -168,7 +165,7 @@ export function NumbersView({
     <Page
       title="Numbers"
       kicker="Connection"
-      actions={<AddNumberButton expanded={adding} onToggle={setAdding} disabled={closed} />}
+      actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
     >
       {outcome}
       {closed ? <SubscriptionNotice /> : null}
@@ -278,17 +275,13 @@ function AddNumberDialog({
 export function AddNumberButton({
   expanded,
   onToggle,
-  disabled,
 }: {
   expanded: boolean;
   onToggle: (expanded: boolean) => void;
-  /** The workspace may not add numbers (`SubscriptionNotice` says why). */
-  disabled?: boolean;
 }) {
   return (
     <Button
       type="button"
-      disabled={disabled}
       aria-haspopup="dialog"
       aria-expanded={expanded}
       onClick={() => onToggle(true)}
