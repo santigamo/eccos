@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import { authClient } from "../../auth/auth-client";
 import { totpSecret, twoFactorErrorMessage } from "../../lib/two-factor";
+import { ERROR_CLASS, MACHINE_CLASS } from "../../ui";
 import { PasswordField } from "../auth/password-field";
 import { QrCode } from "./qr-code";
 import {
@@ -10,13 +11,8 @@ import {
   FramePanel,
   FrameTitle,
 } from "@/components/reui/frame";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
-
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
-const ERROR_CLASS =
-  "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs";
 
 interface Setup {
   totpURI: string;
@@ -24,58 +20,70 @@ interface Setup {
 }
 
 /**
- * Two-factor authentication (TOTP) for the signed-in user.
- *
- * Sensitive actions require it (contract §4/§8). `returnTo` is the page a
- * refused action came from: the panel says so and goes back there when done.
+ * Two-factor authentication (TOTP) for the signed-in user, on Settings.
  * Every control is a ghost: the page's one primary is Create key.
  */
-export function TwoFactorPanel({ enabled, returnTo }: { enabled: boolean; returnTo?: string }) {
-  const [setup, setSetup] = useState<Setup | null>(null);
-  const [verified, setVerified] = useState(false);
-
+export function TwoFactorPanel({ enabled }: { enabled: boolean }) {
   return (
     <Frame variant="default" spacing="lg">
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-sm font-semibold">Two-factor authentication</FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            {returnTo && !enabled && !verified
-              ? "The action you started needs two-factor authentication. Set it up here and you will go back to where you were."
-              : "A code from an authenticator app at sign-in. Connecting numbers, API keys and webhook settings require it."}
+            A code from an authenticator app at sign-in. Connecting numbers, API keys and
+            webhook settings require it.
           </FrameDescription>
         </FrameHeader>
-        {verified && setup ? (
-          <BackupCodes codes={setup.backupCodes} doneHref={returnTo ?? "/settings"} />
-        ) : enabled ? (
-          <Enabled returnTo={returnTo} />
-        ) : setup ? (
-          <VerifyStep totpURI={setup.totpURI} onVerified={() => setVerified(true)} />
-        ) : (
-          <StartStep onStarted={setSetup} />
-        )}
+        <div className="mt-5">
+          {enabled ? (
+            <>
+              <span className={`block ${MACHINE_CLASS}`}>On</span>
+              <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
+                Sign-ins to this account ask for a code from your authenticator app.
+              </p>
+            </>
+          ) : (
+            // A full load: enrolling re-issued the session, so the loaders re-run.
+            <TwoFactorSetup onDone={() => window.location.assign("/settings")} />
+          )}
+        </div>
       </FramePanel>
     </Frame>
   );
 }
 
-function Enabled({ returnTo }: { returnTo?: string }) {
-  return (
-    <div className="mt-5">
-      <span className={`block ${MACHINE_CLASS}`}>On</span>
-      <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
-        Sign-ins to this account ask for a code from your authenticator app.
-      </p>
-      {returnTo ? (
-        <a href={returnTo} className={cn("mt-3", buttonVariants({ variant: "outline" }))}>
-          Back to where you were
-        </a>
-      ) : null}
-    </div>
-  );
+/**
+ * Enrollment: password, then the QR code and the first code, then the backup
+ * codes. `onEnrolled` fires once the codes are on screen and cannot be shown
+ * again; `onDone` when the operator has dealt with them.
+ */
+export function TwoFactorSetup({
+  onEnrolled,
+  onDone,
+}: {
+  onEnrolled?: () => void;
+  onDone: () => void;
+}) {
+  const [setup, setSetup] = useState<Setup | null>(null);
+  const [verified, setVerified] = useState(false);
+  if (!setup) return <StartStep onStarted={setSetup} />;
+  if (!verified) {
+    return (
+      <VerifyStep
+        totpURI={setup.totpURI}
+        onVerified={() => {
+          setVerified(true);
+          onEnrolled?.();
+        }}
+      />
+    );
+  }
+  return <BackupCodes codes={setup.backupCodes} onDone={onDone} />;
 }
 
 function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
+  // Not fixed ids: the panel and the step-up sheet can be mounted together.
+  const id = useId();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,15 +107,15 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
   }
 
   return (
-    <form onSubmit={onSubmit} aria-busy={busy} className="mt-5 flex max-w-sm flex-col gap-3">
+    <form onSubmit={onSubmit} aria-busy={busy} className="flex max-w-sm flex-col gap-3">
       <PasswordField
-        id="two-factor-password"
+        id={`${id}-password`}
         label="Your password"
         value={password}
         onChange={setPassword}
         autoComplete="current-password"
         hasError={Boolean(error)}
-        errorId={error ? "two-factor-error" : undefined}
+        errorId={error ? `${id}-error` : undefined}
       />
       <div>
         <Button type="submit" variant="outline" disabled={busy || !password}>
@@ -115,7 +123,7 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
         </Button>
       </div>
       {error ? (
-        <output id="two-factor-error" aria-live="polite" className={ERROR_CLASS}>
+        <output id={`${id}-error`} aria-live="polite" className={ERROR_CLASS}>
           {error}
         </output>
       ) : null}
@@ -124,6 +132,7 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
 }
 
 function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () => void }) {
+  const id = useId();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,7 +155,7 @@ function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () =
   }
 
   return (
-    <div className="mt-5 flex flex-wrap items-start gap-5">
+    <div className="flex flex-wrap items-start gap-5">
       <QrCode value={totpURI} label="QR code for your authenticator app" />
       <form onSubmit={onSubmit} aria-busy={busy} className="flex min-w-0 max-w-sm flex-1 flex-col gap-3">
         <p className="m-0 text-sm text-pretty text-muted-foreground">
@@ -154,11 +163,11 @@ function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () =
         </p>
         <code className="font-mono text-xs break-all text-foreground">{totpSecret(totpURI)}</code>
         <div>
-          <label htmlFor="two-factor-code" className={`mb-1 block ${MACHINE_CLASS}`}>
+          <label htmlFor={id} className={`mb-1 block ${MACHINE_CLASS}`}>
             6-digit code
           </label>
           <Input
-            id="two-factor-code"
+            id={id}
             autoComplete="one-time-code"
             inputMode="numeric"
             value={code}
@@ -181,11 +190,13 @@ function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () =
   );
 }
 
+type CopyState = "idle" | "copied" | "failed";
+
 /** Shown once, after the first code verifies. Exported for direct rendering in tests. */
-export function BackupCodes({ codes, doneHref }: { codes: string[]; doneHref: string }) {
-  const [copied, setCopied] = useState(false);
+export function BackupCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+  const [copy, setCopy] = useState<CopyState>("idle");
   return (
-    <div className="mt-5 border border-(--line-strong) bg-(--ghost-fill) p-3">
+    <div className="border border-(--line-strong) bg-(--ghost-fill) p-3">
       <span className={`block ${MACHINE_CLASS}`}>Backup codes</span>
       <ul className="mt-2 mb-0 grid list-none grid-cols-2 gap-x-6 gap-y-1 p-0 font-mono text-xs text-foreground">
         {codes.map((code) => (
@@ -202,16 +213,23 @@ export function BackupCodes({ codes, doneHref }: { codes: string[]; doneHref: st
           variant="outline"
           size="sm"
           onClick={() =>
-            void navigator.clipboard.writeText(codes.join("\n")).then(() => setCopied(true))
+            void navigator.clipboard.writeText(codes.join("\n")).then(
+              () => setCopy("copied"),
+              () => setCopy("failed"),
+            )
           }
         >
-          {copied ? "Copied" : "Copy"}
+          {copy === "copied" ? "Copied" : "Copy"}
         </Button>
-        {/* A full navigation: enrolling re-issued the session, so the loaders re-run. */}
-        <a href={doneHref} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-          {doneHref === "/settings" ? "Done" : "Continue"}
-        </a>
+        <Button type="button" variant="outline" size="sm" onClick={onDone}>
+          Done
+        </Button>
       </div>
+      <output aria-live="polite" className={copy === "failed" ? ERROR_CLASS : undefined}>
+        {copy === "failed"
+          ? "The browser refused to copy. Select the codes above and copy them by hand."
+          : null}
+      </output>
     </div>
   );
 }

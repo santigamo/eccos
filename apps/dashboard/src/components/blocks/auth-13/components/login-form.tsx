@@ -29,7 +29,6 @@ export type FormSubmitEvent = Parameters<FormSubmitHandler>[0];
  */
 export function LoginForm({
   onSubmit,
-  notice = null,
   error,
   pending,
   email,
@@ -40,7 +39,6 @@ export function LoginForm({
   onFieldClear,
 }: {
   onSubmit: (event: FormSubmitEvent) => void;
-  notice?: string | null;
   error: string | null;
   pending: boolean;
   email: string;
@@ -72,12 +70,6 @@ export function LoginForm({
           </p>
         </div>
       </div>
-
-      {notice ? (
-        <p className="border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground">
-          {notice}
-        </p>
-      ) : null}
 
       {/* Form */}
       <form className="flex flex-col gap-5" onSubmit={onSubmit} noValidate>

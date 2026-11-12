@@ -1,23 +1,22 @@
 /**
- * The operator's side of step-up (eccos-eyel): a refused sensitive action
- * leads to enrollment or a fresh sign-in and back, never to a dead end.
+ * The operator's side of step-up (eccos-eyel): a refused sensitive action is
+ * resolved in place and retried, never a dead end and never a lost form.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
-import { safeRedirectTarget } from "../src/auth/redirect-target";
 import { failureCopy } from "../src/lib/failure";
 import { totpSecret, twoFactorErrorMessage } from "../src/lib/two-factor";
 import type { Failure } from "../src/server/gateway";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { followStepUp, stepUpHref } = await import("../src/lib/step-up");
+const { registerStepUpPrompt, withStepUp } = await import("../src/lib/step-up");
 const { BackupCodes, TwoFactorPanel } = await import("../src/components/dashboard/two-factor");
 const { QrCode } = await import("../src/components/dashboard/qr-code");
 const { SettingsView } = await import("../src/routes/settings");
-const { LoginForm } = await import("../src/components/blocks/auth-13/components/login-form");
+const { TwoFactorForm } = await import("../src/components/blocks/auth-13/components/two-factor-form");
 
 const refusal = (reason: Failure["reason"]): Failure => ({
   ok: false,
@@ -26,71 +25,63 @@ const refusal = (reason: Failure["reason"]): Failure => ({
   error: "server words",
 });
 
-/** Every page that hosts a step-up action. */
-const ORIGINS = ["/settings", "/numbers", "/numbers/attach-token", "/webhooks?wabaId=100"];
+describe("withStepUp", () => {
+  let unregister = () => {};
+  afterEach(() => unregister());
 
-describe("stepUpHref", () => {
-  test("enrollment and re-authentication each carry the way back", () => {
-    expect(stepUpHref("totp-required", "/numbers")).toBe("/settings?redirect=%2Fnumbers");
-    expect(stepUpHref("reauth-required", "/webhooks?wabaId=100")).toBe(
-      "/signin?reauth=true&redirect=%2Fwebhooks%3FwabaId%3D100",
-    );
-  });
-
-  test("the way back survives the destination's own redirect validation", () => {
-    for (const origin of ORIGINS) {
-      for (const reason of ["totp-required", "reauth-required"] as const) {
-        const href = new URL(stepUpHref(reason, origin)!, "http://localhost");
-        expect(safeRedirectTarget(href.searchParams.get("redirect") ?? undefined)).toBe(origin);
-      }
-    }
-  });
-
-  test("no other refusal is a step-up", () => {
-    expect(stepUpHref("missing-permission", "/settings")).toBeNull();
-    expect(stepUpHref(undefined, "/settings")).toBeNull();
-  });
-});
-
-describe("followStepUp", () => {
-  function nav() {
-    const log: string[] = [];
+  /** A call refused once for `reason`, then accepted. */
+  function sensitive(reason: Failure["reason"]) {
+    let calls = 0;
     return {
-      log,
-      here: () => "/settings",
-      assign: (href: string) => void log.push(href),
-      signOut: async () => void log.push("signed out"),
+      calls: () => calls,
+      call: async () => (++calls === 1 ? refusal(reason) : { ok: true as const, data: "done" }),
     };
   }
 
-  test("missing TOTP goes straight to enrollment, still signed in", () => {
-    const n = nav();
-    expect(followStepUp(refusal("totp-required"), n)).toBe(true);
-    expect(n.log).toEqual(["/settings?redirect=%2Fsettings"]);
+  test("a refusal is put to the operator, and the call runs again once they confirm", async () => {
+    const asked: string[] = [];
+    unregister = registerStepUpPrompt(async (reason) => {
+      asked.push(reason);
+      return true;
+    });
+    for (const reason of ["totp-required", "reauth-required"] as const) {
+      const action = sensitive(reason);
+      expect(await withStepUp(action.call)).toEqual({ ok: true, data: "done" });
+      expect(action.calls()).toBe(2);
+    }
+    expect(asked).toEqual(["totp-required", "reauth-required"]);
   });
 
-  test("a stale session is ended before the sign-in page, which would bounce it", async () => {
-    const n = nav();
-    expect(followStepUp(refusal("reauth-required"), n)).toBe(true);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(n.log).toEqual(["signed out", "/signin?reauth=true&redirect=%2Fsettings"]);
+  test("a declined prompt hands back the refusal and does not retry", async () => {
+    unregister = registerStepUpPrompt(async () => false);
+    const action = sensitive("reauth-required");
+    expect(await withStepUp(action.call)).toEqual(refusal("reauth-required"));
+    expect(action.calls()).toBe(1);
   });
 
-  test("a failed sign-out still navigates", async () => {
-    const n = nav();
-    n.signOut = () => Promise.reject(new Error("offline"));
-    followStepUp(refusal("reauth-required"), n);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(n.log).toEqual(["/signin?reauth=true&redirect=%2Fsettings"]);
+  test("with no prompt mounted the refusal still reaches the caller's own copy", async () => {
+    const action = sensitive("totp-required");
+    expect(await withStepUp(action.call)).toEqual(refusal("totp-required"));
   });
 
-  test("any other failure is left to the caller", () => {
-    const n = nav();
-    expect(followStepUp(refusal("missing-permission"), n)).toBe(false);
-    expect(followStepUp({ ok: false, kind: "unreachable", error: "x" }, n)).toBe(false);
-    expect(n.log).toEqual([]);
+  test("success and every other failure pass straight through, unasked", async () => {
+    let asked = false;
+    unregister = registerStepUpPrompt(async () => {
+      asked = true;
+      return true;
+    });
+    const denied = refusal("missing-permission");
+    expect(await withStepUp(async () => denied)).toBe(denied);
+    expect(await withStepUp(async () => ({ ok: true as const, data: 1 }))).toEqual({ ok: true, data: 1 });
+    expect(asked).toBe(false);
+  });
+
+  test("a result that only carries a reason code is followed too (inviteMember)", async () => {
+    unregister = registerStepUpPrompt(async () => true);
+    let calls = 0;
+    const invite = async () =>
+      ++calls === 1 ? { ok: false as const, error: "x", reason: "reauth-required" } : { ok: true as const };
+    expect(await withStepUp(invite)).toEqual({ ok: true });
   });
 });
 
@@ -117,39 +108,24 @@ describe("copy", () => {
 });
 
 describe("TwoFactorPanel", () => {
-  test("not enrolled: asks for the password, and says why when sent here", () => {
-    const sent = renderToStaticMarkup(<TwoFactorPanel enabled={false} returnTo="/numbers" />);
-    expect(sent).toContain("The action you started needs two-factor authentication");
-    expect(sent).toContain("Your password");
-    expect(sent).toContain("Set up");
-    const visiting = renderToStaticMarkup(<TwoFactorPanel enabled={false} />);
-    expect(visiting).not.toContain("The action you started");
-    expect(visiting).toContain("Set up");
+  test("not enrolled asks for the password; enrolled says so and offers nothing to set up", () => {
+    const off = renderToStaticMarkup(<TwoFactorPanel enabled={false} />);
+    expect(off).toContain("Your password");
+    expect(off).toContain("Set up");
+    const on = renderToStaticMarkup(<TwoFactorPanel enabled />);
+    expect(on).not.toContain("Set up");
+    expect(on).toContain("ask for a code");
   });
 
-  test("enrolled: says so, and offers the way back when there is one", () => {
-    const html = renderToStaticMarkup(<TwoFactorPanel enabled returnTo="/numbers" />);
-    expect(html).not.toContain("Set up");
-    expect(html).toContain('href="/numbers"');
-    expect(renderToStaticMarkup(<TwoFactorPanel enabled />)).not.toContain("Back to where you were");
-  });
-
-  test("backup codes are listed once with the way onward", () => {
-    const html = renderToStaticMarkup(<BackupCodes codes={["aaaa-bbbb", "cccc-dddd"]} doneHref="/numbers" />);
+  test("backup codes are listed once, with a way on and a live region for a refused copy", () => {
+    const html = renderToStaticMarkup(<BackupCodes codes={["aaaa-bbbb", "cccc-dddd"]} onDone={() => {}} />);
     expect(html).toContain("aaaa-bbbb");
     expect(html).toContain("cccc-dddd");
-    expect(html).toContain('href="/numbers"');
-    expect(html).toContain("Continue");
+    expect(html).toContain("Done");
+    expect(html).toContain('aria-live="polite"');
   });
 
-  test("the QR code draws the URI as a labelled image", () => {
-    const html = renderToStaticMarkup(<QrCode value="otpauth://totp/Eccos:a?secret=JBSWY3DP" label="QR" />);
-    expect(html).toContain('role="img"');
-    expect(html).toContain('aria-label="QR"');
-    expect(html).toMatch(/<path d="M\d+ \d+h1v1h-1z/);
-  });
-
-  test("the QR code is drawn upright, not mirrored across its diagonal", async () => {
+  test("the QR code is a labelled image, drawn upright and not mirrored across its diagonal", async () => {
     const { encode } = await import("uqr");
     const value = "otpauth://totp/Eccos:a?secret=JBSWY3DP";
     const { data } = encode(value, { border: 2 });
@@ -157,38 +133,25 @@ describe("TwoFactorPanel", () => {
     const y = data.findIndex((row, r) => row.some((on, c) => on && !data[c]![r]));
     const x = data[y]!.findIndex((on, c) => on && !data[c]![y]);
     const html = renderToStaticMarkup(<QrCode value={value} label="QR" />);
+    expect(html).toContain('role="img"');
+    expect(html).toContain('aria-label="QR"');
     expect(html).toContain(`M${x} ${y}h1v1h-1z`);
     expect(html).not.toContain(`M${y} ${x}h1v1h-1z`);
   });
 });
 
 describe("Settings", () => {
-  test("the panel leads the page when it is why the operator is here", () => {
-    const sent = renderToStaticMarkup(
-      <SettingsView accountId="account-a" twoFactorEnabled={false} returnTo="/numbers" />,
-    );
-    expect(sent.indexOf("Two-factor authentication")).toBeLessThan(sent.indexOf("Account ID"));
-    const visiting = renderToStaticMarkup(<SettingsView accountId="account-a" twoFactorEnabled={false} />);
-    expect(visiting.indexOf("Two-factor authentication")).toBeGreaterThan(visiting.indexOf("Account ID"));
+  test("carries the two-factor panel after the workspace's own panels", () => {
+    const html = renderToStaticMarkup(<SettingsView accountId="account-a" twoFactorEnabled={false} />);
+    expect(html.indexOf("Two-factor authentication")).toBeGreaterThan(html.indexOf("Account ID"));
   });
 });
 
-describe("sign-in", () => {
-  test("a re-authentication says why the operator is being asked again", () => {
-    const form = (notice: string | null) =>
-      renderToStaticMarkup(
-        <LoginForm
-          onSubmit={() => {}}
-          notice={notice}
-          error={null}
-          pending={false}
-          email=""
-          password=""
-          onEmailChange={() => {}}
-          onPasswordChange={() => {}}
-        />,
-      );
-    expect(form("Confirm it's you.")).toContain("Confirm it&#x27;s you.");
-    expect(form(null)).not.toContain("Confirm");
+describe("sign-in code step", () => {
+  test("starting again keeps the page the operator was going to", () => {
+    const html = renderToStaticMarkup(
+      <TwoFactorForm onVerified={() => {}} restartHref="/signin?redirect=%2Fwebhooks" />,
+    );
+    expect(html).toContain('href="/signin?redirect=%2Fwebhooks"');
   });
 });

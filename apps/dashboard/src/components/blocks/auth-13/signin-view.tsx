@@ -6,6 +6,7 @@ import { TwoFactorForm } from "./components/two-factor-form";
 import { authErrorMessage } from "@/components/auth/auth-page";
 import { validateEmail } from "./components/validation";
 import { track } from "@/lib/analytics";
+import { signInHref } from "@/auth/redirect-target";
 
 /**
  * Sign-in view on the reui auth-13 split-screen skeleton, adapted to the
@@ -15,12 +16,9 @@ import { track } from "@/lib/analytics";
 export function SignInView({
   redirectTo,
   searchError,
-  reauth = false,
 }: {
   redirectTo: string;
   searchError: string | null;
-  /** Arrived from a sensitive action that needs a recent sign-in. */
-  reauth?: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -92,7 +90,7 @@ export function SignInView({
   if (challenged) {
     return (
       <AuthSplitShell>
-        <TwoFactorForm onVerified={enter} />
+        <TwoFactorForm onVerified={enter} restartHref={signInHref(redirectTo)} />
       </AuthSplitShell>
     );
   }
@@ -101,11 +99,6 @@ export function SignInView({
     <AuthSplitShell>
       <LoginForm
         onSubmit={onSubmit}
-        notice={
-          reauth
-            ? "Confirm it's you. The action you started needs a sign-in from the last 15 minutes; you will go back to where you were."
-            : null
-        }
         error={error}
         pending={pending}
         email={email}

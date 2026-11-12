@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { resubscribe } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
-import { followStepUp } from "../../lib/step-up";
+import { withStepUp } from "../../lib/step-up";
 import { Button } from "@/components/ui/button";
 
 type Notice = { ok: boolean; text: string };
@@ -43,9 +43,8 @@ export function ResubscribeAction({ wabaId }: { wabaId?: string }) {
     setRunning(true);
     setNotice(null);
     try {
-      const res = await resubscribe({ data: { wabaId } });
+      const res = await withStepUp(() => resubscribe({ data: { wabaId } }));
       if (!res.ok) {
-        if (followStepUp(res)) return;
         setNotice({ ok: false, text: failureCopy(res).detail });
       } else if (res.data.ok) {
         setNotice({ ok: true, text: "Re-subscribed. Meta accepted the webhook subscription." });

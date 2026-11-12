@@ -7,8 +7,8 @@ import {
   type Result,
 } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
-import { followStepUp } from "../../lib/step-up";
-import { fmtTsShort } from "../../ui";
+import { withStepUp } from "../../lib/step-up";
+import { fmtTsShort, ERROR_CLASS, MACHINE_CLASS } from "../../ui";
 import {
   Frame,
   FrameDescription,
@@ -29,9 +29,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
-const ERROR_CLASS =
-  "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs";
 
 /**
  * Account API keys: create, list, revoke (eccos-bm92).
@@ -62,9 +59,8 @@ export function ApiKeysPanel({
     setCreating(true);
     setError(null);
     try {
-      const res = await issueApiKey({ data: { label } });
+      const res = await withStepUp(() => issueApiKey({ data: { label } }));
       if (!res.ok) {
-        if (followStepUp(res)) return;
         setError(failureCopy(res).detail);
         return;
       }
@@ -242,9 +238,8 @@ function RevokeKeyDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await revokeApiKey({ data: { keyId: target.keyId } });
+      const res = await withStepUp(() => revokeApiKey({ data: { keyId: target.keyId } }));
       if (!res.ok) {
-        if (followStepUp(res)) return;
         setError(failureCopy(res).detail);
         return;
       }

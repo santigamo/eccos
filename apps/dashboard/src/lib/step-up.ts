@@ -1,42 +1,39 @@
-import { authClient } from "../auth/auth-client";
-import type { Failure } from "../server/gateway";
+/**
+ * The operator's side of step-up: a sensitive call refused for it is resolved
+ * in place and run once more. Nothing navigates, so the page and whatever was
+ * typed into it stay as they were.
+ */
 
-/** Where a step-up refusal is resolved, carrying the page to come back to. */
-export function stepUpHref(reason: Failure["reason"], returnTo: string): string | null {
-  const back = encodeURIComponent(returnTo);
-  if (reason === "totp-required") return `/settings?redirect=${back}`;
-  if (reason === "reauth-required") return `/signin?reauth=true&redirect=${back}`;
-  return null;
+export type StepUpReason = "totp-required" | "reauth-required";
+
+type Prompt = (reason: StepUpReason) => Promise<boolean>;
+
+let prompt: Prompt | null = null;
+
+/** The mounted prompt (`step-up-sheet.tsx`) registers itself; returns its unregister. */
+export function registerStepUpPrompt(next: Prompt): () => void {
+  prompt = next;
+  return () => {
+    if (prompt === next) prompt = null;
+  };
 }
 
-export interface StepUpNavigation {
-  here: () => string;
-  assign: (href: string) => void;
-  signOut: () => Promise<unknown>;
+function stepUpReason(result: { reason?: string }): StepUpReason | null {
+  return result.reason === "totp-required" || result.reason === "reauth-required"
+    ? result.reason
+    : null;
 }
-
-const browser: StepUpNavigation = {
-  here: () => window.location.pathname + window.location.search,
-  assign: (href) => window.location.assign(href),
-  signOut: () => authClient.signOut(),
-};
 
 /**
- * Sends the operator to enroll or sign in again when a sensitive action was
- * refused for step-up, and reports whether it did. The destination explains
- * why and returns them to the page they were on.
+ * Run a sensitive call; if it is refused for step-up, ask the operator to
+ * enroll or confirm, then run it again. A declined prompt (or none mounted)
+ * returns the refusal for the caller to show.
  */
-export function followStepUp(failure: Failure, nav: StepUpNavigation = browser): boolean {
-  const href = stepUpHref(failure.reason, nav.here());
-  if (!href) return false;
-  if (failure.reason === "reauth-required") {
-    // /signin bounces a signed-in visitor, so the stale session ends first.
-    void nav
-      .signOut()
-      .catch(() => {})
-      .finally(() => nav.assign(href));
-  } else {
-    nav.assign(href);
-  }
-  return true;
+export async function withStepUp<R extends { ok: boolean; reason?: string }>(
+  call: () => Promise<R>,
+): Promise<R> {
+  const first = await call();
+  const reason = first.ok ? null : stepUpReason(first);
+  if (!reason || !prompt || !(await prompt(reason))) return first;
+  return call();
 }

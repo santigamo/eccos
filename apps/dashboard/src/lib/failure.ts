@@ -86,13 +86,13 @@ function forbiddenCopy(failure: Failure): FailureCopy {
       return {
         title: "Two-factor authentication needed",
         detail:
-          "This action is protected. Set up two-factor authentication on your account, then try again.",
+          "This action is protected. Set up two-factor authentication under Settings, then try again.",
       };
     case "reauth-required":
       return {
         title: "Confirm it's you",
         detail:
-          "This action needs a sign-in from the last 15 minutes. Sign in again, then try again.",
+          "This action needs your password and two-factor code again. Try it once more and confirm when asked.",
       };
     default:
       // A refusal with no reason code of its own: report it as the refusal it

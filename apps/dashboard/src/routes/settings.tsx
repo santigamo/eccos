@@ -16,7 +16,6 @@ import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billi
 import { ApiKeysPanel } from "../components/dashboard/api-keys";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
 import { TwoFactorPanel } from "../components/dashboard/two-factor";
-import { safeRedirectTarget } from "../auth/redirect-target";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Frame,
@@ -43,13 +42,6 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
  * not wait on a number. API keys are account-level too.
  */
 export const Route = createFileRoute("/settings")({
-  // Where a step-up refusal came from, to return to once two-factor is set up.
-  validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
-    const redirect = safeRedirectTarget(
-      typeof search.redirect === "string" ? search.redirect : undefined,
-    );
-    return redirect ? { redirect } : {};
-  },
   staleTime: CONFIG_STALE_MS,
   // Creem returns the customer here with the subscription it created.
   validateSearch: (search: Record<string, unknown>): { billing?: "success"; subscription_id?: string } => ({
@@ -72,7 +64,6 @@ export const Route = createFileRoute("/settings")({
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
   const [keys, retention, gatewayOrigin] = Route.useLoaderData();
-  const { redirect: returnTo } = Route.useSearch();
   const router = useRouter();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -110,7 +101,6 @@ function SettingsPage() {
       wabaId={wabaId}
       gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
       twoFactorEnabled={scope.user?.twoFactorEnabled}
-      returnTo={returnTo}
       onKeysChanged={() => void invalidatePage(router)}
     />
   );
@@ -127,7 +117,6 @@ export function SettingsView({
   wabaId,
   gatewayOrigin,
   twoFactorEnabled,
-  returnTo,
   onKeysChanged,
 }: {
   accountId?: string;
@@ -136,20 +125,11 @@ export function SettingsView({
   wabaId?: string;
   gatewayOrigin?: string | null;
   twoFactorEnabled?: boolean;
-  returnTo?: string;
   onKeysChanged?: () => void;
 }) {
-  const twoFactor =
-    twoFactorEnabled === undefined ? null : (
-      <div className="lg:col-span-2">
-        <TwoFactorPanel enabled={twoFactorEnabled} returnTo={returnTo} />
-      </div>
-    );
   return (
     <Page title="Settings" kicker="Configuration">
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        {/* First when it is why the operator is here, last otherwise. */}
-        {returnTo ? twoFactor : null}
         {accountId ? <WorkspacePanel accountId={accountId} /> : null}
         {accountId && retention ? (
           <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
@@ -160,7 +140,11 @@ export function SettingsView({
             <ApiKeysPanel keys={keys} wabaId={wabaId} gatewayOrigin={gatewayOrigin} onChanged={onKeysChanged} />
           </div>
         ) : null}
-        {returnTo ? null : twoFactor}
+        {twoFactorEnabled === undefined ? null : (
+          <div className="lg:col-span-2">
+            <TwoFactorPanel enabled={twoFactorEnabled} />
+          </div>
+        )}
       </div>
     </Page>
   );

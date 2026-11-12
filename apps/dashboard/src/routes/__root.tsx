@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
+import { StepUpSheet } from "../components/dashboard/step-up-sheet"
 import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
@@ -225,7 +226,10 @@ function RootComponent() {
         // Authenticated tenant context. The chrome wraps every state that has
         // an organization, including the one with no WABA yet: the user is
         // signed in, so they must be able to see who they are and sign out.
-        <AppShell />
+        <>
+          <AppShell />
+          {state.user ? <StepUpSheet email={state.user.email} /> : null}
+        </>
       ) : (
         // Unauthenticated (or gateway-unreachable) root load: bare outlet so
         // the sign-in screen renders WITHOUT the app chrome around it.
