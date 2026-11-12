@@ -18,6 +18,7 @@ import { getControlPlaneStub } from "./control-plane-stub";
 import { runBoundedPool } from "./gateway";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { opsAlertsEnabled, sendOpsAlert } from "./ops-alert";
+import { withTimeout } from "./with-timeout";
 import { formatDay, type TokenCheck, type TokenHealth, tokenProblems, type Unchecked } from "./token-health";
 
 const CENSUS_HOUR_UTC = 7;
@@ -63,14 +64,6 @@ interface AccountBlock {
 
 // Terminal sync states that need the operator. `unavailable` and `not_coexistence` are terminal non-failures.
 const SYNC_NEEDS_ACTION = new Set(["unconfirmed", "expired"]);
-
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timeout")), ms);
-  });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
 
 export async function runDailyCensus(
   env: Env,
@@ -143,13 +136,21 @@ export async function runDailyCensus(
   });
 
   if (!(await control.claimDailyCensus(day))) return;
-  const alerts = [
-    tokenAlertLines(blocks, now).length > 0 && ["Eccos: WhatsApp tokens need attention", ...tokenAlertLines(blocks, now)],
-    uncheckedAlertLines(blocks).length > 0 && ["Eccos: cannot check WhatsApp tokens", ...uncheckedAlertLines(blocks)],
+  const problems = [
+    ...tokenAlertLines(blocks, now),
+    ...(await control.takeLostTokenAlerts()).map(
+      ([wabaId, accountId]) => `WABA ${wabaId} · account ${accountId}: Meta rejected the token on send, the alert may not have arrived`,
+    ),
   ];
-  for (const lines of alerts) {
+  const unchecked = uncheckedAlertLines(blocks);
+  for (const lines of [
+    problems.length > 0 && ["Eccos: WhatsApp tokens need attention", ...problems],
+    unchecked.length > 0 && ["Eccos: cannot check WhatsApp tokens", ...unchecked],
+  ]) {
     if (lines) for (const chunk of chunkLines(lines)) await sendOpsAlert(env, chunk, fetchImpl);
   }
+  const invalid = blocks.flatMap((b) => b.wabas.filter((w) => w.token?.valid === false).map((w) => w.wabaId));
+  if (invalid.length > 0) await control.markTokensAlerted(invalid);
   for (const chunk of chunkLines(formatCensus(day, blocks).split("\n"))) {
     if ((await sendOpsAlert(env, chunk, fetchImpl)) !== "sent") return;
   }
@@ -159,6 +160,8 @@ const UNCHECKED_REASON: Record<Unchecked, string> = {
   no_app_id: "META_APP_ID is not set",
   no_token: "no stored token",
   token_unreadable: "stored token cannot be decrypted",
+  foreign_app: "token was issued by another Meta app",
+  no_verdict: "debug_token did not say whether the token is valid",
   meta_no_answer: "Meta debug_token gave no answer",
 };
 
@@ -182,7 +185,8 @@ function describeToken({ token: health, tokenUnchecked }: WabaLine): string {
   if (tokenUnchecked) return ", token unchecked";
   if (!health) return "";
   if (!health.valid) return ", token invalid";
-  const expiry = health.expiresAt ? `expires ${formatDay(health.expiresAt)}` : "never expires";
+  const expiry =
+    health.expiresAt === null ? "expiry unknown" : health.expiresAt ? `expires ${formatDay(health.expiresAt)}` : "never expires";
   const access = health.dataAccessExpiresAt ? `, data access ${formatDay(health.dataAccessExpiresAt)}` : "";
   return `, token ${expiry}${access}`;
 }

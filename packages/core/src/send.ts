@@ -24,7 +24,7 @@ export async function sendMessage(
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await (cfg.fetch ?? fetch)(url, {
       method: "POST",
       headers: {
         authorization: `Bearer ${cfg.META_ACCESS_TOKEN}`,

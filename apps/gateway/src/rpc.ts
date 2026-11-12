@@ -11,10 +11,10 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
-import { sendWatched, type TokenHealth } from "./token-health";
+import { type TokenHealth, watchGraph } from "./token-health";
 import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
-import { metaErrorCodes, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
@@ -386,6 +386,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: watchGraph(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId),
     });
     return {
       stub: this.stubFor(wabaId),
@@ -1055,11 +1056,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: watchGraph(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTemplateTestResult> => {
-      const result = await sendWatched(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId, cfg, metaBody);
+      const result = await sendMessage(cfg, metaBody);
       logSend("send_test", waba.wabaId, input.phoneNumberId, "template", result);
 
       if (!result.ok) {
@@ -1166,11 +1168,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: watchGraph(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
     return this.sendOnce(stub, account, waba.wabaId, keyed, async (): Promise<SendTextResult> => {
-      const result = await sendWatched(this.env, (work) => this.ctx.waitUntil(work), waba.wabaId, cfg, metaBody);
+      const result = await sendMessage(cfg, metaBody);
       logSend(source, waba.wabaId, input.phoneNumberId, String(metaBody.type), result);
 
       if (!result.ok) {

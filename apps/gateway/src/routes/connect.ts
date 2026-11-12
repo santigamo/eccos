@@ -519,6 +519,7 @@ export async function registerWabasForToken(
           displayPhoneNumber: p.display_phone_number ?? "",
         })),
         onboardingType,
+        ...(health ? { tokenHealth: health } : {}),
       })),
     );
 
@@ -542,12 +543,6 @@ export async function registerWabasForToken(
       accountId,
       registrations.map((registration) => registration.waba.wabaId),
     );
-    if (health) {
-      const known = health;
-      await Promise.all(
-        registrations.map((r) => controlPlane.recordTokenHealth(r.waba.wabaId, known).catch(() => undefined)),
-      );
-    }
     const statuses = registrations.map(
       (registration) => kicked.get(registration.waba.wabaId) ?? registration.waba.status,
     );

@@ -9,14 +9,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-/** Unix ms; 0 means Meta says it never expires. */
+/** Unix ms; 0 means Meta says it never expires, null that it did not say. */
 export interface TokenHealth {
   valid: boolean;
-  expiresAt: number;
-  dataAccessExpiresAt: number;
+  expiresAt: number | null;
+  dataAccessExpiresAt: number | null;
 }
 
-const ms = (seconds: unknown) => (typeof seconds === "number" && seconds > 0 ? seconds * 1000 : 0);
+const ms = (seconds: unknown) =>
+  typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
 
 /** The token's health from the `data` of a debug_token answer, or null when it carries no verdict. */
 function healthFromDebugData(data: Record<string, unknown> | null): TokenHealth | null {
@@ -54,7 +55,9 @@ export class MetaGraphError extends Error {
 function graphError(prefix: string, res: Response, json: unknown): MetaGraphError {
   const error = asRecord(asRecord(json)?.error);
   const message = typeof error?.message === "string" ? error.message : null;
-  return new MetaGraphError(prefix, res.status, message);
+  const code = typeof error?.code === "number" ? error.code : null;
+  const subcode = typeof error?.error_subcode === "number" ? error.error_subcode : null;
+  return new MetaGraphError(prefix, res.status, message, code, subcode);
 }
 
 /** code -> Business Integration System User access token (60 days). */

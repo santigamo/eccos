@@ -62,6 +62,8 @@ export type MetaAppConfig = {
   META_ACCESS_TOKEN: string;
   META_PHONE_NUMBER_ID?: string;
   META_WABA_ID?: string;
+  /** Replaces the global `fetch` for every Graph call made with this config. */
+  fetch?: typeof fetch;
 };
 
 export function parseCoreConfig(env: Record<string, string | undefined>): CoreConfig {

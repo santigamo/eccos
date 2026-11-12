@@ -10,11 +10,12 @@ import {
   type MetaWebhookBatch,
 } from "@eccos/core/parser";
 import { isBsuid } from "@eccos/core/bsuid";
-import { metaErrorCodes, sendOutcomeUnknown } from "@eccos/core/send";
+import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
 import { listTemplates, TEMPLATE_FIELDS } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
-import { sendWatched } from "./token-health";
+import { watchGraph } from "./token-health";
+import { withTimeout } from "./with-timeout";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
@@ -185,18 +186,6 @@ function configPresence(env: Bindings): Record<string, boolean> {
   return out;
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("durable object probe timed out")), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 app.get("/ready", async (c) => {
   const cid = correlationId(c);
   const config = configPresence(c.env);
@@ -205,7 +194,7 @@ app.get("/ready", async (c) => {
   let doOk = false;
   let doError: string | null = null;
   try {
-    await withTimeout(Promise.resolve(getControlPlane(c.env).getHealth()), 2000);
+    await withTimeout(Promise.resolve(getControlPlane(c.env).getHealth()), 2000, "durable object probe timed out");
     doOk = true;
   } catch (err) {
     doError = err instanceof Error ? err.message : "unknown error";
@@ -782,6 +771,7 @@ async function sendMessageRoute(c: AppContext) {
     wabaId: target.waba.wabaId,
     phoneNumberId: target.phoneNumberId,
     metaAccessToken: target.metaAccessToken,
+    fetch: watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), target.waba.wabaId),
   });
   const { recipient } = target;
   const ids = { wabaId: target.waba.wabaId, phoneNumberId: target.phoneNumberId };
@@ -815,7 +805,7 @@ async function sendMessageRoute(c: AppContext) {
     if (key !== undefined) await stub.settleSendKey(account.accountId, key, JSON.stringify({ status, body }));
     return c.json(body, status);
   };
-  const result = await sendWatched(c.env, (work) => c.executionCtx.waitUntil(work), target.waba.wabaId, cfg, target.metaBody);
+  const result = await sendMessage(cfg, target.metaBody);
   if (!result.ok) {
     logEvent("outbound_send", cid, 502, {
       ...ids,
@@ -904,6 +894,7 @@ async function templatesRoute(c: AppContext) {
     wabaId: waba.wabaId,
     phoneNumberId: waba.phones[0]?.phoneNumberId ?? "",
     metaAccessToken: waba.metaAccessToken,
+    fetch: watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), waba.wabaId),
   });
   const result = await listTemplates(cfg, limit, { fields: TEMPLATE_FIELDS });
   if (!result.ok) {
@@ -936,6 +927,7 @@ async function templateRefusal(
     wabaId: waba.wabaId,
     phoneNumberId,
     metaAccessToken: waba.metaAccessToken,
+    fetch: watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), waba.wabaId),
   });
   const templates = await listTemplates(cfg, 100, { fields: ["name", "language", "status"], name });
   if (!templates.ok) {

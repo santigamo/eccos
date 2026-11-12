@@ -26,7 +26,7 @@ import {
   sealToken,
   wabaTokenAad,
 } from "./token-crypto";
-import { sendOpsAlert } from "./ops-alert";
+import { opsAlertsEnabled, sendOpsAlert } from "./ops-alert";
 import { getAppConfig } from "./tenant-config";
 import { readTokenHealth, type TokenCheck, type TokenHealth } from "./token-health";
 import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
@@ -149,6 +149,8 @@ export interface RegisterWabaInput {
    * WABA into the coexistence obligations — an omission can never invent one.
    */
   onboardingType?: WabaOnboardingType;
+  /** What Meta said about the token at connect time; stored with it by `beginWabaProvisioningBatch`. */
+  tokenHealth?: TokenHealth;
 }
 
 export interface RegisterWabaResult {
@@ -229,6 +231,9 @@ interface PreparedWaba {
   phones: PhoneRecord[];
   createdAt: number;
   onboardingType: WabaOnboardingType;
+  /** Stored with the token in one upsert, so a slower connect cannot leave an older token's expiry on a newer one. */
+  tokenExpiresAt: number | null;
+  tokenDataAccessExpiresAt: number | null;
 }
 
 interface ProvisioningRow {
@@ -696,7 +701,8 @@ export class EccosControlPlane extends DurableObject<Env> {
         history_sync_request_id TEXT,
         token_expires_at INTEGER,
         token_data_access_expires_at INTEGER,
-        token_rejected_at INTEGER
+        token_rejected_at INTEGER,
+        token_alert_lost INTEGER
       );`);
       this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_wabas_account
         ON wabas (account_id);`);
@@ -763,7 +769,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN provisioning_fingerprint TEXT");
       }
       // NULL means never read; 0 means Meta says it never expires.
-      for (const column of ["token_expires_at", "token_data_access_expires_at", "token_rejected_at"]) {
+      for (const column of ["token_expires_at", "token_data_access_expires_at", "token_rejected_at", "token_alert_lost"]) {
         if (!wabaColumns.some((row) => row.name === column)) {
           this.sql.exec(`ALTER TABLE wabas ADD COLUMN ${column} INTEGER`);
         }
@@ -945,15 +951,17 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   /**
    * Stores what Meta reported about a WABA's token. A valid reading also clears an earlier
-   * rejection; an invalid one keeps the stored expiry, since 0 would read as "never expires".
-   * `sealed` is the stored token the reading is about: a reconnect that replaced it meanwhile
-   * is not overwritten with the old token's expiry.
+   * rejection; an invalid one keeps the stored expiry, and a value Meta did not give keeps the
+   * stored one (null is "unknown", 0 is "never expires"). `sealed` is the stored token the
+   * reading is about: a reconnect that replaced it meanwhile is not overwritten.
    */
   recordTokenHealth(wabaId: string, health: TokenHealth, sealed?: string): void {
     const id = validateWabaId(wabaId, "wabaId");
     if (!health.valid) return;
     this.sql.exec(
-      `UPDATE wabas SET token_expires_at = ?, token_data_access_expires_at = ?, token_rejected_at = NULL
+      `UPDATE wabas SET token_expires_at = COALESCE(?, token_expires_at),
+         token_data_access_expires_at = COALESCE(?, token_data_access_expires_at),
+         token_rejected_at = NULL, token_alert_lost = NULL
        WHERE waba_id = ? AND (? IS NULL OR meta_access_token = ?)`,
       health.expiresAt,
       health.dataAccessExpiresAt,
@@ -980,19 +988,35 @@ export class EccosControlPlane extends DurableObject<Env> {
     } catch {
       return { unchecked: "token_unreadable" };
     }
-    const health = await readTokenHealth(cfg, token);
-    if (!health) return { unchecked: "meta_no_answer" };
-    this.recordTokenHealth(id, health, row.meta_access_token as string);
-    return { health };
+    const check = await readTokenHealth(cfg, token);
+    if ("health" in check) this.recordTokenHealth(id, check.health, row.meta_access_token as string);
+    return check;
+  }
+
+  /** The census just alerted these tokens as invalid: a send 190 must not alert again until a valid reading. */
+  markTokensAlerted(wabaIds: string[]): void {
+    for (const id of wabaIds) {
+      this.sql.exec("UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND token_rejected_at IS NULL", Date.now(), id);
+    }
+  }
+
+  /** WABAs whose 190 alert may not have reached Telegram, as `[wabaId, accountId]`; each is returned once. */
+  takeLostTokenAlerts(): Array<[string, string]> {
+    return this.sql
+      .exec("UPDATE wabas SET token_alert_lost = NULL WHERE token_alert_lost = 1 RETURNING waba_id, account_id")
+      .toArray()
+      .map((row) => [row.waba_id as string, row.account_id as string]);
   }
 
   /**
    * Meta rejected the WABA's token (Graph error 190): alerts the operator the first time only.
-   * The WABA is claimed before the alert and released if the post failed, so concurrent reports
-   * send one alert and a failed post is retried by the next 190.
+   * Nothing is claimed while ops alerts are off. The WABA is claimed before the alert, and the
+   * post is one attempt, never retried (ops-alert contract): a failed post is recorded in
+   * `token_alert_lost` for the next census to mention once.
    */
-  async reportRejectedToken(wabaId: string): Promise<void> {
+  async reportRejectedToken(wabaId: string): Promise<"sent" | "already" | "disabled" | "failed"> {
     const id = validateWabaId(wabaId, "wabaId");
+    if (!opsAlertsEnabled(this.env)) return "disabled";
     const row = this.sql
       .exec(
         "UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND token_rejected_at IS NULL RETURNING account_id",
@@ -1000,12 +1024,14 @@ export class EccosControlPlane extends DurableObject<Env> {
         id,
       )
       .toArray()[0];
-    if (!row) return;
+    if (!row) return "already";
     const sent = await sendOpsAlert(
       this.env,
       `Eccos: Meta rejected a WABA token (Graph error 190)\nWABA ${id} · account ${row.account_id}`,
     );
-    if (sent === "failed") this.sql.exec("UPDATE wabas SET token_rejected_at = NULL WHERE waba_id = ?", id);
+    if (sent === "sent") return "sent";
+    this.sql.exec("UPDATE wabas SET token_alert_lost = 1 WHERE waba_id = ?", id);
+    return "failed";
   }
 
   /** Stores the retention and returns it. */
@@ -1210,6 +1236,8 @@ export class EccosControlPlane extends DurableObject<Env> {
         phones: checkedPhones,
         createdAt: Date.now(),
         onboardingType: validateOnboardingType(input.onboardingType),
+        tokenExpiresAt: input.tokenHealth?.valid ? input.tokenHealth.expiresAt : null,
+        tokenDataAccessExpiresAt: input.tokenHealth?.valid ? input.tokenHealth.dataAccessExpiresAt : null,
       };
     }));
     const seenWabaIds = new Set<string>();
@@ -1384,13 +1412,14 @@ export class EccosControlPlane extends DurableObject<Env> {
               provisioning_lease_until, provisioning_revision, provisioning_fingerprint, provisioned_at,
               onboarding_type, coexistence_sync_status, coexistence_sync_deadline_at,
               coexistence_sync_error, contacts_sync_started_at, contacts_sync_request_id,
-              history_sync_started_at, history_sync_request_id)
-           VALUES (?, ?, ?, ?, ?, 'pending', NULL, 0, ?, NULL, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+              history_sync_started_at, history_sync_request_id,
+              token_expires_at, token_data_access_expires_at)
+           VALUES (?, ?, ?, ?, ?, 'pending', NULL, 0, ?, NULL, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)
            ON CONFLICT(waba_id) DO UPDATE SET
              account_id = excluded.account_id,
              meta_access_token = excluded.meta_access_token,
-             token_expires_at = NULL,
-             token_data_access_expires_at = NULL,
+             token_expires_at = excluded.token_expires_at,
+             token_data_access_expires_at = excluded.token_data_access_expires_at,
              token_rejected_at = NULL,
              callback_url = excluded.callback_url,
              status = 'pending',
@@ -1424,6 +1453,8 @@ export class EccosControlPlane extends DurableObject<Env> {
           item.onboardingType,
           initialCoexistenceStatus(item.onboardingType),
           registrationDeadline(item.onboardingType, now),
+          item.tokenExpiresAt,
+          item.tokenDataAccessExpiresAt,
         );
         // An empty phone set means the handoff told us nothing about numbers —
         // a v4 completion without one — not that the WABA's existing numbers

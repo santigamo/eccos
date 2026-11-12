@@ -147,20 +147,24 @@ Embedded Signup configs exist at Meta:
 so each stored token is checked rather than assumed.
 
 - **Connect** reads Meta's `debug_token` once (the same call that discovers the WABAs) and stores
-  `expires_at` on each WABA row (`token_expires_at`, Unix ms; `0` means it never expires, `NULL`
-  means never read). Registering a WABA again with a new token clears the stored values.
+  `expires_at` on each WABA row in the same write as the token (`token_expires_at`, Unix ms; `0`
+  means it never expires, `NULL` means unknown or never read). Registering a WABA again with a new
+  token replaces the stored values.
 - **Daily census** checks every active WABA inside the control plane (the token never leaves it),
-  refreshes the stored expiry and shows validity and expiry on each WABA line. It sends a separate
-  alert, with WABA and account ids only, when Meta reports a token invalid or its token or data
-  access expires within 14 days. A token that cannot be checked is one separate "cannot check
-  WhatsApp tokens" alert that gives the reason: `META_APP_ID` unset, no stored token, a stored token
-  that cannot be decrypted, or no usable answer from `debug_token` (a Graph error, including a
-  top-level 190 that can mean a bad `META_APP_SECRET`, or a timeout). The stored values stay as they
-  were, and a slow check never marks a WABA's data plane unreadable.
-- **Sends and media downloads**: the first time Meta answers with Graph error 190 for a WABA (a bare
-  401 on a media download does not count), the operator gets one alert, reported off the request path. A failed Telegram post is retried by the
-  next 190. Later 190s stay quiet until a census reads the token as valid again or the number is
-  reconnected through Embedded Signup.
+  refreshes the stored expiry and shows validity and expiry on each WABA line ("expiry unknown" when
+  Meta gave none). It sends a separate alert, with WABA and account ids only, when Meta reports a
+  token invalid or its token or data access expires within 14 days. A token that cannot be checked
+  is one separate "cannot check WhatsApp tokens" alert with the reason: `META_APP_ID` unset, no
+  stored token, a stored token that cannot be decrypted, a token issued by another Meta app, an
+  answer without a validity verdict, or no usable answer from `debug_token` (a Graph error,
+  including a top-level 190 that can mean a bad `META_APP_SECRET`, or a timeout). The stored values
+  stay as they were, and a slow check never marks a WABA's data plane unreadable.
+- **Graph error 190 on any call made with a WABA's token** (sends, templates, media downloads,
+  provisioning): the first one gives the operator one alert, reported off the request path. A bare
+  401 on a media download does not count. Nothing is claimed while ops alerts are off. The post is
+  one attempt, never retried: if it failed, the next census says once that the alert may not have
+  arrived. A token the census already alerted as invalid stays quiet on sends until a valid reading,
+  and so does one reconnected through Embedded Signup.
 
 To renew an expiring token, reconnect the number through Embedded Signup under the current config.
 

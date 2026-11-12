@@ -5,12 +5,14 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext, createScheduledController, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sendMessage } from "@eccos/core/send";
+import { listTemplates } from "@eccos/core/templates";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { EccosControlPlane } from "../../src/control-plane";
 import { EccosGateway } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { chunkLines, formatCensus, runDailyCensus } from "../../src/ops-census";
-import { forgetTokenReports, noteTokenRejected, sendWatched } from "../../src/token-health";
+import { forgetTokenReports, noteTokenRejected, watchGraph } from "../../src/token-health";
 import worker from "../../src/worker";
 import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
@@ -32,6 +34,12 @@ function telegramOk(): ReturnType<typeof vi.fn> {
 
 function sentTexts(fetchMock: ReturnType<typeof vi.fn>): string[] {
   return fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string).text as string);
+}
+
+async function census() {
+  const fetchMock = telegramOk();
+  await runDailyCensus(opsEnv, NOON, fetchMock as unknown as typeof fetch);
+  return sentTexts(fetchMock);
 }
 
 async function seedDeliveries(wabaId: string, rows: Array<[status: string, createdAt: number]>, target?: string) {
@@ -275,12 +283,6 @@ describe("daily census", () => {
 describe("token expiry monitoring", () => {
   const DAY = 24 * 3600_000;
 
-  async function census() {
-    const fetchMock = telegramOk();
-    await runDailyCensus(opsEnv, NOON, fetchMock as unknown as typeof fetch);
-    return sentTexts(fetchMock);
-  }
-
   it("alerts with ids only when a token expires within 14 days, and stores the expiry", async () => {
     const expiresAt = NOON + 5 * DAY;
     mockDebugToken({ is_valid: true, expires_at: SECONDS(expiresAt), data_access_expires_at: 0 });
@@ -365,6 +367,41 @@ describe("token expiry monitoring", () => {
     expect((await getControlPlaneStub(env).getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBeNull();
   });
 
+  it("says expiry unknown, not never, when Meta gives no expires_at, and keeps a stored expiry", async () => {
+    const control = getControlPlaneStub(env);
+    mockDebugToken({ is_valid: true });
+    const [report] = await census();
+    expect(report).toContain("token expiry unknown");
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBeNull();
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: null });
+    await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: null, dataAccessExpiresAt: null });
+    expect((await control.getWabaById(TEST_WABA_ID))?.tokenExpiresAt).toBe(NOON + 40 * DAY);
+  });
+
+  it.each([
+    ["a token from another app", { app_id: "someone-else", is_valid: true }, "token was issued by another Meta app"],
+    ["an answer without is_valid", {}, "debug_token did not say whether the token is valid"],
+  ])("names the reason for %s", async (_name, data, reason) => {
+    mockDebugToken(data);
+    const [alert] = await census();
+    expect(alert).toContain(`WABA ${TEST_WABA_ID}: ${reason}`);
+  });
+
+  it("stores the connect-time expiry in the same upsert that stores the token", async () => {
+    const control = getControlPlaneStub(env);
+    await control.beginWabaProvisioningBatch([
+      {
+        accountId: TEST_ACCOUNT_ID,
+        wabaId: "WABA_NEW",
+        metaAccessToken: "fresh-token",
+        callbackUrl: "https://gateway.example/webhooks/meta",
+        phones: [{ phoneNumberId: "PN_NEW", displayPhoneNumber: "+34 600 000 009" }],
+        tokenHealth: { valid: true, expiresAt: NOON + 9 * DAY, dataAccessExpiresAt: 0 },
+      },
+    ]);
+    expect((await control.getWabaById("WABA_NEW"))?.tokenExpiresAt).toBe(NOON + 9 * DAY);
+  });
+
   it("keeps the stored expiry when the token is invalid", async () => {
     const control = getControlPlaneStub(env);
     await control.recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: NOON + 40 * DAY, dataAccessExpiresAt: 0 });
@@ -396,15 +433,37 @@ describe("Graph error 190 on a send", () => {
     expect(sentTexts(telegram)[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}`);
   });
 
-  it("retries the alert on the next 190 when the Telegram post failed", async () => {
+  it("sends one attempt only: a failed post is not retried, the next census mentions it once", async () => {
     const telegram = vi.fn(async () => new Response("down", { status: 502 }));
     vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
     await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
       Object.assign(cp, { env: opsEnv });
-      await cp.reportRejectedToken(TEST_WABA_ID);
-      await cp.reportRejectedToken(TEST_WABA_ID);
+      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("failed");
+      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("already");
     });
-    expect(telegram).toHaveBeenCalledTimes(2);
+    expect(telegram).toHaveBeenCalledTimes(1);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("down", { status: 503 }));
+    const texts = await census();
+    expect(texts[0]).toContain(`WABA ${TEST_WABA_ID} · account ${TEST_ACCOUNT_ID}: Meta rejected the token on send, the alert may not have arrived`);
+  });
+
+  it("claims nothing while ops alerts are off, so a later configuration still alerts", async () => {
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("disabled");
+      expect(cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at).toBeNull();
+    });
+  });
+
+  it("stays quiet on a send 190 after the census already alerted the token as invalid", async () => {
+    mockDebugToken({ is_valid: false });
+    await census();
+    const telegram = telegramOk();
+    vi.spyOn(globalThis, "fetch").mockImplementation(telegram as unknown as typeof fetch);
+    await runInDurableObject(getControlPlaneStub(env), async (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+      expect(await cp.reportRejectedToken(TEST_WABA_ID)).toBe("already");
+    });
+    expect(telegram).not.toHaveBeenCalled();
   });
 
   it("is triggered by a failed send with error 190 only, and a valid token reading re-arms it", async () => {
@@ -412,11 +471,15 @@ describe("Graph error 190 on a send", () => {
       runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
         cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0]?.at,
       );
+    await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+    });
     const cfg = { META_GRAPH_VERSION: "v25.0", META_PHONE_NUMBER_ID: "PNID1", META_ACCESS_TOKEN: "t" } as never;
     const pending: Promise<unknown>[] = [];
     const send = async (error: unknown) => {
       vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(error), { status: 400 }));
-      await sendWatched(env, (work) => pending.push(work), TEST_WABA_ID, cfg, { messaging_product: "whatsapp" } as never);
+      const watched = { ...cfg, fetch: watchGraph(env, (work) => pending.push(work), TEST_WABA_ID) };
+      await sendMessage(watched, { type: "text" });
       await Promise.all(pending);
     };
     await send({ error: { code: 131047 } });
@@ -425,6 +488,21 @@ describe("Graph error 190 on a send", () => {
     expect(await rejectedAt()).not.toBeNull();
     await getControlPlaneStub(env).recordTokenHealth(TEST_WABA_ID, { valid: true, expiresAt: 0, dataAccessExpiresAt: 0 });
     expect(await rejectedAt()).toBeNull();
+  });
+
+  it("reports a 190 from a template call too, through the same config fetch", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) => {
+      Object.assign(cp, { env: opsEnv });
+    });
+    const pending: Promise<unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(rejected), { status: 401 }));
+    const cfg = { META_GRAPH_VERSION: "v25.0", META_ACCESS_TOKEN: "t", META_WABA_ID: TEST_WABA_ID, fetch: watchGraph(env, (work) => pending.push(work), TEST_WABA_ID) };
+    await listTemplates(cfg as never, 5);
+    await Promise.all(pending);
+    const row = await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
+      cp.sql.exec("SELECT token_rejected_at AS at FROM wabas WHERE waba_id = ?", TEST_WABA_ID).toArray()[0],
+    );
+    expect(row?.at).not.toBeNull();
   });
 
   it("does not call the control plane again for a WABA it just reported", async () => {
