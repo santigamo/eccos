@@ -263,7 +263,7 @@ describe("organization server functions", () => {
     expect(calls.length).toBe(0);
   });
 
-  test("inviteMember names the step-up it was refused for, so the console can follow it", async () => {
+  test("inviteMember is refused until the caller has stepped up", async () => {
     const { auth, db } = await createServerFnAuth();
     await signInAsServerFnCaller(auth, db, "owner3@corp.test");
     fakeEnv.GATEWAY = {
@@ -275,10 +275,12 @@ describe("organization server functions", () => {
       inviteMember({
         data: { email: "new@corp.test", role: "viewer", organizationId: created.data.organizationId },
       });
+    const sent = () => db.query("SELECT COUNT(*) AS n FROM invitation").get();
 
-    expect(await invite()).toMatchObject({ ok: false, reason: "totp-required" });
+    expect((await invite()).ok).toBe(false);
     db.query('UPDATE user SET "twoFactorEnabled" = 1').run();
-    expect(await invite()).toMatchObject({ ok: false, reason: "reauth-required" });
+    expect((await invite()).ok).toBe(false);
+    expect(sent()).toEqual({ n: 0 });
     enrollTotp(db, "owner3@corp.test");
     expect(await invite()).toEqual({ ok: true });
   });

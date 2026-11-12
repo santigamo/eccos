@@ -6,6 +6,32 @@
 
 import { isStepUpReason, type StepUpReason } from "@eccos/auth-baseline/step-up";
 
+/**
+ * The words for each step-up, in one place: the refusal a caller shows when
+ * nobody could be asked, the sheet that asks, and the notice on the connect
+ * fork. `title` is also what the button that opens the sheet says.
+ */
+export const STEP_UP_COPY: Record<
+  StepUpReason,
+  { title: string; refused: string; prompt: string; connect: string }
+> = {
+  "totp-required": {
+    title: "Set up two-factor authentication",
+    refused:
+      "This action is protected. Set up two-factor authentication under Settings, then try again.",
+    prompt:
+      "The action you started needs it. Set it up here and the action continues; the page behind stays as you left it.",
+    connect: "Connecting a number needs two-factor authentication on your account.",
+  },
+  "reauth-required": {
+    title: "Confirm it's you",
+    refused: "This action needs your two-factor code again. Try it once more and confirm when asked.",
+    prompt:
+      "The action you started needs your two-factor code again. It continues once you confirm; the page behind stays as you left it.",
+    connect: "Connecting a number needs your two-factor code first.",
+  },
+};
+
 type Open = (reason: StepUpReason | null) => void;
 
 /**

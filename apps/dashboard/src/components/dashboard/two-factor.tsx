@@ -3,7 +3,7 @@ import { authClient } from "../../auth/auth-client";
 import { totpSecret, twoFactorErrorMessage } from "../../lib/two-factor";
 import { ERROR_CLASS, MACHINE_CLASS } from "../../ui";
 import { PasswordField } from "../auth/password-field";
-import { TwoFactorCodeForm } from "../auth/two-factor-code-form";
+import { TwoFactorCodeForm, verifyChallenge } from "../auth/two-factor-code-form";
 import { QrCode } from "./qr-code";
 import {
   Frame,
@@ -131,13 +131,6 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
   );
 }
 
-/** Check the first code of an enrollment, which turns the factor on. */
-async function verifyFirstCode(code: string): Promise<string | null> {
-  const result = await authClient.twoFactor.verifyTotp({ code }).catch(() => null);
-  if (!result) return "Could not verify the code right now. Please try again.";
-  return result.error ? twoFactorErrorMessage(result.error.code) : null;
-}
-
 function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () => void }) {
   return (
     <div className="flex flex-wrap items-start gap-5">
@@ -147,7 +140,7 @@ function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () =
           Scan the code with an authenticator app, or enter this key by hand.
         </p>
         <code className="font-mono text-xs break-all text-foreground">{totpSecret(totpURI)}</code>
-        <TwoFactorCodeForm enrolling verify={verifyFirstCode} onVerified={onVerified} />
+        <TwoFactorCodeForm enrolling verify={verifyChallenge} onVerified={onVerified} />
       </div>
     </div>
   );

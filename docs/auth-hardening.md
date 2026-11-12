@@ -83,13 +83,17 @@ email-verification link, so a stolen cookie plus the password could otherwise
 renew itself; those sessions carry no stamp of their own and never pass.
 
 **Wrong codes.** The challenge spends Better Auth's own account lockout on the
-`twoFactor` row (`failedVerificationCount` / `lockedUntil`, 10 attempts, then
-15 minutes; honoured when `accountLockout.enabled` is off), so sign-in and
-step-up share one budget. Each attempt is RESERVED before its code is checked,
+`twoFactor` row (`failedVerificationCount` / `lockedUntil`; limits read from
+the two-factor plugin's `accountLockout` options, 10 attempts then 15 minutes
+by default), so sign-in and step-up share one budget. The plugin's `enabled`
+switch is deliberately NOT honoured for step-up: with the lockout off an
+existing session would have no limit at all. The wait the console shows after
+a lock is the server's own remaining time. Each attempt is RESERVED before its code is checked,
 by one conditional atomic increment that only lands while budget is left: a
 parallel burst cannot verify more codes than remain. A right code clears the
 count. Only a genuine wrong-code answer keeps its reservation: any other
-failure hands it back, is reported to Sentry and shown as "try again". Better
+failure hands it back (never below zero, so a refund cannot buy attempts), is
+reported to Sentry and shown as "try again". Better
 Auth applies that lockout only to a sign-in's challenge, so its
 `two-factor/verify-totp` and `verify-backup-code` are refused over HTTP
 (`USE_STEP_UP`) for an enrolled, signed-in caller; they stay open to a
@@ -134,7 +138,8 @@ version as `better-auth`, and bumped with it).
 One branch never reaches a hook: `invite-member` with `resend: true` returns
 before `beforeCreateInvitation`. A `before` hook gates it instead, resolving
 the organization as Better Auth does and skipping step-up only for a member
-known to lack the permission.
+whose every role is known and none grants invitations. An unknown, padded or
+empty role string does not skip it.
 
 **What the operator sees.** A refusal is a typed `forbidden` failure with
 reason `totp-required` or `reauth-required` (`StepUpReason`, defined once in

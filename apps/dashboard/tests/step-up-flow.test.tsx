@@ -7,12 +7,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { failureCopy } from "../src/lib/failure";
-import { totpSecret, twoFactorErrorMessage } from "../src/lib/two-factor";
+import { lockedMessage, totpSecret, twoFactorErrorMessage } from "../src/lib/two-factor";
 import type { Failure } from "../src/server/gateway";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { holdStepUp, promptStepUp, registerStepUpPrompt, settleStepUp, withStepUp } = await import(
+const { holdStepUp, promptStepUp, registerStepUpPrompt, settleStepUp, STEP_UP_COPY, withStepUp } = await import(
   "../src/lib/step-up"
 );
 const { BackupCodes, TwoFactorPanel } = await import("../src/components/dashboard/two-factor");
@@ -81,14 +81,6 @@ describe("withStepUp", () => {
     expect(shown).toEqual([]);
   });
 
-  test("a result that only carries a reason code is followed too (inviteMember)", async () => {
-    prompt(true);
-    let calls = 0;
-    const invite = async () =>
-      ++calls === 1 ? { ok: false as const, error: "x", reason: "reauth-required" } : { ok: true as const };
-    expect(await withStepUp(invite)).toEqual({ ok: true });
-  });
-
   test("a second prompt declines the first instead of leaving it waiting", async () => {
     unregister = registerStepUpPrompt(() => {});
     const first = promptStepUp("reauth-required");
@@ -144,6 +136,13 @@ describe("withStepUp", () => {
 });
 
 describe("copy", () => {
+  test("one set of words per step-up, shared by the refusal, the sheet and the connect fork", () => {
+    for (const reason of ["totp-required", "reauth-required"] as const) {
+      const copy = failureCopy(refusal(reason));
+      expect(copy).toEqual({ title: STEP_UP_COPY[reason].title, detail: STEP_UP_COPY[reason].refused });
+    }
+  });
+
   test("each step-up refusal has its own words, not the server's", () => {
     for (const reason of ["totp-required", "reauth-required"] as const) {
       const copy = failureCopy(refusal(reason));
@@ -156,7 +155,10 @@ describe("copy", () => {
     expect(twoFactorErrorMessage("INVALID_CODE")).toContain("did not match");
     expect(twoFactorErrorMessage(undefined)).toContain("did not match");
     expect(twoFactorErrorMessage("INVALID_TWO_FACTOR_COOKIE")).toContain("Start again");
-    expect(twoFactorErrorMessage("ACCOUNT_TEMPORARILY_LOCKED")).toContain("15 minutes");
+    // The wait is the server's when it says, and never a number of our own.
+    expect(twoFactorErrorMessage("ACCOUNT_TEMPORARILY_LOCKED")).toContain("a few minutes");
+    expect(lockedMessage(2)).toContain("2 minutes");
+    expect(lockedMessage(1)).toContain("1 minute,");
   });
 
   test("the key shown for typing is the one inside the URI", () => {

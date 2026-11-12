@@ -9,7 +9,8 @@
  * (`failedVerificationCount` / `lockedUntil`), so sign-in and step-up share
  * one budget. Each attempt is RESERVED before its code is checked, with one
  * conditional atomic increment: a parallel burst cannot verify more codes
- * than the budget has left. A right code clears the count.
+ * than the budget has left. A right code clears the count. The limit applies
+ * whether or not the plugin's lockout is switched on.
  */
 
 import type { Auth } from "./auth";
@@ -17,7 +18,13 @@ import { getSessionOnce } from "./request-memo";
 
 export type ConfirmStepUpResult =
   | { ok: true }
-  | { ok: false; code: "invalid" | "locked" | "not-enrolled" | "signed-out" };
+  | { ok: false; code: "invalid" | "not-enrolled" | "signed-out" }
+  /** `minutes`: how long until the budget is back, for the operator's message. */
+  | { ok: false; code: "locked"; minutes: number };
+
+/** Better Auth's own defaults (`resolveAccountLockoutConfig`), for options left unset. */
+const DEFAULT_MAX_FAILED_ATTEMPTS = 10;
+const DEFAULT_LOCK_SECONDS = 900;
 
 interface TwoFactorRow {
   id: string;
@@ -52,45 +59,50 @@ export async function confirmStepUp(
     return { ok: false, code: "not-enrolled" };
   }
   const byId = [{ field: "id", value: factor.id }];
+  // The limits are the two-factor plugin's own, so sign-in and step-up agree.
+  // Its `enabled` switch is NOT honoured here: with the lockout off, sign-in
+  // still has its per-challenge cap, but an existing session would have no
+  // limit at all, so step-up always counts.
   const lockout = (getPlugin("two-factor")?.options as
-    | { accountLockout?: { enabled?: boolean; maxFailedAttempts?: number; durationSeconds?: number } }
+    | { accountLockout?: { maxFailedAttempts?: number; durationSeconds?: number } }
     | undefined)?.accountLockout;
-  // Better Auth's own switch and defaults (`resolveAccountLockoutConfig`).
-  const limited = lockout?.enabled ?? true;
-  const maxFailedAttempts = lockout?.maxFailedAttempts ?? 10;
+  const maxFailedAttempts = lockout?.maxFailedAttempts ?? DEFAULT_MAX_FAILED_ATTEMPTS;
+  const lockMs = (lockout?.durationSeconds ?? DEFAULT_LOCK_SECONDS) * 1000;
+  const locked = (until: number): ConfirmStepUpResult => ({
+    ok: false,
+    code: "locked",
+    minutes: Math.max(1, Math.ceil((until - Date.now()) / 60_000)),
+  });
   const lock = () =>
     adapter.incrementOne({
       model: "twoFactor",
       where: [...byId, { field: "failedVerificationCount", operator: "gte", value: maxFailedAttempts }],
       increment: {},
-      set: { lockedUntil: new Date(Date.now() + (lockout?.durationSeconds ?? 900) * 1000) },
+      set: { lockedUntil: new Date(Date.now() + lockMs) },
     });
 
-  let reserved = 0;
-  if (limited) {
-    if (factor.lockedUntil) {
-      if (new Date(factor.lockedUntil).getTime() > Date.now()) return { ok: false, code: "locked" };
-      // An expired lock is cleared before the next attempt is reserved.
-      await adapter.incrementOne({
-        model: "twoFactor",
-        where: [...byId, { field: "lockedUntil", operator: "lte", value: new Date() }],
-        increment: {},
-        set: { failedVerificationCount: 0, lockedUntil: null },
-      });
-    }
-    // The reservation: it only lands while budget is left, and a row with no
-    // counter at all fails closed rather than verifying unlimited codes.
-    const slot = await adapter.incrementOne<{ failedVerificationCount?: number }>({
+  if (factor.lockedUntil) {
+    const until = new Date(factor.lockedUntil).getTime();
+    if (until > Date.now()) return locked(until);
+    // An expired lock is cleared before the next attempt is reserved.
+    await adapter.incrementOne({
       model: "twoFactor",
-      where: [...byId, { field: "failedVerificationCount", operator: "lt", value: maxFailedAttempts }],
-      increment: { failedVerificationCount: 1 },
+      where: [...byId, { field: "lockedUntil", operator: "lte", value: new Date() }],
+      increment: {},
+      set: { failedVerificationCount: 0, lockedUntil: null },
     });
-    if (!slot) {
-      // Spent. Make sure the lock stands, so the budget comes back on its own.
-      await lock();
-      return { ok: false, code: "locked" };
-    }
-    reserved = slot.failedVerificationCount ?? maxFailedAttempts;
+  }
+  // The reservation: it only lands while budget is left, and a row with no
+  // counter at all fails closed rather than verifying unlimited codes.
+  const slot = await adapter.incrementOne<{ failedVerificationCount?: number }>({
+    model: "twoFactor",
+    where: [...byId, { field: "failedVerificationCount", operator: "lt", value: maxFailedAttempts }],
+    increment: { failedVerificationCount: 1 },
+  });
+  if (!slot) {
+    // Spent. Make sure the lock stands, so the budget comes back on its own.
+    await lock();
+    return locked(Date.now() + lockMs);
   }
 
   try {
@@ -100,27 +112,25 @@ export async function confirmStepUp(
   } catch (error) {
     const code = (error as { body?: { code?: unknown } } | null)?.body?.code;
     if (typeof code !== "string" || !WRONG_CODE.has(code)) {
-      // Not a verdict on the code: hand the reservation back.
-      if (limited) {
-        await adapter.incrementOne({
-          model: "twoFactor",
-          where: byId,
-          increment: { failedVerificationCount: -1 },
-        });
-      }
+      // Not a verdict on the code: hand the reservation back. Never below
+      // zero, which is also what makes this a no-op after a concurrent right
+      // code has already reset the count.
+      await adapter.incrementOne({
+        model: "twoFactor",
+        where: [...byId, { field: "failedVerificationCount", operator: "gt", value: 0 }],
+        increment: { failedVerificationCount: -1 },
+      });
       throw error;
     }
-    if (reserved >= maxFailedAttempts) await lock();
+    if ((slot.failedVerificationCount ?? maxFailedAttempts) >= maxFailedAttempts) await lock();
     return { ok: false, code: "invalid" };
   }
 
-  if (limited) {
-    await adapter.update({
-      model: "twoFactor",
-      where: byId,
-      update: { failedVerificationCount: 0, lockedUntil: null },
-    });
-  }
+  await adapter.update({
+    model: "twoFactor",
+    where: byId,
+    update: { failedVerificationCount: 0, lockedUntil: null },
+  });
   await internalAdapter.updateSession(token, { stepUpAt: new Date() });
   return { ok: true };
 }

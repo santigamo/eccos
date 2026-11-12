@@ -24,7 +24,7 @@ import {
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
 import { Button } from "../ui/button";
-import { promptStepUp, stepUpReason } from "../../lib/step-up";
+import { promptStepUp, STEP_UP_COPY, stepUpReason } from "../../lib/step-up";
 import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import {
   CONNECT_CANCELLED_MESSAGE,
@@ -97,17 +97,6 @@ export function resetConnectGuards(): void {
   guards.exchanging = false;
   guards.left = false;
 }
-
-const STEP_UP_NOTICE: Record<StepUpReason, { text: string; action: string }> = {
-  "totp-required": {
-    text: "Connecting a number needs two-factor authentication on your account.",
-    action: "Set it up",
-  },
-  "reauth-required": {
-    text: "Connecting a number needs your two-factor code first.",
-    action: "Confirm it's you",
-  },
-};
 
 type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
@@ -448,14 +437,14 @@ export function ConnectNumberChoices({
 
       {stepUp ? (
         <div className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground">
-          <span>{STEP_UP_NOTICE[stepUp].text}</span>
+          <span>{STEP_UP_COPY[stepUp].connect}</span>
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={() => void promptStepUp(stepUp).then((ok) => ok && setStepUp(null))}
           >
-            {STEP_UP_NOTICE[stepUp].action}
+            {STEP_UP_COPY[stepUp].title}
           </Button>
         </div>
       ) : null}

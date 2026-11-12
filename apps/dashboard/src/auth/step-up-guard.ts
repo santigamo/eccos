@@ -43,13 +43,6 @@ function refuse(reason: StepUpReason): never {
   throw new APIError("FORBIDDEN", { code: ERROR_CODES[reason], message: stepUpMessage(reason) });
 }
 
-/** The step-up reason a Better Auth refusal carries, if that is what it was. */
-export function stepUpReasonOf(error: unknown): StepUpReason | null {
-  const code = (error as { body?: { code?: unknown } } | null)?.body?.code;
-  const match = Object.entries(ERROR_CODES).find(([, value]) => value === code);
-  return match ? (match[0] as StepUpReason) : null;
-}
-
 /**
  * Member management (invitations, role changes, removal). These run as
  * Better Auth's `organizationHooks`, AFTER it has resolved the organization
@@ -69,13 +62,20 @@ function refuseUnlessSteppedUp(session: Parameters<typeof stepUpRefusal>[0] | nu
   if (refusal) refuse(refusal);
 }
 
-function mayInvite(role: unknown): boolean {
-  return String(role ?? "")
+/**
+ * Whether a member's role string is KNOWN not to grant invitations. Split as
+ * Better Auth's permission check splits it (on commas, nothing trimmed), and
+ * closed on doubt: one role this module does not know, an empty string, or a
+ * padded name, and the answer is no, so step-up still applies.
+ */
+function knownNotToInvite(role: unknown): boolean {
+  if (typeof role !== "string" || role === "") return false;
+  return role
     .split(",")
-    .some(
+    .every(
       (name) =>
         Object.hasOwn(roles, name) &&
-        roles[name as keyof typeof roles].authorize({ invitation: ["create"] }).success === true,
+        roles[name as keyof typeof roles].authorize({ invitation: ["create"] }).success !== true,
     );
 }
 
@@ -118,7 +118,7 @@ export function stepUpGuard() {
                   ],
                 })
               : null;
-            if (member && !mayInvite(member.role)) return;
+            if (member && knownNotToInvite(member.role)) return;
             refuseUnlessSteppedUp(session);
           }),
         },

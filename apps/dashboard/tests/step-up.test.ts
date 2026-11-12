@@ -274,7 +274,8 @@ describe("attack: a stale stolen cookie plus the password", () => {
     expect(budget().locked).not.toBeNull();
 
     // Locked for the account: the right code here, and the sign-in challenge too.
-    expect(await attempt(await code())).toEqual({ ok: false, code: "locked" });
+    // The wait it reports is the plugin's own lock, not a number written twice.
+    expect(await attempt(await code())).toEqual({ ok: false, code: "locked", minutes: 15 });
     expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
     const signIn = await post("/sign-in/email", { email: EMAIL, password: PASSWORD });
     const challenge = await post("/two-factor/verify-totp", { code: await code() }, cookiesOf(signIn));
@@ -291,8 +292,36 @@ describe("attack: a stale stolen cookie plus the password", () => {
     goStale(db);
     // An unreadable secret: Better Auth fails to decrypt it, which says nothing about the guess.
     db.query('UPDATE "twoFactor" SET secret = ?').run("not-a-ciphertext");
+    const failed = () => db.query('SELECT "failedVerificationCount" AS failed FROM "twoFactor"').get();
     await expect(confirmStepUp(auth, new Headers({ cookie }), { code: "000000" })).rejects.toThrow();
-    expect(db.query('SELECT "failedVerificationCount" AS failed FROM "twoFactor"').get()).toEqual({ failed: 0 });
+    expect(failed()).toEqual({ failed: 0 });
+
+    // Handing a reservation back never takes the count below zero, however many
+    // do it at once, so a refund cannot buy extra attempts.
+    await Promise.allSettled(
+      Array.from({ length: 8 }, () => confirmStepUp(auth, new Headers({ cookie }), { code: "000000" })),
+    );
+    expect(failed()).toEqual({ failed: 0 });
+  });
+
+  test("the limit holds even with the plugin's account lockout switched off", async () => {
+    const { auth, db, cookie } = await enrolled();
+    goStale(db);
+    const options = (await auth.$context).getPlugin("two-factor")?.options as {
+      accountLockout?: { enabled?: boolean; maxFailedAttempts?: number; durationSeconds?: number };
+    };
+    // The same options object the limits are read from: off, three attempts, two minutes.
+    options.accountLockout = { enabled: false, maxFailedAttempts: 3, durationSeconds: 120 };
+    const guesses = await Promise.all(
+      Array.from({ length: 6 }, () => confirmStepUp(auth, new Headers({ cookie }), { code: "000000" })),
+    );
+    expect(guesses.filter((g) => !g.ok && g.code === "invalid")).toHaveLength(3);
+    expect(guesses.filter((g) => !g.ok && g.code === "locked")).toHaveLength(3);
+    expect(await confirmStepUp(auth, new Headers({ cookie }), { code: "000000" })).toEqual({
+      ok: false,
+      code: "locked",
+      minutes: 2,
+    });
   });
 
   test("every guarded account path is a real endpoint", async () => {
@@ -556,6 +585,30 @@ describe("Better Auth organization endpoints (invitations, role changes)", () =>
 
     enrollTotp(db, EMAIL);
     expect((await resend(cookie)).status).toBe(200);
+  });
+
+  test("a resend skips step-up only for a role known not to invite; any doubt keeps it", async () => {
+    const { db, post, org, invite, cookie } = await withOrganization();
+    enrollTotp(db, EMAIL);
+    await invite();
+    goStale(db);
+    const resendAs = async (role: string) => {
+      db.query("UPDATE member SET role = ?").run(role);
+      const res = await post(
+        "/organization/invite-member",
+        { email: "invitee@corp.test", role: "viewer", organizationId: org.id, resend: true },
+        cookie,
+      );
+      return (await refusal(res))[1];
+    };
+
+    // Known, and without the permission: Better Auth's own refusal, not step-up.
+    expect(await resendAs("viewer")).not.toBe("SESSION_NOT_FRESH");
+    expect(await resendAs("viewer,operator")).not.toBe("SESSION_NOT_FRESH");
+    // One role that invites, a padded name, an unknown role, or nothing at all.
+    for (const role of ["viewer,admin", "viewer, admin", " viewer", "viewer,custom", ""]) {
+      expect([role, await resendAs(role)]).toEqual([role, "SESSION_NOT_FRESH"]);
+    }
   });
 
   test("an anonymous call still gets the endpoint's own 401", async () => {

@@ -4,8 +4,24 @@ import { AUTH_ERROR_BANNER_CLASS } from "@/components/auth/auth-page";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { authClient } from "@/auth/auth-client";
+import { twoFactorErrorMessage, VERIFY_UNAVAILABLE } from "@/lib/two-factor";
 import { MACHINE_CLASS } from "@/ui";
 import { ArrowRightIcon } from "lucide-react";
+
+/**
+ * Check a code through Better Auth's own endpoints: against a sign-in's
+ * pending challenge, or as the first code of an enrollment.
+ */
+export async function verifyChallenge(code: string, backup: boolean): Promise<string | null> {
+  const result = await (
+    backup
+      ? authClient.twoFactor.verifyBackupCode({ code })
+      : authClient.twoFactor.verifyTotp({ code })
+  ).catch(() => null);
+  if (!result) return VERIFY_UNAVAILABLE;
+  return result.error ? twoFactorErrorMessage(result.error.code) : null;
+}
 
 /**
  * The authenticator code, or a backup code. `verify` says what the code is

@@ -2,8 +2,8 @@ import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useState, type RefObject } from "react";
 import { invalidateRoutes, rootRouteId } from "../../lib/invalidate";
-import { holdStepUp, registerStepUpPrompt, settleStepUp } from "../../lib/step-up";
-import { twoFactorErrorMessage } from "../../lib/two-factor";
+import { holdStepUp, registerStepUpPrompt, settleStepUp, STEP_UP_COPY } from "../../lib/step-up";
+import { lockedMessage, twoFactorErrorMessage, VERIFY_UNAVAILABLE } from "../../lib/two-factor";
 import { confirmStepUpCode } from "../../server/step-up";
 import { TwoFactorCodeForm } from "../auth/two-factor-code-form";
 import { TwoFactorSetup } from "./two-factor";
@@ -15,29 +15,16 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-const COPY: Record<StepUpReason, { title: string; description: string }> = {
-  "totp-required": {
-    title: "Set up two-factor authentication",
-    description:
-      "The action you started needs it. Set it up here and the action continues; the page behind stays as you left it.",
-  },
-  "reauth-required": {
-    title: "Confirm it's you",
-    description:
-      "The action you started needs your two-factor code again. It continues once you confirm; the page behind stays as you left it.",
-  },
-};
-
 /** Check a code against the current session; the message to show, or null when it passed. */
 async function verifyOnSession(code: string, backup: boolean): Promise<string | null> {
   const result = await confirmStepUpCode({ data: { code, backup } }).catch(() => null);
-  if (!result) return "Could not verify the code right now. Please try again.";
+  if (!result) return VERIFY_UNAVAILABLE;
   if (result.ok) return null;
   switch (result.code) {
     case "unavailable":
-      return "Could not verify the code right now. Please try again.";
+      return VERIFY_UNAVAILABLE;
     case "locked":
-      return twoFactorErrorMessage("ACCOUNT_TEMPORARILY_LOCKED");
+      return lockedMessage(result.minutes);
     case "signed-out":
       return "This session is no longer signed in. Reload the page and sign in.";
     case "not-enrolled":
@@ -80,7 +67,7 @@ export function StepUpSheet({
     settleStepUp(ok);
   }
 
-  const copy = reason ? COPY[reason] : null;
+  const copy = reason ? STEP_UP_COPY[reason] : null;
   return (
     <Sheet
       open={reason !== null}
@@ -96,7 +83,7 @@ export function StepUpSheet({
       >
         <SheetHeader className="gap-2">
           <SheetTitle>{copy?.title}</SheetTitle>
-          <SheetDescription>{copy?.description}</SheetDescription>
+          <SheetDescription>{copy?.prompt}</SheetDescription>
         </SheetHeader>
         <div className="px-4 pb-4">
           {reason === "totp-required" ? (

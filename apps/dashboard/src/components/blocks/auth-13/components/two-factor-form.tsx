@@ -1,18 +1,5 @@
-import { authClient } from "@/auth/auth-client";
-import { TwoFactorCodeForm } from "@/components/auth/two-factor-code-form";
-import { twoFactorErrorMessage } from "@/lib/two-factor";
+import { TwoFactorCodeForm, verifyChallenge } from "@/components/auth/two-factor-code-form";
 import { Logo } from "@/components/blocks/app-shell-7/components/logo";
-
-/** Check a code against the sign-in's pending challenge. */
-async function verifyChallenge(code: string, backup: boolean): Promise<string | null> {
-  const result = await (
-    backup
-      ? authClient.twoFactor.verifyBackupCode({ code })
-      : authClient.twoFactor.verifyTotp({ code })
-  ).catch(() => null);
-  if (!result) return "Could not verify the code right now. Please try again.";
-  return result.error ? twoFactorErrorMessage(result.error.code) : null;
-}
 
 /**
  * The second step of sign-in for an account with two-factor authentication.

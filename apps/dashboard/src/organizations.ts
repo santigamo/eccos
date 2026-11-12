@@ -18,13 +18,11 @@ import {
   ForbiddenError,
   resolveMemberships,
   verifyMembership,
-  type ForbiddenReason,
   type Membership,
 } from "./auth/tenant";
 import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import { getSessionOnce } from "./auth/request-memo";
 import { stepUpRefusal } from "./auth/step-up";
-import { stepUpReasonOf } from "./auth/step-up-guard";
 import { activeWorkspace } from "./lib/workspaces";
 
 export interface OrganizationView {
@@ -259,11 +257,6 @@ export const selectOrganization = createServerFn({ method: "POST" })
     }
   });
 
-function reasonOf(err: unknown): { reason?: ForbiddenReason } {
-  const reason = err instanceof ForbiddenError ? err.reason : stepUpReasonOf(err);
-  return reason ? { reason } : {};
-}
-
 const inviteInput = z
   .object({
     email: z.string().trim().email(),
@@ -280,9 +273,7 @@ const inviteInput = z
 export const inviteMember = createServerFn({ method: "POST" })
   .validator((input: unknown) => inviteInput.parse(input))
   .handler(
-    async ({
-      data,
-    }): Promise<{ ok: true } | { ok: false; error: string; reason?: ForbiddenReason }> => {
+    async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
       try {
         const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "administer");
         if (organizationId !== data.organizationId) {
@@ -301,13 +292,8 @@ export const inviteMember = createServerFn({ method: "POST" })
         });
         return { ok: true };
       } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-          // What `withStepUp` follows. Step-up itself is judged once, by the
-          // organization hook inside `createInvitation`.
-          ...reasonOf(err),
-        };
+        // Step-up is judged inside `createInvitation`, by the organization hook.
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     },
   );
