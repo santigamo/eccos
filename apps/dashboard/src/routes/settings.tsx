@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { invalidatePage } from "../lib/invalidate";
 import { Page } from "../ui";
@@ -11,7 +12,7 @@ import {
   type BillingState,
   type Result,
 } from "../server/gateway";
-import { BillingPanel } from "../components/dashboard/billing-panel";
+import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billing-panel";
 import { ApiKeysPanel } from "../components/dashboard/api-keys";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -45,16 +46,7 @@ export const Route = createFileRoute("/settings")({
     billing: search.billing === "success" ? "success" : undefined,
     subscription_id: typeof search.subscription_id === "string" ? search.subscription_id : undefined,
   }),
-  loaderDeps: ({ search }) => ({
-    subscriptionId: search.billing === "success" ? search.subscription_id : undefined,
-  }),
-  loader: async ({ deps }) => {
-    // The webhook may land after the redirect, so the return asks Creem itself.
-    if (deps.subscriptionId) {
-      await confirmCheckout({ data: { subscriptionId: deps.subscriptionId } }).catch(() => null);
-    }
-    return Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin(), getBilling()]);
-  },
+  loader: () => Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin(), getBilling()]),
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
@@ -70,8 +62,28 @@ export const Route = createFileRoute("/settings")({
 function SettingsPage() {
   const scope = useLoaderData({ from: "__root__" });
   const [keys, retention, gatewayOrigin, billing] = Route.useLoaderData();
-  const { billing: billingReturn } = Route.useSearch();
   const router = useRouter();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [returned, setReturned] = useState<CheckoutReturn | null>(null);
+  // The webhook may land after Creem's redirect, so the return asks Creem itself.
+  // Once: the parameters then leave the URL, and a reload does not ask again.
+  useEffect(() => {
+    if (search.billing !== "success") return;
+    let current = true;
+    void (async () => {
+      const confirmed = search.subscription_id
+        ? await confirmCheckout({ data: { subscriptionId: search.subscription_id } }).catch(() => null)
+        : null;
+      if (!current) return;
+      setReturned({ status: confirmed?.ok ? confirmed.data : null });
+      await navigate({ search: {}, replace: true });
+      await invalidatePage(router);
+    })();
+    return () => {
+      current = false;
+    };
+  }, [search.billing, search.subscription_id, navigate, router]);
   // Both post-organization stages carry the account, in two shapes. Reachable
   // before any WABA exists, which is exactly why nothing here may need one.
   const ready = scope.ok && scope.data.stage === "ready" ? scope.data.scope : null;
@@ -87,7 +99,7 @@ function SettingsPage() {
       wabaId={wabaId}
       gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
       billing={billing.ok ? billing.data : null}
-      billingReturned={billingReturn === "success"}
+      billingReturned={returned}
       onKeysChanged={() => void invalidatePage(router)}
     />
   );
@@ -114,7 +126,7 @@ export function SettingsView({
   gatewayOrigin?: string | null;
   /** Null while billing is off, and for a role that may not administer it. */
   billing?: BillingState | null;
-  billingReturned?: boolean;
+  billingReturned?: CheckoutReturn | null;
   onKeysChanged?: () => void;
 }) {
   return (

@@ -282,7 +282,13 @@ export function ConnectNumberChoices({
         }
         // The numbers table is a loader read; a reload is the honest way to
         // show what provisioning just did without duplicating its state here.
-        leave(returnPathFor(CONNECT_RETURN_PATH, verdict.skipped));
+        leave(
+          returnPathFor(
+            CONNECT_RETURN_PATH,
+            verdict.skipped,
+            result.data.ok && result.data.subscriptionRequired === true,
+          ),
+        );
       } finally {
         guards.exchanging = false;
       }

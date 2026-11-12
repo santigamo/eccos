@@ -317,8 +317,8 @@ export function tokenConnectFailureCopy(
       };
     case "subscription_required":
       return {
-        title: "Subscription needed",
-        detail: "Adding a number needs an active subscription. Start one in Settings, then attach again.",
+        title: "No new numbers",
+        detail: "This workspace cannot add new numbers, so nothing was attached.",
       };
     default:
       return {

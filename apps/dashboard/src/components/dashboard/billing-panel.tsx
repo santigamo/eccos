@@ -10,24 +10,25 @@ const ROW_CLASS = "flex items-center justify-between gap-4 px-(--frame-panel-px)
 const NOTE_CLASS = "mt-4 mb-0 block border-l-2 px-3 py-2 text-sm text-foreground";
 
 export function billingStatusLabel(billing: BillingState): string {
-  if (billing.status === "trialing") return "Trial";
-  if (billing.status === "scheduled_cancel") return "Active until the period ends";
-  if (billing.connectPolicy === "open") return billing.hasCustomer ? "Active" : "No subscription needed";
-  return billing.status === "past_due" || billing.status === "unpaid" ? "Payment failed" : "No active subscription";
+  if (billing.connectPolicy === "closed") return "No active subscription";
+  return billing.hasCustomer ? "Active" : "No subscription needed";
 }
 
+/** What Creem said about the subscription a checkout just returned with; null when it did not say. */
+export type CheckoutReturn = { status: string | null };
+
 /** What the page says on the way back from a Creem checkout, whose webhook may not have landed yet. */
-export function checkoutReturnNote(billing: BillingState): string {
+export function checkoutReturnNote(billing: BillingState, { status }: CheckoutReturn): string {
   if (billing.connectPolicy === "closed") {
     return "Creem is still confirming the checkout. Reload this page in a few seconds.";
   }
-  return billing.status === "trialing"
+  return status === "trialing"
     ? "Your trial has started. You can add numbers now."
     : "Your subscription is active. You can add numbers now.";
 }
 
 /** Billing for the workspace. Rendered only while billing is on. */
-export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: boolean }) {
+export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: CheckoutReturn | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closed = billing.connectPolicy === "closed";
@@ -61,7 +62,7 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
         </FrameHeader>
         {returned ? (
           <output className={`${NOTE_CLASS} ${closed ? "border-l-warning" : "border-l-(--mark)"}`}>
-            {checkoutReturnNote(billing)}
+            {checkoutReturnNote(billing, returned)}
           </output>
         ) : null}
         <dl className="my-0 -mx-(--frame-panel-px) mt-5 divide-y divide-(--line) border-y border-(--line)">

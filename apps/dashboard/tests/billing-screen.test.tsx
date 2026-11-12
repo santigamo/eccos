@@ -9,10 +9,11 @@ const { SettingsView } = await import("../src/routes/settings");
 const { NumbersView } = await import("../src/routes/numbers");
 const { billingStatusLabel, checkoutReturnNote } = await import("../src/components/dashboard/billing-panel");
 const { normalizeConnectError } = await import("../src/components/dashboard/connect-outcome");
+const { returnPathFor } = await import("../src/lib/connect-result");
 const { validateConfirmCheckoutInput } = await import("../src/server/gateway");
 
-const closed = { connectPolicy: "closed" as const, numbers: 2, monthlyEuros: 8, hasCustomer: false, status: null };
-const trial = { connectPolicy: "open" as const, numbers: 2, monthlyEuros: 8, hasCustomer: true, status: "trialing" };
+const closed = { connectPolicy: "closed" as const, numbers: 2, monthlyEuros: 8, hasCustomer: false };
+const trial = { connectPolicy: "open" as const, numbers: 2, monthlyEuros: 8, hasCustomer: true };
 
 function resources(connectPolicy: ConnectPolicy): AccountResources {
   return {
@@ -54,6 +55,15 @@ describe("billing off", () => {
     }
   });
 
+  test("a gateway that refuses new numbers is explained without pointing at a billing page", () => {
+    const html = renderToStaticMarkup(
+      <NumbersView resources={resources("closed")} connectError="subscription_required" />,
+    );
+    expect(html).toContain("This workspace cannot add new numbers");
+    expect(html).not.toContain("subscription");
+    expect(html).not.toContain('href="/settings"');
+  });
+
   test("Numbers has no banner and the add button works", () => {
     const html = renderToStaticMarkup(<NumbersView resources={resources("open")} />);
     expect(html).not.toContain("subscription");
@@ -78,25 +88,26 @@ describe("billing on", () => {
     expect(html).not.toContain("Start subscription");
   });
 
-  test("status labels", () => {
-    expect(billingStatusLabel(trial)).toBe("Trial");
-    expect(billingStatusLabel({ ...trial, status: "active" })).toBe("Active");
-    expect(billingStatusLabel({ ...closed, hasCustomer: true, status: "past_due" })).toBe("Payment failed");
-    expect(billingStatusLabel({ ...trial, hasCustomer: false, status: null })).toBe("No subscription needed");
+  test("status labels come from the stored policy", () => {
+    expect(billingStatusLabel(trial)).toBe("Active");
+    expect(billingStatusLabel(closed)).toBe("No active subscription");
+    expect(billingStatusLabel({ ...trial, hasCustomer: false })).toBe("No subscription needed");
   });
 
   test("the checkout return says what happened, and waits when the webhook has not landed", () => {
-    expect(checkoutReturnNote(trial)).toContain("trial has started");
-    expect(checkoutReturnNote({ ...trial, status: "active" })).toContain("subscription is active");
-    expect(checkoutReturnNote(closed)).toContain("still confirming");
-    const html = renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} billingReturned />);
+    expect(checkoutReturnNote(trial, { status: "trialing" })).toContain("trial has started");
+    expect(checkoutReturnNote(trial, { status: "active" })).toContain("subscription is active");
+    expect(checkoutReturnNote(closed, { status: null })).toContain("still confirming");
+    const html = renderToStaticMarkup(
+      <SettingsView accountId="account-a" billing={trial} billingReturned={{ status: "trialing" }} />,
+    );
     expect(html).toContain("trial has started");
     expect(renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} />)).not.toContain("trial has started");
   });
 
   test("Numbers warns while closed and never blocks connecting", () => {
     // A closed workspace must still be able to reconnect a number it already has.
-    const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} />);
+    const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />);
     expect(html).toContain("Adding a new number needs an active subscription");
     expect(html).toContain('href="/settings"');
     expect(html).toContain("+ Add number");
@@ -105,11 +116,17 @@ describe("billing on", () => {
 
   test("a refused new number says why and links to billing", () => {
     const html = renderToStaticMarkup(
-      <NumbersView resources={resources("closed")} connectError="subscription_required" />,
+      <NumbersView resources={resources("closed")} billing connectError="subscription_required" />,
     );
-    expect(html).toContain("Adding a number needs an active subscription");
+    expect(html).toContain("needs an active subscription, so the new ones were left out");
     expect(html).toContain("Open billing</a>");
     expect(normalizeConnectError("subscription_required")).toBe("subscription_required");
+  });
+
+  test("a connect that left new numbers out lands on Numbers saying so", () => {
+    expect(returnPathFor("/numbers", 0)).toBe("/numbers");
+    expect(returnPathFor("/numbers", 2)).toBe("/numbers?connectSkipped=2");
+    expect(returnPathFor("/numbers", 1, true)).toBe("/numbers?connectSkipped=1&connectError=subscription_required");
   });
 
   test("the checkout return only accepts an id-shaped subscription", () => {

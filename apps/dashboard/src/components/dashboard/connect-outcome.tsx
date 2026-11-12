@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
 import { track, whenUmamiReady } from "@/lib/analytics";
-import { CONNECT_FAILURES } from "@/lib/connect-result";
+import { CONNECT_FAILURES, SUBSCRIPTION_REQUIRED_MESSAGE } from "@/lib/connect-result";
 import { cn } from "@/lib/utils";
 
 /**
@@ -48,7 +48,11 @@ function skippedDetail(skipped: number): string {
  * message: an element that appears is not reliably announced, an empty one that
  * fills up is.
  */
-export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeSearch) {
+export function ConnectOutcome({
+  connectError,
+  connectSkipped,
+  billing,
+}: ConnectOutcomeSearch & { billing?: boolean }) {
   // Counted once per gateway redirect: a reload or Back renders the same URL.
   // Success carries no parameter; it is tracked in `connect-number.tsx`.
   useEffect(() => {
@@ -61,7 +65,9 @@ export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeS
   }, [connectError, connectSkipped]);
 
   const detail = connectError
-    ? CONNECT_FAILURES[connectError]
+    ? connectError === "subscription_required" && billing
+      ? SUBSCRIPTION_REQUIRED_MESSAGE
+      : CONNECT_FAILURES[connectError]
     : connectSkipped
       ? skippedDetail(connectSkipped)
       : null;
@@ -78,7 +84,7 @@ export function ConnectOutcome({ connectError, connectSkipped }: ConnectOutcomeS
       aria-live="polite"
     >
       {detail}
-      {connectError === "subscription_required" ? (
+      {connectError === "subscription_required" && billing ? (
         <>
           {" "}
           <a href="/settings" className="underline underline-offset-2">
