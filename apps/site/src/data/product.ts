@@ -17,7 +17,7 @@ export const SITE = {
   url: "https://eccos.chat",
   repo: "https://github.com/santigamo/eccos",
   signup: "https://app.eccos.chat/signup",
-  email: "hello@eccos.chat",
+  email: "hello@imsanti.dev",
   provider: "Santiago García Monsalve",
   location: "Manresa (Barcelona), Spain",
   license: "MIT",

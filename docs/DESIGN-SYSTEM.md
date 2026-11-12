@@ -277,7 +277,7 @@ last run: Higgsfield `nano_banana_2` @2K), never lifted from references.
 These outrank aesthetics. Before shipping any site change, verify:
 
 1. **Facts that must stay on the landing**: provider name + Manresa
-   (Barcelona), Spain + `hello@eccos.chat` with links to the aviso legal and
+   (Barcelona), Spain + `hello@imsanti.dev` with links to the aviso legal and
    /privacy (the **full** identity — NIF, street address, phone — lives on
    /privacy and the aviso legal and must never leave *those*); what the
    service does (receive/forward with retry; send messages, templates,
