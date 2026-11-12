@@ -9,8 +9,9 @@ and `SECURITY.md` (vulnerability reporting).
 
 ## 1. What data Eccos stores
 
-Eccos is a message *gateway*, not a CRM — it stores just enough to normalize, forward, and retry
-delivery of WhatsApp events, plus a short operator-visible history.
+Eccos is a message *gateway*, not a CRM. It stores a short relay buffer to normalize, forward, and
+retry delivery of WhatsApp events. The Workers target also keeps the conversation history, its media
+files and the coexistence sync payloads, by default with no time limit (§2).
 
 | Data | Contains | Table / store | Where |
 |---|---|---|---|
@@ -21,7 +22,9 @@ delivery of WhatsApp events, plus a short operator-visible history.
 | Forwarding queue (`deliveries`) | Business phone number id and a JSON copy of the batch of normalized events (`{ events: [...] }`) queued to POST to your subscriber, plus attempt count / last error | `deliveries` | DO SQLite / `bun:sqlite` |
 | Media files | The bytes of images, audio, video, documents and stickers sent or received, as Meta serves them | `MEDIA` R2 bucket (`eccos-media`, EU), under `waba/<wabaId>/media/` | Cloudflare R2 (Workers target only) |
 | Coexistence sync payloads | The raw, unparsed `history` (past chats, incl. media message metadata) and `smb_app_state_sync` (contacts: names and phone numbers) webhooks Meta sends once when a WhatsApp Business app number is onboarded, stored verbatim with a SHA-256, size, and arrival time | `sync_payloads` + `sync_payload_parts` | DO SQLite (Workers target only) |
-| Onboarding/config metadata | Account/WABA/phone ownership, WABA callback URL, and Meta access token; plus `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable subscriber URL/secret | Control-plane `accounts`/`wabas`/`phones` tables plus the WABA `config` table | DO SQLite (`apps/gateway/src/control-plane.ts`, `apps/gateway/src/gateway.ts`) |
+| Onboarding/config metadata | Account/WABA/phone ownership, WABA callback URL, and Meta access token (AES-256-GCM sealed on the Workers target, `apps/gateway/src/token-crypto.ts`); plus `META_WABA_ID`, `META_PHONE_NUMBER_ID`, `DISPLAY_PHONE_NUMBER`, `CONNECTED_AT`, and (Workers target) an operator-rotatable subscriber URL/secret | Control-plane `accounts`/`wabas`/`phones` tables plus the WABA `config` table | DO SQLite (`apps/gateway/src/control-plane.ts`, `apps/gateway/src/gateway.ts`) |
+| Console identity (dashboard) | Name, email, password hash, sessions with IP address and user agent (7-day expiry), invitations, verification tokens, TOTP secret when enrolled, per-IP rate-limit counters | Better Auth tables (`apps/dashboard/migrations/`) | Auth D1 (`eccos-auth`, EU), separate from message data |
+| Console audit events | User id and email, organization and account ids, resource ids, outcome. No message content, customer numbers or secrets (`apps/dashboard/src/server/audit.ts`) | Worker structured log | Cloudflare Workers Logs |
 
 Source of truth for the exact columns: `apps/gateway/src/gateway.ts` (`CREATE TABLE` statements)
 for the Workers target, `src/db/client.ts` for the Bun target — the two schemas are effectively
@@ -38,8 +41,9 @@ private caching. No public URLs are issued and the bucket is not public. Each ob
 conversation it belongs to: it is deleted when its message is pruned by the workspace's retention
 window or when the number is erased (see the sections below).
 
-**The gateway sends no analytics or telemetry.** Its only network calls are to `graph.facebook.com`
-(Meta Cloud API) and to the operator's own `SUBSCRIBER_WEBHOOK_URL`.
+**The gateway sends no analytics.** Its network calls are to `graph.facebook.com` (Meta Cloud API)
+and to the operator's own `SUBSCRIBER_WEBHOOK_URL`, plus two opt-in operator integrations that are
+off unless their secrets are set: Sentry error reports and Telegram operator alerts (§3).
 
 **The operator console has one opt-in analytics integration (Umami).** It is on only when
 `ANALYTICS_SCRIPT_URL` and `ANALYTICS_WEBSITE_ID` are set (dashboard `vars`; see
@@ -140,7 +144,20 @@ Third parties that see this data, and why:
   (`VITE_SENTRY_DSN`): error message, stack trace, request method and path. Headers, bodies, query
   strings, cookies and user identity are turned off (`dataCollection` in `apps/gateway/src/sentry.ts`
   and `apps/dashboard/src/lib/sentry.ts`). Nothing is sent unless a DSN is set; Eccos Cloud sets both.
-- **No other third party is contacted by this codebase** — no mailing list, no license-check
+- **Telegram** (gateway, opt-in) — operator alerts and the daily census (`apps/gateway/src/ops-alert.ts`,
+  `ops-census.ts`): account names, organization, WABA and phone number ids, counts, and the last
+  delivery error truncated to 200 characters. No message content and no end-user numbers. Off
+  unless the three `OPS_TELEGRAM_*` secrets are set; Eccos Cloud sets them.
+- **Mail provider** (console) — verification, password reset and invitation emails go through the
+  configured `MailSender` (`apps/dashboard/src/auth/mail-reccado.ts`): recipient address and
+  template variables.
+- **Fallback proxy** (Eccos Cloud only, not in this repo) — while Spanish operators block
+  Cloudflare addresses, the Eccos Cloud hostnames resolve to a Caddy proxy on a Hetzner server in
+  Germany that terminates TLS and forwards to the Cloudflare edge, so console, API and Meta
+  webhook traffic is decrypted in memory there. It keeps no access logs for those hostnames. The
+  console trusts its visitor IP header only with a shared secret
+  (`apps/dashboard/src/server/sigue-proxy.ts`).
+- **No other third party is contacted by this codebase**: no mailing list, no license-check
   phone-home.
 
 ## 4. Operator access to stored data

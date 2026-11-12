@@ -51,19 +51,21 @@ gateway layer and the D1-level `429` behavior tested in
 
 - `twoFactor()` plugin enabled; enrollment via `POST /api/auth/two-factor/enable`
   with password (returns `otpauth://` URI + one-time backup codes).
-- **Policy (contract §4/§8):** owner/admin must enroll TOTP before performing
-  sensitive actions (connect, API keys, export, erasure, membership/role
-  changes, subscriber config write). Enforcement rides on Better Auth's
-  `sensitiveSessionMiddleware`/fresh-session checks plus the dashboard audit
-  path; enrollment UX ships with the security dashboard pass.
+- **Not enforced yet (`eccos-eyel`).** The policy in the contract (§4/§8) is that
+  owner/admin must enroll TOTP before sensitive actions (connect, API keys,
+  export, erasure, membership/role changes, subscriber config write). Today the
+  console has no enrollment screen, and `requirePermission`
+  (`apps/dashboard/src/auth/tenant.ts`) checks only the role. Do not describe
+  TOTP as a control to customers until `eccos-eyel` lands.
 - Backup codes are shown once at enrollment; they are hashed at rest like
   passwords and can be regenerated through the two-factor endpoints.
 
 ### Session freshness (step-up)
 
 - Session expiry: 7 days; session refresh (`updateAge`): daily.
-- `freshAge: 900` (15 minutes) — a sensitive action requires authentication or
-  step-up within the last 15 minutes, matching the contract's step-up window.
+- `freshAge: 900` (15 minutes) is configured, matching the contract's step-up
+  window, but it is **not applied** to the console's server functions yet
+  (`eccos-eyel`): a sensitive action does not require a recent sign-in today.
 - Revocation is immediate: sessions are looked up in the auth D1 on every
   request; a revoked/deleted session fails closed on the next protected
   request (no cached claims).
