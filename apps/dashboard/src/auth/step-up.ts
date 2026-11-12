@@ -25,7 +25,6 @@ export const STEP_UP_ROWS = {
   connect: "administer",
   "api-keys": "administer",
   "conversation-retention": "administer",
-  members: "administer",
   "subscriber-config": "configure",
   resubscribe: "configure",
 } as const satisfies Record<string, GatewayAction>;

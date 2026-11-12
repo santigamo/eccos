@@ -8,103 +8,72 @@
  */
 
 import type { StepUpReason } from "@eccos/auth-baseline/step-up";
+import { getCurrentAuthContext } from "@better-auth/core/context";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
-import { roles } from "./permissions";
 import { stepUpMessage, stepUpRefusal } from "./step-up";
 
-type Permission = Record<string, string[]>;
-
 /**
- * Member management, with the permission Better Auth itself goes on to check.
- * Three of the four name their organization in the body, falling back to the
- * session's active one; a cancellation is authorized on the invitation's own.
+ * Endpoints that change or reveal a factor and otherwise ask only for the
+ * password. Gated once the account HAS a second factor: before that there is
+ * nothing for a password to bypass, and a user without TOTP must still be able
+ * to change their password or enroll.
  */
-export const STEP_UP_ORGANIZATION_PATHS: Record<string, Permission> = {
-  "/organization/invite-member": { invitation: ["create"] },
-  "/organization/cancel-invitation": { invitation: ["cancel"] },
-  "/organization/update-member-role": { member: ["update"] },
-  "/organization/remove-member": { member: ["delete"] },
-};
-
-/** Endpoints that change or reveal a factor and otherwise ask only for the password. */
 export const STEP_UP_ACCOUNT_PATHS: ReadonlySet<string> = new Set([
   "/change-password",
   "/change-email",
+  "/two-factor/enable",
   "/two-factor/disable",
   "/two-factor/generate-backup-codes",
   "/two-factor/get-totp-uri",
 ]);
-
-/** Open to an account with no second factor yet; step-up once it has one. */
-const ENROLL_PATH = "/two-factor/enable";
 
 const VERIFY_PATHS: ReadonlySet<string> = new Set([
   "/two-factor/verify-totp",
   "/two-factor/verify-backup-code",
 ]);
 
+const ERROR_CODES: Record<StepUpReason, string> = {
+  "totp-required": "TOTP_REQUIRED",
+  "reauth-required": "SESSION_NOT_FRESH",
+};
+
 function refuse(reason: StepUpReason): never {
-  throw new APIError("FORBIDDEN", {
-    code: reason === "totp-required" ? "TOTP_REQUIRED" : "SESSION_NOT_FRESH",
-    message: stepUpMessage(reason),
-  });
+  throw new APIError("FORBIDDEN", { code: ERROR_CODES[reason], message: stepUpMessage(reason) });
 }
 
-function roleHolds(role: unknown, permission: Permission): boolean {
-  return String(role ?? "")
-    .split(",")
-    .some(
-      (name) =>
-        Object.hasOwn(roles, name) &&
-        roles[name as keyof typeof roles].authorize(permission as never).success === true,
-    );
-}
-
-interface Finder {
-  findOne<T>(query: {
-    model: string;
-    where: { field: string; value: string }[];
-  }): Promise<T | null>;
+/** The step-up reason a Better Auth refusal carries, if that is what it was. */
+export function stepUpReasonOf(error: unknown): StepUpReason | null {
+  const code = (error as { body?: { code?: unknown } } | null)?.body?.code;
+  const match = Object.entries(ERROR_CODES).find(([, value]) => value === code);
+  return match ? (match[0] as StepUpReason) : null;
 }
 
 /**
- * Whether the caller's role is KNOWN to lack the permission in the
- * organization Better Auth will authorize against, resolved exactly as it
- * resolves it (`||`, so an empty id falls through to the active one). Only
- * that positive knowledge skips step-up: an organization, invitation or
- * membership that cannot be resolved does not.
+ * Member management (invitations, role changes, removal). These run as
+ * Better Auth's `organizationHooks`, AFTER it has resolved the organization
+ * and checked the caller's role there, so a role that lacks the action gets
+ * its permission error and nothing here re-derives either. The hooks are
+ * handed no session, so it is read from the request's own context.
  */
-async function roleLacks(
-  adapter: Finder,
-  path: string,
-  body: Record<string, unknown> | undefined,
-  session: { user: { id: string }; session: Record<string, unknown> },
-): Promise<boolean> {
-  let organizationId: unknown;
-  if (path === "/organization/cancel-invitation") {
-    const invitationId = body?.invitationId;
-    const invitation =
-      typeof invitationId === "string" && invitationId
-        ? await adapter.findOne<{ organizationId?: unknown }>({
-            model: "invitation",
-            where: [{ field: "id", value: invitationId }],
-          })
-        : null;
-    organizationId = invitation?.organizationId;
-  } else {
-    organizationId = body?.organizationId || session.session.activeOrganizationId;
-  }
-  if (typeof organizationId !== "string" || !organizationId) return false;
-  const member = await adapter.findOne<{ role?: unknown }>({
-    model: "member",
-    where: [
-      { field: "userId", value: session.user.id },
-      { field: "organizationId", value: organizationId },
-    ],
-  });
-  return member !== null && !roleHolds(member.role, STEP_UP_ORGANIZATION_PATHS[path] ?? {});
+async function requireMemberStepUp(): Promise<void> {
+  const ctx = (await getCurrentAuthContext()) as Parameters<typeof getSessionFromCtx>[0];
+  const session = await getSessionFromCtx(ctx);
+  refuseUnlessSteppedUp(session);
 }
+
+function refuseUnlessSteppedUp(session: Parameters<typeof stepUpRefusal>[0] | null): void {
+  // No session here would be a Better Auth bug: fail closed.
+  const refusal = session ? stepUpRefusal(session) : "reauth-required";
+  if (refusal) refuse(refusal);
+}
+
+export const stepUpOrganizationHooks = {
+  beforeCreateInvitation: requireMemberStepUp,
+  beforeCancelInvitation: requireMemberStepUp,
+  beforeUpdateMemberRole: requireMemberStepUp,
+  beforeRemoveMember: requireMemberStepUp,
+};
 
 export function stepUpGuard() {
   return {
@@ -117,34 +86,19 @@ export function stepUpGuard() {
     hooks: {
       before: [
         {
-          matcher: (ctx) => Object.hasOwn(STEP_UP_ORGANIZATION_PATHS, ctx.path ?? ""),
+          matcher: (ctx) => STEP_UP_ACCOUNT_PATHS.has(ctx.path ?? ""),
           handler: createAuthMiddleware(async (ctx) => {
             const session = await getSessionFromCtx(ctx);
             // No session: the endpoint's own middleware answers 401.
-            if (!session) return;
-            // The role first: one that lacks the action gets Better Auth's own
-            // permission error, not an invitation to enroll.
-            if (await roleLacks(ctx.context.adapter, ctx.path, ctx.body, session)) return;
-            const refusal = stepUpRefusal(session);
-            if (refusal) refuse(refusal);
+            if (!session?.user.twoFactorEnabled) return;
+            refuseUnlessSteppedUp(session);
           }),
         },
         {
-          matcher: (ctx) =>
-            STEP_UP_ACCOUNT_PATHS.has(ctx.path ?? "") || ctx.path === ENROLL_PATH,
-          handler: createAuthMiddleware(async (ctx) => {
-            const session = await getSessionFromCtx(ctx);
-            if (!session) return;
-            if (ctx.path === ENROLL_PATH && !session.user.twoFactorEnabled) return;
-            const refusal = stepUpRefusal(session);
-            if (refusal) refuse(refusal);
-          }),
-        },
-        {
-          // An enrolled, signed-in caller has no business here over HTTP: on an
-          // existing session these endpoints count no wrong codes, so they
-          // would be a free oracle for the limited step-up check
-          // (`step-up-confirm.ts`, which calls them server-side).
+          // An enrolled, signed-in caller has no business here over HTTP: the
+          // step-up check (`step-up-confirm.ts`) calls these server-side and
+          // owns the lockout around them, so a direct call would be a free
+          // oracle for codes.
           matcher: (ctx) => VERIFY_PATHS.has(ctx.path ?? ""),
           handler: createAuthMiddleware(async (ctx) => {
             if (!ctx.request) return;

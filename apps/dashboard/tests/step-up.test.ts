@@ -11,15 +11,8 @@ import { getMigrations } from "better-auth/db/migration";
 import { createAuth } from "../src/auth/auth";
 import { CaptureMailSender } from "../src/auth/mail";
 import { requireStepUp, STEP_UP_WINDOW_SECONDS, stepUpRefusal } from "../src/auth/step-up";
-import {
-  confirmStepUp,
-  STEP_UP_ATTEMPT_WINDOW_MS,
-  STEP_UP_MAX_ATTEMPTS,
-} from "../src/auth/step-up-confirm";
-import {
-  STEP_UP_ACCOUNT_PATHS,
-  STEP_UP_ORGANIZATION_PATHS,
-} from "../src/auth/step-up-guard";
+import { confirmStepUp } from "../src/auth/step-up-confirm";
+import { STEP_UP_ACCOUNT_PATHS } from "../src/auth/step-up-guard";
 import { ForbiddenError } from "../src/auth/tenant";
 import { enrollTotp } from "./helpers/step-up";
 
@@ -243,29 +236,48 @@ describe("attack: a stale stolen cookie plus the password", () => {
     expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
   });
 
-  test("cannot guess the code: five wrong attempts lock step-up for the user, right code included", async () => {
-    const { auth, db, cookie, code } = await enrolled();
+  test("cannot guess the code: wrong attempts spend the account lockout, and parallel guesses all count", async () => {
+    const { auth, db, post, cookie, code } = await enrolled();
     goStale(db);
-    const attempt = (value: string, now?: number) =>
-      confirmStepUp(auth, new Headers({ cookie }), { code: value }, now);
+    const attempt = (value: string) => confirmStepUp(auth, new Headers({ cookie }), { code: value });
+    const budget = () =>
+      db.query('SELECT "failedVerificationCount" AS failed, "lockedUntil" AS locked FROM "twoFactor"').get() as {
+        failed: number | null;
+        locked: string | null;
+      };
 
-    for (let i = 0; i < STEP_UP_MAX_ATTEMPTS; i++) {
-      expect(await attempt("000000")).toEqual({ ok: false, code: "invalid" });
-    }
+    // Ten at once: a read-check-write counter would count them as one.
+    const guesses = await Promise.all(Array.from({ length: 10 }, () => attempt("000000")));
+    expect(guesses).toEqual(Array.from({ length: 10 }, () => ({ ok: false, code: "invalid" })));
+    expect(budget().failed).toBe(10);
+    expect(budget().locked).not.toBeNull();
+
+    // Locked for the account: the right code here, and the sign-in challenge too.
     expect(await attempt(await code())).toEqual({ ok: false, code: "locked" });
     expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
-    // The count is per user, not per session or address: a second session is locked too.
-    expect(db.query('SELECT key, count FROM "rateLimit" WHERE key LIKE \'step-up|%\'').all()).toHaveLength(1);
+    const signIn = await post("/sign-in/email", { email: EMAIL, password: PASSWORD });
+    const challenge = await post("/two-factor/verify-totp", { code: await code() }, cookiesOf(signIn));
+    expect(await refusal(challenge)).toEqual([429, "ACCOUNT_TEMPORARILY_LOCKED"]);
 
-    // Once the window has passed, the right code works again.
-    const later = Date.now() + STEP_UP_ATTEMPT_WINDOW_MS + 1000;
-    expect(await attempt(await code(), later)).toEqual({ ok: true });
+    // Once the lock has run out, the right code works and clears the count.
+    db.query('UPDATE "twoFactor" SET "lockedUntil" = ?').run(new Date(Date.now() - 1000).toISOString());
+    expect(await attempt(await code())).toEqual({ ok: true });
+    expect(budget()).toEqual({ failed: 0, locked: null });
+  });
+
+  test("a failure that is not a verdict on the code is thrown, and spends no attempt", async () => {
+    const { auth, db, cookie } = await enrolled();
+    goStale(db);
+    // An unreadable secret: Better Auth fails to decrypt it, which says nothing about the guess.
+    db.query('UPDATE "twoFactor" SET secret = ?').run("not-a-ciphertext");
+    await expect(confirmStepUp(auth, new Headers({ cookie }), { code: "000000" })).rejects.toThrow();
+    expect(db.query('SELECT "failedVerificationCount" AS failed FROM "twoFactor"').get()).toEqual({ failed: 0 });
   });
 
   test("every guarded account path is a real endpoint", async () => {
     const { auth } = await testAuth();
     const endpoints = new Set(Object.values(auth.api).map((e) => (e as { path?: string }).path));
-    for (const path of [...STEP_UP_ACCOUNT_PATHS, ...Object.keys(STEP_UP_ORGANIZATION_PATHS)]) {
+    for (const path of STEP_UP_ACCOUNT_PATHS) {
       expect([path, endpoints.has(path)]).toEqual([path, true]);
     }
   });
@@ -309,13 +321,28 @@ describe("the step-up challenge on the current session", () => {
     expect(await spend()).toEqual({ ok: false, code: "invalid" });
   });
 
-  test("no session, or an account with no second factor, has nothing to confirm", async () => {
-    const { auth, cookie } = await signedIn();
+  test("no session has nothing to confirm", async () => {
+    const { auth } = await signedIn();
     expect(await confirmStepUp(auth, new Headers(), { code: "000000" })).toEqual({ ok: false, code: "signed-out" });
-    expect(await confirmStepUp(auth, new Headers({ cookie }), { code: "000000" })).toEqual({
-      ok: false,
-      code: "invalid",
-    });
+  });
+
+  test("an account that is not fully enrolled is refused before any code is checked", async () => {
+    const { auth, db, post, cookie } = await signedIn();
+    const sessions = () => db.query("SELECT id, token FROM session").all();
+    const confirm = (code: string) => confirmStepUp(auth, new Headers({ cookie }), { code });
+
+    expect(await confirm("000000")).toEqual({ ok: false, code: "not-enrolled" });
+
+    // A PENDING enrollment: the right code here must not run Better Auth's
+    // enrollment branch, which would replace the session behind the caller.
+    const enable = await post("/two-factor/enable", { password: PASSWORD }, cookie);
+    const secret = rawSecret(((await enable.json()) as { totpURI: string }).totpURI);
+    const before = sessions();
+    const { code } = await auth.api.generateTOTP({ body: { secret } });
+    expect(await confirm(code)).toEqual({ ok: false, code: "not-enrolled" });
+    expect(sessions()).toEqual(before);
+    expect(db.query('SELECT verified FROM "twoFactor"').get()).toEqual({ verified: 0 });
+    expect(db.query('SELECT "twoFactorEnabled" AS enabled FROM user').get()).toEqual({ enabled: 0 });
   });
 });
 
@@ -335,9 +362,15 @@ describe("sessions minted without a second factor", () => {
     expect(await reasonOf(requireStepUp(auth, new Headers({ cookie })))).toBe("reauth-required");
   });
 
-  test("first enrollment stays open to an account with no second factor", async () => {
+  test("an account with no second factor can still change its password and enroll", async () => {
     const { post, cookie } = await signedIn();
-    expect((await post("/two-factor/enable", { password: PASSWORD }, cookie)).status).toBe(200);
+    const change = await post(
+      "/change-password",
+      { currentPassword: PASSWORD, newPassword: "a-new-long-password" },
+      cookie,
+    );
+    expect(change.status).toBe(200);
+    expect((await post("/two-factor/enable", { password: "a-new-long-password" }, cookie)).status).toBe(200);
   });
 });
 
@@ -403,19 +436,49 @@ describe("Better Auth organization endpoints (invitations, role changes)", () =>
     expect(invitations(db)).toEqual({ n: 0 });
   });
 
-  test("an organization that cannot be resolved does not skip step-up", async () => {
+  test("an organization that cannot be resolved is refused, and nothing acts", async () => {
     const { db, post, cookie } = await withOrganization();
     enrollTotp(db, EMAIL);
     goStale(db);
     db.query('UPDATE session SET "activeOrganizationId" = NULL').run();
+    const members = () => db.query("SELECT id, role FROM member").all();
+    const before = members();
     for (const [path, body] of [
       ["/organization/invite-member", { email: "x@corp.test", role: "viewer" }],
       ["/organization/update-member-role", { memberId: "any", role: "admin" }],
-      ["/organization/remove-member", { memberIdOrEmail: "x@corp.test" }],
+      ["/organization/remove-member", { memberIdOrEmail: EMAIL }],
       ["/organization/cancel-invitation", { invitationId: "no-such-invitation" }],
+    ] as const) {
+      const [status] = await refusal(await post(path, body, cookie));
+      expect([path, status >= 400]).toEqual([path, true]);
+    }
+    expect(invitations(db)).toEqual({ n: 0 });
+    expect(members()).toEqual(before);
+  });
+
+  test("role changes and removals in the caller's own organization need step-up", async () => {
+    const { auth, db, post, org, invite, cookie, headers } = await withOrganization();
+    await auth.api.setActiveOrganization({ body: { organizationId: org.id }, headers: headers() });
+    enrollTotp(db, EMAIL);
+    const invitation = (await (await invite(undefined, "member@corp.test")).json()) as { id: string };
+    await post("/sign-up/email", { email: "member@corp.test", password: PASSWORD, name: "Member" });
+    db.query('UPDATE user SET "emailVerified" = 1').run();
+    const member = cookiesOf(await post("/sign-in/email", { email: "member@corp.test", password: PASSWORD }));
+    await auth.api.acceptInvitation({ body: { invitationId: invitation.id }, headers: new Headers({ cookie: member }) });
+    const row = () =>
+      db.query("SELECT m.id, m.role FROM member m JOIN user u ON u.id = m.userId WHERE u.email = ?").get(
+        "member@corp.test",
+      ) as { id: string; role: string };
+    const before = row();
+
+    goStale(db);
+    for (const [path, body] of [
+      ["/organization/update-member-role", { memberId: before.id, role: "admin" }],
+      ["/organization/remove-member", { memberIdOrEmail: "member@corp.test" }],
     ] as const) {
       expect([path, ...(await refusal(await post(path, body, cookie)))]).toEqual([path, ...STALE]);
     }
+    expect(row()).toEqual(before);
   });
 
   test("cancelling is judged on the invitation's organization, not the active one", async () => {

@@ -82,13 +82,18 @@ Better Auth mints sessions on endpoints that ask for the password alone
 email-verification link, so a stolen cookie plus the password could otherwise
 renew itself; those sessions carry no stamp of their own and never pass.
 
-**Wrong codes.** The challenge counts wrong codes per user in the auth D1's
-`rateLimit` table (key `step-up|<userId>`): 5 inside 15 minutes lock it for
-that user, on every session and from every address, until the window passes. A
-right code clears the count. Better Auth's own `two-factor/verify-totp` and
-`verify-backup-code` count nothing on an existing session, so over HTTP they
-are refused (`USE_STEP_UP`) for an enrolled, signed-in caller; they stay open
-to a sign-in's challenge and to a first enrollment.
+**Wrong codes.** The challenge spends Better Auth's own account lockout on the
+`twoFactor` row (`failedVerificationCount` / `lockedUntil`, 10 wrong codes,
+then 15 minutes), with its atomic increments. Sign-in and step-up therefore
+share one budget, parallel guesses all count, and a right code clears it. Only
+a genuine wrong-code answer is counted: any other failure is reported to
+Sentry, shown as "try again", and spends nothing. Better Auth applies that
+lockout only to a sign-in's challenge, so its `two-factor/verify-totp` and
+`verify-backup-code` are refused over HTTP (`USE_STEP_UP`) for an enrolled,
+signed-in caller; they stay open to a sign-in's challenge and to a first
+enrollment. The challenge refuses an account that is not fully enrolled before
+checking any code: verifying against a pending enrollment would run Better
+Auth's enrollment branch, which replaces the session.
 
 **Where it is enforced.**
 
@@ -98,8 +103,8 @@ to a sign-in's challenge and to a first enrollment.
 | API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
 | Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
 | Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
-| Invitations and member role changes | `STEP_UP_ROWS.members` (`inviteMember`) and, inside Better Auth, `STEP_UP_ORGANIZATION_PATHS`: `invite-member`, `cancel-invitation`, `update-member-role`, `remove-member` |
-| Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`: `change-password`, `change-email`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`; `two-factor/enable` once the account is enrolled (first enrollment stays open) |
+| Invitations and member role changes | `stepUpOrganizationHooks`, Better Auth's `organizationHooks` (`beforeCreateInvitation`, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`). `inviteMember` reaches the first through `createInvitation` and passes the refusal's reason on |
+| Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`, once the account has a second factor: `change-password`, `change-email`, `two-factor/enable`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`. An account with no TOTP can still change its password and enroll |
 
 `STEP_UP_ROWS` is the single table for the Eccos server functions: a function
 names its row, and `requireGatewayPermission` checks the row's role and then
@@ -116,11 +121,12 @@ Export and erasure have no console path: they are reachable only with an
 account API key, so there is nothing for a session step-up to gate. A console
 action for either must add its row to `STEP_UP_ROWS`.
 
-The organization endpoints resolve their target the way Better Auth does: the
-body's `organizationId` or, when it is empty, the session's active one; for
-`cancel-invitation`, the invitation's own. Step-up is skipped only when the
-caller's role is KNOWN to lack the permission there. An organization,
-invitation or membership that cannot be resolved does not skip it.
+The organization hooks run after Better Auth has resolved the target
+organization and checked the caller's role there, so nothing in Eccos
+re-derives either, and a role that lacks the action gets Better Auth's own
+permission error. The hooks are handed no session; it is read from the
+request's context (`@better-auth/core/context`, pinned to the same exact
+version as `better-auth`, and bumped with it).
 
 **What the operator sees.** A refusal is a typed `forbidden` failure with
 reason `totp-required` or `reauth-required` (`StepUpReason`, defined once in
@@ -128,7 +134,10 @@ reason `totp-required` or `reauth-required` (`StepUpReason`, defined once in
 step-up sheet (`src/components/dashboard/step-up-sheet.tsx`) beside the page:
 the code, or enrollment for an account with none. On success the action runs
 again. Nothing navigates and no session changes, so the form the operator was
-filling in is untouched, and closing the sheet only declines.
+filling in is untouched, and closing the sheet only declines. A dialog that
+hosts a sensitive action (add a number, revoke a key) mounts its own sheet
+inside itself, so there the prompt opens as that dialog's nested surface
+rather than as a second modal beside it.
 
 Connecting a number asks ahead of the click (`canStartConnect`, when the fork
 appears): Meta's window only opens on the customer's own click, and a prompt

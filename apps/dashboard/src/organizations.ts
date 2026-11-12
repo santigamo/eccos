@@ -21,6 +21,7 @@ import {
   type ForbiddenReason,
   type Membership,
 } from "./auth/tenant";
+import { stepUpReasonOf } from "./auth/step-up-guard";
 import { activeWorkspace } from "./lib/workspaces";
 
 export interface OrganizationView {
@@ -255,6 +256,11 @@ export const selectOrganization = createServerFn({ method: "POST" })
     }
   });
 
+function reasonOf(err: unknown): { reason?: ForbiddenReason } {
+  const reason = err instanceof ForbiddenError ? err.reason : stepUpReasonOf(err);
+  return reason ? { reason } : {};
+}
+
 const inviteInput = z
   .object({
     email: z.string().trim().email(),
@@ -275,7 +281,7 @@ export const inviteMember = createServerFn({ method: "POST" })
       data,
     }): Promise<{ ok: true } | { ok: false; error: string; reason?: ForbiddenReason }> => {
       try {
-        const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "members");
+        const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "administer");
         if (organizationId !== data.organizationId) {
           throw new ForbiddenError("organization mismatch");
         }
@@ -295,8 +301,9 @@ export const inviteMember = createServerFn({ method: "POST" })
         return {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
-          // The code a caller follows for step-up (`lib/step-up.ts`).
-          ...(err instanceof ForbiddenError ? { reason: err.reason } : {}),
+          // What `withStepUp` follows. Step-up itself is judged once, by the
+          // organization hook inside `createInvitation`.
+          ...reasonOf(err),
         };
       }
     },

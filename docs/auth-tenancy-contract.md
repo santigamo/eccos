@@ -102,7 +102,8 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Subscriber config write | admin | **Yes** | TOTP (owner/admin) + ≤15 min recent auth |
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |
 | API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
-| Embedded Signup `/connect` start + callback | admin | **Yes** | Account-bound OAuth state |
+| Embedded Signup `/connect` start | admin | **Yes** | Issues the account-bound OAuth state |
+| Embedded Signup callback / code exchange | admin | — (by design) | Must present the state the stepped-up start issued. Meta's code is single-use and lives 30 seconds, so a step-up refusal here would lose it and force the whole flow again |
 | Conversation retention write | admin | **Yes** | Shortening it purges history |
 | Export data | admin | **Yes** | |
 | GDPR erasure (`eraseByPhone`) | owner | **Yes** | Owner-only destructive action |

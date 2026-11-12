@@ -5,56 +5,98 @@
  * the cookie, the active organization and every other session stay as they
  * were, and a trusted-device cookie plays no part.
  *
- * Wrong codes are counted per user in the auth database's rate-limit table,
- * so the limit holds across isolates and across the caller's addresses.
+ * Wrong codes spend Better Auth's own account lockout on the `twoFactor` row
+ * (`failedVerificationCount` / `lockedUntil`), with its atomic increments, so
+ * sign-in and step-up share one budget and parallel guesses cannot undercount.
+ * Better Auth applies that lockout only to a sign-in's challenge; on an
+ * existing session it is applied here.
  */
 
 import type { Auth } from "./auth";
 import { getSessionOnce } from "./request-memo";
 
-export const STEP_UP_MAX_ATTEMPTS = 5;
-export const STEP_UP_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
-
 export type ConfirmStepUpResult =
   | { ok: true }
-  | { ok: false; code: "invalid" | "locked" | "signed-out" };
+  | { ok: false; code: "invalid" | "locked" | "not-enrolled" | "signed-out" };
 
-interface AttemptRow {
+interface TwoFactorRow {
   id: string;
-  count: number;
-  lastRequest: number;
+  verified?: boolean | null;
+  lockedUntil?: Date | string | null;
 }
 
+/** The codes Better Auth answers a wrong guess with. Nothing else is a guess. */
+const WRONG_CODE = new Set(["INVALID_CODE", "INVALID_BACKUP_CODE"]);
+
+/**
+ * Throws on anything that is not a verdict on the code (a database or crypto
+ * failure): the caller reports it and asks the operator to retry, and no
+ * attempt is spent.
+ */
 export async function confirmStepUp(
   auth: Auth,
   headers: Headers,
   input: { code: string; backup?: boolean },
-  now = Date.now(),
 ): Promise<ConfirmStepUpResult> {
   const session = await getSessionOnce(auth, headers);
-  const userId = session?.user?.id;
+  const user = session?.user;
   const token = session?.session?.token;
-  if (!userId || !token) return { ok: false, code: "signed-out" };
+  if (!user?.id || !token) return { ok: false, code: "signed-out" };
 
-  const { adapter, internalAdapter } = await auth.$context;
-  const key = `step-up|${userId}`;
-  const where = [{ field: "key", value: key }];
-  const row = await adapter.findOne<AttemptRow>({ model: "rateLimit", where });
-  const failures = row && now - Number(row.lastRequest) < STEP_UP_ATTEMPT_WINDOW_MS ? row.count : 0;
-  if (failures >= STEP_UP_MAX_ATTEMPTS) return { ok: false, code: "locked" };
+  const { adapter, internalAdapter, getPlugin } = await auth.$context;
+  const byUser = [{ field: "userId", value: user.id }];
+  const factor = await adapter.findOne<TwoFactorRow>({ model: "twoFactor", where: byUser });
+  // A pending enrollment is not a factor, and verifying a code against one
+  // would run Better Auth's enrollment branch, which replaces the session.
+  if (!user.twoFactorEnabled || !factor || factor.verified === false) {
+    return { ok: false, code: "not-enrolled" };
+  }
+  const byId = [{ field: "id", value: factor.id }];
+  const lockout = (getPlugin("two-factor")?.options as
+    | { accountLockout?: { maxFailedAttempts?: number; durationSeconds?: number } }
+    | undefined)?.accountLockout;
+  const maxFailedAttempts = lockout?.maxFailedAttempts ?? 10;
+  const lockMs = (lockout?.durationSeconds ?? 900) * 1000;
+
+  if (factor.lockedUntil) {
+    if (new Date(factor.lockedUntil).getTime() > Date.now()) return { ok: false, code: "locked" };
+    // An expired lock is cleared before the next attempt is counted.
+    await adapter.incrementOne({
+      model: "twoFactor",
+      where: [...byId, { field: "lockedUntil", operator: "lte", value: new Date() }],
+      increment: {},
+      set: { failedVerificationCount: 0, lockedUntil: null },
+    });
+  }
 
   try {
     // Server-side calls: over HTTP these are refused for an enrolled session.
     if (input.backup) await auth.api.verifyBackupCode({ body: { code: input.code }, headers });
     else await auth.api.verifyTOTP({ body: { code: input.code }, headers });
-  } catch {
-    const update = { count: failures + 1, lastRequest: now };
-    if (row) await adapter.update({ model: "rateLimit", where, update });
-    else await adapter.create({ model: "rateLimit", data: { key, ...update } });
+  } catch (error) {
+    const code = (error as { body?: { code?: unknown } } | null)?.body?.code;
+    if (typeof code !== "string" || !WRONG_CODE.has(code)) throw error;
+    const counted = await adapter.incrementOne<{ failedVerificationCount?: number }>({
+      model: "twoFactor",
+      where: byId,
+      increment: { failedVerificationCount: 1 },
+    });
+    if ((counted?.failedVerificationCount ?? 0) >= maxFailedAttempts) {
+      await adapter.incrementOne({
+        model: "twoFactor",
+        where: [...byId, { field: "failedVerificationCount", operator: "gte", value: maxFailedAttempts }],
+        increment: {},
+        set: { lockedUntil: new Date(Date.now() + lockMs) },
+      });
+    }
     return { ok: false, code: "invalid" };
   }
 
-  if (row) await adapter.delete({ model: "rateLimit", where });
-  await internalAdapter.updateSession(token, { stepUpAt: new Date(now) });
+  await adapter.update({
+    model: "twoFactor",
+    where: byId,
+    update: { failedVerificationCount: 0, lockedUntil: null },
+  });
+  await internalAdapter.updateSession(token, { stepUpAt: new Date() });
   return { ok: true };
 }

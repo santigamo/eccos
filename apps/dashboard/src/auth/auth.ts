@@ -27,7 +27,7 @@ import {
 import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
 import { STEP_UP_WINDOW_SECONDS } from "./step-up";
-import { stepUpGuard } from "./step-up-guard";
+import { stepUpGuard, stepUpOrganizationHooks } from "./step-up-guard";
 
 /**
  * Build the accept-invitation link for the dashboard UI.
@@ -364,6 +364,9 @@ export function createAuth(config: AuthConfig) {
       organization({
         ac,
         roles: { owner, admin, operator, viewer },
+        // Step-up on invitations and member changes (contract §4), after
+        // Better Auth's own organization and role checks.
+        organizationHooks: stepUpOrganizationHooks,
         // Organization deletion is disabled in v1 (contract §4/§9): no
         // offboarding saga exists yet, so /organization/delete is rejected.
         disableOrganizationDeletion: true,
