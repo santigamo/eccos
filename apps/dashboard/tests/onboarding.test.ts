@@ -277,9 +277,10 @@ describe("organization server functions", () => {
       });
     const sent = () => db.query("SELECT COUNT(*) AS n FROM invitation").get();
 
-    expect((await invite()).ok).toBe(false);
+    // The reason is what `withStepUp` acts on once a console form calls this.
+    expect(await invite()).toMatchObject({ ok: false, reason: "totp-required" });
     db.query('UPDATE user SET "twoFactorEnabled" = 1').run();
-    expect((await invite()).ok).toBe(false);
+    expect(await invite()).toMatchObject({ ok: false, reason: "reauth-required" });
     expect(sent()).toEqual({ n: 0 });
     enrollTotp(db, "owner3@corp.test");
     expect(await invite()).toEqual({ ok: true });

@@ -15,6 +15,7 @@ import {
   getSessionFromCtx,
   sessionMiddleware,
 } from "better-auth/api";
+import { defineRequestState } from "@better-auth/core/context";
 import { generateRandomString } from "better-auth/crypto";
 import { z } from "zod";
 
@@ -44,6 +45,11 @@ const CHANGES: Record<string, TwoFactorChange> = {
   "/two-factor/disable": "disabled",
   "/two-factor/generate-backup-codes": "backup-codes",
 };
+
+/** The signed-in caller as a request to one of `CHANGES` found them, or null. */
+const callerBefore = defineRequestState<(Recipient & { twoFactorEnabled?: boolean | null }) | null>(
+  () => null,
+);
 
 const identifierOf = (userId: string) => `two-factor-enable-${userId}`;
 
@@ -76,12 +82,14 @@ export function enrollmentProof(mail: TwoFactorMail) {
           const code = generateRandomString(ENABLE_CODE_LENGTH, "A-Z", "0-9");
           const value = await digest(user.id, code);
           await internalAdapter.deleteVerificationByIdentifier(identifier);
+          // Stored only once the mail is out: a send that failed leaves no
+          // code behind, so it starts no resend wait.
+          await mail.code(user, code, value);
           await internalAdapter.createVerificationValue({
             identifier,
             value,
             expiresAt: new Date(Date.now() + ENABLE_CODE_TTL_SECONDS * 1000),
           });
-          await mail.code(user, code, value);
           return ctx.json({ status: true });
         },
       ),
@@ -122,21 +130,30 @@ export function enrollmentProof(mail: TwoFactorMail) {
             }
           }),
         },
+        {
+          matcher: (ctx) => Object.hasOwn(CHANGES, ctx.path ?? ""),
+          handler: createAuthMiddleware(async (ctx) => {
+            await callerBefore.set((await getSessionFromCtx(ctx))?.user ?? null);
+          }),
+        },
       ],
       after: [
         {
           matcher: (ctx) => Object.hasOwn(CHANGES, ctx.path ?? ""),
           handler: createAuthMiddleware(async (ctx) => {
-            const answer = ctx.context.returned as { token?: unknown } | undefined;
-            if (!answer || answer instanceof Error) return;
-            const minted = ctx.context.newSession;
+            const answer = ctx.context.returned;
+            const user = await callerBefore.get();
             const change = CHANGES[ctx.path ?? ""];
-            // A verified code enabled TOTP only if it replaced the caller's
-            // session: a sign-in answers with the session it minted, and a
-            // step-up mints none.
-            if (change === "enabled" && (!minted || answer.token === minted.session.token)) return;
-            const user = minted?.user ?? (await getSessionFromCtx(ctx))?.user;
-            if (!change || !user) return;
+            if (!answer || answer instanceof Error || !user || !change) return;
+            // A verified code turned TOTP on only if the account's flag went
+            // from off to on across this request: not a sign-in's code (no
+            // caller), not a step-up (already on).
+            if (change === "enabled") {
+              const now = await ctx.context.internalAdapter.findUserById(user.id);
+              if (user.twoFactorEnabled || !(now && "twoFactorEnabled" in now && now.twoFactorEnabled)) {
+                return;
+              }
+            }
             // The change already happened: a mail that fails must not undo or hide it.
             await mail.changed(user, change).catch((error: unknown) => {
               ctx.context.logger.error("two-factor change notification failed", error);

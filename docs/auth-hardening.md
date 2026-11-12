@@ -62,7 +62,8 @@ gateway layer and the D1-level `429` behavior tested in
   code is 8 characters, lives 10 minutes, is stored hashed, and is consumed
   atomically before it is compared: one attempt per code, right or wrong.
   A send needs the password, is refused within a minute of the last one for
-  that user, and is capped at 10 per hour per caller. A pending enrollment's
+  that user, and is capped at 10 per hour per caller. The code is stored only
+  after the mail went out, so a failed send starts no wait. A pending enrollment's
   secret (`two-factor/get-totp-uri`) is never returned for the password alone.
 - **A mail goes out whenever the second factor changes**: turned on, turned
   off, backup codes regenerated (`two-factor-changed`). It follows a change
@@ -126,7 +127,7 @@ the session.
 | API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
 | Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
 | Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
-| Invitations and member role changes | `stepUpOrganizationHooks`, Better Auth's `organizationHooks` (`beforeCreateInvitation`, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`). `inviteMember` reaches the first through `createInvitation` |
+| Invitations and member role changes | `stepUpOrganizationHooks`, Better Auth's `organizationHooks` (`beforeCreateInvitation`, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`). `inviteMember` reaches the first through `createInvitation` and returns the refusal's reason |
 | Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`, once the account has a second factor: `change-password`, `change-email`, `two-factor/enable`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`. An account with no TOTP can still change its password, and enroll with the mailed code; `get-totp-uri` is refused for it |
 
 `STEP_UP_ROWS` is the single table for the Eccos server functions: a function
@@ -148,7 +149,7 @@ The organization hooks run after Better Auth has resolved the target
 organization and checked the caller's role there, so nothing in Eccos
 re-derives either, and a role that lacks the action gets Better Auth's own
 permission error. The hooks are handed no session; it is read from the
-request's context (`@better-auth/core/context`, pinned to the same exact
+request's context (`getCurrentAuthEndpointContext` in `@better-auth/core/context`, pinned to the same exact
 version as `better-auth`, and bumped with it).
 
 One branch never reaches a hook: `invite-member` with `resend: true` returns
@@ -168,18 +169,21 @@ hosts a sensitive action (add a number, revoke a key) mounts its own sheet
 inside itself, so there the prompt opens as that dialog's nested surface
 rather than as a second modal beside it.
 
-Connecting a number settles step-up ahead of the click: the fork knows what
-the signed-in user owes from the shell's own read of the session, and keeps
-its cards disabled until that is confirmed, because Meta's window only opens
-on the customer's own click and a prompt in between would spend it. A connect
-start is refused (`reauth-required`) when less than 10 minutes of the step-up
-are left, and the state it issues is capped by the gateway at the moment the
-step-up ends (`startConnectForAccountId`'s `expiresBy`): the state never
-outlives the step-up it was authorized by, and every flow that opens has at
-least 10 minutes to finish. Nothing is prepared ahead of a click.
+Connecting a number settles what it needs ahead of the click, role first: the
+fork knows from the shell's own read of the session whether the signed-in user
+may connect at all and what step-up they owe. A role that may not connect sees
+that, and is never asked for a second factor. Otherwise the cards stay disabled
+until the step-up is confirmed, because Meta's window only opens on the
+customer's own click and a prompt in between would spend it. The step-up
+authorizes the start; the state then lives its normal 30 minutes, so the
+customer has Meta's whole window to finish. Nothing is prepared ahead of a
+click: after a cancelled or blocked popup, the next card click fetches a new
+state and an "Open Meta" button then opens the window from its own click.
 
-While the sheet shows one-time backup codes it is held: no dismissal and no
-other prompt can close it until the operator confirms.
+One-time backup codes are not shown by the surface that enrolled. They are
+held at the app's root (`src/lib/backup-codes.ts`) and shown by one sheet
+mounted in the shell (`backup-codes-sheet.tsx`), which only Done closes: a
+dialog that unmounts mid-enrollment cannot take them with it.
 
 ### Session freshness
 

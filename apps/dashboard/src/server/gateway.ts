@@ -25,7 +25,6 @@ import { normalizeCustomerId } from "../lib/customer-id";
 import {
   requireAuthContext,
   requireGatewayPermission,
-  stepUpUntil,
   UnauthorizedError,
 } from "../auth/server-auth";
 import type { Grant } from "../auth/step-up";
@@ -1334,20 +1333,14 @@ function connectReturnTo(request: Request): string {
   return new URL(CONNECT_RETURN_PATH, new URL(request.url).origin).href;
 }
 
-/**
- * The least step-up a connect start needs left. The state it issues dies with
- * the step-up, and Meta's single-use code is lost if that happens mid-flow, so
- * a customer with less than this confirms again before Meta's window opens.
- */
-const CONNECT_STEP_UP_FLOOR_MS = 10 * 60_000;
 
 export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
       // Embedded Signup is an admin+ step-up mutation (contract §4); the
-      // account comes from the organization link.
+      // account comes from the organization link. The step-up authorizes the
+      // start: the state it issues then lives its normal 30 minutes.
       const actor = await requireActor("connect");
-      const until = await stepUpUntil(requestAuth(), getRequest(), CONNECT_STEP_UP_FLOOR_MS);
       const returnTo = connectReturnTo(getRequest());
       let link = await gateway.getOrganizationAccountLink(actor.organizationId);
       if (!link) {
@@ -1357,7 +1350,7 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
       if (!link || link.status !== "active") {
         throw new Error("This organization is not linked to an Eccos account");
       }
-      const result = await gateway.startConnectForAccountId(link.accountId, returnTo, until);
+      const result = await gateway.startConnectForAccountId(link.accountId, returnTo);
       auditEvent({
         action: "connect_start",
         actorUserId: actor.session.userId,

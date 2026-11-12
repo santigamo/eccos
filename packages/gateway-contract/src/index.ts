@@ -1274,15 +1274,8 @@ export interface GatewayApi {
    * Meta's callback is handled. It is only accepted here, never on the public
    * `POST /connect/start`: this entrypoint is reachable solely over the service
    * binding, so the value comes from the console's own canonical origin rather
-   * than from a browser.
-   *
-   * `expiresBy` (epoch ms) caps the state's life below the default 30 minutes:
-   * the console passes the end of the step-up the start was authorized by. */
-  startConnectForAccountId(
-    accountId: string,
-    returnTo?: string,
-    expiresBy?: number,
-  ): Promise<ConnectStartResult>;
+   * than from a browser. */
+  startConnectForAccountId(accountId: string, returnTo?: string): Promise<ConnectStartResult>;
   /**
    * Exchange an Embedded Signup authorization code for a resolved account and
    * register everything it unlocks.

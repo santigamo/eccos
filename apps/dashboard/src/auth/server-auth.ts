@@ -18,17 +18,10 @@
  * next request always re-resolves (contract §5).
  */
 
-import { ForbiddenError, requirePermission } from "./tenant";
+import { requirePermission } from "./tenant";
 import { resolveSession, UnauthorizedError, type SessionUser } from "./session";
 import { getSessionOnce } from "./request-memo";
-import {
-  isStepUpRow,
-  requireStepUp,
-  STEP_UP_ROWS,
-  stepUpDeadline,
-  stepUpMessage,
-  type Grant,
-} from "./step-up";
+import { isStepUpRow, requireStepUp, STEP_UP_ROWS, type Grant } from "./step-up";
 import type { Auth } from "./auth";
 
 export { UnauthorizedError, type SessionUser };
@@ -51,18 +44,6 @@ export async function requireGatewayPermission(
   );
   if (stepUp) await requireStepUp(auth, request.headers);
   return organizationId;
-}
-
-/**
- * When the caller's step-up runs out (epoch ms), for work that outlives the
- * request. Refused unless at least `floorMs` of it is left.
- */
-export async function stepUpUntil(auth: Auth, request: Request, floorMs: number): Promise<number> {
-  const until = stepUpDeadline((await getSessionOnce(auth, request)) ?? {});
-  if (until - Date.now() < floorMs) {
-    throw new ForbiddenError(stepUpMessage("reauth-required"), "reauth-required");
-  }
-  return until;
 }
 
 /** Authenticated server-function context: throws UnauthorizedError when absent. */

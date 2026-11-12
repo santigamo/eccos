@@ -2,7 +2,7 @@ import type { StepUpReason } from "@eccos/auth-baseline/step-up";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useState, type RefObject } from "react";
 import { invalidateRoutes, rootRouteId } from "../../lib/invalidate";
-import { holdStepUp, registerStepUpPrompt, settleStepUp, STEP_UP_COPY } from "../../lib/step-up";
+import { registerStepUpPrompt, settleStepUp, STEP_UP_COPY } from "../../lib/step-up";
 import { lockedMessage, twoFactorErrorMessage, VERIFY_UNAVAILABLE } from "../../lib/two-factor";
 import { confirmStepUpCode } from "../../server/step-up";
 import { TwoFactorCodeForm } from "../auth/two-factor-code-form";
@@ -49,17 +49,8 @@ export function StepUpSheet({
 }) {
   const router = useRouter();
   const [reason, setReason] = useState<StepUpReason | null>(null);
-  // Backup codes are on screen and cannot be shown again: only Done leaves.
-  const [locked, setLocked] = useState(false);
 
-  useEffect(
-    () =>
-      registerStepUpPrompt((next) => {
-        setReason(next);
-        setLocked(false);
-      }),
-    [],
-  );
+  useEffect(() => registerStepUpPrompt(setReason), []);
 
   function settle(ok: boolean) {
     // The shell's view of the user (enrolled, stepped up) is now out of date.
@@ -72,12 +63,11 @@ export function StepUpSheet({
     <Sheet
       open={reason !== null}
       onOpenChange={(open) => {
-        if (!open && !locked) settle(false);
+        if (!open) settle(false);
       }}
     >
       <SheetContent
         side="right"
-        showCloseButton={!locked}
         finalFocus={finalFocus}
         className="gap-2 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
       >
@@ -87,13 +77,7 @@ export function StepUpSheet({
         </SheetHeader>
         <div className="px-4 pb-4">
           {reason === "totp-required" ? (
-            <TwoFactorSetup
-              onEnrolled={() => {
-                setLocked(true);
-                holdStepUp();
-              }}
-              onDone={() => settle(true)}
-            />
+            <TwoFactorSetup onDone={() => settle(true)} />
           ) : reason ? (
             <TwoFactorCodeForm verify={verifyOnSession} onVerified={() => settle(true)} />
           ) : null}

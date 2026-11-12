@@ -129,7 +129,6 @@ let fakeSessionHeaders: Headers | null = null;
 let fakeMemberships: { id: string; name?: string }[] = [{ id: "org-fixture" }];
 /** Gateway actions the fake role does NOT hold, to drive the forbidden path. */
 let fakeDeniedActions = new Set<string>();
-const FAKE_STEP_UP_UNTIL = 1_800_000_000_000;
 /** Why the fake session fails step-up, or null when it passes. */
 let fakeStepUpRefusal: "totp-required" | "reauth-required" | null = null;
 
@@ -214,8 +213,6 @@ mock.module("../src/auth/server-auth", () => ({
     fakesActive ? fakeServerAuth.resolveMemberships() : realTenant.resolveMemberships(...args),
   requireAuthContext: (...args: Parameters<typeof realServerAuth.requireAuthContext>) =>
     fakesActive ? fakeServerAuth.requireAuthContext(...args) : realServerAuth.requireAuthContext(...args),
-  stepUpUntil: (...args: Parameters<typeof realServerAuth.stepUpUntil>) =>
-    fakesActive ? Promise.resolve(FAKE_STEP_UP_UNTIL) : realServerAuth.stepUpUntil(...args),
 }));
 
 installServerFnMocks({
@@ -649,8 +646,7 @@ describe("session bootstrap (auth-aware state)", () => {
     // the operator back to. The target is built from the request origin, which
     // the server entry has already narrowed to the canonical host — never from
     // anything the browser supplies.
-    // The third argument caps the state's life at the end of the step-up.
-    expect(calls).toEqual([["account-a", "http://localhost:3000/numbers", FAKE_STEP_UP_UNTIL]]);
+    expect(calls).toEqual([["account-a", "http://localhost:3000/numbers"]]);
   });
 });
 

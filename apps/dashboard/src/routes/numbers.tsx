@@ -3,7 +3,7 @@ import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-route
 import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
-import type { StepUpReason } from "@eccos/auth-baseline/step-up";
+import type { ConnectBlock } from "../organizations";
 import { StepUpSheet } from "../components/dashboard/step-up-sheet";
 import { FailureView } from "../components/dashboard/failure";
 import {
@@ -92,7 +92,7 @@ function NumbersPage() {
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
             {resources?.account?.connectPolicy === "closed" ? <SubscriptionNotice billing={billing} /> : null}
-            <ConnectNumberPanel heading="Meta Embedded Signup" owedStepUp={root.user?.stepUp} />
+            <ConnectNumberPanel heading="Meta Embedded Signup" blocked={root.user?.connectBlock} />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -113,7 +113,7 @@ function NumbersPage() {
       billing={billing}
       connectError={connectError}
       connectSkipped={connectSkipped}
-      owedStepUp={root.user?.stepUp}
+      blocked={root.user?.connectBlock}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
     />
   );
@@ -145,11 +145,11 @@ export function NumbersView({
   billing = false,
   connectError,
   connectSkipped,
-  owedStepUp,
+  blocked,
   onRefresh,
 }: {
-  /** The step-up the signed-in user owes right now, for the add-number fork. */
-  owedStepUp?: StepUpReason | null;
+  /** What stops the signed-in user connecting right now, for the add-number fork. */
+  blocked?: ConnectBlock | null;
   resources: AccountResources;
   /** Whether this console has billing on, so a closed workspace can be pointed at it. */
   billing?: boolean;
@@ -197,7 +197,7 @@ export function NumbersView({
           }}
           busy={busy}
           onBusyChange={setBusy}
-          owedStepUp={owedStepUp}
+          blocked={blocked}
         />
       ) : null}
     </Page>
@@ -230,9 +230,9 @@ function AddNumberDialog({
   onOpenChange,
   busy,
   onBusyChange,
-  owedStepUp,
+  blocked,
 }: {
-  owedStepUp?: StepUpReason | null;
+  blocked?: ConnectBlock | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   busy: boolean;
@@ -258,7 +258,7 @@ function AddNumberDialog({
             {CONNECT_FORK_DESCRIPTION}
           </DialogDescription>
         </DialogHeader>
-        <ConnectNumberChoices onBusyChange={onBusyChange} owedStepUp={owedStepUp} />
+        <ConnectNumberChoices onBusyChange={onBusyChange} blocked={blocked} />
         {/* Nested: step-up from the fork opens inside this dialog. The notice
             that opened it is gone once it passes, so focus returns here. */}
         <StepUpSheet finalFocus={description} />

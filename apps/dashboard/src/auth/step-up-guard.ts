@@ -7,8 +7,8 @@
  * server-side `auth.api.*` call are covered alike.
  */
 
-import type { StepUpReason } from "@eccos/auth-baseline/step-up";
-import { getCurrentAuthContext } from "@better-auth/core/context";
+import { STEP_UP_REASONS, type StepUpReason } from "@eccos/auth-baseline/step-up";
+import { getCurrentAuthEndpointContext } from "@better-auth/core/context";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { roles } from "./permissions";
@@ -40,6 +40,12 @@ const ERROR_CODES: Record<StepUpReason, string> = {
   "reauth-required": "SESSION_NOT_FRESH",
 };
 
+/** The step-up one of this module's refusals was thrown for, if `error` is one. */
+export function stepUpReasonOfError(error: unknown): StepUpReason | null {
+  const code = error instanceof APIError ? error.body?.code : undefined;
+  return STEP_UP_REASONS.find((reason) => ERROR_CODES[reason] === code) ?? null;
+}
+
 function refuse(reason: StepUpReason): never {
   throw new APIError("FORBIDDEN", { code: ERROR_CODES[reason], message: stepUpMessage(reason) });
 }
@@ -52,7 +58,7 @@ function refuse(reason: StepUpReason): never {
  * handed no session, so it is read from the request's own context.
  */
 async function requireMemberStepUp(): Promise<void> {
-  const ctx = (await getCurrentAuthContext()) as Parameters<typeof getSessionFromCtx>[0];
+  const ctx = getCurrentAuthEndpointContext() as Parameters<typeof getSessionFromCtx>[0];
   const session = await getSessionFromCtx(ctx);
   refuseUnlessSteppedUp(session);
 }

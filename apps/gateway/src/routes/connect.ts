@@ -286,13 +286,12 @@ export async function startConnectForAccount(
   accountId: string,
   publicOrigin: string,
   returnTo?: string,
-  expiresBy = Number.POSITIVE_INFINITY,
 ): Promise<ConnectStartResult> {
   configuredConnect(env);
   const origin = validatePublicOrigin(publicOrigin);
   const redirectUri = new URL("/connect", origin).href;
   const state = crypto.randomUUID();
-  const expiresAt = Math.min(Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000, expiresBy);
+  const expiresAt = Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000;
   await getControlPlaneStub(env).startConnectState(state, accountId, expiresAt, redirectUri, returnTo);
   const url = new URL(redirectUri);
   url.searchParams.set("state", state);

@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
+import { BackupCodesSheet } from "../components/dashboard/backup-codes-sheet"
 import { StepUpSheet } from "../components/dashboard/step-up-sheet"
 import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
@@ -229,6 +230,7 @@ function RootComponent() {
         <>
           <AppShell />
           <StepUpSheet />
+          <BackupCodesSheet />
         </>
       ) : (
         // Unauthenticated (or gateway-unreachable) root load: bare outlet so

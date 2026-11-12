@@ -20,9 +20,8 @@ import {
   verifyMembership,
   type Membership,
 } from "./auth/tenant";
-import type { StepUpReason } from "@eccos/auth-baseline/step-up";
-import { getSessionOnce } from "./auth/request-memo";
-import { stepUpRefusal } from "./auth/step-up";
+import { isStepUpReason, type StepUpReason } from "@eccos/auth-baseline/step-up";
+import { stepUpReasonOfError } from "./auth/step-up-guard";
 import { activeWorkspace } from "./lib/workspaces";
 
 export interface OrganizationView {
@@ -273,7 +272,9 @@ const inviteInput = z
 export const inviteMember = createServerFn({ method: "POST" })
   .validator((input: unknown) => inviteInput.parse(input))
   .handler(
-    async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async ({
+      data,
+    }): Promise<{ ok: true } | { ok: false; error: string; reason?: StepUpReason }> => {
       try {
         const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "administer");
         if (organizationId !== data.organizationId) {
@@ -292,8 +293,14 @@ export const inviteMember = createServerFn({ method: "POST" })
         });
         return { ok: true };
       } catch (err) {
-        // Step-up is judged inside `createInvitation`, by the organization hook.
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        // Step-up is judged inside `createInvitation`, by the organization
+        // hook; its refusal carries the reason `withStepUp` acts on.
+        const reason = stepUpReasonOfError(err);
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          ...(reason ? { reason } : {}),
+        };
       }
     },
   );
@@ -386,8 +393,8 @@ export interface SessionUserView {
   name: string;
   email: string;
   twoFactorEnabled: boolean;
-  /** The step-up a sensitive action would be refused for right now, if any. */
-  stepUp: StepUpReason | null;
+  /** What connecting a number would be refused for right now, if anything. */
+  connectBlock: ConnectBlock | null;
   /**
    * The organizations this user belongs to, for the shell's workspace control.
    * Display data: the list an operator may CHOOSE from, never proof they hold
@@ -401,6 +408,24 @@ export interface SessionUserView {
    * choice has not been made yet.
    */
   activeWorkspaceId: string | null;
+}
+
+/** Why the connect fork cannot start: the role, or the step-up still owed. */
+export type ConnectBlock = "missing-permission" | StepUpReason;
+
+/**
+ * Judged exactly as `startConnect` judges it, role first: a role that may not
+ * connect is told so, never asked for a second factor it has no use for.
+ * Anything else (no workspace yet, none selected) is the page's own state.
+ */
+async function connectBlock(auth: ReturnType<typeof authInstance>, request: Request): Promise<ConnectBlock | null> {
+  try {
+    await requireGatewayPermission(auth, request, "connect");
+    return null;
+  } catch (err) {
+    if (!(err instanceof ForbiddenError)) return null;
+    return err.reason === "missing-permission" || isStepUpReason(err.reason) ? err.reason : null;
+  }
 }
 
 /**
@@ -428,7 +453,7 @@ export const getSessionUser = createServerFn({ method: "GET" }).handler(
         name: session.name,
         email: session.email,
         twoFactorEnabled: session.twoFactorEnabled,
-        stepUp: stepUpRefusal((await getSessionOnce(auth, request)) ?? {}),
+        connectBlock: await connectBlock(auth, request),
         workspaces,
         activeWorkspaceId: activeWorkspace(workspaces, session.activeOrganizationId)?.id ?? null,
       };

@@ -10,7 +10,6 @@ import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { createAuth } from "../src/auth/auth";
 import { CaptureMailSender } from "../src/auth/mail";
-import { stepUpUntil } from "../src/auth/server-auth";
 import { requireStepUp, STEP_UP_WINDOW_SECONDS, stepUpRefusal } from "../src/auth/step-up";
 import { confirmStepUp } from "../src/auth/step-up-confirm";
 import { STEP_UP_ACCOUNT_PATHS } from "../src/auth/step-up-guard";
@@ -144,24 +143,6 @@ describe("stepUpRefusal", () => {
     expect(stepUpRefusal({ user, session: { createdAt: new Date(now), stepUpAt: null } }, now)).toBe("reauth-required");
     expect(stepUpRefusal({ user, session: { stepUpAt: "not a date" } }, now)).toBe("reauth-required");
     expect(stepUpRefusal({ user }, now)).toBe("reauth-required");
-  });
-});
-
-describe("stepUpUntil", () => {
-  const MINUTE = 60_000;
-  const request = (cookie: string) => new Request(BASE_URL, { headers: { cookie } });
-
-  test("says when the step-up ends, and refuses when less than the floor is left", async () => {
-    const { auth, db, cookie } = await enrolled();
-    const stamp = (agoMs: number) =>
-      db.query('UPDATE session SET "stepUpAt" = ?').run(new Date(Date.now() - agoMs).toISOString());
-
-    stamp(4 * MINUTE);
-    const until = await stepUpUntil(auth, request(cookie), 10 * MINUTE);
-    expect(Math.abs(until - (Date.now() + 11 * MINUTE))).toBeLessThan(5_000);
-
-    stamp(6 * MINUTE);
-    expect(await reasonOf(stepUpUntil(auth, request(cookie), 10 * MINUTE))).toBe("reauth-required");
   });
 });
 
@@ -532,6 +513,16 @@ describe("attack: enrolling the thief's own authenticator", () => {
       "ENABLE_CODE_JUST_SENT",
     ]);
     expect(sends()).toHaveLength(1);
+  });
+
+  test("a send that fails stores no code, so the next one is not made to wait", async () => {
+    const { db, mail, post, cookie } = await signedIn();
+    mail.outcome = { status: "undeliverable", reason: "permanent_failure" };
+    expect((await post("/two-factor/send-enable-code", { password: PASSWORD }, cookie)).ok).toBe(false);
+    expect(db.query("SELECT count(*) AS n FROM verification WHERE identifier LIKE 'two-factor-enable-%'").get()).toEqual({ n: 0 });
+
+    mail.outcome = { status: "sent" };
+    expect((await post("/two-factor/send-enable-code", { password: PASSWORD }, cookie)).status).toBe(200);
   });
 
   test("a pending enrollment's secret is not read with the password alone", async () => {

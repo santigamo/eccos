@@ -12,9 +12,11 @@ import type { Failure } from "../src/server/gateway";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { holdStepUp, promptStepUp, registerStepUpPrompt, settleStepUp, STEP_UP_COPY, withStepUp } = await import(
+const { promptStepUp, registerStepUpPrompt, settleStepUp, STEP_UP_COPY, withStepUp } = await import(
   "../src/lib/step-up"
 );
+const { heldBackupCodes, showBackupCodes } = await import("../src/lib/backup-codes");
+const { BackupCodesSheet } = await import("../src/components/dashboard/backup-codes-sheet");
 const { BackupCodes, TwoFactorPanel } = await import("../src/components/dashboard/two-factor");
 const { QrCode } = await import("../src/components/dashboard/qr-code");
 const { SettingsView } = await import("../src/routes/settings");
@@ -107,22 +109,6 @@ describe("withStepUp", () => {
     expect(await onPage).toBe(true);
   });
 
-  test("a sheet showing one-time backup codes is held until the operator confirms", async () => {
-    const shown: (string | null)[] = [];
-    unregister = registerStepUpPrompt((reason) => void shown.push(reason));
-    const enrolling = promptStepUp("totp-required");
-    holdStepUp();
-
-    // Neither a dismissal nor another action's prompt may take the codes away.
-    settleStepUp(false);
-    expect(await promptStepUp("reauth-required")).toBe(false);
-    expect(shown).toEqual(["totp-required"]);
-
-    settleStepUp(true);
-    expect(await enrolling).toBe(true);
-    expect(shown).toEqual(["totp-required", null]);
-  });
-
   test("a prompt still waiting when the sheet unmounts is declined, not lost", async () => {
     const shown: (string | null)[] = [];
     const leave = registerStepUpPrompt((reason) => void shown.push(reason));
@@ -132,6 +118,41 @@ describe("withStepUp", () => {
     // Closed on the way out, and nothing is asked of a sheet that is gone.
     expect(shown.at(-1)).toBeNull();
     expect(await promptStepUp("reauth-required")).toBe(false);
+  });
+});
+
+describe("backup codes held at the app's root", () => {
+  test("stay on screen when the surface that enrolled goes away, until confirmed", async () => {
+    const leave = registerStepUpPrompt(() => {});
+    const enrolling = promptStepUp("totp-required");
+    let saved = false;
+    void showBackupCodes(["aaaa-bbbb"]).then(() => {
+      saved = true;
+    });
+
+    // The dialog that hosted the enrollment unmounts, taking its sheet with it.
+    leave();
+    expect(await enrolling).toBe(false);
+    expect(heldBackupCodes()?.codes).toEqual(["aaaa-bbbb"]);
+    expect(saved).toBe(false);
+
+    heldBackupCodes()?.confirm();
+    await Promise.resolve();
+    expect(saved).toBe(true);
+    expect(heldBackupCodes()).toBeNull();
+  });
+
+  test("a second enrollment's codes wait behind the first", () => {
+    void showBackupCodes(["first"]);
+    void showBackupCodes(["second"]);
+    expect(heldBackupCodes()?.codes).toEqual(["first"]);
+    heldBackupCodes()?.confirm();
+    expect(heldBackupCodes()?.codes).toEqual(["second"]);
+    heldBackupCodes()?.confirm();
+  });
+
+  test("the sheet shows nothing until codes are held", () => {
+    expect(renderToStaticMarkup(<BackupCodesSheet />)).not.toContain("Backup codes");
   });
 });
 

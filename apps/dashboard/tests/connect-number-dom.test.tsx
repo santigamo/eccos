@@ -124,12 +124,15 @@ async function mount(node: ReactNode): Promise<HTMLElement> {
   return host;
 }
 
-const mountChoices = (popupWatchdogMs = 3_000, owedStepUp: "reauth-required" | null = null) =>
+const mountChoices = (
+  popupWatchdogMs = 3_000,
+  blocked: "reauth-required" | "missing-permission" | null = null,
+) =>
   mount(
     <ConnectNumberChoices
       navigate={(path) => navigated.push(path)}
       popupWatchdogMs={popupWatchdogMs}
-      owedStepUp={owedStepUp}
+      blocked={blocked}
     />,
   );
 
@@ -280,18 +283,44 @@ describe("ConnectNumberChoices in a real DOM", () => {
 
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
-  test("a retry after a cancel asks the server for a fresh state", async () => {
+  test("a retry after a cancel fetches a fresh state, then opens Meta from its own click", async () => {
     const host = await mountChoices();
     await runFlow(host, { authResponse: null });
     expect(handoffs).toBe(1);
 
     await act(async () => card(host, "A new number").click());
     await settle();
+    // Nothing was fetched ahead of the click, and no window opens after an await.
     expect(handoffs).toBe(2);
+    expect(loginCalls).toBe(1);
+
+    await act(async () => card(host, "Open Meta").click());
     expect(loginCalls).toBe(2);
+    expect(host.textContent).not.toContain("Open Meta");
     await act(async () => loginCallback?.(FINISHED));
     await settle();
     expect(exchanges).toEqual([{ code: "code-1", state: "state-2" }]);
+  });
+
+  test("after a blocked popup, Start again and a card lead to Open Meta too", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    await wait(60);
+    await act(async () => card(host, "Start again").click());
+    await act(async () => card(host, "A new number").click());
+    await settle();
+    expect(loginCalls).toBe(1);
+    await act(async () => card(host, "Open Meta").click());
+    expect(loginCalls).toBe(2);
+  });
+
+  test("a role that may not connect is told so, and is never asked for a second factor", async () => {
+    const host = await mountChoices(3_000, "missing-permission");
+    expect(card(host, "A new number").disabled).toBe(true);
+    expect(host.textContent).toContain("Your role in this workspace does not allow this");
+    expect(host.textContent).not.toContain("two-factor");
+    expect(host.textContent).not.toContain("Confirm it's you");
   });
 
   test("a blocked popup shows a message and a Start again control, and changes nothing else", async () => {

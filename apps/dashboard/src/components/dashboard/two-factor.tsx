@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from "react";
 import { authClient } from "../../auth/auth-client";
+import { showBackupCodes } from "../../lib/backup-codes";
 import { totpSecret, twoFactorErrorMessage } from "../../lib/two-factor";
 import { ERROR_CLASS, MACHINE_CLASS } from "../../ui";
 import { PasswordField } from "../auth/password-field";
@@ -56,16 +57,11 @@ export function TwoFactorPanel({ enabled }: { enabled: boolean }) {
 
 /**
  * Enrollment: password and a mailed code, then the QR code and the first
- * code, then the backup codes. `onEnrolled` fires once the codes are on screen
- * and cannot be shown again; `onDone` when the operator has dealt with them.
+ * code. The backup codes then go to the app's own sheet
+ * (`backup-codes-sheet.tsx`), which outlives whatever hosts this; `onDone`
+ * fires when the operator has dealt with them.
  */
-export function TwoFactorSetup({
-  onEnrolled,
-  onDone,
-}: {
-  onEnrolled?: () => void;
-  onDone: () => void;
-}) {
+export function TwoFactorSetup({ onDone }: { onDone: () => void }) {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [verified, setVerified] = useState(false);
   if (!setup) return <StartStep onStarted={setSetup} />;
@@ -75,12 +71,12 @@ export function TwoFactorSetup({
         totpURI={setup.totpURI}
         onVerified={() => {
           setVerified(true);
-          onEnrolled?.();
+          void showBackupCodes(setup.backupCodes).then(onDone);
         }}
       />
     );
   }
-  return <BackupCodes codes={setup.backupCodes} onDone={onDone} />;
+  return <span className={`block ${MACHINE_CLASS}`}>On</span>;
 }
 
 const START_ERRORS: Record<string, string> = {
@@ -128,9 +124,11 @@ function StartStep({ onStarted }: { onStarted: (setup: Setup) => void }) {
       return;
     }
     const code = (result?.error as { code?: string } | null | undefined)?.code;
-    // Every attempt spends the code, so a refused one needs a new send.
-    if (code === "EMAIL_CODE_REQUIRED") setSent(false);
-    setError(startError(code, "Could not start the setup right now. Please try again."));
+    // Every attempt spends the mailed code, whatever then refused it.
+    setSent(false);
+    setError(
+      startError(code, "Could not start the setup, and the code is used up. Email a new one to try again."),
+    );
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -207,7 +205,7 @@ function VerifyStep({ totpURI, onVerified }: { totpURI: string; onVerified: () =
 
 type CopyState = "idle" | "copied" | "failed";
 
-/** Shown once, after the first code verifies. Exported for direct rendering in tests. */
+/** Shown once, after the first code verifies, by `backup-codes-sheet.tsx`. */
 export function BackupCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
   const [copy, setCopy] = useState<CopyState>("idle");
   return (
