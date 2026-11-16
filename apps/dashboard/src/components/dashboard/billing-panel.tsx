@@ -1,7 +1,5 @@
-import { isRedirect } from "@tanstack/react-router";
-import { useState } from "react";
-import { openPortal, startCheckout, type BillingState, type Result } from "../../server/gateway";
-import { failureCopy } from "../../lib/failure";
+import { openPortal, startCheckout, type BillingState } from "../../server/gateway";
+import { BillingError, useBillingRedirect } from "./billing-redirect";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 
@@ -29,26 +27,10 @@ export function checkoutReturnNote(billing: BillingState, { status }: CheckoutRe
 
 /** Billing for the workspace. Rendered only while billing is on. */
 export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: CheckoutReturn | null }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, leaveTo } = useBillingRedirect();
   const closed = billing.connectPolicy === "closed";
-
-  async function leaveTo(target: () => Promise<Result<{ url: string }>>) {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await target();
-      if (res.ok) {
-        window.location.assign(res.data.url);
-        return;
-      }
-      setError(res.kind === "unreachable" ? "Billing could not be opened. Try again." : failureCopy(res).detail);
-    } catch (thrown) {
-      if (isRedirect(thrown)) throw thrown;
-      setError("Billing could not be opened. Try again.");
-    }
-    setBusy(false);
-  }
+  // With no subscription and none needed, a price would read as a charge.
+  const priced = closed || billing.hasCustomer;
 
   return (
     <Frame variant="default" spacing="lg">
@@ -56,7 +38,7 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-sm font-semibold">Billing</FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            Eccos Cloud is billed per connected number. Messages are never billed.
+            Eccos Cloud is billed per connected number, never per message.
             {closed ? " Messaging keeps working without a subscription; adding a number needs one." : ""}
           </FrameDescription>
         </FrameHeader>
@@ -74,10 +56,12 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
             <dt className={MACHINE_CLASS}>Connected numbers</dt>
             <dd className="m-0 text-sm text-foreground tabular-nums">{billing.numbers}</dd>
           </div>
-          <div className={ROW_CLASS}>
-            <dt className={MACHINE_CLASS}>Monthly price</dt>
-            <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR</dd>
-          </div>
+          {priced ? (
+            <div className={ROW_CLASS}>
+              <dt className={MACHINE_CLASS}>Monthly price</dt>
+              <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR</dd>
+            </div>
+          ) : null}
         </dl>
         <div className="mt-5 flex flex-wrap gap-2">
           {closed ? (
@@ -91,14 +75,7 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
             </Button>
           ) : null}
         </div>
-        {error ? (
-          <output
-            aria-live="polite"
-            className="bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs"
-          >
-            {error}
-          </output>
-        ) : null}
+        <BillingError error={error} />
       </FramePanel>
     </Frame>
   );

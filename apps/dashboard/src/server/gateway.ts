@@ -225,8 +225,10 @@ export type DashboardOverviewResult = Result<DashboardOverview>;
 export type DashboardState =
   | { stage: "unassigned" }
   | { stage: "no-organization" }
-  | { stage: "account-ready"; resources: AccountResources; billing?: true }
-  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: true };
+  | { stage: "account-ready"; resources: AccountResources; billing?: BillingFlag }
+  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag };
+/** Present only while billing is on. `subscribed`: a closed account whose subscription still exists, so billing opens its portal. */
+export type BillingFlag = { subscribed: boolean };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1290,8 +1292,9 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // on EVERY page, /numbers included, where the note explaining the state
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
-        // Present only while billing is on, so the console knows whether to point at it.
-        const billing = billingEnabled(env) ? { billing: true as const } : {};
+        const billing = billingEnabled(env)
+          ? { billing: { subscribed: await closedSubscription(gateway, state) } }
+          : {};
         if (!state.status) return { stage: "account-ready", resources: state.resources, ...billing };
         return {
           stage: "ready",
@@ -1301,6 +1304,16 @@ export const getDashboardState = createServerFn({ method: "GET" })
         };
       }),
   );
+
+/** Read only for a closed account: an open one is never pointed at billing. */
+async function closedSubscription(
+  gateway: GatewayApi,
+  state: { accountId: string; resources: AccountResources },
+): Promise<boolean> {
+  if (state.resources.account?.connectPolicy !== "closed") return false;
+  const stored = await gateway.getAccountBilling(state.accountId);
+  return Boolean(stored?.subscriptionId && stored.customerId);
+}
 
 export const getDashboardOverview = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
