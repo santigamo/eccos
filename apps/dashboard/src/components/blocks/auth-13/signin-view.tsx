@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { authClient } from "@/auth/auth-client";
+import { signUpHref } from "@/auth/redirect-target";
 import { AuthSplitShell } from "./components/auth";
 import { LoginForm, type FormSubmitEvent } from "./components/login-form";
 import { authErrorMessage } from "@/components/auth/auth-page";
@@ -86,7 +87,7 @@ export function SignInView({
         password={password}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
-        signUpHref={redirectTo && redirectTo !== "/" ? `/signup?redirect=${encodeURIComponent(redirectTo)}` : "/signup"}
+        signUpHref={signUpHref(redirectTo === "/" ? undefined : redirectTo)}
       />
     </AuthSplitShell>
   );

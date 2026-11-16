@@ -15,8 +15,11 @@ export const INVITATION_UNAVAILABLE =
 const NO_LONGER_VALID = "This invitation is no longer valid. Ask for a new one.";
 const UNVERIFIED = "Verify your email address, then open the invitation link again.";
 
+/** Never rendered by the invitation screen, which goes to sign-in instead. */
+export const INVITATION_SIGNED_OUT = "Your session has expired. Sign in again to accept the invitation.";
+export const SIGN_OUT_RETRY = "Could not sign out right now. Please try again.";
+
 export const INVITATION_COPY: Record<string, string> = {
-  UNAUTHORIZED: "Your session has expired. Sign in again to accept the invitation.",
   INVITATION_NOT_FOUND: INVITATION_UNAVAILABLE,
   YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION: INVITATION_UNAVAILABLE,
   ORGANIZATION_NOT_FOUND: NO_LONGER_VALID,

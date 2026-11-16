@@ -59,7 +59,7 @@ const {
   inviteMember,
   acceptInvitation,
   getInvitation,
-  invitationErrorCopy,
+  invitationFailure,
 } =
   await import("../src/organizations");
 const { createAuth } = await import("../src/auth/auth");
@@ -408,7 +408,11 @@ describe("createWorkspaceErrorCopy", () => {
 
 describe("invitation server functions", () => {
   const UNAVAILABLE = /not available to the account you are signed in with/;
-  const RETRY = "Something went wrong with this invitation. Please try again.";
+  const RETRY = {
+    ok: false,
+    kind: "retry",
+    error: "Something went wrong with this invitation. Please try again.",
+  };
 
   async function invite(auth: ReturnType<typeof createAuth>, db: Database, email: string) {
     await signInAsServerFnCaller(auth, db, "reseller@corp.test");
@@ -472,14 +476,14 @@ describe("invitation server functions", () => {
     await signInAsServerFnCaller(auth, db, "agency@corp.test");
 
     gateway.healthy = false;
-    expect(await acceptInvitation({ data: { invitationId } })).toEqual({ ok: false, error: RETRY });
+    expect(await acceptInvitation({ data: { invitationId } })).toEqual(RETRY);
 
     // Better Auth has accepted it: the member is in, the link is not.
     expect(await getInvitation({ data: { invitationId } })).toEqual({
       ok: true,
       data: { organizationName: "NACEX 2801", joined: true },
     });
-    expect(await acceptInvitation({ data: { invitationId } })).toEqual({ ok: false, error: RETRY });
+    expect(await acceptInvitation({ data: { invitationId } })).toEqual(RETRY);
 
     gateway.healthy = true;
     await auth.api.setActiveOrganization({ body: { organizationId: null }, headers: fakeRequestHeaders });
@@ -493,7 +497,7 @@ describe("invitation server functions", () => {
       await getInvitation({ data: { invitationId } }),
       await acceptInvitation({ data: { invitationId } }),
     ]) {
-      expect((result as { error: string }).error).toMatch(UNAVAILABLE);
+      expect(result).toMatchObject({ ok: false, kind: "unavailable", error: expect.stringMatching(UNAVAILABLE) });
     }
   });
 
@@ -508,22 +512,51 @@ describe("invitation server functions", () => {
         await getInvitation({ data: { invitationId: id } }),
         await acceptInvitation({ data: { invitationId: id } }),
       ]) {
-        expect(result.ok).toBe(false);
-        expect((result as { error: string }).error).toMatch(UNAVAILABLE);
+        expect(result).toMatchObject({ ok: false, kind: "unavailable", error: expect.stringMatching(UNAVAILABLE) });
       }
     }
   });
 
-  test("only recognised codes get their own sentence; the rest collapse into the retry line", () => {
-    const GONE = "This invitation is no longer valid. Ask for a new one.";
-    expect(invitationErrorCopy({ body: { code: "ORGANIZATION_NOT_FOUND" } })).toBe(GONE);
-    expect(invitationErrorCopy({ body: { code: "INVITER_IS_NO_LONGER_A_MEMBER_OF_THE_ORGANIZATION" } })).toBe(GONE);
-    expect(invitationErrorCopy({ body: { code: "EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION" } })).toMatch(
-      /Verify your email address/,
-    );
-    // A bare status is not a diagnosis: it is logged, never read as "wrong account".
-    expect(invitationErrorCopy({ status: "BAD_REQUEST", body: { message: "nope" } })).toBe(RETRY);
-    expect(invitationErrorCopy(new Error("D1_ERROR: no such table: invitation"))).toBe(RETRY);
-    expect(invitationErrorCopy(null)).toBe(RETRY);
+  test("a lapsed session is its own kind on both calls, so the client goes to sign-in", async () => {
+    await createServerFnAuth();
+    linkingGateway();
+    for (const result of [
+      await getInvitation({ data: { invitationId: "inv_1" } }),
+      await acceptInvitation({ data: { invitationId: "inv_1" } }),
+    ]) {
+      expect(result).toMatchObject({ ok: false, kind: "signed-out" });
+    }
+  });
+
+  test("a read whose setup throws still answers with the page's own copy", async () => {
+    // A production origin with no secret: building the auth instance itself throws.
+    fakeEnv.BETTER_AUTH_URL = "https://console.example";
+    expect(await getInvitation({ data: { invitationId: "inv_1" } })).toEqual(RETRY);
+  });
+
+  test("only recognised codes get their own sentence; the rest are transient and logged without their message", () => {
+    const GONE = { ok: false, kind: "unavailable", error: "This invitation is no longer valid. Ask for a new one." };
+    expect(invitationFailure({ body: { code: "ORGANIZATION_NOT_FOUND" } })).toEqual(GONE);
+    expect(invitationFailure({ body: { code: "INVITER_IS_NO_LONGER_A_MEMBER_OF_THE_ORGANIZATION" } })).toEqual(GONE);
+    expect(invitationFailure({ body: { code: "EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION" } })).toMatchObject({
+      kind: "unavailable",
+      error: expect.stringMatching(/Verify your email address/),
+    });
+    expect(invitationFailure({ status: "UNAUTHORIZED" }).kind).toBe("signed-out");
+
+    const warn = console.warn;
+    const logged: string[] = [];
+    console.warn = (line: string) => void logged.push(line);
+    try {
+      // A bare status is not a diagnosis: never read as "wrong account".
+      expect(invitationFailure({ status: "BAD_REQUEST", body: { message: "nope" } })).toEqual(RETRY);
+      expect(invitationFailure(new Error('account "acc_secret" does not exist'))).toEqual(RETRY);
+      expect(invitationFailure(null)).toEqual(RETRY);
+    } finally {
+      console.warn = warn;
+    }
+    expect(logged).toHaveLength(3);
+    expect(logged.join("")).not.toContain("acc_secret");
+    expect(JSON.parse(logged[1]!)).toMatchObject({ event: "invitation-failed", code: null, error: "Error" });
   });
 });

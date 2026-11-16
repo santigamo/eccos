@@ -6,7 +6,7 @@ import type {
   ConnectPolicy,
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
-import { effectiveConnectPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
 import {
   coexistenceSyncStatus,
   historySyncDeadline,
@@ -1130,7 +1130,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     if (!row) return null;
     return {
       connectPolicy: effectiveConnectPolicy(row.connect_policy, this.env.CONNECT_POLICY_DEFAULT),
-      explicitPolicy: row.connect_policy === "open" || row.connect_policy === "closed",
+      explicitPolicy: isStoredPolicy(row.connect_policy),
       customerId: (row.billing_customer_id as string | null) ?? null,
       subscriptionId: (row.billing_subscription_id as string | null) ?? null,
     };

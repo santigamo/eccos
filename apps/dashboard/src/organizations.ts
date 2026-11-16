@@ -12,9 +12,8 @@ import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { env } from "cloudflare:workers";
 import type { GatewayApi } from "@eccos/gateway-contract";
-import type { Auth } from "./auth/auth";
 import { getAuthForRequest } from "./auth/request-auth";
-import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
+import { UnauthorizedError, requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
 import {
   ForbiddenError,
   resolveMemberships,
@@ -22,7 +21,12 @@ import {
   type Membership,
 } from "./auth/tenant";
 import { activeWorkspace } from "./lib/workspaces";
-import { INVITATION_COPY, INVITATION_RETRY, INVITATION_UNAVAILABLE } from "./lib/invitation-copy";
+import {
+  INVITATION_COPY,
+  INVITATION_RETRY,
+  INVITATION_SIGNED_OUT,
+  INVITATION_UNAVAILABLE,
+} from "./lib/invitation-copy";
 
 export interface OrganizationView {
   id: string;
@@ -164,7 +168,8 @@ function authErrorCode(err: unknown): string {
 
 /**
  * Server-side only: the operator keeps the diagnosis the customer no longer
- * gets. Never the request body, never anything tenant-identifying.
+ * gets. The code and the error's class, never its message: that can carry an
+ * organization or account id.
  */
 function warnUnmapped(event: string, code: string, err: unknown): void {
   console.warn(
@@ -173,7 +178,7 @@ function warnUnmapped(event: string, code: string, err: unknown): void {
       area: "organizations",
       event,
       code: code || null,
-      error: err instanceof Error ? err.message : String(err),
+      error: err instanceof Error ? err.name : typeof err,
     }),
   );
 }
@@ -302,13 +307,23 @@ export const inviteMember = createServerFn({ method: "POST" })
     },
   );
 
-/** Map an invitation failure to customer-facing copy (allowlist, `lib/invitation-copy.ts`). */
-export function invitationErrorCopy(err: unknown): string {
+export interface InvitationFailure {
+  ok: false;
+  /** `signed-out` goes to sign-in, `retry` is transient, `unavailable` will not change by asking again. */
+  kind: "signed-out" | "retry" | "unavailable";
+  error: string;
+}
+
+/** Classify an invitation failure and give it allowlisted copy (`lib/invitation-copy.ts`). */
+export function invitationFailure(err: unknown): InvitationFailure {
   const code = authErrorCode(err);
+  if (code === "UNAUTHORIZED" || err instanceof UnauthorizedError) {
+    return { ok: false, kind: "signed-out", error: INVITATION_SIGNED_OUT };
+  }
   const mapped = INVITATION_COPY[code];
-  if (mapped) return mapped;
+  if (mapped) return { ok: false, kind: "unavailable", error: mapped };
   warnUnmapped("invitation-failed", code, err);
-  return INVITATION_RETRY;
+  return { ok: false, kind: "retry", error: INVITATION_RETRY };
 }
 
 export const acceptInviteInput = z
@@ -322,7 +337,9 @@ export const acceptInviteInput = z
  * retry meets when the accept went through but the account link after it did
  * not. Only the invited identity that is now a member gets an answer here.
  */
-async function joinedWorkspace(auth: Auth, request: Request, invitationId: string): Promise<Membership | null> {
+async function joinedWorkspace(invitationId: string): Promise<Membership | null> {
+  const auth = authInstance();
+  const request = currentRequest();
   const { session } = await requireAuthContext(auth, request);
   const invitation = await (await auth.$context).adapter.findOne<{
     email: string;
@@ -339,9 +356,7 @@ async function joinedWorkspace(auth: Auth, request: Request, invitationId: strin
 export const acceptInvitation = createServerFn({ method: "POST" })
   .validator((input: unknown) => acceptInviteInput.parse(input))
   .handler(
-    async ({
-      data,
-    }): Promise<{ ok: true; data: { organizationId: string } } | { ok: false; error: string }> => {
+    async ({ data }): Promise<{ ok: true; data: { organizationId: string } } | InvitationFailure> => {
       try {
         const auth = authInstance();
         const request = currentRequest();
@@ -353,7 +368,7 @@ export const acceptInvitation = createServerFn({ method: "POST" })
           })) as { invitation: { organizationId: string } };
           organizationId = accepted.invitation.organizationId;
         } catch (err) {
-          const joined = await joinedWorkspace(auth, request, data.invitationId).catch(() => null);
+          const joined = await joinedWorkspace(data.invitationId).catch(() => null);
           if (!joined) throw err;
           organizationId = joined.id;
           await auth.api.setActiveOrganization({ body: { organizationId }, headers: request.headers });
@@ -363,7 +378,7 @@ export const acceptInvitation = createServerFn({ method: "POST" })
         await withGateway((gateway) => gateway.ensureOrganizationAccount(organizationId));
         return { ok: true, data: { organizationId } };
       } catch (err) {
-        return { ok: false, error: invitationErrorCopy(err) };
+        return invitationFailure(err);
       }
     },
   );
@@ -377,22 +392,22 @@ export interface InvitationView {
 /** The invitation behind an accept link, for the invited identity only. */
 export const getInvitation = createServerFn({ method: "GET" })
   .validator((input: unknown) => acceptInviteInput.parse(input))
-  .handler(async ({ data }): Promise<{ ok: true; data: InvitationView } | { ok: false; error: string }> => {
-    const auth = authInstance();
-    const request = currentRequest();
+  .handler(async ({ data }): Promise<{ ok: true; data: InvitationView } | InvitationFailure> => {
     try {
-      const invitation = (await auth.api.getInvitation({
+      const invitation = (await authInstance().api.getInvitation({
         query: { id: data.invitationId },
-        headers: request.headers,
+        headers: currentRequest().headers,
       })) as { organizationName: string };
       return { ok: true, data: { organizationName: invitation.organizationName, joined: false } };
     } catch (err) {
-      const joined = await joinedWorkspace(auth, request, data.invitationId).catch(() => null);
+      const joined = await joinedWorkspace(data.invitationId).catch(() => null);
       if (joined) return { ok: true, data: { organizationName: joined.name, joined: true } };
       // get-invitation raises "not found" from a bare status, with no code of
       // its own; it must read like the accept's, or the pair is an id oracle.
-      const notFound = authErrorCode(err) === "BAD_REQUEST";
-      return { ok: false, error: notFound ? INVITATION_UNAVAILABLE : invitationErrorCopy(err) };
+      if (authErrorCode(err) === "BAD_REQUEST") {
+        return { ok: false, kind: "unavailable", error: INVITATION_UNAVAILABLE };
+      }
+      return invitationFailure(err);
     }
   });
 

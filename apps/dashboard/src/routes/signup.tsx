@@ -17,5 +17,5 @@ export const Route = createFileRoute("/signup")({
 
 function SignUpPage() {
   const { redirect } = useSearch({ from: "/signup" });
-  return <SignUpView redirectTo={safeRedirectTarget(redirect)} />;
+  return <SignUpView redirectTo={redirect} />;
 }
