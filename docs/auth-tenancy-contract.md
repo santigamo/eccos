@@ -192,7 +192,8 @@ Better Auth's Organization plugin exposes HTTP endpoints under `/api/auth/organi
 exist and cannot all be removed, so each carries an explicit policy. The dashboard's own server
 functions remain the primary UI path; direct plugin calls are subject to the same rules.
 
-**Three of them are not served at all.** `src/server.ts` refuses `organization/create`,
+**Seven of them are not served at all**: the three slug-bearing endpoints below, and the four
+membership writes, whose rules and audit live in the console's server functions. `src/server.ts` refuses `organization/create`,
 `organization/check-slug` and `organization/update` with better-call's own 404 before the request
 reaches `auth.handler`, so a blocked endpoint is indistinguishable from one that was never
 registered. The reasoning lives in `src/auth/blocked-endpoints.ts`; the short version is that all
@@ -212,9 +213,10 @@ across tenants and inside one user's own membership list.
 | `set-active` | Set active organization | Wrapped by app validation: server re-verifies membership; result is UX state only (§5) |
 | `update` | Update organization (name, metadata) | **Not served** — 404 before dispatch, because the same slug-uniqueness probe is reachable through a rename. There is no rename UI in v1; when one is built it must be a server function that never accepts a slug. Metadata/slug changes **never authorize the account mapping** (§2) |
 | `delete` | Delete organization | **Disabled in v1** — rejected regardless of role |
-| `create-invitation` (POST), `list-invitations` (GET) | Invitations | Owner/admin + verified email + step-up (§4); recipients must be verified identities (§7) |
-| `accept-invitation`, `reject-invitation`, `cancel-invitation`, `get-invitation` (GET) | Invitation lifecycle | Acceptance requires signed-in matching identity (§7); never provisions a tenant |
-| `add-member` (remove-member), `update-member-role` | Member add/remove, role update | Owner/admin per Better Auth defaults + verified email + step-up (§4) |
+| `invite-member`, `cancel-invitation`, `remove-member`, `update-member-role` | Invite, cancel an invitation, remove a member, change a role | **Not served** — 404 before dispatch. Served only through the console's server functions (`src/members.ts`), which call them in process: owner/admin, only `admin`/`operator`/`viewer` may be granted, an owner is changed or removed only by an owner and never the last one, removing a member cancels the invitations they sent that are still pending, ids-only audit line, at most 20 invitations per inviter per hour (enforced in the plugin's `beforeCreateInvitation` hook). Step-up (§4) to follow |
+| `list-invitations` (GET) | Invitations | Owner/admin; recipients must be verified identities (§7) |
+| `accept-invitation`, `reject-invitation`, `get-invitation` (GET) | Invitation lifecycle | Acceptance requires signed-in matching identity (§7); never provisions a tenant |
+| `add-member` | Member add | Server-only in Better Auth; not reachable over HTTP |
 | `transfer-ownership` | Ownership transfer | Owner→owner + step-up |
 
 Invariants for all of them: no endpoint issues or returns an API key; no endpoint creates or

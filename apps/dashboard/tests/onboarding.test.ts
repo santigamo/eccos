@@ -14,6 +14,7 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
+import { withD1Statements } from "./helpers/d1-statements";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 
@@ -56,7 +57,6 @@ installServerFnMocks({
 const {
   createOrganization,
   createWorkspaceErrorCopy,
-  inviteMember,
   acceptInvitation,
   getInvitation,
   invitationFailure,
@@ -101,7 +101,7 @@ afterEach(() => {
  * server-function call would fail closed for the wrong reason.
  */
 async function createServerFnAuth() {
-  const db = new Database(":memory:");
+  const db = withD1Statements(new Database(":memory:"));
   fakeEnv.DB = db;
   fakeEnv.BETTER_AUTH_SECRET = SECRET;
   const auth = createAuth(authConfigFromEnv(fakeEnv as never));

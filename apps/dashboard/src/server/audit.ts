@@ -112,6 +112,9 @@ export type SensitiveAction =
   | "export_data"
   | "erase_by_phone"
   | "member_invited"
+  /** An invitation cancelled and sent again under a new id. Ids only, never the address. */
+  | "invitation_resent"
+  | "invitation_canceled"
   | "member_role_changed"
   | "member_removed";
 

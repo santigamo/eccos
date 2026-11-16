@@ -50,6 +50,7 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/webhooks": "waba",
   "/templates": "waba",
   "/settings": "none",
+  "/members": "none",
   "/": "number",
   "/deliveries": "number",
   "/events": "number",

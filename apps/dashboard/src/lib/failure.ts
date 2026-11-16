@@ -82,6 +82,8 @@ function forbiddenCopy(failure: Failure): FailureCopy {
         detail:
           "Your role in this workspace does not allow this. Ask an owner or an admin to widen it.",
       };
+    case "workspace-changed":
+      return { title: "Workspace changed", detail: "You switched workspace in another tab. Reload this page." };
     default:
       // A refusal with no reason code of its own: report it as the refusal it
       // is, using the server's own words rather than inventing a cause.

@@ -14,7 +14,7 @@ import * as Sentry from "@sentry/cloudflare";
 import { env } from "cloudflare:workers";
 import type { GatewayApi } from "@eccos/gateway-contract";
 import { getAuthForRequest } from "./auth/request-auth";
-import { UnauthorizedError, requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
+import { UnauthorizedError, requireAuthContext } from "./auth/server-auth";
 import {
   ForbiddenError,
   resolveMemberships,
@@ -170,7 +170,7 @@ const CREATE_WORKSPACE_COPY: Record<string, string> = {
  * ones raised straight from a status. Anything else — a plain `Error`, an RPC
  * failure — has no code and lands on the generic branch by construction.
  */
-function authErrorCode(err: unknown): string {
+export function authErrorCode(err: unknown): string {
   if (!err || typeof err !== "object") return "";
   const e = err as { body?: { code?: unknown }; status?: unknown };
   if (typeof e.body?.code === "string") return e.body.code;
@@ -183,7 +183,7 @@ function authErrorCode(err: unknown): string {
  * gets. The code and the error's class, never its message: that can carry an
  * organization or account id.
  */
-function warnUnmapped(event: string, code: string, err: unknown): void {
+export function warnUnmapped(event: string, code: string, err: unknown): void {
   console.warn(
     JSON.stringify({
       level: "warn",
@@ -280,46 +280,6 @@ export const selectOrganization = createServerFn({ method: "POST" })
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
-
-const inviteInput = z
-  .object({
-    email: z.string().trim().email(),
-    role: z.enum(["admin", "operator", "viewer"]),
-    organizationId: z.string().trim().min(1).max(128),
-  })
-  .strict();
-
-/**
- * Invite a verified email to the organization (owner/admin per contract §4).
- * A member invitation never provisions a new tenant: accepting joins the
- * existing organization and its already-linked account.
- */
-export const inviteMember = createServerFn({ method: "POST" })
-  .validator((input: unknown) => inviteInput.parse(input))
-  .handler(
-    async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
-      try {
-        const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "administer");
-        if (organizationId !== data.organizationId) {
-          throw new ForbiddenError("organization mismatch");
-        }
-        const auth = authInstance();
-        const request = currentRequest();
-        await auth.api.createInvitation({
-          body: {
-            email: data.email,
-            role: data.role,
-            organizationId: data.organizationId,
-          },
-          headers: request.headers,
-          // sendInvitationEmail (wired in auth.ts) delivers via the mail adapter.
-        });
-        return { ok: true };
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
-      }
-    },
-  );
 
 export interface InvitationFailure {
   ok: false;

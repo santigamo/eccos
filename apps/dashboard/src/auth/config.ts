@@ -9,6 +9,12 @@
 import type { AuthConfig } from "./auth";
 import { ConsoleMailSender, type MailEnv, type MailSender } from "./mail";
 import { ReccadoMailSender } from "./mail-reccado";
+import { attemptLimiter, type AttemptLimiter } from "../server/attempt-limit";
+
+/** At most 20 invitations per inviter per hour, counted in the invitation hook (auth.ts). */
+export function invitationLimiter(db: D1Database): AttemptLimiter {
+  return attemptLimiter(db, "invite-member", 20, 60 * 60 * 1000);
+}
 
 /** Local development origin (vite dev). */
 export const LOCAL_ORIGIN = "http://localhost:3000";
@@ -80,5 +86,6 @@ export function authConfigFromEnv(env: AuthEnv): AuthConfig {
     baseURL,
     trustedOrigins,
     mail: createMailSenderFromEnv(env),
+    invitationLimiter: invitationLimiter(env.DB as D1Database),
   };
 }

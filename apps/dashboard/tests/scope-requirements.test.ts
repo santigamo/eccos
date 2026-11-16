@@ -81,6 +81,8 @@ describe("SCOPE_REQUIREMENTS", () => {
       // panel's: the account id is an account-level fact and does not wait on a
       // number. The token panel left for /numbers/attach-token.
       "/settings": "none",
+      // Account-level, and listed only for a role with `administer`.
+      "/members": "none",
       "/": "number",
       // Named but UNLISTED, the second route in that shape after
       // /numbers/attach-token: the forwarding queue is the destination of every
@@ -216,7 +218,7 @@ describe("the sidebar's groups", () => {
       // batch. Messages and Events are the two UNITS; the forward is a state on
       // an event and the queue keeps its route without a row here.
       ["/messages", "/events"],
-      ["/settings"],
+      ["/members", "/settings"],
     ]);
   });
 

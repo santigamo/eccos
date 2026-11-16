@@ -7,6 +7,8 @@
 export interface AttemptLimiter {
   /** Counts one attempt. True once the caller is over the limit for this window. */
   strike(caller: string): Promise<boolean>;
+  /** True when the next `strike` would be over the limit. Counts nothing. */
+  spent(caller: string): Promise<boolean>;
 }
 
 export function attemptLimiter(
@@ -31,6 +33,13 @@ export function attemptLimiter(
         .bind(key, at, at - windowMs)
         .first<{ count: number }>();
       return (row?.count ?? 0) > max;
+    },
+    async spent(caller) {
+      const row = await db
+        .prepare(`SELECT "count" FROM "rateLimit" WHERE "id" = ?1 AND "lastRequest" > ?2`)
+        .bind(`${scope}|${caller}`, now() - windowMs)
+        .first<{ count: number }>();
+      return (row?.count ?? 0) >= max;
     },
   };
 }
