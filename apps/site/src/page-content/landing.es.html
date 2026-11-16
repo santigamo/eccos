@@ -4,14 +4,13 @@
     <div class="hero-bg" aria-hidden="true"></div>
     <div class="hero-scrim" aria-hidden="true"></div>
     <div class="wrap hero-inner">
-      <h1 class="reveal">El gateway de WhatsApp,<br class="br-lg"> con precio <span class="px">por número</span></h1>
+      <h1 class="reveal">Automatiza WhatsApp sin soltar el móvil<br class="br-lg"> ni pagar <span class="px">por mensaje</span></h1>
       <p class="lede reveal">
-        Eccos es un gateway de WhatsApp de código abierto sobre la API oficial de
-        WhatsApp Business (la Cloud API de Meta): conecta tus números y retransmite todos los eventos entre Meta y tus
-        sistemas. Un número o cincuenta, tuyos o de tus clientes, totalmente
-        automatizados o todavía atendidos a mano desde el teléfono. Se cobra por número
-        conectado, desde 5 € al mes, sin tarifa ni recargo por mensaje, y cada empresa paga directamente a Meta los cargos
-        de sus propias conversaciones. Licencia MIT.
+        Eccos conecta tu número de WhatsApp con tus programas por la API oficial de
+        WhatsApp Business. Los recordatorios, avisos y respuestas salen solos, tu
+        equipo sigue contestando desde la app de siempre y pagas una cuota fija por
+        número, desde 5 € al mes. Es un gateway de WhatsApp de código abierto: usa el
+        nuestro o instálalo en tu servidor.
       </p>
       <div class="actions reveal">
         <a class="btn btn-primary" href="https://app.eccos.chat/signup">Crear tu cuenta</a>
@@ -28,10 +27,10 @@
 
   <section class="band facts" aria-label="De un vistazo">
     <ul class="cells">
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>API Cloud oficial de Meta</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>API oficial de WhatsApp</li>
       <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>Código abierto · MIT</li>
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>Coexistence incluida</li>
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>Las empresas pagan a Meta directamente</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>Sigues usando la app del móvil</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>Mensajes ilimitados</li>
       <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>Almacenamiento de Eccos Cloud en la UE</li>
     </ul>
   </section>
@@ -40,22 +39,22 @@
 
   <section class="band" id="how" aria-labelledby="how-h">
     <div class="wrap statement">
-      <h2 id="how-h" class="reveal">El gateway entre Meta y <span class="px">tus sistemas</span></h2>
+      <h2 id="how-h" class="reveal">Qué cambia al <span class="px">conectar un número</span></h2>
       <p class="reveal">
-        El número puede ser de un cliente para el que gestionas WhatsApp, de un usuario
-        de tu producto, o tuyo. En cualquier caso se conecta como su propia cuenta
-        comercial de WhatsApp a través del Embedded Signup de Meta, y a partir de ahí
-        Eccos hace dos cosas con él.
+        Puede ser tu número, el de un cliente al que le llevas WhatsApp o el de un
+        usuario de tu producto. Lo conectas desde el panel con el alta oficial de
+        Meta, y no tienes que pedirle permisos a Meta ni montar nada: eso ya lo hemos
+        hecho nosotros.
       </p>
     </div>
 
     <article class="row">
       <div class="row-text reveal">
-        <h3>Recibe y reenvía</h3>
+        <h3>Todo lo que pasa en el número te llega</h3>
         <p>
-          Recoge cada evento que Meta envía sobre el número, tanto los mensajes entrantes
-          como las confirmaciones de entrega y de lectura, y los remite al endpoint que
-          elijas, reintentando si ese endpoint no responde.
+          Cada mensaje que te escriben, y cada aviso de entregado o leído, llega a tu
+          programa al momento. Si tu servidor se cae un rato, Eccos lo guarda y lo
+          vuelve a intentar. Y las conversaciones las tienes también en el panel.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -77,11 +76,11 @@
 
     <article class="row">
       <div class="row-text reveal">
-        <h3>Envía</h3>
+        <h3>Tus mensajes salen solos</h3>
         <p>
-          Envía los mensajes que tu sistema le pide, incluidas plantillas y multimedia,
-           a través de la Cloud API oficial de Meta. Las confirmaciones de envío y de entrega
-          vuelven por el mismo canal.
+          Recordatorios de cita, confirmaciones de pedido, avisos de entrega. Tu
+          programa le pide a Eccos que los mande, ahora o programados para más tarde,
+          a una persona o a una lista, y sabes si llegaron y si se leyeron.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -105,13 +104,12 @@
 
     <article class="row">
       <div class="row-text reveal">
-        <h3>El teléfono sigue respondiendo</h3>
+        <h3>El móvil sigue como siempre</h3>
         <p>
-          Meta lo llama coexistencia: el número sigue activo en la app de WhatsApp
-          mientras la API envía en paralelo. Quien tenga el teléfono sigue respondiendo
-          a mano, y esas respuestas escritas llegan a tu endpoint como eventos de eco.
-          Los números que solo viven en la API funcionan igual de bien; la coexistencia
-           está ahí para quienes necesitan la app. <a href="/coexistence">Cómo funciona la coexistencia de WhatsApp</a>.
+          Tu equipo sigue contestando desde la app de WhatsApp Business, en el mismo
+          número y con los mismos chats. Lo que escriben a mano también le llega a tu
+          programa, así que no manda un recordatorio a quien ya ha recibido respuesta.
+          Meta lo llama coexistencia. <a href="/coexistence">Cómo funciona la coexistencia de WhatsApp</a>.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -132,12 +130,12 @@
 
   <section class="band" id="meter" aria-labelledby="meter-h">
     <div class="wrap statement">
-      <h2 id="meter-h" class="reveal">El contador cuenta <span class="px">todo</span></h2>
+      <h2 id="meter-h" class="reveal">Si pagas por mensaje, <span class="px">pagas por todos</span></h2>
       <p class="reveal">
-        Las plataformas que cobran por mensaje cuentan todos los mensajes de un número:
-        lo que envía tu automatización, lo que escriben los clientes y cada respuesta
-        que el propietario teclea a mano. Un mes real de una clínica de fisioterapia,
-        junio de 2026, leído desde el propio panel del proveedor que cobra por mensaje:
+        Las plataformas que cobran por mensaje no cuentan solo lo que envía tu
+        programa. Cuentan también lo que te escriben los clientes y cada respuesta
+        que alguien teclea a mano en el móvil. Este es un mes real de una clínica de
+        fisioterapia, junio de 2026, leído en el panel de su proveedor:
       </p>
     </div>
 
@@ -181,11 +179,9 @@
       <p class="label reveal">Eccos Cloud</p>
       <h2 id="pricing-h" class="reveal">Precio fijo por número, <span class="px">mensajes ilimitados</span></h2>
       <p class="reveal">
-        Una sola suscripción cubre todos los números que conectes y todos los mensajes
-        que esos números muevan. Meta no permite que los Tech Provider facturen el
-        uso de mensajes; los cargos por conversación van de Meta a cada empresa
-        directamente, con el método de pago propio de esa empresa. Así que el contador
-        no tiene descuento aquí: directamente no existe.
+        Una cuota fija cubre todos los números que conectes y todos sus mensajes.
+        Los mensajes de WhatsApp los cobra Meta a cada empresa, con la tarjeta de
+        esa empresa, y Eccos no añade nada encima. Aquí no hay contador que vigilar.
       </p>
     </div>
 
@@ -257,17 +253,16 @@
 
   <section class="band" id="run" aria-labelledby="run-h">
     <div class="wrap statement solo">
-      <h2 id="run-h" class="reveal">Dos formas de <span class="px">ejecutarlo</span></h2>
+      <h2 id="run-h" class="reveal">En nuestro servidor <span class="px">o en el tuyo</span></h2>
     </div>
     <div class="modes">
       <article class="mode reveal">
         <div class="mode-head">
-          <h3>Self-hosted</h3>
+          <h3>En tu servidor</h3>
           <span class="tag tag-live">Disponible ahora</span>
         </div>
-        <p>El gateway completo, con código abierto bajo la licencia MIT, en la
-        infraestructura que tú controlas. Nada sobre ti ni sobre las empresas que
-        conectas se envía a Eccos.</p>
+        <p>Eccos entero, gratis y de código abierto, instalado donde tú decidas.
+        Nada tuyo ni de las empresas que conectas pasa por nosotros.</p>
         <p class="label">Qué incluye</p>
         <ul class="ticks">
           <li>Despliegue como binario único en Bun</li>
@@ -283,9 +278,8 @@
           <h3>Eccos Cloud</h3>
           <span class="tag tag-live">Disponible ahora</span>
         </div>
-        <p>El mismo gateway, operado por nosotros. Cada empresa se conecta por el
-          mismo flujo; tú tienes el panel, la cola y la API sin gestionar
-          infraestructura.</p>
+        <p>Nosotros lo mantenemos en marcha. Tú conectas los números y usas el
+          panel y la API, sin instalar ni vigilar nada.</p>
         <p class="label">Qué esperar</p>
         <ul class="ticks">
           <li>Nosotros operamos el gateway por ti</li>
@@ -313,24 +307,24 @@
       <article class="own reveal">
         <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-account-light.jpg"><img src="/assets/own-account.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
         <h3 class="own-title">Su cuenta</h3>
-         <p>Cada empresa conectada usa su propia cuenta de WhatsApp Business a través del
-           Embedded Signup y registra su propio método de pago en Meta. Los cargos
-          por conversación nunca pasan por nosotros, así que nunca se recargan.</p>
+         <p>Cada empresa conecta su propia cuenta de WhatsApp Business y pone su
+          método de pago en Meta. Los mensajes los paga ella a Meta, sin pasar por
+          Eccos y sin recargo, y la cuenta sigue siendo suya si deja de trabajar contigo.</p>
       </article>
       <article class="own reveal">
         <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-infra-light.jpg"><img src="/assets/own-infra.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
-        <h3 class="own-title">Tu infraestructura</h3>
-         <p>El gateway es de código abierto bajo la licencia MIT. Despliégalo como un
-           binario único de Bun o en Cloudflare Workers y Durable Objects, en tu propia
-          cuenta, o deja que Eccos Cloud ejecute el mismo código por ti.</p>
+        <h3 class="own-title">Tu salida</h3>
+         <p>Eccos es código abierto con licencia MIT. Si un día prefieres llevarlo
+          tú, despliegas el mismo código en tu servidor o en tu cuenta de Cloudflare
+          y sigues funcionando. El cambio está <a href="/migrate">documentado paso a paso</a>.</p>
       </article>
       <article class="own reveal">
         <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-data-light.jpg"><img src="/assets/own-data.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
         <h3 class="own-title">Sus datos</h3>
-        <p>Los datos de cada empresa permanecen aislados: nunca se combinan entre
-          empresas, nunca se venden, nunca se usan para publicidad ni para entrenar
-          modelos. Cuando alguien ejerce su derecho de supresión, el gateway elimina
-          sus datos por número de teléfono y devuelve los recuentos por tabla como comprobante.</p>
+        <p>Los datos de cada empresa van por separado: no se mezclan con los de
+          otras, no se venden y no se usan para publicidad ni para entrenar modelos.
+          Si alguien pide que se borren los suyos, se borran por número de teléfono y
+          te queda el comprobante.</p>
       </article>
     </div>
   </section>
