@@ -447,7 +447,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
       const host = await mountChoices(20);
       act(() => card(host, "A new number").click());
       await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 60))));
-      expect(live(host)).toContain("If you do not see Meta's window");
+      expect(live(host)).toContain("Don't see Meta's window?");
       expect(live(host)).toContain("Start again");
     } finally {
       window.open = original;
@@ -478,6 +478,21 @@ describe("ConnectNumberChoices in a real DOM", () => {
       return { ok: true };
     };
     (window as unknown as { umami: unknown }).umami = { track: (n: string, d: unknown) => tracked.push([n, d]) };
+    const { post } = await openObserved();
+    await settle();
+    await post("CANCEL", { current_step: "PHONE_NUMBER_SETUP" });
+    await act(async () => loginCallback?.({ authResponse: null }));
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 40))));
+    expect(events).toContainEqual({ event: "CANCEL", currentStep: "PHONE_NUMBER_SETUP" });
+    expect(events).toContainEqual({ event: "POPUP_CLOSED", currentStep: "PHONE_NUMBER_SETUP" });
+    expect(tracked.find(([n]) => n === "es_abandon")?.[1]).toMatchObject({ step: "PHONE_NUMBER_SETUP", events: 1 });
+    delete (window as unknown as { umami?: unknown }).umami;
+  });
+
+  const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
+
+  /** Open an observable Meta window from the Business app card; returns the window and a way to post as it. */
+  async function openObserved(popupWatchdogMs?: number) {
     const popup = { closed: false };
     const original = window.open;
     window.open = (() => popup) as unknown as typeof window.open;
@@ -486,28 +501,101 @@ describe("ConnectNumberChoices in a real DOM", () => {
       loginCallback = cb;
       window.open("https://www.facebook.com/", "_blank");
     };
-    const host = await mountChoices();
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    await act(async () => {
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          origin: "https://www.facebook.com",
-          source: popup as unknown as MessageEventSource,
-          data: JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "CANCEL", data: { current_step: "PHONE_NUMBER_SETUP" } }),
-        }),
-      );
-    });
-    await act(async () => loginCallback?.({ authResponse: null }));
-    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 40))));
-    expect(events).toContainEqual({ event: "CANCEL", currentStep: "PHONE_NUMBER_SETUP" });
-    expect(events).toContainEqual({ event: "POPUP_CLOSED", currentStep: "PHONE_NUMBER_SETUP" });
-    expect(tracked.find(([n]) => n === "es_abandon")?.[1]).toMatchObject({ step: "PHONE_NUMBER_SETUP", events: 1 });
-    delete (window as unknown as { umami?: unknown }).umami;
+    const host = await mountChoices(popupWatchdogMs);
+    await act(async () => card(host, "WhatsApp Business app").click());
     window.open = original;
+    const post = (event: string, data: Record<string, unknown>) =>
+      act(async () => {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            origin: "https://www.facebook.com",
+            source: popup as unknown as MessageEventSource,
+            data: JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event, data }),
+          }),
+        );
+      });
+    return { host, post };
+  }
+
+  const QR = { current_step: "WHATSAPP_BUSINESS_APP_ONBOARDING_QR_CODE" };
+
+  test("a window closed at the QR step says so, and what to do about a number without activity", async () => {
+    const { host, post } = await openObserved();
+    await post("CANCEL", QR);
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("closed at the QR code step. Nothing changed.");
+    expect(live(host)).toContain("for about a week");
+    expect(live(host)).not.toContain("Meta reported error");
   });
 
-  const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
+  const REPORTED = { error_message: "x", error_code: "524126", session_id: "f34b51d", timestamp: "1" };
+
+  test("a CANCEL that lands after the window closed still names the step and Meta's references", async () => {
+    const { host, post } = await openObserved();
+    await post("ERROR", REPORTED);
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("The Meta window was closed before a number was connected");
+    await post("CANCEL", QR);
+    expect(live(host)).toContain("closed at the QR code step");
+    expect(live(host)).toContain("Meta reported error 524126, session f34b51d. Quote both if you contact support.");
+  });
+
+  test("an error the customer got past is not quoted on a later cancel", async () => {
+    const { host, post } = await openObserved();
+    await post("ERROR", REPORTED);
+    await post("FINISH_ONLY_WABA", { waba_id: "100" });
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("Nothing changed");
+    expect(live(host)).not.toContain("Meta reported");
+  });
+
+  test("a late CANCEL from an older window does not rewrite a newer attempt", async () => {
+    const { host, post } = await openObserved();
+    await act(async () => loginCallback?.({ authResponse: null }));
+    await act(async () => card(host, "A new number").click());
+    await post("CANCEL", QR);
+    expect(live(host)).toBe("");
+  });
+
+  test("the first Meta message clears the behind-this-window hint", async () => {
+    const { host, post } = await openObserved(20);
+    await wait(60);
+    expect(live(host)).toContain("Don't see Meta's window?");
+    await post("START", {});
+    expect(live(host)).toBe("");
+  });
+
+  test("a Meta message before the watchdog fires means no hint at all", async () => {
+    const { host, post } = await openObserved(20);
+    await post("START", {});
+    await wait(60);
+    expect(live(host)).toBe("");
+  });
+
+  test("losing focus after the hint keeps it and its Start again: allowing pop-ups takes focus too", async () => {
+    const host = await mountChoices(20);
+    await act(async () => card(host, "A new number").click());
+    await wait(60);
+    await act(async () => void window.dispatchEvent(new Event("blur")));
+    expect(live(host)).toContain("Don't see Meta's window?");
+    expect(live(host)).toContain("Start again");
+  });
+
+  test("a message from an older attempt's window does not clear a newer attempt's hint", async () => {
+    const { host, post } = await openObserved(20);
+    await act(async () => loginCallback?.({ authResponse: null }));
+    const original = window.open;
+    window.open = (() => ({ closed: false })) as unknown as typeof window.open;
+    try {
+      await act(async () => card(host, "A new number").click());
+      await wait(60);
+      await post("CANCEL", QR);
+      expect(live(host)).toContain("Don't see Meta's window?");
+      expect(live(host)).toContain("Start again");
+    } finally {
+      window.open = original;
+    }
+  });
 
   test("a retry after a cancel logs in again and exchanges with its own handoff", async () => {
     const host = await mountChoices();
@@ -527,8 +615,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("If you do not see");
-    expect(live(host)).toContain("If you do not see Meta's window");
+    expect(live(host)).toContain("Don't see Meta's window?");
     expect(live(host)).not.toContain("should be open");
     expect(live(host)).toContain("Start again");
     // Message only: the cards stay disabled until the customer resets.
@@ -541,7 +628,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("If you do not see");
+    expect(live(host)).toContain("Don't see Meta's window?");
 
     await act(async () => loginCallback?.(FINISHED));
     await settle();
@@ -646,7 +733,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("If you do not see");
+    expect(live(host)).toContain("Don't see Meta's window?");
 
     await act(async () => loginCallback?.(FINISHED));
     expect(live(host)).toBe("");
@@ -709,7 +796,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await settle();
     await act(async () => stale?.({ authResponse: null }));
     await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 100))));
-    expect(live(host)).toContain("If you do not see Meta's window");
+    expect(live(host)).toContain("Don't see Meta's window?");
   });
 
   test("an old window's cancel does not re-enable the cards of a newer attempt", async () => {
@@ -728,7 +815,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await settle();
     document.dispatchEvent(new Event("visibilitychange"));
     await wait(60);
-    expect(live(host)).toContain("If you do not see");
+    expect(live(host)).toContain("Don't see Meta's window?");
   });
 
   test("a remounted panel cannot exchange a second code while the first is in flight", async () => {

@@ -82,6 +82,14 @@ describe("parsing an Embedded Signup session event", () => {
     expect(JSON.stringify(parsed)).not.toContain("violates");
   });
 
+  test("reads today's ERROR event, and the older error_id field", () => {
+    const data = { error_message: "x", session_id: "f34b51d", timestamp: "1" };
+    const post = (extra: object) =>
+      parseSessionEvent(ORIGIN, { type: SESSION_EVENT_TYPE, event: "ERROR", data: { ...data, ...extra } });
+    expect(post({ error_code: "524126" })).toEqual({ event: "ERROR", errorCode: "524126", sessionId: "f34b51d" });
+    expect(post({ error_id: "524126" })).toEqual({ event: "ERROR", errorCode: "524126", sessionId: "f34b51d" });
+  });
+
   test("reads the coexistence completion, which carries only a WABA id", () => {
     const parsed = parseSessionEvent(ORIGIN, {
       type: SESSION_EVENT_TYPE,

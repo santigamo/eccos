@@ -26,9 +26,9 @@ import {
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
 import {
-  CONNECT_CANCELLED_MESSAGE,
   CONNECT_CLOSE_AND_RETRY,
   CONNECT_NOT_PREPARED,
+  connectCancelledMessage,
   judgeExchange,
   popupBlockedMessage,
   popupHintMessage,
@@ -74,8 +74,8 @@ const CONNECT_PATHS: ReadonlyArray<{
     tone: "muted",
     title: "I use this number in the WhatsApp Business app",
     detail:
-      "Keep using the app on your phone. Eccos works alongside it, and Meta copies your contacts and recent chats once.",
-    caution: "Best if customers already message this number · Up to 20 messages per second",
+      "Keep using the app on your phone, and have it in hand: Meta shows a QR code to scan and asks during setup whether to share your chat history.",
+    caution: "Meta usually asks for about a week of real use first · Up to 20 messages per second",
   },
   {
     path: "new-number",
@@ -120,7 +120,17 @@ export function resetConnectGuards(): void {
 
 type Handoff = Awaited<ReturnType<typeof startConnect>>;
 type EsConfig = Awaited<ReturnType<typeof getEmbeddedSignupConfig>>;
-type Session = { count: number; step?: string; openedAt: number };
+type Session = {
+  /** The attempt that opened the window. */
+  attempt: number;
+  count: number;
+  step?: string;
+  /** The error the customer reported from inside the flow, while nothing but a CANCEL has followed it. */
+  error?: { code?: string; sessionId?: string };
+  openedAt: number;
+  /** The window closed with no code, so the cancel notice is showing. */
+  cancelled?: boolean;
+};
 type Prepared = { config: EsConfig; sdk: FacebookSdk | null };
 /** What a click needs to open Meta with no awaiting. */
 type Ready = { sdk: FacebookSdk; configId: string };
@@ -185,7 +195,7 @@ export function ConnectNumberChoices({
   closed = false,
   onBusyChange,
   navigate = (path) => window.location.assign(path),
-  popupWatchdogMs = 3_000,
+  popupWatchdogMs = 4_000,
   abandonDelayMs = 1_500,
 }: {
   className?: string;
@@ -257,9 +267,23 @@ export function ConnectNumberChoices({
       // Every message is recorded: the session id must never be lost. Only the
       // abandonment summary needs to know which attempt's window posted it.
       const mine = event.source ? sessions.current.get(event.source) : undefined;
+      // Meta's window is demonstrably open, so the "may be behind this one" hint
+      // goes. Not for a message from an older attempt's window.
+      if (!mine || mine.attempt === attempt.current) {
+        stopWatch.current?.();
+        setFeedback((now) => (now?.tone === "slow" ? null : now));
+      }
       if (mine) {
         mine.count += 1;
         if (parsed.currentStep) mine.step = parsed.currentStep;
+        // An error the customer got past is not why the window closed.
+        if (parsed.errorCode) mine.error = { code: parsed.errorCode, sessionId: parsed.sessionId };
+        else if (parsed.event !== "CANCEL") mine.error = undefined;
+        // Meta's CANCEL can land just after the window closed: the notice catches up.
+        if (mine.cancelled && mine.attempt === attempt.current) {
+          const text = connectCancelledMessage(mine.step, mine.error);
+          setFeedback((now) => (now?.tone === "notice" ? { text, tone: "notice" } : now));
+        }
       }
       trackSessionEvent(parsed);
       // Telemetry must never break the flow the operator is in the middle of.
@@ -389,7 +413,7 @@ export function ConnectNumberChoices({
   function launch(path: ConnectPath, ready: Ready) {
     const mine = beginAttempt(path);
     const isCurrent = () => attempt.current === mine;
-    const mySession: Session = { count: 0, openedAt: Date.now() };
+    const mySession: Session = { attempt: mine, count: 0, openedAt: Date.now() };
     // Set inside `window.open`, before the SDK sees its result, so a callback
     // for a refused window (even a synchronous one) is ignored.
     let refused = false;
@@ -440,7 +464,8 @@ export function ConnectNumberChoices({
       }, abandonDelayMs);
       if (!isCurrent()) return;
       track("connect_outcome", { result: "cancelled" });
-      setFeedback({ text: CONNECT_CANCELLED_MESSAGE, tone: "notice" });
+      mySession.cancelled = true;
+      setFeedback({ text: connectCancelledMessage(mySession.step, mySession.error), tone: "notice" });
       setStarting(null);
     };
     let popup: Window | null | undefined;

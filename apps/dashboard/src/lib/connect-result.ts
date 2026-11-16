@@ -23,6 +23,24 @@ export const SUBSCRIPTION_REQUIRED_MESSAGE =
 export const CONNECT_CANCELLED_MESSAGE =
   "The Meta window was closed before a number was connected. Nothing changed. Start again when you are ready.";
 
+/** The coexistence screen where Meta refuses a number without enough Business app activity. */
+export const QR_CODE_STEP = "WHATSAPP_BUSINESS_APP_ONBOARDING_QR_CODE";
+
+const CANCELLED_AT_QR_MESSAGE =
+  "Meta's window was closed at the QR code step. Nothing changed. If Meta said the number lacks activity, use it in the WhatsApp Business app for about a week, then try again.";
+
+/**
+ * The cancel notice for the screen Meta's window was closed on. When the
+ * customer reported an error from inside the flow, Meta's references for it
+ * are appended: the session id is what Meta's support asks for.
+ */
+export function connectCancelledMessage(step?: string, error?: { code?: string; sessionId?: string }): string {
+  const base = step === QR_CODE_STEP ? CANCELLED_AT_QR_MESSAGE : CONNECT_CANCELLED_MESSAGE;
+  const refs = [error?.code && `error ${error.code}`, error?.sessionId && `session ${error.sessionId}`].filter(Boolean);
+  if (refs.length === 0) return base;
+  return `${base} Meta reported ${refs.join(", ")}. Quote ${refs.length > 1 ? "both" : "it"} if you contact support.`;
+}
+
 /**
  * The browser refused Meta's window: `window.open` returned null. Chrome's
  * address bar shows a blocked-pop-up icon at that moment; the way out is to
@@ -33,12 +51,12 @@ export function popupBlockedMessage(host: string): string {
 }
 
 /**
- * Shown when nothing took focus after Meta's window should have opened. It says
- * only what to check: a window behind this one and a blocked one look the same,
- * and `window.open` is not always observable.
+ * Shown when nothing took focus after Meta's window should have opened. A
+ * window behind this one is the likely case, so it comes first; a blocked one
+ * looks the same and `window.open` is not always observable.
  */
 export function popupHintMessage(host: string): string {
-  return `If you do not see Meta's window, it may be behind this one or blocked. Allow pop-ups for ${host} (look for the pop-up icon in the address bar), then start again.`;
+  return `Don't see Meta's window? It may be behind this one. If nothing opened, allow pop-ups for ${host} and start again.`;
 }
 
 /** Shown when Meta's window returns a code but the handoff behind it never existed. */

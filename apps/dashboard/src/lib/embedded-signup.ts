@@ -94,7 +94,8 @@ export function parseSessionEvent(origin: string, data: unknown): SessionEvent |
   return {
     event,
     ...(str(inner.current_step) ? { currentStep: str(inner.current_step) } : {}),
-    ...(str(inner.error_code) ? { errorCode: str(inner.error_code) } : {}),
+    // `error_code` is today's documented field; older flows sent `error_id`.
+    ...(str(inner.error_code ?? inner.error_id) ? { errorCode: str(inner.error_code ?? inner.error_id) } : {}),
     ...(str(inner.session_id) ? { sessionId: str(inner.session_id) } : {}),
     ...(str(inner.waba_id) ? { wabaId: str(inner.waba_id) } : {}),
     ...(str(inner.phone_number_id) ? { phoneNumberId: str(inner.phone_number_id) } : {}),

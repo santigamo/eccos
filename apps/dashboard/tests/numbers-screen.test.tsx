@@ -50,6 +50,9 @@ describe("ConnectNumberPanel", () => {
     const html = render();
     expect(html).toContain("A number on WhatsApp today stops working in the app");
     expect(html).toContain("Up to 20 messages per second");
+    expect(html).toContain("about a week of real use first");
+    expect(html).toContain("QR code");
+    expect(html).toContain("share your chat history");
   });
 
   test("the heading is the caller's, so first run and add-another differ", () => {
@@ -61,12 +64,14 @@ describe("ConnectNumberPanel", () => {
     // button. It now presents an irreversible fork, and each path owes the
     // reader a title, a line of detail, and its consequence, which is six
     // pieces of copy that did not exist before. So the budget moved with the
-    // job rather than being deleted: 100 words is roughly that content and no
-    // prose. If this fails, the fix is almost certainly a sentence that crept
+    // job rather than being deleted: 100 words was roughly that content and no
+    // prose. The Business app card then gained what a first customer hit
+    // unwarned (the QR scan, the history choice, the week of use): 115.
+    // If this fails, the fix is almost certainly a sentence that crept
     // back into the description or a card detail, not a seventh piece of copy.
     const html = render();
     const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    expect(text.split(" ").length).toBeLessThan(100);
+    expect(text.split(" ").length).toBeLessThan(115);
   });
 
   test("panels and buttons stay square", () => {
