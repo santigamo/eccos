@@ -182,12 +182,15 @@ export const CONNECT_FORK_DESCRIPTION =
  */
 export function ConnectNumberChoices({
   className,
+  closed = false,
   onBusyChange,
   navigate = (path) => window.location.assign(path),
   popupWatchdogMs = 3_000,
   abandonDelayMs = 1_500,
 }: {
   className?: string;
+  /** A closed workspace with nothing to reconnect: the cards are off and the caller says why. */
+  closed?: boolean;
   /** Full navigation. A seam for tests. */
   navigate?: (path: string) => void;
   /** How long Meta's window may stay out of sight before we say it may be behind this one. */
@@ -306,6 +309,7 @@ export function ConnectNumberChoices({
   }, []);
 
   useEffect(() => {
+    if (closed) return;
     // Best effort: a failure here is retried, and shown, by the click.
     prepare().catch(() => {});
     // Creates no state and writes no audit. A transient failure is left to the
@@ -321,7 +325,7 @@ export function ConnectNumberChoices({
       },
       () => {},
     );
-  }, [prepare, setError]);
+  }, [closed, prepare, setError]);
 
   /** Hand the code to the server before Meta's 30-second TTL runs out. */
   const finish = useCallback(
@@ -612,7 +616,7 @@ export function ConnectNumberChoices({
               <button
                 type="button"
                 onClick={() => start(path)}
-                disabled={locked || unavailable !== null}
+                disabled={closed || locked || unavailable !== null}
                 className={cn(
                   // INTERACTIVE anatomy, not structural. These rested on
                   // `--line` (7%, "structural hairlines") with no fill, which
@@ -720,7 +724,7 @@ export function ConnectNumberChoices({
  * panel inside a panel. That is why the split exists: one fork, two containers,
  * and the container is the only thing that differs.
  */
-export function ConnectNumberPanel({ heading }: { heading: string }) {
+export function ConnectNumberPanel({ heading, closed }: { heading: string; closed?: boolean }) {
   return (
     <Frame variant="default" spacing="lg" className="max-w-3xl">
       <FramePanel fit>
@@ -734,7 +738,7 @@ export function ConnectNumberPanel({ heading }: { heading: string }) {
             {CONNECT_FORK_DESCRIPTION}
           </FrameDescription>
         </FrameHeader>
-        <ConnectNumberChoices className="pt-5" />
+        <ConnectNumberChoices className="pt-5" closed={closed} />
       </FramePanel>
     </Frame>
   );

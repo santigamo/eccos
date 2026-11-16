@@ -27,11 +27,10 @@ export function checkoutReturnNote(billing: BillingState, { status }: CheckoutRe
     : "Your subscription is active. You can add numbers now.";
 }
 
-/** Billing for the workspace. Rendered only while billing is on. */
-export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: CheckoutReturn | null }) {
+/** Leaves for Creem (a checkout or the portal), or says why it could not. */
+export function useBillingRedirect() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const closed = billing.connectPolicy === "closed";
 
   async function leaveTo(target: () => Promise<Result<{ url: string }>>) {
     setBusy(true);
@@ -49,6 +48,27 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
     }
     setBusy(false);
   }
+
+  return { busy, error, leaveTo };
+}
+
+export function BillingError({ error }: { error: string | null }) {
+  return error ? (
+    <output
+      aria-live="polite"
+      className="bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs"
+    >
+      {error}
+    </output>
+  ) : null;
+}
+
+/** Billing for the workspace. Rendered only while billing is on. */
+export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: CheckoutReturn | null }) {
+  const { busy, error, leaveTo } = useBillingRedirect();
+  const closed = billing.connectPolicy === "closed";
+  // With no subscription and none needed, a price would read as a charge.
+  const priced = closed || billing.hasCustomer;
 
   return (
     <Frame variant="default" spacing="lg">
@@ -74,10 +94,12 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
             <dt className={MACHINE_CLASS}>Connected numbers</dt>
             <dd className="m-0 text-sm text-foreground tabular-nums">{billing.numbers}</dd>
           </div>
-          <div className={ROW_CLASS}>
-            <dt className={MACHINE_CLASS}>Monthly price</dt>
-            <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR</dd>
-          </div>
+          {priced ? (
+            <div className={ROW_CLASS}>
+              <dt className={MACHINE_CLASS}>Monthly price</dt>
+              <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR</dd>
+            </div>
+          ) : null}
         </dl>
         <div className="mt-5 flex flex-wrap gap-2">
           {closed ? (
@@ -91,14 +113,7 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
             </Button>
           ) : null}
         </div>
-        {error ? (
-          <output
-            aria-live="polite"
-            className="bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs"
-          >
-            {error}
-          </output>
-        ) : null}
+        <BillingError error={error} />
       </FramePanel>
     </Frame>
   );

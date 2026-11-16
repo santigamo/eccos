@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { signPayload } from "@eccos/core/signature";
 import type { AccountBilling, AccountBillingInput, GatewayApi } from "@eccos/gateway-contract";
-import { billingReturnUrl, billingState, checkoutUrl } from "../src/billing/account";
+import { billingReturnUrl, billingState, checkoutUrl, connectBlocked } from "../src/billing/account";
 import { billingConfig } from "../src/billing/config";
 import { billingFor } from "../src/billing/context";
 import { creemClient, type Creem, type Subscription } from "../src/billing/creem";
@@ -413,6 +413,17 @@ describe("checkout return", () => {
     expect(stored.acc_1).toEqual(UNSUBSCRIBED);
     expect((await syncSubscription({ creem, gateway }, "sub_1", "acc_1"))?.status).toBe("trialing");
     expect(stored.acc_1).toEqual({ connectPolicy: "open", customerId: "cust_1", subscriptionId: "sub_1" });
+  });
+
+  test("connecting is blocked only for a closed account with nothing to reconnect", async () => {
+    const account = (connectPolicy: "open" | "closed", wabas: unknown[]) =>
+      ({
+        getAccountBilling: async () => ({ connectPolicy, customerId: null, subscriptionId: null }),
+        listAccountResources: async () => ({ account: null, keys: [], phones: [], wabas }),
+      }) as unknown as GatewayApi;
+    expect(await connectBlocked(account("closed", []), "acc_1")).toBe(true);
+    expect(await connectBlocked(account("closed", [{ status: "active", phones: [] }]), "acc_1")).toBe(false);
+    expect(await connectBlocked(account("open", []), "acc_1")).toBe(false);
   });
 
   test("the billing state is read from the control plane, never from Creem", async () => {

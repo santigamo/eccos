@@ -10,7 +10,8 @@ import {
   ConnectNumberPanel,
 } from "../components/dashboard/connect-number";
 import { NumbersTable } from "../components/dashboard/numbers-table";
-import { SubscriptionNotice } from "../components/dashboard/subscription-notice";
+import { SubscriptionGate, SubscriptionNotice } from "../components/dashboard/subscription-notice";
+import { billableCount } from "../billing/account";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -70,6 +71,7 @@ function NumbersPage() {
     const outcome = (
       <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
     );
+    const closed = resources?.account?.connectPolicy === "closed";
     return (
       <Page title="Connect WhatsApp" kicker="First run">
         {/* Centred and LIFTED, the house treatment for a single-purpose frame
@@ -89,8 +91,7 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
-            {resources?.account?.connectPolicy === "closed" ? <SubscriptionNotice billing={billing} /> : null}
-            <ConnectNumberPanel heading="Meta Embedded Signup" />
+            <FirstRunConnect closed={closed} billing={billing} />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -162,7 +163,10 @@ export function NumbersView({
    * it is supposed to be refused.
    */
   const [busy, setBusy] = useState(false);
-  const closed = resources.account?.connectPolicy === "closed";
+  const notice = (className?: string) =>
+    resources.account?.connectPolicy === "closed" ? (
+      <SubscriptionNotice billing={billing} numbers={billableCount(resources.wabas)} className={className} />
+    ) : null;
   const outcome = (
     <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
   );
@@ -173,7 +177,7 @@ export function NumbersView({
       actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
     >
       {outcome}
-      {closed ? <SubscriptionNotice billing={billing} /> : null}
+      {notice()}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
@@ -191,9 +195,25 @@ export function NumbersView({
           }}
           busy={busy}
           onBusyChange={setBusy}
+          notice={notice("mb-0")}
         />
       ) : null}
     </Page>
+  );
+}
+
+/**
+ * First run. A closed workspace has nothing to reconnect, so the gateway would
+ * refuse whatever Meta returned: it is stopped here, before Meta's window. With
+ * billing on that means the subscription; without it the fork stays, switched off.
+ */
+export function FirstRunConnect({ closed, billing }: { closed: boolean; billing: boolean }) {
+  if (closed && billing) return <SubscriptionGate />;
+  return (
+    <>
+      {closed ? <SubscriptionNotice billing={false} numbers={0} className="mb-0" /> : null}
+      <ConnectNumberPanel heading="Meta Embedded Signup" closed={closed} />
+    </>
   );
 }
 
@@ -223,11 +243,14 @@ function AddNumberDialog({
   onOpenChange,
   busy,
   onBusyChange,
+  notice,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   busy: boolean;
   onBusyChange: (busy: boolean) => void;
+  /** The closed-workspace warning, read before the cards. They stay live: a number already here can be reconnected. */
+  notice?: React.ReactNode;
 }) {
   const description = useRef<HTMLParagraphElement>(null);
   return (
@@ -249,6 +272,7 @@ function AddNumberDialog({
             {CONNECT_FORK_DESCRIPTION}
           </DialogDescription>
         </DialogHeader>
+        {notice}
         <ConnectNumberChoices onBusyChange={onBusyChange} />
       </DialogContent>
     </Dialog>

@@ -1,4 +1,4 @@
-import type { ConnectPolicy, GatewayApi } from "@eccos/gateway-contract";
+import type { AccountResources, ConnectPolicy, GatewayApi } from "@eccos/gateway-contract";
 import type { Billing } from "./context";
 import { monthlyPriceEuros, subscriptionEnded } from "./plan";
 
@@ -17,9 +17,19 @@ export function billingReturnUrl(consoleOrigin: string | undefined, requestUrl: 
   return new URL(BILLING_RETURN_PATH, consoleOrigin?.trim() || new URL(requestUrl).origin).href;
 }
 
-async function billableNumbers(gateway: GatewayApi, accountId: string): Promise<number> {
-  const { wabas } = await gateway.listAccountResources(accountId);
+/** Numbers on active WABAs: what the subscription is priced for. */
+export function billableCount(wabas: AccountResources["wabas"]): number {
   return wabas.filter((waba) => waba.status === "active").reduce((sum, waba) => sum + waba.phones.length, 0);
+}
+
+async function billableNumbers(gateway: GatewayApi, accountId: string): Promise<number> {
+  return billableCount((await gateway.listAccountResources(accountId)).wabas);
+}
+
+/** A closed account with nothing of its own to reconnect: the gateway would refuse whatever Meta returns. */
+export async function connectBlocked(gateway: GatewayApi, accountId: string): Promise<boolean> {
+  if ((await gateway.getAccountBilling(accountId))?.connectPolicy !== "closed") return false;
+  return (await gateway.listAccountResources(accountId)).wabas.length === 0;
 }
 
 async function storedBilling(gateway: GatewayApi, accountId: string) {

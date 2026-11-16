@@ -6,7 +6,15 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
-import { billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
+import {
+  billingReturnUrl,
+  billingState,
+  checkoutUrl,
+  connectBlocked,
+  portalUrl,
+  type BillingState,
+} from "../billing/account";
+import { closedNotice } from "../billing/notice";
 import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
@@ -1402,9 +1410,10 @@ export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler
 /**
  * Whether Connect can start, checked without creating a state or writing an
  * audit event: the caller may administer, the gateway answers, it has a public
- * address for Meta's redirect, and the organization's account (if it has one
- * yet) is active. `startConnect` fails on the same conditions, but only after
- * the customer has been through Meta's window.
+ * address for Meta's redirect, the organization's account (if it has one yet)
+ * is active, and it is not closed with nothing to reconnect. `startConnect` and
+ * the exchange fail on the same conditions, but only after the customer has
+ * been through Meta's window.
  */
 export const getConnectReadiness = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<{ ready: true } | { ready: false; reason: string }>> =>
@@ -1415,6 +1424,9 @@ export const getConnectReadiness = createServerFn({ method: "GET" }).handler(
       const link = organizationId ? await gateway.getOrganizationAccountLink(organizationId) : null;
       if (link && link.status !== "active") {
         return { ready: false as const, reason: "This workspace's account is not active, so numbers cannot be connected." };
+      }
+      if (link && (await connectBlocked(gateway, link.accountId))) {
+        return { ready: false as const, reason: closedNotice(billingEnabled(env), 0) };
       }
       return { ready: true as const };
     }, "administer"),
