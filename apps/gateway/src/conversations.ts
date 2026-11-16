@@ -1,4 +1,5 @@
 import { isBsuid } from "@eccos/core/bsuid";
+import type { TemplateCopy } from "@eccos/core/template-copy";
 import type { MessageContent, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type { MessageDirection, MessageOrigin, MessageStatus } from "@eccos/gateway-contract";
 
@@ -118,6 +119,22 @@ export function messageFromOutbound(input: {
   };
 }
 
+/** The template a stored send body names, with the parameters it filled; null for any other send. */
+export function templateSendOf(request: string): { name: string; language: string; components: unknown } | null {
+  const body = parseRecord(request);
+  const template = asRecord(body?.template);
+  const name = str(template?.name);
+  const language = str(asRecord(template?.language)?.code);
+  if (body?.type !== "template" || !name || !language) return null;
+  return { name, language, components: template?.components };
+}
+
+/** A stored template message with what the customer read added under `copy`; its text becomes the filled body. */
+export function withTemplateCopy(content: string | null, copy: TemplateCopy): { content: string; text: string } {
+  const stored = (content && parseRecord(content)) ?? {};
+  return { content: JSON.stringify({ ...stored, copy }), text: copy.body };
+}
+
 /** The status a sent/delivered/read/failed callback applies; null for every other event. */
 export function statusFromEvent(ev: WhatsAppCallbackEvent): StatusUpdate | null {
   if (ev.type !== "sent" && ev.type !== "delivered" && ev.type !== "read" && ev.type !== "failed") return null;
@@ -157,7 +174,7 @@ function contentJson(fields: MessageContent): string | null {
   return Object.keys(content).length > 0 ? JSON.stringify(content) : null;
 }
 
-/** Text as the conversation shows it: a template is labelled by its name, media by its caption. */
+/** Text as the conversation shows it: a template is labelled by its name until its copy is known, media by its caption. */
 function outboundText(type: string, typed: Record<string, unknown> | null): string | null {
   if (type === "text") return str(typed?.body);
   if (type === "template") {

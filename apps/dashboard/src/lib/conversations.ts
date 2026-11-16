@@ -206,7 +206,7 @@ export function describeEntry(entry: Pick<ThreadEntry, "message" | "text" | "del
   const kind = entry.deleted ? "revoke" : entry.message.type;
   return {
     sender: entry.message.direction === "in" ? "Customer" : "You",
-    preview: entry.text !== null && !entry.deleted ? entry.text : (TYPE_LABEL[kind] ?? kind),
+    preview: entry.text !== null && !entry.deleted ? readableText(kind, entry.text) : (TYPE_LABEL[kind] ?? kind),
   };
 }
 
@@ -302,11 +302,23 @@ const TYPE_LABEL: Record<string, string> = {
   revoke: "Message deleted",
   unsupported: "Unsupported message",
   media_placeholder: "Media not available",
+  template: "Template",
 };
+
+/** A template whose copy the gateway could not read keeps `template:<name>` as its text; that marker is never shown. */
+function readableText(type: string, text: string): string {
+  const name = type === "template" ? /^template:(.+)$/.exec(text)?.[1] : undefined;
+  return name ? `Template: ${name}` : text;
+}
 
 /** The last message as the list previews it: its text or caption, else what kind it is. The staff's own sends are marked as theirs. */
 export function previewOf(last: ConversationSummary["lastMessage"]): string {
-  const body = last.type === "revoke" ? "Message deleted" : (last.text ?? TYPE_LABEL[last.type] ?? last.type);
+  const body =
+    last.type === "revoke"
+      ? "Message deleted"
+      : last.text !== null
+        ? readableText(last.type, last.text)
+        : (TYPE_LABEL[last.type] ?? last.type);
   return last.direction === "in" ? body : `You: ${body}`;
 }
 

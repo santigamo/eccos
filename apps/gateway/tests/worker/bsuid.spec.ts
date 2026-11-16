@@ -69,7 +69,8 @@ describe("sending to a BSUID", () => {
     expect(await send(BSUID)).toEqual({ ok: true, messageId: "wamid.B" });
     expect(JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body)).recipient).toBe(BSUID);
     await expect(send("US-1349")).rejects.toThrow("to must be 5-15 digits or a BSUID");
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // The template's copy is looked up after the send; only the sends count here.
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).endsWith("/messages"))).toHaveLength(1);
   });
 
   it("the public send route sends a BSUID as recipient", async () => {

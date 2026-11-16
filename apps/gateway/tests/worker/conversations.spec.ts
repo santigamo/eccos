@@ -101,6 +101,68 @@ describe("conversation store: live feed", () => {
     });
   });
 
+  describe("a template send", () => {
+    const send = JSON.stringify({
+      type: "template",
+      to: WA,
+      template: {
+        name: "order_update",
+        language: { code: "es" },
+        components: [{ type: "body", parameters: [{ type: "text", text: "Ada" }] }],
+      },
+    });
+
+    function mockTemplates(answer: () => Response) {
+      return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        if (String(input instanceof Request ? input.url : input).includes("/message_templates")) return answer();
+        return new Response("unexpected", { status: 500 });
+      });
+    }
+
+    it("stores the copy the customer read, filled with the send's parameters", async () => {
+      const fetchSpy = mockTemplates(() =>
+        Response.json({
+          data: [
+            { name: "order_update", language: "en", components: [{ type: "BODY", text: "Hi {{1}}" }] },
+            {
+              name: "order_update",
+              language: "es",
+              components: [
+                { type: "BODY", text: "Hola {{1}}, tu pedido está listo." },
+                { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Gracias" }] },
+              ],
+            },
+          ],
+        }),
+      );
+      await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+        i.logOutbound("wamid.TPLCOPY", WA, send, "sent", null);
+        await vi.waitFor(() => expect(i.getConversation({ waId: WA }).items[0]!.text).toBe("Hola Ada, tu pedido está listo."));
+        const content = JSON.parse(i.getConversation({ waId: WA }).items[0]!.content!);
+        expect(content).toMatchObject({
+          name: "order_update",
+          language: { code: "es" },
+          components: [{ type: "body", parameters: [{ type: "text", text: "Ada" }] }],
+          copy: { body: "Hola Ada, tu pedido está listo.", buttons: ["Gracias"] },
+        });
+        expect(i.listConversations().items[0]!.lastMessage.text).toBe("Hola Ada, tu pedido está listo.");
+      });
+      expect(String(fetchSpy.mock.calls[0]![0])).toContain("name=order_update");
+    });
+
+    it("stores the message as sent when the definition cannot be read", async () => {
+      const fetchSpy = mockTemplates(() => Response.json({ error: { code: 1 } }, { status: 500 }));
+      await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+        i.logOutbound("wamid.TPLNOCOPY", WA, send, "sent", null);
+        await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const [message] = i.getConversation({ waId: WA }).items;
+        expect(message!.text).toBe("template:order_update");
+        expect(JSON.parse(message!.content!)).not.toHaveProperty("copy");
+      });
+    });
+  });
+
   it("ignores a duplicate webhook: one message, one contact", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const reply = { type: "reply" as const, from: WA, messageId: "wamid.DUP1", text: "once", at: 1000 };

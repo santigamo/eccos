@@ -102,6 +102,13 @@ export function requestReading(request: string): RequestReading | null {
   return reading;
 }
 
+/** A template send read from its stored `template` object alone, as a conversation stores it. */
+export function templateReading(template: unknown): RequestReading {
+  const reading: RequestReading = { kind: "template", template: null, text: null, values: [] };
+  readTemplateSend(template, reading);
+  return reading;
+}
+
 /** What one `parameters[]` entry actually carries. `null` for a shape this does
  * not read — the raw body below the section is the answer for those. */
 function paramValue(param: Record<string, unknown>): { value: string; mono: boolean } | null {

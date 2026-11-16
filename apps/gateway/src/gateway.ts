@@ -3,6 +3,8 @@ import { DurableObject } from "cloudflare:workers";
 import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
+import { fillTemplate } from "@eccos/core/template-copy";
+import { listTemplates } from "@eccos/core/templates";
 import type { EventOrigin, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   ContactRecord,
@@ -34,8 +36,11 @@ import {
   messageFromEvent,
   messageFromOutbound,
   statusFromEvent,
+  templateSendOf,
   waIdOf,
+  withTemplateCopy,
 } from "./conversations";
+import { TemplateDefinitions } from "./template-definitions";
 import type { EccosControlPlane } from "./control-plane";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { type HistoryMessage, type SyncItem, mapSyncItem, syncItems } from "./history";
@@ -341,6 +346,7 @@ export class EccosGateway extends DurableObject<Env> {
   /** Set when a payload or webhook lands while alarm() runs. alarm()'s final setAlarm would
    * overwrite that wake with a later one, so alarm() checks this and wakes again at once. */
   private wakeArrived = false;
+  private templateDefinitions = new TemplateDefinitions((name, language) => this.loadTemplateDefinition(name, language));
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -815,6 +821,38 @@ export class EccosGateway extends DurableObject<Env> {
         }
       }
     });
+    // After the send, never in its way: a template's copy is read from Meta and added when it comes back.
+    if (status === "sent" && transportMessageId) this.ctx.waitUntil(this.recordTemplateCopy(transportMessageId, requestJson));
+  }
+
+  /** Stores what the customer read of a template send: its copy as Meta defined it at send time (within
+   * the definitions' hour), filled with the send's parameters. Without a definition the row stays as sent. */
+  private async recordTemplateCopy(messageId: string, requestJson: string): Promise<void> {
+    const send = templateSendOf(requestJson);
+    if (!send) return;
+    const definition = await this.templateDefinitions.get(send.name, send.language);
+    const copy = definition && fillTemplate(definition, send.components);
+    if (!copy) return;
+    const row = this.sql.exec(`SELECT content FROM messages WHERE id = ?`, messageId).toArray()[0];
+    if (!row) return;
+    const stored = withTemplateCopy(row.content as string | null, copy);
+    this.sql.exec(`UPDATE messages SET content = ?, text = ? WHERE id = ?`, stored.content, stored.text, messageId);
+  }
+
+  private async loadTemplateDefinition(name: string, language: string): Promise<unknown[] | null> {
+    const token = await this.metaToken();
+    if (token === "missing" || token === "unavailable") return null;
+    const cfg = {
+      META_GRAPH_VERSION: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
+      META_ACCESS_TOKEN: token,
+      META_WABA_ID: this.wabaIdForOps(),
+      fetch: this.watchedFetch(),
+    };
+    const result = await listTemplates(cfg, 100, { fields: ["name", "language", "components"], name });
+    if (!result.ok) return null;
+    const data = (result.data as { data?: { name?: unknown; language?: unknown; components?: unknown }[] } | null)?.data;
+    const found = Array.isArray(data) ? data.find((t) => t.name === name && t.language === language) : undefined;
+    return Array.isArray(found?.components) ? found.components : null;
   }
 
   /** A status that overtook its send was stored without the origin: add it to the event and its

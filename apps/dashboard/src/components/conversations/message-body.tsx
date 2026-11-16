@@ -10,6 +10,7 @@ import {
   reactionEmojiOf,
   type ThreadEntry,
 } from "../../lib/conversations";
+import { templateMessageOf } from "../../lib/template-message";
 import { ImageViewer } from "./image-viewer";
 
 /**
@@ -105,9 +106,51 @@ export function MessageBody({ entry, wabaId }: { entry: ThreadEntry; wabaId?: st
     }
     case "media_placeholder":
       return <MediaUnavailable />;
+    case "template":
+      return <TemplateBody entry={entry} />;
     default:
       return text ? <p className="whitespace-pre-wrap">{text}</p> : <p className="text-muted-foreground">{message.type}</p>;
   }
+}
+
+/** With its copy, the words the customer read; without it, the values sent by slot, never today's template. */
+function TemplateBody({ entry }: { entry: ThreadEntry }) {
+  const { name, copy, values } = templateMessageOf(entry.message);
+  return (
+    <>
+      <p className="mb-1 text-[11px] text-muted-foreground">
+        <span className="font-medium tracking-wider uppercase">Template</span>
+        {name ? <span className="font-mono"> · {name}</span> : null}
+      </p>
+      {copy ? (
+        <>
+          {copy.header ? <p className="font-medium whitespace-pre-wrap">{copy.header}</p> : null}
+          <p className="whitespace-pre-wrap">{copy.body}</p>
+          {copy.footer ? <p className="mt-1 text-xs text-muted-foreground">{copy.footer}</p> : null}
+          {copy.buttons ? (
+            <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">
+              {copy.buttons.map((label, index) => (
+                <li key={`${index}:${label}`} className="border border-border px-2 py-1 text-center text-sm">
+                  {label}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : values.length > 0 ? (
+        <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 text-sm">
+          {values.map((value) => (
+            <div key={value.slot} className="contents">
+              <dt className="font-mono text-xs text-muted-foreground">{value.slot}</dt>
+              <dd className={`m-0 ${value.mono ? "font-mono text-xs break-all" : "whitespace-pre-wrap"}`}>{value.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-muted-foreground">This send filled no parameters.</p>
+      )}
+    </>
+  );
 }
 
 function Caption({ text }: { text: string | null }) {
