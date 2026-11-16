@@ -26,14 +26,15 @@ export function NavMain() {
   const scope = root.ok ? root.data : null
   const hasNumber = scope !== null && hasNumberScope(scope)
   const hasWaba = scope !== null && hasWabaScope(scope)
-  useIdlePrefetch({ hasNumber, hasWaba }, wabaId)
+  const canAdminister = scope !== null && "canAdminister" in scope && scope.canAdminister
+  useIdlePrefetch({ hasNumber, hasWaba, canAdminister }, wabaId)
 
   return (
     <>
       {NAV_MAIN.map((group) => (
         <NavGroupSection
           key={group.id}
-          group={group}
+          group={{ ...group, items: group.items.filter((item) => canAdminister || !item.adminOnly) }}
           pathname={pathname}
           wabaId={wabaId}
           hasNumber={hasNumber}

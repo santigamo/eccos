@@ -1,0 +1,77 @@
+import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { removeMember, type MemberView } from "../../members";
+import { isOwnerRole } from "../../lib/member-roles";
+
+/** What removing this member costs. Exported so the wording is asserted directly. */
+export function removeMemberCopy(role: string): string[] {
+  return [
+    "Their access ends on their next request.",
+    "API keys they created keep working. Revoke them in Settings if they should stop.",
+    ...(role === "admin" || isOwnerRole(role) ? ["The connection link they made stops working."] : []),
+  ];
+}
+
+export function RemoveMemberDialog({
+  target,
+  onOpenChange,
+  onRemoved,
+}: {
+  target: MemberView;
+  onOpenChange: (open: boolean) => void;
+  onRemoved: () => void;
+}) {
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onConfirm() {
+    setRemoving(true);
+    setError(null);
+    try {
+      const result = await removeMember({ data: { memberId: target.memberId } });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      onRemoved();
+      onOpenChange(false);
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  return (
+    <AlertDialog open onOpenChange={(next) => (removing ? undefined : onOpenChange(next))}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove {target.name || target.email}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {removeMemberCopy(target.role).map((line) => (
+              <span key={line} className="block">
+                {line}
+              </span>
+            ))}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <output aria-live="polite" aria-atomic="true" className={error ? "block text-xs text-destructive-foreground" : undefined}>
+          {error}
+        </output>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+          <AlertDialogAction type="button" onClick={onConfirm} aria-busy={removing} disabled={removing}>
+            {removing ? "Removing…" : "Remove member"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}

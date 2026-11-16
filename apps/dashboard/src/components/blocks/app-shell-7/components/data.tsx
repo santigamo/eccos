@@ -8,6 +8,7 @@ import {
   SendIcon,
   FileTextIcon,
   SettingsIcon,
+  UsersIcon,
   WebhookIcon,
   PhoneIcon,
 } from "lucide-react"
@@ -39,6 +40,8 @@ export type NavItem = {
    * redirects from; `tests/scope-requirements.test.ts` fails if they drift.
    */
   requires?: "waba" | "number"
+  /** Listed only for a role with `administer` (the root's `canAdminister`); the server refuses the rest anyway. */
+  adminOnly?: boolean
 }
 
 /**
@@ -176,6 +179,13 @@ export const NAV_MAIN: NavGroup[] = [
     id: "workspace",
     label: "Workspace",
     items: [
+      {
+        id: "members",
+        label: "Members",
+        href: "/members",
+        icon: <UsersIcon aria-hidden="true" />,
+        adminOnly: true,
+      },
       {
         id: "settings",
         label: "Settings",

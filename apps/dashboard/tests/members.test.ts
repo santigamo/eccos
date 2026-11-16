@@ -1,0 +1,343 @@
+/**
+ * Workspace members server functions (`src/members.ts`) against a real Better
+ * Auth instance built the way the Worker builds it, so the role matrix, the
+ * owner rules, the copy and the invitation rate limit are Better Auth's and
+ * ours together, not a mock's.
+ */
+
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { getMigrations } from "better-auth/db/migration";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
+import { withD1Statements } from "./helpers/d1-statements";
+
+const BASE_URL = "http://localhost:3000";
+const SECRET = "test-secret-32-chars-minimum-length!!";
+
+const fakeEnv: { BETTER_AUTH_URL: string; BETTER_AUTH_SECRET?: string; DB?: unknown } = {
+  BETTER_AUTH_URL: BASE_URL,
+};
+let fakeRequestHeaders = new Headers();
+
+installServerFnMocks({
+  env: fakeEnv,
+  getRequest: () => new Request(`${BASE_URL}/`, { headers: fakeRequestHeaders }),
+});
+
+const members = await import("../src/members");
+const copy = await import("../src/lib/members-copy");
+const { createAuth } = await import("../src/auth/auth");
+const { authConfigFromEnv } = await import("../src/auth/config");
+
+const { listWorkspaceMembers, inviteMember, resendInvitation, cancelInvitation, updateMemberRole, removeMember } =
+  members;
+
+afterEach(() => {
+  fakeRequestHeaders = new Headers();
+});
+
+type Role = "owner" | "admin" | "operator" | "viewer";
+
+/** One workspace with one member per role, plus a second workspace for cross-tenant ids. */
+async function workspace() {
+  const db = withD1Statements(new Database(":memory:"));
+  fakeEnv.DB = db;
+  fakeEnv.BETTER_AUTH_SECRET = SECRET;
+  const auth = createAuth(authConfigFromEnv(fakeEnv as never));
+  await (await getMigrations(auth.options)).runMigrations();
+
+  const cookies = new Map<string, string>();
+  async function user(email: string): Promise<string> {
+    await auth.handler(
+      new Request(`${BASE_URL}/api/auth/sign-up/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: BASE_URL },
+        body: JSON.stringify({ email, password: "correct-horse-battery", name: email.split("@")[0] }),
+      }),
+    );
+    db.query('UPDATE user SET "emailVerified" = 1 WHERE email = ?').run(email);
+    const signIn = await auth.handler(
+      new Request(`${BASE_URL}/api/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: BASE_URL },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      }),
+    );
+    cookies.set(email, signIn.headers.get("set-cookie")!.split(";")[0]!);
+    return (db.query("SELECT id FROM user WHERE email = ?").get(email) as { id: string }).id;
+  }
+  const headersOf = (email: string) => new Headers({ cookie: cookies.get(email)! });
+
+  await user("owner@example.test");
+  const org = (await auth.api.createOrganization({
+    body: { name: "Agency", slug: crypto.randomUUID() },
+    headers: headersOf("owner@example.test"),
+  })) as { id: string };
+  const memberIds: Record<string, string> = {};
+  for (const role of ["admin", "operator", "viewer"] as const) {
+    const userId = await user(`${role}@example.test`);
+    await auth.api.addMember({ body: { userId, role, organizationId: org.id } });
+  }
+  for (const row of db.query("SELECT member.id, user.email FROM member JOIN user ON user.id = member.userId").all() as Array<{
+    id: string;
+    email: string;
+  }>) {
+    memberIds[row.email] = row.id;
+  }
+
+  await user("stranger@example.test");
+  const other = (await auth.api.createOrganization({
+    body: { name: "Elsewhere", slug: crypto.randomUUID() },
+    headers: headersOf("stranger@example.test"),
+  })) as { id: string };
+  const foreignInvitation = (await auth.api.createInvitation({
+    body: { email: "someone@example.test", role: "viewer", organizationId: other.id },
+    headers: headersOf("stranger@example.test"),
+  })) as { id: string };
+  const foreignMember = (db.query("SELECT id FROM member WHERE organizationId = ?").get(other.id) as { id: string }).id;
+
+  return {
+    auth,
+    db,
+    user,
+    org,
+    memberIds,
+    foreignInvitation: foreignInvitation.id,
+    foreignMember,
+    as: (who: Role | string) => {
+      fakeRequestHeaders = headersOf(who.includes("@") ? who : `${who}@example.test`);
+    },
+    memberOf: (role: Role) => memberIds[`${role}@example.test`]!,
+    pending: () =>
+      db.query("SELECT id, email, role FROM invitation WHERE organizationId = ? AND status = 'pending'").all(org.id) as Array<{
+        id: string;
+        email: string;
+        role: string;
+      }>,
+  };
+}
+
+describe("the role matrix", () => {
+  test("an operator or a viewer is refused by every function", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await inviteMember({ data: { email: "pending@example.test", role: "viewer" } });
+    const invitationId = ws.pending()[0]!.id;
+    const refused = { ok: false, error: copy.ASK_TO_MANAGE_MEMBERS };
+
+    for (const role of ["operator", "viewer"] as const) {
+      ws.as(role);
+      expect(await listWorkspaceMembers()).toEqual(refused);
+      expect(await inviteMember({ data: { email: "new@example.test", role: "viewer" } })).toEqual(refused);
+      expect(await resendInvitation({ data: { invitationId } })).toEqual(refused);
+      expect(await cancelInvitation({ data: { invitationId } })).toEqual(refused);
+      expect(await updateMemberRole({ data: { memberId: ws.memberOf("viewer"), role: "admin" } })).toEqual(refused);
+      expect(await removeMember({ data: { memberId: ws.memberOf("viewer") } })).toEqual(refused);
+    }
+    // Nothing they tried landed.
+    expect(ws.pending().map((row) => row.id)).toEqual([invitationId]);
+    expect(ws.db.query("SELECT role FROM member WHERE id = ?").get(ws.memberOf("viewer"))).toEqual({ role: "viewer" });
+  });
+
+  for (const role of ["owner", "admin"] as const) {
+    test(`an ${role} may run every function`, async () => {
+      const ws = await workspace();
+      ws.as(role);
+      const listed = await listWorkspaceMembers();
+      expect(listed.ok).toBe(true);
+
+      expect(await inviteMember({ data: { email: "new@example.test", role: "operator" } })).toEqual({ ok: true });
+      const first = ws.pending()[0]!.id;
+      expect(await resendInvitation({ data: { invitationId: first } })).toEqual({ ok: true });
+      const second = ws.pending()[0]!.id;
+      expect(await cancelInvitation({ data: { invitationId: second } })).toEqual({ ok: true });
+      expect(ws.pending()).toEqual([]);
+
+      expect(await updateMemberRole({ data: { memberId: ws.memberOf("operator"), role: "viewer" } })).toEqual({ ok: true });
+      expect(await removeMember({ data: { memberId: ws.memberOf("viewer") } })).toEqual({ ok: true });
+      expect(ws.db.query("SELECT role FROM member WHERE id = ?").get(ws.memberOf("operator"))).toEqual({ role: "viewer" });
+      expect(ws.db.query("SELECT id FROM member WHERE id = ?").get(ws.memberOf("viewer"))).toBeNull();
+    });
+  }
+
+  test("signed out reads as a session to renew", async () => {
+    await workspace();
+    expect(await listWorkspaceMembers()).toEqual({ ok: false, error: copy.MEMBERS_SIGNED_OUT });
+    expect(await inviteMember({ data: { email: "new@example.test", role: "viewer" } })).toEqual({
+      ok: false,
+      error: copy.MEMBERS_SIGNED_OUT,
+    });
+  });
+
+  test("the owner role is never accepted as input", async () => {
+    await workspace();
+    expect(() => members.inviteMemberInput.parse({ email: "new@example.test", role: "owner" })).toThrow();
+    expect(() => updateMemberRole({ data: { memberId: "m", role: "owner" } })).toThrow();
+  });
+});
+
+describe("the list", () => {
+  test("members carry the caller's own row, and invitations their inviter and expiry", async () => {
+    const ws = await workspace();
+    ws.as("admin");
+    await inviteMember({ data: { email: "new@example.test", role: "viewer" } });
+    const result = await listWorkspaceMembers();
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.callerRole).toBe("admin");
+    expect(result.data.members.map((m) => [m.email, m.role, m.isSelf])).toEqual(
+      expect.arrayContaining([
+        ["owner@example.test", "owner", false],
+        ["admin@example.test", "admin", true],
+        ["operator@example.test", "operator", false],
+      ]),
+    );
+    expect(result.data.members.every((m) => m.joinedAt > 0)).toBe(true);
+    const [invitation] = result.data.invitations;
+    expect(invitation).toMatchObject({ email: "new@example.test", role: "viewer", inviterName: "admin", expired: false });
+    // Invitations last 7 days, not Better Auth's default 48 hours.
+    const week = 7 * 24 * 60 * 60 * 1000;
+    expect(Math.abs(invitation!.expiresAt - (Date.now() + week))).toBeLessThan(60_000);
+  });
+
+  test("an expired invitation says so, and another workspace's never shows", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await inviteMember({ data: { email: "late@example.test", role: "viewer" } });
+    ws.db.query("UPDATE invitation SET expiresAt = ? WHERE email = ?").run(Date.now() - 1000, "late@example.test");
+    const result = await listWorkspaceMembers();
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.invitations.map((i) => [i.email, i.expired])).toEqual([["late@example.test", true]]);
+    expect(result.data.members.some((m) => m.email === "stranger@example.test")).toBe(false);
+  });
+});
+
+describe("owners", () => {
+  test("an admin cannot change or remove an owner", async () => {
+    const ws = await workspace();
+    ws.as("admin");
+    const protectedCopy = copy.MEMBERS_COPY[copy.OWNER_PROTECTED];
+    expect(await updateMemberRole({ data: { memberId: ws.memberOf("owner"), role: "viewer" } })).toEqual({
+      ok: false,
+      error: protectedCopy!,
+    });
+    expect(await removeMember({ data: { memberId: ws.memberOf("owner") } })).toEqual({ ok: false, error: protectedCopy! });
+  });
+
+  test("the last owner cannot be demoted or removed, by themselves either", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    const last = { ok: false, error: copy.MEMBERS_COPY[copy.LAST_OWNER]! };
+    expect(await updateMemberRole({ data: { memberId: ws.memberOf("owner"), role: "admin" } })).toEqual(last);
+    expect(await removeMember({ data: { memberId: ws.memberOf("owner") } })).toEqual(last);
+  });
+
+  test("with a second owner, an owner may remove the other", async () => {
+    const ws = await workspace();
+    ws.db.query("UPDATE member SET role = 'owner' WHERE id = ?").run(ws.memberOf("admin"));
+    ws.as("owner");
+    expect(await removeMember({ data: { memberId: ws.memberOf("admin") } })).toEqual({ ok: true });
+  });
+});
+
+describe("failure copy", () => {
+  test("already a member and already invited each have their own sentence", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    expect(await inviteMember({ data: { email: "operator@example.test", role: "viewer" } })).toEqual({
+      ok: false,
+      error: copy.MEMBERS_COPY.USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION!,
+    });
+    await inviteMember({ data: { email: "twice@example.test", role: "viewer" } });
+    expect(await inviteMember({ data: { email: "twice@example.test", role: "viewer" } })).toEqual({
+      ok: false,
+      error: copy.MEMBERS_COPY.USER_IS_ALREADY_INVITED_TO_THIS_ORGANIZATION!,
+    });
+  });
+
+  test("an id from another workspace reads exactly like one that does not exist", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    const gone = { ok: false, error: copy.INVITATION_GONE };
+    expect(await cancelInvitation({ data: { invitationId: ws.foreignInvitation } })).toEqual(gone);
+    expect(await cancelInvitation({ data: { invitationId: "no-such-invitation" } })).toEqual(gone);
+    expect(await resendInvitation({ data: { invitationId: ws.foreignInvitation } })).toEqual(gone);
+
+    const memberGone = { ok: false, error: copy.MEMBER_GONE };
+    expect(await removeMember({ data: { memberId: ws.foreignMember } })).toEqual(memberGone);
+    expect(await removeMember({ data: { memberId: "no-such-member" } })).toEqual(memberGone);
+    expect(await updateMemberRole({ data: { memberId: ws.foreignMember, role: "viewer" } })).toEqual(memberGone);
+    // And the other workspace is untouched.
+    expect(ws.db.query("SELECT status FROM invitation WHERE id = ?").get(ws.foreignInvitation)).toEqual({ status: "pending" });
+  });
+
+  test("anything unrecognised is the retry line, never the provider's text", () => {
+    expect(members.membersFailure(new Error("D1_ERROR: no such table: member"))).toEqual({
+      ok: false,
+      error: copy.MEMBERS_RETRY,
+    });
+  });
+});
+
+describe("resend", () => {
+  test("cancels the invitation and sends a new one under a new id", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await inviteMember({ data: { email: "again@example.test", role: "operator" } });
+    const before = ws.pending()[0]!;
+    expect(await resendInvitation({ data: { invitationId: before.id } })).toEqual({ ok: true });
+    const after = ws.pending();
+    expect(after).toHaveLength(1);
+    expect(after[0]!.id).not.toBe(before.id);
+    expect(after[0]).toMatchObject({ email: "again@example.test", role: "operator" });
+    expect(ws.db.query("SELECT status FROM invitation WHERE id = ?").get(before.id)).toEqual({ status: "canceled" });
+  });
+});
+
+describe("audit", () => {
+  test("each mutation writes one ids-only line", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    try {
+      await inviteMember({ data: { email: "audited@example.test", role: "viewer" } });
+      await removeMember({ data: { memberId: ws.memberOf("viewer") } });
+      const lines = info.mock.calls
+        .map(([line]) => JSON.parse(String(line)) as { area?: string; action?: string; outcome?: string })
+        .filter((line) => line.area === "audit");
+      expect(lines.map((line) => [line.action, line.outcome])).toEqual([
+        ["member_invited", "success"],
+        ["member_removed", "success"],
+      ]);
+      expect(JSON.stringify(lines)).not.toContain("@");
+    } finally {
+      info.mockRestore();
+    }
+  });
+});
+
+describe("the invitation rate limit", () => {
+  test("caps sends per inviter, through the console and over HTTP alike", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    for (let i = 0; i < 20; i++) {
+      expect(await inviteMember({ data: { email: `person${i}@example.test`, role: "viewer" } })).toEqual({ ok: true });
+    }
+    expect(await inviteMember({ data: { email: "one-more@example.test", role: "viewer" } })).toEqual({
+      ok: false,
+      error: copy.MEMBERS_COPY[copy.INVITATION_RATE_LIMITED]!,
+    });
+    const direct = await ws.auth.handler(
+      new Request(`${BASE_URL}/api/auth/organization/invite-member`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: BASE_URL, cookie: fakeRequestHeaders.get("cookie")! },
+        body: JSON.stringify({ email: "direct@example.test", role: "viewer", organizationId: ws.org.id }),
+      }),
+    );
+    expect(direct.status).toBe(429);
+    expect(ws.pending()).toHaveLength(20);
+
+    // The cap is the inviter's, not the workspace's.
+    ws.as("admin");
+    expect(await inviteMember({ data: { email: "from-admin@example.test", role: "viewer" } })).toEqual({ ok: true });
+  });
+});

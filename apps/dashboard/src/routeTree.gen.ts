@@ -19,6 +19,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as NumbersRouteImport } from './routes/numbers'
 import { Route as MessagesRouteImport } from './routes/messages'
+import { Route as MembersRouteImport } from './routes/members'
 import { Route as InvitationsRouteImport } from './routes/invitations'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as EventsRouteImport } from './routes/events'
@@ -79,6 +80,11 @@ const NumbersRoute = NumbersRouteImport.update({
 const MessagesRoute = MessagesRouteImport.update({
   id: '/messages',
   path: '/messages',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MembersRoute = MembersRouteImport.update({
+  id: '/members',
+  path: '/members',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InvitationsRoute = InvitationsRouteImport.update({
@@ -146,6 +152,7 @@ export interface FileRoutesByFullPath {
   '/events': typeof EventsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/invitations': typeof InvitationsRoute
+  '/members': typeof MembersRoute
   '/messages': typeof MessagesRoute
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
@@ -169,6 +176,7 @@ export interface FileRoutesByTo {
   '/events': typeof EventsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/invitations': typeof InvitationsRoute
+  '/members': typeof MembersRoute
   '/messages': typeof MessagesRoute
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
@@ -193,6 +201,7 @@ export interface FileRoutesById {
   '/events': typeof EventsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/invitations': typeof InvitationsRoute
+  '/members': typeof MembersRoute
   '/messages': typeof MessagesRoute
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
@@ -218,6 +227,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/forgot-password'
     | '/invitations'
+    | '/members'
     | '/messages'
     | '/numbers'
     | '/onboarding'
@@ -241,6 +251,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/forgot-password'
     | '/invitations'
+    | '/members'
     | '/messages'
     | '/numbers'
     | '/onboarding'
@@ -264,6 +275,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/forgot-password'
     | '/invitations'
+    | '/members'
     | '/messages'
     | '/numbers'
     | '/onboarding'
@@ -288,6 +300,7 @@ export interface RootRouteChildren {
   EventsRoute: typeof EventsRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   InvitationsRoute: typeof InvitationsRoute
+  MembersRoute: typeof MembersRoute
   MessagesRoute: typeof MessagesRoute
   NumbersRoute: typeof NumbersRoute
   OnboardingRoute: typeof OnboardingRoute
@@ -373,6 +386,13 @@ declare module '@tanstack/react-router' {
       path: '/messages'
       fullPath: '/messages'
       preLoaderRoute: typeof MessagesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/members': {
+      id: '/members'
+      path: '/members'
+      fullPath: '/members'
+      preLoaderRoute: typeof MembersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/invitations': {
@@ -464,6 +484,7 @@ const rootRouteChildren: RootRouteChildren = {
   EventsRoute: EventsRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   InvitationsRoute: InvitationsRoute,
+  MembersRoute: MembersRoute,
   MessagesRoute: MessagesRoute,
   NumbersRoute: NumbersRoute,
   OnboardingRoute: OnboardingRoute,
