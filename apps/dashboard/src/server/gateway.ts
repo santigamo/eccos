@@ -16,7 +16,12 @@ import { connectAudit } from "../lib/connect-result";
 import { CONNECT_LINK_PATH } from "../lib/connect-link/api";
 import { linkIsLive } from "../lib/connect-link/status";
 import { linkPeople } from "./connect-link-people";
-import { type EmbeddedSignupConfig, embeddedSignupConfig, validateSessionEvent } from "../lib/embedded-signup";
+import {
+  type EmbeddedSignupConfig,
+  embeddedSignupConfig,
+  validateCodeAndState,
+  validateSessionEvent,
+} from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
@@ -229,8 +234,10 @@ export type DashboardOverviewResult = Result<DashboardOverview>;
 export type DashboardState =
   | { stage: "unassigned" }
   | { stage: "no-organization" }
-  | { stage: "account-ready"; resources: AccountResources; billing?: BillingFlag }
-  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag };
+  | ({ stage: "account-ready"; resources: AccountResources; billing?: BillingFlag } & RoleFlag)
+  | ({ stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag } & RoleFlag);
+/** Whether the member's role may connect numbers and make connection links. The server refuses either way. */
+export type RoleFlag = { canAdminister: boolean };
 /**
  * Present only while billing is on. `subscribed`: a closed account whose
  * subscription still exists, so billing opens its portal. `canManage`: the
@@ -1300,17 +1307,14 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // on EVERY page, /numbers included, where the note explaining the state
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
+        const canAdminister = await holdsPermission(auth, request, "administer");
         const billing = billingEnabled(env)
-          ? {
-              billing: {
-                subscribed: await closedSubscription(gateway, state),
-                canManage: await holdsPermission(auth, request, "administer"),
-              },
-            }
+          ? { billing: { subscribed: await closedSubscription(gateway, state), canManage: canAdminister } }
           : {};
-        if (!state.status) return { stage: "account-ready", resources: state.resources, ...billing };
+        if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, ...billing };
         return {
           stage: "ready",
+          canAdminister,
           status: state.status.data,
           scope: dashboardScope(state.status.scope),
           ...billing,
@@ -1468,16 +1472,8 @@ function validateConnectExchangeInput(input: unknown): {
   wabaId?: string;
 } {
   const record = inputRecord(input);
-  const code = record.code;
-  if (typeof code !== "string" || code.trim() === "" || code.length > 4096) {
-    throw new Error("code must be a non-empty string");
-  }
-  const state = record.state;
-  if (typeof state !== "string" || state.trim() === "" || state.length > 512) {
-    throw new Error("state must be a non-empty string");
-  }
   const wabaId = optionalWabaId(record.wabaId);
-  return { code: code.trim(), state: state.trim(), ...(wabaId ? { wabaId } : {}) };
+  return { ...validateCodeAndState(record), ...(wabaId ? { wabaId } : {}) };
 }
 
 /**
@@ -1640,6 +1636,8 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
 export interface ConnectLinkView {
   link: ConnectLinkSummary;
   url: string | null;
+  /** A new link was asked for while a connection with the current one is in progress: nothing was replaced. */
+  busy?: true;
 }
 
 /**
@@ -1661,7 +1659,13 @@ export const openConnectLink = createServerFn({ method: "POST" })
           linkIsLive(current) &&
           !(await linkPeople(env.DB, actor.organizationId, current.creatorUserId));
         if (current && current.state !== "expired" && !dead) return { link: current, url: null };
-        const issued = await gateway.issueConnectLink(accountId, actor.session.userId);
+        // Without `replace` the gateway keeps a live link, so two dialogs opening at once share one.
+        const issued = await gateway.issueConnectLink(accountId, actor.session.userId, data.fresh || Boolean(dead));
+        if (issued === "exists" || issued === "busy") {
+          const link = await gateway.getConnectLink(accountId);
+          if (!link) throw new Error("the connection link could not be read");
+          return { link, url: null, ...(issued === "busy" ? { busy: true as const } : {}) };
+        }
         auditEvent({
           action: "connect_link_issue",
           actorUserId: actor.session.userId,

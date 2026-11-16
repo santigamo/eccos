@@ -13,6 +13,7 @@ import {
   CONNECT_LINKS_SCHEMA,
   type ConnectLinkRow,
   type ConnectLinkSettlement,
+  abandonConnectLink,
   claimConnectLink,
   issueConnectLink,
   resolveConnectLink,
@@ -2225,13 +2226,20 @@ export class EccosControlPlane extends DurableObject<Env> {
     return summary.state === "pending" || summary.state === "opened" ? { ...summary, state: "expired" } : summary;
   }
 
-  /** Replaces the account's link: the previous token stops resolving. */
-  async issueConnectLink(accountId: string, creatorUserId: string): Promise<IssuedConnectLink> {
+  async issueConnectLink(
+    accountId: string,
+    creatorUserId: string,
+    replace = false,
+  ): Promise<IssuedConnectLink | "exists" | "busy"> {
     const id = this.requireAccount(accountId);
     if (!ORGANIZATION_ID_PATTERN.test(creatorUserId) || creatorUserId.length > ORGANIZATION_ID_MAX_LENGTH) {
       throw new Error("invalid creatorUserId");
     }
-    return issueConnectLink(this.sql, id, creatorUserId);
+    return issueConnectLink(this.sql, id, creatorUserId, replace);
+  }
+
+  abandonConnectLink(token: string): Promise<void> {
+    return abandonConnectLink(this.sql, token);
   }
 
   async resolveConnectLink(token: string, markOpened = false): Promise<ConnectLinkGrant | null> {

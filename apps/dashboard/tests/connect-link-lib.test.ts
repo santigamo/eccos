@@ -69,4 +69,16 @@ describe("takeLinkToken", () => {
     expect(takeLinkToken(win("", "abc.def").fake)).toBe("abc.def");
     expect(takeLinkToken(win("").fake)).toBeNull();
   });
+
+  test("leaves the address bar clean even when storage refuses", () => {
+    const blocked = win("#abc.def");
+    (blocked.fake as unknown as { sessionStorage: unknown }).sessionStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("storage is blocked");
+      },
+    };
+    expect(takeLinkToken(blocked.fake)).toBe("abc.def");
+    expect(blocked.replaced).toEqual(["/connect"]);
+  });
 });

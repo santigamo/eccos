@@ -249,3 +249,15 @@ export function embeddedSignupConfig(vars: {
   // call with, which this flow never does.
   return { appId, configId, graphVersion: vars.META_GRAPH_VERSION?.trim() || "v25.0" };
 }
+
+/** An Embedded Signup code and the state it was started with, within the lengths a server accepts. */
+export function validateCodeAndState(record: Record<string, unknown>): { code: string; state: string } {
+  const { code, state } = record;
+  if (typeof code !== "string" || code.trim() === "" || code.length > 4096) {
+    throw new Error("code must be a non-empty string");
+  }
+  if (typeof state !== "string" || state.trim() === "" || state.length > 512) {
+    throw new Error("state must be a non-empty string");
+  }
+  return { code: code.trim(), state: state.trim() };
+}

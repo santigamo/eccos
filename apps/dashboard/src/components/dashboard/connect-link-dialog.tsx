@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
@@ -47,8 +47,12 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
   const [pending, setPending] = useState(true);
   const [copied, setCopied] = useState(false);
 
+  // One request at a time: a second open or a double click must not make a second link.
+  const inFlight = useRef(false);
   const request = useCallback(
     async (fresh: boolean) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
       setPending(true);
       setCopied(false);
       try {
@@ -58,6 +62,7 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
       } catch (err) {
         if (!followSignIn(err)) setView({ ok: false, kind: "unreachable", error: String(err) });
       } finally {
+        inFlight.current = false;
         setPending(false);
       }
     },
@@ -73,6 +78,11 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
           {failureCopy(view).detail}
         </p>
       ) : null}
+      {view?.ok && view.data.busy ? (
+        <p className={AUTH_ERROR_BANNER_CLASS} role="alert">
+          A connection with this link is in progress right now, so it was not replaced. Try again in a minute.
+        </p>
+      ) : null}
       {url ? (
         <code className="block border border-(--line-strong) bg-(--ghost-fill) p-3 font-mono text-xs break-all text-foreground">
           {url}
@@ -80,7 +90,7 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
       ) : link ? (
         <p className="m-0 text-sm text-muted-foreground">
           {linkIsLive(link)
-            ? "A link's address is shown only when it is made. To send it again, make a new one."
+            ? "This link was sent already. Make a new one to get its address again; the old one stops working."
             : "Make a new link to connect another number."}
         </p>
       ) : null}
@@ -95,18 +105,24 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
         ) : null}
       </output>
       <div className="flex items-center gap-2">
+        {url ? (
+          <Button type="button" onClick={() => void navigator.clipboard.writeText(url).then(() => setCopied(true))}>
+            {copied ? "Copied" : "Copy link"}
+          </Button>
+        ) : null}
+        {/* The one thing left to do when there is no address to copy. */}
         <Button
           type="button"
-          disabled={!url}
-          onClick={() => url && void navigator.clipboard.writeText(url).then(() => setCopied(true))}
+          variant={url ? "outline" : "default"}
+          disabled={pending || !view}
+          onClick={() => void request(true)}
         >
-          {copied ? "Copied" : "Copy link"}
-        </Button>
-        <Button type="button" variant="outline" disabled={pending || !view} onClick={() => void request(true)}>
           New link
         </Button>
       </div>
-      <p className="m-0 text-xs text-muted-foreground">A new link replaces the previous one, which stops working.</p>
+      {url ? (
+        <p className="m-0 text-xs text-muted-foreground">A new link replaces this one, which stops working.</p>
+      ) : null}
     </>
   );
 }

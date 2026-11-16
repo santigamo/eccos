@@ -16,6 +16,7 @@ const GRANT: ConnectLinkGrant = {
   accountId: "acc_agency",
   organizationId: "org_agency",
   creatorUserId: "user_ruben",
+  issuedAt: 1_700_000_000_000,
   state: "active",
   connectPolicy: "open",
 };
@@ -61,6 +62,7 @@ function harness(over: { grant?: ConnectLinkGrant | null; people?: typeof PEOPLE
         calls.push(["start", ...args]);
         return { url: "https://gateway.test/connect?state=s", state: "state-1", expiresAt: 1 };
       },
+      abandonConnectLinkExchange: async (...args) => void calls.push(["abandon", ...args]),
       exchangeConnectCodeForLink: async (...args) => {
         calls.push(["exchange", ...args]);
         if (over.exchange instanceof Error) throw over.exchange;
@@ -223,6 +225,20 @@ describe("exchange", () => {
       expect(h.mail.sent[0]?.variables.reason).toContain("Open Numbers");
     }
     expect(logged.find((line) => line.includes('"action":"connect_link"'))).toContain('"detail":"unknown"');
+    // Only a call that died without an answer has to spend the link itself.
+    expect(brokeOff.calls.map((call) => call[0])).not.toContain("abandon");
+    expect(died.calls.at(-1)).toEqual(["abandon", TOKEN]);
+  });
+
+  test("the mail's key names the link and the outcome, so a repeat is the same mail", async () => {
+    const h = harness({ exchange: new Error("rpc died") });
+    await h.call("exchange", { code: "c", state: "s" });
+    await h.call("exchange", { code: "c", state: "s" });
+    expect(h.mail.sent).toHaveLength(2);
+    expect(h.mail.sent[0]?.idempotencyKey).toBe(h.mail.sent[1]?.idempotencyKey);
+    const other = harness({ grant: { ...GRANT, issuedAt: 2 }, exchange: new Error("rpc died") });
+    await other.call("exchange", { code: "c", state: "s" });
+    expect(other.mail.sent[0]?.idempotencyKey).not.toBe(h.mail.sent[0]?.idempotencyKey);
   });
 
   test("refuses a missing code or state", async () => {
@@ -266,6 +282,9 @@ describe("the boundary", () => {
 
   test("an unknown action or a missing token is a bad request", async () => {
     const h = harness();
+    expect((await h.call("event", { event: { event: "" } })).status).toBe(400);
+    expect((await h.call("event", {})).status).toBe(400);
+    expect((await h.call("exchange", { code: "x".repeat(4097), state: "s" })).status).toBe(400);
     expect((await h.call("revoke")).status).toBe(400);
     expect((await h.call("constructor")).status).toBe(400);
     const response = await handleConnectLink("view", {}, "ip", {} as ConnectLinkDeps);

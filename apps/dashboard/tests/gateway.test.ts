@@ -542,11 +542,14 @@ describe("session bootstrap (auth-aware state)", () => {
     const result = await getDashboardState();
     expect(result).toEqual({
       ok: true,
-      data: { stage: "account-ready", resources: {
+      data: { stage: "account-ready", canAdminister: true, resources: {
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [], wabas: [], phones: [],
       } },
     });
+    // A role that may not connect is told so by the state, which is what hides the controls.
+    fakeDeniedActions = new Set(["administer", "erase"]);
+    expect(await getDashboardState()).toMatchObject({ ok: true, data: { canAdminister: false } });
   });
 
   test("an account whose only WABA is awaiting a phone number stays inside the app", async () => {
@@ -2485,7 +2488,7 @@ describe("openConnectLink (Numbers, connection link)", () => {
     });
     expect(calls).toEqual([
       ["get", "account-a"],
-      ["issue", "account-a", "user-1"],
+      ["issue", "account-a", "user-1", false],
     ]);
   });
 
@@ -2507,7 +2510,27 @@ describe("openConnectLink (Numbers, connection link)", () => {
     const fresh: unknown[][] = [];
     linkBinding(fresh, LIVE);
     await openConnectLink({ data: { fresh: true } });
-    expect(fresh).toEqual([["issue", "account-a", "user-1"]]);
+    expect(fresh).toEqual([["issue", "account-a", "user-1", true]]);
+  });
+
+  test("a link another dialog just made, or one mid-connection, is shown and not replaced", async () => {
+    for (const [answer, extra] of [
+      ["exists", {}],
+      ["busy", { busy: true }],
+    ] as const) {
+      let current: unknown = null;
+      withResources({
+        getConnectLink: async () => current,
+        issueConnectLink: async () => {
+          current = LIVE;
+          return answer;
+        },
+      });
+      expect(await openConnectLink({ data: { fresh: answer === "busy" } })).toEqual({
+        ok: true,
+        data: { link: LIVE, url: null, ...extra },
+      });
+    }
   });
 
   test("replaces a live link whose creator may no longer connect: it resolves for nobody", async () => {

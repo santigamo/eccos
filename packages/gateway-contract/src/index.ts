@@ -723,7 +723,13 @@ export type ConnectExchangeResult =
       /** Some numbers were new and the account may not add numbers; they were left out. */
       subscriptionRequired?: true;
     }
-  | { ok: false; error: string; code: ConnectFailureCode };
+  | {
+      ok: false;
+      error: string;
+      code: ConnectFailureCode;
+      /** The failure came after registrations were written: something may be connected, so a retry is not safe. */
+      partial?: true;
+    };
 
 /**
  * Where a workspace's connection link stands, for the admin who made it.
@@ -751,6 +757,8 @@ export interface ConnectLinkGrant {
   accountId: string;
   organizationId: string;
   creatorUserId: string;
+  /** When the link was made: with the account, it names one link without revealing its token. */
+  issuedAt: number;
   state: "active" | "expired" | "used";
   connectPolicy: ConnectPolicy;
 }
@@ -1372,8 +1380,17 @@ export interface GatewayApi {
   ): Promise<ManualConnectResult>;
   /** The account's current connection link, or null when none was ever made. */
   getConnectLink(accountId: string): Promise<ConnectLinkSummary | null>;
-  /** Makes the account's one connection link, valid for 7 days; any previous one stops working. */
-  issueConnectLink(accountId: string, creatorUserId: string): Promise<IssuedConnectLink>;
+  /**
+   * Makes the account's one connection link, valid for 7 days. Without
+   * `replace` a live link is kept and the answer is `exists`, so two callers
+   * racing to make the first link end up with one. With it the previous link
+   * stops working, unless an exchange holds it right now: `busy`.
+   */
+  issueConnectLink(
+    accountId: string,
+    creatorUserId: string,
+    replace?: boolean,
+  ): Promise<IssuedConnectLink | "exists" | "busy">;
   /** Null for a token that is unknown, replaced, or whose account has no active organization. */
   resolveConnectLink(token: string, markOpened?: boolean): Promise<ConnectLinkGrant | null>;
   /**
@@ -1387,6 +1404,11 @@ export interface GatewayApi {
     code: string,
     state: string,
   ): Promise<ConnectLinkExchange | "busy" | null>;
+  /**
+   * For a caller whose exchange call died without an answer: spends the link
+   * as unconfirmed unless it was already spent. Idempotent.
+   */
+  abandonConnectLinkExchange(token: string): Promise<void>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(

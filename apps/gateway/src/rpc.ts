@@ -1391,11 +1391,20 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).getConnectLink(requireAccountId(accountId, "accountId is required"));
   }
 
-  async issueConnectLink(accountId: string, creatorUserId: string): Promise<IssuedConnectLink> {
+  async issueConnectLink(
+    accountId: string,
+    creatorUserId: string,
+    replace?: boolean,
+  ): Promise<IssuedConnectLink | "exists" | "busy"> {
     return getControlPlaneStub(this.env).issueConnectLink(
       requireAccountId(accountId, "accountId is required"),
       creatorUserId,
+      replace,
     );
+  }
+
+  async abandonConnectLinkExchange(token: string): Promise<void> {
+    return getControlPlaneStub(this.env).abandonConnectLink(token);
   }
 
   async resolveConnectLink(token: string, markOpened?: boolean): Promise<ConnectLinkGrant | null> {
@@ -1404,28 +1413,32 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
   /**
    * The link is claimed for the length of the exchange, so two bearers cannot
-   * both spend it. An exchange that throws may already have registered
-   * something, so it spends the link as unconfirmed instead of inviting a retry.
+   * both spend it. Only an outcome that may have registered something spends
+   * the link without a clean result (`result: null`): the exchange itself
+   * reports that as `partial`. A throw comes from before Meta is called
+   * (configuration, the state lookup), so it is an ordinary failure and the
+   * link stays usable.
    */
   async exchangeConnectCodeForLink(token: string, code: string, state: string): Promise<ConnectLinkExchange | "busy" | null> {
     const controlPlane = getControlPlaneStub(this.env);
     const grant = await controlPlane.claimConnectLink(token);
     if (!grant || grant === "busy") return grant;
-    let result: ConnectExchangeResult | null;
+    let result: ConnectExchangeResult;
     try {
       result = await this.exchangeConnectCodeForAccountId(grant.accountId, code, state);
-    } catch {
-      result = null;
+    } catch (err) {
+      result = { ok: false, error: errorDetail(err), code: "failed" };
     }
+    const unknown = !result.ok && result.partial === true;
     const notify = await controlPlane.settleConnectLink(
       token,
-      !result
+      unknown
         ? { kind: "unknown" }
         : result.ok
           ? { kind: "connected", phone: result.display_phone_number || null }
           : { kind: "failed", code: result.code },
     );
-    return { grant: !result || result.ok ? { ...grant, state: "used" } : grant, result, notify };
+    return { grant: unknown || result.ok ? { ...grant, state: "used" } : grant, result: unknown ? null : result, notify };
   }
 
   /**

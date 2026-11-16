@@ -71,8 +71,40 @@ describe("ConnectLinkPanel", () => {
   test("an existing link shows its status but cannot be copied again", async () => {
     await mount(() => ({ ok: true, data: { link: { ...pending, state: "opened" }, url: null } }));
     expect(document.body.textContent).toContain("Opened, not finished");
-    expect(document.body.textContent).toContain("To send it again, make a new one.");
-    expect(button("Copy link").disabled).toBe(true);
+    expect(document.body.textContent).toContain(
+      "This link was sent already. Make a new one to get its address again; the old one stops working.",
+    );
+    // No dead Copy button: making a new link is the one thing left, so it is the primary action.
+    expect(button("Copy link")).toBeUndefined();
+    expect(button("New link").className).toContain("bg-primary");
+  });
+
+  test("a link mid-connection is not replaced, and the dialog says why", async () => {
+    await mount((fresh) => ({
+      ok: true,
+      data: { link: { ...pending, state: "opened" }, url: null, ...(fresh ? { busy: true } : {}) },
+    }));
+    await act(async () => button("New link").click());
+    await settle();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("in progress");
+  });
+
+  test("a second click while a request is out does not ask twice", async () => {
+    let release: (value: unknown) => void = () => {};
+    const asked = await mount((fresh) =>
+      fresh
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : { ok: true, data: { link: pending, url: URL_1 } },
+    );
+    await act(async () => {
+      button("New link").click();
+      button("New link").click();
+    });
+    await act(async () => release({ ok: true, data: { link: pending, url: URL_2 } }));
+    await settle();
+    expect(asked).toEqual([false, true]);
   });
 
   test("a used link reads as connected, with the number", async () => {
@@ -95,6 +127,6 @@ describe("ConnectLinkPanel", () => {
   test("a role that may not connect gets the refusal, and nothing to copy", async () => {
     await mount(() => ({ ok: false, kind: "forbidden", reason: "missing-permission", error: "no" }));
     expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
-    expect(button("Copy link").disabled).toBe(true);
+    expect(button("Copy link")).toBeUndefined();
   });
 });

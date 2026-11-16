@@ -32,6 +32,7 @@ export const CONNECT_LINKS_SCHEMA = `CREATE TABLE IF NOT EXISTS connect_links (
 export interface ConnectLinkRow {
   accountId: string;
   creatorUserId: string;
+  issuedAt: number;
   state: "active" | "expired" | "used";
 }
 
@@ -67,25 +68,39 @@ function grant(row: Record<string, unknown>, now: number): ConnectLinkRow {
   return {
     accountId: row.account_id as string,
     creatorUserId: row.creator_user_id as string,
+    issuedAt: row.created_at as number,
     state: stateOf(row, now),
   };
 }
 
+/**
+ * Makes the account's link. A live one is kept unless `replace` (`exists`),
+ * and one an exchange holds is never replaced (`busy`): its settlement would
+ * land on nothing and lose what it registered.
+ */
 export async function issueConnectLink(
   sql: SqlStorage,
   accountId: string,
   creatorUserId: string,
+  replace: boolean,
   now = Date.now(),
-): Promise<{ token: string; expiresAt: number }> {
+): Promise<{ token: string; expiresAt: number } | "exists" | "busy"> {
   const selector = toBase64Url(crypto.getRandomValues(new Uint8Array(8)));
   const secret = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const hash = await sha256Hex(secret);
   const expiresAt = now + CONNECT_LINK_TTL_MS;
+  // Nothing is awaited from the check to the write, so no other call runs between them.
+  const current = sql.exec("SELECT * FROM connect_links WHERE account_id = ?", accountId).toArray()[0];
+  if (current && stateOf(current, now) === "active") {
+    if (((current.claimed_until as number | null) ?? 0) > now) return "busy";
+    if (!replace) return "exists";
+  }
   sql.exec(
     `INSERT OR REPLACE INTO connect_links (account_id, selector, hash, creator_user_id, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
     accountId,
     selector,
-    await sha256Hex(secret),
+    hash,
     creatorUserId,
     now,
     expiresAt,
@@ -187,4 +202,16 @@ export async function settleConnectLink(
     row.selector,
   );
   return notify;
+}
+
+/** Spends a link whose exchange nobody heard back from, unless it is already spent. */
+export async function abandonConnectLink(sql: SqlStorage, token: string, now = Date.now()): Promise<void> {
+  const row = await find(sql, token);
+  if (row && row.used_at === null) {
+    sql.exec(
+      "UPDATE connect_links SET used_at = ?, unconfirmed = 1, claimed_until = NULL WHERE selector = ? AND used_at IS NULL",
+      now,
+      row.selector,
+    );
+  }
 }

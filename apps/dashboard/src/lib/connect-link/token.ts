@@ -7,11 +7,10 @@ const STORAGE_KEY = "eccos.connect-link";
  */
 export function takeLinkToken(win: Window = window): string | null {
   const fromHash = win.location.hash.slice(1);
+  // First, and on its own: storage that throws must not leave the token in the address bar.
+  if (fromHash) win.history.replaceState(win.history.state, "", win.location.pathname + win.location.search);
   try {
-    if (fromHash) {
-      win.sessionStorage.setItem(STORAGE_KEY, fromHash);
-      win.history.replaceState(win.history.state, "", win.location.pathname + win.location.search);
-    }
+    if (fromHash) win.sessionStorage.setItem(STORAGE_KEY, fromHash);
     return fromHash || win.sessionStorage.getItem(STORAGE_KEY);
   } catch {
     return fromHash || null;

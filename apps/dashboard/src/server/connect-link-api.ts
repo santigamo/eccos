@@ -3,7 +3,12 @@ import { createMailSenderFromEnv } from "../auth/config";
 import type { MailEnv, MailSender } from "../auth/mail";
 import { CONNECT_LINK_API, type LinkOutcome, type LinkStart, type LinkView } from "../lib/connect-link/api";
 import { connectAudit, judgeExchange } from "../lib/connect-result";
-import { type EmbeddedSignupConfig, embeddedSignupConfig, validateSessionEvent } from "../lib/embedded-signup";
+import {
+  type EmbeddedSignupConfig,
+  embeddedSignupConfig,
+  validateCodeAndState,
+  validateSessionEvent,
+} from "../lib/embedded-signup";
 import { type AttemptLimiter, attemptLimiter } from "./attempt-limit";
 import { auditEvent } from "./audit";
 import { mailLinkOutcome } from "./connect-link-mail";
@@ -19,7 +24,10 @@ import { type LinkPeople, linkPeople } from "./connect-link-people";
  */
 
 export interface ConnectLinkDeps {
-  gateway: Pick<GatewayApi, "resolveConnectLink" | "startConnectForAccountId" | "exchangeConnectCodeForLink">;
+  gateway: Pick<
+    GatewayApi,
+    "resolveConnectLink" | "startConnectForAccountId" | "exchangeConnectCodeForLink" | "abandonConnectLinkExchange"
+  >;
   people(organizationId: string, userId: string): Promise<LinkPeople | null>;
   /** Wrong tokens per caller. A right token is never counted, so strangers behind one address cannot lock a bearer out. */
   failures: AttemptLimiter;
@@ -62,12 +70,16 @@ function audit(
   });
 }
 
-function text(value: unknown, max: number): string {
-  if (typeof value !== "string" || value.trim() === "" || value.length > max) throw new BadRequest();
-  return value.trim();
-}
-
 class BadRequest extends Error {}
+
+/** A validator's refusal is the caller's mistake: 400, not a failure of ours. */
+function accept<T>(validate: () => T): T {
+  try {
+    return validate();
+  } catch {
+    throw new BadRequest();
+  }
+}
 
 const ACTIONS: Record<string, { gone: unknown; run(call: Call): Promise<unknown> }> = {
   view: {
@@ -105,12 +117,13 @@ const ACTIONS: Record<string, { gone: unknown; run(call: Call): Promise<unknown>
     gone: { outcome: "gone" } satisfies LinkOutcome,
     async run({ token, input, grant: resolved, people, deps }): Promise<LinkOutcome> {
       if (resolved.state !== "active") return { outcome: "gone" };
-      const code = text(input.code, 4096);
-      const state = text(input.state, 512);
-      // A call that dies on the way may still have registered something: unknown, never "try again".
-      const exchange = await deps.gateway
-        .exchangeConnectCodeForLink(token, code, state)
-        .catch(() => ({ grant: resolved, result: null, notify: true }));
+      const { code, state } = accept(() => validateCodeAndState(input));
+      // A call that dies without an answer may still have registered something: unknown, never
+      // "try again". The link is spent so that copy holds; the mail's key makes it one per link.
+      const exchange = await deps.gateway.exchangeConnectCodeForLink(token, code, state).catch(async () => {
+        await deps.gateway.abandonConnectLinkExchange(token).catch(() => {});
+        return { grant: resolved, result: null, notify: true };
+      });
       if (!exchange) return { outcome: "gone" };
       if (exchange === "busy") return { outcome: "busy" };
       const { grant, result } = exchange;
@@ -139,7 +152,8 @@ const ACTIONS: Record<string, { gone: unknown; run(call: Call): Promise<unknown>
             workspace: people.workspace,
             url: `${deps.origin}/numbers`,
             outcome: outcome.outcome,
-            unique: `${grant.accountId}:${Date.now()}`,
+            // One mail per link and outcome, whoever asks for it and however often.
+            unique: `${grant.accountId}:${grant.issuedAt}:${outcome.outcome}`,
           }),
         );
       }
@@ -150,7 +164,7 @@ const ACTIONS: Record<string, { gone: unknown; run(call: Call): Promise<unknown>
     gone: {},
     // Only for a link still in use, and only so many: each event is an audit line.
     async run({ input, caller, grant, deps }) {
-      const event = validateSessionEvent(input.event);
+      const event = accept(() => validateSessionEvent(input.event));
       if (grant.state !== "active" || (await deps.events.strike(caller))) return {};
       auditEvent({
         action: "connect_session_event",
