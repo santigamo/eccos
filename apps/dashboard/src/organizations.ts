@@ -21,6 +21,7 @@ import {
   type Membership,
 } from "./auth/tenant";
 import { activeWorkspace } from "./lib/workspaces";
+import { isReseller } from "./billing/reseller";
 import {
   INVITATION_COPY,
   INVITATION_RETRY,
@@ -57,6 +58,17 @@ function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<T> {
   const gateway = env.GATEWAY;
   if (!gateway) throw new Error("GATEWAY service binding is not configured");
   return fn(gateway);
+}
+
+/** A reseller's new workspace opens without a subscription; a failure leaves it closed for the operator to open. */
+async function openForReseller(accountId: string): Promise<void> {
+  const { session } = await requireAuthContext(authInstance(), currentRequest());
+  if (!isReseller(session.userId, (env as { RESELLER_USER_IDS?: string }).RESELLER_USER_IDS)) return;
+  try {
+    await withGateway((gateway) => gateway.setAccountBilling(accountId, { connectPolicy: "open" }));
+  } catch (err) {
+    console.error(JSON.stringify({ level: "error", area: "billing", event: "reseller-open-failed", error: (err as Error)?.name }));
+  }
 }
 
 /** List the signed-in user's organizations with their account-link state. */
@@ -225,6 +237,7 @@ export const createOrganization = createServerFn({ method: "POST" })
         const link = await withGateway((gateway) =>
           gateway.ensureOrganizationAccount(org.id as string, data.name),
         );
+        await openForReseller(link.accountId);
         return { ok: true, data: { organizationId: org.id, accountId: link.accountId } };
       } catch (err) {
         return { ok: false, error: createWorkspaceErrorCopy(err) };
