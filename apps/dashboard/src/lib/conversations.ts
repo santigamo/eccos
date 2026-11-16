@@ -206,7 +206,12 @@ export function describeEntry(entry: Pick<ThreadEntry, "message" | "text" | "del
   const kind = entry.deleted ? "revoke" : entry.message.type;
   return {
     sender: entry.message.direction === "in" ? "Customer" : "You",
-    preview: entry.text !== null && !entry.deleted ? entry.text : (TYPE_LABEL[kind] ?? kind),
+    preview:
+      kind === "template"
+        ? templatePreviewOf(entry.message)
+        : entry.text !== null && !entry.deleted
+          ? entry.text
+          : (TYPE_LABEL[kind] ?? kind),
   };
 }
 
@@ -302,7 +307,16 @@ const TYPE_LABEL: Record<string, string> = {
   revoke: "Message deleted",
   unsupported: "Unsupported message",
   media_placeholder: "Media not available",
+  template: "Template",
 };
+
+/** A template as a quote reads it: the body the customer read, else its name. Never its stored text,
+ * which on older rows is a `template:<name>` marker. */
+function templatePreviewOf(message: MessageRecord): string {
+  const content = contentOf(message);
+  const name = str(content.name);
+  return str(asRecord(content.copy)?.body) ?? (name ? `Template: ${name}` : "Template");
+}
 
 /** The last message as the list previews it: its text or caption, else what kind it is. The staff's own sends are marked as theirs. */
 export function previewOf(last: ConversationSummary["lastMessage"]): string {

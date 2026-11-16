@@ -12,7 +12,7 @@ import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./met
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { type TokenHealth, watchGraph } from "./token-health";
-import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
+import { createTemplate, deleteTemplate, editTemplate, findTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -728,7 +728,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * that can reach another WABA's template must still not edit it from here.
    */
   async editTemplate(input: EditTemplateInput, accountId: string): Promise<EditTemplateResult> {
-    const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
+    const { config: cfg, stub } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
     if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
     if (!LANGUAGE_PATTERN.test(input.language)) throw new Error("invalid template language");
     if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
@@ -737,17 +737,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     }
     const { examples, footerText, buttons } = assertTemplateContent(input);
 
-    const found = await listTemplates(cfg, 100, { fields: ["id", "name", "language"], name: input.name });
+    const found = await findTemplate(cfg, input.name, input.language, ["id", "name", "language"]);
     if (!found.ok) {
       const { message } = graphError(found.error);
       return { ok: false, code: "graph", detail: message ?? `HTTP ${found.status}` };
     }
-    const rows =
-      (found.data as { data?: { id?: unknown; name?: unknown; language?: unknown }[] } | null)?.data ?? [];
-    const owned = rows.some(
-      (row) => row.id === input.templateId && row.name === input.name && row.language === input.language,
-    );
-    if (!owned) {
+    if (found.template?.id !== input.templateId) {
       return { ok: false, code: "not_found", detail: null };
     }
 
@@ -764,6 +759,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         code === 80008 ? "rate_limited" : code === 100 ? "invalid" : "graph";
       return { ok: false, code: mapped, detail: message ?? `HTTP ${result.status}` };
     }
+    // Best effort: the change is made at Meta, and a missed drop only lasts the cache lifetime.
+    await stub.forgetTemplate(input.name).catch(() => {});
     return { ok: true };
   }
 
@@ -772,7 +769,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * `wabaId` is re-read from the scoped record so the Graph call can never be
    * addressed at a WABA the account does not own. */
   async deleteTemplate(input: DeleteTemplateInput, accountId: string): Promise<DeleteTemplateResult> {
-    const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
+    const { config: cfg, stub } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
     // Defense in depth again: only a regressed console can produce these.
     if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
     if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
@@ -782,6 +779,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       const { message } = graphError(result.error);
       return { ok: false, code: "graph", detail: message ?? `HTTP ${result.status}` };
     }
+    // Best effort: the change is made at Meta, and a missed drop only lasts the cache lifetime.
+    await stub.forgetTemplate(input.name).catch(() => {});
     return { ok: true };
   }
 

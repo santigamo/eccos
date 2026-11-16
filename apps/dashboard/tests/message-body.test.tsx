@@ -48,3 +48,49 @@ describe("MessageBody media", () => {
     expect(html).not.toContain("Open image");
   });
 });
+
+describe("MessageBody template", () => {
+  const sent = {
+    name: "order_update",
+    language: { code: "es" },
+    components: [{ type: "body", parameters: [{ type: "text", text: "Ada" }] }],
+  };
+
+  test("with its copy, shows what the customer read, marked as a template by name", () => {
+    const copy = { header: "Pedido", body: "Hola Ada, tu pedido está listo.", footer: "Eccos test", buttons: ["Gracias"] };
+    const html = renderToStaticMarkup(<MessageBody entry={entry("template", { ...sent, copy })} wabaId={WABA} />);
+    for (const words of ["Template", "order_update", "Pedido", "Hola Ada, tu pedido está listo.", "Eccos test", "Gracias"]) {
+      expect(html).toContain(words);
+    }
+    expect(html).not.toContain("{{1}}");
+  });
+
+  test("without a copy, names the template and lists the values sent by slot", () => {
+    const html = renderToStaticMarkup(<MessageBody entry={entry("template", sent)} wabaId={WABA} />);
+    expect(html).toContain("order_update");
+    expect(html).toContain("{{1}}");
+    expect(html).toContain("Ada");
+    expect(html).not.toContain("template:order_update");
+  });
+
+  test("a send that filled no parameters says so", () => {
+    const html = renderToStaticMarkup(
+      <MessageBody entry={entry("template", { name: "hello_world", language: { code: "en_US" } })} wabaId={WABA} />,
+    );
+    expect(html).toContain("hello_world");
+    expect(html).toContain("This send filled no parameters.");
+  });
+
+  test("a template row the console cannot read says so, not that it filled nothing", () => {
+    const unreadable = renderToStaticMarkup(<MessageBody entry={entry("template", {})} wabaId={WABA} />);
+    expect(unreadable).toContain("The console cannot read what this template message carried.");
+    expect(unreadable).not.toContain("filled no parameters");
+    const mediaOnly = renderToStaticMarkup(
+      <MessageBody
+        entry={entry("template", { name: "promo", components: [{ type: "header", parameters: [{ type: "image", image: {} }] }] })}
+        wabaId={WABA}
+      />,
+    );
+    expect(mediaOnly).toContain("The console cannot read");
+  });
+});

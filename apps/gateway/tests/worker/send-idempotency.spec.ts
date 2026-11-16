@@ -126,7 +126,8 @@ describe("console send idempotency", () => {
       );
     expect(await send()).toEqual({ ok: true, messageId: "wamid.1" });
     expect(await send()).toEqual({ ok: true, messageId: "wamid.1" });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // The template's copy is looked up after the send; only the sends count here.
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).endsWith("/messages"))).toHaveLength(1);
   });
 
   it("refuses a malformed key before anything is sent", async () => {

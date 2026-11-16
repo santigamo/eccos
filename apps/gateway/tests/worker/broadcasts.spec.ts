@@ -29,7 +29,7 @@ type SendAnswer = { status: number; body: unknown };
  * Meta: the template lookup answers with `templateStatus`, and each send takes
  * the next answer from `sends` (default: accepted with a fresh wamid).
  */
-function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[]; onSend?: () => Promise<void> } = {}) {
+function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[]; onSend?: () => Promise<void>; components?: unknown[] } = {}) {
   const sends = [...(opts.sends ?? [])];
   let wamid = 0;
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -40,7 +40,7 @@ function mockMeta(opts: { templateStatus?: string | null; sends?: SendAnswer[]; 
     }
     if (url.includes("/message_templates")) {
       const status = opts.templateStatus === undefined ? "APPROVED" : opts.templateStatus;
-      const data = status === null ? [] : [{ name: "promo", language: "es", status, id: "1" }];
+      const data = status === null ? [] : [{ name: "promo", language: "es", status, id: "1", components: opts.components }];
       return Response.json({ data });
     }
     await opts.onSend?.();
@@ -172,6 +172,20 @@ describe("sending", () => {
       TEST_ACCOUNT_ID,
     );
     expect(outbound.map((row) => row.transport_message_id).sort()).toEqual(["wamid.1", "wamid.2"]);
+  });
+
+  it("reads the template's copy from Meta once for the whole broadcast", async () => {
+    const fetchSpy = mockMeta({ components: [{ type: "BODY", text: "Hola {{1}}" }] });
+    await createdId(broadcast(["34600000001", "34600000002", "34600000003"]));
+    for (let n = 0; n < 3; n++) await tick();
+    await vi.waitFor(async () => {
+      const texts = await runInDurableObject(gatewayStub(), (instance: EccosGateway) =>
+        instance.sql.exec(`SELECT text FROM messages ORDER BY text`).toArray().map((row) => row.text),
+      );
+      expect(texts).toEqual(["Hola name-34600000001", "Hola name-34600000002", "Hola name-34600000003"]);
+    });
+    const lookups = fetchSpy.mock.calls.filter(([input]) => String(input).includes("components"));
+    expect(lookups).toHaveLength(1);
   });
 
   it("keeps no message values once a recipient is settled", async () => {
