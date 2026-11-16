@@ -12,7 +12,7 @@ export const TEMPLATE_FIELDS = ["id", "name", "language", "status", "category", 
 export async function listTemplates(
   cfg: MetaAppConfig,
   limit = 100,
-  options: { fields?: readonly string[]; name?: string } = {},
+  options: { fields?: readonly string[]; name?: string; after?: string } = {},
 ): Promise<TemplatesResult> {
   const wabaId = cfg.META_WABA_ID;
   if (!wabaId) {
@@ -21,6 +21,7 @@ export async function listTemplates(
   const query = new URLSearchParams({ limit: String(limit) });
   if (options.fields) query.set("fields", options.fields.join(","));
   if (options.name) query.set("name", options.name);
+  if (options.after) query.set("after", options.after);
   const url = `${graphBaseUrl(cfg)}/${wabaId}/message_templates?${query}`;
 
   let res: Response;
@@ -36,6 +37,39 @@ export async function listTemplates(
   const json = await res.json().catch(() => null);
   if (!res.ok) return { ok: false, status: res.status, error: json };
   return { ok: true, data: json };
+}
+
+/** Pages read by {@link findTemplate}: 1,000 rows of one name filter is past any real WABA. */
+const FIND_MAX_PAGES = 10;
+
+export type FindTemplateResult =
+  | { ok: true; template: Record<string, unknown> | null }
+  | { ok: false; status: number; error: unknown };
+
+/**
+ * One translation of a template, by exact name and language; `template` is null when there is none.
+ * Meta's `name` filter matches substrings (`promo` also lists every `promo_*`), so the list is paged
+ * until the translation is found or it ends. `fields` must include `name` and `language`.
+ */
+export async function findTemplate(
+  cfg: MetaAppConfig,
+  name: string,
+  language: string,
+  fields: readonly string[],
+): Promise<FindTemplateResult> {
+  let after: string | undefined;
+  for (let page = 0; page < FIND_MAX_PAGES; page++) {
+    const result = await listTemplates(cfg, 100, { fields, name, after });
+    if (!result.ok) return result;
+    const body = result.data as { data?: unknown; paging?: { next?: unknown; cursors?: { after?: unknown } } } | null;
+    const rows = Array.isArray(body?.data) ? (body.data as Record<string, unknown>[]) : [];
+    const template = rows.find((row) => row?.name === name && row?.language === language);
+    if (template) return { ok: true, template };
+    const cursor = body?.paging?.cursors?.after;
+    if (typeof body?.paging?.next !== "string" || typeof cursor !== "string") break;
+    after = cursor;
+  }
+  return { ok: true, template: null };
 }
 
 /** A text message template as the console authors it: an optional static

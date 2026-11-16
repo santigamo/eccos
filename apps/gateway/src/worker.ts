@@ -11,7 +11,7 @@ import {
 } from "@eccos/core/parser";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
-import { listTemplates, TEMPLATE_FIELDS } from "@eccos/core/templates";
+import { findTemplate, listTemplates, TEMPLATE_FIELDS } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
 import { watchGraph } from "./token-health";
@@ -932,14 +932,12 @@ async function templateRefusal(
     metaAccessToken: waba.metaAccessToken,
     fetch: watched(c, waba.wabaId),
   });
-  const templates = await listTemplates(cfg, 100, { fields: ["name", "language", "status"], name });
-  if (!templates.ok) {
+  const found = await findTemplate(cfg, name, language, ["name", "language", "status"]);
+  if (!found.ok) {
     logEvent(event, cid, 502, { wabaId: waba.wabaId, reason: "template_lookup_failed" });
-    return c.json({ ok: false, error: templates.error }, 502);
+    return c.json({ ok: false, error: found.error }, 502);
   }
-  const translation = ((templates.data as { data?: { name?: unknown; language?: unknown; status?: unknown }[] })?.data ?? []).find(
-    (row) => row.name === name && row.language === language,
-  );
+  const translation = found.template;
   if (!translation) return c.json({ ok: false, error: "template_not_found" }, 422);
   if (translation.status !== "APPROVED") {
     return c.json({ ok: false, error: "template_not_approved", templateStatus: translation.status }, 422);
