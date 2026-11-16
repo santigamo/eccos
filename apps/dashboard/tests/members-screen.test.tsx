@@ -8,7 +8,7 @@ import type { MembersPage } from "../src/members";
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { MembersView } = await import("../src/routes/members");
-const { InviteMemberForm } = await import("../src/components/dashboard/invite-member-sheet");
+const { InviteMemberForm, inviteEmailProblem } = await import("../src/components/dashboard/invite-member-sheet");
 const { InvitationsTable } = await import("../src/components/dashboard/invitations-table");
 const { removeMemberCopy } = await import("../src/components/dashboard/remove-member-dialog");
 const { roleChangeCost } = await import("../src/components/dashboard/change-role-dialog");
@@ -152,6 +152,14 @@ describe("the change-role dialog's reading", () => {
   });
 });
 
+describe("the invite form's email rule is the server's", () => {
+  test("an address without a domain suffix is refused in the form", () => {
+    expect(inviteEmailProblem("ana@empresa")).toBe("Enter a full email address, like name@company.com.");
+    expect(inviteEmailProblem("ana@empresa.com")).toBeNull();
+    expect(inviteEmailProblem("")).toBeNull();
+  });
+});
+
 describe("a role change states its cost", () => {
   test("demoting an admin ends their management and their connection link", () => {
     expect(roleChangeCost("admin", "operator")).toContain("connection link they made stops working");
@@ -173,6 +181,7 @@ describe("removing a member states the cost", () => {
     expect(removeMemberCopy("operator")).toEqual([
       "Their access ends on their next request.",
       "API keys they created keep working. Revoke them in Settings if they should stop.",
+      "Invitations they sent that are still pending are cancelled.",
     ]);
   });
 

@@ -21,7 +21,14 @@ endpoint, since Better Auth silently ignores a misspelled rule):
 | `/sign-up/email` | 3600 s | 20 |
 | `/request-password-reset` | 3600 s | 10 |
 | `/send-verification-email` | 300 s | 5 |
-| `/organization/invite-member` | 3600 s | 50 |
+| `/organization/invite-member` | 3600 s | 50 (inactive in the dashboard: the route is not served, see below) |
+
+**Invitations are capped per inviter, not per IP.** The dashboard does not
+serve `/organization/invite-member` over HTTP (`src/auth/blocked-endpoints.ts`),
+so the 50/hour rule above never fires there. The active control is 20
+invitations per inviter per hour, counted by `attemptLimiter` in the
+organization plugin's `beforeCreateInvitation` hook (`src/auth/auth.ts`), which
+every invitation and every resend passes through.
 
 **What a bucket keys on.** Better Auth builds the key as `${callerIP}|${path}`
 (`createRateLimitKey`, `@better-auth/core/utils/ip`) — the caller's address and
@@ -81,8 +88,13 @@ gateway layer and the D1-level `429` behavior tested in
 
 - `disableOrganizationDeletion: true` — `POST /organization/delete` is rejected
   in v1 (no offboarding saga yet).
-- Create/invite/role changes wrapped by the dashboard server functions with the
-  same permission checks as the matrix; unverified emails are rejected.
+- `organization/create`, `check-slug` and `update`, and the membership writes
+  `invite-member`, `cancel-invitation`, `remove-member` and
+  `update-member-role`, answer 404 before dispatch
+  (`src/auth/blocked-endpoints.ts`). Creation and every membership change go
+  through the dashboard server functions (`src/organizations.ts`,
+  `src/members.ts`), which hold the permission checks, the grantable roles, the
+  owner rules and the audit line; unverified emails are rejected.
 
 ### CSRF / cookies / origins
 

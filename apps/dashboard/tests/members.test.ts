@@ -275,11 +275,13 @@ describe("failure copy", () => {
     expect(ws.db.query("SELECT status FROM invitation WHERE id = ?").get(ws.foreignInvitation)).toEqual({ status: "pending" });
   });
 
-  test("anything unrecognised is the retry line, never the provider's text", () => {
-    expect(members.membersFailure(new Error("D1_ERROR: no such table: member"))).toEqual({
-      ok: false,
-      error: copy.MEMBERS_RETRY,
-    });
+  test("anything unrecognised is the retry line, never the provider's text", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await ws.invite("doomed@example.test");
+    const invitationId = ws.pending()[0]!.id;
+    ws.db.run("ALTER TABLE invitation RENAME TO invitation_gone");
+    expect(await cancelInvitation({ data: { invitationId } })).toEqual({ ok: false, error: copy.MEMBERS_RETRY });
   });
 });
 
@@ -423,7 +425,7 @@ describe("the page's workspace", () => {
     const otherWorkspace = ws.db.query("SELECT id FROM organization WHERE id != ?").get(ws.org.id) as { id: string };
     expect(
       await inviteMember({ data: { email: "new@example.test", role: "viewer", organizationId: otherWorkspace.id } }),
-    ).toEqual({ ok: false, error: copy.MEMBERS_COPY[copy.WORKSPACE_CHANGED]! });
+    ).toEqual({ ok: false, error: "You switched workspace in another tab. Reload this page." });
     expect(ws.pending()).toEqual([]);
   });
 
@@ -438,5 +440,77 @@ describe("the page's workspace", () => {
     const refused = await removeMember({ data: { memberId: ws.memberOf("viewer") } });
     expect(refused.ok).toBe(false);
     expect(refused.ok ? "" : refused.error).toContain("Pick the one you want to work in.");
+  });
+});
+
+describe("removing a member", () => {
+  test("cancels the invitations they sent, in the same operation, and audits how many", async () => {
+    const ws = await workspace();
+    ws.as("admin");
+    await ws.invite("from-admin-1@example.test");
+    await ws.invite("from-admin-2@example.test");
+    ws.as("owner");
+    await ws.invite("from-owner@example.test");
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    try {
+      expect(await removeMember({ data: { memberId: ws.memberOf("admin") } })).toEqual({ ok: true });
+      const audit = info.mock.calls.map(([line]) => JSON.parse(String(line))).find((line) => line.area === "audit");
+      expect(audit).toMatchObject({ action: "member_removed", outcome: "success", resource: { invitationsCanceled: "2" } });
+    } finally {
+      info.mockRestore();
+    }
+    expect(ws.pending().map((row) => row.email)).toEqual(["from-owner@example.test"]);
+  });
+});
+
+describe("invitation writes are conditional on the status they expect", () => {
+  test("an invitation accepted in the meantime is not cancelled", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await ws.invite("quick@example.test");
+    const id = ws.pending()[0]!.id;
+    ws.db.query("UPDATE invitation SET status = 'accepted' WHERE id = ?").run(id);
+    expect(await cancelInvitation({ data: { invitationId: id } })).toEqual({
+      ok: false,
+      error: copy.INVITATION_GONE,
+      gone: true,
+    });
+    expect(ws.db.query("SELECT status FROM invitation WHERE id = ?").get(id)).toEqual({ status: "accepted" });
+  });
+
+  test("two resends of the same row leave exactly one live invitation", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await ws.invite("twice@example.test");
+    const id = ws.pending()[0]!.id;
+    const results = await Promise.all([
+      resendInvitation({ data: { invitationId: id } }),
+      resendInvitation({ data: { invitationId: id } }),
+    ]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, error: copy.INVITATION_GONE, gone: true }]);
+    expect(ws.pending()).toHaveLength(1);
+  });
+});
+
+describe("the pending list", () => {
+  test("is newest first, so old expired rows never crowd out a live one", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await ws.invite("template@example.test");
+    const template = ws.pending()[0]!.id;
+    const columns = (ws.db.query("PRAGMA table_info(invitation)").all() as Array<{ name: string }>).map((c) => `"${c.name}"`);
+    const copied = columns.map((c) =>
+      c === '"id"' ? "?1" : c === '"email"' ? "?2" : c === '"createdAt"' ? "0" : c === '"expiresAt"' ? "1" : c,
+    );
+    const insert = ws.db.query(
+      `INSERT INTO invitation (${columns.join(", ")}) SELECT ${copied.join(", ")} FROM invitation WHERE id = ?3`,
+    );
+    for (let i = 0; i < 120; i++) insert.run(`stale-${i}`, `stale${i}@example.test`, template);
+    await ws.invite("fresh@example.test");
+
+    const result = await listWorkspaceMembers();
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.invitations[0]!.email).toBe("fresh@example.test");
   });
 });

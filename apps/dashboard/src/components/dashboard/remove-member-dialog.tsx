@@ -11,12 +11,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import { removeMember, type MembersMutation, type MemberView } from "../../members";
 import { isOwnerRole } from "../../lib/member-roles";
+import { followSignIn } from "../../lib/follow-sign-in";
+import { MEMBERS_RETRY } from "../../lib/members-copy";
 
 /** What removing this member costs. Exported so the wording is asserted directly. */
 export function removeMemberCopy(role: string): string[] {
   return [
     "Their access ends on their next request.",
     "API keys they created keep working. Revoke them in Settings if they should stop.",
+    "Invitations they sent that are still pending are cancelled.",
     ...(role === "admin" || isOwnerRole(role) ? ["The connection link they made stops working."] : []),
   ];
 }
@@ -42,6 +45,8 @@ export function RemoveMemberDialog({
       onResult(result);
       if (result.ok || result.gone) onOpenChange(false);
       else setError(result.error);
+    } catch (err) {
+      if (!followSignIn(err)) setError(MEMBERS_RETRY);
     } finally {
       setRemoving(false);
     }

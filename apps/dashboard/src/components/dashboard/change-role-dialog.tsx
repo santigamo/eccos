@@ -11,6 +11,8 @@ import {
 import { updateMemberRole, type MemberRole, type MembersMutation, type MemberView } from "../../members";
 import { roleInSentence } from "../../lib/member-roles";
 import { RoleChoices } from "./role-choices";
+import { followSignIn } from "../../lib/follow-sign-in";
+import { MEMBERS_RETRY } from "../../lib/members-copy";
 
 /** What moving from one role to another costs, or null when it costs nothing worth saying. */
 export function roleChangeCost(from: string, to: MemberRole): string | null {
@@ -51,6 +53,8 @@ export function ChangeRoleDialog({
       onResult(result);
       if (result.ok || result.gone) onOpenChange(false);
       else setError(result.error);
+    } catch (err) {
+      if (!followSignIn(err)) setError(MEMBERS_RETRY);
     } finally {
       setSaving(false);
     }

@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cancelInvitation, resendInvitation, type InvitationView, type MembersMutation } from "../../members";
 import { roleLabel } from "../../lib/member-roles";
-import { expiresIn } from "../../lib/invitation-expiry";
+import { INVITATION_LIFETIME_DAYS, expiresIn } from "../../lib/invitation-expiry";
+import { followSignIn } from "../../lib/follow-sign-in";
+import { MEMBERS_RETRY } from "../../lib/members-copy";
 import { StatusTag, fmtTsShort } from "../../ui";
 import { IDENTITY_TIER, MACHINE_CLASS, ROW, SECONDARY_TIER, SUPPORT_TIER, TALL_CELL, Th } from "./plain-table";
 
@@ -31,6 +33,8 @@ export function InvitationsTable({
       const result = await run();
       if (!result.ok) setError(result.error);
       if (result.ok || result.gone) onChanged();
+    } catch (err) {
+      if (!followSignIn(err)) setError(MEMBERS_RETRY);
     } finally {
       setBusy(false);
     }
@@ -53,8 +57,8 @@ export function InvitationsTable({
         <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
           <p className={`m-0 ${MACHINE_CLASS}`}>No pending invitations</p>
           <p className={`m-0 max-w-prose text-pretty ${SUPPORT_TIER}`}>
-            An invitation emails a link to join this workspace with the role you choose. It works for 7
-            days, for whoever signs in with that address.
+            An invitation emails a link to join this workspace with the role you choose. It works for{" "}
+            {INVITATION_LIFETIME_DAYS} days, for whoever signs in with that address.
           </p>
         </div>
         {output}

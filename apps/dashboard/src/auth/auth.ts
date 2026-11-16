@@ -29,6 +29,7 @@ import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
 import type { AttemptLimiter } from "../server/attempt-limit";
 import { INVITATION_RATE_LIMITED } from "../lib/members-copy";
+import { INVITATION_LIFETIME_DAYS } from "../lib/invitation-expiry";
 
 /**
  * Build the accept-invitation link for the dashboard UI.
@@ -373,10 +374,12 @@ export function createAuth(config: AuthConfig) {
         // Invitations only go to verified identities (contract §7).
         requireEmailVerificationOnInvitation: true,
         // Long enough for a small business to open the mail after a weekend.
-        invitationExpiresIn: 60 * 60 * 24 * 7,
+        invitationExpiresIn: INVITATION_LIFETIME_DAYS * 24 * 60 * 60,
         organizationHooks: {
-          // Runs for the console's server functions and for a direct HTTP
-          // call to /organization/invite-member alike.
+          // Every invitation comes through here: the console's server functions
+          // call the plugin in process, and its HTTP route is blocked
+          // (blocked-endpoints.ts). The cap lives in the plugin so it holds
+          // for any future caller too.
           beforeCreateInvitation: async ({ inviter }) => {
             if (await config.invitationLimiter?.strike(inviter.id)) {
               throw new APIError("TOO_MANY_REQUESTS", {

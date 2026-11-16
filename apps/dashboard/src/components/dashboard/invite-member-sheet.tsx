@@ -2,8 +2,18 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { inviteMember, type MemberRole } from "../../members";
+import { inviteMember, memberEmail, type MemberRole } from "../../members";
+import { INVITATION_LIFETIME_DAYS } from "../../lib/invitation-expiry";
+import { followSignIn } from "../../lib/follow-sign-in";
+import { MEMBERS_RETRY } from "../../lib/members-copy";
 import { RoleChoices } from "./role-choices";
+
+/** The server's own rule for the address, so the form refuses what the server would. */
+export function inviteEmailProblem(value: string): string | null {
+  return value.trim() === "" || memberEmail.safeParse(value).success
+    ? null
+    : "Enter a full email address, like name@company.com.";
+}
 
 const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 
@@ -41,6 +51,8 @@ export function InviteMemberForm({
         return;
       }
       onInvited?.();
+    } catch (err) {
+      if (!followSignIn(err)) setError(MEMBERS_RETRY);
     } finally {
       setSending(false);
       onBusyChange?.(false);
@@ -62,6 +74,7 @@ export function InviteMemberForm({
             maxLength={320}
             value={email}
             onChange={(event) => {
+              event.target.setCustomValidity(inviteEmailProblem(event.target.value) ?? "");
               setEmail(event.target.value);
               onDirtyChange?.(event.target.value.trim() !== "");
             }}
@@ -117,7 +130,7 @@ export function InviteMemberSheet({
         <SheetHeader className="gap-2">
           <SheetTitle className="text-sm">Invite member</SheetTitle>
           <SheetDescription>
-            They get an email with a link to join this workspace. It works for 7 days.
+            They get an email with a link to join this workspace. It works for {INVITATION_LIFETIME_DAYS} days.
           </SheetDescription>
         </SheetHeader>
         <InviteMemberForm organizationId={organizationId} onBusyChange={setBusy} onDirtyChange={setDirty} onInvited={onInvited} />

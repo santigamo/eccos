@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/cloudflare";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { env } from "cloudflare:workers";
@@ -34,7 +33,6 @@ import { normalizeCustomerId } from "../lib/customer-id";
 import {
   requireAuthContext,
   requireGatewayPermission,
-  UnauthorizedError,
 } from "../auth/server-auth";
 import { ForbiddenError, resolveMemberships } from "../auth/tenant";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";

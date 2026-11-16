@@ -16,12 +16,12 @@ import { z } from "zod";
 import type { Auth } from "./auth/auth";
 import { invitationLimiter } from "./auth/config";
 import { getAuthForRequest } from "./auth/request-auth";
-import { UnauthorizedError, requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
+import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
 import { ForbiddenError } from "./auth/tenant";
 import { auditEvent, type SensitiveAction } from "./server/audit";
 import type { Result } from "./server/gateway";
 import { classifyFailure } from "./server/classify-failure";
-import { authErrorCode, warnUnmapped } from "./organizations";
+import { authErrorCode } from "./organizations";
 import { failureCopy } from "./lib/failure";
 import {
   ASK_TO_MANAGE_MEMBERS,
@@ -32,7 +32,6 @@ import {
   MEMBERS_SIGNED_OUT,
   OWNER_PROTECTED,
   ROLE_NOT_OFFERED,
-  WORKSPACE_CHANGED,
 } from "./lib/members-copy";
 import { isOwnerRole } from "./lib/member-roles";
 
@@ -127,7 +126,7 @@ async function pendingInvitations(caller: Caller): Promise<InvitationRow[]> {
     model: "invitation",
     where: pendingWhere(caller),
     limit: 100,
-    sortBy: { field: "expiresAt", direction: "asc" },
+    sortBy: { field: "createdAt", direction: "desc" },
   });
 }
 
@@ -140,29 +139,45 @@ async function pendingInvitation(caller: Caller, invitationId: string): Promise<
   return invitation ?? refuse("INVITATION_NOT_FOUND");
 }
 
+/**
+ * Move one invitation from `from` to `to`, only if it is still in `from`. A
+ * lost race (an accept, another admin's cancel) reads as "no longer pending".
+ */
+async function moveInvitation(caller: Caller, invitationId: string, from: string, to: string): Promise<boolean> {
+  const { adapter } = await caller.auth.$context;
+  const moved = await adapter.updateMany({
+    model: "invitation",
+    where: [
+      { field: "id", value: invitationId },
+      { field: "organizationId", value: caller.organizationId },
+      { field: "status", value: from },
+    ],
+    update: { status: to },
+  });
+  return moved > 0;
+}
+
 function refuse(code: string): never {
   throw new APIError("BAD_REQUEST", { code, message: code });
 }
 
 const GONE = new Set(["MEMBER_NOT_FOUND", "INVITATION_NOT_FOUND"]);
 
-/** Map a write's failure to allowlisted copy; the unmapped ones are logged by code and class only. */
-export function membersFailure(err: unknown): MembersFailure {
-  if (err instanceof UnauthorizedError) return { ok: false, error: MEMBERS_SIGNED_OUT };
-  if (err instanceof ForbiddenError) {
-    return {
-      ok: false,
-      error:
-        err.reason === "missing-permission"
-          ? ASK_TO_MANAGE_MEMBERS
-          : failureCopy({ ok: false, kind: "forbidden", reason: err.reason, error: err.message }).detail,
-    };
-  }
+/**
+ * Map a write's failure to allowlisted copy. Anything without a code of ours
+ * goes through `classifyFailure`, which names it and reports the unexpected.
+ */
+async function membersFailure(err: unknown): Promise<MembersFailure> {
   const code = authErrorCode(err);
   const mapped = MEMBERS_COPY[code];
   if (mapped) return GONE.has(code) ? { ok: false, error: mapped, gone: true } : { ok: false, error: mapped };
-  warnUnmapped("members-failed", code, err);
-  return { ok: false, error: MEMBERS_RETRY };
+  const failure = await classifyFailure(err);
+  if (failure.kind === "unauthenticated") return { ok: false, error: MEMBERS_SIGNED_OUT };
+  if (failure.kind === "unreachable") return { ok: false, error: MEMBERS_RETRY };
+  return {
+    ok: false,
+    error: failure.reason === "missing-permission" ? ASK_TO_MANAGE_MEMBERS : failureCopy(failure).detail,
+  };
 }
 
 /**
@@ -192,19 +207,35 @@ async function mutate(
   }
 }
 
+interface MemberRecord {
+  id: string;
+  userId: string;
+  role: string;
+}
+
 /**
  * The target member, if it belongs to the caller's organization. An owner can
  * only be changed or removed by another owner, and never the last one: the
  * owner role is not offered, so any change to an owner is a demotion.
  */
-async function manageableMember(caller: Caller, memberId: string): Promise<MemberRow> {
-  const members = await listMembers(caller);
-  const target = members.find((member) => member.id === memberId) ?? refuse("MEMBER_NOT_FOUND");
+async function manageableMember(caller: Caller, memberId: string): Promise<MemberRecord> {
+  const { adapter } = await caller.auth.$context;
+  const inOrganization = { field: "organizationId", value: caller.organizationId };
+  const target =
+    (await adapter.findOne<MemberRecord>({ model: "member", where: [{ field: "id", value: memberId }, inOrganization] })) ??
+    refuse("MEMBER_NOT_FOUND");
   if (isOwnerRole(target.role)) {
-    const self = members.find((member) => member.userId === caller.userId);
+    const self = await adapter.findOne<MemberRecord>({
+      model: "member",
+      where: [{ field: "userId", value: caller.userId }, inOrganization],
+    });
     if (!self || !isOwnerRole(self.role)) refuse(OWNER_PROTECTED);
     // No path grants owner (never offered here, HTTP routes blocked), so two owners cannot race past this.
-    if (members.filter((member) => isOwnerRole(member.role)).length <= 1) refuse(LAST_OWNER);
+    const owners = await adapter.findMany<MemberRecord>({
+      model: "member",
+      where: [inOrganization, { field: "role", value: "owner", operator: "contains" }],
+    });
+    if (owners.filter((member) => isOwnerRole(member.role)).length <= 1) refuse(LAST_OWNER);
   }
   return target;
 }
@@ -263,16 +294,19 @@ export const listWorkspaceMembers = createServerFn({ method: "GET" }).handler(
 const roleSchema = z.enum(MEMBER_ROLES);
 const idSchema = z.string().trim().min(1).max(256);
 
-export const inviteMemberInput = z
-  .object({ email: z.string().trim().email().max(320), role: roleSchema, organizationId: idSchema })
-  .strict();
+/** The server's own email rule; the invite form checks the field against it too. */
+export const memberEmail = z.string().trim().email().max(320);
+
+export const inviteMemberInput = z.object({ email: memberEmail, role: roleSchema, organizationId: idSchema }).strict();
 
 /** `organizationId` is the page's workspace: a check against the session, never the tenant's source. */
 export const inviteMember = createServerFn({ method: "POST" })
   .validator((input: unknown) => inviteMemberInput.parse(input))
   .handler(({ data }) =>
     mutate("member_invited", { role: data.role }, async (caller, facts) => {
-      if (caller.organizationId !== data.organizationId) refuse(WORKSPACE_CHANGED);
+      if (caller.organizationId !== data.organizationId) {
+        throw new ForbiddenError("the page's workspace is not the session's", "workspace-changed");
+      }
       facts.invitationId = await createInvitation(caller, data.email, data.role);
     }),
   );
@@ -286,7 +320,8 @@ const invitationInput = z.object({ invitationId: idSchema }).strict();
  *
  * The invitee is never left without a live invitation: what can refuse the new
  * one is checked before the old one is cancelled, and a create that still
- * fails puts the old one back.
+ * fails puts the old one back. Both writes are conditional on the status this
+ * call expects, so a concurrent resend, cancel or accept loses cleanly.
  */
 export const resendInvitation = createServerFn({ method: "POST" })
   .validator((input: unknown) => invitationInput.parse(input))
@@ -295,17 +330,11 @@ export const resendInvitation = createServerFn({ method: "POST" })
       const invitation = await pendingInvitation(caller, data.invitationId);
       if (!isMemberRole(invitation.role)) refuse(ROLE_NOT_OFFERED);
       if (await invitationLimiter(env.DB).spent(caller.userId)) refuse(INVITATION_RATE_LIMITED);
-      await caller.auth.api.cancelInvitation({ body: { invitationId: invitation.id }, headers: caller.headers });
+      if (!(await moveInvitation(caller, invitation.id, "pending", "canceled"))) refuse("INVITATION_NOT_FOUND");
       try {
         facts.newInvitationId = await createInvitation(caller, invitation.email, invitation.role);
       } catch (err) {
-        const { adapter } = await caller.auth.$context;
-        await adapter.update({
-          model: "invitation",
-          where: [{ field: "id", value: invitation.id }],
-          update: { status: "pending" },
-        });
-        facts.restored = "true";
+        if (await moveInvitation(caller, invitation.id, "canceled", "pending")) facts.restored = "true";
         throw err;
       }
     }),
@@ -315,8 +344,7 @@ export const cancelInvitation = createServerFn({ method: "POST" })
   .validator((input: unknown) => invitationInput.parse(input))
   .handler(({ data }) =>
     mutate("invitation_canceled", { invitationId: data.invitationId }, async (caller) => {
-      const invitation = await pendingInvitation(caller, data.invitationId);
-      await caller.auth.api.cancelInvitation({ body: { invitationId: invitation.id }, headers: caller.headers });
+      if (!(await moveInvitation(caller, data.invitationId, "pending", "canceled"))) refuse("INVITATION_NOT_FOUND");
     }),
   );
 
@@ -336,14 +364,26 @@ export const updateMemberRole = createServerFn({ method: "POST" })
 
 const memberInput = z.object({ memberId: idSchema }).strict();
 
+/**
+ * Remove a member and cancel the invitations they sent that are still pending:
+ * Better Auth refuses those once their inviter has left, so left alone they
+ * would list as live here while the invitee's link says "no longer valid".
+ */
 export const removeMember = createServerFn({ method: "POST" })
   .validator((input: unknown) => memberInput.parse(input))
   .handler(({ data }) =>
-    mutate("member_removed", { memberId: data.memberId }, async (caller) => {
+    mutate("member_removed", { memberId: data.memberId }, async (caller, facts) => {
       const target = await manageableMember(caller, data.memberId);
       await caller.auth.api.removeMember({
         body: { memberIdOrEmail: target.id, organizationId: caller.organizationId },
         headers: caller.headers,
       });
+      const { adapter } = await caller.auth.$context;
+      const canceled = await adapter.updateMany({
+        model: "invitation",
+        where: [...pendingWhere(caller), { field: "inviterId", value: target.userId }],
+        update: { status: "canceled" },
+      });
+      facts.invitationsCanceled = String(canceled);
     }),
   );

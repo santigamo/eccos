@@ -1,3 +1,6 @@
+/** How long an invitation works. Feeds Better Auth's `invitationExpiresIn` and the copy that quotes it. */
+export const INVITATION_LIFETIME_DAYS = 7;
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
