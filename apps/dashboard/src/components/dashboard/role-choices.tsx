@@ -1,14 +1,18 @@
 import type { MemberRole } from "../../members";
 import { ROLE_OPTIONS } from "../../lib/member-roles";
+import { MACHINE_CLASS } from "./plain-table";
 
 /** The three grantable roles as radio cards, each with the one line that says what it can do. */
 export function RoleChoices({
   name,
   value,
+  current,
   onChange,
 }: {
   name: string;
   value: MemberRole | null;
+  /** The member's role today, tagged "Current" among the options. */
+  current?: string;
   onChange: (role: MemberRole) => void;
 }) {
   return (
@@ -26,7 +30,10 @@ export function RoleChoices({
             onChange={() => onChange(option.value)}
             className="sr-only"
           />
-          <span className="text-sm font-medium text-foreground">{option.label}</span>
+          <span className="flex items-baseline justify-between gap-3">
+            <span className="text-sm font-medium text-foreground">{option.label}</span>
+            {option.value === current ? <span className={MACHINE_CLASS}>Current</span> : null}
+          </span>
           <span className="text-xs text-muted-foreground">{option.description}</span>
         </label>
       ))}

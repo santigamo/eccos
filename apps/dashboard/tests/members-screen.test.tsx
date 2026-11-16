@@ -13,6 +13,8 @@ const { InvitationsTable } = await import("../src/components/dashboard/invitatio
 const { removeMemberCopy } = await import("../src/components/dashboard/remove-member-dialog");
 const { roleChangeCost } = await import("../src/components/dashboard/change-role-dialog");
 const { expiresIn } = await import("../src/lib/invitation-expiry");
+const { RoleChoices } = await import("../src/components/dashboard/role-choices");
+const { roleInSentence } = await import("../src/lib/member-roles");
 
 const NOW = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -133,6 +135,20 @@ describe("the invite form", () => {
     expect(html.match(/type="radio"/g)).toHaveLength(3);
     expect(html).not.toContain('value="owner"');
     expect(html).toContain("Send invitation");
+  });
+});
+
+describe("the change-role dialog's reading", () => {
+  test("the current role is a label with its article, never the raw id", () => {
+    expect(roleInSentence("viewer")).toBe("a Viewer");
+    expect(roleInSentence("admin")).toBe("an Admin");
+    expect(roleInSentence("operator")).toBe("an Operator");
+  });
+
+  test("the member's current role is tagged among the options, and only it", () => {
+    const html = renderToStaticMarkup(<RoleChoices name="r" value={null} current="operator" onChange={() => {}} />);
+    expect(html.match(/>Current</g)).toHaveLength(1);
+    expect(html).toMatch(/>Operator<\/span><span class="[^"]*uppercase">Current</);
   });
 });
 

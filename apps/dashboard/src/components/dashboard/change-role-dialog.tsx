@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { updateMemberRole, type MemberRole, type MembersMutation, type MemberView } from "../../members";
-import { roleLabel } from "../../lib/member-roles";
+import { roleInSentence } from "../../lib/member-roles";
 import { RoleChoices } from "./role-choices";
 
 /** What moving from one role to another costs, or null when it costs nothing worth saying. */
@@ -72,12 +72,12 @@ export function ChangeRoleDialog({
         <DialogHeader>
           <DialogTitle>Change role</DialogTitle>
           <DialogDescription>
-            {target.name || target.email} is {roleLabel(target.role).toLowerCase()} now.
+            {target.name || target.email} is {roleInSentence(target.role)}.
           </DialogDescription>
         </DialogHeader>
         <fieldset disabled={saving} className="m-0 flex flex-col gap-2 border-0 p-0">
           <legend className="sr-only">New role</legend>
-          <RoleChoices name="change-role" value={role} onChange={setRole} />
+          <RoleChoices name="change-role" value={role} current={target.role} onChange={setRole} />
         </fieldset>
         <output aria-live="polite" aria-atomic="true" className="flex flex-col gap-1 empty:hidden">
           {cost ? <span className="block text-sm text-warning-foreground">{cost}</span> : null}

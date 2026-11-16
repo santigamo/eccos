@@ -11,4 +11,10 @@ const LABELS: Record<string, string> = { owner: "Owner", admin: "Admin", operato
 
 export const roleLabel = (role: string) => LABELS[role] ?? role;
 
+/** "an Admin", "a Viewer": the label with its article, for a sentence. */
+export function roleInSentence(role: string): string {
+  const label = roleLabel(role);
+  return `${/^[aeiou]/i.test(label) ? "an" : "a"} ${label}`;
+}
+
 export const isOwnerRole = (role: string) => role.split(",").includes("owner");
