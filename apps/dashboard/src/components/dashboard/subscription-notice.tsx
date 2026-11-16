@@ -3,22 +3,31 @@ import { closedNotice } from "../../billing/notice";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { BillingError, useBillingRedirect } from "./billing-panel";
+import { BillingError, useBillingRedirect } from "./billing-redirect";
+
+/** `startCheckout` opens the portal while a subscription still exists, so the button says which. */
+function billingActionLabel(subscribed: boolean): string {
+  return subscribed ? "Manage billing" : "Start subscription";
+}
 
 /**
- * A warning beside the connect fork, never a gate: a number already here can
- * still be reconnected, and the gateway refuses a new one with
- * `subscription_required`. Without billing on this console there is no
- * subscription to start.
+ * The warning a closed workspace reads beside the connect fork. With billing on
+ * it offers the way out; the gateway refuses a new number either way with
+ * `subscription_required`.
  */
 export function SubscriptionNotice({
   billing,
+  subscribed = false,
   numbers,
+  reconnect,
   className,
 }: {
   billing: boolean;
-  /** Billable numbers the workspace has now. */
+  subscribed?: boolean;
+  /** Billable numbers the workspace has now: what a checkout would charge for. */
   numbers: number;
+  /** The workspace owns a WABA, so the fork can still re-register what it has. */
+  reconnect: boolean;
   className?: string;
 }) {
   const { busy, error, leaveTo } = useBillingRedirect();
@@ -27,13 +36,13 @@ export function SubscriptionNotice({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 max-w-prose text-sm text-pretty text-foreground">
           {closedNotice(billing, numbers)}
-          {numbers > 0
+          {reconnect
             ? ` ${billing ? "Without one, " : ""}Meta's flow ends with the new number left out. Numbers already connected keep working and can be reconnected.`
             : null}
         </p>
         {billing ? (
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
-            Start subscription
+            {billingActionLabel(subscribed)}
           </Button>
         ) : null}
       </div>
@@ -46,7 +55,7 @@ export function SubscriptionNotice({
  * First run on a closed workspace with billing on: there is nothing to
  * reconnect, so this stands where the connect fork would, before Meta's window.
  */
-export function SubscriptionGate() {
+export function SubscriptionGate({ subscribed = false }: { subscribed?: boolean }) {
   const { busy, error, leaveTo } = useBillingRedirect();
   return (
     <Frame variant="default" spacing="lg" className="max-w-3xl">
@@ -61,7 +70,7 @@ export function SubscriptionGate() {
         </FrameHeader>
         <div className="pt-5">
           <Button type="button" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
-            Start subscription
+            {billingActionLabel(subscribed)}
           </Button>
         </div>
         <BillingError error={error} />

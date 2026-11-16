@@ -117,7 +117,7 @@ describe("billing on", () => {
   test("Numbers warns while closed and never blocks connecting", () => {
     // A closed workspace must still be able to reconnect a number it already has.
     const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />);
-    expect(html).toContain("Adding a new number needs an active subscription: 8 EUR per month for 2 numbers.");
+    expect(html).toContain("Adding a new number needs an active subscription: 5 EUR per month for 1 number. The price follows");
     expect(html).toContain("new number left out");
     expect(html).toContain("Start subscription");
     expect(html).toContain("+ Add number");
@@ -129,16 +129,34 @@ describe("billing on", () => {
     expect(html).toContain("needs an active subscription: 5 EUR per month for 1 number.");
     expect(html).toContain("Start subscription");
     expect(html).not.toContain("WhatsApp Business app");
+    const pastDue = renderToStaticMarkup(<FirstRunConnect closed billing subscribed />);
+    expect(pastDue).toContain("Manage billing");
+    expect(pastDue).not.toContain("Start subscription");
     const open = renderToStaticMarkup(<FirstRunConnect closed={false} billing />);
     expect(open).toContain("WhatsApp Business app");
     expect(open).not.toContain("subscription");
     expect(open).not.toMatch(/<button[^>]*\sdisabled=/);
   });
 
-  test("the notice prices one more number than the workspace has", () => {
-    expect(closedNotice(true, 4)).toContain("17 EUR per month for 5 numbers");
-    expect(closedNotice(true, 5)).toContain("19 EUR per month for 6 numbers");
-    expect(closedNotice(true, 15)).toContain("49 EUR per month for 16 numbers");
+  test("the notice quotes what a checkout started now charges", () => {
+    // `checkoutUrl` prices the numbers connected today, and at least one.
+    expect(closedNotice(true, 0)).toContain("5 EUR per month for 1 number.");
+    expect(closedNotice(true, 5)).toContain("17 EUR per month for 5 numbers.");
+    expect(closedNotice(true, 6)).toContain("19 EUR per month for 6 numbers.");
+    expect(closedNotice(true, 16)).toContain("49 EUR per month for 16 numbers.");
+    expect(closedNotice(true, 3)).toContain("The price follows the numbers you connect.");
+  });
+
+  test("a closed workspace whose subscription still exists is sent to manage it", () => {
+    const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing subscribed />);
+    expect(html).toContain("Manage billing");
+    expect(html).not.toContain("Start subscription");
+  });
+
+  test("the reconnect sentence follows owning a WABA, not having a number", () => {
+    const awaiting = resources("closed");
+    awaiting.wabas[0]!.phones = [];
+    expect(renderToStaticMarkup(<NumbersView resources={awaiting} billing />)).toContain("can be reconnected");
   });
 
   test("a workspace that needs no subscription is shown no price", () => {

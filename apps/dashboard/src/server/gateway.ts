@@ -6,15 +6,7 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
-import {
-  billingReturnUrl,
-  billingState,
-  checkoutUrl,
-  connectBlocked,
-  portalUrl,
-  type BillingState,
-} from "../billing/account";
-import { closedNotice } from "../billing/notice";
+import { billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
 import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
@@ -233,8 +225,10 @@ export type DashboardOverviewResult = Result<DashboardOverview>;
 export type DashboardState =
   | { stage: "unassigned" }
   | { stage: "no-organization" }
-  | { stage: "account-ready"; resources: AccountResources; billing?: true }
-  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: true };
+  | { stage: "account-ready"; resources: AccountResources; billing?: BillingFlag }
+  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag };
+/** Present only while billing is on. `subscribed`: a closed account whose subscription still exists, so billing opens its portal. */
+export type BillingFlag = { subscribed: boolean };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1298,8 +1292,9 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // on EVERY page, /numbers included, where the note explaining the state
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
-        // Present only while billing is on, so the console knows whether to point at it.
-        const billing = billingEnabled(env) ? { billing: true as const } : {};
+        const billing = billingEnabled(env)
+          ? { billing: { subscribed: await closedSubscription(gateway, state) } }
+          : {};
         if (!state.status) return { stage: "account-ready", resources: state.resources, ...billing };
         return {
           stage: "ready",
@@ -1309,6 +1304,16 @@ export const getDashboardState = createServerFn({ method: "GET" })
         };
       }),
   );
+
+/** Read only for a closed account: an open one is never pointed at billing. */
+async function closedSubscription(
+  gateway: GatewayApi,
+  state: { accountId: string; resources: AccountResources },
+): Promise<boolean> {
+  if (state.resources.account?.connectPolicy !== "closed") return false;
+  const stored = await gateway.getAccountBilling(state.accountId);
+  return Boolean(stored?.subscriptionId && stored.customerId);
+}
 
 export const getDashboardOverview = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
@@ -1410,10 +1415,9 @@ export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler
 /**
  * Whether Connect can start, checked without creating a state or writing an
  * audit event: the caller may administer, the gateway answers, it has a public
- * address for Meta's redirect, the organization's account (if it has one yet)
- * is active, and it is not closed with nothing to reconnect. `startConnect` and
- * the exchange fail on the same conditions, but only after the customer has
- * been through Meta's window.
+ * address for Meta's redirect, and the organization's account (if it has one
+ * yet) is active. `startConnect` fails on the same conditions, but only after
+ * the customer has been through Meta's window.
  */
 export const getConnectReadiness = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<{ ready: true } | { ready: false; reason: string }>> =>
@@ -1424,9 +1428,6 @@ export const getConnectReadiness = createServerFn({ method: "GET" }).handler(
       const link = organizationId ? await gateway.getOrganizationAccountLink(organizationId) : null;
       if (link && link.status !== "active") {
         return { ready: false as const, reason: "This workspace's account is not active, so numbers cannot be connected." };
-      }
-      if (link && (await connectBlocked(gateway, link.accountId))) {
-        return { ready: false as const, reason: closedNotice(billingEnabled(env), 0) };
       }
       return { ready: true as const };
     }, "administer"),

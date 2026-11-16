@@ -61,7 +61,9 @@ function NumbersPage() {
     );
   }
   const resources = resourcesFor(root.data);
-  const billing = "billing" in root.data && root.data.billing === true;
+  const flag = "billing" in root.data ? root.data.billing : undefined;
+  const billing = flag !== undefined;
+  const subscribed = flag?.subscribed === true;
   const wabas = resources?.wabas ?? [];
 
   // No account registry, or no number yet: both land on the connect flow, and
@@ -91,7 +93,7 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
-            <FirstRunConnect closed={closed} billing={billing} />
+            <FirstRunConnect closed={closed} billing={billing} subscribed={subscribed} />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -110,6 +112,7 @@ function NumbersPage() {
     <NumbersView
       resources={resources}
       billing={billing}
+      subscribed={subscribed}
       connectError={connectError}
       connectSkipped={connectSkipped}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
@@ -141,6 +144,7 @@ function NumbersPage() {
 export function NumbersView({
   resources,
   billing = false,
+  subscribed = false,
   connectError,
   connectSkipped,
   onRefresh,
@@ -148,6 +152,8 @@ export function NumbersView({
   resources: AccountResources;
   /** Whether this console has billing on, so a closed workspace can be pointed at it. */
   billing?: boolean;
+  /** A subscription still exists, so billing opens its portal instead of a checkout. */
+  subscribed?: boolean;
   connectError?: ConnectFailureCode;
   connectSkipped?: number;
   /** Re-read the loader after the table's re-check changed something. */
@@ -163,9 +169,16 @@ export function NumbersView({
    * it is supposed to be refused.
    */
   const [busy, setBusy] = useState(false);
+  // One instance: it moves into the dialog while that is open.
   const notice = (className?: string) =>
     resources.account?.connectPolicy === "closed" ? (
-      <SubscriptionNotice billing={billing} numbers={billableCount(resources.wabas)} className={className} />
+      <SubscriptionNotice
+        billing={billing}
+        subscribed={subscribed}
+        numbers={billableCount(resources.wabas)}
+        reconnect={resources.wabas.length > 0}
+        className={className}
+      />
     ) : null;
   const outcome = (
     <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
@@ -177,7 +190,7 @@ export function NumbersView({
       actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
     >
       {outcome}
-      {notice()}
+      {adding ? null : notice()}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
@@ -207,11 +220,19 @@ export function NumbersView({
  * refuse whatever Meta returned: it is stopped here, before Meta's window. With
  * billing on that means the subscription; without it the fork stays, switched off.
  */
-export function FirstRunConnect({ closed, billing }: { closed: boolean; billing: boolean }) {
-  if (closed && billing) return <SubscriptionGate />;
+export function FirstRunConnect({
+  closed,
+  billing,
+  subscribed = false,
+}: {
+  closed: boolean;
+  billing: boolean;
+  subscribed?: boolean;
+}) {
+  if (closed && billing) return <SubscriptionGate subscribed={subscribed} />;
   return (
     <>
-      {closed ? <SubscriptionNotice billing={false} numbers={0} className="mb-0" /> : null}
+      {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}
       <ConnectNumberPanel heading="Meta Embedded Signup" closed={closed} />
     </>
   );

@@ -26,12 +26,6 @@ async function billableNumbers(gateway: GatewayApi, accountId: string): Promise<
   return billableCount((await gateway.listAccountResources(accountId)).wabas);
 }
 
-/** A closed account with nothing of its own to reconnect: the gateway would refuse whatever Meta returns. */
-export async function connectBlocked(gateway: GatewayApi, accountId: string): Promise<boolean> {
-  if ((await gateway.getAccountBilling(accountId))?.connectPolicy !== "closed") return false;
-  return (await gateway.listAccountResources(accountId)).wabas.length === 0;
-}
-
 async function storedBilling(gateway: GatewayApi, accountId: string) {
   const stored = await gateway.getAccountBilling(accountId);
   if (!stored) throw new Error(`account "${accountId}" does not exist`);
