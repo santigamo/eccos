@@ -19,7 +19,8 @@ import { getAuthForRequest } from "./auth/request-auth";
 import { UnauthorizedError, requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
 import { ForbiddenError } from "./auth/tenant";
 import { auditEvent, type SensitiveAction } from "./server/audit";
-import { classifyFailure, type Result } from "./server/gateway";
+import type { Result } from "./server/gateway";
+import { classifyFailure } from "./server/classify-failure";
 import { authErrorCode, warnUnmapped } from "./organizations";
 import { failureCopy } from "./lib/failure";
 import {
