@@ -3,9 +3,22 @@ import type {
   AccountBilling,
   AccountBillingInput,
   BilledAccount,
+  ConnectFailureCode,
+  ConnectLinkGrant,
+  ConnectLinkSummary,
   ConnectPolicy,
+  IssuedConnectLink,
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
+import {
+  CONNECT_LINKS_SCHEMA,
+  type ConnectLinkRow,
+  claimConnectLink,
+  issueConnectLink,
+  resolveConnectLink,
+  settleConnectLink,
+  summarizeConnectLink,
+} from "./connect-links";
 import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
 import {
   coexistenceSyncStatus,
@@ -721,6 +734,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         redirect_uri TEXT,
         return_to  TEXT
       );`);
+      this.sql.exec(CONNECT_LINKS_SCHEMA);
       // Operator-only bookkeeping (the daily census guard); never read by the console.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
         key   TEXT PRIMARY KEY,
@@ -2214,6 +2228,51 @@ export class EccosControlPlane extends DurableObject<Env> {
     const resources = this.listAccountResources(link.accountId);
     if (!resources.account) throw new Error(`Account "${link.accountId}" is not configured`);
     return { accountId: link.accountId, resources };
+  }
+
+  getConnectLink(accountId: string): ConnectLinkSummary | null {
+    return summarizeConnectLink(this.sql, this.requireAccount(accountId));
+  }
+
+  /** Replaces the account's link: the previous token stops resolving. */
+  async issueConnectLink(accountId: string, creatorUserId: string): Promise<IssuedConnectLink> {
+    const id = this.requireAccount(accountId);
+    if (!ORGANIZATION_ID_PATTERN.test(creatorUserId) || creatorUserId.length > ORGANIZATION_ID_MAX_LENGTH) {
+      throw new Error("invalid creatorUserId");
+    }
+    return issueConnectLink(this.sql, id, creatorUserId);
+  }
+
+  async resolveConnectLink(token: string, markOpened = false): Promise<ConnectLinkGrant | null> {
+    return this.connectLinkGrant(await resolveConnectLink(this.sql, token, markOpened));
+  }
+
+  async claimConnectLink(token: string): Promise<ConnectLinkGrant | null> {
+    const row = await claimConnectLink(this.sql, token);
+    const grant = this.connectLinkGrant(row);
+    if (row && !grant) await settleConnectLink(this.sql, token, { connected: false, code: "state" });
+    return grant;
+  }
+
+  settleConnectLink(
+    token: string,
+    outcome: { connected: true; phone: string | null } | { connected: false; code: ConnectFailureCode },
+  ): Promise<boolean> {
+    return settleConnectLink(this.sql, token, outcome);
+  }
+
+  /** Fails closed unless the link's account still has an active organization. */
+  private connectLinkGrant(row: ConnectLinkRow | null): ConnectLinkGrant | null {
+    if (!row) return null;
+    const link = this.sql
+      .exec("SELECT organization_id FROM organization_accounts WHERE account_id = ? AND status = 'active'", row.accountId)
+      .toArray()[0];
+    if (!link) return null;
+    return {
+      ...row,
+      organizationId: link.organization_id as string,
+      connectPolicy: this.connectPolicyOf(row.accountId),
+    };
   }
 
   purgeExpiredConnectStates(now = Date.now()): void {

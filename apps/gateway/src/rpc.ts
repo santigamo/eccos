@@ -32,7 +32,11 @@ import type {
   AccountResources,
   BilledAccount,
   ConnectExchangeResult,
+  ConnectLinkExchange,
+  ConnectLinkGrant,
+  ConnectLinkSummary,
   ConnectStartResult,
+  IssuedConnectLink,
   ConversationListOpts,
   ConversationOpts,
   ConversationSummary,
@@ -1381,6 +1385,42 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       publicOrigin,
       wabaId?.trim() || undefined,
     );
+  }
+
+  async getConnectLink(accountId: string): Promise<ConnectLinkSummary | null> {
+    return getControlPlaneStub(this.env).getConnectLink(requireAccountId(accountId, "accountId is required"));
+  }
+
+  async issueConnectLink(accountId: string, creatorUserId: string): Promise<IssuedConnectLink> {
+    return getControlPlaneStub(this.env).issueConnectLink(
+      requireAccountId(accountId, "accountId is required"),
+      creatorUserId,
+    );
+  }
+
+  async resolveConnectLink(token: string, markOpened?: boolean): Promise<ConnectLinkGrant | null> {
+    return getControlPlaneStub(this.env).resolveConnectLink(token, markOpened);
+  }
+
+  /** The link is claimed for the length of the exchange, so two bearers cannot both spend it. */
+  async exchangeConnectCodeForLink(token: string, code: string, state: string): Promise<ConnectLinkExchange | null> {
+    const controlPlane = getControlPlaneStub(this.env);
+    const grant = await controlPlane.claimConnectLink(token);
+    if (!grant) return null;
+    let result: ConnectExchangeResult;
+    try {
+      result = await this.exchangeConnectCodeForAccountId(grant.accountId, code, state);
+    } catch (err) {
+      await controlPlane.settleConnectLink(token, { connected: false, code: "state" });
+      throw err;
+    }
+    const notify = await controlPlane.settleConnectLink(
+      token,
+      result.ok
+        ? { connected: true, phone: result.display_phone_number || null }
+        : { connected: false, code: result.code },
+    );
+    return { grant: result.ok ? { ...grant, state: "used" } : grant, result, notify };
   }
 
   /**

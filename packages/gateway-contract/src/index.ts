@@ -725,6 +725,38 @@ export type ConnectExchangeResult =
     }
   | { ok: false; error: string; code: ConnectFailureCode };
 
+/** Where a workspace's connection link stands, for the admin who made it. */
+export type ConnectLinkState = "pending" | "opened" | "connected" | "expired";
+
+export interface ConnectLinkSummary {
+  state: ConnectLinkState;
+  expiresAt: number;
+  /** The number the link connected, once it has. */
+  connectedPhone: string | null;
+}
+
+/** The raw token exists only here: the gateway keeps its hash. */
+export interface IssuedConnectLink {
+  token: string;
+  expiresAt: number;
+}
+
+/** What a link token resolves to. Only `active` may start or finish a connection. */
+export interface ConnectLinkGrant {
+  accountId: string;
+  organizationId: string;
+  creatorUserId: string;
+  state: "active" | "expired" | "used";
+  connectPolicy: ConnectPolicy;
+}
+
+export interface ConnectLinkExchange {
+  grant: ConnectLinkGrant;
+  result: ConnectExchangeResult;
+  /** Whether the link's creator should be told about this outcome. */
+  notify: boolean;
+}
+
 /**
  * One WhatsApp Business Account a pasted token can reach, offered to the
  * operator as a choice.
@@ -1332,6 +1364,18 @@ export interface GatewayApi {
     token: string,
     wabaId?: string,
   ): Promise<ManualConnectResult>;
+  /** The account's current connection link, or null when none was ever made. */
+  getConnectLink(accountId: string): Promise<ConnectLinkSummary | null>;
+  /** Makes the account's one connection link, valid for 7 days; any previous one stops working. */
+  issueConnectLink(accountId: string, creatorUserId: string): Promise<IssuedConnectLink>;
+  /** Null for a token that is unknown, replaced, or whose account has no active organization. */
+  resolveConnectLink(token: string, markOpened?: boolean): Promise<ConnectLinkGrant | null>;
+  /**
+   * `exchangeConnectCodeForAccountId` for the account the token is bound to.
+   * A registration spends the link; a failure leaves it usable. Null when the
+   * link is not active or another exchange holds it.
+   */
+  exchangeConnectCodeForLink(token: string, code: string, state: string): Promise<ConnectLinkExchange | null>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(
