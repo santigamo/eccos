@@ -15,7 +15,7 @@ import {
   prettyJson,
   wamidTail,
 } from "../../lib/logs";
-import { StatusTag, fmtTsShort } from "../../ui";
+import { INLINE_LINK, StatusTag, fmtTsShort } from "../../ui";
 
 /**
  * ONE EVENT, AND WHAT THE RECEIVER GOT.
@@ -222,7 +222,7 @@ export function EventDetail({ row, hasForwardingTarget, wabaId, onRetry, retryin
             <Link
               to="/messages"
               search={{ message: row.outbound_id ?? undefined, ...(wabaId ? { wabaId } : {}) }}
-              className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+              className={INLINE_LINK}
             >
               Open message {messageRefText(message)}
             </Link>

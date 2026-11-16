@@ -72,7 +72,7 @@ export function ForwardingTargetPanel({
   config: SubscriberConfig;
   wabaId?: string;
   /** The gateway's content window, when the console has read it. */
-  retentionDays?: number;
+  retentionDays?: number | null;
   /** Called after a write lands, so the route can re-read its loader. */
   onSaved?: () => void;
 }) {
@@ -127,8 +127,9 @@ export function ForwardingTargetPanel({
           <FrameTitle className={MACHINE_CLASS}>Forwarding target</FrameTitle>
           {hasTarget ? null : (
             /* Data rule 6: structure, and no action of its own, because the
-               form below IS the action. The deadline is load-bearing: a held
-               row past the content window is deleted (`pruneExpired` in
+               form below IS the action. Both promises are the gateway's: saving
+               a target sets the alarm that drains the backlog, and a held row
+               past the content window is deleted (`pruneExpired` in
                apps/gateway/src/gateway.ts, docs/privacy.md). */
             <FrameDescription className="max-w-prose text-pretty">
               <span className={`block ${MACHINE_CLASS}`}>No forwarding target</span>
@@ -136,8 +137,9 @@ export function ForwardingTargetPanel({
                 The URL on your server where Eccos sends every message and status
                 as it arrives. You only need one if your own system should
                 receive them; Conversations works without it. Until you set one,
-                events are held {retentionDays ? `for ${retentionDays} days` : "until the retention window ends"},
-                then deleted.
+                events are held: saving a target sends everything still held, and
+                each event is deleted{" "}
+                {retentionDays ? `${retentionDays} days after it arrived` : "when its retention window ends"}.
               </span>
             </FrameDescription>
           )}

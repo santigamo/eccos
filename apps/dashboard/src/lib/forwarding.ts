@@ -176,13 +176,13 @@ export function batchEventSummary(payload: string): string {
 }
 
 /**
- * The held sentence, shared by the Status banner and `HeldNotice`. Held events
- * age out with the gateway's content window; an older gateway reports no days.
+ * The held sentence, shared by the Status banner and `HeldNotice`. The deadline
+ * runs per event from its arrival (`pruneExpired` cuts on `created_at`), so it
+ * is never "N days from now". Saving a target sets the alarm that drains the
+ * backlog, which is the promise the middle sentence makes.
  */
-export function heldSentence(pending: number, retentionDays?: number): string {
+export function heldSentence(pending: number, retentionDays?: number | null): string {
   const one = pending === 1;
-  const deadline = retentionDays
-    ? `kept for ${retentionDays} days, then deleted`
-    : "deleted when the retention window ends";
-  return `${pending} ${one ? "event is" : "events are"} waiting for a forwarding target. ${one ? "It is" : "They are"} ${deadline}.`;
+  const deadline = retentionDays ? `${retentionDays} days after it arrived` : "when its retention window ends";
+  return `${pending} ${one ? "event is" : "events are"} waiting for a forwarding target. Save one and ${one ? "it is" : "they are"} sent right away. ${one ? "It" : "Each"} is deleted ${deadline}.`;
 }

@@ -76,7 +76,7 @@ const readyRoot = {
   ok: true,
   data: {
     stage: "ready",
-    status: { counts: { inbound: 0, outbound: {}, deliveries: {} } },
+    status: {},
     scope: { accountId: "account-a", selectedWabaId: WABA, resources: { wabas: [], phones: [] } },
   },
 };
@@ -492,23 +492,6 @@ describe("the conversations page", () => {
     threadRead = thread;
     rootData = readyRoot;
   };
-
-  test("held events are said here too, where a customer who only uses the inbox will see them", () => {
-    searchParams = { wabaId: WABA };
-    ready({ ok: true, data: page([SUMMARY]) });
-    expect(renderToStaticMarkup(<Route.component />)).not.toContain("waiting for a forwarding target");
-    rootData = {
-      ...readyRoot,
-      hasForwardingTarget: false,
-      data: {
-        ...readyRoot.data,
-        status: { counts: { inbound: 9, outbound: {}, deliveries: { pending: 9 } }, contentRetentionDays: 30 },
-      },
-    };
-    const html = renderToStaticMarkup(<Route.component />);
-    expect(html).toContain("9 events are waiting for a forwarding target. They are kept for 30 days, then deleted.");
-    expect(html).toContain(`href="/webhooks?wabaId=${WABA}"`);
-  });
 
   test("with a number selected, the thread shows and the list steps aside on a phone", () => {
     searchParams = { wabaId: WABA, waId: CUSTOMER };

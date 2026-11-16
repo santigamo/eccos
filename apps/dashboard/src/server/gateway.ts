@@ -2279,26 +2279,40 @@ export const getSubscriberConfig = createServerFn({ method: "GET" })
   );
 
 /**
- * Whether a forwarding target exists — the one setup fact the root loader
+ * Whether a forwarding target exists: the one setup fact the root loader
  * cannot already see (`lib/setup-checklist.ts`).
  *
- * A BOOLEAN and not the config, on purpose: this rides every page load for the
- * sidebar checklist, and the URL itself is nobody's business outside the
- * Webhooks page. `action: "view"`, because seeing that a step is done is not
- * configuring anything.
+ * Not the config, on purpose: this rides every page load, and the URL itself is
+ * nobody's business outside the Webhooks page. `action: "view"`, because seeing
+ * that a step is done is not configuring anything.
  *
- * It answers `false` rather than a failure for an account that has no WABA yet:
- * there, "no forwarding target" is simply true, and a checklist row cannot show
- * a failure card. Nothing else consumes this, so nothing else loses a diagnosis.
+ * `null` when the read failed. The held banner fires on a single pending row,
+ * so a failed read must not pass for "no target" on an account that has one.
  */
 export const hasForwardingTarget = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(async ({ data }): Promise<boolean> => {
+  .handler(async ({ data }): Promise<boolean | null> => {
     const res = await withScopedRead({ action: "view", wabaId: data?.wabaId, scope: "any" }, (gateway, org) =>
       gateway.readSubscriberConfig(org),
     );
-    return res.ok ? res.data.data.url !== null : false;
+    return res.ok ? res.data.data.url !== null : null;
   });
+
+/** Deployment-wide facts the console quotes; each is null when unset or unread. */
+export interface Deployment {
+  /** `SUPPORT_EMAIL`: where "contact Eccos support" leads. */
+  supportEmail: string | null;
+  /** The gateway's content window, which also bounds how long an event is held. */
+  contentRetentionDays: number | null;
+}
+
+export const getDeployment = createServerFn({ method: "GET" }).handler(async (): Promise<Deployment> => {
+  const days = await withGateway((gateway) => gateway.getContentRetentionDays(), "view");
+  return {
+    supportEmail: (env as { SUPPORT_EMAIL?: string }).SUPPORT_EMAIL?.trim() || null,
+    contentRetentionDays: days.ok ? days.data : null,
+  };
+});
 
 /** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
 export const setSubscriberConfig = createServerFn({ method: "POST" })

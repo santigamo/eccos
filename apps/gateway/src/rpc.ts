@@ -427,7 +427,6 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         connectedAt: provisionedAt === null ? null : new Date(provisionedAt).toISOString(),
       },
       counts,
-      contentRetentionDays: resolveRetentionDays(this.env).contentDays,
     };
   }
 
@@ -1256,6 +1255,10 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
   async getPublicOrigin(): Promise<string | null> {
     return this.env.GATEWAY_PUBLIC_URL?.trim() || null;
+  }
+
+  async getContentRetentionDays(): Promise<number> {
+    return resolveRetentionDays(this.env).contentDays;
   }
 
   /** Account-key management for the console (eccos-bm92): the same control-plane

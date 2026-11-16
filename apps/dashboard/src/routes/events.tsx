@@ -333,7 +333,9 @@ function EventsPage() {
   const selectedWabaId = wabaId ?? ready?.scope.selectedWabaId;
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
-  const hasForwardingTarget = root.ok ? root.hasForwardingTarget : false;
+  const target = root.ok ? root.hasForwardingTarget : null;
+  // An unread target leaves rows `queued`: `held` asks for an action it cannot justify.
+  const hasForwardingTarget = target !== false;
   const counts = ready?.status.counts;
   const pending = counts?.deliveries.pending ?? 0;
 
@@ -492,9 +494,9 @@ function EventsPage() {
           disagree about when forwarding is held. */}
       <HeldNotice
         pending={pending}
-        hasForwardingTarget={hasForwardingTarget}
+        hasForwardingTarget={target}
         wabaId={selectedWabaId}
-        retentionDays={ready?.status.contentRetentionDays}
+        retentionDays={root.ok ? root.deployment.contentRetentionDays : null}
       />
       {retryError ? (
         <p

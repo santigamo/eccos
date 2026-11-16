@@ -14,6 +14,7 @@ import type { DashboardScope, GatewayStatus } from "../server/gateway";
 import {
   COUNT_LINK,
   countTotal,
+  INLINE_LINK,
   FactCell,
   FactsStrip,
   Page,
@@ -47,7 +48,11 @@ function StatusPage() {
 
   if (result.data.stage !== "ready") return null;
 
-  const reading = healthReading(result.data.status, result.hasForwardingTarget);
+  const reading = healthReading(
+    result.data.status,
+    result.hasForwardingTarget,
+    result.deployment.contentRetentionDays,
+  );
 
   return (
     <Page title="Status" kicker="Gateway" actions={<HealthBadge reading={reading} />}>
@@ -85,10 +90,7 @@ function StatusBanner({ banner, wabaId }: { banner: HealthBanner | null; wabaId:
           <Link
             to={banner.action.to}
             search={{ wabaId }}
-            // The house link idiom (the `link` button variant): green ink, the
-            // console's interactivity signature, underlined on hover, green
-            // ring on focus.
-            className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className={INLINE_LINK}
           >
             {banner.action.label}
           </Link>

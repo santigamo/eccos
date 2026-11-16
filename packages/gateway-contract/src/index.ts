@@ -334,8 +334,6 @@ export interface GatewayStatus {
   health: Health;
   connection: { wabaId: string | null; phoneNumberId: string | null; displayPhone: string | null; connectedAt: string | null };
   counts: OperatorCounts;
-  /** Days the deployment keeps message content, held events included. Absent on an older gateway. */
-  contentRetentionDays?: number;
 }
 
 export type TemplatesResult = { ok: true; data: unknown } | { ok: false; error: unknown };
@@ -1264,6 +1262,8 @@ export interface GatewayApi {
   listAccountResources(accountId: string): Promise<AccountResources>;
   /** The gateway's public HTTPS origin (`GATEWAY_PUBLIC_URL`), null when unset. */
   getPublicOrigin(): Promise<string | null>;
+  /** Days the deployment keeps message content (`CONTENT_RETENTION_DAYS`, clamped); held events age out with it. */
+  getContentRetentionDays(): Promise<number>;
   /** The account's API keys, metadata only (never the secret or its hash). */
   listApiKeys(accountId: string): Promise<AccountKeyResource[]>;
   /** Issue an `ek_` key for the account; the raw key is returned once, here. */

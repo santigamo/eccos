@@ -329,11 +329,12 @@ Eccos system — the practices, not the brand):
    next to the heading suffices, and the health banner renders **only** when
    something is wrong (amber for degraded, red for unhealthy/unreachable). When an
    operator sees a banner, it always means something. **Held events count as
-   something:** with no forwarding target and at least one event waiting, the amber
-   held banner renders at any count and under a `Healthy` tag, on Status and on the
-   pages an operator actually works in (`HeldNotice`), and it states the retention
-   deadline. Events with a deletion date that only the operator can stop are not a
-   quiet system.
+   something:** with a forwarding target confirmed missing and at least one event
+   waiting, the amber held banner renders at any count and under a `Healthy` tag, on
+   Status, on /webhooks and above the two logs (`HeldNotice`). It says that saving a
+   target sends them and when each is deleted. It stays off /conversations: an
+   inbox-only customer needs no server, and a standing warning there would mean
+   nothing. A target read that failed is unknown, and unknown says nothing.
 2. **Every metric links to its evidence.** Status is the index; the logs are the
    body. Counts navigate to the filtered log view that explains them
    (`failed 1` → `/deliveries?status=failed`). A number an operator cannot chase

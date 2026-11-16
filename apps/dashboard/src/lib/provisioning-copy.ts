@@ -8,7 +8,7 @@ import type { AccountWabaResource, CoexistenceResource } from "@eccos/gateway-co
  *
  * Only an operator can act on these, so they point to Eccos support rather than
  * promising a notification nobody sends. `SupportText` links the phrase
- * "contact Eccos support" wherever these sentences render.
+ * "contact Eccos support" when the deployment sets `SUPPORT_EMAIL`.
  */
 
 const UNAVAILABLE_REASON = /^unavailable:(already_synced|history_sharing_off|not_permitted)$/;

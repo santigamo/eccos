@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { heldSentence } from "../../lib/forwarding";
+import { INLINE_LINK } from "../../ui";
 
 /**
  * "Forwarding is held" — the third register in which the console says the same
@@ -15,8 +16,8 @@ import { heldSentence } from "../../lib/forwarding";
  * the same statement about the same system, and a second visual language for it
  * would read as a second condition.
  *
- * SAID ONLY WHEN BOTH HALVES ARE TRUE: no target AND something actually
- * waiting. With an empty queue there is nothing held and the line would be a
+ * SAID ONLY WHEN BOTH HALVES ARE TRUE: a confirmed missing target (`false`,
+ * never the `null` of a failed read) AND something actually waiting. With an empty queue there is nothing held and the line would be a
  * standing scold on a page that is behaving; with a target set, `pending` rows
  * are ordinary queue and drain in seconds. Data rule 1: when an operator sees
  * this, it always means something.
@@ -37,12 +38,12 @@ export function HeldNotice({
   link = true,
 }: {
   pending: number;
-  hasForwardingTarget: boolean;
+  hasForwardingTarget: boolean | null;
   wabaId?: string;
-  retentionDays?: number;
+  retentionDays?: number | null;
   link?: boolean;
 }) {
-  const held = !hasForwardingTarget && pending > 0;
+  const held = hasForwardingTarget === false && pending > 0;
   return (
     <output
       className={
@@ -61,7 +62,7 @@ export function HeldNotice({
               <Link
                 to="/webhooks"
                 search={wabaId ? { wabaId } : {}}
-                className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+                className={INLINE_LINK}
               >
                 Set a forwarding target
               </Link>

@@ -6,7 +6,7 @@ import type { AccountResources } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
 import { failedWabaCopy, recheckNotice, syncUnavailableCopy } from "../../lib/provisioning-copy";
 import { wabaLabel } from "../../lib/wabas";
-import { StatusTag } from "../../ui";
+import { INLINE_LINK, StatusTag } from "../../ui";
 import { SupportText } from "./support-text";
 
 type Notice = { ok: boolean; text: string };
@@ -34,12 +34,14 @@ type NumberRow = {
  */
 export function NumbersTable({
   resources,
-  hasForwardingTarget = true,
+  nextWabaId,
+  supportEmail,
   onRefresh,
 }: {
   resources: AccountResources;
-  /** False raises the NEXT note under live numbers. The route knows; tests default to quiet. */
-  hasForwardingTarget?: boolean;
+  /** The selected WABA, when it is confirmed to have no forwarding target: raises the NEXT note for its live numbers. */
+  nextWabaId?: string;
+  supportEmail?: string | null;
   /** Re-read the loader once a re-check changed something. The route owns it. */
   onRefresh?: () => void | Promise<void>;
 }) {
@@ -57,7 +59,7 @@ export function NumbersTable({
     })),
   );
   const pendingRows = rows.filter((row) => row.status === "pending").length;
-  const liveRows = rows.filter((row) => row.status === "active");
+  const nextRows = rows.filter((row) => row.status === "active" && row.wabaId === nextWabaId).length;
   const notCoexistenceRows = rows.filter(
     (row) => row.status === "active" && row.coexistence === "not_coexistence",
   ).length;
@@ -148,9 +150,7 @@ export function NumbersTable({
         </table>
       </div>
 
-      {!hasForwardingTarget && liveRows[0] ? (
-        <NextNote count={liveRows.length} wabaId={liveRows[0].wabaId} />
-      ) : null}
+      {nextWabaId && nextRows > 0 ? <NextNote count={nextRows} wabaId={nextWabaId} /> : null}
       {pendingRows > 0 ? <PendingNote count={pendingRows} /> : null}
       {awaitingPhoneWabas.length > 0 ? (
         <AwaitingPhoneNote
@@ -160,9 +160,9 @@ export function NumbersTable({
           onRecheck={onRecheck}
         />
       ) : null}
-      {failedWabas.length > 0 ? <FailedNote wabas={failedWabas} /> : null}
+      {failedWabas.length > 0 ? <FailedNote wabas={failedWabas} supportEmail={supportEmail} /> : null}
       {notCoexistenceRows > 0 ? <NotCoexistenceNote count={notCoexistenceRows} /> : null}
-      {unavailableLines.length > 0 ? <UnavailableSyncNote lines={unavailableLines} /> : null}
+      {unavailableLines.length > 0 ? <UnavailableSyncNote lines={unavailableLines} supportEmail={supportEmail} /> : null}
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -216,12 +216,10 @@ function RowAction({
   );
 }
 
-const NOTE_LINK =
-  "text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2";
-
 /**
- * What to do with a live number, shown until a forwarding target exists. A
- * note, not a success banner: the green tag already says the number is live.
+ * What to do with a live number, shown until its WABA has a forwarding target.
+ * The count and the links are the selected WABA's, the one the target read
+ * describes. A note, not a success banner: the green tag already says live.
  */
 function NextNote({ count, wabaId }: { count: number; wabaId: string }) {
   const search = { wabaId };
@@ -230,15 +228,15 @@ function NextNote({ count, wabaId }: { count: number; wabaId: string }) {
       <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Next</p>
       <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
         {count === 1 ? "This number is live." : "These numbers are live."} Reply to customers from{" "}
-        <Link to="/conversations" search={search} className={NOTE_LINK}>
+        <Link to="/conversations" search={search} className={INLINE_LINK}>
           Conversations
         </Link>
         . To receive events in your own system,{" "}
-        <Link to="/webhooks" search={search} className={NOTE_LINK}>
+        <Link to="/webhooks" search={search} className={INLINE_LINK}>
           set a forwarding target
         </Link>
         ; to send from your server,{" "}
-        <Link to="/settings" className={NOTE_LINK}>
+        <Link to="/settings" search={search} className={INLINE_LINK}>
           create an API key
         </Link>
         .
@@ -334,7 +332,13 @@ function AwaitingPhoneNote({
  * state, never from the operator-facing `provisioningError`. A WABA with no
  * numbers produces no rows, so without this it would not show at all.
  */
-function FailedNote({ wabas }: { wabas: AccountResources["wabas"] }) {
+function FailedNote({
+  wabas,
+  supportEmail,
+}: {
+  wabas: AccountResources["wabas"];
+  supportEmail?: string | null;
+}) {
   return (
     <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
       <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -344,7 +348,7 @@ function FailedNote({ wabas }: { wabas: AccountResources["wabas"] }) {
         {wabas.map((waba) => (
           <li key={waba.wabaId} className="max-w-prose text-sm text-pretty text-muted-foreground">
             <span className="font-medium text-foreground">{wabaLabel(waba)}</span> —{" "}
-            <SupportText>{failedWabaCopy(waba)}</SupportText>
+            <SupportText email={supportEmail}>{failedWabaCopy(waba)}</SupportText>
           </li>
         ))}
       </ul>
@@ -386,7 +390,7 @@ function NotCoexistenceNote({ count }: { count: number }) {
  * what would mislead is leaving somebody waiting for contacts or history that
  * will not come.
  */
-function UnavailableSyncNote({ lines }: { lines: string[] }) {
+function UnavailableSyncNote({ lines, supportEmail }: { lines: string[]; supportEmail?: string | null }) {
   return (
     <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
       <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -394,7 +398,7 @@ function UnavailableSyncNote({ lines }: { lines: string[] }) {
       </p>
       {lines.map((line) => (
         <p key={line} className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
-          <SupportText>{line}</SupportText>
+          <SupportText email={supportEmail}>{line}</SupportText>
         </p>
       ))}
     </div>

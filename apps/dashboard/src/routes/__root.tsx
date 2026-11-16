@@ -13,7 +13,7 @@ import { RouteProgress } from "../components/dashboard/route-progress"
 import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
-import { type getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
+import { type Deployment, type getDashboardState, getDeployment, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { useRootRefresh } from "../hooks/use-root-refresh"
 import { watchUnhandledSignIn } from "../lib/follow-sign-in"
@@ -41,6 +41,19 @@ function loadAnalyticsConfig(): Promise<AnalyticsConfig | null> {
     return null
   })
   return documentAnalytics
+}
+
+const NO_DEPLOYMENT: Deployment = { supportEmail: null, contentRetentionDays: null }
+let documentDeployment: Promise<Deployment> | undefined
+
+/** Once per document, like the analytics config: deployment facts do not change under a page. */
+function loadDeployment(): Promise<Deployment> {
+  if (typeof window === "undefined") return getDeployment().catch(() => NO_DEPLOYMENT)
+  documentDeployment ??= getDeployment().catch(() => {
+    documentDeployment = undefined
+    return NO_DEPLOYMENT
+  })
+  return documentDeployment
 }
 
 type RootState = Awaited<ReturnType<typeof getDashboardState>>
@@ -80,15 +93,17 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
     // The checklist read is deliberately NOT folded into `getDashboardState`:
     // that shape drives the root redirect and the stage machine, and display
     // data has no business deciding where an operator lands.
-    const [user, forwardingTarget, analytics] = await Promise.all([
+    const [user, forwardingTarget, analytics, deployment] = await Promise.all([
       getSessionUser(),
       // No WABA yet means no forwarding target, without asking the gateway.
+      // `null` is a read that failed: unknown, never "no target".
       state.ok && hasWabaScope(state.data)
         ? hasForwardingTarget({ data: { wabaId: deps.wabaId } })
         : Promise.resolve(false),
       loadAnalyticsConfig(),
+      loadDeployment(),
     ])
-    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics }
+    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics, deployment }
   },
   head: () => ({
     meta: [

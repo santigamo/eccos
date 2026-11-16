@@ -7,7 +7,7 @@ import {
   type Result,
 } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
-import { fmtTsShort } from "../../ui";
+import { INLINE_LINK, fmtTsShort } from "../../ui";
 import {
   Frame,
   FrameDescription,
@@ -322,7 +322,7 @@ export function SendSnippet({
         href={API_GUIDE_URL}
         target="_blank"
         rel="noreferrer"
-        className="mt-2 inline-block text-sm text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+        className={`mt-2 inline-block text-sm ${INLINE_LINK}`}
       >
         Read the API guide
       </a>

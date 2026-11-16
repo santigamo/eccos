@@ -92,7 +92,7 @@ function WebhooksPage() {
   }
 
   const config = result.data;
-  const retentionDays = ready?.status.contentRetentionDays;
+  const retentionDays = root.ok ? root.deployment.contentRetentionDays : null;
   return (
     <Page
       title="Webhooks"

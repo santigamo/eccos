@@ -57,17 +57,23 @@ const GENERIC_BANNER: Record<Health, HealthBanner | null> = {
 /**
  * ── THE HELD READING ────────────────────────────────────────────────────────
  * With no forwarding target, `alarm()` HOLDS the drain
- * (`apps/gateway/src/gateway.ts`) and pending rows wait until the content
- * window deletes them. That is a deadline only the operator can act on, so it
+ * (`apps/gateway/src/gateway.ts`) and each pending row waits until the content
+ * window deletes it. That is a deadline only the operator can act on, so it
  * raises the banner at any count, whatever the health word. The gateway only
  * reads `degraded` past ten held rows, so waiting for that hid the first nine.
  *
- * Two cases keep their own sentence. Failed forwards are a real fault and come
- * first. Failed outbound sends are a second, unrelated reason for `degraded`,
- * and one sentence naming only the queue would hide it, so that case keeps the
- * generic line and the facts strip's red `failed` count carries the other half.
+ * Only on a CONFIRMED missing target: `null` is a read that failed, and saying
+ * "waiting for a forwarding target" to an account that has one is worse than
+ * saying nothing.
+ *
+ * Failed forwards are a real fault and come first. Failed outbound sends are a
+ * second, unrelated fact, so the held sentence names them too.
  */
-export function healthReading(status: GatewayStatus, hasForwardingTarget: boolean): HealthReading {
+export function healthReading(
+  status: GatewayStatus,
+  hasForwardingTarget: boolean | null,
+  retentionDays?: number | null,
+): HealthReading {
   const label = HEALTH_LABEL[status.health];
   // `unhealthy` means only this: forwarded batches that failed every attempt.
   const failed = status.counts.deliveries.failed ?? 0;
@@ -82,12 +88,13 @@ export function healthReading(status: GatewayStatus, hasForwardingTarget: boolea
     };
   }
   const held = status.counts.deliveries.pending ?? 0;
-  const outboundFailed = status.counts.outbound.failed ?? 0;
-  if (!hasForwardingTarget && held > 0 && outboundFailed === 0) {
+  if (hasForwardingTarget === false && held > 0) {
+    const unsent = status.counts.outbound.failed ?? 0;
+    const also = unsent > 0 ? ` ${unsent} ${unsent === 1 ? "message" : "messages"} also failed to send.` : "";
     return {
       label,
       banner: {
-        detail: heldSentence(held, status.contentRetentionDays),
+        detail: `${heldSentence(held, retentionDays)}${also}`,
         rail: "border-l-warning",
         action: { to: "/webhooks", label: "Set a forwarding target" },
       },

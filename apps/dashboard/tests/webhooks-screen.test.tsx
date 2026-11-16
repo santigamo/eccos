@@ -125,10 +125,12 @@ describe("ForwardingTargetPanel", () => {
     // `pruneExpired` DELETES a held row past the content window, so a promise
     // that events are simply "not lost" would outlive the storage backing it.
     // This assertion exists so that copy cannot drift back.
-    expect(empty).toContain("events are held until the retention window ends, then deleted");
+    expect(empty).toContain("when its retention window ends");
     expect(
       renderToStaticMarkup(<ForwardingTargetPanel config={EMPTY} retentionDays={30} />),
-    ).toContain("events are held for 30 days, then deleted");
+    ).toContain("30 days after it arrived");
+    // The other half of the promise: saving is what sends the backlog.
+    expect(empty).toContain("saving a target sends everything still held");
     expect(empty).not.toContain("not lost");
   });
 

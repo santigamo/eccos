@@ -71,18 +71,23 @@ describe("healthReading", () => {
   test("held events raise the banner under a Healthy tag, with the deadline", () => {
     // Nine held events is below the gateway's `degraded` threshold. A first
     // customer sat under a green tag with exactly that many.
-    const reading = healthReading(
-      { ...status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 9 } } }), contentRetentionDays: 30 },
-      false,
-    );
+    const nine = status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 9 } } });
+    const reading = healthReading(nine, false, 30);
     expect(reading.label).toBe("Healthy");
+    // The deadline runs per event from its arrival, and saving a target is
+    // what sends them: without that half an operator reads "lost".
     expect(reading.banner?.detail).toBe(
-      "9 events are waiting for a forwarding target. They are kept for 30 days, then deleted.",
+      "9 events are waiting for a forwarding target. Save one and they are sent right away. Each is deleted 30 days after it arrived.",
     );
     expect(reading.banner?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
-    expect(
-      healthReading(status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 9 } } }), true).banner,
-    ).toBeNull();
+    expect(healthReading(nine, true, 30).banner).toBeNull();
+  });
+
+  test("a target read that failed is unknown, and unknown raises nothing", () => {
+    // `null` is a failed read. The banner fires at one pending row, so reading
+    // it as "no target" would tell an account WITH a target to go set one.
+    const queued = status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 3 } } });
+    expect(healthReading(queued, null, 30).banner).toBeNull();
   });
 
   test("one held event reads as one event, not '1 events'", () => {
@@ -93,18 +98,18 @@ describe("healthReading", () => {
     expect(reading.banner?.detail).toContain("1 event is waiting");
   });
 
-  test("failed outbound sends keep the generic sentence, even with a held backlog", () => {
-    // Two unrelated reasons for `degraded`; one sentence naming only the queue
-    // would hide the other. The facts strip's red `failed` count carries it.
-    const reading = healthReading(
-      status({
-        health: "degraded",
-        counts: { inbound: 0, outbound: { failed: 3 }, deliveries: { pending: 12 } },
-      }),
-      false,
-    );
-    expect(reading.banner?.detail).toBe("The gateway is running with reduced capacity.");
-    expect(reading.banner?.action).toBeUndefined();
+  test("failed outbound sends and a held backlog are both said", () => {
+    // Two unrelated facts. Either sentence alone would hide the other.
+    const both = status({
+      health: "degraded",
+      counts: { inbound: 0, outbound: { failed: 3 }, deliveries: { pending: 12 } },
+    });
+    const reading = healthReading(both, false, 30);
+    expect(reading.banner?.detail).toContain("12 events are waiting for a forwarding target");
+    expect(reading.banner?.detail).toContain("3 messages also failed to send.");
+    expect(reading.banner?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
+    // With a target, only the outbound fault is left and the generic line carries it.
+    expect(healthReading(both, true, 30).banner?.detail).toBe("The gateway is running with reduced capacity.");
   });
 
   test("unhealthy is never softened into a waiting message", () => {

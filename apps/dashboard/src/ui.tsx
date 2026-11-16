@@ -127,6 +127,9 @@ const COUNT_INK: Record<string, string> = {
 export const COUNT_LINK =
   "underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
 
+/** A link inside a sentence: green ink, underlined on hover, green ring on focus. */
+export const INLINE_LINK = `text-ink ${COUNT_LINK}`
+
 /** Sum of a per-status count map — the headline number of a facts cell. */
 export function countTotal(counts: Record<string, number>): number {
   let total = 0

@@ -155,6 +155,7 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 | `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
 | `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
 | `META_GRAPH_VERSION` | `v25.0` | Passed to `FB.init`. Keep equal to the gateway's — see [Meta Graph API version](#meta-graph-api-version) |
+| `SUPPORT_EMAIL` | unset | Address the console links wherever it says "contact Eccos support". Unset leaves that sentence as plain text |
 | `ANALYTICS_SCRIPT_URL` | `""` | Umami tracker script URL. Either this or `ANALYTICS_WEBSITE_ID` empty renders no tracker at all |
 | `ANALYTICS_WEBSITE_ID` | `""` | Umami website id |
 | `ANALYTICS_DOMAINS` | `""` | Umami `data-domains`: exact hostnames the tracker counts on (no subdomain wildcard). Empty counts every hostname |

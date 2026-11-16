@@ -252,7 +252,7 @@ function MessagesPage() {
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
   const counts = ready?.status.counts.outbound ?? {};
-  const hasForwardingTarget = root.ok ? root.hasForwardingTarget : false;
+  const hasForwardingTarget = root.ok ? root.hasForwardingTarget !== false : false;
 
   const openMessage = (row: OutboundRow) =>
     navigate({ search: (prev) => ({ ...prev, message: row.id }) });

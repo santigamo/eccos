@@ -53,7 +53,7 @@ export function NavSetup() {
   }, [])
 
   if (!root.ok) return null
-  const steps = setupSteps(root.data, root.hasForwardingTarget)
+  const steps = setupSteps(root.data, root.hasForwardingTarget === true)
   if (dismissed || setupComplete(steps)) return null
 
   function hide() {

@@ -380,10 +380,10 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
   test("it states the deadline, with the gateway's days when it has them", () => {
     expect(
       renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} retentionDays={30} />),
-    ).toContain("They are kept for 30 days, then deleted.");
+    ).toContain("Save one and they are sent right away. Each is deleted 30 days after it arrived.");
     expect(
       renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} />),
-    ).toContain("They are deleted when the retention window ends.");
+    ).toContain("Each is deleted when its retention window ends.");
   });
 
   test("on /webhooks the form is the action, so it carries no link", () => {
@@ -395,7 +395,7 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
   test("one waiting event is one sentence, not `1 events`", () => {
     expect(
       renderToStaticMarkup(<HeldNotice pending={1} hasForwardingTarget={false} />),
-    ).toContain("1 event is waiting for a forwarding target. It is deleted");
+    ).toContain("1 event is waiting for a forwarding target. Save one and it is sent right away. It is deleted");
   });
 
   test("the live region stays mounted and says nothing when nothing is held", () => {
@@ -405,6 +405,8 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
     const withTarget = renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={true} />);
     expect(withTarget).toContain("<output");
     expect(withTarget).not.toContain("waiting");
+    // A failed target read is unknown, never "no target".
+    expect(renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={null} />)).not.toContain("waiting");
     expect(withTarget).not.toContain("border-l-warning");
     // Nothing waiting is not held either: a standing scold on a page that is
     // behaving is exactly what data rule 1 forbids.

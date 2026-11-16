@@ -52,7 +52,7 @@ export const Route = createFileRoute("/numbers")({
 function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
-  const { connectError, connectSkipped } = Route.useSearch();
+  const { wabaId, connectError, connectSkipped } = Route.useSearch();
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
@@ -111,7 +111,15 @@ function NumbersPage() {
   return (
     <NumbersView
       resources={resources}
-      hasForwardingTarget={root.hasForwardingTarget}
+      // The WABA the root's target read describes, and only on a confirmed "none".
+      nextWabaId={
+        root.hasForwardingTarget === false
+          ? root.data.stage === "ready"
+            ? root.data.scope.selectedWabaId
+            : (wabaId ?? wabas[0]?.wabaId)
+          : undefined
+      }
+      supportEmail={root.deployment.supportEmail}
       billing={billing}
       subscribed={subscribed}
       connectError={connectError}
@@ -144,7 +152,8 @@ function NumbersPage() {
  */
 export function NumbersView({
   resources,
-  hasForwardingTarget,
+  nextWabaId,
+  supportEmail,
   billing = false,
   subscribed = false,
   connectError,
@@ -152,7 +161,8 @@ export function NumbersView({
   onRefresh,
 }: {
   resources: AccountResources;
-  hasForwardingTarget?: boolean;
+  nextWabaId?: string;
+  supportEmail?: string | null;
   /** Whether this console has billing on, so a closed workspace can be pointed at it. */
   billing?: boolean;
   /** A subscription still exists, so billing opens its portal instead of a checkout. */
@@ -197,7 +207,12 @@ export function NumbersView({
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
-        <NumbersTable resources={resources} hasForwardingTarget={hasForwardingTarget} onRefresh={onRefresh} />
+        <NumbersTable
+          resources={resources}
+          nextWabaId={nextWabaId}
+          supportEmail={supportEmail}
+          onRefresh={onRefresh}
+        />
       </div>
       {/* Mounted only while open, so a previous attempt's inline error never
           greets the next one — the same remount-per-opening idiom /templates
