@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ConnectLinkExchange, ConnectLinkGrant } from "@eccos/gateway-contract";
+import type { ConnectLinkGrant } from "@eccos/gateway-contract";
 import { CaptureMailSender } from "../src/auth/mail";
 import { attemptLimiter } from "../src/server/attempt-limit";
 import { type ConnectLinkDeps, connectLinkApi, handleConnectLink } from "../src/server/connect-link-api";
@@ -15,8 +15,8 @@ const TOKEN = "0123456789abcdef.rawsecretvalue_never_logged_never_echoed00";
 const GRANT: ConnectLinkGrant = {
   accountId: "acc_agency",
   organizationId: "org_agency",
+  linkId: "link_1",
   creatorUserId: "user_ruben",
-  issuedAt: 1_700_000_000_000,
   state: "active",
   connectPolicy: "open",
 };
@@ -43,40 +43,63 @@ function d1(db: Database): D1Database {
   } as unknown as D1Database;
 }
 
-type Exchanged = ConnectLinkExchange | "busy" | null | Error;
+type Settled = Awaited<ReturnType<ConnectLinkDeps["gateway"]["exchangeConnectCodeForClaim"]>>;
+type Over = {
+  grant?: ConnectLinkGrant | null;
+  people?: typeof PEOPLE | null;
+  /** What the claim answers; by default the grant, claimed when it is active. */
+  claim?: "busy" | Error;
+  /** What the exchange answers, or the error it dies with. */
+  exchange?: Settled | Error;
+  /** What settling the claim as unknown answers after a dead exchange. */
+  left?: Awaited<ReturnType<ConnectLinkDeps["gateway"]["settleConnectLink"]>> | Error;
+};
 
-function harness(over: { grant?: ConnectLinkGrant | null; people?: typeof PEOPLE | null; exchange?: Exchanged } = {}) {
+function harness(over: Over = {}) {
   const calls: unknown[][] = [];
   const strikes: string[] = [];
   const deferred: Promise<unknown>[] = [];
   let blocked = false;
   const mail = new CaptureMailSender();
   const grant = over.grant === undefined ? GRANT : over.grant;
+  const limiter = (name: string) => ({
+    strike: async (key: string) => {
+      strikes.push(`${name}:${key}`);
+      return blocked;
+    },
+  });
   const deps: ConnectLinkDeps = {
     gateway: {
       resolveConnectLink: async (...args) => {
         calls.push(["resolve", ...args]);
         return grant;
       },
+      markConnectLinkOpened: async (...args) => void calls.push(["opened", ...args]),
       startConnectForAccountId: async (...args) => {
         calls.push(["start", ...args]);
         return { url: "https://gateway.test/connect?state=s", state: "state-1", expiresAt: 1 };
       },
-      abandonConnectLinkExchange: async (...args) => void calls.push(["abandon", ...args]),
-      exchangeConnectCodeForLink: async (...args) => {
+      claimConnectLink: async (...args) => {
+        calls.push(["claim", ...args]);
+        if (over.claim instanceof Error) throw over.claim;
+        if (over.claim === "busy") return "busy";
+        return grant && { grant, claimId: grant.state === "active" ? "link_1.nonce" : null };
+      },
+      exchangeConnectCodeForClaim: async (...args) => {
         calls.push(["exchange", ...args]);
         if (over.exchange instanceof Error) throw over.exchange;
-        return over.exchange === undefined ? { grant: { ...GRANT, state: "used" }, result: CONNECTED, notify: true } : over.exchange;
+        return over.exchange === undefined ? { result: CONNECTED, notify: true, state: "connected" } : over.exchange;
+      },
+      settleConnectLink: async (...args) => {
+        calls.push(["settle", ...args]);
+        if (over.left instanceof Error) throw over.left;
+        return over.left === undefined ? { notify: true, state: "unconfirmed" } : over.left;
       },
     },
     people: async () => (over.people === undefined ? PEOPLE : over.people),
-    failures: {
-      strike: async (caller) => {
-        strikes.push(caller);
-        return blocked;
-      },
-    },
-    events: { strike: async () => blocked },
+    failures: limiter("failures"),
+    events: limiter("events"),
+    starts: limiter("starts"),
     mail,
     defer: (work) => void deferred.push(work),
     signup: SIGNUP,
@@ -87,9 +110,11 @@ function harness(over: { grant?: ConnectLinkGrant | null; people?: typeof PEOPLE
     await Promise.all(deferred);
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
+  const steps = () => calls.map((entry) => entry[0]);
   return {
     call,
     calls,
+    steps,
     strikes,
     mail,
     block: () => {
@@ -110,13 +135,16 @@ afterEach(() => {
 });
 
 describe("view", () => {
-  test("names the workspace and the inviter, and marks the link opened", async () => {
+  test("names the workspace and the inviter, and marks the link opened once it has resolved in full", async () => {
     const h = harness();
     expect(await h.call("view")).toEqual({
       status: 200,
       body: { status: "ready", workspace: "NACEX 2801", inviter: "Rubén", closed: false, signup: SIGNUP },
     });
-    expect(h.calls).toEqual([["resolve", TOKEN, true]]);
+    expect(h.calls).toEqual([
+      ["resolve", TOKEN],
+      ["opened", "link_1"],
+    ]);
   });
 
   test("says a closed workspace is closed before Meta is ever opened", async () => {
@@ -124,34 +152,38 @@ describe("view", () => {
     expect((await h.call("view")).body).toMatchObject({ status: "ready", closed: true });
   });
 
-  test("a spent or expired link names who to ask, and nothing else", async () => {
-    for (const state of ["used", "expired"] as const) {
+  test("a spent, expired or replaced link names who to ask, counts no strike and is not marked opened", async () => {
+    for (const state of ["used", "expired", "revoked"] as const) {
       const h = harness({ grant: { ...GRANT, state } });
       expect((await h.call("view")).body).toEqual({ status: "gone", inviter: "Rubén" });
+      expect(h.steps()).toEqual(["resolve"]);
+      expect(h.strikes).toEqual([]);
     }
   });
 
   test("an unknown token learns nothing and counts against the caller", async () => {
     const h = harness({ grant: null });
     expect((await h.call("view")).body).toEqual({ status: "gone", inviter: null });
-    expect(h.strikes).toEqual(["203.0.113.9"]);
+    expect(h.strikes).toEqual(["failures:203.0.113.9"]);
   });
 
-  test("a link whose creator may no longer connect is gone, without a strike", async () => {
+  test("a link whose creator may no longer connect is gone, and never reads as opened", async () => {
     const h = harness({ people: null });
     expect((await h.call("view")).body).toEqual({ status: "gone", inviter: null });
     expect(h.strikes).toEqual([]);
+    expect(h.steps()).toEqual(["resolve"]);
   });
 });
 
 describe("start", () => {
-  test("mints the state for the token's account, without marking the link opened", async () => {
+  test("mints the state for the token's account", async () => {
     const h = harness();
     expect((await h.call("start", { accountId: "acc_other" })).body).toEqual({ ok: true, state: "state-1" });
     expect(h.calls).toEqual([
-      ["resolve", TOKEN, false],
+      ["resolve", TOKEN],
       ["start", "acc_agency"],
     ]);
+    expect(h.strikes).toEqual(["starts:link_1"]);
   });
 
   test("refuses a closed workspace and a dead link without minting a state", async () => {
@@ -159,93 +191,141 @@ describe("start", () => {
     expect((await closed.call("start")).body).toEqual({ ok: false, code: "subscription_required" });
     const used = harness({ grant: { ...GRANT, state: "used" } });
     expect((await used.call("start")).body).toEqual({ ok: false, code: "gone" });
-    for (const h of [closed, used]) expect(h.calls.map((call) => call[0])).toEqual(["resolve"]);
+    for (const h of [closed, used]) expect(h.steps()).toEqual(["resolve"]);
+  });
+
+  test("past the per-link limit it mints nothing and audits nothing", async () => {
+    const h = harness();
+    h.block();
+    expect((await h.call("start")).status).toBe(429);
+    expect(h.steps()).toEqual(["resolve"]);
+    expect(logged).toEqual([]);
   });
 });
 
 describe("exchange", () => {
-  test("reports the number, mails the creator, and audits under the creator's id", async () => {
+  const body = { code: "meta-code", state: "state-1" };
+
+  test("claims the link, exchanges under that claim, mails the creator and audits under their id", async () => {
     const h = harness();
-    expect((await h.call("exchange", { code: "meta-code", state: "state-1" })).body).toEqual({
-      outcome: "connected",
-      phone: "+34 600 000 222",
-    });
-    expect(h.calls.at(-1)).toEqual(["exchange", TOKEN, "meta-code", "state-1"]);
+    expect((await h.call("exchange", body)).body).toEqual({ outcome: "connected", phone: "+34 600 000 222" });
+    expect(h.calls).toEqual([
+      ["claim", TOKEN],
+      ["exchange", "link_1.nonce", "meta-code", "state-1"],
+    ]);
     expect(h.mail.sent).toHaveLength(1);
     expect(h.mail.sent[0]).toMatchObject({
       template: "connect-link-connected",
       to: "ruben@agency.test",
       variables: { workspace: "NACEX 2801", url: "https://app.eccos.test/numbers" },
     });
-    const audit = logged.find((line) => line.includes('"action":"connect_link"')) ?? "";
-    expect(audit).toContain('"actorUserId":"user_ruben"');
-    expect(audit).toContain('"wabaId":"WABA_1"');
+    expect(h.mail.sent[0]?.variables.note).toContain("forwarded");
+    const audits = logged.filter((line) => line.includes('"action":"connect_link"'));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toContain('"actorUserId":"user_ruben"');
+    expect(audits[0]).toContain('"wabaId":"WABA_1"');
+  });
+
+  test("numbers left out by a closed workspace are said to the bearer and to the admin", async () => {
+    const h = harness({
+      exchange: { result: { ...CONNECTED, subscriptionRequired: true }, notify: true, state: "connected" },
+    });
+    expect((await h.call("exchange", body)).body).toEqual({ outcome: "connected", phone: "+34 600 000 222", leftOut: true });
+    expect(h.mail.sent[0]?.template).toBe("connect-link-connected");
+    expect(h.mail.sent[0]?.variables.note).toContain("left out");
   });
 
   test("a failure is reported to the page and mailed only when the gateway says so", async () => {
     const failed = { ok: false as const, error: "owned", code: "owned" as const };
-    const first = harness({ exchange: { grant: GRANT, result: failed, notify: true } });
-    expect((await first.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "owned" });
+    const first = harness({ exchange: { result: failed, notify: true, state: "pending" } });
+    expect((await first.call("exchange", body)).body).toEqual({ outcome: "owned" });
     expect(first.mail.sent[0]).toMatchObject({ template: "connect-link-failed", to: "ruben@agency.test" });
     expect(Object.keys(first.mail.sent[0]?.variables ?? {}).sort()).toEqual(["reason", "url", "workspace"]);
 
-    const again = harness({ exchange: { grant: GRANT, result: failed, notify: false } });
-    await again.call("exchange", { code: "c", state: "s" });
+    const again = harness({ exchange: { result: failed, notify: false, state: "pending" } });
+    await again.call("exchange", body);
     expect(again.mail.sent).toEqual([]);
   });
 
   test("a registration without a ready number is pending, and mailed as a failure", async () => {
     const h = harness({
-      exchange: { grant: GRANT, result: { ...CONNECTED, connected: [], display_phone_number: "" }, notify: true },
+      exchange: { result: { ...CONNECTED, connected: [], display_phone_number: "" }, notify: true, state: "connected" },
     });
-    expect((await h.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "pending" });
+    expect((await h.call("exchange", body)).body).toEqual({ outcome: "pending" });
     expect(h.mail.sent[0]?.template).toBe("connect-link-failed");
   });
 
-  test("a link spent in the meantime is gone; one held by another exchange is busy, not gone", async () => {
-    const spent = harness({ exchange: null });
-    expect((await spent.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "gone" });
-    const held = harness({ exchange: "busy" });
-    expect((await held.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "busy" });
-    for (const h of [spent, held]) expect(h.mail.sent).toEqual([]);
-  });
-
-  test("a spent or expired link never reaches the exchange", async () => {
-    const h = harness({ grant: { ...GRANT, state: "used" } });
-    expect((await h.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "gone" });
-    expect(h.calls.map((call) => call[0])).toEqual(["resolve"]);
-  });
-
-  test("an exchange that broke off is unknown: never a retry, and the creator is told", async () => {
-    const brokeOff = harness({ exchange: { grant: { ...GRANT, state: "used" }, result: null, notify: true } });
-    const died = harness({ exchange: new Error(`rpc died ${TOKEN}`) });
-    for (const h of [brokeOff, died]) {
-      expect(await h.call("exchange", { code: "c", state: "s" })).toEqual({ status: 200, body: { outcome: "unknown" } });
-      expect(h.mail.sent[0]).toMatchObject({ template: "connect-link-failed", to: "ruben@agency.test" });
-      expect(h.mail.sent[0]?.variables.reason).toContain("Open Numbers");
+  test("a link held by another exchange is busy, and one that is not active is gone: neither is exchanged", async () => {
+    const held = harness({ claim: "busy" });
+    expect((await held.call("exchange", body)).body).toEqual({ outcome: "busy" });
+    for (const state of ["used", "expired", "revoked"] as const) {
+      const dead = harness({ grant: { ...GRANT, state } });
+      expect((await dead.call("exchange", body)).body).toEqual({ outcome: "gone" });
+      expect(dead.steps()).toEqual(["claim"]);
     }
+    expect(held.steps()).toEqual(["claim"]);
+  });
+
+  test("a claim taken for a link whose creator lost access is released, not left held", async () => {
+    const h = harness({ people: null });
+    expect((await h.call("exchange", body)).body).toEqual({ outcome: "gone" });
+    expect(h.calls.at(-1)).toEqual(["settle", "link_1.nonce", { kind: "released" }]);
+  });
+
+  test("when the claim itself fails nothing was taken: retry, with the link unspent and no mail", async () => {
+    const h = harness({ claim: new Error(`rpc died ${TOKEN}`) });
+    expect(await h.call("exchange", body)).toEqual({ status: 200, body: { outcome: "failed" } });
+    expect(h.steps()).toEqual(["claim"]);
+    expect(h.mail.sent).toEqual([]);
+  });
+
+  test("a failure once the registration write began is unknown: never a retry, and the creator is told", async () => {
+    const h = harness({ exchange: { result: null, notify: true, state: "unconfirmed" } });
+    expect((await h.call("exchange", body)).body).toEqual({ outcome: "unknown" });
+    expect(h.mail.sent[0]?.variables.reason).toContain("Open Numbers");
     expect(logged.find((line) => line.includes('"action":"connect_link"'))).toContain('"detail":"unknown"');
-    // Only a call that died without an answer has to spend the link itself.
-    expect(brokeOff.calls.map((call) => call[0])).not.toContain("abandon");
-    expect(died.calls.at(-1)).toEqual(["abandon", TOKEN]);
+    expect(h.steps()).not.toContain("settle");
+  });
+
+  test("an exchange that dies without an answer spends only the claim this request holds", async () => {
+    const h = harness({ exchange: new Error(`rpc died ${TOKEN}`) });
+    expect((await h.call("exchange", body)).body).toEqual({ outcome: "unknown" });
+    expect(h.calls.at(-1)).toEqual(["settle", "link_1.nonce", { kind: "unknown" }]);
+    expect(h.mail.sent[0]).toMatchObject({ template: "connect-link-failed" });
+  });
+
+  test("what the gateway had already recorded wins over the guess", async () => {
+    const connected = harness({ exchange: new Error("rpc died"), left: { notify: false, state: "connected" } });
+    expect((await connected.call("exchange", body)).body).toEqual({ outcome: "connected", phone: null });
+    expect(connected.mail.sent.map((sent) => sent.template)).toEqual(["connect-link-connected"]);
+
+    const failed = harness({ exchange: new Error("rpc died"), left: { notify: false, state: "pending" } });
+    expect((await failed.call("exchange", body)).body).toEqual({ outcome: "failed" });
+    expect(failed.mail.sent).toEqual([]);
+  });
+
+  test("when the link could not be marked either, nothing is mailed that a later result could contradict", async () => {
+    const h = harness({ exchange: new Error("rpc died"), left: new Error("still down") });
+    expect((await h.call("exchange", body)).body).toEqual({ outcome: "unknown" });
+    expect(h.mail.sent).toEqual([]);
   });
 
   test("the mail's key names the link and the outcome, so a repeat is the same mail", async () => {
-    const h = harness({ exchange: new Error("rpc died") });
-    await h.call("exchange", { code: "c", state: "s" });
-    await h.call("exchange", { code: "c", state: "s" });
-    expect(h.mail.sent).toHaveLength(2);
+    const h = harness();
+    await h.call("exchange", body);
+    await h.call("exchange", body);
     expect(h.mail.sent[0]?.idempotencyKey).toBe(h.mail.sent[1]?.idempotencyKey);
-    const other = harness({ grant: { ...GRANT, issuedAt: 2 }, exchange: new Error("rpc died") });
-    await other.call("exchange", { code: "c", state: "s" });
+    const other = harness({ grant: { ...GRANT, linkId: "link_2" } });
+    await other.call("exchange", body);
     expect(other.mail.sent[0]?.idempotencyKey).not.toBe(h.mail.sent[0]?.idempotencyKey);
   });
 
-  test("refuses a missing code or state", async () => {
+  test("refuses a missing or oversized code or state before the link is taken", async () => {
     const h = harness();
     expect((await h.call("exchange", { code: "", state: "s" })).status).toBe(400);
     expect((await h.call("exchange", { code: "c" })).status).toBe(400);
-    expect(h.calls.map((call) => call[0])).not.toContain("exchange");
+    expect((await h.call("exchange", { code: "x".repeat(4097), state: "s" })).status).toBe(400);
+    expect(h.calls).toEqual([]);
   });
 });
 
@@ -274,19 +354,18 @@ describe("the boundary", () => {
     const limited = harness();
     limited.block();
     expect(await limited.call("event", event)).toEqual({ status: 200, body: {} });
-    for (const state of ["used", "expired"] as const) {
+    for (const state of ["used", "expired", "revoked"] as const) {
       await harness({ grant: { ...GRANT, state } }).call("event", event);
     }
     expect(logged.filter((line) => line.includes("connect_session_event"))).toEqual([]);
   });
 
-  test("an unknown action or a missing token is a bad request", async () => {
+  test("an unknown action, a missing token or a malformed event is a bad request", async () => {
     const h = harness();
-    expect((await h.call("event", { event: { event: "" } })).status).toBe(400);
-    expect((await h.call("event", {})).status).toBe(400);
-    expect((await h.call("exchange", { code: "x".repeat(4097), state: "s" })).status).toBe(400);
     expect((await h.call("revoke")).status).toBe(400);
     expect((await h.call("constructor")).status).toBe(400);
+    expect((await h.call("event", { event: { event: "" } })).status).toBe(400);
+    expect((await h.call("event", {})).status).toBe(400);
     const response = await handleConnectLink("view", {}, "ip", {} as ConnectLinkDeps);
     expect(response.status).toBe(400);
   });
@@ -300,7 +379,7 @@ describe("the boundary", () => {
       await h.call("event", { event: { event: "FINISH" } }),
     ];
     const said = JSON.stringify(answers);
-    for (const secret of ["acc_agency", "org_agency", "user_ruben", "WABA_1", "ruben@agency.test", "rawsecretvalue"]) {
+    for (const secret of ["acc_agency", "org_agency", "user_ruben", "WABA_1", "ruben@agency.test", "rawsecretvalue", "link_1"]) {
       expect(said).not.toContain(secret);
     }
     expect(logged.length).toBeGreaterThan(0);
@@ -308,7 +387,6 @@ describe("the boundary", () => {
   });
 
   test("a gateway failure answers 502 and logs the error's name only", async () => {
-    const h = harness();
     const response = await handleConnectLink("view", { token: TOKEN }, "ip", {
       gateway: {
         resolveConnectLink: async () => {
@@ -317,7 +395,7 @@ describe("the boundary", () => {
       },
     } as unknown as ConnectLinkDeps);
     expect(response.status).toBe(502);
-    expect(h.mail.sent).toEqual([]);
+    expect(logged.length).toBe(1);
     for (const line of logged) expect(line).not.toContain("rawsecretvalue");
   });
 
@@ -339,7 +417,7 @@ describe("attemptLimiter", () => {
   function limiter(clock: { now: number }) {
     const db = new Database(":memory:");
     db.run('create table "rateLimit" ("id" text not null primary key, "key" text not null, "count" integer not null, "lastRequest" bigint not null)');
-    return { limit: attemptLimiter(d1(db), "connect-link", 10, () => clock.now), db };
+    return { limit: attemptLimiter(d1(db), "connect-link", 10, 10 * 60 * 1000, () => clock.now), db };
   }
 
   test("is over the limit from the eleventh attempt, for that caller only", async () => {

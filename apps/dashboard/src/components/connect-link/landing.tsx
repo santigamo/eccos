@@ -4,7 +4,7 @@ import { FrameDescription, FrameHeader, FrameTitle } from "../reui/frame";
 import { Button } from "../ui/button";
 import { type LinkOutcome, type LinkStart, type LinkView, connectLinkApi } from "../../lib/connect-link/api";
 import type { ConnectLinkCopy } from "../../lib/connect-link/en";
-import { takeLinkToken } from "../../lib/connect-link/token";
+import { forgetLinkToken, takeLinkToken } from "../../lib/connect-link/token";
 import { loginOptions, parseSessionEvent } from "../../lib/embedded-signup";
 import { type FacebookSdk, captureWindowOpen, currentFacebookSdk, loadFacebookSdk } from "../../lib/facebook-sdk";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ export function ConnectLinkLanding({
   copy,
   api = connectLinkApi,
   readToken = takeLinkToken,
+  forgetToken = forgetLinkToken,
   loadSdk = loadFacebookSdk,
   busyRetryMs = 2_000,
 }: {
@@ -33,6 +34,7 @@ export function ConnectLinkLanding({
   /** Seams for tests. */
   api?: typeof connectLinkApi;
   readToken?: () => string | null;
+  forgetToken?: () => void;
   loadSdk?: typeof loadFacebookSdk;
   busyRetryMs?: number;
 }) {
@@ -56,13 +58,16 @@ export function ConnectLinkLanding({
     void api.view(token.current).then((view) => {
       if (!live) return;
       if (view === "limited" || view === "unreachable") setScreen({ at: "message", text: copy[view] });
-      else if (view.status === "gone") setScreen({ at: "message", text: copy.gone(view.inviter ?? copy.sender) });
+      else if (view.status === "gone") {
+        forgetToken();
+        setScreen({ at: "message", text: copy.gone(view.inviter ?? copy.sender) });
+      }
       else setScreen({ at: "ready", view });
     });
     return () => {
       live = false;
     };
-  }, [api, copy, readToken]);
+  }, [api, copy, readToken, forgetToken]);
 
   const signup = screen.at === "ready" && !screen.view.closed ? screen.view.signup : null;
   // Loaded before the click: the browser only lets Meta's window open while the click is live.
@@ -107,7 +112,10 @@ export function ConnectLinkLanding({
   }
 
   const { view } = screen;
-  const gone = () => setScreen({ at: "message", text: copy.gone(view.inviter) });
+  const gone = () => {
+    forgetToken();
+    setScreen({ at: "message", text: copy.gone(view.inviter) });
+  };
 
   function settle(result: LinkOutcome | "limited" | "unreachable") {
     setBusy(false);
@@ -120,7 +128,11 @@ export function ConnectLinkLanding({
       case "busy":
         return setNote({ text: copy.busy, tone: "error" });
       case "connected":
-        return setScreen({ at: "done", title: copy.connectedTitle, text: copy.connected(result.phone, view.workspace) });
+        return setScreen({
+          at: "done",
+          title: copy.connectedTitle,
+          text: `${copy.connected(result.phone, view.workspace)}${result.leftOut ? ` ${copy.leftOut(view.inviter)}` : ""}`,
+        });
       case "pending":
         return setScreen({ at: "done", text: copy.pending(view.inviter) });
       case "gone":

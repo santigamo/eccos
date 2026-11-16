@@ -79,16 +79,6 @@ describe("ConnectLinkPanel", () => {
     expect(button("New link").className).toContain("bg-primary");
   });
 
-  test("a link mid-connection is not replaced, and the dialog says why", async () => {
-    await mount((fresh) => ({
-      ok: true,
-      data: { link: { ...pending, state: "opened" }, url: null, ...(fresh ? { busy: true } : {}) },
-    }));
-    await act(async () => button("New link").click());
-    await settle();
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("in progress");
-  });
-
   test("a second click while a request is out does not ask twice", async () => {
     let release: (value: unknown) => void = () => {};
     const asked = await mount((fresh) =>

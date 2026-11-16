@@ -37,6 +37,7 @@ let outcome: LinkOutcome | "unreachable";
 let earlier: LinkOutcome[];
 let login: { callback: LoginCallback; options: { extras?: { featureType?: string } } } | null;
 let events: unknown[];
+let forgotten: boolean[];
 let unmount: (() => void) | null = null;
 
 const api = {
@@ -66,6 +67,7 @@ const sdk = {
 beforeEach(() => {
   calls = [];
   events = [];
+  forgotten = [];
   login = null;
   view = READY;
   start = { ok: true, state: "state-1" };
@@ -93,7 +95,14 @@ async function mount(copy = en, token: string | null = "tok"): Promise<HTMLEleme
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <ConnectLinkLanding copy={copy} api={api} readToken={() => token} loadSdk={async () => sdk} busyRetryMs={1} />,
+      <ConnectLinkLanding
+        copy={copy}
+        api={api}
+        readToken={() => token}
+        forgetToken={() => void forgotten.push(true)}
+        loadSdk={async () => sdk}
+        busyRetryMs={1}
+      />,
     ),
   );
   unmount = () => root.unmount();
@@ -241,9 +250,35 @@ describe("the landing", () => {
     expect(calls).toEqual(["view"]);
   });
 
+  test("numbers left out are said after the connected line", async () => {
+    outcome = { outcome: "connected", phone: "+34 600 000 222", leftOut: true };
+    const host = await mount();
+    await click(host);
+    await answer({ authResponse: { code: "c" } });
+    expect(host.textContent).toContain("+34 600 000 222 now works with NACEX 2801");
+    expect(host.textContent).toContain(en.leftOut("Rubén"));
+  });
+
+  test("a link that asks too often for a state is told to wait", async () => {
+    const limitedStart = { ...api, start: async () => "limited" as const };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(<ConnectLinkLanding copy={en} api={limitedStart} readToken={() => "tok"} forgetToken={() => {}} loadSdk={async () => sdk} />),
+    );
+    unmount = () => root.unmount();
+    await settle();
+    await click(host);
+    expect(host.textContent).toContain(en.limited);
+    expect(button(host)?.disabled).toBe(false);
+  });
+
   test("a spent, expired or unknown link says who to ask", async () => {
     view = { status: "gone", inviter: "Rubén" };
     expect((await mount()).textContent).toContain("This link no longer works. Ask Rubén for a new one.");
+    // And the stored token goes with it, so a reload does not present it again.
+    expect(forgotten.length).toBeGreaterThan(0);
     act(() => unmount?.());
     view = { status: "gone", inviter: null };
     expect((await mount()).textContent).toContain(en.gone(en.sender));

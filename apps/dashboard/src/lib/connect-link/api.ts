@@ -12,7 +12,8 @@ export type LinkView =
 export type LinkStart = { ok: true; state: string } | { ok: false; code: "gone" | "subscription_required" | "failed" };
 
 export type LinkOutcome =
-  | { outcome: "connected"; phone: string | null }
+  /** `leftOut`: some numbers were not connected, because the workspace cannot add new ones. */
+  | { outcome: "connected"; phone: string | null; leftOut?: true }
   /** Registered, but the number is missing or its setup failed: the workspace admin finishes it. */
   | { outcome: "pending" }
   /** The exchange broke off: something may have been registered, so the bearer must not retry. */

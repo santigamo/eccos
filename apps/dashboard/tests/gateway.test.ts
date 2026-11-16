@@ -2513,24 +2513,16 @@ describe("openConnectLink (Numbers, connection link)", () => {
     expect(fresh).toEqual([["issue", "account-a", "user-1", true]]);
   });
 
-  test("a link another dialog just made, or one mid-connection, is shown and not replaced", async () => {
-    for (const [answer, extra] of [
-      ["exists", {}],
-      ["busy", { busy: true }],
-    ] as const) {
-      let current: unknown = null;
-      withResources({
-        getConnectLink: async () => current,
-        issueConnectLink: async () => {
-          current = LIVE;
-          return answer;
-        },
-      });
-      expect(await openConnectLink({ data: { fresh: answer === "busy" } })).toEqual({
-        ok: true,
-        data: { link: LIVE, url: null, ...extra },
-      });
-    }
+  test("a link another dialog made in the same moment is shown, not replaced", async () => {
+    let current: unknown = null;
+    withResources({
+      getConnectLink: async () => current,
+      issueConnectLink: async () => {
+        current = LIVE;
+        return "exists";
+      },
+    });
+    expect(await openConnectLink({ data: { fresh: false } })).toEqual({ ok: true, data: { link: LIVE, url: null } });
   });
 
   test("replaces a live link whose creator may no longer connect: it resolves for nobody", async () => {

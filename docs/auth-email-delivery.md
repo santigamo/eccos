@@ -112,7 +112,8 @@ the callback (`extractTokenFromUrl`); the URL itself is never hashed.
 
 Five templates: `verify-email`, `reset-password`, `invite-member`, and the two
 that tell an admin how their connection link went, `connect-link-connected`
-(`workspace`, `url`) and `connect-link-failed` (`workspace`, `reason`, `url`).
+(`workspace`, `note`, `url`) and `connect-link-failed` (`workspace`, `reason`, `url`).
+`note` and `reason` are fixed sentences chosen by the console, never free text.
 Each one's declared variable set is **one explicit constant** in
 `src/auth/mail.ts`, so a provider-side rename is a one-line change. The
 connection-link mails are best effort: a send that fails is logged and never

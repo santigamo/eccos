@@ -78,11 +78,6 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
           {failureCopy(view).detail}
         </p>
       ) : null}
-      {view?.ok && view.data.busy ? (
-        <p className={AUTH_ERROR_BANNER_CLASS} role="alert">
-          A connection with this link is in progress right now, so it was not replaced. Try again in a minute.
-        </p>
-      ) : null}
       {url ? (
         <code className="block border border-(--line-strong) bg-(--ghost-fill) p-3 font-mono text-xs break-all text-foreground">
           {url}

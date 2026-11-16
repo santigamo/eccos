@@ -4,8 +4,6 @@
  * id is the key itself, which makes each count one atomic upsert.
  * `lastRequest` holds the start of the caller's current window.
  */
-const WINDOW_MS = 10 * 60 * 1000;
-
 export interface AttemptLimiter {
   /** Counts one attempt. True once the caller is over the limit for this window. */
   strike(caller: string): Promise<boolean>;
@@ -15,6 +13,7 @@ export function attemptLimiter(
   db: D1Database,
   scope: string,
   max: number,
+  windowMs: number,
   now: () => number = Date.now,
 ): AttemptLimiter {
   return {
@@ -29,7 +28,7 @@ export function attemptLimiter(
              "lastRequest" = CASE WHEN "lastRequest" <= ?3 THEN ?2 ELSE "lastRequest" END
            RETURNING "count"`,
         )
-        .bind(key, at, at - WINDOW_MS)
+        .bind(key, at, at - windowMs)
         .first<{ count: number }>();
       return (row?.count ?? 0) > max;
     },

@@ -17,6 +17,7 @@ export const en = {
   connectedTitle: "Connected.",
   connected: (phone: string | null, workspace: string) =>
     `${phone ?? "Your number"} now works with ${workspace}. Nothing changes on your phone. You can close this page.`,
+  leftOut: (inviter: string) => `Some numbers were left out: this workspace cannot add new numbers right now. Tell ${inviter}.`,
   pending: (inviter: string) =>
     `Your WhatsApp account is connected, but the number is not ready yet. ${inviter} will finish it. You can close this page.`,
   unknown: (inviter: string) =>

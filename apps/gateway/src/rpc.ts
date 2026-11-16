@@ -32,8 +32,10 @@ import type {
   AccountResources,
   BilledAccount,
   ConnectExchangeResult,
-  ConnectLinkExchange,
+  ConnectLinkClaim,
   ConnectLinkGrant,
+  ConnectLinkSettled,
+  ConnectLinkSettlement,
   ConnectLinkSummary,
   ConnectStartResult,
   IssuedConnectLink,
@@ -1391,11 +1393,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).getConnectLink(requireAccountId(accountId, "accountId is required"));
   }
 
-  async issueConnectLink(
-    accountId: string,
-    creatorUserId: string,
-    replace?: boolean,
-  ): Promise<IssuedConnectLink | "exists" | "busy"> {
+  async issueConnectLink(accountId: string, creatorUserId: string, replace?: boolean): Promise<IssuedConnectLink | "exists"> {
     return getControlPlaneStub(this.env).issueConnectLink(
       requireAccountId(accountId, "accountId is required"),
       creatorUserId,
@@ -1403,42 +1401,52 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     );
   }
 
-  async abandonConnectLinkExchange(token: string): Promise<void> {
-    return getControlPlaneStub(this.env).abandonConnectLink(token);
+  async resolveConnectLink(token: string): Promise<ConnectLinkGrant | null> {
+    return getControlPlaneStub(this.env).resolveConnectLink(token);
   }
 
-  async resolveConnectLink(token: string, markOpened?: boolean): Promise<ConnectLinkGrant | null> {
-    return getControlPlaneStub(this.env).resolveConnectLink(token, markOpened);
+  async markConnectLinkOpened(linkId: string): Promise<void> {
+    await getControlPlaneStub(this.env).markConnectLinkOpened(linkId);
+  }
+
+  async claimConnectLink(token: string): Promise<ConnectLinkClaim | "busy" | null> {
+    return getControlPlaneStub(this.env).claimConnectLink(token);
+  }
+
+  async settleConnectLink(claimId: string, outcome: ConnectLinkSettlement): Promise<ConnectLinkSettled | null> {
+    return getControlPlaneStub(this.env).settleConnectLink(claimId, outcome);
   }
 
   /**
-   * The link is claimed for the length of the exchange, so two bearers cannot
-   * both spend it. Only an outcome that may have registered something spends
-   * the link without a clean result (`result: null`): the exchange itself
-   * reports that as `partial`. A throw comes from before Meta is called
-   * (configuration, the state lookup), so it is an ordinary failure and the
-   * link stays usable.
+   * A throw from the exchange comes from before Meta is called (configuration,
+   * the state lookup), so it is an ordinary failure and the link stays usable.
+   * Only a failure once the registration write has started (`partial`) spends
+   * the link without a clean result.
    */
-  async exchangeConnectCodeForLink(token: string, code: string, state: string): Promise<ConnectLinkExchange | "busy" | null> {
+  async exchangeConnectCodeForClaim(
+    claimId: string,
+    code: string,
+    state: string,
+  ): Promise<(ConnectLinkSettled & { result: ConnectExchangeResult | null }) | null> {
     const controlPlane = getControlPlaneStub(this.env);
-    const grant = await controlPlane.claimConnectLink(token);
-    if (!grant || grant === "busy") return grant;
+    const accountId = await controlPlane.connectLinkAccount(claimId);
+    if (!accountId) return null;
     let result: ConnectExchangeResult;
     try {
-      result = await this.exchangeConnectCodeForAccountId(grant.accountId, code, state);
+      result = await this.exchangeConnectCodeForAccountId(accountId, code, state);
     } catch (err) {
       result = { ok: false, error: errorDetail(err), code: "failed" };
     }
     const unknown = !result.ok && result.partial === true;
-    const notify = await controlPlane.settleConnectLink(
-      token,
+    const settled = await controlPlane.settleConnectLink(
+      claimId,
       unknown
         ? { kind: "unknown" }
         : result.ok
           ? { kind: "connected", phone: result.display_phone_number || null }
           : { kind: "failed", code: result.code },
     );
-    return { grant: unknown || result.ok ? { ...grant, state: "used" } : grant, result: unknown ? null : result, notify };
+    return settled && { ...settled, result: unknown ? null : result };
   }
 
   /**

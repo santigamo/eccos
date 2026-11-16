@@ -11,11 +11,11 @@ import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
+import { linkPeople } from "./connect-link-people";
 import { timedProxy } from "./timing";
 import { connectAudit } from "../lib/connect-result";
 import { CONNECT_LINK_PATH } from "../lib/connect-link/api";
 import { linkIsLive } from "../lib/connect-link/status";
-import { linkPeople } from "./connect-link-people";
 import {
   type EmbeddedSignupConfig,
   embeddedSignupConfig,
@@ -1636,8 +1636,6 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
 export interface ConnectLinkView {
   link: ConnectLinkSummary;
   url: string | null;
-  /** A new link was asked for while a connection with the current one is in progress: nothing was replaced. */
-  busy?: true;
 }
 
 /**
@@ -1661,10 +1659,10 @@ export const openConnectLink = createServerFn({ method: "POST" })
         if (current && current.state !== "expired" && !dead) return { link: current, url: null };
         // Without `replace` the gateway keeps a live link, so two dialogs opening at once share one.
         const issued = await gateway.issueConnectLink(accountId, actor.session.userId, data.fresh || Boolean(dead));
-        if (issued === "exists" || issued === "busy") {
+        if (issued === "exists") {
           const link = await gateway.getConnectLink(accountId);
           if (!link) throw new Error("the connection link could not be read");
-          return { link, url: null, ...(issued === "busy" ? { busy: true as const } : {}) };
+          return { link, url: null };
         }
         auditEvent({
           action: "connect_link_issue",

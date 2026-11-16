@@ -1,33 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { scrubBreadcrumb, scrubEvent, sentryOptions } from "../src/lib/sentry";
+import { scrubFragments, sentryOptions } from "../src/lib/sentry";
 
 /** A URL fragment never reaches Sentry: on /connect it is the connection-link token. */
 describe("Sentry scrubbing", () => {
   test("a navigation breadcrumb loses its fragments", () => {
     expect(
-      scrubBreadcrumb({
+      scrubFragments({
         category: "navigation",
-        data: { from: "/connect#sel.secret", to: "/connect", other: "#kept" },
+        data: { from: "/connect#sel.secret", to: "/connect", note: "#kept, not a URL" },
       }),
-    ).toEqual({ category: "navigation", data: { from: "/connect", to: "/connect", other: "#kept" } });
-    expect(scrubBreadcrumb({ data: { url: "https://app.test/connect?x=1#sel.secret" } }).data).toEqual({
+    ).toEqual({ category: "navigation", data: { from: "/connect", to: "/connect", note: "#kept, not a URL" } });
+    expect(scrubFragments({ data: { url: "https://app.test/connect?x=1#sel.secret" } }).data).toEqual({
       url: "https://app.test/connect?x=1",
     });
-    expect(scrubBreadcrumb({ message: "no data" })).toEqual({ message: "no data" });
   });
 
-  test("an event loses them from its URL and from every breadcrumb it carries", () => {
-    const event = scrubEvent({
+  test("a transaction loses them from its name, its spans and its contexts", () => {
+    const transaction = scrubFragments({
+      type: "transaction",
+      transaction: "GET /connect#sel.secret",
       request: { url: "https://app.test/connect#sel.secret" },
+      contexts: { trace: { data: { "url.full": "https://app.test/connect#sel.secret", "url.fragment": "sel.secret" } } },
+      spans: [
+        { description: "navigation /connect#sel.secret", data: { "http.url": "/connect#sel.secret", "http.fragment": "sel.secret" } },
+      ],
       breadcrumbs: [{ data: { from: "/connect#sel.secret", to: "/numbers" } }],
     });
-    expect(JSON.stringify(event)).not.toContain("sel.secret");
-    expect(event.request.url).toBe("https://app.test/connect");
+    expect(JSON.stringify(transaction)).not.toContain("sel.secret");
+    expect(transaction.transaction).toBe("GET /connect");
+    expect(transaction.spans[0]?.description).toBe("navigation /connect");
   });
 
-  test("both hooks are installed for the browser and the server", () => {
-    expect(sentryOptions.beforeBreadcrumb).toBe(scrubBreadcrumb);
-    expect(sentryOptions.beforeSend).toBe(scrubEvent);
-    expect(sentryOptions.beforeSendTransaction).toBe(scrubEvent);
+  test("the hooks cover breadcrumbs, errors and transactions, in the browser and on the server", () => {
+    expect(sentryOptions.beforeBreadcrumb).toBe(scrubFragments);
+    expect(sentryOptions.beforeSend).toBe(scrubFragments);
+    expect(sentryOptions.beforeSendTransaction).toBe(scrubFragments);
   });
 });

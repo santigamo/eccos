@@ -19,7 +19,7 @@
  * adapter's job is to report the outcome faithfully — not to decide.
  */
 
-/** The three transactional templates registered with the provider. */
+/** The five transactional templates registered with the provider. */
 export type MailTemplate =
   | "verify-email"
   | "reset-password"
@@ -57,11 +57,11 @@ export const INVITE_MEMBER_VARIABLES = [
   "workspace",
 ] as const;
 
-/** The declared set for a template, by name. */
-/** To the admin who made a connection link: ids and the workspace name, never a phone number. */
-export const CONNECT_LINK_CONNECTED_VARIABLES = ["workspace", "url"] as const;
+/** To the admin who made a connection link: the workspace name and a fixed sentence, never a phone number. */
+export const CONNECT_LINK_CONNECTED_VARIABLES = ["workspace", "note", "url"] as const;
 export const CONNECT_LINK_FAILED_VARIABLES = ["workspace", "reason", "url"] as const;
 
+/** The declared set for a template, by name. */
 export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
   "verify-email": VERIFY_EMAIL_VARIABLES,
   "reset-password": RESET_PASSWORD_VARIABLES,

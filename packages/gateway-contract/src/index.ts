@@ -754,21 +754,35 @@ export interface IssuedConnectLink {
 
 /** What a link token resolves to. Only `active` may start or finish a connection. */
 export interface ConnectLinkGrant {
+  /** Names the link to the gateway and in idempotency keys. It cannot open the link, and never reaches a browser. */
+  linkId: string;
   accountId: string;
   organizationId: string;
   creatorUserId: string;
-  /** When the link was made: with the account, it names one link without revealing its token. */
-  issuedAt: number;
-  state: "active" | "expired" | "used";
+  state: "active" | "expired" | "used" | "revoked";
   connectPolicy: ConnectPolicy;
 }
 
-export interface ConnectLinkExchange {
+/** A link taken for one exchange. `claimId` is null when the link is not active: nothing was taken. */
+export interface ConnectLinkClaim {
   grant: ConnectLinkGrant;
-  /** Null when the exchange broke off and its outcome is unknown. */
-  result: ConnectExchangeResult | null;
+  claimId: string | null;
+}
+
+/** How a claimed exchange ended. */
+export type ConnectLinkSettlement =
+  | { kind: "connected"; phone: string | null }
+  | { kind: "failed"; code: ConnectFailureCode }
+  /** The exchange broke off where a registration may already have run. */
+  | { kind: "unknown" }
+  /** Nothing was attempted. */
+  | { kind: "released" };
+
+export interface ConnectLinkSettled {
   /** Whether the link's creator should be told about this outcome. */
   notify: boolean;
+  /** Where the link stands after it. */
+  state: ConnectLinkState | "revoked";
 }
 
 /**
@@ -1384,31 +1398,31 @@ export interface GatewayApi {
    * Makes the account's one connection link, valid for 7 days. Without
    * `replace` a live link is kept and the answer is `exists`, so two callers
    * racing to make the first link end up with one. With it the previous link
-   * stops working, unless an exchange holds it right now: `busy`.
+   * is revoked; an exchange already running on it still records its result.
    */
-  issueConnectLink(
-    accountId: string,
-    creatorUserId: string,
-    replace?: boolean,
-  ): Promise<IssuedConnectLink | "exists" | "busy">;
-  /** Null for a token that is unknown, replaced, or whose account has no active organization. */
-  resolveConnectLink(token: string, markOpened?: boolean): Promise<ConnectLinkGrant | null>;
+  issueConnectLink(accountId: string, creatorUserId: string, replace?: boolean): Promise<IssuedConnectLink | "exists">;
+  /** Null for a token that is unknown or whose account has no active organization. Changes nothing. */
+  resolveConnectLink(token: string): Promise<ConnectLinkGrant | null>;
+  /** Records that the link's page was opened. For a link the caller has resolved in full. */
+  markConnectLinkOpened(linkId: string): Promise<void>;
   /**
-   * `exchangeConnectCodeForAccountId` for the account the token is bound to.
-   * A registration spends the link, and so does an exchange whose outcome is
-   * unknown; a failure leaves it usable. `busy` while another exchange holds
-   * the link, null when it is not active.
+   * Takes the link for one exchange, so two bearers cannot both spend it:
+   * `busy` while another exchange holds it, null as `resolveConnectLink`.
    */
-  exchangeConnectCodeForLink(
-    token: string,
+  claimConnectLink(token: string): Promise<ConnectLinkClaim | "busy" | null>;
+  /**
+   * `exchangeConnectCodeForAccountId` for a claim, settled before it answers:
+   * a registration spends the link, a failure frees it, and a failure once the
+   * registration write has started spends it as unconfirmed (`result: null`).
+   * Null for a claim that does not exist.
+   */
+  exchangeConnectCodeForClaim(
+    claimId: string,
     code: string,
     state: string,
-  ): Promise<ConnectLinkExchange | "busy" | null>;
-  /**
-   * For a caller whose exchange call died without an answer: spends the link
-   * as unconfirmed unless it was already spent. Idempotent.
-   */
-  abandonConnectLinkExchange(token: string): Promise<void>;
+  ): Promise<(ConnectLinkSettled & { result: ConnectExchangeResult | null }) | null>;
+  /** Ends a claim without an exchange result. Null for a claim that does not exist. */
+  settleConnectLink(claimId: string, outcome: ConnectLinkSettlement): Promise<ConnectLinkSettled | null>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(

@@ -3,7 +3,8 @@ const STORAGE_KEY = "eccos.connect-link";
 /**
  * The link token, read from the URL fragment and then taken out of the address
  * bar: Meta's SDK copies the page URL into its popup, and a fragment left in
- * place would hand the token over. Session storage keeps it for a reload.
+ * place would hand the token over. Session storage keeps it for a reload; a
+ * fragment always wins over what was stored, and replaces it.
  */
 export function takeLinkToken(win: Window = window): string | null {
   const fromHash = win.location.hash.slice(1);
@@ -15,4 +16,11 @@ export function takeLinkToken(win: Window = window): string | null {
   } catch {
     return fromHash || null;
   }
+}
+
+/** Drops the stored token once it has answered "gone", so a reload does not present it again. */
+export function forgetLinkToken(win: Window = window): void {
+  try {
+    win.sessionStorage.removeItem(STORAGE_KEY);
+  } catch {}
 }

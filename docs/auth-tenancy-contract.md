@@ -117,7 +117,7 @@ re-authentication before executing the action. Reads never require step-up.
 **The connection link is the one unauthenticated actor.** An admin makes a link for their
 workspace; whoever holds it may run Embedded Signup into that workspace from the public `/connect`
 page, with no Eccos session. The token is bound in the control plane to (account, creating user),
-lives 7 days, is spent by the first registration and replaced by the next link. The account always
+lives 7 days, is spent by the first registration and revoked by the next link. The account always
 comes from the token's row, never from the request; the bearer can add their own WABA and can read
 nothing. A link stops resolving once its creator is no longer an owner or admin of the workspace,
 and its use is audited as `connect_link` under the creator's user id.

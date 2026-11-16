@@ -3,7 +3,7 @@ import { en } from "../src/lib/connect-link/en";
 import { es } from "../src/lib/connect-link/es";
 import { copyFor, pickLanguage } from "../src/lib/connect-link/language";
 import { linkIsLive, linkStatusLine } from "../src/lib/connect-link/status";
-import { takeLinkToken } from "../src/lib/connect-link/token";
+import { forgetLinkToken, takeLinkToken } from "../src/lib/connect-link/token";
 
 describe("pickLanguage", () => {
   test("Spanish only when the browser ranks it above English", () => {
@@ -57,7 +57,11 @@ describe("takeLinkToken", () => {
     const fake = {
       location: { hash, pathname: "/connect", search: "" },
       history: { state: null, replaceState: (_s: unknown, _t: string, url: string) => void replaced.push(url) },
-      sessionStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) },
+      sessionStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+      },
     };
     return { fake: fake as unknown as Window, replaced };
   }
@@ -68,6 +72,15 @@ describe("takeLinkToken", () => {
     expect(first.replaced).toEqual(["/connect"]);
     expect(takeLinkToken(win("", "abc.def").fake)).toBe("abc.def");
     expect(takeLinkToken(win("").fake)).toBeNull();
+  });
+
+  test("a fragment wins over a stored token and replaces it; a token that answered gone is forgotten", () => {
+    const next = win("#new.token", "old.token");
+    expect(takeLinkToken(next.fake)).toBe("new.token");
+    next.fake.location.hash = "";
+    expect(takeLinkToken(next.fake)).toBe("new.token");
+    forgetLinkToken(next.fake);
+    expect(takeLinkToken(next.fake)).toBeNull();
   });
 
   test("leaves the address bar clean even when storage refuses", () => {

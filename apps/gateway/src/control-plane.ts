@@ -3,7 +3,10 @@ import type {
   AccountBilling,
   AccountBillingInput,
   BilledAccount,
+  ConnectLinkClaim,
   ConnectLinkGrant,
+  ConnectLinkSettled,
+  ConnectLinkSettlement,
   ConnectLinkSummary,
   ConnectPolicy,
   IssuedConnectLink,
@@ -12,10 +15,9 @@ import type {
 import {
   CONNECT_LINKS_SCHEMA,
   type ConnectLinkRow,
-  type ConnectLinkSettlement,
-  abandonConnectLink,
   claimConnectLink,
   issueConnectLink,
+  markConnectLinkOpened,
   resolveConnectLink,
   settleConnectLink,
   summarizeConnectLink,
@@ -723,6 +725,11 @@ export class EccosControlPlane extends DurableObject<Env> {
         redirect_uri TEXT,
         return_to  TEXT
       );`);
+      // The table's first shape (one row per account) never shipped; a dev database may still hold it.
+      const linkColumns = this.sql.exec("PRAGMA table_info(connect_links)").toArray();
+      if (linkColumns.length > 0 && !linkColumns.some((row) => row.name === "revoked_at")) {
+        this.sql.exec("DROP TABLE connect_links");
+      }
       this.sql.exec(CONNECT_LINKS_SCHEMA);
       // Operator-only bookkeeping (the daily census guard); never read by the console.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
@@ -2226,11 +2233,7 @@ export class EccosControlPlane extends DurableObject<Env> {
     return summary.state === "pending" || summary.state === "opened" ? { ...summary, state: "expired" } : summary;
   }
 
-  async issueConnectLink(
-    accountId: string,
-    creatorUserId: string,
-    replace = false,
-  ): Promise<IssuedConnectLink | "exists" | "busy"> {
+  async issueConnectLink(accountId: string, creatorUserId: string, replace = false): Promise<IssuedConnectLink | "exists"> {
     const id = this.requireAccount(accountId);
     if (!ORGANIZATION_ID_PATTERN.test(creatorUserId) || creatorUserId.length > ORGANIZATION_ID_MAX_LENGTH) {
       throw new Error("invalid creatorUserId");
@@ -2238,24 +2241,32 @@ export class EccosControlPlane extends DurableObject<Env> {
     return issueConnectLink(this.sql, id, creatorUserId, replace);
   }
 
-  abandonConnectLink(token: string): Promise<void> {
-    return abandonConnectLink(this.sql, token);
+  async resolveConnectLink(token: string): Promise<ConnectLinkGrant | null> {
+    return this.connectLinkGrant(await resolveConnectLink(this.sql, token));
   }
 
-  async resolveConnectLink(token: string, markOpened = false): Promise<ConnectLinkGrant | null> {
-    return this.connectLinkGrant(await resolveConnectLink(this.sql, token, markOpened));
+  markConnectLinkOpened(linkId: string): void {
+    markConnectLinkOpened(this.sql, linkId);
   }
 
-  async claimConnectLink(token: string): Promise<ConnectLinkGrant | "busy" | null> {
-    const row = await claimConnectLink(this.sql, token);
-    if (row === "busy") return row;
-    const grant = this.connectLinkGrant(row);
-    if (row && !grant) await settleConnectLink(this.sql, token, { kind: "released" });
-    return grant;
+  async claimConnectLink(token: string): Promise<ConnectLinkClaim | "busy" | null> {
+    const claimed = await claimConnectLink(this.sql, token);
+    if (!claimed || claimed === "busy") return claimed;
+    const grant = this.connectLinkGrant(claimed.row);
+    if (!grant && claimed.claimId) settleConnectLink(this.sql, claimed.claimId, { kind: "released" });
+    return grant && { grant, claimId: claimed.claimId };
   }
 
-  settleConnectLink(token: string, outcome: ConnectLinkSettlement): Promise<boolean> {
-    return settleConnectLink(this.sql, token, outcome);
+  /** The account a claim's link belongs to, for the exchange that runs under it. */
+  connectLinkAccount(claimId: string): string | null {
+    const row = this.sql
+      .exec("SELECT account_id FROM connect_links WHERE selector = ?", claimId.split(".")[0] ?? "")
+      .toArray()[0];
+    return (row?.account_id as string | undefined) ?? null;
+  }
+
+  settleConnectLink(claimId: string, outcome: ConnectLinkSettlement): ConnectLinkSettled | null {
+    return settleConnectLink(this.sql, claimId, outcome);
   }
 
   private organizationOf(accountId: string): string | null {

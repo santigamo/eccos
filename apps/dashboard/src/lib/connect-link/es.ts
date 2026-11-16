@@ -18,6 +18,8 @@ export const es: ConnectLinkCopy = {
   connectedTitle: "Conectado.",
   connected: (phone, workspace) =>
     `${phone ?? "Tu número"} ya funciona con ${workspace}. No cambia nada en tu teléfono. Puedes cerrar esta página.`,
+  leftOut: (inviter) =>
+    `Algunos números se han quedado fuera: este espacio de trabajo no puede añadir números nuevos ahora mismo. Díselo a ${inviter}.`,
   pending: (inviter) =>
     `Tu cuenta de WhatsApp está conectada, pero el número aún no está listo. ${inviter} lo terminará. Puedes cerrar esta página.`,
   unknown: (inviter) =>

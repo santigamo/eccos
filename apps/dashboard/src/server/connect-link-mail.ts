@@ -1,10 +1,17 @@
 import { deriveIdempotencyKey, type MailSender } from "../auth/mail";
 import type { LinkOutcome } from "../lib/connect-link/api";
 
-type Reported = Exclude<LinkOutcome["outcome"], "gone" | "state" | "busy">;
+type Reported = Exclude<LinkOutcome["outcome"], "gone" | "state" | "busy"> | "connected_partly";
+
+/** What follows "A number was connected" for the admin. */
+const NOTES = {
+  connected: "Open Numbers to set where its messages are forwarded.",
+  connected_partly:
+    "Some numbers were left out, because this workspace cannot add new numbers right now. Open Numbers to see which ones are connected.",
+};
 
 /** What the admin reads; the bearer's page has its own wording. */
-const REASONS: Record<Exclude<Reported, "connected">, string> = {
+const REASONS: Record<Exclude<Reported, keyof typeof NOTES>, string> = {
   unknown: "The connection broke off before its result was known. Open Numbers to see whether the number is there.",
   pending: "Meta connected the account, but the number is not ready. Open Numbers to see what it needs.",
   denied: "Meta ended the connection before a number was attached.",
@@ -20,12 +27,13 @@ export async function mailLinkOutcome(
   message: { to: string; workspace: string; url: string; outcome: Reported; unique: string },
 ): Promise<void> {
   const { to, workspace, url, outcome } = message;
-  const template = outcome === "connected" ? "connect-link-connected" : "connect-link-failed";
+  const connected = outcome === "connected" || outcome === "connected_partly";
+  const template = connected ? "connect-link-connected" : "connect-link-failed";
   try {
     await mail.sendTemplate({
       template,
       to,
-      variables: outcome === "connected" ? { workspace, url } : { workspace, url, reason: REASONS[outcome] },
+      variables: connected ? { workspace, url, note: NOTES[outcome] } : { workspace, url, reason: REASONS[outcome] },
       idempotencyKey: await deriveIdempotencyKey(template, to, message.unique),
     });
   } catch (err) {
