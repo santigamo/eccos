@@ -1,0 +1,235 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { DATA_TERMS, MARKET, PRICING, SITE, monthlyPrice, type Locale } from "../data/product";
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const es = locale === "es";
+const [first, extra, mid, high, beyond] = PRICING.tiers;
+const examples = [1, 3, 5, 10, 30, 60];
+const eur = (n: number) => (es ? `${n} €` : `€${n}`);
+const verified = new Date(MARKET.verified).toLocaleDateString(es ? "es-ES" : "en-GB", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const coexistence = es ? "/coexistence" : "/en/coexistence";
+
+const title = es
+  ? "Precios de Eccos: API de WhatsApp Business desde 5 € por número, sin coste por mensaje"
+  : "Eccos pricing: WhatsApp Business API from €5 per number, no per-message fees";
+const description = es
+  ? `Eccos Cloud cuesta ${first.monthly} € al mes por el primer número de WhatsApp, ${monthlyPrice(5)} € por cinco y ${monthlyPrice(10)} € por diez, con mensajes ilimitados y sin recargo sobre las tarifas de Meta. Autoalojarlo es gratis. Comparativa con Twilio, 360dialog y la Cloud API directa.`
+  : `Eccos Cloud costs €${first.monthly} a month for the first WhatsApp number, €${monthlyPrice(5)} for five and €${monthlyPrice(10)} for ten, with unlimited messages and no markup on Meta's fees. Self-hosting is free. Compared with Twilio, 360dialog and the Cloud API used directly.`;
+---
+
+<SiteLayout {title} {description} canonical={`${SITE.url}${es ? "" : "/en"}/pricing`} {locale} bilingualPath="pricing" active="pricing">
+  <main class="shell doc" id="main">
+    {
+      es ? (
+        <>
+          <h1>Precios de Eccos: la API de WhatsApp Business por número, sin coste por mensaje</h1>
+          <p class="lede">
+            Eccos Cloud cuesta <strong>{eur(first.monthly)} al mes por el primer número de WhatsApp</strong>,{" "}
+            {eur(monthlyPrice(5))} por cinco y {eur(monthlyPrice(10))} por diez. Los mensajes son ilimitados en todos los
+            planes: Eccos no cobra tarifa por mensaje ni aplica recargo sobre las tarifas de Meta, y Meta factura a cada
+            empresa directamente sus propias conversaciones. Autoalojar el mismo código, con licencia {SITE.license}, es
+            gratis.
+          </p>
+        </>
+      ) : (
+        <>
+          <h1>Eccos pricing: the WhatsApp Business API per number, with no per-message fees</h1>
+          <p class="lede">
+            Eccos Cloud costs <strong>{eur(first.monthly)} a month for the first WhatsApp number</strong>,{" "}
+            {eur(monthlyPrice(5))} for five and {eur(monthlyPrice(10))} for ten. Messages are unlimited on every plan:
+            Eccos charges no per-message fee and adds no markup to Meta's fees, and Meta bills each business directly for
+            its own conversations. Self-hosting the same {SITE.license}-licensed code is free.
+          </p>
+        </>
+      )
+    }
+
+    <section>
+      <h2>{es ? "La tarifa de Eccos Cloud" : "The Eccos Cloud tariff"}</h2>
+      <div class="tablewrap" tabindex="0" role="region" aria-label={es ? "Tarifa de Eccos Cloud" : "Eccos Cloud tariff"}>
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th scope="col">{es ? "Números conectados" : "Connected numbers"}</th>
+              <th scope="col">{es ? "Al mes, sin IVA" : "Per month, before VAT"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">{es ? "El primer número" : "The first number"}</th><td>{eur(first.monthly)}</td></tr>
+            <tr><th scope="row">{es ? "Números 2 a 5" : "Numbers 2 to 5"}</th><td>+{eur(extra.monthly)} {es ? "por número" : "per number"}</td></tr>
+            <tr><th scope="row">{es ? "De 6 a 15 números" : "6 to 15 numbers"}</th><td>{eur(mid.monthly)} {es ? "fijos" : "flat"}</td></tr>
+            <tr><th scope="row">{es ? "De 16 a 50 números" : "16 to 50 numbers"}</th><td>{eur(high.monthly)} {es ? "fijos" : "flat"}</td></tr>
+            <tr><th scope="row">{es ? "Más de 50" : "More than 50"}</th><td>{eur(high.monthly)} + {eur(beyond.plusPerNumber)} {es ? "por número a partir del 51" : "per number past 50"}</td></tr>
+            <tr><th scope="row">{es ? "Mensajes" : "Messages"}</th><td>{es ? "Ilimitados, en todos los planes" : "Unlimited, on every plan"}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        {
+          es
+            ? "La única métrica es el número conectado. Entrantes, salientes, plantillas, multimedia y las respuestas que el equipo escribe desde el teléfono no se cuentan."
+            : "The only metric is the connected number. Inbound, outbound, templates, media and the replies your team types on the phone are not counted."
+        }
+      </p>
+    </section>
+
+    <section>
+      <h2>{es ? "Cuánto pagas según tus números" : "What you pay for your numbers"}</h2>
+      <div class="tablewrap" tabindex="0" role="region" aria-label={es ? "Ejemplos de precio" : "Price examples"}>
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th scope="col">{es ? "Números de WhatsApp" : "WhatsApp numbers"}</th>
+              <th scope="col">{es ? "Eccos Cloud al mes" : "Eccos Cloud per month"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {examples.map((n) => <tr><th scope="row">{n}</th><td>{eur(monthlyPrice(n))}</td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>{es ? "Qué le pagas a Meta" : "What you pay Meta"}</h2>
+      {
+        es ? (
+          <p>
+            Las tarifas de WhatsApp las cobra Meta, no Eccos. Cada empresa conecta su propia cuenta de WhatsApp Business
+            con su método de pago, y Meta le factura sus mensajes de plantilla según el país y la categoría (marketing,
+            utilidad, autenticación). Las respuestas dentro de la ventana de atención de 24 horas no tienen coste de Meta.
+            Eccos es Tech Provider, y Meta no permite a los Tech Provider facturar el uso de mensajes: por eso aquí no hay
+            contador, ni recargo, ni saldo que recargar.
+          </p>
+        ) : (
+          <p>
+            WhatsApp's fees are charged by Meta, not by Eccos. Each business connects its own WhatsApp Business Account
+            with its own payment method, and Meta bills it for template messages by country and category (marketing,
+            utility, authentication). Replies inside the 24-hour customer service window carry no Meta charge. Eccos is a
+            Tech Provider, and Meta does not let Tech Providers bill message usage: that is why there is no meter, no
+            markup and no balance to top up here.
+          </p>
+        )
+      }
+    </section>
+
+    <section>
+      <h2>{es ? `Comparado con otras formas de usar la API de WhatsApp Business` : `Compared with other ways to use the WhatsApp Business API`}</h2>
+      <div class="tablewrap" tabindex="0" role="region" aria-label={es ? "Comparativa de precios" : "Price comparison"}>
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th scope="col">{es ? "Opción" : "Option"}</th>
+              <th scope="col">{es ? "Cuota del proveedor" : "Provider fee"}</th>
+              <th scope="col">{es ? "Diez números, 20.000 mensajes al mes" : "Ten numbers, 20,000 messages a month"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Eccos Cloud</th>
+              <td>{es ? `${eur(first.monthly)} el primer número, por tramos después; sin tarifa por mensaje` : `${eur(first.monthly)} for the first number, tiered after; no per-message fee`}</td>
+              <td>{eur(monthlyPrice(10))}</td>
+            </tr>
+            <tr>
+              <th scope="row">{es ? "Eccos autoalojado" : "Eccos self-hosted"}</th>
+              <td>{es ? "Gratis (MIT); pagas tu infraestructura" : "Free (MIT); you pay your own infrastructure"}</td>
+              <td>{es ? "0 € a Eccos" : "€0 to Eccos"}</td>
+            </tr>
+            <tr>
+              <th scope="row">{es ? "Cloud API de Meta, directa" : "Meta's Cloud API, direct"}</th>
+              <td>{es ? "Sin cuota; construyes y operas la integración" : "No fee; you build and run the integration"}</td>
+              <td>{es ? "0 € de cuota" : "€0 in fees"}</td>
+            </tr>
+            <tr>
+              <th scope="row">360dialog</th>
+              <td>{es ? `${MARKET.dialog360.perNumberEur} € por número al mes, sin recargo por mensaje` : `€${MARKET.dialog360.perNumberEur} per number a month, no message markup`}</td>
+              <td>{eur(MARKET.dialog360.perNumberEur * 10)}</td>
+            </tr>
+            <tr>
+              <th scope="row">Twilio</th>
+              <td>{es ? `${MARKET.twilio.perMessageUsd} $ por mensaje, entrante o saliente, sin cuota fija` : `$${MARKET.twilio.perMessageUsd} per message, inbound or outbound, no fixed fee`}</td>
+              <td>{es ? `${MARKET.twilio.perMessageUsd * 20000} $` : `$${MARKET.twilio.perMessageUsd * 20000}`}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {
+        es ? (
+          <p>
+            Precios de lista leídos en la página de precios de cada proveedor (<a href={MARKET.dialog360.source} rel="noreferrer">360dialog</a>,{" "}
+            <a href={MARKET.twilio.source} rel="noreferrer">Twilio</a>) el {verified}; en todos los casos las tarifas de Meta
+            van aparte. El precio no es lo único: 360dialog y Twilio son empresas con soporte y acuerdos de nivel de
+            servicio, y Eccos es un proyecto de código abierto operado por una sola persona. Lo que Eccos ofrece a cambio
+            es precio por número, <a href={coexistence}>coexistencia con la app de WhatsApp Business</a>, almacenamiento en{" "}
+            la jurisdicción europea de Cloudflare y una <a href="/migrate">salida documentada a tu propio servidor</a>.
+          </p>
+        ) : (
+          <p>
+            List prices read on each provider's own pricing page (<a href={MARKET.dialog360.source} rel="noreferrer">360dialog</a>,{" "}
+            <a href={MARKET.twilio.source} rel="noreferrer">Twilio</a>) on {verified}; Meta's fees are extra in every case.
+            Price is not everything: 360dialog and Twilio are companies with support teams and service-level agreements,
+            and Eccos is an open-source project run by one person. What Eccos offers in exchange is per-number pricing,{" "}
+            <a href={coexistence}>coexistence with the WhatsApp Business app</a>, storage in {DATA_TERMS.jurisdiction} and
+            a <a href="/migrate">documented exit to your own server</a>.
+          </p>
+        )
+      }
+    </section>
+
+    <section>
+      <h2>{es ? "Cuánto cuesta autoalojarlo" : "What self-hosting costs"}</h2>
+      {
+        es ? (
+          <p>
+            Nada a Eccos: el código es el mismo y la licencia es {SITE.license}. En Cloudflare pagas el plan de Workers de
+            5 $ al mes que exigen los Durable Objects, y hasta unos quinientos mil eventos al mes esa cuota es toda la
+            factura. También se ejecuta como un binario de Bun o en Docker en cualquier servidor. Autoalojándolo traes tu
+            propia app de Meta; en Eccos Cloud usas la nuestra, ya aprobada. El código y las guías están en{" "}
+            <a href={SITE.repo} rel="noreferrer">GitHub</a>.
+          </p>
+        ) : (
+          <p>
+            Nothing to Eccos: the code is the same and the licence is {SITE.license}. On Cloudflare you pay the $5 a month
+            Workers plan that Durable Objects require, and up to about half a million events a month that fee is the whole
+            bill. It also runs as a single Bun binary or in Docker on any server. Self-hosting, you bring your own Meta
+            app; on Eccos Cloud you use ours, already approved. The code and the guides are on{" "}
+            <a href={SITE.repo} rel="noreferrer">GitHub</a>.
+          </p>
+        )
+      }
+    </section>
+
+    <section>
+      <h2>{es ? "Prueba, pago y cancelación" : "Trial, payment and cancellation"}</h2>
+      {
+        es ? (
+          <p>
+            Crear la cuenta es gratis y no pide tarjeta. Para añadir un número te suscribes antes, y la suscripción
+            empieza con una prueba gratuita de {PRICING.trialDays} días que pide tarjeta; después no hay plan gratuito.
+            Puedes cancelar cuando quieras, con efecto al final del periodo pagado. El pago y las facturas los gestiona
+            Creem como vendedor oficial (merchant of record). Las condiciones completas están en los{" "}
+            <a href="/terms">términos</a>.
+          </p>
+        ) : (
+          <p>
+            Creating an account is free and needs no card. To add a number you subscribe first, and the subscription
+            starts with a {PRICING.trialDays}-day free trial that asks for a card; there is no free tier after it. You can
+            cancel at any time, effective at the end of the paid period. Payment and invoices are handled by Creem as
+            merchant of record. The full conditions are in the <a href="/terms">terms</a>.
+          </p>
+        )
+      }
+      <p><a class="btn btn-primary" href={SITE.signup}>{es ? "Crear tu cuenta" : "Create your account"}</a></p>
+    </section>
+  </main>
+</SiteLayout>

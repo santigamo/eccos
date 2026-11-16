@@ -4,7 +4,7 @@ import { ClientRouter } from "astro:transitions";
 import LandingSchema from "../components/LandingSchema.astro";
 import { SITE } from "../data/product";
 
-type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate";
+type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate" | "pricing" | "coexistence";
 
 interface Props {
   title: string;
@@ -14,6 +14,8 @@ interface Props {
   notFound?: boolean;
   active?: ActivePage;
   locale?: "en" | "es";
+  /** Path of a page that exists in both languages (`/pricing`): emits hreflang for the pair. */
+  bilingualPath?: string;
 }
 
 const {
@@ -24,14 +26,17 @@ const {
   notFound = false,
   active,
   locale = "en",
+  bilingualPath,
 } = Astro.props;
 const pageLocale = landing ? (Astro.currentLocale ?? locale) : locale;
 const es = pageLocale === "es";
 const alternateLocale = es ? "en" : "es";
 const localeHome = getRelativeLocaleUrl(pageLocale);
-const alternateHome = getRelativeLocaleUrl(alternateLocale);
-const esUrl = getAbsoluteLocaleUrl("es");
-const enUrl = getAbsoluteLocaleUrl("en");
+const esUrl = getAbsoluteLocaleUrl("es", bilingualPath);
+const enUrl = getAbsoluteLocaleUrl("en", bilingualPath);
+const paired = landing || Boolean(bilingualPath);
+const pricingUrl = getRelativeLocaleUrl(pageLocale, "pricing");
+const coexistenceUrl = getRelativeLocaleUrl(pageLocale, "coexistence");
 const hasPixelPreload = landing || notFound;
 const hasMigrationLink = landing || active === "migrate";
 const ogDescription = es
@@ -51,9 +56,9 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9f8">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070c0f">
 {canonical && <link rel="canonical" href={canonical}>}
-{landing && <link rel="alternate" hreflang="es" href={esUrl}>}
-{landing && <link rel="alternate" hreflang="en" href={enUrl}>}
-{landing && <link rel="alternate" hreflang="x-default" href={esUrl}>}
+{paired && <link rel="alternate" hreflang="es" href={esUrl}>}
+{paired && <link rel="alternate" hreflang="en" href={enUrl}>}
+{paired && <link rel="alternate" hreflang="x-default" href={esUrl}>}
 <link rel="icon" href="/assets/favicon.svg?v=2" type="image/svg+xml">
 {!notFound && <link rel="icon" href="/assets/favicon-32.png?v=2" sizes="32x32">}
 {landing && <link rel="apple-touch-icon" href="/assets/avatar.png">}
@@ -129,6 +134,11 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
       <a href="#data">{es ? "Tus datos" : "Your data"}</a>
       <a href="https://docs.eccos.chat">Docs</a>
       <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
+    </nav> : bilingualPath ? <nav class="nav" aria-label={es ? "Navegación principal" : "Primary"}>
+      <a href={pricingUrl} aria-current={active === "pricing" ? "page" : undefined}>{es ? "Precios" : "Pricing"}</a>
+      <a href={coexistenceUrl} aria-current={active === "coexistence" ? "page" : undefined}>{es ? "Coexistencia" : "Coexistence"}</a>
+      <a href="https://docs.eccos.chat">Docs</a>
+      <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
     </nav> : <nav class="nav" aria-label="Primary">
       <a href="/privacy" aria-current={active === "privacy" ? "page" : undefined}>Privacy</a>
       <a href="/terms" aria-current={active === "terms" ? "page" : undefined}>Terms</a>
@@ -142,7 +152,7 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
         <svg class="tt-ic tt-ic-sun" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="5" height="5"/><path d="M8 1v1.9M8 13.1V15M1 8h1.9M13.1 8H15M3.05 3.05 4.4 4.4M11.6 11.6l1.35 1.35M12.95 3.05 11.6 4.4M4.4 11.6l-1.35 1.35"/></svg>
         <svg class="tt-ic tt-ic-moon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2a4 4 0 0 0 6 6 6 6 0 1 1-6-6Z"/></svg>
       </button>
-      {landing && <a class="lang-switch" href={alternateHome} lang={alternateLocale} hreflang={alternateLocale}>{es ? "English" : "Español"}</a>}
+      {paired && <a class="lang-switch" href={getRelativeLocaleUrl(alternateLocale, bilingualPath)} lang={alternateLocale} hreflang={alternateLocale}>{es ? "English" : "Español"}</a>}
       {landing && <a class="btn btn-primary btn-sm nav-cta" href="https://app.eccos.chat/signin">{es ? "Entrar" : "Log in"}</a>}
       {landing && <button class="nav-toggle" type="button" id="nav-toggle" aria-expanded="false" aria-controls="primary-nav">
         <svg class="ic ic-open" aria-hidden="true"><use href="#i-menu"/></svg>
@@ -167,7 +177,8 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
         <nav class="foot-col" aria-label={es ? "Producto" : "Product"}>
           <p class="label">{es ? "Producto" : "Product"}</p>
           {landing ? <a href="#how">{es ? "Cómo funciona" : "How it works"}</a> : <a href={`${localeHome}#how`}>{es ? "Cómo funciona" : "How it works"}</a>}
-           {landing && <a href="#pricing">{es ? "Precios" : "Pricing"}</a>}
+          <a href={pricingUrl}>{es ? "Precios" : "Pricing"}</a>
+          <a href={coexistenceUrl}>{es ? "Coexistencia" : "Coexistence"}</a>
           <a href={landing ? "#run" : `${localeHome}#run`}>{es ? "Cómo usarlo" : "Run it"}</a>
           <a href={landing ? "#data" : `${localeHome}#data`}>{es ? "Tus datos" : "Your data"}</a>
           <a href="https://docs.eccos.chat">Docs</a>

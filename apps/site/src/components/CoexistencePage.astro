@@ -1,0 +1,159 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { PRICING, SITE, type Locale } from "../data/product";
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const es = locale === "es";
+const price = PRICING.firstNumber;
+const pricing = es ? "/pricing" : "/en/pricing";
+const metaDoc = "https://developers.facebook.com/docs/whatsapp/embedded-signup/custom-flows/onboarding-business-app-users";
+
+const title = es
+  ? "Coexistencia de WhatsApp: la app Business y la API en el mismo número — Eccos"
+  : "WhatsApp coexistence: the Business app and the API on one number — Eccos";
+const description = es
+  ? `Qué es la coexistencia de WhatsApp, cómo conectar a la API oficial un número que ya usas en la app de WhatsApp Business sin perderlo del teléfono, qué recibe tu backend y qué límites pone Meta. Con Eccos, desde ${price} € al mes por número.`
+  : `What WhatsApp coexistence is, how to connect a number you already use in the WhatsApp Business app to the official API without taking it off the phone, what your backend receives and the limits Meta sets. With Eccos, from €${price} a month per number.`;
+---
+
+<SiteLayout {title} {description} canonical={`${SITE.url}${es ? "" : "/en"}/coexistence`} {locale} bilingualPath="coexistence" active="coexistence">
+  <main class="shell doc" id="main">
+    {
+      es ? (
+        <>
+          <h1>Coexistencia de WhatsApp: la app Business y la API en el mismo número</h1>
+          <p class="lede">
+            La coexistencia de WhatsApp (<em>coexistence</em>) es la forma oficial de Meta de conectar a la API de WhatsApp
+            Business (la Cloud API) un número que ya se usa en la app de WhatsApp Business, <strong>sin sacarlo del
+            teléfono</strong>. El equipo sigue respondiendo a mano desde la app, tu software envía y recibe por la API en
+            ese mismo número, y Eccos reenvía a tu backend los dos lados de la conversación. Eccos admite coexistencia en
+            todos los planes, desde {price} € al mes por número, y también autoalojado.
+          </p>
+
+          <section>
+            <h2>Cómo conectar un número con coexistencia en Eccos</h2>
+            <ul>
+              <li>Crea tu cuenta en <a href={SITE.signup}>app.eccos.chat</a> y abre <strong>Numbers</strong>.</li>
+              <li>Conecta el número con el Embedded Signup de Meta y elige <strong>«I use this number in the WhatsApp Business app»</strong>. La otra opción, para números nuevos, saca de la app un número que hoy esté en WhatsApp.</li>
+              <li>Eccos pide a Meta la sincronización de contactos y del historial de chats dentro de las 24 horas que Meta da para hacerlo, y los guarda con el resto de tus conversaciones.</li>
+              <li>En <strong>Webhooks</strong>, indica la URL de tu backend. Desde ese momento recibe todos los eventos del número, firmados con HMAC y con reintentos.</li>
+            </ul>
+            <p>
+              No hace falta que la empresa cree una app en Meta ni que sea Tech Provider: usa la app de Eccos, que Meta ya
+              ha revisado y aprobado. Autoalojando Eccos, la app de Meta y esa aprobación son las tuyas.
+            </p>
+          </section>
+
+          <section>
+            <h2>Qué recibe tu backend</h2>
+            <ul>
+              <li><strong>Los mensajes de los clientes</strong>, como en cualquier número de la API.</li>
+              <li><strong>Lo que el equipo escribe desde el teléfono</strong>: el texto llega como evento <code>echo</code> y lo demás (fotos, audios, documentos, botones pulsados, ediciones y mensajes borrados) como <code>message_echo</code>.</li>
+              <li><strong>Los estados de entrega y lectura</strong>, también de los mensajes enviados desde la app.</li>
+            </ul>
+            <p>
+              Así tu sistema ve la conversación entera y no solo lo que él envió: puede dejar de mandar un recordatorio si
+              recepción ya contestó a mano. El formato de cada evento está en la{" "}
+              <a href="https://docs.eccos.chat/event-reference">referencia de eventos</a>.
+            </p>
+          </section>
+
+          <section>
+            <h2>Requisitos y límites que pone Meta</h2>
+            <ul>
+              <li>Tiene que ser la app de <strong>WhatsApp Business</strong>, versión 2.24.17 o superior. El WhatsApp personal no sirve.</li>
+              <li>Un número en coexistencia tiene un caudal fijo de <strong>20 mensajes por segundo</strong> por la API.</li>
+              <li>Se sincroniza el historial de los chats individuales de los últimos <strong>180 días</strong>; los archivos multimedia, solo los de los últimos 14 días. Los grupos no se sincronizan.</li>
+              <li>En la app se desactivan los mensajes temporales, los de ver una vez y la ubicación en tiempo real, y las listas de difusión pasan a ser de solo lectura.</li>
+              <li>Hay que abrir la app en el teléfono principal de vez en cuando: Meta desconecta el número tras unos 14 días sin actividad.</li>
+              <li>Los mensajes enviados desde la app siguen siendo gratis; los enviados por la API se pagan a Meta con sus tarifas de la Cloud API.</li>
+            </ul>
+            <p>
+              Son condiciones de Meta, iguales con cualquier proveedor, tomadas de su{" "}
+              <a href={metaDoc} rel="noreferrer">documentación de coexistencia</a> el 16 de noviembre de 2026.
+            </p>
+          </section>
+
+          <section>
+            <h2>Cuánto cuesta</h2>
+            <p>
+              En Eccos Cloud, {price} € al mes por el primer número y menos por cada uno adicional, con mensajes
+              ilimitados: las respuestas que el equipo escribe desde el teléfono no se cuentan ni se cobran. La tarifa
+              completa está en <a href={pricing}>precios</a>.
+            </p>
+            <p><a class="btn btn-primary" href={SITE.signup}>Crear tu cuenta</a></p>
+          </section>
+        </>
+      ) : (
+        <>
+          <h1>WhatsApp coexistence: the Business app and the API on one number</h1>
+          <p class="lede">
+            WhatsApp coexistence is Meta's official way to connect a number that is already used in the WhatsApp Business
+            app to the WhatsApp Business API (the Cloud API) <strong>without taking it off the phone</strong>. The team
+            keeps answering by hand in the app, your software sends and receives through the API on that same number, and
+            Eccos forwards both sides of the conversation to your backend. Eccos supports coexistence on every plan, from
+            €{price} a month per number, and self-hosted too.
+          </p>
+
+          <section>
+            <h2>How to connect a number with coexistence on Eccos</h2>
+            <ul>
+              <li>Create your account at <a href={SITE.signup}>app.eccos.chat</a> and open <strong>Numbers</strong>.</li>
+              <li>Connect the number with Meta's Embedded Signup and choose <strong>"I use this number in the WhatsApp Business app"</strong>. The other option, for new numbers, takes a number that is on WhatsApp today off the app.</li>
+              <li>Eccos asks Meta to synchronise contacts and chat history inside the 24 hours Meta allows for it, and stores them with the rest of your conversations.</li>
+              <li>Under <strong>Webhooks</strong>, set your backend's URL. From then on it receives every event for the number, HMAC-signed and retried.</li>
+            </ul>
+            <p>
+              The business does not need to create a Meta app or become a Tech Provider: it uses the Eccos app, which Meta
+              has already reviewed and approved. Self-hosting Eccos, the Meta app and that approval are your own.
+            </p>
+          </section>
+
+          <section>
+            <h2>What your backend receives</h2>
+            <ul>
+              <li><strong>Customer messages</strong>, as on any API number.</li>
+              <li><strong>What the team types on the phone</strong>: text arrives as an <code>echo</code> event and everything else (photos, voice notes, documents, tapped buttons, edits and deleted messages) as <code>message_echo</code>.</li>
+              <li><strong>Delivery and read statuses</strong>, including for messages sent from the app.</li>
+            </ul>
+            <p>
+              So your system sees the whole conversation, not only what it sent: it can skip a reminder when the front
+              desk has already replied by hand. The shape of every event is in the{" "}
+              <a href="https://docs.eccos.chat/event-reference">event reference</a>.
+            </p>
+          </section>
+
+          <section>
+            <h2>Requirements and limits set by Meta</h2>
+            <ul>
+              <li>It has to be the <strong>WhatsApp Business</strong> app, version 2.24.17 or higher. Personal WhatsApp does not qualify.</li>
+              <li>A number in coexistence has a fixed throughput of <strong>20 messages per second</strong> through the API.</li>
+              <li>History is synchronised for one-to-one chats from the last <strong>180 days</strong>; media files only from the last 14 days. Group chats are not synchronised.</li>
+              <li>In the app, disappearing messages, view-once messages and live location are turned off, and broadcast lists become read-only.</li>
+              <li>The app has to be opened on the primary phone now and then: Meta disconnects the number after about 14 days of inactivity.</li>
+              <li>Messages sent from the app stay free; messages sent through the API are paid to Meta at its Cloud API rates.</li>
+            </ul>
+            <p>
+              These are Meta's conditions, the same with any provider, taken from its{" "}
+              <a href={metaDoc} rel="noreferrer">coexistence documentation</a> on 16 November 2026.
+            </p>
+          </section>
+
+          <section>
+            <h2>What it costs</h2>
+            <p>
+              On Eccos Cloud, €{price} a month for the first number and less for each one after it, with unlimited
+              messages: the replies your team types on the phone are neither counted nor charged. The full tariff is on
+              the <a href={pricing}>pricing page</a>.
+            </p>
+            <p><a class="btn btn-primary" href={SITE.signup}>Create your account</a></p>
+          </section>
+        </>
+      )
+    }
+  </main>
+</SiteLayout>
