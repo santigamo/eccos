@@ -833,7 +833,7 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /** Stores what the customer read of a template send: its copy as Meta defined it at send time (within
-   * the definitions' hour), filled with the send's parameters. Without a definition the row stays as sent. */
+   * the definitions' five minutes), filled with the send's parameters. Without a definition the row stays as sent. */
   private async recordTemplateCopy(messageId: string, send: TemplateSend): Promise<void> {
     const definition = await this.templateDefinitions.get(send.name, send.language);
     const copy = definition && fillTemplate(definition, send.components);
