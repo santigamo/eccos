@@ -405,7 +405,7 @@ function DeliveriesPage() {
   ) : (
     <GridEmptyState
       label="NO BATCHES YET"
-      description="Forward attempts to your subscriber will appear here."
+      description="Batches forwarded to your server will appear here."
     />
   );
 
@@ -427,6 +427,7 @@ function DeliveriesPage() {
         pending={pending}
         hasForwardingTarget={hasForwardingTarget}
         wabaId={selectedWabaId}
+        retentionDays={ready?.status.contentRetentionDays}
       />
       {retryError ? <p className="mb-4 border-l-2 border-destructive px-3 py-2 text-sm text-destructive-foreground" role="alert">{retryError}</p> : null}
       <LogGrid

@@ -87,7 +87,14 @@ export function ApiKeysPanel({
 
         {keys.ok ? (
           <>
-            {issued ? <IssuedKeyNotice issued={issued} onDone={() => setIssued(null)} /> : null}
+            {issued ? (
+              <IssuedKeyNotice
+                issued={issued}
+                wabaId={wabaId}
+                gatewayOrigin={gatewayOrigin}
+                onDone={() => setIssued(null)}
+              />
+            ) : null}
 
             <form onSubmit={onCreate} aria-busy={creating} className="mt-5 flex items-end gap-2">
               <div className="min-w-0 flex-1">
@@ -113,7 +120,7 @@ export function ApiKeysPanel({
             ) : null}
 
             <KeyList keys={keys.data} onRevoke={setRevoking} />
-            <SendSnippet wabaId={wabaId} gatewayOrigin={gatewayOrigin} />
+            {issued ? null : <SendSnippet wabaId={wabaId} gatewayOrigin={gatewayOrigin} />}
           </>
         ) : (
           <KeysUnavailable keys={keys} />
@@ -146,9 +153,13 @@ function KeysUnavailable({ keys }: { keys: Extract<Result<AccountKeyResource[]>,
 /** The raw key, shown once. Exported so it can be rendered directly in tests. */
 export function IssuedKeyNotice({
   issued,
+  wabaId,
+  gatewayOrigin,
   onDone,
 }: {
   issued: IssuedApiKey;
+  wabaId?: string;
+  gatewayOrigin?: string | null;
   onDone: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -174,6 +185,7 @@ export function IssuedKeyNotice({
           Done
         </Button>
       </div>
+      <SendSnippet wabaId={wabaId} gatewayOrigin={gatewayOrigin} apiKey={issued.apiKey} />
     </div>
   );
 }
@@ -190,8 +202,8 @@ export function KeyList({
       <div className="mt-5">
         <span className={`block ${MACHINE_CLASS}`}>No keys yet</span>
         <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
-          Keys you create appear here. Until one exists, this workspace can
-          receive events but not send.
+          Keys you create appear here. Your server needs one to send through
+          the API; Conversations in this console works without it.
         </p>
       </div>
     );
@@ -284,10 +296,20 @@ function RevokeKeyDialog({
   );
 }
 
-/** How a key is used: the send endpoint, with this workspace's WABA when known. */
-export function SendSnippet({ wabaId, gatewayOrigin }: { wabaId?: string; gatewayOrigin?: string | null }) {
+const API_GUIDE_URL = "https://docs.eccos.chat/sending-messages";
+
+/** How a key is used: the send endpoint, with this workspace's WABA and a just-issued key when known. */
+export function SendSnippet({
+  wabaId,
+  gatewayOrigin,
+  apiKey,
+}: {
+  wabaId?: string;
+  gatewayOrigin?: string | null;
+  apiKey?: string;
+}) {
   const snippet = `curl -X POST ${gatewayOrigin ?? "<GATEWAY_URL>"}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
-  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Authorization: Bearer ${apiKey ?? "<API_KEY>"}" \\
   -H "Content-Type: application/json" \\
   -d '{"to": "<PHONE>", "type": "text", "text": {"body": "Hello"}}'`;
   return (
@@ -296,6 +318,14 @@ export function SendSnippet({ wabaId, gatewayOrigin }: { wabaId?: string; gatewa
       <pre className="mt-2 mb-0 overflow-x-auto border border-(--line) p-3 font-mono text-xs text-foreground">
         {snippet}
       </pre>
+      <a
+        href={API_GUIDE_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-2 inline-block text-sm text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+      >
+        Read the API guide
+      </a>
     </div>
   );
 }

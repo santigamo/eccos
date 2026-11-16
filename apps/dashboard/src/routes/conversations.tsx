@@ -10,6 +10,7 @@ import { ConversationThread } from "../components/conversations/conversation-thr
 import { NewConversation } from "../components/conversations/new-conversation";
 import { FailureView } from "../components/dashboard/failure";
 import { GridEmptyState } from "../components/grid/empty-state";
+import { HeldNotice } from "../components/logs/held-notice";
 import { useWhenIdle } from "../hooks/use-idle-prefetch";
 import { useConversationSearch } from "../hooks/use-conversation-search";
 import { useLastGood } from "../hooks/use-last-good";
@@ -166,6 +167,12 @@ function ConversationsPage() {
       }
     >
       {failure ? <RefreshNotice failure={failure} /> : null}
+      <HeldNotice
+        pending={ready?.status.counts.deliveries.pending ?? 0}
+        hasForwardingTarget={root.ok ? root.hasForwardingTarget : false}
+        wabaId={selectedWabaId}
+        retentionDays={ready?.status.contentRetentionDays}
+      />
       <div className={PANES}>
         {/* On a phone the list and the thread take turns: a selected thread
             hides the list, and its back link brings the list back. */}

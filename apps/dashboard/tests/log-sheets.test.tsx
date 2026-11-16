@@ -227,7 +227,7 @@ describe("EventDetail", () => {
       <EventDetail row={statusEvent} hasForwardingTarget={true} />,
     );
     expect(html).toContain("<details");
-    expect(html).toContain("Event JSON, exactly what your receiver got");
+    expect(html).toContain("Event JSON, exactly what your server got");
     expect(html).toContain("&quot;transportMessageId&quot;: &quot;wamid.");
     expect(html).toContain("2 other events");
   });
@@ -373,16 +373,29 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
       <HeldNotice pending={4} hasForwardingTarget={false} wabaId="WABA1" />,
     );
     expect(html).toContain("border-l-warning");
-    expect(html).toContain("Forwarding is held");
-    expect(html).toContain("4 events are waiting");
-    expect(html).toContain("nothing has failed");
+    expect(html).toContain("4 events are waiting for a forwarding target");
     expect(html).toContain('href="/webhooks"');
+  });
+
+  test("it states the deadline, with the gateway's days when it has them", () => {
+    expect(
+      renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} retentionDays={30} />),
+    ).toContain("They are kept for 30 days, then deleted.");
+    expect(
+      renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} />),
+    ).toContain("They are deleted when the retention window ends.");
+  });
+
+  test("on /webhooks the form is the action, so it carries no link", () => {
+    const html = renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} link={false} />);
+    expect(html).toContain("9 events are waiting");
+    expect(html).not.toContain("<a ");
   });
 
   test("one waiting event is one sentence, not `1 events`", () => {
     expect(
       renderToStaticMarkup(<HeldNotice pending={1} hasForwardingTarget={false} />),
-    ).toContain("One event is waiting");
+    ).toContain("1 event is waiting for a forwarding target. It is deleted");
   });
 
   test("the live region stays mounted and says nothing when nothing is held", () => {
@@ -391,12 +404,12 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
     // no margin (data rule 1).
     const withTarget = renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={true} />);
     expect(withTarget).toContain("<output");
-    expect(withTarget).not.toContain("Forwarding is held");
+    expect(withTarget).not.toContain("waiting");
     expect(withTarget).not.toContain("border-l-warning");
     // Nothing waiting is not held either: a standing scold on a page that is
     // behaving is exactly what data rule 1 forbids.
     expect(
       renderToStaticMarkup(<HeldNotice pending={0} hasForwardingTarget={false} />),
-    ).not.toContain("Forwarding is held");
+    ).not.toContain("waiting");
   });
 });

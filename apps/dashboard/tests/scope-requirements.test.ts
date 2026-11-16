@@ -202,9 +202,9 @@ describe("the sidebar's groups", () => {
     ]);
     expect(NAV_MAIN.map((group) => group.items.map((item) => item.href))).toEqual([
       ["/"],
-      ["/numbers", "/webhooks", "/templates"],
+      ["/numbers", "/webhooks"],
       ["/conversations"],
-      ["/broadcasts", "/scheduled"],
+      ["/templates", "/broadcasts", "/scheduled"],
       // TWO LOGS. One send used to produce a row in each of three: an outbound
       // message, a `delivered` callback under "Inbound", and a forwarding
       // batch. Messages and Events are the two UNITS; the forward is a state on

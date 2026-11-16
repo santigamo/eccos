@@ -19,7 +19,7 @@ import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
-import { isIdempotencyKey, sendBodyHash } from "./gateway";
+import { isIdempotencyKey, resolveRetentionDays, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
 import type {
   AccountKeyResource,
@@ -427,6 +427,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         connectedAt: provisionedAt === null ? null : new Date(provisionedAt).toISOString(),
       },
       counts,
+      contentRetentionDays: resolveRetentionDays(this.env).contentDays,
     };
   }
 

@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FailureView } from "../components/dashboard/failure";
 import { ForwardingTargetPanel } from "../components/dashboard/forwarding-target";
 import { ResubscribeAction } from "../components/dashboard/resubscribe-action";
+import { HeldNotice } from "../components/logs/held-notice";
 import { forwardingTag, readLastForward } from "../lib/forwarding";
 import {
   Frame,
@@ -91,6 +92,7 @@ function WebhooksPage() {
   }
 
   const config = result.data;
+  const retentionDays = ready?.status.contentRetentionDays;
   return (
     <Page
       title="Webhooks"
@@ -99,6 +101,12 @@ function WebhooksPage() {
       // configured, which is the one thing the page is about.
       actions={<StatusTag status={forwardingTag(config)} />}
     >
+      <HeldNotice
+        pending={ready?.status.counts.deliveries.pending ?? 0}
+        hasForwardingTarget={config.url !== null}
+        retentionDays={retentionDays}
+        link={false}
+      />
       <ForwardingFacts
         config={config}
         counts={ready?.status.counts ?? null}
@@ -110,6 +118,7 @@ function WebhooksPage() {
           <ForwardingTargetPanel
             config={config}
             wabaId={selectedWabaId}
+            retentionDays={retentionDays}
             // The route owns the data, so re-reading it after a write is the
             // route's job — which is also what keeps the panel router-free. The root
             // is included: it carries the forwarding flag the setup checklist reads.
@@ -323,10 +332,10 @@ export function ReceiverReference() {
       <FramePanel fit>
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-            Receiver reference
+            Forwarding reference
           </FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            What Eccos sends, and what it does when your endpoint does not answer.
+            What Eccos sends your server, and what it does when your server does not answer.
           </FrameDescription>
         </FrameHeader>
         <dl className="my-0 -mx-(--frame-panel-px) mt-5 divide-y divide-(--line) border-y border-(--line)">

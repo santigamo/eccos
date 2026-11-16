@@ -494,6 +494,7 @@ function EventsPage() {
         pending={pending}
         hasForwardingTarget={hasForwardingTarget}
         wabaId={selectedWabaId}
+        retentionDays={ready?.status.contentRetentionDays}
       />
       {retryError ? (
         <p

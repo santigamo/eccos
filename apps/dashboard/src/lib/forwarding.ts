@@ -174,3 +174,15 @@ export function batchEventSummary(payload: string): string {
     .map(([type, n]) => `${n} ${eventKindNoun(type, n)}`)
     .join(" · ");
 }
+
+/**
+ * The held sentence, shared by the Status banner and `HeldNotice`. Held events
+ * age out with the gateway's content window; an older gateway reports no days.
+ */
+export function heldSentence(pending: number, retentionDays?: number): string {
+  const one = pending === 1;
+  const deadline = retentionDays
+    ? `kept for ${retentionDays} days, then deleted`
+    : "deleted when the retention window ends";
+  return `${pending} ${one ? "event is" : "events are"} waiting for a forwarding target. ${one ? "It is" : "They are"} ${deadline}.`;
+}

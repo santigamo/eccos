@@ -111,6 +111,7 @@ function NumbersPage() {
   return (
     <NumbersView
       resources={resources}
+      hasForwardingTarget={root.hasForwardingTarget}
       billing={billing}
       subscribed={subscribed}
       connectError={connectError}
@@ -143,6 +144,7 @@ function NumbersPage() {
  */
 export function NumbersView({
   resources,
+  hasForwardingTarget,
   billing = false,
   subscribed = false,
   connectError,
@@ -150,6 +152,7 @@ export function NumbersView({
   onRefresh,
 }: {
   resources: AccountResources;
+  hasForwardingTarget?: boolean;
   /** Whether this console has billing on, so a closed workspace can be pointed at it. */
   billing?: boolean;
   /** A subscription still exists, so billing opens its portal instead of a checkout. */
@@ -194,7 +197,7 @@ export function NumbersView({
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
-        <NumbersTable resources={resources} onRefresh={onRefresh} />
+        <NumbersTable resources={resources} hasForwardingTarget={hasForwardingTarget} onRefresh={onRefresh} />
       </div>
       {/* Mounted only while open, so a previous attempt's inline error never
           greets the next one — the same remount-per-opening idiom /templates

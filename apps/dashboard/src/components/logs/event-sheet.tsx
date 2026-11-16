@@ -148,12 +148,12 @@ export function EventDetail({ row, hasForwardingTarget, wabaId, onRetry, retryin
           <p className="m-0 text-muted-foreground text-sm">
             {row.transport_message_id
               ? `A ${reading.kind} event carries no text — it reports on the message it names.`
-              : "This event carries no text. What your receiver got is below."}
+              : "This event carries no text. What your server got is below."}
           </p>
         ) : null}
 
         <RawDisclosure
-          summary="Event JSON, exactly what your receiver got"
+          summary="Event JSON, exactly what your server got"
           json={prettyJson(row.payload)}
           note={
             others > 0

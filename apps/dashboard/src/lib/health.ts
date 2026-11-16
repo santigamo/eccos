@@ -1,4 +1,5 @@
 import type { GatewayStatus, Health } from "../server/gateway";
+import { heldSentence } from "./forwarding";
 
 /**
  * What the Status page SAYS about the gateway's health.
@@ -15,7 +16,8 @@ import type { GatewayStatus, Health } from "../server/gateway";
 
 /** The banner a state raises. `null` means the state speaks for itself: healthy
  * needs no sentence, the tag beside the heading already says it (data rule 1 —
- * when an operator sees a banner it always means something). */
+ * when an operator sees a banner it always means something). Held events are
+ * the one banner a healthy gateway raises. */
 export interface HealthBanner {
   detail: string;
   /**
@@ -47,53 +49,47 @@ const GENERIC_BANNER: Record<Health, HealthBanner | null> = {
     rail: "border-l-warning",
   },
   unhealthy: {
-    detail: "Forwarding to your receiver is failing.",
+    detail: "Forwarding to your server is failing.",
     rail: "border-l-destructive",
   },
 };
 
 /**
  * ── THE HELD READING ────────────────────────────────────────────────────────
- * `degraded` means "reduced capacity" only when there is somewhere to send.
- * With no forwarding target configured, `alarm()` HOLDS the drain
- * (`apps/gateway/src/gateway.ts`) and the pending rows pile up until an
- * operator names a receiver — which `healthFromCounts` reads as `degraded` past
- * ten rows. Nothing is degraded there: nothing has been attempted, nothing has
- * failed, and the gateway is doing exactly what it was told to. Saying "reduced
- * capacity" sends an operator hunting for a fault that does not exist, and
- * hides the one action that clears the state.
+ * With no forwarding target, `alarm()` HOLDS the drain
+ * (`apps/gateway/src/gateway.ts`) and pending rows wait until the content
+ * window deletes them. That is a deadline only the operator can act on, so it
+ * raises the banner at any count, whatever the health word. The gateway only
+ * reads `degraded` past ten held rows, so waiting for that hid the first nine.
  *
- * `hasForwardingTarget` is already on the root loader (the sidebar checklist
- * reads it), so telling the two cases apart costs no extra read.
- *
- * Only when held rows are the ONLY reason for `degraded`. A gateway that also
- * has failed outbound sends is degraded for a second, unrelated reason, and one
- * sentence naming only the queue would hide it — so that case keeps the generic
- * line and the facts strip's red `failed` count carries the other half.
+ * Two cases keep their own sentence. Failed forwards are a real fault and come
+ * first. Failed outbound sends are a second, unrelated reason for `degraded`,
+ * and one sentence naming only the queue would hide it, so that case keeps the
+ * generic line and the facts strip's red `failed` count carries the other half.
  */
 export function healthReading(status: GatewayStatus, hasForwardingTarget: boolean): HealthReading {
   const label = HEALTH_LABEL[status.health];
-  const held = status.counts.deliveries.pending ?? 0;
-  const outboundFailed = status.counts.outbound.failed ?? 0;
-  if (status.health === "degraded" && !hasForwardingTarget && held > 0 && outboundFailed === 0) {
-    return {
-      label,
-      banner: {
-        detail: `${held} ${held === 1 ? "event is" : "events are"} waiting for a forwarding target. Nothing has been attempted and nothing has failed — they go out as soon as you name a receiver.`,
-        rail: "border-l-warning",
-        action: { to: "/webhooks", label: "Set a forwarding target" },
-      },
-    };
-  }
   // `unhealthy` means only this: forwarded batches that failed every attempt.
   const failed = status.counts.deliveries.failed ?? 0;
   if (status.health === "unhealthy" && failed > 0) {
     return {
       label,
       banner: {
-        detail: `${failed} forwarded ${failed === 1 ? "batch" : "batches"} failed after every retry. Check your receiver, then retry ${failed === 1 ? "it" : "them"} from the forwarding queue.`,
+        detail: `${failed} forwarded ${failed === 1 ? "batch" : "batches"} failed after every retry. Check your server, then retry ${failed === 1 ? "it" : "them"} from the forwarding queue.`,
         rail: "border-l-destructive",
         action: { to: "/deliveries", label: "Open the forwarding queue" },
+      },
+    };
+  }
+  const held = status.counts.deliveries.pending ?? 0;
+  const outboundFailed = status.counts.outbound.failed ?? 0;
+  if (!hasForwardingTarget && held > 0 && outboundFailed === 0) {
+    return {
+      label,
+      banner: {
+        detail: heldSentence(held, status.contentRetentionDays),
+        rail: "border-l-warning",
+        action: { to: "/webhooks", label: "Set a forwarding target" },
       },
     };
   }

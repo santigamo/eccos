@@ -116,7 +116,7 @@ describe("ForwardingTargetPanel", () => {
     // form directly below IS the action. The sentence is only honest because
     // the gateway now HOLDS the queue while no target exists.
     expect(empty).toContain("No forwarding target");
-    expect(empty).toContain("Events are queued, not attempted");
+    expect(empty).toContain("Conversations works without it");
     // Nothing to remove, so no dead control (data rule 5).
     expect(empty).not.toContain("Remove target");
   });
@@ -125,7 +125,10 @@ describe("ForwardingTargetPanel", () => {
     // `pruneExpired` DELETES a held row past the content window, so a promise
     // that events are simply "not lost" would outlive the storage backing it.
     // This assertion exists so that copy cannot drift back.
-    expect(empty).toContain("expire with the retention window");
+    expect(empty).toContain("events are held until the retention window ends, then deleted");
+    expect(
+      renderToStaticMarkup(<ForwardingTargetPanel config={EMPTY} retentionDays={30} />),
+    ).toContain("events are held for 30 days, then deleted");
     expect(empty).not.toContain("not lost");
   });
 
@@ -136,7 +139,7 @@ describe("ForwardingTargetPanel", () => {
     expect(configured).toContain("deliveries");
     // The recovery path is rotation, never a reveal — the stored value never
     // comes back out of the gateway (docs/threat-model.md).
-    expect(configured).toContain("set a new one here and in your receiver");
+    expect(configured).toContain("set a new one here and on your server");
   });
 
   test("Save is the page's one primary; everything else is a ghost", () => {

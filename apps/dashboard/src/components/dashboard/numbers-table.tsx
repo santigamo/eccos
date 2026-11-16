@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { recheckNumber } from "../../server/gateway";
 import type { AccountResources } from "../../server/gateway";
@@ -6,6 +7,7 @@ import { failureCopy } from "../../lib/failure";
 import { failedWabaCopy, recheckNotice, syncUnavailableCopy } from "../../lib/provisioning-copy";
 import { wabaLabel } from "../../lib/wabas";
 import { StatusTag } from "../../ui";
+import { SupportText } from "./support-text";
 
 type Notice = { ok: boolean; text: string };
 
@@ -32,9 +34,12 @@ type NumberRow = {
  */
 export function NumbersTable({
   resources,
+  hasForwardingTarget = true,
   onRefresh,
 }: {
   resources: AccountResources;
+  /** False raises the NEXT note under live numbers. The route knows; tests default to quiet. */
+  hasForwardingTarget?: boolean;
   /** Re-read the loader once a re-check changed something. The route owns it. */
   onRefresh?: () => void | Promise<void>;
 }) {
@@ -52,6 +57,7 @@ export function NumbersTable({
     })),
   );
   const pendingRows = rows.filter((row) => row.status === "pending").length;
+  const liveRows = rows.filter((row) => row.status === "active");
   const notCoexistenceRows = rows.filter(
     (row) => row.status === "active" && row.coexistence === "not_coexistence",
   ).length;
@@ -142,6 +148,9 @@ export function NumbersTable({
         </table>
       </div>
 
+      {!hasForwardingTarget && liveRows[0] ? (
+        <NextNote count={liveRows.length} wabaId={liveRows[0].wabaId} />
+      ) : null}
       {pendingRows > 0 ? <PendingNote count={pendingRows} /> : null}
       {awaitingPhoneWabas.length > 0 ? (
         <AwaitingPhoneNote
@@ -204,6 +213,37 @@ function RowAction({
     >
       {running ? "…" : "Re-check"}
     </Button>
+  );
+}
+
+const NOTE_LINK =
+  "text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2";
+
+/**
+ * What to do with a live number, shown until a forwarding target exists. A
+ * note, not a success banner: the green tag already says the number is live.
+ */
+function NextNote({ count, wabaId }: { count: number; wabaId: string }) {
+  const search = { wabaId };
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-(--line) pt-3">
+      <p className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Next</p>
+      <p className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
+        {count === 1 ? "This number is live." : "These numbers are live."} Reply to customers from{" "}
+        <Link to="/conversations" search={search} className={NOTE_LINK}>
+          Conversations
+        </Link>
+        . To receive events in your own system,{" "}
+        <Link to="/webhooks" search={search} className={NOTE_LINK}>
+          set a forwarding target
+        </Link>
+        ; to send from your server,{" "}
+        <Link to="/settings" className={NOTE_LINK}>
+          create an API key
+        </Link>
+        .
+      </p>
+    </div>
   );
 }
 
@@ -303,7 +343,8 @@ function FailedNote({ wabas }: { wabas: AccountResources["wabas"] }) {
       <ul className="m-0 flex list-none flex-col gap-1 p-0">
         {wabas.map((waba) => (
           <li key={waba.wabaId} className="max-w-prose text-sm text-pretty text-muted-foreground">
-            <span className="font-medium text-foreground">{wabaLabel(waba)}</span> — {failedWabaCopy(waba)}
+            <span className="font-medium text-foreground">{wabaLabel(waba)}</span> —{" "}
+            <SupportText>{failedWabaCopy(waba)}</SupportText>
           </li>
         ))}
       </ul>
@@ -353,7 +394,7 @@ function UnavailableSyncNote({ lines }: { lines: string[] }) {
       </p>
       {lines.map((line) => (
         <p key={line} className="m-0 max-w-prose text-sm text-pretty text-muted-foreground">
-          {line}
+          <SupportText>{line}</SupportText>
         </p>
       ))}
     </div>

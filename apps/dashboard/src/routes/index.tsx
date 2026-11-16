@@ -223,7 +223,7 @@ function FactsStripSection({ counts, selectedWabaId }: { counts: GatewayStatus["
       </FactCell>
       <FactCell
         kicker="Forwards"
-        caption="batches to your subscriber"
+        caption="batches to your server"
         value={
           <Link
             to="/deliveries"

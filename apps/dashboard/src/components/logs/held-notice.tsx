@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { heldSentence } from "../../lib/forwarding";
 
 /**
  * "Forwarding is held" — the third register in which the console says the same
@@ -20,7 +21,9 @@ import { Link } from "@tanstack/react-router";
  * are ordinary queue and drain in seconds. Data rule 1: when an operator sees
  * this, it always means something.
  *
- * The decision lives HERE rather than at the call sites, so the two pages that
+ * `link={false}` is for /webhooks, where the form that resolves it is the page.
+ *
+ * The decision lives HERE rather than at the call sites, so the pages that
  * show it cannot disagree about when — and so the live region can stay mounted
  * while it says nothing. An element that appears and disappears is not reliably
  * announced; an empty one that fills up is (same reasoning as `StatusBanner` on
@@ -30,10 +33,14 @@ export function HeldNotice({
   pending,
   hasForwardingTarget,
   wabaId,
+  retentionDays,
+  link = true,
 }: {
   pending: number;
   hasForwardingTarget: boolean;
   wabaId?: string;
+  retentionDays?: number;
+  link?: boolean;
 }) {
   const held = !hasForwardingTarget && pending > 0;
   return (
@@ -47,16 +54,19 @@ export function HeldNotice({
     >
       {held ? (
         <>
-          Forwarding is held — no target is set.{" "}
-          {pending === 1 ? "One event is" : `${pending} events are`} waiting. Nothing has been
-          attempted and nothing has failed; events go out the moment you name a receiver.{" "}
-          <Link
-            to="/webhooks"
-            search={wabaId ? { wabaId } : {}}
-            className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            Set a forwarding target
-          </Link>
+          {heldSentence(pending, retentionDays)}
+          {link ? (
+            <>
+              {" "}
+              <Link
+                to="/webhooks"
+                search={wabaId ? { wabaId } : {}}
+                className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                Set a forwarding target
+              </Link>
+            </>
+          ) : null}
         </>
       ) : null}
     </output>

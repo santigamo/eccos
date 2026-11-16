@@ -68,7 +68,7 @@ export function RetryFailedFields({
     <form onSubmit={onSubmit} aria-busy={submitting} className="flex flex-col gap-4 px-4 pb-4">
       <p className="m-0 max-w-prose text-sm text-pretty text-foreground/80">
         Sends every failed delivery enqueued in this window again. Each keeps its{" "}
-        <code className="font-mono text-xs">x-idempotency-key</code>, so your receiver can drop
+        <code className="font-mono text-xs">x-idempotency-key</code>, so your server can drop
         repeats. Older events arrive late.
       </p>
 

@@ -7,7 +7,8 @@ import type { AccountWabaResource, CoexistenceResource } from "@eccos/gateway-co
  * written for operators and stay in the logs and docs/operations.md.
  *
  * Only an operator can act on these, so they point to Eccos support rather than
- * promising a notification nobody sends.
+ * promising a notification nobody sends. `SupportText` links the phrase
+ * "contact Eccos support" wherever these sentences render.
  */
 
 const UNAVAILABLE_REASON = /^unavailable:(already_synced|history_sharing_off|not_permitted)$/;
@@ -20,8 +21,9 @@ const SYNC_NOUN = {
 const REASON_COPY = {
   already_synced:
     "not imported: Meta allows that import once per number, and it was already used. To repeat the import, contact Eccos support.",
+  // No recovery is promised: the saga records this refusal as settled.
   history_sharing_off:
-    "not imported: history sharing was off when the number was connected. To run the import, contact Eccos support.",
+    "not imported: history sharing was off in the app when the number was connected.",
   not_permitted: "not imported: Meta did not allow it for this number. Contact Eccos support.",
 } as const;
 
@@ -30,7 +32,10 @@ export function syncUnavailableCopy(coexistence: CoexistenceResource): string[] 
   const lines = (["contacts", "history"] as const).flatMap((kind) => {
     const requestId = kind === "contacts" ? coexistence.contactsRequestId : coexistence.historyRequestId;
     const reason = requestId?.match(UNAVAILABLE_REASON)?.[1] as keyof typeof REASON_COPY | undefined;
-    return reason ? [`${SYNC_NOUN[kind]} ${REASON_COPY[reason]}`] : [];
+    if (!reason) return [];
+    const consequence =
+      kind === "history" && reason === "history_sharing_off" ? " Conversations shows messages from now on." : "";
+    return [`${SYNC_NOUN[kind]} ${REASON_COPY[reason]}${consequence}`];
   });
   return lines.length > 0 ? lines : ["Some WhatsApp Business app data was not imported. Contact Eccos support."];
 }

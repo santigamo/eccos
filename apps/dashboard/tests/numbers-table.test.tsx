@@ -24,6 +24,17 @@ import type {
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
+// SPREAD, not replaced: see the same note in tests/nav-setup.test.tsx.
+const routerModule = await import("@tanstack/react-router");
+mock.module("@tanstack/react-router", () => ({
+  ...routerModule,
+  Link: (props: { to: string; children: React.ReactNode; className?: string }) => (
+    <a href={props.to} className={props.className}>
+      {props.children}
+    </a>
+  ),
+}));
+
 const { NumbersTable } = await import("../src/components/dashboard/numbers-table");
 const { recheckNotice } = await import("../src/lib/provisioning-copy");
 
@@ -82,6 +93,27 @@ function text(html: string): string {
 }
 
 describe("NumbersTable", () => {
+  test("a live number with no forwarding target gets a NEXT note with its three doors", () => {
+    const state = resources({ wabaId: "waba-a", status: "active", phones: 1 });
+    const html = renderToStaticMarkup(<NumbersTable resources={state} hasForwardingTarget={false} />);
+    expect(text(html)).toContain("This number is live. Reply to customers from Conversations");
+    for (const href of ["/conversations", "/webhooks", "/settings"]) expect(html).toContain(`href="${href}"`);
+    // A note, never a success banner.
+    expect(html).not.toContain("border-l-");
+
+    const quiet = (hasForwardingTarget: boolean, status: Status) =>
+      text(
+        renderToStaticMarkup(
+          <NumbersTable
+            resources={resources({ wabaId: "waba-a", status, phones: 1 })}
+            hasForwardingTarget={hasForwardingTarget}
+          />,
+        ),
+      );
+    expect(quiet(true, "active")).not.toContain("is live");
+    expect(quiet(false, "pending")).not.toContain("is live");
+  });
+
   test("an active number is quiet: a tag, and no action to take", () => {
     const html = render(resources({ wabaId: "waba-a", status: "active", phones: 1 }));
     expect(html).toContain("active");
@@ -189,10 +221,15 @@ describe("NumbersTable", () => {
     coexistence.historyRequestId = "unavailable:history_sharing_off";
     coexistence.error =
       "contacts sync unavailable: Meta refused it with a permission error. The number works as a Cloud API number without that data";
-    const body = text(render(state));
+    const html = render(state);
+    const body = text(html);
     expect(body).toContain("Some WhatsApp Business app data was not imported");
-    expect(body).toContain("contacts were not imported: Meta did not allow it for this number. Contact Eccos support.");
-    expect(body).toContain("history sharing was off when the number was connected");
+    expect(body).toContain("contacts were not imported: Meta did not allow it for this number. Contact Eccos support");
+    // No recovery is promised for history: the code has none to offer.
+    expect(body).toContain(
+      "chat history was not imported: history sharing was off in the app when the number was connected. Conversations shows messages from now on.",
+    );
+    expect(html).toContain('href="mailto:hello@imsanti.dev"');
     expect(body).not.toContain("Cloud API number");
     expect(body).not.toContain("offboard");
     expect(text(render(resources({ wabaId: "waba-a", status: "active", phones: 1, coexistence: "initiated" })))).not.toContain(
@@ -228,7 +265,7 @@ describe("NumbersTable", () => {
     expect(body).toContain("Connection failed");
     expect(body).toContain("+34 600 000 000");
     expect(body).toContain("This number is not connected: Eccos could not confirm");
-    expect(body).toContain("Contact Eccos support.");
+    expect(body).toContain("Contact Eccos support");
     expect(body).not.toContain("offboard");
     expect(body).not.toContain("works normally");
   });
@@ -255,7 +292,7 @@ describe("NumbersTable", () => {
     Object.assign(historyOnly.wabas[0]!.coexistence, { historyStartedAt: 2 });
     for (const state of [pending, settled, historyOnly]) {
       const body = text(render(state));
-      expect(body).toContain("Contact Eccos support.");
+      expect(body).toContain("Contact Eccos support");
       expect(body).not.toContain("Connect it again");
     }
   });

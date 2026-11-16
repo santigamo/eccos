@@ -334,6 +334,8 @@ export interface GatewayStatus {
   health: Health;
   connection: { wabaId: string | null; phoneNumberId: string | null; displayPhone: string | null; connectedAt: string | null };
   counts: OperatorCounts;
+  /** Days the deployment keeps message content, held events included. Absent on an older gateway. */
+  contentRetentionDays?: number;
 }
 
 export type TemplatesResult = { ok: true; data: unknown } | { ok: false; error: unknown };

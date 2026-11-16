@@ -68,6 +68,23 @@ describe("healthReading", () => {
     expect(reading.banner?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
   });
 
+  test("held events raise the banner under a Healthy tag, with the deadline", () => {
+    // Nine held events is below the gateway's `degraded` threshold. A first
+    // customer sat under a green tag with exactly that many.
+    const reading = healthReading(
+      { ...status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 9 } } }), contentRetentionDays: 30 },
+      false,
+    );
+    expect(reading.label).toBe("Healthy");
+    expect(reading.banner?.detail).toBe(
+      "9 events are waiting for a forwarding target. They are kept for 30 days, then deleted.",
+    );
+    expect(reading.banner?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
+    expect(
+      healthReading(status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 9 } } }), true).banner,
+    ).toBeNull();
+  });
+
   test("one held event reads as one event, not '1 events'", () => {
     const reading = healthReading(
       status({ health: "degraded", counts: { inbound: 0, outbound: {}, deliveries: { pending: 1 } } }),
@@ -102,7 +119,7 @@ describe("healthReading", () => {
     );
     expect(reading.label).toBe("Unhealthy");
     expect(reading.banner?.detail).toBe(
-      "2 forwarded batches failed after every retry. Check your receiver, then retry them from the forwarding queue.",
+      "2 forwarded batches failed after every retry. Check your server, then retry them from the forwarding queue.",
     );
     expect(reading.banner?.action).toEqual({ to: "/deliveries", label: "Open the forwarding queue" });
   });
