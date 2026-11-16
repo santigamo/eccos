@@ -65,7 +65,7 @@ export function SubscriptionGate({ subscribed = false }: { subscribed?: boolean 
             Subscription
           </FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            {closedNotice(true, 0)} Messages are never billed. Once it is active, come back here to connect your number.
+            {closedNotice(true, 0)} Eccos does not charge per message. Once it is active, come back here to connect your number.
           </FrameDescription>
         </FrameHeader>
         <div className="pt-5">
