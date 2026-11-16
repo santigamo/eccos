@@ -32,7 +32,13 @@ import type {
   AccountResources,
   BilledAccount,
   ConnectExchangeResult,
+  ConnectLinkClaim,
+  ConnectLinkGrant,
+  ConnectLinkSettled,
+  ConnectLinkSettlement,
+  ConnectLinkSummary,
   ConnectStartResult,
+  IssuedConnectLink,
   ConversationListOpts,
   ConversationOpts,
   ConversationSummary,
@@ -1381,6 +1387,66 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       publicOrigin,
       wabaId?.trim() || undefined,
     );
+  }
+
+  async getConnectLink(accountId: string): Promise<ConnectLinkSummary | null> {
+    return getControlPlaneStub(this.env).getConnectLink(requireAccountId(accountId, "accountId is required"));
+  }
+
+  async issueConnectLink(accountId: string, creatorUserId: string, replace?: boolean): Promise<IssuedConnectLink | "exists"> {
+    return getControlPlaneStub(this.env).issueConnectLink(
+      requireAccountId(accountId, "accountId is required"),
+      creatorUserId,
+      replace,
+    );
+  }
+
+  async resolveConnectLink(token: string): Promise<ConnectLinkGrant | null> {
+    return getControlPlaneStub(this.env).resolveConnectLink(token);
+  }
+
+  async markConnectLinkOpened(linkId: string): Promise<void> {
+    await getControlPlaneStub(this.env).markConnectLinkOpened(linkId);
+  }
+
+  async claimConnectLink(token: string): Promise<ConnectLinkClaim | "busy" | null> {
+    return getControlPlaneStub(this.env).claimConnectLink(token);
+  }
+
+  async settleConnectLink(claimId: string, outcome: ConnectLinkSettlement): Promise<ConnectLinkSettled | null> {
+    return getControlPlaneStub(this.env).settleConnectLink(claimId, outcome);
+  }
+
+  /**
+   * A throw from the exchange comes from before Meta is called (configuration,
+   * the state lookup), so it is an ordinary failure and the link stays usable.
+   * Only a failure once the registration write has started (`partial`) spends
+   * the link without a clean result.
+   */
+  async exchangeConnectCodeForClaim(
+    claimId: string,
+    code: string,
+    state: string,
+  ): Promise<(ConnectLinkSettled & { result: ConnectExchangeResult | null }) | null> {
+    const controlPlane = getControlPlaneStub(this.env);
+    const accountId = await controlPlane.connectLinkAccount(claimId);
+    if (!accountId) return null;
+    let result: ConnectExchangeResult;
+    try {
+      result = await this.exchangeConnectCodeForAccountId(accountId, code, state);
+    } catch (err) {
+      result = { ok: false, error: errorDetail(err), code: "failed" };
+    }
+    const unknown = !result.ok && result.partial === true;
+    const settled = await controlPlane.settleConnectLink(
+      claimId,
+      unknown
+        ? { kind: "unknown" }
+        : result.ok
+          ? { kind: "connected", phone: result.display_phone_number || null }
+          : { kind: "failed", code: result.code },
+    );
+    return settled && { ...settled, result: unknown ? null : result };
   }
 
   /**

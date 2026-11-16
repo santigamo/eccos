@@ -9,6 +9,7 @@ import {
   ConnectNumberChoices,
   ConnectNumberPanel,
 } from "../components/dashboard/connect-number";
+import { ConnectLinkButton } from "../components/dashboard/connect-link-dialog";
 import { NumbersTable } from "../components/dashboard/numbers-table";
 import { SubscriptionGate, SubscriptionNotice } from "../components/dashboard/subscription-notice";
 import { billableCount } from "../billing/account";
@@ -67,6 +68,8 @@ function NumbersPage() {
   const billing = flag !== undefined;
   const subscribed = flag?.subscribed === true;
   const canManageBilling = flag?.canManage === true;
+  // Absent only on a state that predates the flag; the server refuses a member either way.
+  const canConnect = !("canAdminister" in root.data) || root.data.canAdminister;
   const wabas = resources?.wabas ?? [];
 
   // No account registry, or no number yet: both land on the connect flow, and
@@ -83,7 +86,7 @@ function NumbersPage() {
     );
     const closed = resources?.account?.connectPolicy === "closed";
     return (
-      <Page title="Connect WhatsApp" kicker="First run">
+      <Page title="Connect WhatsApp" kicker="First run" actions={closed || !canConnect ? undefined : <ConnectLinkButton />}>
         {/* Centred and LIFTED, the house treatment for a single-purpose frame
             — the same one `/workspaces/new` uses, and for the same reason: on a
             tall viewport a top-anchored panel leaves the eye and the cursor far
@@ -101,7 +104,13 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
-            <FirstRunConnect closed={closed} billing={billing} subscribed={subscribed} canManageBilling={canManageBilling} />
+            <FirstRunConnect
+              closed={closed}
+              billing={billing}
+              subscribed={subscribed}
+              canManageBilling={canManageBilling}
+              canConnect={canConnect}
+            />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -130,6 +139,7 @@ function NumbersPage() {
       billing={billing}
       subscribed={subscribed}
       canManageBilling={canManageBilling}
+      canConnect={canConnect}
       connectError={connectError}
       connectSkipped={connectSkipped}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
@@ -165,6 +175,7 @@ export function NumbersView({
   billing = false,
   subscribed = false,
   canManageBilling = true,
+  canConnect = true,
   connectError,
   connectSkipped,
   onRefresh,
@@ -178,6 +189,8 @@ export function NumbersView({
   subscribed?: boolean;
   /** The member may start or manage the subscription; resolved server-side from their role. */
   canManageBilling?: boolean;
+  /** The member's role may connect numbers; resolved server-side. */
+  canConnect?: boolean;
   connectError?: ConnectFailureCode;
   connectSkipped?: number;
   /** Re-read the loader after the table's re-check changed something. */
@@ -217,7 +230,12 @@ export function NumbersView({
     <Page
       title="Numbers"
       kicker="Connection"
-      actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
+      actions={
+        <>
+          {resources.account?.connectPolicy === "closed" || !canConnect ? null : <ConnectLinkButton />}
+          <AddNumberButton expanded={adding} onToggle={setAdding} />
+        </>
+      }
     >
       {outcome}
       {adding ? null : notice()}
@@ -244,11 +262,15 @@ export function NumbersView({
           busy={busy}
           onBusyChange={setBusy}
           notice={notice("mb-0")}
+          canConnect={canConnect}
         />
       ) : null}
     </Page>
   );
 }
+
+/** Shown in place of the connect fork to a member whose role may not connect. */
+export const ASK_AN_ADMIN = "Ask an owner or admin of this workspace to connect a number.";
 
 /**
  * First run. A closed workspace has nothing to reconnect, so the gateway would
@@ -260,13 +282,16 @@ export function FirstRunConnect({
   billing,
   subscribed = false,
   canManageBilling = true,
+  canConnect = true,
 }: {
   closed: boolean;
   billing: boolean;
   subscribed?: boolean;
   canManageBilling?: boolean;
+  canConnect?: boolean;
 }) {
   if (closed && billing) return <SubscriptionGate subscribed={subscribed} canManage={canManageBilling} />;
+  if (!canConnect) return <p className="m-0 text-sm text-muted-foreground">{ASK_AN_ADMIN}</p>;
   return (
     <>
       {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}
@@ -302,6 +327,7 @@ function AddNumberDialog({
   busy,
   onBusyChange,
   notice,
+  canConnect,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -309,6 +335,7 @@ function AddNumberDialog({
   onBusyChange: (busy: boolean) => void;
   /** The closed-workspace warning, read before the cards. They stay live: a number already here can be reconnected. */
   notice?: React.ReactNode;
+  canConnect: boolean;
 }) {
   const description = useRef<HTMLParagraphElement>(null);
   return (
@@ -327,11 +354,15 @@ function AddNumberDialog({
         <DialogHeader>
           <DialogTitle>Add another number</DialogTitle>
           <DialogDescription ref={description} tabIndex={-1}>
-            {CONNECT_FORK_DESCRIPTION}
+            {canConnect ? CONNECT_FORK_DESCRIPTION : ASK_AN_ADMIN}
           </DialogDescription>
         </DialogHeader>
-        {notice}
-        <ConnectNumberChoices onBusyChange={onBusyChange} />
+        {canConnect ? (
+          <>
+            {notice}
+            <ConnectNumberChoices onBusyChange={onBusyChange} />
+          </>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

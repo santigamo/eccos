@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { UnauthorizedError } from "../src/auth/session";
@@ -47,6 +47,7 @@ let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
 const workerEnv: {
   BETTER_AUTH_URL?: string;
   SUPPORT_EMAIL?: string;
+  DB?: unknown;
   readonly GATEWAY?: typeof gatewayBinding;
 } = {
   get GATEWAY() {
@@ -253,6 +254,7 @@ const {
   validateDeleteTemplateInput,
   validateEditTemplateInput,
   connectWithToken,
+  openConnectLink,
   validateTokenConnectInput,
   listApiKeys,
   issueApiKey,
@@ -540,11 +542,14 @@ describe("session bootstrap (auth-aware state)", () => {
     const result = await getDashboardState();
     expect(result).toEqual({
       ok: true,
-      data: { stage: "account-ready", resources: {
+      data: { stage: "account-ready", canAdminister: true, resources: {
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [], wabas: [], phones: [],
       } },
     });
+    // A role that may not connect is told so by the state, which is what hides the controls.
+    fakeDeniedActions = new Set(["administer", "erase"]);
+    expect(await getDashboardState()).toMatchObject({ ok: true, data: { canAdminister: false } });
   });
 
   test("an account whose only WABA is awaiting a phone number stays inside the app", async () => {
@@ -2432,6 +2437,127 @@ describe("listApiKeys / issueApiKey / revokeApiKey (Settings, API keys)", () => 
     expect(validateRevokeKeyInput({ keyId: "key_abc123" })).toEqual({ keyId: "key_abc123" });
     expect(() => validateRevokeKeyInput({ keyId: "key_../x" })).toThrow();
     expect(() => validateRevokeKeyInput({})).toThrow();
+  });
+});
+
+describe("openConnectLink (Numbers, connection link)", () => {
+  const TOKEN = "0123456789abcdef.rawsecretvalue_never_logged";
+  const LIVE = { state: "opened", expiresAt: 9, connectedPhone: null, creatorUserId: "user-1" };
+  /** The auth D1 as `linkPeople` reads it: whether the link's creator is still an admin. */
+  let creatorRole: string | null = "owner";
+  beforeEach(() => {
+    creatorRole = "owner";
+    // D1-shaped enough for the auth instance built beside it, which the mocked seam never queries.
+    workerEnv.DB = {
+      batch: async () => [],
+      exec: async () => ({}),
+      prepare: () => ({
+        bind: () => ({
+          first: async () =>
+            creatorRole ? { inviter: "Op", email: "op@corp.test", workspace: "Acme", role: creatorRole } : null,
+        }),
+      }),
+    };
+  });
+  afterEach(() => {
+    workerEnv.DB = undefined;
+  });
+
+  function linkBinding(calls: unknown[][], current: unknown) {
+    withResources({
+      getConnectLink: async (...args: unknown[]) => {
+        calls.push(["get", ...args]);
+        return current;
+      },
+      issueConnectLink: async (...args: unknown[]) => {
+        calls.push(["issue", ...args]);
+        return { token: TOKEN, expiresAt: 7 };
+      },
+    });
+  }
+
+  test("makes the first link for the session's account and creator, with the token in the fragment", async () => {
+    const calls: unknown[][] = [];
+    linkBinding(calls, null);
+    expect(await openConnectLink({ data: { fresh: false, accountId: "account-b" } })).toEqual({
+      ok: true,
+      data: {
+        link: { state: "pending", expiresAt: 7, connectedPhone: null, creatorUserId: "user-1" },
+        url: `http://localhost:3000/connect#${TOKEN}`,
+      },
+    });
+    expect(calls).toEqual([
+      ["get", "account-a"],
+      ["issue", "account-a", "user-1", false],
+    ]);
+  });
+
+  test("leaves a live or used link alone, and cannot show its address again", async () => {
+    for (const current of [LIVE, { ...LIVE, state: "connected", connectedPhone: "+34 600" }]) {
+      const calls: unknown[][] = [];
+      linkBinding(calls, current);
+      expect(await openConnectLink({ data: { fresh: false } })).toEqual({ ok: true, data: { link: current, url: null } });
+      expect(calls).toEqual([["get", "account-a"]]);
+    }
+  });
+
+  test("replaces an expired link, and any link when asked for a new one", async () => {
+    const expired: unknown[][] = [];
+    linkBinding(expired, { ...LIVE, state: "expired" });
+    expect(await openConnectLink({ data: { fresh: false } })).toMatchObject({ ok: true, data: { url: expect.any(String) } });
+    expect(expired.map((call) => call[0])).toEqual(["get", "issue"]);
+
+    const fresh: unknown[][] = [];
+    linkBinding(fresh, LIVE);
+    await openConnectLink({ data: { fresh: true } });
+    expect(fresh).toEqual([["issue", "account-a", "user-1", true]]);
+  });
+
+  test("a link another dialog made in the same moment is shown, not replaced", async () => {
+    let current: unknown = null;
+    withResources({
+      getConnectLink: async () => current,
+      issueConnectLink: async () => {
+        current = LIVE;
+        return "exists";
+      },
+    });
+    expect(await openConnectLink({ data: { fresh: false } })).toEqual({ ok: true, data: { link: LIVE, url: null } });
+  });
+
+  test("replaces a live link whose creator may no longer connect: it resolves for nobody", async () => {
+    for (const role of ["operator", null]) {
+      const calls: unknown[][] = [];
+      linkBinding(calls, { ...LIVE, creatorUserId: "user-gone" });
+      creatorRole = role;
+      expect(await openConnectLink({ data: { fresh: false } })).toMatchObject({
+        ok: true,
+        data: { link: { state: "pending", creatorUserId: "user-1" }, url: expect.any(String) },
+      });
+      expect(calls.map((call) => call[0])).toEqual(["get", "issue"]);
+    }
+  });
+
+  test("requires administer, and never writes the token to a log", async () => {
+    const calls: unknown[][] = [];
+    linkBinding(calls, null);
+    fakeDeniedActions = new Set(["administer", "erase"]);
+    expect(await openConnectLink({ data: { fresh: true } })).toMatchObject({ ok: false, kind: "forbidden" });
+    expect(calls).toEqual([]);
+
+    fakeDeniedActions = new Set();
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await openConnectLink({ data: { fresh: true } });
+    } finally {
+      console.info = original;
+    }
+    expect(emitted.filter((line) => line.includes('"action":"connect_link_issue"'))).toHaveLength(1);
+    for (const line of emitted) expect(line).not.toContain("rawsecretvalue");
   });
 });
 

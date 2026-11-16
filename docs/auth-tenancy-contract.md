@@ -42,7 +42,7 @@ Two planes, two stores, one authority per concern:
 | Plane | Store | Owns |
 |---|---|---|
 | Identity plane | Better Auth on the dedicated auth D1 (§3) | users, sessions, credential accounts, organizations, members, invitations, verifications |
-| Data plane (authority) | `EccosControlPlane` Durable Object | accounts, WABAs, phones, hashed API keys, connect states, **`organization_accounts`** |
+| Data plane (authority) | `EccosControlPlane` Durable Object | accounts, WABAs, phones, hashed API keys, connect states, hashed connection links, **`organization_accounts`** |
 
 The identity plane answers *who is signed in and what role they hold in which organization*. The
 data plane answers *which Eccos account exists, which WABAs/phones it owns, which API keys work*.
@@ -103,6 +103,7 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |
 | API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
 | Embedded Signup `/connect` start + callback | admin | **Yes** | Account-bound OAuth state |
+| Connection link: make or replace | admin | **Yes** | One per workspace; see below |
 | Export data | admin | **Yes** | |
 | GDPR erasure (`eraseByPhone`) | owner | **Yes** | Owner-only destructive action |
 | Invitations & member role changes | owner/admin (Better Auth defaults) | **Yes** | Verified email required (§7) |
@@ -112,6 +113,14 @@ defaults; `operator` and `viewer` are configured custom roles):
 "**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** a
 recent authentication within the step-up window (15 minutes); otherwise the server demands
 re-authentication before executing the action. Reads never require step-up.
+
+**The connection link is the one unauthenticated actor.** An admin makes a link for their
+workspace; whoever holds it may run Embedded Signup into that workspace from the public `/connect`
+page, with no Eccos session. The token is bound in the control plane to (account, creating user),
+lives 7 days, is spent by the first registration and revoked by the next link. The account always
+comes from the token's row, never from the request; the bearer can add their own WABA and can read
+nothing. A link stops resolving once its creator is no longer an owner or admin of the workspace,
+and its use is audited as `connect_link` under the creator's user id.
 
 ## 5. Session & active-organization rules
 
@@ -219,7 +228,7 @@ server-side instead (§7/§8 anti-enumeration, applied to the organization plane
 
 | Condition | Behavior |
 |---|---|
-| Missing / invalid session | Pages redirect to sign-in; server functions return `401` |
+| Missing / invalid session | Pages redirect to sign-in; server functions return `401`. `/connect` and `/api/connect-link/*` are public: the link token is their credential |
 | Signed in, no organization membership | Organization onboarding screen (create/join an org) |
 | Mapping `pending` or `disabled`, or no `organization_accounts` row | **Fail closed** (`403`); no fallback resolution path |
 | Requested WABA not owned by the resolved account | Fail closed (existing `resolveScope` rule) |

@@ -13,7 +13,11 @@ export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/signup",
   "/forgot-password",
   "/reset-password",
+  "/connect",
 ]);
+
+/** Public pages that serve a signed-in visitor too, instead of sending them into the console. */
+export const SESSION_NEUTRAL_PATHS: ReadonlySet<string> = new Set(["/reset-password", "/connect"]);
 
 /**
  * The app pages a sign-in may return to — every route in `routeTree.gen.ts`

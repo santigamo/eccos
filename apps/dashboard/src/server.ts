@@ -4,7 +4,7 @@ import {
 } from "@tanstack/react-start/server";
 import { createServerEntry, type ServerEntry } from "@tanstack/react-start/server-entry";
 import * as Sentry from "@sentry/cloudflare";
-import { env } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import { isAllowedHost } from "./auth/config";
 import { getAuthForRequest } from "./auth/request-auth";
 import {
@@ -22,6 +22,7 @@ import { sentryOptions } from "./lib/sentry";
 import { billingFor } from "./billing/context";
 import { reconcileBilling } from "./billing/reconcile";
 import { billingWebhook } from "./billing/webhook";
+import { connectLinkApi } from "./server/connect-link-api";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -71,6 +72,8 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
   // Before the session gate: Creem signs the request instead. Off, the path is not handled.
   const billingResponse = billingWebhook(request, pathname, env);
   if (billingResponse) return billingResponse;
+  const linkResponse = connectLinkApi(request, pathname, env, waitUntil);
+  if (linkResponse) return linkResponse;
   if (pathname.startsWith("/api/auth/")) {
     // Refused BEFORE the auth instance is even built: these endpoints answer
     // questions about the globally-unique organization slug, and `create`

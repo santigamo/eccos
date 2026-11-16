@@ -3,10 +3,27 @@ import type {
   AccountBilling,
   AccountBillingInput,
   BilledAccount,
+  ConnectLinkClaim,
+  ConnectLinkGrant,
+  ConnectLinkSettled,
+  ConnectLinkSettlement,
+  ConnectLinkSummary,
   ConnectPolicy,
+  IssuedConnectLink,
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
+import {
+  CONNECT_LINKS_SCHEMA,
+  type ConnectLinkRow,
+  claimConnectLink,
+  issueConnectLink,
+  markConnectLinkOpened,
+  resolveConnectLink,
+  settleConnectLink,
+  summarizeConnectLink,
+} from "./connect-links";
 import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import { sha256Hex, toBase64Url } from "./encoding";
 import {
   coexistenceSyncStatus,
   historySyncDeadline,
@@ -556,21 +573,8 @@ function coexistenceOf(row: Record<string, unknown>, now = Date.now()): Coexiste
   };
 }
 
-async function sha256Hex(s: string): Promise<string> {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(d)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 function newApiKey(): string {
-  const bytes = new Uint8Array(API_KEY_RAW_BYTES);
-  crypto.getRandomValues(bytes);
-  const encoded = btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-  return `${API_KEY_PREFIX}${encoded}`;
+  return `${API_KEY_PREFIX}${toBase64Url(crypto.getRandomValues(new Uint8Array(API_KEY_RAW_BYTES)))}`;
 }
 
 function newId(prefix: string): string {
@@ -721,6 +725,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         redirect_uri TEXT,
         return_to  TEXT
       );`);
+      this.sql.exec(CONNECT_LINKS_SCHEMA);
       // Operator-only bookkeeping (the daily census guard); never read by the console.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
         key   TEXT PRIMARY KEY,
@@ -2214,6 +2219,63 @@ export class EccosControlPlane extends DurableObject<Env> {
     const resources = this.listAccountResources(link.accountId);
     if (!resources.account) throw new Error(`Account "${link.accountId}" is not configured`);
     return { accountId: link.accountId, resources };
+  }
+
+  /** A live link whose account has lost its active organization reads as expired: it no longer resolves. */
+  getConnectLink(accountId: string): ConnectLinkSummary | null {
+    const summary = summarizeConnectLink(this.sql, this.requireAccount(accountId));
+    if (!summary || this.organizationOf(accountId)) return summary;
+    return summary.state === "pending" || summary.state === "opened" ? { ...summary, state: "expired" } : summary;
+  }
+
+  async issueConnectLink(accountId: string, creatorUserId: string, replace = false): Promise<IssuedConnectLink | "exists"> {
+    const id = this.requireAccount(accountId);
+    if (!ORGANIZATION_ID_PATTERN.test(creatorUserId) || creatorUserId.length > ORGANIZATION_ID_MAX_LENGTH) {
+      throw new Error("invalid creatorUserId");
+    }
+    return issueConnectLink(this.sql, id, creatorUserId, replace);
+  }
+
+  async resolveConnectLink(token: string): Promise<ConnectLinkGrant | null> {
+    return this.connectLinkGrant(await resolveConnectLink(this.sql, token));
+  }
+
+  markConnectLinkOpened(linkId: string): void {
+    markConnectLinkOpened(this.sql, linkId);
+  }
+
+  async claimConnectLink(token: string): Promise<ConnectLinkClaim | "busy" | null> {
+    const claimed = await claimConnectLink(this.sql, token);
+    if (!claimed || claimed === "busy") return claimed;
+    const grant = this.connectLinkGrant(claimed.row);
+    if (!grant && claimed.claimId) settleConnectLink(this.sql, claimed.claimId, { kind: "released" });
+    return grant && { grant, claimId: claimed.claimId };
+  }
+
+  /** The account a claim's link belongs to, for the exchange that runs under it. */
+  connectLinkAccount(claimId: string): string | null {
+    const row = this.sql
+      .exec("SELECT account_id FROM connect_links WHERE selector = ?", claimId.split(".")[0] ?? "")
+      .toArray()[0];
+    return (row?.account_id as string | undefined) ?? null;
+  }
+
+  settleConnectLink(claimId: string, outcome: ConnectLinkSettlement): ConnectLinkSettled | null {
+    return settleConnectLink(this.sql, claimId, outcome);
+  }
+
+  private organizationOf(accountId: string): string | null {
+    const link = this.sql
+      .exec("SELECT organization_id FROM organization_accounts WHERE account_id = ? AND status = 'active'", accountId)
+      .toArray()[0];
+    return (link?.organization_id as string | undefined) ?? null;
+  }
+
+  /** Fails closed unless the link's account still has an active organization. */
+  private connectLinkGrant(row: ConnectLinkRow | null): ConnectLinkGrant | null {
+    const organizationId = row && this.organizationOf(row.accountId);
+    if (!row || !organizationId) return null;
+    return { ...row, organizationId, connectPolicy: this.connectPolicyOf(row.accountId) };
   }
 
   purgeExpiredConnectStates(now = Date.now()): void {

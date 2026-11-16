@@ -12,7 +12,7 @@ installServerFnMocks({ env });
 
 const { getAnalyticsConfig, hashUserId } = await import("../src/server/analytics");
 const { AnalyticsScripts } = await import("../src/components/analytics");
-const { analyticsBootstrapScript, BEFORE_SEND_HOOK, installAnalyticsHooks, track, trackSessionEvent } =
+const { analyticsBootstrapScript, analyticsFor, BEFORE_SEND_HOOK, installAnalyticsHooks, track, trackSessionEvent } =
   await import("../src/lib/analytics");
 
 const CONFIG = {
@@ -54,6 +54,9 @@ describe("server config (opt-in)", () => {
 describe("document tags", () => {
   test("no config renders nothing", () => {
     expect(renderToStaticMarkup(<AnalyticsScripts analytics={null} />)).toBe("");
+    // The connection-link page never loads the tracker: its URL fragment is the link token.
+    expect(renderToStaticMarkup(<AnalyticsScripts analytics={analyticsFor("/connect", CONFIG)} />)).toBe("");
+    expect(analyticsFor("/numbers", CONFIG)).toBe(CONFIG);
   });
 
   test("config renders the hook before the deferred tracker", () => {
@@ -112,11 +115,19 @@ describe("analytics hooks", () => {
         title: "Numbers",
       }),
     ).toEqual({
-      url: "https://app.eccos.chat/numbers?UTM_Source=landing#x",
+      url: "https://app.eccos.chat/numbers?UTM_Source=landing",
       referrer: "/reset-password?utm_medium=mail",
       title: "Numbers",
     });
     expect(beforeSend("pageview", { url: "/x", referrer: "" })).toEqual({ url: "/x", referrer: "" });
+    // A fragment is never sent: on /connect it is the link token.
+    expect(beforeSend("pageview", { url: "/connect", referrer: "/connect#sel.secret" })).toEqual({
+      url: "/connect",
+      referrer: "/connect",
+    });
+    expect(beforeSend("pageview", { url: "https://app.eccos.chat/connect#sel.secret" })).toEqual({
+      url: "https://app.eccos.chat/connect",
+    });
     expect(beforeSend("pageview", null)).toBeNull();
   });
 

@@ -1,3 +1,4 @@
+import { sha256Hex } from "./encoding";
 import { DurableObject } from "cloudflare:workers";
 import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
@@ -3572,7 +3573,3 @@ function clampPage(limit?: number): number {
   return Math.min(v, OPERATOR_MAX_PAGE);
 }
 
-async function sha256Hex(s: string): Promise<string> {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}

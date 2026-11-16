@@ -3,6 +3,7 @@
  * enums and Meta codes only; the one identifier Umami sees is a hashed user id.
  */
 
+import { CONNECT_LINK_PATH } from "./connect-link/api";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
 import { isFinishEvent, type ConnectPath, type SessionEvent } from "./embedded-signup";
 
@@ -31,14 +32,16 @@ export function installAnalyticsHooks(win: Window, hook: string): void {
   } catch {}
 
   // Every query parameter in the console is state (OAuth codes, tokens, tenant
-  // ids); only the landing's utm_* attribution is worth sending.
+  // ids); only the landing's utm_* attribution is worth sending. The fragment
+  // never is: on /connect it is the link token.
   const keepUtmOnly = (value: string): string => {
     try {
       const url = new URL(value, win.location.href);
       for (const key of [...url.searchParams.keys()]) {
         if (!key.toLowerCase().startsWith("utm_")) url.searchParams.delete(key);
       }
-      return /^[a-z][a-z\d+.-]*:/i.test(value) ? url.href : url.pathname + url.search + url.hash;
+      url.hash = "";
+      return /^[a-z][a-z\d+.-]*:/i.test(value) ? url.href : url.pathname + url.search;
     } catch {
       return value;
     }
@@ -120,4 +123,13 @@ export function whenUmamiReady(timeoutMs = 10_000): Promise<UmamiTracker | undef
       }
     }, 100);
   });
+}
+
+/**
+ * The tracker a document may load. None on the connection-link page: its URL
+ * fragment is a credential, and the tracker reads the URL before any page code
+ * can take the fragment out.
+ */
+export function analyticsFor(pathname: string, analytics: AnalyticsConfig | null): AnalyticsConfig | null {
+  return pathname === CONNECT_LINK_PATH ? null : analytics;
 }
