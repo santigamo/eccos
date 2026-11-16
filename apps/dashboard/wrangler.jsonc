@@ -41,7 +41,8 @@
     // Must match the gateway (docs/deployment.md#meta-graph-api-version).
     "META_GRAPH_VERSION": "v25.0"
     // Optional: links "contact Eccos support" in the console to this address.
-    // "SUPPORT_EMAIL": "support@example.com"
+    // "SUPPORT_EMAIL": "support@example.com",
+    // "RESELLER_USER_IDS": "<user id>,<user id>"
   },
 
   // Eccos Cloud billing (docs/deployment.md#billing). Off unless the CREEM_API_KEY and

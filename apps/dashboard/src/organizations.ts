@@ -10,6 +10,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
+import * as Sentry from "@sentry/cloudflare";
 import { env } from "cloudflare:workers";
 import type { GatewayApi } from "@eccos/gateway-contract";
 import { getAuthForRequest } from "./auth/request-auth";
@@ -21,6 +22,7 @@ import {
   type Membership,
 } from "./auth/tenant";
 import { activeWorkspace } from "./lib/workspaces";
+import { isReseller } from "./billing/reseller";
 import {
   INVITATION_COPY,
   INVITATION_RETRY,
@@ -57,6 +59,16 @@ function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<T> {
   const gateway = env.GATEWAY;
   if (!gateway) throw new Error("GATEWAY service binding is not configured");
   return fn(gateway);
+}
+
+/** A reseller's new workspace opens without a subscription; a failure leaves it closed for the operator to open. */
+async function openForReseller(userId: string, accountId: string): Promise<void> {
+  if (!isReseller(userId, env.RESELLER_USER_IDS)) return;
+  try {
+    await withGateway((gateway) => gateway.setAccountBilling(accountId, { connectPolicy: "open" }));
+  } catch (err) {
+    Sentry.captureException(err, { tags: { area: "billing", event: "reseller-open-failed" }, extra: { accountId } });
+  }
 }
 
 /** List the signed-in user's organizations with their account-link state. */
@@ -214,6 +226,7 @@ export const createOrganization = createServerFn({ method: "POST" })
       try {
         const auth = authInstance();
         const request = currentRequest();
+        const { session } = await requireAuthContext(auth, request);
         const org = (await auth.api.createOrganization({
           body: { name: data.name, slug: crypto.randomUUID() },
           headers: request.headers,
@@ -225,6 +238,7 @@ export const createOrganization = createServerFn({ method: "POST" })
         const link = await withGateway((gateway) =>
           gateway.ensureOrganizationAccount(org.id as string, data.name),
         );
+        await openForReseller(session.userId, link.accountId);
         return { ok: true, data: { organizationId: org.id, accountId: link.accountId } };
       } catch (err) {
         return { ok: false, error: createWorkspaceErrorCopy(err) };

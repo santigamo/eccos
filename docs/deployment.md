@@ -192,6 +192,7 @@ numbers, and an account that may not keeps sending, receiving and forwarding.
 | dashboard secret | `CREEM_WEBHOOK_SECRET` | Verifies `creem-signature` on `POST /api/billing/webhook` |
 | dashboard var | `CREEM_PRODUCT_ID` | The Creem product, e.g. `prod_XXXXXXXXXXXXXXXXXXXXXX`. Set it in the gitignored `wrangler.production.jsonc`, never in the template |
 | dashboard config | `"triggers": { "crons": ["0 4 * * *"] }` | Daily reconcile: prices each subscription for the account's connected numbers |
+| dashboard var | `RESELLER_USER_IDS` | Comma-separated user ids whose new workspaces open without a subscription, for a reseller invoiced separately. Their settings read "Billed separately". Existing workspaces are opened by the operator |
 
 The Creem product is a monthly subscription at 1 EUR per unit (a subscription's units are its
 monthly price in euros), with the free trial configured on the product and its default return URL

@@ -18,6 +18,7 @@ declare global {
       CREEM_API_KEY?: string;
       CREEM_WEBHOOK_SECRET?: string;
       CREEM_PRODUCT_ID?: string;
+      RESELLER_USER_IDS?: string;
       GATEWAY: Service<GatewayApi & Rpc.WorkerEntrypointBranded>;
     }
   }
