@@ -14,6 +14,8 @@ import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba"
 import { timedProxy } from "./timing";
 import { connectAudit } from "../lib/connect-result";
 import { CONNECT_LINK_PATH } from "../lib/connect-link/api";
+import { linkIsLive } from "../lib/connect-link/status";
+import { linkPeople } from "./connect-link-people";
 import { type EmbeddedSignupConfig, embeddedSignupConfig, validateSessionEvent } from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
@@ -1642,7 +1644,8 @@ export interface ConnectLinkView {
 
 /**
  * Read the workspace's connection link, making one when there is none to wait
- * for (never made, or expired) or when `fresh` asks to replace it. `administer`,
+ * for (never made, expired, or dead with its creator's access) or when `fresh`
+ * asks to replace it. `administer`,
  * like connecting: the link lets its bearer add a number to this account.
  */
 export const openConnectLink = createServerFn({ method: "POST" })
@@ -1652,7 +1655,12 @@ export const openConnectLink = createServerFn({ method: "POST" })
       withGateway(async (gateway) => {
         const { actor, accountId } = await adminActorAccount(gateway);
         const current = data.fresh ? null : await gateway.getConnectLink(accountId);
-        if (current && current.state !== "expired") return { link: current, url: null };
+        // A live link whose creator may no longer connect resolves for nobody: replace it too.
+        const dead =
+          current &&
+          linkIsLive(current) &&
+          !(await linkPeople(env.DB, actor.organizationId, current.creatorUserId));
+        if (current && current.state !== "expired" && !dead) return { link: current, url: null };
         const issued = await gateway.issueConnectLink(accountId, actor.session.userId);
         auditEvent({
           action: "connect_link_issue",
@@ -1662,7 +1670,12 @@ export const openConnectLink = createServerFn({ method: "POST" })
           outcome: "success",
         });
         return {
-          link: { state: "pending", expiresAt: issued.expiresAt, connectedPhone: null },
+          link: {
+            state: "pending",
+            expiresAt: issued.expiresAt,
+            connectedPhone: null,
+            creatorUserId: actor.session.userId,
+          },
           // In the fragment, so the token reaches no server log and no Referer.
           url: `${new URL(getRequest().url).origin}${CONNECT_LINK_PATH}#${issued.token}`,
         };

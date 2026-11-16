@@ -19,6 +19,10 @@ export const en = {
     `${phone ?? "Your number"} now works with ${workspace}. Nothing changes on your phone. You can close this page.`,
   pending: (inviter: string) =>
     `Your WhatsApp account is connected, but the number is not ready yet. ${inviter} will finish it. You can close this page.`,
+  unknown: (inviter: string) =>
+    `We are checking whether your number was connected. ${inviter} will confirm it. Do not start again.`,
+  busy: "A connection with this link is already in progress. Wait a minute, then start again.",
+  notPrepared: "The connection could not be prepared. Close Meta's window and start again.",
   cancelled: "Nothing was connected. You can start again with the same link.",
   gone: (inviter: string) => `This link no longer works. Ask ${inviter} for a new one.`,
   sender: "whoever sent it to you",

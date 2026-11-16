@@ -15,6 +15,10 @@ export type LinkOutcome =
   | { outcome: "connected"; phone: string | null }
   /** Registered, but the number is missing or its setup failed: the workspace admin finishes it. */
   | { outcome: "pending" }
+  /** The exchange broke off: something may have been registered, so the bearer must not retry. */
+  | { outcome: "unknown" }
+  /** Another exchange holds the link right now. The same code may be sent again. */
+  | { outcome: "busy" }
   | { outcome: ConnectFailureCode | "gone" };
 
 /** The answer, or why there is none. The token only ever travels in a POST body. */

@@ -4,7 +4,7 @@ import {
 } from "@tanstack/react-start/server";
 import { createServerEntry, type ServerEntry } from "@tanstack/react-start/server-entry";
 import * as Sentry from "@sentry/cloudflare";
-import { env } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import { isAllowedHost } from "./auth/config";
 import { getAuthForRequest } from "./auth/request-auth";
 import {
@@ -72,7 +72,7 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
   // Before the session gate: Creem signs the request instead. Off, the path is not handled.
   const billingResponse = billingWebhook(request, pathname, env);
   if (billingResponse) return billingResponse;
-  const linkResponse = connectLinkApi(request, pathname, env);
+  const linkResponse = connectLinkApi(request, pathname, env, waitUntil);
   if (linkResponse) return linkResponse;
   if (pathname.startsWith("/api/auth/")) {
     // Refused BEFORE the auth instance is even built: these endpoints answer

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { UnauthorizedError } from "../src/auth/session";
@@ -47,6 +47,7 @@ let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
 const workerEnv: {
   BETTER_AUTH_URL?: string;
   SUPPORT_EMAIL?: string;
+  DB?: unknown;
   readonly GATEWAY?: typeof gatewayBinding;
 } = {
   get GATEWAY() {
@@ -2438,7 +2439,26 @@ describe("listApiKeys / issueApiKey / revokeApiKey (Settings, API keys)", () => 
 
 describe("openConnectLink (Numbers, connection link)", () => {
   const TOKEN = "0123456789abcdef.rawsecretvalue_never_logged";
-  const LIVE = { state: "opened", expiresAt: 9, connectedPhone: null };
+  const LIVE = { state: "opened", expiresAt: 9, connectedPhone: null, creatorUserId: "user-1" };
+  /** The auth D1 as `linkPeople` reads it: whether the link's creator is still an admin. */
+  let creatorRole: string | null = "owner";
+  beforeEach(() => {
+    creatorRole = "owner";
+    // D1-shaped enough for the auth instance built beside it, which the mocked seam never queries.
+    workerEnv.DB = {
+      batch: async () => [],
+      exec: async () => ({}),
+      prepare: () => ({
+        bind: () => ({
+          first: async () =>
+            creatorRole ? { inviter: "Op", email: "op@corp.test", workspace: "Acme", role: creatorRole } : null,
+        }),
+      }),
+    };
+  });
+  afterEach(() => {
+    workerEnv.DB = undefined;
+  });
 
   function linkBinding(calls: unknown[][], current: unknown) {
     withResources({
@@ -2459,7 +2479,7 @@ describe("openConnectLink (Numbers, connection link)", () => {
     expect(await openConnectLink({ data: { fresh: false, accountId: "account-b" } })).toEqual({
       ok: true,
       data: {
-        link: { state: "pending", expiresAt: 7, connectedPhone: null },
+        link: { state: "pending", expiresAt: 7, connectedPhone: null, creatorUserId: "user-1" },
         url: `http://localhost:3000/connect#${TOKEN}`,
       },
     });
@@ -2470,7 +2490,7 @@ describe("openConnectLink (Numbers, connection link)", () => {
   });
 
   test("leaves a live or used link alone, and cannot show its address again", async () => {
-    for (const current of [LIVE, { state: "connected", expiresAt: 9, connectedPhone: "+34 600" }]) {
+    for (const current of [LIVE, { ...LIVE, state: "connected", connectedPhone: "+34 600" }]) {
       const calls: unknown[][] = [];
       linkBinding(calls, current);
       expect(await openConnectLink({ data: { fresh: false } })).toEqual({ ok: true, data: { link: current, url: null } });
@@ -2480,7 +2500,7 @@ describe("openConnectLink (Numbers, connection link)", () => {
 
   test("replaces an expired link, and any link when asked for a new one", async () => {
     const expired: unknown[][] = [];
-    linkBinding(expired, { state: "expired", expiresAt: 1, connectedPhone: null });
+    linkBinding(expired, { ...LIVE, state: "expired" });
     expect(await openConnectLink({ data: { fresh: false } })).toMatchObject({ ok: true, data: { url: expect.any(String) } });
     expect(expired.map((call) => call[0])).toEqual(["get", "issue"]);
 
@@ -2488,6 +2508,19 @@ describe("openConnectLink (Numbers, connection link)", () => {
     linkBinding(fresh, LIVE);
     await openConnectLink({ data: { fresh: true } });
     expect(fresh).toEqual([["issue", "account-a", "user-1"]]);
+  });
+
+  test("replaces a live link whose creator may no longer connect: it resolves for nobody", async () => {
+    for (const role of ["operator", null]) {
+      const calls: unknown[][] = [];
+      linkBinding(calls, { ...LIVE, creatorUserId: "user-gone" });
+      creatorRole = role;
+      expect(await openConnectLink({ data: { fresh: false } })).toMatchObject({
+        ok: true,
+        data: { link: { state: "pending", creatorUserId: "user-1" }, url: expect.any(String) },
+      });
+      expect(calls.map((call) => call[0])).toEqual(["get", "issue"]);
+    }
   });
 
   test("requires administer, and never writes the token to a log", async () => {

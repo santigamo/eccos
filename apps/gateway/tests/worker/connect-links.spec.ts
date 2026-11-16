@@ -59,7 +59,7 @@ describe("connection links", () => {
   it("stores the selector and a hash, never the token", async () => {
     const accountId = await workspace();
     const { token, expiresAt } = await rpc().issueConnectLink(accountId, "user_ruben");
-    expect(token).toMatch(/^[a-f0-9]{16}\.[A-Za-z0-9_-]{43}$/);
+    expect(token).toMatch(/^[A-Za-z0-9_-]{11}\.[A-Za-z0-9_-]{43}$/);
     expect(expiresAt - Date.now()).toBeGreaterThan(CONNECT_LINK_TTL_MS - 5_000);
 
     const stored = JSON.stringify(await cp((instance) => instance.sql.exec("SELECT * FROM connect_links").toArray()));
@@ -135,6 +135,7 @@ describe("connection links", () => {
     expect(await rpc().getConnectLink(accountId)).toMatchObject({
       state: "connected",
       connectedPhone: "+34 600 000 222",
+      creatorUserId: "user_ruben",
     });
 
     await mintState(accountId, "state-2");
@@ -182,14 +183,48 @@ describe("connection links", () => {
     expect(await cp((instance) => instance.ownsWaba(other, "WABA_LINK"))).toBe(false);
   });
 
-  it("lets only one exchange hold the link at a time", async () => {
+  it("mails each failure reason once, however the reasons alternate, and a few per link at most", async () => {
+    const accountId = await workspace();
+    const { token } = await rpc().issueConnectLink(accountId, "user_ruben");
+    const attempt = async (code: "owned" | "no_waba" | "denied" | "failed" | "subscription_required") => {
+      await cp((instance) => instance.claimConnectLink(token));
+      return cp((instance) => instance.settleConnectLink(token, { kind: "failed", code }));
+    };
+
+    expect(await attempt("owned")).toBe(true);
+    expect(await attempt("no_waba")).toBe(true);
+    expect(await attempt("owned")).toBe(false);
+    expect(await attempt("no_waba")).toBe(false);
+    expect(await attempt("denied")).toBe(true);
+    expect(await attempt("failed")).toBe(false);
+    expect(await attempt("subscription_required")).toBe(false);
+  });
+
+  it("spends the link as unconfirmed when the exchange breaks off", async () => {
+    const accountId = await workspace();
+    const { token } = await rpc().issueConnectLink(accountId, "user_ruben");
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response(JSON.stringify({ access_token: "biz-token" }), { status: 200 }),
+    );
+    await mintState(accountId, "state-1");
+    const gateway = new GatewayRPC(createExecutionContext(), env);
+    vi.spyOn(gateway, "exchangeConnectCodeForAccountId").mockRejectedValue(new Error("storage went away"));
+
+    const exchange = await gateway.exchangeConnectCodeForLink(token, "code", "state-1");
+    expect(exchange).toMatchObject({ result: null, notify: true, grant: { state: "used" } });
+    expect((await rpc().getConnectLink(accountId))?.state).toBe("unconfirmed");
+    expect(await rpc().exchangeConnectCodeForLink(token, "code", "state-2")).toBeNull();
+  });
+
+  it("answers busy while another exchange holds the link, and frees it afterwards", async () => {
     const accountId = await workspace();
     const { token } = await rpc().issueConnectLink(accountId, "user_ruben");
 
-    expect(await cp((instance) => instance.claimConnectLink(token))).not.toBeNull();
-    expect(await cp((instance) => instance.claimConnectLink(token))).toBeNull();
-    await cp((instance) => instance.settleConnectLink(token, { connected: false, code: "failed" }));
-    expect(await cp((instance) => instance.claimConnectLink(token))).not.toBeNull();
+    expect(await cp((instance) => instance.claimConnectLink(token))).toMatchObject({ accountId });
+    expect(await cp((instance) => instance.claimConnectLink(token))).toBe("busy");
+    expect(await rpc().exchangeConnectCodeForLink(token, "code", "state")).toBe("busy");
+    await cp((instance) => instance.settleConnectLink(token, { kind: "failed", code: "failed" }));
+    expect(await cp((instance) => instance.claimConnectLink(token))).toMatchObject({ accountId });
   });
 
   it("fails closed when the workspace's organization link is not active", async () => {
@@ -199,5 +234,6 @@ describe("connection links", () => {
 
     expect(await rpc().resolveConnectLink(token)).toBeNull();
     expect(await rpc().exchangeConnectCodeForLink(token, "code", "state")).toBeNull();
+    expect((await rpc().getConnectLink(accountId))?.state).toBe("expired");
   });
 });

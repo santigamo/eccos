@@ -725,14 +725,19 @@ export type ConnectExchangeResult =
     }
   | { ok: false; error: string; code: ConnectFailureCode };
 
-/** Where a workspace's connection link stands, for the admin who made it. */
-export type ConnectLinkState = "pending" | "opened" | "connected" | "expired";
+/**
+ * Where a workspace's connection link stands, for the admin who made it.
+ * `unconfirmed`: an exchange broke off where it may already have registered
+ * something, so the link is spent and Numbers holds the truth.
+ */
+export type ConnectLinkState = "pending" | "opened" | "connected" | "unconfirmed" | "expired";
 
 export interface ConnectLinkSummary {
   state: ConnectLinkState;
   expiresAt: number;
   /** The number the link connected, once it has. */
   connectedPhone: string | null;
+  creatorUserId: string;
 }
 
 /** The raw token exists only here: the gateway keeps its hash. */
@@ -752,7 +757,8 @@ export interface ConnectLinkGrant {
 
 export interface ConnectLinkExchange {
   grant: ConnectLinkGrant;
-  result: ConnectExchangeResult;
+  /** Null when the exchange broke off and its outcome is unknown. */
+  result: ConnectExchangeResult | null;
   /** Whether the link's creator should be told about this outcome. */
   notify: boolean;
 }
@@ -1372,10 +1378,15 @@ export interface GatewayApi {
   resolveConnectLink(token: string, markOpened?: boolean): Promise<ConnectLinkGrant | null>;
   /**
    * `exchangeConnectCodeForAccountId` for the account the token is bound to.
-   * A registration spends the link; a failure leaves it usable. Null when the
-   * link is not active or another exchange holds it.
+   * A registration spends the link, and so does an exchange whose outcome is
+   * unknown; a failure leaves it usable. `busy` while another exchange holds
+   * the link, null when it is not active.
    */
-  exchangeConnectCodeForLink(token: string, code: string, state: string): Promise<ConnectLinkExchange | null>;
+  exchangeConnectCodeForLink(
+    token: string,
+    code: string,
+    state: string,
+  ): Promise<ConnectLinkExchange | "busy" | null>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(

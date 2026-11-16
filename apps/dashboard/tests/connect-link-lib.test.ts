@@ -34,7 +34,7 @@ describe("the two languages", () => {
 });
 
 describe("linkStatusLine", () => {
-  const link = { expiresAt: 1, connectedPhone: null };
+  const link = { expiresAt: 1, connectedPhone: null, creatorUserId: "user_ruben" };
   test("reads each state the way the dialog says it", () => {
     expect(linkStatusLine({ ...link, state: "pending" })).toBe("Not opened yet");
     expect(linkStatusLine({ ...link, state: "opened" })).toBe("Opened, not finished");
@@ -43,6 +43,8 @@ describe("linkStatusLine", () => {
     );
     expect(linkStatusLine({ ...link, state: "connected" })).toBe("Connected");
     expect(linkStatusLine({ ...link, state: "expired" })).toBe("Expired");
+    expect(linkStatusLine({ ...link, state: "unconfirmed" })).toContain("not confirmed");
+    expect(linkIsLive({ ...link, state: "unconfirmed" })).toBe(false);
     expect(linkIsLive({ ...link, state: "opened" })).toBe(true);
     expect(linkIsLive({ ...link, state: "connected" })).toBe(false);
   });

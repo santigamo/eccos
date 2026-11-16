@@ -20,6 +20,10 @@ export const es: ConnectLinkCopy = {
     `${phone ?? "Tu número"} ya funciona con ${workspace}. No cambia nada en tu teléfono. Puedes cerrar esta página.`,
   pending: (inviter) =>
     `Tu cuenta de WhatsApp está conectada, pero el número aún no está listo. ${inviter} lo terminará. Puedes cerrar esta página.`,
+  unknown: (inviter) =>
+    `Estamos comprobando si tu número se ha conectado. ${inviter} te lo confirmará. No empieces de nuevo.`,
+  busy: "Ya hay una conexión en curso con este enlace. Espera un minuto y empieza de nuevo.",
+  notPrepared: "No se ha podido preparar la conexión. Cierra la ventana de Meta y empieza de nuevo.",
   cancelled: "No se ha conectado nada. Puedes empezar de nuevo con el mismo enlace.",
   gone: (inviter) => `Este enlace ya no funciona. Pide uno nuevo a ${inviter}.`,
   sender: "quien te lo envió",

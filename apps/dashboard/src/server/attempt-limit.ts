@@ -1,42 +1,37 @@
 /**
- * Counts failed attempts per caller in Better Auth's `rateLimit` table, so the
- * count is shared across isolates without a table or a binding of its own.
+ * Counts attempts per caller in Better Auth's `rateLimit` table, so the count
+ * is shared across isolates without a table or a binding of its own. The row's
+ * id is the key itself, which makes each count one atomic upsert.
  * `lastRequest` holds the start of the caller's current window.
  */
 const WINDOW_MS = 10 * 60 * 1000;
-const MAX_FAILURES = 10;
 
 export interface AttemptLimiter {
-  blocked(caller: string): Promise<boolean>;
-  strike(caller: string): Promise<void>;
+  /** Counts one attempt. True once the caller is over the limit for this window. */
+  strike(caller: string): Promise<boolean>;
 }
 
-type Row = { id: string; count: number; lastRequest: number };
-
-export function attemptLimiter(db: D1Database, scope: string, now: () => number = Date.now): AttemptLimiter {
-  const read = (caller: string) =>
-    db
-      .prepare('SELECT "id", "count", "lastRequest" FROM "rateLimit" WHERE "key" = ?')
-      .bind(`${scope}|${caller}`)
-      .first<Row>();
-  const live = (row: Row) => now() - row.lastRequest < WINDOW_MS;
+export function attemptLimiter(
+  db: D1Database,
+  scope: string,
+  max: number,
+  now: () => number = Date.now,
+): AttemptLimiter {
   return {
-    async blocked(caller) {
-      const row = await read(caller);
-      return row !== null && live(row) && row.count >= MAX_FAILURES;
-    },
     async strike(caller) {
-      const row = await read(caller);
-      if (row && live(row)) {
-        await db.prepare('UPDATE "rateLimit" SET "count" = "count" + 1 WHERE "id" = ?').bind(row.id).run();
-      } else if (row) {
-        await db.prepare('UPDATE "rateLimit" SET "count" = 1, "lastRequest" = ? WHERE "id" = ?').bind(now(), row.id).run();
-      } else {
-        await db
-          .prepare('INSERT INTO "rateLimit" ("id", "key", "count", "lastRequest") VALUES (?, ?, 1, ?)')
-          .bind(crypto.randomUUID(), `${scope}|${caller}`, now())
-          .run();
-      }
+      const key = `${scope}|${caller}`;
+      const at = now();
+      const row = await db
+        .prepare(
+          `INSERT INTO "rateLimit" ("id", "key", "count", "lastRequest") VALUES (?1, ?1, 1, ?2)
+           ON CONFLICT("id") DO UPDATE SET
+             "count" = CASE WHEN "lastRequest" <= ?3 THEN 1 ELSE "count" + 1 END,
+             "lastRequest" = CASE WHEN "lastRequest" <= ?3 THEN ?2 ELSE "lastRequest" END
+           RETURNING "count"`,
+        )
+        .bind(key, at, at - WINDOW_MS)
+        .first<{ count: number }>();
+      return (row?.count ?? 0) > max;
     },
   };
 }

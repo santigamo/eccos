@@ -32,7 +32,9 @@ const READY: LinkView = {
 let calls: string[];
 let view: LinkView | "limited" | "unreachable";
 let start: LinkStart;
-let outcome: LinkOutcome;
+let outcome: LinkOutcome | "unreachable";
+/** Answers the exchange gives before `outcome`, in order. */
+let earlier: LinkOutcome[];
 let login: { callback: LoginCallback; options: { extras?: { featureType?: string } } } | null;
 let events: unknown[];
 let unmount: (() => void) | null = null;
@@ -48,7 +50,7 @@ const api = {
   },
   exchange: async (_token: string, code: string, state: string) => {
     calls.push(`exchange:${code}:${state}`);
-    return outcome;
+    return earlier.shift() ?? outcome;
   },
   event: (_token: string, event: unknown) => void events.push(event),
 } as NonNullable<Api>;
@@ -68,6 +70,7 @@ beforeEach(() => {
   view = READY;
   start = { ok: true, state: "state-1" };
   outcome = { outcome: "connected", phone: "+34 600 000 222" };
+  earlier = [];
   window.open = (() => ({ closed: false })) as unknown as typeof window.open;
 });
 
@@ -89,7 +92,9 @@ async function mount(copy = en, token: string | null = "tok"): Promise<HTMLEleme
   document.body.append(host);
   const root = createRoot(host);
   await act(async () =>
-    root.render(<ConnectLinkLanding copy={copy} api={api} readToken={() => token} loadSdk={async () => sdk} />),
+    root.render(
+      <ConnectLinkLanding copy={copy} api={api} readToken={() => token} loadSdk={async () => sdk} busyRetryMs={1} />,
+    ),
   );
   unmount = () => root.unmount();
   await settle();
@@ -177,6 +182,55 @@ describe("the landing", () => {
     await answer({ authResponse: { code: "c" } });
     expect(host.textContent).toContain(en.pending("Rubén"));
     expect(button(host)).toBeNull();
+  });
+
+  test("an exchange with no known result is being checked: no button, no 'start again'", async () => {
+    for (const result of [{ outcome: "unknown" } as const, "unreachable" as const]) {
+      outcome = result;
+      const host = await mount();
+      await click(host);
+      await answer({ authResponse: { code: "c" } });
+      expect(host.textContent).toContain(en.unknown("Rubén"));
+      expect(button(host)).toBeNull();
+      act(() => unmount?.());
+    }
+  });
+
+  test("a link held by another exchange is retried with the same code, then says it is busy", async () => {
+    earlier = [{ outcome: "busy" }];
+    const retried = await mount();
+    await click(retried);
+    await answer({ authResponse: { code: "c" } });
+    await settle();
+    expect(calls.filter((call) => call === "exchange:c:state-1")).toHaveLength(2);
+    expect(retried.textContent).toContain("Connected.");
+    act(() => unmount?.());
+
+    outcome = { outcome: "busy" };
+    const held = await mount();
+    await click(held);
+    await answer({ authResponse: { code: "c" } });
+    await settle();
+    expect(held.textContent).toContain(en.busy);
+    expect(held.textContent).not.toContain(en.gone("Rubén"));
+    expect(button(held)?.disabled).toBe(false);
+  });
+
+  test("Meta answering inside login, before a state exists, never leaves the page connecting", async () => {
+    const eager = { ...sdk, login: (callback: LoginCallback) => callback({ authResponse: { code: "early" } }) };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(<ConnectLinkLanding copy={en} api={api} readToken={() => "tok"} loadSdk={async () => eager} />),
+    );
+    unmount = () => root.unmount();
+    await settle();
+    await click(host);
+    expect(host.textContent).toContain(en.notPrepared);
+    expect(button(host)?.disabled).toBe(false);
+    expect(button(host)?.textContent).toBe(en.button);
+    expect(calls).toEqual(["view"]);
   });
 
   test("a closed workspace says so and never offers Meta", async () => {

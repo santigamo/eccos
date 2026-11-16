@@ -21,14 +21,26 @@ import { type LinkPeople, linkPeople } from "./connect-link-people";
 export interface ConnectLinkDeps {
   gateway: Pick<GatewayApi, "resolveConnectLink" | "startConnectForAccountId" | "exchangeConnectCodeForLink">;
   people(organizationId: string, userId: string): Promise<LinkPeople | null>;
-  limiter: AttemptLimiter;
+  /** Wrong tokens per caller. A right token is never counted, so strangers behind one address cannot lock a bearer out. */
+  failures: AttemptLimiter;
+  /** Session events per caller: each one writes an audit line. */
+  events: AttemptLimiter;
   mail: MailSender;
+  /** Runs work after the response, as `waitUntil` does. */
+  defer(work: Promise<unknown>): void;
   signup: EmbeddedSignupConfig | null;
   /** The console's own origin, for the link in the outcome mail. */
   origin: string;
 }
 
-type Call = { token: string; input: Record<string, unknown>; grant: ConnectLinkGrant; people: LinkPeople; deps: ConnectLinkDeps };
+type Call = {
+  token: string;
+  input: Record<string, unknown>;
+  caller: string;
+  grant: ConnectLinkGrant;
+  people: LinkPeople;
+  deps: ConnectLinkDeps;
+};
 
 const json = (body: unknown, status = 200): Response =>
   Response.json(body, { status, headers: { "cache-control": "private, no-store" } });
@@ -91,40 +103,55 @@ const ACTIONS: Record<string, { gone: unknown; run(call: Call): Promise<unknown>
   },
   exchange: {
     gone: { outcome: "gone" } satisfies LinkOutcome,
-    async run({ token, input, people, deps }): Promise<LinkOutcome> {
-      const exchange = await deps.gateway.exchangeConnectCodeForLink(token, text(input.code, 4096), text(input.state, 512));
+    async run({ token, input, grant: resolved, people, deps }): Promise<LinkOutcome> {
+      if (resolved.state !== "active") return { outcome: "gone" };
+      const code = text(input.code, 4096);
+      const state = text(input.state, 512);
+      // A call that dies on the way may still have registered something: unknown, never "try again".
+      const exchange = await deps.gateway
+        .exchangeConnectCodeForLink(token, code, state)
+        .catch(() => ({ grant: resolved, result: null, notify: true }));
       if (!exchange) return { outcome: "gone" };
+      if (exchange === "busy") return { outcome: "busy" };
       const { grant, result } = exchange;
-      const verdict = judgeExchange(result);
-      const outcome: LinkOutcome = !verdict.navigate
-        ? { outcome: verdict.outcome }
-        : verdict.outcome === "ok" && result.ok
-          ? { outcome: "connected", phone: result.display_phone_number || null }
-          : { outcome: "pending" };
+      const verdict = result && judgeExchange(result);
+      const outcome: LinkOutcome = !result || !verdict
+        ? { outcome: "unknown" }
+        : !verdict.navigate
+          ? { outcome: verdict.outcome }
+          : verdict.outcome === "ok" && result.ok
+            ? { outcome: "connected", phone: result.display_phone_number || null }
+            : { outcome: "pending" };
       audit(
         grant,
-        result.ok
-          ? { step: "exchange", wabaId: result.waba_id, connected: result.connected.length, status: result.status }
-          : { step: "exchange", code: result.code },
-        connectAudit(result).outcome,
-        connectAudit(result).detail,
+        !result
+          ? { step: "exchange" }
+          : result.ok
+            ? { step: "exchange", wabaId: result.waba_id, connected: result.connected.length, status: result.status }
+            : { step: "exchange", code: result.code },
+        result ? connectAudit(result).outcome : "failed",
+        result ? connectAudit(result).detail : "unknown",
       );
       if (exchange.notify && outcome.outcome !== "state" && outcome.outcome !== "gone") {
-        await mailLinkOutcome(deps.mail, {
-          to: people.inviterEmail,
-          workspace: people.workspace,
-          url: `${deps.origin}/numbers`,
-          outcome: outcome.outcome,
-          unique: `${grant.accountId}:${Date.now()}`,
-        });
+        deps.defer(
+          mailLinkOutcome(deps.mail, {
+            to: people.inviterEmail,
+            workspace: people.workspace,
+            url: `${deps.origin}/numbers`,
+            outcome: outcome.outcome,
+            unique: `${grant.accountId}:${Date.now()}`,
+          }),
+        );
       }
       return outcome;
     },
   },
   event: {
     gone: {},
-    async run({ input, grant }) {
+    // Only for a link still in use, and only so many: each event is an audit line.
+    async run({ input, caller, grant, deps }) {
       const event = validateSessionEvent(input.event);
+      if (grant.state !== "active" || (await deps.events.strike(caller))) return {};
       auditEvent({
         action: "connect_session_event",
         actorUserId: grant.creatorUserId,
@@ -145,7 +172,7 @@ const ACTIONS: Record<string, { gone: unknown; run(call: Call): Promise<unknown>
   },
 };
 
-/** `caller` keys the limit on wrong tokens; a right one is never counted. */
+/** `caller` keys the limits. The token is checked first: only a wrong one can be refused for trying too often. */
 export async function handleConnectLink(
   action: string,
   body: unknown,
@@ -157,15 +184,13 @@ export async function handleConnectLink(
   const token = input.token;
   if (!handler || typeof token !== "string" || token.length > 128) return json({ error: "bad request" }, 400);
   try {
-    if (await deps.limiter.blocked(caller)) return json({ error: "too many attempts" }, 429);
     const grant = await deps.gateway.resolveConnectLink(token, action === "view");
     if (!grant) {
-      await deps.limiter.strike(caller);
-      return json(handler.gone);
+      return (await deps.failures.strike(caller)) ? json({ error: "too many attempts" }, 429) : json(handler.gone);
     }
     const people = await deps.people(grant.organizationId, grant.creatorUserId);
     if (!people) return json(handler.gone);
-    return json(await handler.run({ token, input, grant, people, deps }));
+    return json(await handler.run({ token, input, caller, grant, people, deps }));
   } catch (err) {
     if (err instanceof BadRequest) return json({ error: "bad request" }, 400);
     // The error's name only: a message could quote its input.
@@ -185,7 +210,12 @@ type ConnectLinkEnv = MailEnv & {
 };
 
 /** Null when the request is not for this API. Answered before the session gate: the token is the credential. */
-export function connectLinkApi(request: Request, pathname: string, env: ConnectLinkEnv): Promise<Response> | null {
+export function connectLinkApi(
+  request: Request,
+  pathname: string,
+  env: ConnectLinkEnv,
+  defer: ConnectLinkDeps["defer"],
+): Promise<Response> | null {
   if (!pathname.startsWith(CONNECT_LINK_API)) return null;
   if (request.method !== "POST") return Promise.resolve(json({ error: "method not allowed" }, 405));
   return request
@@ -195,8 +225,10 @@ export function connectLinkApi(request: Request, pathname: string, env: ConnectL
       handleConnectLink(pathname.slice(CONNECT_LINK_API.length), body, request.headers.get("cf-connecting-ip") ?? "local", {
         gateway: env.GATEWAY,
         people: (organizationId, userId) => linkPeople(env.DB, organizationId, userId),
-        limiter: attemptLimiter(env.DB, "connect-link"),
+        failures: attemptLimiter(env.DB, "connect-link", 10),
+        events: attemptLimiter(env.DB, "connect-link-event", 120),
         mail: createMailSenderFromEnv(env),
+        defer,
         signup: embeddedSignupConfig(env),
         origin: new URL(request.url).origin,
       }),

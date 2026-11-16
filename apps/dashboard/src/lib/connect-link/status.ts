@@ -9,6 +9,8 @@ export function linkStatusLine(link: ConnectLinkSummary): string {
       return "Opened, not finished";
     case "connected":
       return link.connectedPhone ? `Connected ${link.connectedPhone}` : "Connected";
+    case "unconfirmed":
+      return "Used, but the result was not confirmed. Check Numbers.";
     case "expired":
       return "Expired";
   }

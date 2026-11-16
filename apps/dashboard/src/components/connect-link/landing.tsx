@@ -27,12 +27,14 @@ export function ConnectLinkLanding({
   api = connectLinkApi,
   readToken = takeLinkToken,
   loadSdk = loadFacebookSdk,
+  busyRetryMs = 2_000,
 }: {
   copy: ConnectLinkCopy;
   /** Seams for tests. */
   api?: typeof connectLinkApi;
   readToken?: () => string | null;
   loadSdk?: typeof loadFacebookSdk;
+  busyRetryMs?: number;
 }) {
   const [screen, setScreen] = useState<Screen>({ at: "loading" });
   const [sdk, setSdk] = useState<FacebookSdk | "failed" | null>(null);
@@ -110,8 +112,13 @@ export function ConnectLinkLanding({
   function settle(result: LinkOutcome | "limited" | "unreachable") {
     setBusy(false);
     if (result === "limited") return setNote({ text: copy.limited, tone: "error" });
-    if (result === "unreachable") return setNote({ text: copy.failed, tone: "error" });
+    // No answer to an exchange is not a failure: it may have registered the number.
+    if (result === "unreachable") return setScreen({ at: "done", text: copy.unknown(view.inviter) });
     switch (result.outcome) {
+      case "unknown":
+        return setScreen({ at: "done", text: copy.unknown(view.inviter) });
+      case "busy":
+        return setNote({ text: copy.busy, tone: "error" });
       case "connected":
         return setScreen({ at: "done", title: copy.connectedTitle, text: copy.connected(result.phone, view.workspace) });
       case "pending":
@@ -170,10 +177,22 @@ export function ConnectLinkLanding({
         setNote({ text: copy.cancelled, tone: "notice" });
         return;
       }
+      // Meta answered inside `login`, before a state was asked for: there is nothing to exchange with.
+      if (!started) {
+        setBusy(false);
+        setNote({ text: copy.notPrepared, tone: "error" });
+        return;
+      }
       void (async () => {
         const handoff = await started;
-        if (mine !== attempt.current || !handoff || handoff === "limited" || handoff === "unreachable" || !handoff.ok) return;
-        settle(await api.exchange(linkToken, code, handoff.state));
+        if (mine !== attempt.current || handoff === "limited" || handoff === "unreachable" || !handoff.ok) return;
+        // Another exchange holds the link: the same code is still good for a few seconds.
+        let result = await api.exchange(linkToken, code, handoff.state);
+        for (let tries = 0; tries < 3 && result !== "limited" && result !== "unreachable" && result.outcome === "busy"; tries++) {
+          await new Promise((resolve) => setTimeout(resolve, busyRetryMs));
+          result = await api.exchange(linkToken, code, handoff.state);
+        }
+        settle(result);
       })();
     };
     try {

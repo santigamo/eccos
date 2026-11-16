@@ -1402,25 +1402,30 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).resolveConnectLink(token, markOpened);
   }
 
-  /** The link is claimed for the length of the exchange, so two bearers cannot both spend it. */
-  async exchangeConnectCodeForLink(token: string, code: string, state: string): Promise<ConnectLinkExchange | null> {
+  /**
+   * The link is claimed for the length of the exchange, so two bearers cannot
+   * both spend it. An exchange that throws may already have registered
+   * something, so it spends the link as unconfirmed instead of inviting a retry.
+   */
+  async exchangeConnectCodeForLink(token: string, code: string, state: string): Promise<ConnectLinkExchange | "busy" | null> {
     const controlPlane = getControlPlaneStub(this.env);
     const grant = await controlPlane.claimConnectLink(token);
-    if (!grant) return null;
-    let result: ConnectExchangeResult;
+    if (!grant || grant === "busy") return grant;
+    let result: ConnectExchangeResult | null;
     try {
       result = await this.exchangeConnectCodeForAccountId(grant.accountId, code, state);
-    } catch (err) {
-      await controlPlane.settleConnectLink(token, { connected: false, code: "state" });
-      throw err;
+    } catch {
+      result = null;
     }
     const notify = await controlPlane.settleConnectLink(
       token,
-      result.ok
-        ? { connected: true, phone: result.display_phone_number || null }
-        : { connected: false, code: result.code },
+      !result
+        ? { kind: "unknown" }
+        : result.ok
+          ? { kind: "connected", phone: result.display_phone_number || null }
+          : { kind: "failed", code: result.code },
     );
-    return { grant: result.ok ? { ...grant, state: "used" } : grant, result, notify };
+    return { grant: !result || result.ok ? { ...grant, state: "used" } : grant, result, notify };
   }
 
   /**

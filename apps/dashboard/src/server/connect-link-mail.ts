@@ -1,10 +1,11 @@
 import { deriveIdempotencyKey, type MailSender } from "../auth/mail";
 import type { LinkOutcome } from "../lib/connect-link/api";
 
-type Reported = Exclude<LinkOutcome["outcome"], "gone" | "state">;
+type Reported = Exclude<LinkOutcome["outcome"], "gone" | "state" | "busy">;
 
 /** What the admin reads; the bearer's page has its own wording. */
 const REASONS: Record<Exclude<Reported, "connected">, string> = {
+  unknown: "The connection broke off before its result was known. Open Numbers to see whether the number is there.",
   pending: "Meta connected the account, but the number is not ready. Open Numbers to see what it needs.",
   denied: "Meta ended the connection before a number was attached.",
   owned: "That WhatsApp Business Account is already connected to another Eccos workspace.",

@@ -1,3 +1,5 @@
+import { toBase64Url } from "./encoding";
+
 /**
  * Application-layer encryption for the Meta access tokens the control plane
  * stores in `wabas.meta_access_token`.
@@ -48,12 +50,6 @@ const decoder = new TextDecoder();
 /** Single-entry derived-key cache: deriving on every read/write would be pure
  * overhead, and an unbounded cache keyed by secret material would not be. */
 let derivedKey: { secret: string; key: Promise<CryptoKey> } | null = null;
-
-function toBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-}
 
 function fromBase64Url(value: string): Uint8Array {
   const padded = value.replaceAll("-", "+").replaceAll("_", "/");

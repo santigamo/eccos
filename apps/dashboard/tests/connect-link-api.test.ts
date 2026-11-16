@@ -42,9 +42,12 @@ function d1(db: Database): D1Database {
   } as unknown as D1Database;
 }
 
-function harness(over: { grant?: ConnectLinkGrant | null; people?: typeof PEOPLE | null; exchange?: ConnectLinkExchange | null } = {}) {
+type Exchanged = ConnectLinkExchange | "busy" | null | Error;
+
+function harness(over: { grant?: ConnectLinkGrant | null; people?: typeof PEOPLE | null; exchange?: Exchanged } = {}) {
   const calls: unknown[][] = [];
   const strikes: string[] = [];
+  const deferred: Promise<unknown>[] = [];
   let blocked = false;
   const mail = new CaptureMailSender();
   const grant = over.grant === undefined ? GRANT : over.grant;
@@ -60,17 +63,26 @@ function harness(over: { grant?: ConnectLinkGrant | null; people?: typeof PEOPLE
       },
       exchangeConnectCodeForLink: async (...args) => {
         calls.push(["exchange", ...args]);
+        if (over.exchange instanceof Error) throw over.exchange;
         return over.exchange === undefined ? { grant: { ...GRANT, state: "used" }, result: CONNECTED, notify: true } : over.exchange;
       },
     },
     people: async () => (over.people === undefined ? PEOPLE : over.people),
-    limiter: { blocked: async () => blocked, strike: async (caller) => void strikes.push(caller) },
+    failures: {
+      strike: async (caller) => {
+        strikes.push(caller);
+        return blocked;
+      },
+    },
+    events: { strike: async () => blocked },
     mail,
+    defer: (work) => void deferred.push(work),
     signup: SIGNUP,
     origin: "https://app.eccos.test",
   };
   const call = async (action: string, body: Record<string, unknown> = {}) => {
     const response = await handleConnectLink(action, { token: TOKEN, ...body }, "203.0.113.9", deps);
+    await Promise.all(deferred);
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
   return {
@@ -188,10 +200,29 @@ describe("exchange", () => {
     expect(h.mail.sent[0]?.template).toBe("connect-link-failed");
   });
 
-  test("a link that is spent, or held by another exchange, is gone", async () => {
-    const h = harness({ exchange: null });
+  test("a link spent in the meantime is gone; one held by another exchange is busy, not gone", async () => {
+    const spent = harness({ exchange: null });
+    expect((await spent.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "gone" });
+    const held = harness({ exchange: "busy" });
+    expect((await held.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "busy" });
+    for (const h of [spent, held]) expect(h.mail.sent).toEqual([]);
+  });
+
+  test("a spent or expired link never reaches the exchange", async () => {
+    const h = harness({ grant: { ...GRANT, state: "used" } });
     expect((await h.call("exchange", { code: "c", state: "s" })).body).toEqual({ outcome: "gone" });
-    expect(h.mail.sent).toEqual([]);
+    expect(h.calls.map((call) => call[0])).toEqual(["resolve"]);
+  });
+
+  test("an exchange that broke off is unknown: never a retry, and the creator is told", async () => {
+    const brokeOff = harness({ exchange: { grant: { ...GRANT, state: "used" }, result: null, notify: true } });
+    const died = harness({ exchange: new Error(`rpc died ${TOKEN}`) });
+    for (const h of [brokeOff, died]) {
+      expect(await h.call("exchange", { code: "c", state: "s" })).toEqual({ status: 200, body: { outcome: "unknown" } });
+      expect(h.mail.sent[0]).toMatchObject({ template: "connect-link-failed", to: "ruben@agency.test" });
+      expect(h.mail.sent[0]?.variables.reason).toContain("Open Numbers");
+    }
+    expect(logged.find((line) => line.includes('"action":"connect_link"'))).toContain('"detail":"unknown"');
   });
 
   test("refuses a missing code or state", async () => {
@@ -212,11 +243,25 @@ describe("the boundary", () => {
     expect(audit).toContain('"sessionId":"sess-9"');
   });
 
-  test("a blocked caller is refused before the token is looked at", async () => {
-    const h = harness();
-    h.block();
-    expect((await h.call("view")).status).toBe(429);
-    expect(h.calls).toEqual([]);
+  test("only a wrong token can be refused for trying too often", async () => {
+    const wrong = harness({ grant: null });
+    wrong.block();
+    expect((await wrong.call("view")).status).toBe(429);
+    const right = harness();
+    right.block();
+    expect((await right.call("view")).body).toMatchObject({ status: "ready" });
+    expect(right.strikes).toEqual([]);
+  });
+
+  test("session events stop at the limit, and are not recorded for a spent or expired link", async () => {
+    const event = { event: { event: "CANCEL", sessionId: "sess-9" } };
+    const limited = harness();
+    limited.block();
+    expect(await limited.call("event", event)).toEqual({ status: 200, body: {} });
+    for (const state of ["used", "expired"] as const) {
+      await harness({ grant: { ...GRANT, state } }).call("event", event);
+    }
+    expect(logged.filter((line) => line.includes("connect_session_event"))).toEqual([]);
   });
 
   test("an unknown action or a missing token is a bad request", async () => {
@@ -251,7 +296,6 @@ describe("the boundary", () => {
           throw new Error(`boom ${TOKEN}`);
         },
       },
-      limiter: { blocked: async () => false, strike: async () => {} },
     } as unknown as ConnectLinkDeps);
     expect(response.status).toBe(502);
     expect(h.mail.sent).toEqual([]);
@@ -260,8 +304,14 @@ describe("the boundary", () => {
 
   test("only POSTs under its own path are answered", async () => {
     const env = {} as Parameters<typeof connectLinkApi>[2];
-    expect(connectLinkApi(new Request("https://app.test/numbers"), "/numbers", env)).toBeNull();
-    const get = await connectLinkApi(new Request("https://app.test/api/connect-link/view"), "/api/connect-link/view", env);
+    const defer = () => {};
+    expect(connectLinkApi(new Request("https://app.test/numbers"), "/numbers", env, defer)).toBeNull();
+    const get = await connectLinkApi(
+      new Request("https://app.test/api/connect-link/view"),
+      "/api/connect-link/view",
+      env,
+      defer,
+    );
     expect(get?.status).toBe(405);
   });
 });
@@ -270,26 +320,28 @@ describe("attemptLimiter", () => {
   function limiter(clock: { now: number }) {
     const db = new Database(":memory:");
     db.run('create table "rateLimit" ("id" text not null primary key, "key" text not null, "count" integer not null, "lastRequest" bigint not null)');
-    return attemptLimiter(d1(db), "connect-link", () => clock.now);
+    return { limit: attemptLimiter(d1(db), "connect-link", 10, () => clock.now), db };
   }
 
-  test("blocks a caller after ten failures, and only that caller", async () => {
-    const limit = limiter({ now: 1_000 });
-    for (let i = 0; i < 9; i++) await limit.strike("a");
-    expect(await limit.blocked("a")).toBe(false);
-    await limit.strike("a");
-    expect(await limit.blocked("a")).toBe(true);
-    expect(await limit.blocked("b")).toBe(false);
+  test("is over the limit from the eleventh attempt, for that caller only", async () => {
+    const { limit } = limiter({ now: 1_000_000 });
+    for (let i = 0; i < 10; i++) expect(await limit.strike("a")).toBe(false);
+    expect(await limit.strike("a")).toBe(true);
+    expect(await limit.strike("b")).toBe(false);
   });
 
-  test("forgets the failures once the window has passed", async () => {
-    const clock = { now: 1_000 };
-    const limit = limiter(clock);
-    for (let i = 0; i < 10; i++) await limit.strike("a");
+  test("counts concurrent attempts without losing any: one row, one upsert each", async () => {
+    const { limit, db } = limiter({ now: 1_000_000 });
+    await Promise.all(Array.from({ length: 10 }, () => limit.strike("a")));
+    expect(db.query('select "count" from "rateLimit"').all()).toEqual([{ count: 10 }]);
+  });
+
+  test("starts over once the window has passed", async () => {
+    const clock = { now: 1_000_000 };
+    const { limit } = limiter(clock);
+    for (let i = 0; i < 11; i++) await limit.strike("a");
     clock.now += 10 * 60 * 1000;
-    expect(await limit.blocked("a")).toBe(false);
-    await limit.strike("a");
-    expect(await limit.blocked("a")).toBe(false);
+    expect(await limit.strike("a")).toBe(false);
   });
 });
 

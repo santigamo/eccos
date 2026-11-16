@@ -19,7 +19,7 @@ import { useRootRefresh } from "../hooks/use-root-refresh"
 import { watchUnhandledSignIn } from "../lib/follow-sign-in"
 import { PUBLIC_PATHS } from "../auth/redirect-target"
 import { CONNECT_LINK_PATH } from "../lib/connect-link/api"
-import type { AnalyticsConfig } from "../lib/analytics"
+import { type AnalyticsConfig, analyticsFor } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
 import { PRE_WORKSPACE_ROUTES, hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
 import type { Bootstrap } from "../lib/bootstrap"
@@ -240,7 +240,7 @@ function RootComponent() {
   return (
     <RootDocument
       lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}
-      analytics={state.analytics}
+      analytics={analyticsFor(pathname, state.analytics)}
     >
       {state.ok && state.data.stage !== "no-organization" && pathname !== CONNECT_LINK_PATH ? (
         // Authenticated tenant context. The chrome wraps every state that has

@@ -3,7 +3,6 @@ import type {
   AccountBilling,
   AccountBillingInput,
   BilledAccount,
-  ConnectFailureCode,
   ConnectLinkGrant,
   ConnectLinkSummary,
   ConnectPolicy,
@@ -13,6 +12,7 @@ import type {
 import {
   CONNECT_LINKS_SCHEMA,
   type ConnectLinkRow,
+  type ConnectLinkSettlement,
   claimConnectLink,
   issueConnectLink,
   resolveConnectLink,
@@ -20,6 +20,7 @@ import {
   summarizeConnectLink,
 } from "./connect-links";
 import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import { sha256Hex, toBase64Url } from "./encoding";
 import {
   coexistenceSyncStatus,
   historySyncDeadline,
@@ -569,21 +570,8 @@ function coexistenceOf(row: Record<string, unknown>, now = Date.now()): Coexiste
   };
 }
 
-async function sha256Hex(s: string): Promise<string> {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(d)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 function newApiKey(): string {
-  const bytes = new Uint8Array(API_KEY_RAW_BYTES);
-  crypto.getRandomValues(bytes);
-  const encoded = btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-  return `${API_KEY_PREFIX}${encoded}`;
+  return `${API_KEY_PREFIX}${toBase64Url(crypto.getRandomValues(new Uint8Array(API_KEY_RAW_BYTES)))}`;
 }
 
 function newId(prefix: string): string {
@@ -2230,8 +2218,11 @@ export class EccosControlPlane extends DurableObject<Env> {
     return { accountId: link.accountId, resources };
   }
 
+  /** A live link whose account has lost its active organization reads as expired: it no longer resolves. */
   getConnectLink(accountId: string): ConnectLinkSummary | null {
-    return summarizeConnectLink(this.sql, this.requireAccount(accountId));
+    const summary = summarizeConnectLink(this.sql, this.requireAccount(accountId));
+    if (!summary || this.organizationOf(accountId)) return summary;
+    return summary.state === "pending" || summary.state === "opened" ? { ...summary, state: "expired" } : summary;
   }
 
   /** Replaces the account's link: the previous token stops resolving. */
@@ -2247,32 +2238,30 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.connectLinkGrant(await resolveConnectLink(this.sql, token, markOpened));
   }
 
-  async claimConnectLink(token: string): Promise<ConnectLinkGrant | null> {
+  async claimConnectLink(token: string): Promise<ConnectLinkGrant | "busy" | null> {
     const row = await claimConnectLink(this.sql, token);
+    if (row === "busy") return row;
     const grant = this.connectLinkGrant(row);
-    if (row && !grant) await settleConnectLink(this.sql, token, { connected: false, code: "state" });
+    if (row && !grant) await settleConnectLink(this.sql, token, { kind: "released" });
     return grant;
   }
 
-  settleConnectLink(
-    token: string,
-    outcome: { connected: true; phone: string | null } | { connected: false; code: ConnectFailureCode },
-  ): Promise<boolean> {
+  settleConnectLink(token: string, outcome: ConnectLinkSettlement): Promise<boolean> {
     return settleConnectLink(this.sql, token, outcome);
+  }
+
+  private organizationOf(accountId: string): string | null {
+    const link = this.sql
+      .exec("SELECT organization_id FROM organization_accounts WHERE account_id = ? AND status = 'active'", accountId)
+      .toArray()[0];
+    return (link?.organization_id as string | undefined) ?? null;
   }
 
   /** Fails closed unless the link's account still has an active organization. */
   private connectLinkGrant(row: ConnectLinkRow | null): ConnectLinkGrant | null {
-    if (!row) return null;
-    const link = this.sql
-      .exec("SELECT organization_id FROM organization_accounts WHERE account_id = ? AND status = 'active'", row.accountId)
-      .toArray()[0];
-    if (!link) return null;
-    return {
-      ...row,
-      organizationId: link.organization_id as string,
-      connectPolicy: this.connectPolicyOf(row.accountId),
-    };
+    const organizationId = row && this.organizationOf(row.accountId);
+    if (!row || !organizationId) return null;
+    return { ...row, organizationId, connectPolicy: this.connectPolicyOf(row.accountId) };
   }
 
   purgeExpiredConnectStates(now = Date.now()): void {

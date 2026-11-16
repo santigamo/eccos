@@ -16,7 +16,7 @@ const { ConnectLinkPanel } = await import("../src/components/dashboard/connect-l
 type Load = NonNullable<Parameters<typeof ConnectLinkPanel>[0]["load"]>;
 const URL_1 = "http://localhost:3000/connect#0123456789abcdef.first";
 const URL_2 = "http://localhost:3000/connect#0123456789abcdef.second";
-const pending = { state: "pending" as const, expiresAt: 1, connectedPhone: null };
+const pending = { state: "pending" as const, expiresAt: 1, connectedPhone: null, creatorUserId: "user-1" };
 
 let unmount: (() => void) | null = null;
 
