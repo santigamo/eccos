@@ -198,3 +198,54 @@ export function loginOptions(configId: string, path: ConnectPath): EmbeddedSignu
     },
   };
 }
+
+/** A session event as a server accepts it: it came from another window's `postMessage`, so it is re-checked. */
+export function validateSessionEvent(input: unknown): SessionEvent {
+  const record = (input !== null && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const event = record.event;
+  if (typeof event !== "string" || event.trim() === "" || event.length > 128) {
+    throw new Error("event must be a non-empty string");
+  }
+  const field = (
+    key: "currentStep" | "errorCode" | "sessionId" | "wabaId" | "phoneNumberId",
+  ): string | undefined => {
+    const value = record[key];
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== "string" || value.length > 256) throw new Error(`${key} must be a string`);
+    return value.trim() || undefined;
+  };
+  const currentStep = field("currentStep");
+  const errorCode = field("errorCode");
+  const sessionId = field("sessionId");
+  const wabaId = field("wabaId");
+  const phoneNumberId = field("phoneNumberId");
+  return {
+    event: event.trim(),
+    ...(currentStep ? { currentStep } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(wabaId ? { wabaId } : {}),
+    ...(phoneNumberId ? { phoneNumberId } : {}),
+  };
+}
+
+/** The public Meta identifiers the SDK page needs. Neither is a credential. */
+export interface EmbeddedSignupConfig {
+  appId: string;
+  configId: string;
+  graphVersion: string;
+}
+
+/** Null when the SDK path is not configured on this deployment. */
+export function embeddedSignupConfig(vars: {
+  META_APP_ID?: string;
+  META_ES_CONFIG_ID?: string;
+  META_GRAPH_VERSION?: string;
+}): EmbeddedSignupConfig | null {
+  const appId = vars.META_APP_ID?.trim();
+  const configId = vars.META_ES_CONFIG_ID?.trim();
+  if (!appId || !configId) return null;
+  // Must match the gateway's; the SDK only uses it for the API version it would
+  // call with, which this flow never does.
+  return { appId, configId, graphVersion: vars.META_GRAPH_VERSION?.trim() || "v25.0" };
+}

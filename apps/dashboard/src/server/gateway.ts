@@ -13,7 +13,8 @@ import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
 import { timedProxy } from "./timing";
 import { connectAudit } from "../lib/connect-result";
-import type { SessionEvent } from "../lib/embedded-signup";
+import { CONNECT_LINK_PATH } from "../lib/connect-link/api";
+import { type EmbeddedSignupConfig, embeddedSignupConfig, validateSessionEvent } from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
@@ -39,6 +40,7 @@ import type {
   AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
+  ConnectLinkSummary,
   ConnectStartResult,
   ConversationListOpts,
   ConversationOpts,
@@ -1403,29 +1405,13 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
  * still session-gated, because who may connect a number is an authorization
  * question regardless of how public the identifiers are.
  */
-export interface EmbeddedSignupConfig {
-  appId: string;
-  configId: string;
-  graphVersion: string;
-}
+export type { EmbeddedSignupConfig };
 
 export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler(
   async (): Promise<Result<EmbeddedSignupConfig | null>> => {
     try {
       await requireActor("administer");
-      const appId = env.META_APP_ID?.trim();
-      const configId = env.META_ES_CONFIG_ID?.trim();
-      if (!appId || !configId) return { ok: true, data: null };
-      return {
-        ok: true,
-        data: {
-          appId,
-          configId,
-          // Must match the gateway's; the SDK only uses it for the API version
-          // it would call with, which this flow never does.
-          graphVersion: env.META_GRAPH_VERSION?.trim() || "v25.0",
-        },
-      };
+      return { ok: true, data: embeddedSignupConfig(env) };
     } catch (err) {
       return classifyFailure(err);
     }
@@ -1610,35 +1596,6 @@ export const connectWithToken = createServerFn({ method: "POST" })
       }),
   );
 
-function validateSessionEventInput(input: unknown): SessionEvent {
-  const record = inputRecord(input);
-  const event = record.event;
-  if (typeof event !== "string" || event.trim() === "" || event.length > 128) {
-    throw new Error("event must be a non-empty string");
-  }
-  const field = (
-    key: "currentStep" | "errorCode" | "sessionId" | "wabaId" | "phoneNumberId",
-  ): string | undefined => {
-    const value = record[key];
-    if (value === undefined || value === null) return undefined;
-    if (typeof value !== "string" || value.length > 256) throw new Error(`${key} must be a string`);
-    return value.trim() || undefined;
-  };
-  const currentStep = field("currentStep");
-  const errorCode = field("errorCode");
-  const sessionId = field("sessionId");
-  const wabaId = field("wabaId");
-  const phoneNumberId = field("phoneNumberId");
-  return {
-    event: event.trim(),
-    ...(currentStep ? { currentStep } : {}),
-    ...(errorCode ? { errorCode } : {}),
-    ...(sessionId ? { sessionId } : {}),
-    ...(wabaId ? { wabaId } : {}),
-    ...(phoneNumberId ? { phoneNumberId } : {}),
-  };
-}
-
 /**
  * Record one Embedded Signup session event in the audit log.
  *
@@ -1654,7 +1611,7 @@ function validateSessionEventInput(input: unknown): SessionEvent {
  * origin, a server route must never depend on a client-side check.
  */
 export const recordConnectSessionEvent = createServerFn({ method: "POST" })
-  .validator(validateSessionEventInput)
+  .validator(validateSessionEvent)
   .handler(
     ({ data }): Promise<Result<{ recorded: true }>> =>
       withGateway(async (gateway) => {
@@ -1674,6 +1631,41 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
           outcome: data.errorCode ? "failed" : "success",
         });
         return { recorded: true as const };
+      }),
+  );
+
+/** The workspace's connection link. `url` is set only by the call that made the link. */
+export interface ConnectLinkView {
+  link: ConnectLinkSummary;
+  url: string | null;
+}
+
+/**
+ * Read the workspace's connection link, making one when there is none to wait
+ * for (never made, or expired) or when `fresh` asks to replace it. `administer`,
+ * like connecting: the link lets its bearer add a number to this account.
+ */
+export const openConnectLink = createServerFn({ method: "POST" })
+  .validator((input: unknown) => ({ fresh: inputRecord(input ?? {}).fresh === true }))
+  .handler(
+    ({ data }): Promise<Result<ConnectLinkView>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await adminActorAccount(gateway);
+        const current = data.fresh ? null : await gateway.getConnectLink(accountId);
+        if (current && current.state !== "expired") return { link: current, url: null };
+        const issued = await gateway.issueConnectLink(accountId, actor.session.userId);
+        auditEvent({
+          action: "connect_link_issue",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          outcome: "success",
+        });
+        return {
+          link: { state: "pending", expiresAt: issued.expiresAt, connectedPhone: null },
+          // In the fragment, so the token reaches no server log and no Referer.
+          url: `${new URL(getRequest().url).origin}${CONNECT_LINK_PATH}#${issued.token}`,
+        };
       }),
   );
 

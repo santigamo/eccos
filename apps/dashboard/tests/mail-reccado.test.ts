@@ -376,6 +376,8 @@ describe("variable sets are exact in both directions", () => {
     expect(TEMPLATE_VARIABLES["reset-password"]).toBe(RESET_PASSWORD_VARIABLES);
     expect(TEMPLATE_VARIABLES["invite-member"]).toBe(INVITE_MEMBER_VARIABLES);
     expect(Object.keys(TEMPLATE_VARIABLES).sort()).toEqual([
+      "connect-link-connected",
+      "connect-link-failed",
       "invite-member",
       "reset-password",
       "verify-email",

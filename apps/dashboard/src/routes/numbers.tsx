@@ -9,6 +9,7 @@ import {
   ConnectNumberChoices,
   ConnectNumberPanel,
 } from "../components/dashboard/connect-number";
+import { ConnectLinkButton } from "../components/dashboard/connect-link-dialog";
 import { NumbersTable } from "../components/dashboard/numbers-table";
 import { SubscriptionGate, SubscriptionNotice } from "../components/dashboard/subscription-notice";
 import { billableCount } from "../billing/account";
@@ -83,7 +84,7 @@ function NumbersPage() {
     );
     const closed = resources?.account?.connectPolicy === "closed";
     return (
-      <Page title="Connect WhatsApp" kicker="First run">
+      <Page title="Connect WhatsApp" kicker="First run" actions={closed ? undefined : <ConnectLinkButton />}>
         {/* Centred and LIFTED, the house treatment for a single-purpose frame
             — the same one `/workspaces/new` uses, and for the same reason: on a
             tall viewport a top-anchored panel leaves the eye and the cursor far
@@ -217,7 +218,12 @@ export function NumbersView({
     <Page
       title="Numbers"
       kicker="Connection"
-      actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
+      actions={
+        <>
+          {resources.account?.connectPolicy === "closed" ? null : <ConnectLinkButton />}
+          <AddNumberButton expanded={adding} onToggle={setAdding} />
+        </>
+      }
     >
       {outcome}
       {adding ? null : notice()}

@@ -23,6 +23,12 @@ const accountReadyNoWaba = {
 const ready = { ok: true, data: { stage: "ready" } } as unknown as State;
 
 describe("rootRedirect (per stage)", () => {
+  test("the connection-link page is never redirected into the console", () => {
+    expect(rootRedirect("/connect", noOrg)).toBeUndefined();
+    expect(rootRedirect("/connect", accountReadyNoWaba)).toBeUndefined();
+  });
+
+
   test("no-organization is sent to /onboarding from anywhere else, and stays there", () => {
     expect(rootRedirect("/events", noOrg)).toBe("/onboarding");
     expect(rootRedirect("/", noOrg)).toBe("/onboarding");

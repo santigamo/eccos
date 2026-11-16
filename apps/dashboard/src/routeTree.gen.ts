@@ -24,6 +24,7 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as DeliveriesRouteImport } from './routes/deliveries'
 import { Route as ConversationsRouteImport } from './routes/conversations'
+import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as BroadcastsRouteImport } from './routes/broadcasts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
@@ -105,6 +106,11 @@ const ConversationsRoute = ConversationsRouteImport.update({
   path: '/conversations',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConnectRoute = ConnectRouteImport.update({
+  id: '/connect',
+  path: '/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BroadcastsRoute = BroadcastsRouteImport.update({
   id: '/broadcasts',
   path: '/broadcasts',
@@ -134,6 +140,7 @@ const BroadcastsBroadcastIdRoute = BroadcastsBroadcastIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/broadcasts': typeof BroadcastsRoute
+  '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
@@ -156,6 +163,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/broadcasts': typeof BroadcastsRoute
+  '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
@@ -179,6 +187,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/broadcasts': typeof BroadcastsRoute
+  '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
@@ -203,6 +212,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/broadcasts'
+    | '/connect'
     | '/conversations'
     | '/deliveries'
     | '/events'
@@ -225,6 +235,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/broadcasts'
+    | '/connect'
     | '/conversations'
     | '/deliveries'
     | '/events'
@@ -247,6 +258,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/broadcasts'
+    | '/connect'
     | '/conversations'
     | '/deliveries'
     | '/events'
@@ -270,6 +282,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BroadcastsRoute: typeof BroadcastsRoute
+  ConnectRoute: typeof ConnectRoute
   ConversationsRoute: typeof ConversationsRoute
   DeliveriesRoute: typeof DeliveriesRoute
   EventsRoute: typeof EventsRoute
@@ -397,6 +410,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConversationsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/connect': {
+      id: '/connect'
+      path: '/connect'
+      fullPath: '/connect'
+      preLoaderRoute: typeof ConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/broadcasts': {
       id: '/broadcasts'
       path: '/broadcasts'
@@ -438,6 +458,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BroadcastsRoute: BroadcastsRoute,
+  ConnectRoute: ConnectRoute,
   ConversationsRoute: ConversationsRoute,
   DeliveriesRoute: DeliveriesRoute,
   EventsRoute: EventsRoute,

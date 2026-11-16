@@ -37,6 +37,14 @@ export type SensitiveAction =
    * asks for. Never carries the authorization code or any token.
    */
   | "connect_session_event"
+  /** A workspace's connection link made (replacing any previous one). Never carries the token. */
+  | "connect_link_issue"
+  /**
+   * A connection link used by its anonymous bearer: a state minted, or a code
+   * exchanged. `actorUserId` is the admin who made the link, since nobody is
+   * signed in. Ids and the failure code only, never the token.
+   */
+  | "connect_link"
   /**
    * One template message sent from the console's "Send test" sheet.
    *

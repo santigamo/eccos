@@ -110,10 +110,14 @@ the callback (`extractTokenFromUrl`); the URL itself is never hashed.
 
 ### Templates
 
-Three templates: `verify-email`, `reset-password`, `invite-member`. Each one's
-declared variable set is **one explicit constant** in `src/auth/mail.ts`
-(`VERIFY_EMAIL_VARIABLES`, `RESET_PASSWORD_VARIABLES`,
-`INVITE_MEMBER_VARIABLES`), so a provider-side rename is a one-line change.
+Five templates: `verify-email`, `reset-password`, `invite-member`, and the two
+that tell an admin how their connection link went, `connect-link-connected`
+(`workspace`, `url`) and `connect-link-failed` (`workspace`, `reason`, `url`).
+Each one's declared variable set is **one explicit constant** in
+`src/auth/mail.ts`, so a provider-side rename is a one-line change. The
+connection-link mails are best effort: a send that fails is logged and never
+fails the connection, and they carry the workspace name and the console URL
+only, never a phone number or message content.
 
 **Variable validation is exact in both directions**: a missing declared
 placeholder *or* an extra undeclared variable is a hard reject. The adapter

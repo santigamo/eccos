@@ -253,6 +253,7 @@ const {
   validateDeleteTemplateInput,
   validateEditTemplateInput,
   connectWithToken,
+  openConnectLink,
   validateTokenConnectInput,
   listApiKeys,
   issueApiKey,
@@ -2432,6 +2433,83 @@ describe("listApiKeys / issueApiKey / revokeApiKey (Settings, API keys)", () => 
     expect(validateRevokeKeyInput({ keyId: "key_abc123" })).toEqual({ keyId: "key_abc123" });
     expect(() => validateRevokeKeyInput({ keyId: "key_../x" })).toThrow();
     expect(() => validateRevokeKeyInput({})).toThrow();
+  });
+});
+
+describe("openConnectLink (Numbers, connection link)", () => {
+  const TOKEN = "0123456789abcdef.rawsecretvalue_never_logged";
+  const LIVE = { state: "opened", expiresAt: 9, connectedPhone: null };
+
+  function linkBinding(calls: unknown[][], current: unknown) {
+    withResources({
+      getConnectLink: async (...args: unknown[]) => {
+        calls.push(["get", ...args]);
+        return current;
+      },
+      issueConnectLink: async (...args: unknown[]) => {
+        calls.push(["issue", ...args]);
+        return { token: TOKEN, expiresAt: 7 };
+      },
+    });
+  }
+
+  test("makes the first link for the session's account and creator, with the token in the fragment", async () => {
+    const calls: unknown[][] = [];
+    linkBinding(calls, null);
+    expect(await openConnectLink({ data: { fresh: false, accountId: "account-b" } })).toEqual({
+      ok: true,
+      data: {
+        link: { state: "pending", expiresAt: 7, connectedPhone: null },
+        url: `http://localhost:3000/connect#${TOKEN}`,
+      },
+    });
+    expect(calls).toEqual([
+      ["get", "account-a"],
+      ["issue", "account-a", "user-1"],
+    ]);
+  });
+
+  test("leaves a live or used link alone, and cannot show its address again", async () => {
+    for (const current of [LIVE, { state: "connected", expiresAt: 9, connectedPhone: "+34 600" }]) {
+      const calls: unknown[][] = [];
+      linkBinding(calls, current);
+      expect(await openConnectLink({ data: { fresh: false } })).toEqual({ ok: true, data: { link: current, url: null } });
+      expect(calls).toEqual([["get", "account-a"]]);
+    }
+  });
+
+  test("replaces an expired link, and any link when asked for a new one", async () => {
+    const expired: unknown[][] = [];
+    linkBinding(expired, { state: "expired", expiresAt: 1, connectedPhone: null });
+    expect(await openConnectLink({ data: { fresh: false } })).toMatchObject({ ok: true, data: { url: expect.any(String) } });
+    expect(expired.map((call) => call[0])).toEqual(["get", "issue"]);
+
+    const fresh: unknown[][] = [];
+    linkBinding(fresh, LIVE);
+    await openConnectLink({ data: { fresh: true } });
+    expect(fresh).toEqual([["issue", "account-a", "user-1"]]);
+  });
+
+  test("requires administer, and never writes the token to a log", async () => {
+    const calls: unknown[][] = [];
+    linkBinding(calls, null);
+    fakeDeniedActions = new Set(["administer", "erase"]);
+    expect(await openConnectLink({ data: { fresh: true } })).toMatchObject({ ok: false, kind: "forbidden" });
+    expect(calls).toEqual([]);
+
+    fakeDeniedActions = new Set();
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await openConnectLink({ data: { fresh: true } });
+    } finally {
+      console.info = original;
+    }
+    expect(emitted.filter((line) => line.includes('"action":"connect_link_issue"'))).toHaveLength(1);
+    for (const line of emitted) expect(line).not.toContain("rawsecretvalue");
   });
 });
 

@@ -1,0 +1,250 @@
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { LinkOutcome, LinkStart, LinkView } from "../src/lib/connect-link/api";
+
+/**
+ * The connection link's landing page through a real DOM: what its reader is
+ * told in each state, and what reaches the server, and when.
+ */
+
+GlobalRegistrator.register();
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const { act } = await import("react");
+const { createRoot } = await import("react-dom/client");
+const { renderToString } = await import("react-dom/server");
+const { ConnectLinkLanding } = await import("../src/components/connect-link/landing");
+const { en } = await import("../src/lib/connect-link/en");
+const { es } = await import("../src/lib/connect-link/es");
+const { COEXISTENCE_FEATURE_TYPE } = await import("../src/lib/embedded-signup");
+
+type LoginCallback = (response: { authResponse?: { code?: string } | null }) => void;
+type Api = Parameters<typeof ConnectLinkLanding>[0]["api"];
+
+const READY: LinkView = {
+  status: "ready",
+  workspace: "NACEX 2801",
+  inviter: "Rubén",
+  closed: false,
+  signup: { appId: "app", configId: "cfg", graphVersion: "v25.0" },
+};
+
+let calls: string[];
+let view: LinkView | "limited" | "unreachable";
+let start: LinkStart;
+let outcome: LinkOutcome;
+let login: { callback: LoginCallback; options: { extras?: { featureType?: string } } } | null;
+let events: unknown[];
+let unmount: (() => void) | null = null;
+
+const api = {
+  view: async () => {
+    calls.push("view");
+    return view;
+  },
+  start: async () => {
+    calls.push("start");
+    return start;
+  },
+  exchange: async (_token: string, code: string, state: string) => {
+    calls.push(`exchange:${code}:${state}`);
+    return outcome;
+  },
+  event: (_token: string, event: unknown) => void events.push(event),
+} as NonNullable<Api>;
+
+const sdk = {
+  init: () => {},
+  login: (callback: LoginCallback, options: object) => {
+    calls.push("login");
+    login = { callback, options };
+  },
+};
+
+beforeEach(() => {
+  calls = [];
+  events = [];
+  login = null;
+  view = READY;
+  start = { ok: true, state: "state-1" };
+  outcome = { outcome: "connected", phone: "+34 600 000 222" };
+  window.open = (() => ({ closed: false })) as unknown as typeof window.open;
+});
+
+afterEach(() => {
+  act(() => unmount?.());
+  unmount = null;
+  document.body.innerHTML = "";
+});
+
+afterAll(async () => {
+  delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  await GlobalRegistrator.unregister();
+});
+
+const settle = () => act(async () => void (await new Promise((resolve) => setTimeout(resolve, 5))));
+
+async function mount(copy = en, token: string | null = "tok"): Promise<HTMLElement> {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(<ConnectLinkLanding copy={copy} api={api} readToken={() => token} loadSdk={async () => sdk} />),
+  );
+  unmount = () => root.unmount();
+  await settle();
+  return host;
+}
+
+const button = (host: HTMLElement) => host.querySelector("button") as HTMLButtonElement | null;
+
+async function click(host: HTMLElement) {
+  await act(async () => button(host)?.click());
+  await settle();
+}
+
+async function answer(response: Parameters<LoginCallback>[0]) {
+  await act(async () => login?.callback(response));
+  await settle();
+}
+
+describe("the landing", () => {
+  test("rendering the page calls nothing: a link preview has no side effect", () => {
+    const html = renderToString(<ConnectLinkLanding copy={es} api={api} readToken={() => "tok"} />);
+    expect(html).toContain(es.loading);
+    expect(html).toContain('lang="es"');
+    expect(calls).toEqual([]);
+  });
+
+  test("names the workspace and the inviter, in the page's language", async () => {
+    const host = await mount(es);
+    expect(host.textContent).toContain("Conecta tu número de WhatsApp a NACEX 2801");
+    expect(host.textContent).toContain("Rubén te ha pedido");
+    expect(button(host)?.textContent).toBe("Conectar con Meta");
+    expect(calls).toEqual(["view"]);
+  });
+
+  test("opens Meta on the Business app path, and only then asks for a state", async () => {
+    const host = await mount();
+    await click(host);
+    expect(calls).toEqual(["view", "login", "start"]);
+    expect(login?.options.extras?.featureType).toBe(COEXISTENCE_FEATURE_TYPE);
+    expect(button(host)?.disabled).toBe(true);
+  });
+
+  test("a finished flow exchanges the code and says the number is connected", async () => {
+    const host = await mount();
+    await click(host);
+    await answer({ authResponse: { code: "meta-code" } });
+    expect(calls.at(-1)).toBe("exchange:meta-code:state-1");
+    expect(host.textContent).toContain("Connected.");
+    expect(host.textContent).toContain("+34 600 000 222 now works with NACEX 2801");
+    expect(button(host)).toBeNull();
+  });
+
+  test("closing Meta's window connects nothing and leaves the link usable", async () => {
+    const host = await mount();
+    await click(host);
+    await answer({ authResponse: null });
+    expect(host.textContent).toContain(en.cancelled);
+    expect(calls).not.toContain("exchange");
+    expect(button(host)?.disabled).toBe(false);
+  });
+
+  test("each refusal reads in its own words and keeps the button", async () => {
+    const said: Array<[LinkOutcome, string]> = [
+      [{ outcome: "owned" }, en.owned("Rubén")],
+      [{ outcome: "no_waba" }, en.noWaba],
+      [{ outcome: "subscription_required" }, en.closed("Rubén")],
+      [{ outcome: "state" }, en.attemptExpired],
+      [{ outcome: "failed" }, en.failed],
+    ];
+    for (const [result, text] of said) {
+      outcome = result;
+      const host = await mount();
+      await click(host);
+      await answer({ authResponse: { code: "c" } });
+      expect(host.textContent).toContain(text);
+      expect(button(host)?.disabled).toBe(false);
+      act(() => unmount?.());
+    }
+  });
+
+  test("a registration whose number is not ready hands over to the inviter", async () => {
+    outcome = { outcome: "pending" };
+    const host = await mount();
+    await click(host);
+    await answer({ authResponse: { code: "c" } });
+    expect(host.textContent).toContain(en.pending("Rubén"));
+    expect(button(host)).toBeNull();
+  });
+
+  test("a closed workspace says so and never offers Meta", async () => {
+    view = { ...READY, closed: true };
+    const host = await mount();
+    expect(host.textContent).toContain("This workspace cannot add numbers right now. Tell Rubén.");
+    expect(button(host)).toBeNull();
+    expect(calls).toEqual(["view"]);
+  });
+
+  test("a spent, expired or unknown link says who to ask", async () => {
+    view = { status: "gone", inviter: "Rubén" };
+    expect((await mount()).textContent).toContain("This link no longer works. Ask Rubén for a new one.");
+    act(() => unmount?.());
+    view = { status: "gone", inviter: null };
+    expect((await mount()).textContent).toContain(en.gone(en.sender));
+    act(() => unmount?.());
+    calls = [];
+    expect((await mount(en, null)).textContent).toContain(en.gone(en.sender));
+    expect(calls).toEqual([]);
+  });
+
+  test("a link that dies mid-flow replaces the page with the same message", async () => {
+    start = { ok: false, code: "gone" };
+    const host = await mount();
+    await click(host);
+    expect(host.textContent).toContain(en.gone("Rubén"));
+    await answer({ authResponse: { code: "late" } });
+    expect(calls).not.toContain("exchange:late:state-1");
+  });
+
+  test("a blocked pop-up mints no state", async () => {
+    window.open = (() => null) as unknown as typeof window.open;
+    const opening = { ...sdk, login: () => void window.open("https://facebook.com") };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(<ConnectLinkLanding copy={en} api={api} readToken={() => "tok"} loadSdk={async () => opening} />),
+    );
+    unmount = () => root.unmount();
+    await settle();
+    await click(host);
+    expect(host.textContent).toContain("Your browser blocked Meta's window");
+    expect(calls).toEqual(["view"]);
+  });
+
+  test("too many attempts and a dead connection each say what to do", async () => {
+    view = "limited";
+    expect((await mount()).textContent).toContain(en.limited);
+    act(() => unmount?.());
+    view = "unreachable";
+    expect((await mount()).textContent).toContain(en.unreachable);
+  });
+
+  test("Meta's session events are recorded; anything else posted to the page is not", async () => {
+    await mount();
+    const post = (origin: string) =>
+      act(async () => {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            origin,
+            data: JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "CANCEL", data: { current_step: "QR" } }),
+          }),
+        );
+      });
+    await post("https://evil-facebook.com");
+    await post("https://www.facebook.com");
+    expect(events).toEqual([{ event: "CANCEL", currentStep: "QR" }]);
+  });
+});
