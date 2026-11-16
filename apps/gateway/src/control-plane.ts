@@ -725,11 +725,6 @@ export class EccosControlPlane extends DurableObject<Env> {
         redirect_uri TEXT,
         return_to  TEXT
       );`);
-      // The table's first shape (one row per account) never shipped; a dev database may still hold it.
-      const linkColumns = this.sql.exec("PRAGMA table_info(connect_links)").toArray();
-      if (linkColumns.length > 0 && !linkColumns.some((row) => row.name === "revoked_at")) {
-        this.sql.exec("DROP TABLE connect_links");
-      }
       this.sql.exec(CONNECT_LINKS_SCHEMA);
       // Operator-only bookkeeping (the daily census guard); never read by the console.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
