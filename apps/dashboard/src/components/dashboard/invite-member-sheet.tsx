@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { inviteMember, type MemberRole } from "../../members";
-import { ROLE_OPTIONS } from "../../lib/member-roles";
+import { RoleChoices } from "./role-choices";
 
 const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 
@@ -13,10 +13,13 @@ const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-fore
  * what the role can do.
  */
 export function InviteMemberForm({
+  organizationId,
   onBusyChange,
   onDirtyChange,
   onInvited,
 }: {
+  /** The workspace the page shows; the server refuses if the session has moved to another. */
+  organizationId: string;
   onBusyChange?: (busy: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onInvited?: () => void;
@@ -32,7 +35,7 @@ export function InviteMemberForm({
     onBusyChange?.(true);
     setError(null);
     try {
-      const result = await inviteMember({ data: { email, role } });
+      const result = await inviteMember({ data: { email, role, organizationId } });
       if (!result.ok) {
         setError(result.error);
         return;
@@ -67,23 +70,7 @@ export function InviteMemberForm({
         </div>
         <fieldset className="m-0 flex flex-col gap-2 border-0 p-0">
           <legend className={LABEL}>Role</legend>
-          {ROLE_OPTIONS.map((option) => (
-            <label
-              key={option.value}
-              className="flex cursor-pointer flex-col gap-0.5 border border-(--line-strong) bg-(--ghost-fill) px-3 py-2.5 transition-colors hover:border-(--ghost-edge-hover) hover:bg-(--ghost-fill-hover) has-checked:border-(--ghost-edge-hover) has-checked:bg-(--tint-live) has-focus-visible:ring-2 has-focus-visible:ring-ring"
-            >
-              <input
-                type="radio"
-                name="invite-role"
-                value={option.value}
-                checked={role === option.value}
-                onChange={() => setRole(option.value)}
-                className="sr-only"
-              />
-              <span className="text-sm text-foreground">{option.label}</span>
-              <span className="text-xs text-muted-foreground">{option.description}</span>
-            </label>
-          ))}
+          <RoleChoices name="invite-role" value={role} onChange={setRole} />
         </fieldset>
         <div>
           <Button type="submit">{sending ? "Sending…" : "Send invitation"}</Button>
@@ -103,9 +90,11 @@ export function InviteMemberForm({
  * closes.
  */
 export function InviteMemberSheet({
+  organizationId,
   onOpenChange,
   onInvited,
 }: {
+  organizationId: string;
   onOpenChange: (open: boolean) => void;
   onInvited: () => void;
 }) {
@@ -131,7 +120,7 @@ export function InviteMemberSheet({
             They get an email with a link to join this workspace. It works for 7 days.
           </SheetDescription>
         </SheetHeader>
-        <InviteMemberForm onBusyChange={setBusy} onDirtyChange={setDirty} onInvited={onInvited} />
+        <InviteMemberForm organizationId={organizationId} onBusyChange={setBusy} onDirtyChange={setDirty} onInvited={onInvited} />
       </SheetContent>
     </Sheet>
   );

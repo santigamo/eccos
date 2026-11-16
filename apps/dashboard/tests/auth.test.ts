@@ -399,14 +399,19 @@ describe("organization plugin", () => {
  * instead of silently un-blocking it. The second proves `src/server.ts` refuses
  * exactly those paths before dispatch.
  */
-describe("blocked slug-bearing organization endpoints", () => {
+describe("blocked organization endpoints", () => {
   const blocked = [
     "/api/auth/organization/create",
     "/api/auth/organization/check-slug",
     "/api/auth/organization/update",
+    // Membership writes: served only through the console's server functions.
+    "/api/auth/organization/invite-member",
+    "/api/auth/organization/cancel-invitation",
+    "/api/auth/organization/remove-member",
+    "/api/auth/organization/update-member-role",
   ];
 
-  test("the block list is exactly the three slug-bearing endpoints", () => {
+  test("the block list is exactly the slug-bearing endpoints and the membership writes", () => {
     expect([...BLOCKED_AUTH_ENDPOINTS].sort()).toEqual([...blocked].sort());
   });
 

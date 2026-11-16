@@ -440,6 +440,18 @@ describe("attemptLimiter", () => {
     clock.now += 10 * 60 * 1000;
     expect(await limit.strike("a")).toBe(false);
   });
+
+  test("spent says whether the next attempt would be over, without counting one", async () => {
+    const clock = { now: 1_000_000 };
+    const { limit, db } = limiter(clock);
+    for (let i = 0; i < 9; i++) await limit.strike("a");
+    expect(await limit.spent("a")).toBe(false);
+    await limit.strike("a");
+    expect(await limit.spent("a")).toBe(true);
+    expect(db.query('select "count" from "rateLimit"').all()).toEqual([{ count: 10 }]);
+    clock.now += 10 * 60 * 1000;
+    expect(await limit.spent("a")).toBe(false);
+  });
 });
 
 describe("linkPeople", () => {

@@ -4,12 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Page } from "../ui";
 import { invalidatePage } from "../lib/invalidate";
-import { ASK_TO_MANAGE_MEMBERS } from "../lib/members-copy";
 import { listWorkspaceMembers, type MembersPage } from "../members";
+import type { Failure } from "../server/gateway";
+import { FailureView } from "../components/dashboard/failure";
 import { MembersTable } from "../components/dashboard/members-table";
 import { InvitationsTable } from "../components/dashboard/invitations-table";
 import { InviteMemberSheet } from "../components/dashboard/invite-member-sheet";
-import { MACHINE_CLASS } from "../components/dashboard/plain-table";
+import { SectionHeading } from "../components/dashboard/plain-table";
 
 const TITLE = "Members";
 const KICKER = "Workspace";
@@ -31,27 +32,26 @@ export const Route = createFileRoute("/members")({
 function MembersRoute() {
   const result = Route.useLoaderData();
   const router = useRouter();
-  // A role without `administer` is refused by the server with ASK_TO_MANAGE_MEMBERS.
-  if (!result.ok) return <MembersView error={result.error} />;
+  if (!result.ok) return <MembersView failure={result} />;
   return <MembersView page={result.data} onChanged={() => void invalidatePage(router)} />;
 }
 
 /** Router-free so tests render it directly, like `SettingsView` and `NumbersView`. */
 export function MembersView({
   page,
-  error,
+  failure,
   onChanged = () => {},
 }: {
   page?: MembersPage;
-  /** Shown instead of the lists: the refusal for a role without `administer`, or a failed read. */
-  error?: string;
+  /** The read's typed failure: a role without `administer`, no workspace chosen, signed out, unreachable. */
+  failure?: Failure;
   onChanged?: () => void;
 }) {
   const [inviting, setInviting] = useState(false);
   if (!page) {
     return (
       <Page title={TITLE} kicker={KICKER}>
-        <p className="m-0 text-sm text-muted-foreground">{error ?? ASK_TO_MANAGE_MEMBERS}</p>
+        {failure ? <FailureView failure={failure} /> : null}
       </Page>
     );
   }
@@ -65,18 +65,19 @@ export function MembersView({
         </Button>
       }
     >
-      <div className="flex flex-col gap-8">
-        <section className="flex flex-col gap-2">
-          <h2 className={`m-0 ${MACHINE_CLASS}`}>Members</h2>
+      <div className="flex flex-col gap-10">
+        <section className="flex flex-col gap-3">
+          <SectionHeading title="Members" count={page.members.length} />
           <MembersTable members={page.members} callerRole={page.callerRole} onChanged={onChanged} />
         </section>
-        <section className="flex flex-col gap-2">
-          <h2 className={`m-0 ${MACHINE_CLASS}`}>Pending invitations</h2>
+        <section className="flex flex-col gap-3">
+          <SectionHeading title="Pending invitations" count={page.invitations.length} />
           <InvitationsTable invitations={page.invitations} onChanged={onChanged} />
         </section>
       </div>
       {inviting ? (
         <InviteMemberSheet
+          organizationId={page.organizationId}
           onOpenChange={setInviting}
           onInvited={() => {
             setInviting(false);

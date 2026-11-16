@@ -1,17 +1,20 @@
 import { useState } from "react";
+import { MoreHorizontalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { updateMemberRole, type MemberRole, type MemberView } from "../../members";
-import { ROLE_OPTIONS, isOwnerRole, roleLabel } from "../../lib/member-roles";
-import { fmtTsShort } from "../../ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import type { MembersMutation, MemberView } from "../../members";
+import { isOwnerRole, roleLabel } from "../../lib/member-roles";
+import { StatusTag, fmtTsShort } from "../../ui";
+import { ChangeRoleDialog } from "./change-role-dialog";
 import { RemoveMemberDialog } from "./remove-member-dialog";
-import { CELL, MACHINE_CLASS, ROW, Th } from "./plain-table";
+import { IDENTITY_TIER, MACHINE_CLASS, ROW, SECONDARY_TIER, SUPPORT_TIER, TALL_CELL, Th } from "./plain-table";
+
+type Open = { act: "role" | "remove"; member: MemberView };
 
 /**
- * The workspace's members. A role select only on rows the caller may change,
- * which is never their own and never an owner's (the owner role is not
- * offered); Remove on rows the caller may remove. Everything else holds the
- * column with an em-dash.
+ * The workspace's members. Change role and Remove share one kebab (data rule
+ * 5), on rows the caller may act on: never their own, and an owner's only for
+ * another owner, who may remove but not demote them here.
  */
 export function MembersTable({
   members,
@@ -22,21 +25,15 @@ export function MembersTable({
   callerRole: string;
   onChanged: () => void;
 }) {
-  const [saving, setSaving] = useState<string | null>(null);
+  const [open, setOpen] = useState<Open | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<MemberView | null>(null);
   const callerIsOwner = isOwnerRole(callerRole);
 
-  async function onRole(member: MemberView, role: MemberRole) {
-    setSaving(member.memberId);
-    setError(null);
-    try {
-      const result = await updateMemberRole({ data: { memberId: member.memberId, role } });
-      if (!result.ok) setError(result.error);
-      else onChanged();
-    } finally {
-      setSaving(null);
-    }
+  // A refusal stays in its dialog; a member that is gone closes it and is said here.
+  function onResult(result: MembersMutation) {
+    if (result.ok) setError(null);
+    else if (result.gone) setError(result.error);
+    if (result.ok || result.gone) onChanged();
   }
 
   return (
@@ -45,10 +42,9 @@ export function MembersTable({
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-y border-(--line)">
-              <Th>Name</Th>
-              <Th>Email</Th>
-              <Th>Role</Th>
-              <Th>Joined</Th>
+              <Th width="45%">Member</Th>
+              <Th width="20%">Role</Th>
+              <Th width="25%">Joined</Th>
               <Th srOnly>Actions</Th>
             </tr>
           </thead>
@@ -57,49 +53,45 @@ export function MembersTable({
               const owner = isOwnerRole(member.role);
               const canChangeRole = !member.isSelf && !owner;
               const canRemove = !member.isSelf && (!owner || callerIsOwner);
+              const who = member.name || member.email;
               return (
                 <tr key={member.memberId} className={ROW}>
-                  <td className={`${CELL} text-foreground`}>
-                    {member.name || "—"}
+                  <td className={`${TALL_CELL}`}>
+                    <span className={IDENTITY_TIER}>{member.name || member.email}</span>
                     {member.isSelf ? <span className={`ml-2 ${MACHINE_CLASS}`}>You</span> : null}
+                    {member.name ? <span className={`block ${SECONDARY_TIER}`}>{member.email}</span> : null}
                   </td>
-                  <td className={`${CELL} font-mono text-xs text-muted-foreground`}>{member.email}</td>
-                  <td className={CELL}>
-                    {canChangeRole ? (
-                      <Select
-                        value={member.role}
-                        disabled={saving !== null}
-                        onValueChange={(value) => {
-                          if (value && value !== member.role) void onRole(member, value as MemberRole);
-                        }}
-                      >
-                        <SelectTrigger
-                          size="sm"
-                          className="w-32 rounded-none"
-                          aria-label={`Role of ${member.name || member.email}`}
+                  <td className={`${TALL_CELL}`}>
+                    <StatusTag status={roleLabel(member.role)} />
+                  </td>
+                  <td className={`${TALL_CELL} whitespace-nowrap ${SUPPORT_TIER}`}>{fmtTsShort(member.joinedAt)}</td>
+                  <td className={`${TALL_CELL} text-right`}>
+                    {canChangeRole || canRemove ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="rounded-none"
+                              aria-label={`Actions for ${who}`}
+                            />
+                          }
                         >
-                          <SelectValue>{(value: string | null) => roleLabel(value ?? "")}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent align="start">
-                          {ROLE_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <span className="text-foreground">{roleLabel(member.role)}</span>
-                    )}
-                  </td>
-                  <td className={`${CELL} font-mono text-xs whitespace-nowrap text-muted-foreground`}>
-                    {fmtTsShort(member.joinedAt)}
-                  </td>
-                  <td className={`${CELL} text-right`}>
-                    {canRemove ? (
-                      <Button type="button" variant="outline" size="sm" onClick={() => setRemoving(member)}>
-                        Remove
-                      </Button>
+                          <MoreHorizontalIcon aria-hidden="true" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-40">
+                          {canChangeRole ? (
+                            <DropdownMenuItem onClick={() => setOpen({ act: "role", member })}>Change role</DropdownMenuItem>
+                          ) : null}
+                          {canRemove ? (
+                            <DropdownMenuItem variant="destructive" onClick={() => setOpen({ act: "remove", member })}>
+                              Remove
+                            </DropdownMenuItem>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
@@ -117,14 +109,11 @@ export function MembersTable({
       >
         {error}
       </output>
-      {removing ? (
-        <RemoveMemberDialog
-          target={removing}
-          onOpenChange={(open) => {
-            if (!open) setRemoving(null);
-          }}
-          onRemoved={onChanged}
-        />
+      {open?.act === "role" ? (
+        <ChangeRoleDialog target={open.member} onOpenChange={(next) => !next && setOpen(null)} onResult={onResult} />
+      ) : null}
+      {open?.act === "remove" ? (
+        <RemoveMemberDialog target={open.member} onOpenChange={(next) => !next && setOpen(null)} onResult={onResult} />
       ) : null}
     </div>
   );

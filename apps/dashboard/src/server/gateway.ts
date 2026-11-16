@@ -1090,7 +1090,7 @@ async function withGateway<T>(
  * the class's own `name` brand as the fallback that survives a duplicated
  * module copy (bundler chunk, test mock) — never the message text.
  */
-async function classifyFailure(err: unknown): Promise<Failure> {
+export async function classifyFailure(err: unknown): Promise<Failure> {
   if (err instanceof UnauthorizedError || isNamed(err, "UnauthorizedError")) {
     return { ok: false, kind: "unauthenticated", error: message(err) };
   }

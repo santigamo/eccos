@@ -9,7 +9,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { removeMember, type MemberView } from "../../members";
+import { removeMember, type MembersMutation, type MemberView } from "../../members";
 import { isOwnerRole } from "../../lib/member-roles";
 
 /** What removing this member costs. Exported so the wording is asserted directly. */
@@ -24,11 +24,12 @@ export function removeMemberCopy(role: string): string[] {
 export function RemoveMemberDialog({
   target,
   onOpenChange,
-  onRemoved,
+  onResult,
 }: {
   target: MemberView;
   onOpenChange: (open: boolean) => void;
-  onRemoved: () => void;
+  /** Every answer, so the page can re-read on success or on a member that is gone. */
+  onResult: (result: MembersMutation) => void;
 }) {
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,12 +39,9 @@ export function RemoveMemberDialog({
     setError(null);
     try {
       const result = await removeMember({ data: { memberId: target.memberId } });
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      onRemoved();
-      onOpenChange(false);
+      onResult(result);
+      if (result.ok || result.gone) onOpenChange(false);
+      else setError(result.error);
     } finally {
       setRemoving(false);
     }

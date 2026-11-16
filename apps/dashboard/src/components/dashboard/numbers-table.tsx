@@ -8,6 +8,7 @@ import { failedWabaCopy, recheckNotice, syncUnavailableCopy } from "../../lib/pr
 import { wabaLabel } from "../../lib/wabas";
 import { INLINE_LINK, StatusTag } from "../../ui";
 import { SupportText } from "./support-text";
+import { CELL, ROW, Th } from "./plain-table";
 
 type Notice = { ok: boolean; text: string };
 
@@ -123,20 +124,20 @@ export function NumbersTable({
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.key} className="border-b border-(--line) transition-colors hover:bg-(--row-hover)">
-                <td className="px-3 py-2.5 font-mono text-xs text-foreground">
+              <tr key={row.key} className={ROW}>
+                <td className={`${CELL} font-mono text-xs text-foreground`}>
                   {row.displayPhoneNumber || "—"}
                 </td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                <td className={`${CELL} font-mono text-xs text-muted-foreground`}>
                   {row.phoneNumberId}
                 </td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                <td className={`${CELL} font-mono text-xs text-muted-foreground`}>
                   {row.wabaId}
                 </td>
-                <td className="px-3 py-2.5">
+                <td className={CELL}>
                   <StatusTag status={row.status} />
                 </td>
-                <td className="px-3 py-2.5">
+                <td className={CELL}>
                   <RowAction
                     row={row}
                     running={rechecking === row.wabaId}
@@ -405,10 +406,4 @@ function UnavailableSyncNote({ lines, supportEmail }: { lines: string[]; support
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-3 py-2 text-left text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-      {children}
-    </th>
-  );
-}
+

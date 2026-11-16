@@ -170,7 +170,7 @@ const CREATE_WORKSPACE_COPY: Record<string, string> = {
  * ones raised straight from a status. Anything else — a plain `Error`, an RPC
  * failure — has no code and lands on the generic branch by construction.
  */
-function authErrorCode(err: unknown): string {
+export function authErrorCode(err: unknown): string {
   if (!err || typeof err !== "object") return "";
   const e = err as { body?: { code?: unknown }; status?: unknown };
   if (typeof e.body?.code === "string") return e.body.code;
@@ -183,7 +183,7 @@ function authErrorCode(err: unknown): string {
  * gets. The code and the error's class, never its message: that can carry an
  * organization or account id.
  */
-function warnUnmapped(event: string, code: string, err: unknown): void {
+export function warnUnmapped(event: string, code: string, err: unknown): void {
   console.warn(
     JSON.stringify({
       level: "warn",

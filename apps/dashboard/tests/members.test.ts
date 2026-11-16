@@ -5,11 +5,14 @@
  * ours together, not a mock's.
  */
 
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { withD1Statements } from "./helpers/d1-statements";
+
+// Each test builds a real auth instance and signs several users in.
+setDefaultTimeout(30_000);
 
 const BASE_URL = "http://localhost:3000";
 const SECRET = "test-secret-32-chars-minimum-length!!";
@@ -104,6 +107,8 @@ async function workspace() {
     memberIds,
     foreignInvitation: foreignInvitation.id,
     foreignMember,
+    invite: (email: string, role: "admin" | "operator" | "viewer" = "viewer") =>
+      inviteMember({ data: { email, role, organizationId: org.id } }),
     as: (who: Role | string) => {
       fakeRequestHeaders = headersOf(who.includes("@") ? who : `${who}@example.test`);
     },
@@ -121,14 +126,14 @@ describe("the role matrix", () => {
   test("an operator or a viewer is refused by every function", async () => {
     const ws = await workspace();
     ws.as("owner");
-    await inviteMember({ data: { email: "pending@example.test", role: "viewer" } });
+    await inviteMember({ data: { email: "pending@example.test", role: "viewer", organizationId: ws.org.id } });
     const invitationId = ws.pending()[0]!.id;
     const refused = { ok: false, error: copy.ASK_TO_MANAGE_MEMBERS };
 
     for (const role of ["operator", "viewer"] as const) {
       ws.as(role);
-      expect(await listWorkspaceMembers()).toEqual(refused);
-      expect(await inviteMember({ data: { email: "new@example.test", role: "viewer" } })).toEqual(refused);
+      expect(await listWorkspaceMembers()).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+      expect(await inviteMember({ data: { email: "new@example.test", role: "viewer", organizationId: ws.org.id } })).toEqual(refused);
       expect(await resendInvitation({ data: { invitationId } })).toEqual(refused);
       expect(await cancelInvitation({ data: { invitationId } })).toEqual(refused);
       expect(await updateMemberRole({ data: { memberId: ws.memberOf("viewer"), role: "admin" } })).toEqual(refused);
@@ -146,7 +151,7 @@ describe("the role matrix", () => {
       const listed = await listWorkspaceMembers();
       expect(listed.ok).toBe(true);
 
-      expect(await inviteMember({ data: { email: "new@example.test", role: "operator" } })).toEqual({ ok: true });
+      expect(await inviteMember({ data: { email: "new@example.test", role: "operator", organizationId: ws.org.id } })).toEqual({ ok: true });
       const first = ws.pending()[0]!.id;
       expect(await resendInvitation({ data: { invitationId: first } })).toEqual({ ok: true });
       const second = ws.pending()[0]!.id;
@@ -161,9 +166,9 @@ describe("the role matrix", () => {
   }
 
   test("signed out reads as a session to renew", async () => {
-    await workspace();
-    expect(await listWorkspaceMembers()).toEqual({ ok: false, error: copy.MEMBERS_SIGNED_OUT });
-    expect(await inviteMember({ data: { email: "new@example.test", role: "viewer" } })).toEqual({
+    const ws = await workspace();
+    expect(await listWorkspaceMembers()).toMatchObject({ ok: false, kind: "unauthenticated" });
+    expect(await inviteMember({ data: { email: "new@example.test", role: "viewer", organizationId: ws.org.id } })).toEqual({
       ok: false,
       error: copy.MEMBERS_SIGNED_OUT,
     });
@@ -171,7 +176,7 @@ describe("the role matrix", () => {
 
   test("the owner role is never accepted as input", async () => {
     await workspace();
-    expect(() => members.inviteMemberInput.parse({ email: "new@example.test", role: "owner" })).toThrow();
+    expect(() => members.inviteMemberInput.parse({ email: "new@example.test", role: "owner", organizationId: "o" })).toThrow();
     expect(() => updateMemberRole({ data: { memberId: "m", role: "owner" } })).toThrow();
   });
 });
@@ -180,7 +185,7 @@ describe("the list", () => {
   test("members carry the caller's own row, and invitations their inviter and expiry", async () => {
     const ws = await workspace();
     ws.as("admin");
-    await inviteMember({ data: { email: "new@example.test", role: "viewer" } });
+    await inviteMember({ data: { email: "new@example.test", role: "viewer", organizationId: ws.org.id } });
     const result = await listWorkspaceMembers();
     if (!result.ok) throw new Error(result.error);
     expect(result.data.callerRole).toBe("admin");
@@ -202,7 +207,7 @@ describe("the list", () => {
   test("an expired invitation says so, and another workspace's never shows", async () => {
     const ws = await workspace();
     ws.as("owner");
-    await inviteMember({ data: { email: "late@example.test", role: "viewer" } });
+    await inviteMember({ data: { email: "late@example.test", role: "viewer", organizationId: ws.org.id } });
     ws.db.query("UPDATE invitation SET expiresAt = ? WHERE email = ?").run(Date.now() - 1000, "late@example.test");
     const result = await listWorkspaceMembers();
     if (!result.ok) throw new Error(result.error);
@@ -243,12 +248,12 @@ describe("failure copy", () => {
   test("already a member and already invited each have their own sentence", async () => {
     const ws = await workspace();
     ws.as("owner");
-    expect(await inviteMember({ data: { email: "operator@example.test", role: "viewer" } })).toEqual({
+    expect(await inviteMember({ data: { email: "operator@example.test", role: "viewer", organizationId: ws.org.id } })).toEqual({
       ok: false,
       error: copy.MEMBERS_COPY.USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION!,
     });
-    await inviteMember({ data: { email: "twice@example.test", role: "viewer" } });
-    expect(await inviteMember({ data: { email: "twice@example.test", role: "viewer" } })).toEqual({
+    await inviteMember({ data: { email: "twice@example.test", role: "viewer", organizationId: ws.org.id } });
+    expect(await inviteMember({ data: { email: "twice@example.test", role: "viewer", organizationId: ws.org.id } })).toEqual({
       ok: false,
       error: copy.MEMBERS_COPY.USER_IS_ALREADY_INVITED_TO_THIS_ORGANIZATION!,
     });
@@ -257,12 +262,12 @@ describe("failure copy", () => {
   test("an id from another workspace reads exactly like one that does not exist", async () => {
     const ws = await workspace();
     ws.as("owner");
-    const gone = { ok: false, error: copy.INVITATION_GONE };
+    const gone = { ok: false, error: copy.INVITATION_GONE, gone: true };
     expect(await cancelInvitation({ data: { invitationId: ws.foreignInvitation } })).toEqual(gone);
     expect(await cancelInvitation({ data: { invitationId: "no-such-invitation" } })).toEqual(gone);
     expect(await resendInvitation({ data: { invitationId: ws.foreignInvitation } })).toEqual(gone);
 
-    const memberGone = { ok: false, error: copy.MEMBER_GONE };
+    const memberGone = { ok: false, error: copy.MEMBER_GONE, gone: true };
     expect(await removeMember({ data: { memberId: ws.foreignMember } })).toEqual(memberGone);
     expect(await removeMember({ data: { memberId: "no-such-member" } })).toEqual(memberGone);
     expect(await updateMemberRole({ data: { memberId: ws.foreignMember, role: "viewer" } })).toEqual(memberGone);
@@ -282,7 +287,7 @@ describe("resend", () => {
   test("cancels the invitation and sends a new one under a new id", async () => {
     const ws = await workspace();
     ws.as("owner");
-    await inviteMember({ data: { email: "again@example.test", role: "operator" } });
+    await inviteMember({ data: { email: "again@example.test", role: "operator", organizationId: ws.org.id } });
     const before = ws.pending()[0]!;
     expect(await resendInvitation({ data: { invitationId: before.id } })).toEqual({ ok: true });
     const after = ws.pending();
@@ -299,7 +304,7 @@ describe("audit", () => {
     ws.as("owner");
     const info = spyOn(console, "info").mockImplementation(() => {});
     try {
-      await inviteMember({ data: { email: "audited@example.test", role: "viewer" } });
+      await inviteMember({ data: { email: "audited@example.test", role: "viewer", organizationId: ws.org.id } });
       await removeMember({ data: { memberId: ws.memberOf("viewer") } });
       const lines = info.mock.calls
         .map(([line]) => JSON.parse(String(line)) as { area?: string; action?: string; outcome?: string })
@@ -316,13 +321,15 @@ describe("audit", () => {
 });
 
 describe("the invitation rate limit", () => {
-  test("caps sends per inviter, through the console and over HTTP alike", async () => {
+  // The HTTP route is blocked in src/server.ts; calling auth.handler directly
+  // shows the hook still holds the cap if it were ever served again.
+  test("caps sends per inviter, in the plugin's hook", async () => {
     const ws = await workspace();
     ws.as("owner");
     for (let i = 0; i < 20; i++) {
-      expect(await inviteMember({ data: { email: `person${i}@example.test`, role: "viewer" } })).toEqual({ ok: true });
+      expect(await ws.invite(`person${i}@example.test`)).toEqual({ ok: true });
     }
-    expect(await inviteMember({ data: { email: "one-more@example.test", role: "viewer" } })).toEqual({
+    expect(await inviteMember({ data: { email: "one-more@example.test", role: "viewer", organizationId: ws.org.id } })).toEqual({
       ok: false,
       error: copy.MEMBERS_COPY[copy.INVITATION_RATE_LIMITED]!,
     });
@@ -338,6 +345,98 @@ describe("the invitation rate limit", () => {
 
     // The cap is the inviter's, not the workspace's.
     ws.as("admin");
-    expect(await inviteMember({ data: { email: "from-admin@example.test", role: "viewer" } })).toEqual({ ok: true });
+    expect(await inviteMember({ data: { email: "from-admin@example.test", role: "viewer", organizationId: ws.org.id } })).toEqual({ ok: true });
+  });
+});
+
+describe("resend never leaves the invitee without a live invitation", () => {
+  test("at the rate limit it refuses before cancelling", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    for (let i = 0; i < 20; i++) await ws.invite(`person${i}@example.test`);
+    const before = ws.pending().map((row) => row.id).sort();
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    try {
+      expect(await resendInvitation({ data: { invitationId: before[0]! } })).toEqual({
+        ok: false,
+        error: copy.MEMBERS_COPY[copy.INVITATION_RATE_LIMITED]!,
+      });
+      const audit = info.mock.calls.map(([line]) => JSON.parse(String(line))).find((line) => line.area === "audit");
+      expect(audit).toMatchObject({ action: "invitation_resent", outcome: "failed", detail: copy.INVITATION_RATE_LIMITED });
+      expect(audit.resource.restored).toBeUndefined();
+    } finally {
+      info.mockRestore();
+    }
+    expect(ws.pending().map((row) => row.id).sort()).toEqual(before);
+  });
+
+  test("a create that still fails puts the old invitation back, and the audit says so", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await ws.invite("joined-meanwhile@example.test");
+    const old = ws.pending()[0]!;
+    // They joined by another route while the invitation was out: the new create is refused.
+    const userId = await ws.user("joined-meanwhile@example.test");
+    await ws.auth.api.addMember({ body: { userId, role: "viewer", organizationId: ws.org.id } });
+    ws.as("owner");
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    try {
+      expect(await resendInvitation({ data: { invitationId: old.id } })).toEqual({
+        ok: false,
+        error: copy.MEMBERS_COPY.USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION!,
+      });
+      const audit = info.mock.calls.map(([line]) => JSON.parse(String(line))).find((line) => line.area === "audit");
+      expect(audit).toMatchObject({ action: "invitation_resent", outcome: "failed", resource: { restored: "true" } });
+    } finally {
+      info.mockRestore();
+    }
+    expect(ws.pending().map((row) => row.id)).toEqual([old.id]);
+  });
+});
+
+describe("pending invitations are read by status, not filtered from a capped list", () => {
+  test("past 100 cancelled rows the live one still lists, cancels and resends", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await ws.invite("live@example.test");
+    const live = ws.pending()[0]!.id;
+    const columns = (ws.db.query("PRAGMA table_info(invitation)").all() as Array<{ name: string }>).map((c) => `"${c.name}"`);
+    const copied = columns.map((c) => (c === '"id"' ? "?1" : c === '"email"' ? "?2" : c === '"status"' ? "'canceled'" : c));
+    const insert = ws.db.query(
+      `INSERT INTO invitation (${columns.join(", ")}) SELECT ${copied.join(", ")} FROM invitation WHERE id = ?3`,
+    );
+    for (let i = 0; i < 150; i++) insert.run(`old-${i}`, `old${i}@example.test`, live);
+
+    const result = await listWorkspaceMembers();
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.invitations.map((i) => i.id)).toEqual([live]);
+    expect(await resendInvitation({ data: { invitationId: live } })).toEqual({ ok: true });
+    const fresh = ws.pending()[0]!.id;
+    expect(await cancelInvitation({ data: { invitationId: fresh } })).toEqual({ ok: true });
+  });
+});
+
+describe("the page's workspace", () => {
+  test("an invitation for a workspace the session has left is refused", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    const otherWorkspace = ws.db.query("SELECT id FROM organization WHERE id != ?").get(ws.org.id) as { id: string };
+    expect(
+      await inviteMember({ data: { email: "new@example.test", role: "viewer", organizationId: otherWorkspace.id } }),
+    ).toEqual({ ok: false, error: copy.MEMBERS_COPY[copy.WORKSPACE_CHANGED]! });
+    expect(ws.pending()).toEqual([]);
+  });
+
+  test("a session in two workspaces with none chosen is asked to choose, not told to ask an admin", async () => {
+    const ws = await workspace();
+    const userId = await ws.user("double@example.test");
+    const other = ws.db.query("SELECT id FROM organization WHERE id != ?").get(ws.org.id) as { id: string };
+    await ws.auth.api.addMember({ body: { userId, role: "admin", organizationId: ws.org.id } });
+    await ws.auth.api.addMember({ body: { userId, role: "admin", organizationId: other.id } });
+    ws.as("double@example.test");
+    expect(await listWorkspaceMembers()).toMatchObject({ ok: false, kind: "forbidden", reason: "select-organization" });
+    const refused = await removeMember({ data: { memberId: ws.memberOf("viewer") } });
+    expect(refused.ok).toBe(false);
+    expect(refused.ok ? "" : refused.error).toContain("Pick the one you want to work in.");
   });
 });
