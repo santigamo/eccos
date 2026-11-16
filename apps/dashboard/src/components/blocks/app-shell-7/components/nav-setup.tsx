@@ -1,5 +1,6 @@
 "use client"
 
+import { targetMissing } from "@/lib/forwarding"
 import { useEffect, useState } from "react"
 import { Link, useLoaderData, useSearch } from "@tanstack/react-router"
 
@@ -53,7 +54,7 @@ export function NavSetup() {
   }, [])
 
   if (!root.ok) return null
-  const steps = setupSteps(root.data, root.hasForwardingTarget === true)
+  const steps = setupSteps(root.data, !targetMissing(root.hasForwardingTarget))
   if (dismissed || setupComplete(steps)) return null
 
   function hide() {

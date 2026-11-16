@@ -26,7 +26,7 @@ import { loaderFailure } from "../lib/failure";
 import { listInbound, retryDelivery } from "../server/gateway";
 import type { InboundRow } from "../server/gateway";
 import { formatCustomerId } from "../lib/customer-id";
-import { forwardReading } from "../lib/forwarding";
+import { forwardReading, targetMissing } from "../lib/forwarding";
 import {
   EMPTY_CELL,
   eventCountEntries,
@@ -334,8 +334,7 @@ function EventsPage() {
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
   const target = root.ok ? root.hasForwardingTarget : null;
-  // An unread target leaves rows `queued`: `held` asks for an action it cannot justify.
-  const hasForwardingTarget = target !== false;
+  const hasForwardingTarget = !targetMissing(target);
   const counts = ready?.status.counts;
   const pending = counts?.deliveries.pending ?? 0;
 

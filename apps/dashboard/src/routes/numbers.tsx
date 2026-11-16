@@ -27,6 +27,8 @@ import {
   type ConnectOutcomeSearch,
 } from "../components/dashboard/connect-outcome";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
+import { selectWaba } from "@eccos/gateway-contract/select-waba";
+import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchWabaId } from "../lib/search";
 
 /** Scope selector plus the Embedded Signup outcome the gateway redirects with. */
@@ -111,12 +113,11 @@ function NumbersPage() {
   return (
     <NumbersView
       resources={resources}
-      // The WABA the root's target read describes, and only on a confirmed "none".
+      // The WABA the root's target read resolved, by the same `selectWaba` call
+      // the gateway makes for it, and only when that read confirmed "none".
       nextWabaId={
-        root.hasForwardingTarget === false
-          ? root.data.stage === "ready"
-            ? root.data.scope.selectedWabaId
-            : (wabaId ?? wabas[0]?.wabaId)
+        targetMissing(root.hasForwardingTarget)
+          ? selectWaba(resources.account?.accountId ?? "", wabas, wabaId, false, "any").wabaId
           : undefined
       }
       supportEmail={root.deployment.supportEmail}

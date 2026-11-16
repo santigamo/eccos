@@ -4,6 +4,7 @@ import {
   batchEventSummary,
   deliveryMoment,
   forwardReading,
+  targetMissing,
 } from "../src/lib/forwarding";
 
 /**
@@ -15,6 +16,18 @@ import {
  * three-way split of `pending` is the part that is easy to get quietly wrong,
  * so each branch is pinned by itself.
  */
+
+describe("targetMissing", () => {
+  test("only a confirmed false is a missing target; a failed read is unknown", () => {
+    expect(targetMissing(false)).toBe(true);
+    expect(targetMissing(true)).toBe(false);
+    expect(targetMissing(null)).toBe(false);
+    // So a pending row under an unread target reads `queued`, never `held`.
+    expect(forwardReading({ status: "pending", attempts: 0, hasForwardingTarget: !targetMissing(null) })?.state).toBe(
+      "queued",
+    );
+  });
+});
 
 describe("forwardReading", () => {
   test("a forwarded batch never says `delivered` again", () => {

@@ -23,12 +23,7 @@ import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
 import { listDeliveries, retryDelivery } from "../server/gateway";
 import type { DeliveryRecord } from "../server/gateway";
-import {
-  FORWARD_MAX_ATTEMPTS,
-  batchEventSummary,
-  deliveryMoment,
-  forwardReading,
-} from "../lib/forwarding";
+import { FORWARD_MAX_ATTEMPTS, batchEventSummary, deliveryMoment, forwardReading, targetMissing } from "../lib/forwarding";
 import { EMPTY_CELL } from "../lib/logs";
 import { normalizeSearchBefore, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { Page, StatusTag, fmtTs } from "../ui";
@@ -249,8 +244,7 @@ function DeliveriesPage() {
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
   const target = root.ok ? root.hasForwardingTarget : null;
-  // An unread target leaves rows `queued`: `held` asks for an action it cannot justify.
-  const hasForwardingTarget = target !== false;
+  const hasForwardingTarget = !targetMissing(target);
   const pending = ready?.status.counts.deliveries.pending ?? 0;
 
   const activeStatus = status ?? "all";

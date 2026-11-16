@@ -1,5 +1,5 @@
 import type { GatewayStatus, Health } from "../server/gateway";
-import { heldSentence } from "./forwarding";
+import { heldSentence, targetMissing } from "./forwarding";
 
 /**
  * What the Status page SAYS about the gateway's health.
@@ -14,10 +14,9 @@ import { heldSentence } from "./forwarding";
  * derivation stays exercisable under plain `bun test`.
  */
 
-/** The banner a state raises. `null` means the state speaks for itself: healthy
- * needs no sentence, the tag beside the heading already says it (data rule 1 —
- * when an operator sees a banner it always means something). Held events are
- * the one banner a healthy gateway raises. */
+/** One line of the banner. A healthy gateway raises none: the tag beside the
+ * heading already says it (data rule 1 — when an operator sees a banner it
+ * always means something). Held events are the one line it can still raise. */
 export interface HealthBanner {
   detail: string;
   /**
@@ -27,12 +26,13 @@ export interface HealthBanner {
   rail: string;
   /** The page that resolves the state, when one exists. A real route, never a
    * step inside a flow — the console has no wizard (`lib/setup-checklist.ts`). */
-  action?: { to: string; label: string };
+  action?: { to: string; label: string; search?: Record<string, string> };
 }
 
 export interface HealthReading {
   label: string;
-  banner: HealthBanner | null;
+  /** One line per fact, each with its own action. Empty while there is nothing to say. */
+  banners: HealthBanner[];
 }
 
 const HEALTH_LABEL: Record<Health, string> = {
@@ -55,50 +55,49 @@ const GENERIC_BANNER: Record<Health, HealthBanner | null> = {
 };
 
 /**
- * ── THE HELD READING ────────────────────────────────────────────────────────
+ * Three facts can stand at once, and each keeps its own line and its own door:
+ * forwards that failed every retry, sends Meta refused, and events held for a
+ * target nobody has set. Folding two into one sentence hides one of the doors.
+ *
+ * ── THE HELD LINE ───────────────────────────────────────────────────────────
  * With no forwarding target, `alarm()` HOLDS the drain
  * (`apps/gateway/src/gateway.ts`) and each pending row waits until the content
- * window deletes it. That is a deadline only the operator can act on, so it
- * raises the banner at any count, whatever the health word. The gateway only
- * reads `degraded` past ten held rows, so waiting for that hid the first nine.
+ * window deletes it. That is a deadline only the operator can act on, so the
+ * line shows at any count and under any health word. Only on a CONFIRMED
+ * missing target (`targetMissing`): a failed read says nothing.
  *
- * Only on a CONFIRMED missing target: `null` is a read that failed, and saying
- * "waiting for a forwarding target" to an account that has one is worse than
- * saying nothing.
- *
- * Failed forwards are a real fault and come first. Failed outbound sends are a
- * second, unrelated fact, so the held sentence names them too.
+ * With none of the three, the health word's generic sentence stands.
  */
 export function healthReading(
   status: GatewayStatus,
   hasForwardingTarget: boolean | null,
   retentionDays?: number | null,
 ): HealthReading {
-  const label = HEALTH_LABEL[status.health];
-  // `unhealthy` means only this: forwarded batches that failed every attempt.
+  const banners: HealthBanner[] = [];
   const failed = status.counts.deliveries.failed ?? 0;
-  if (status.health === "unhealthy" && failed > 0) {
-    return {
-      label,
-      banner: {
-        detail: `${failed} forwarded ${failed === 1 ? "batch" : "batches"} failed after every retry. Check your server, then retry ${failed === 1 ? "it" : "them"} from the forwarding queue.`,
-        rail: "border-l-destructive",
-        action: { to: "/deliveries", label: "Open the forwarding queue" },
-      },
-    };
+  if (failed > 0) {
+    banners.push({
+      detail: `${failed} forwarded ${failed === 1 ? "batch" : "batches"} failed after every retry. Check your server, then retry ${failed === 1 ? "it" : "them"} from the forwarding queue.`,
+      rail: "border-l-destructive",
+      action: { to: "/deliveries", label: "Open the forwarding queue" },
+    });
+  }
+  const unsent = status.counts.outbound.failed ?? 0;
+  if (unsent > 0) {
+    banners.push({
+      detail: `${unsent} ${unsent === 1 ? "message" : "messages"} failed to send.`,
+      rail: "border-l-warning",
+      action: { to: "/messages", label: "Open the failed messages", search: { status: "failed" } },
+    });
   }
   const held = status.counts.deliveries.pending ?? 0;
-  if (hasForwardingTarget === false && held > 0) {
-    const unsent = status.counts.outbound.failed ?? 0;
-    const also = unsent > 0 ? ` ${unsent} ${unsent === 1 ? "message" : "messages"} also failed to send.` : "";
-    return {
-      label,
-      banner: {
-        detail: `${heldSentence(held, retentionDays)}${also}`,
-        rail: "border-l-warning",
-        action: { to: "/webhooks", label: "Set a forwarding target" },
-      },
-    };
+  if (targetMissing(hasForwardingTarget) && held > 0) {
+    banners.push({
+      detail: heldSentence(held, retentionDays),
+      rail: "border-l-warning",
+      action: { to: "/webhooks", label: "Set a forwarding target" },
+    });
   }
-  return { label, banner: GENERIC_BANNER[status.health] };
+  const generic = GENERIC_BANNER[status.health];
+  return { label: HEALTH_LABEL[status.health], banners: banners.length > 0 || !generic ? banners : [generic] };
 }

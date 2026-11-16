@@ -1,49 +1,39 @@
 import { Link } from "@tanstack/react-router";
-import { heldSentence } from "../../lib/forwarding";
+import { heldCount, heldSentence, targetMissing } from "../../lib/forwarding";
 import { INLINE_LINK } from "../../ui";
 
 /**
- * "Forwarding is held" — the third register in which the console says the same
- * fact, and the only one that appears above a log.
+ * "Forwarding is held", said above a page rather than on one row. The row tag
+ * (`HELD`) and the sheet's Forwarding section answer "what happened to THIS
+ * event"; this answers "why does the whole page look stuck".
  *
- * The other two are the row tag (`HELD`, amber) and the sheet's Forwarding
- * section. They answer "what happened to THIS event"; this answers "why does
- * the whole page look stuck", which is the question an operator actually
- * arrives with when every row reads the same.
+ * It borrows the Status banner's anatomy (a live region, an amber rail, one
+ * statement, a link to the page that resolves it) because it is the same
+ * statement about the same system.
  *
- * It borrows the Status banner's exact anatomy — a live region, a 2px amber
- * rail, one sentence, a real link to the page that resolves it — because it is
- * the same statement about the same system, and a second visual language for it
- * would read as a second condition.
+ * Said only when both halves are true: a target confirmed missing
+ * (`targetMissing`, never a failed read) and something actually waiting. The
+ * decision lives here so the pages that show it cannot disagree about when,
+ * and so the live region stays mounted while it says nothing: an element that
+ * appears is not reliably announced, an empty one that fills up is.
  *
- * SAID ONLY WHEN BOTH HALVES ARE TRUE: a confirmed missing target (`false`,
- * never the `null` of a failed read) AND something actually waiting. With an empty queue there is nothing held and the line would be a
- * standing scold on a page that is behaving; with a target set, `pending` rows
- * are ordinary queue and drain in seconds. Data rule 1: when an operator sees
- * this, it always means something.
- *
- * `link={false}` is for /webhooks, where the form that resolves it is the page.
- *
- * The decision lives HERE rather than at the call sites, so the pages that
- * show it cannot disagree about when — and so the live region can stay mounted
- * while it says nothing. An element that appears and disappears is not reliably
- * announced; an empty one that fills up is (same reasoning as `StatusBanner` on
- * the Status page). Quiet therefore costs no pixels: no rail, no margin.
+ * `countOnly` is for /webhooks, where the panel below is the action and
+ * already states the promise and the deadline.
  */
 export function HeldNotice({
   pending,
   hasForwardingTarget,
   wabaId,
   retentionDays,
-  link = true,
+  countOnly = false,
 }: {
   pending: number;
   hasForwardingTarget: boolean | null;
   wabaId?: string;
   retentionDays?: number | null;
-  link?: boolean;
+  countOnly?: boolean;
 }) {
-  const held = hasForwardingTarget === false && pending > 0;
+  const held = targetMissing(hasForwardingTarget) && pending > 0;
   return (
     <output
       className={
@@ -55,8 +45,8 @@ export function HeldNotice({
     >
       {held ? (
         <>
-          {heldSentence(pending, retentionDays)}
-          {link ? (
+          {countOnly ? heldCount(pending) : heldSentence(pending, retentionDays)}
+          {countOnly ? null : (
             <>
               {" "}
               <Link
@@ -67,7 +57,7 @@ export function HeldNotice({
                 Set a forwarding target
               </Link>
             </>
-          ) : null}
+          )}
         </>
       ) : null}
     </output>

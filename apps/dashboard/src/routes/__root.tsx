@@ -46,14 +46,19 @@ function loadAnalyticsConfig(): Promise<AnalyticsConfig | null> {
 const NO_DEPLOYMENT: Deployment = { supportEmail: null, contentRetentionDays: null }
 let documentDeployment: Promise<Deployment> | undefined
 
-/** Once per document, like the analytics config: deployment facts do not change under a page. */
-function loadDeployment(): Promise<Deployment> {
-  if (typeof window === "undefined") return getDeployment().catch(() => NO_DEPLOYMENT)
-  documentDeployment ??= getDeployment().catch(() => {
-    documentDeployment = undefined
-    return NO_DEPLOYMENT
-  })
-  return documentDeployment
+/**
+ * Once per document, like the analytics config: deployment facts do not change
+ * under a page. Only a read that got the retention window is kept, so a failed
+ * one is asked again on the next load.
+ */
+async function loadDeployment(): Promise<Deployment> {
+  if (typeof window !== "undefined" && documentDeployment) return documentDeployment
+  const read = getDeployment().catch(() => NO_DEPLOYMENT)
+  if (typeof window === "undefined") return read
+  documentDeployment = read
+  const deployment = await read
+  if (deployment.contentRetentionDays === null && documentDeployment === read) documentDeployment = undefined
+  return deployment
 }
 
 type RootState = Awaited<ReturnType<typeof getDashboardState>>

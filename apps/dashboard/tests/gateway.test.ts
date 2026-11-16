@@ -1875,6 +1875,19 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Webhooks view
     expect(await getDeployment()).toEqual({ supportEmail: null, contentRetentionDays: null });
   });
 
+  test("getDeployment needs a session and no organization permission, and rounds the days", async () => {
+    // A deployment-wide constant: a member whose role cannot `view` still gets it.
+    withResources({ getContentRetentionDays: async () => 29.6 });
+    fakeDeniedActions.add("view");
+    try {
+      expect((await getDeployment()).contentRetentionDays).toBe(30);
+    } finally {
+      fakeDeniedActions.delete("view");
+    }
+    fakeSessionHeaders = null;
+    expect((await getDeployment()).contentRetentionDays).toBeNull();
+  });
+
   test("setSubscriberConfig unreachable: throw is surfaced as { ok: false }", async () => {
     withResources({
       setSubscriberConfig: async () => {

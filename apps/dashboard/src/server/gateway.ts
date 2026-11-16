@@ -2307,10 +2307,14 @@ export interface Deployment {
 }
 
 export const getDeployment = createServerFn({ method: "GET" }).handler(async (): Promise<Deployment> => {
-  const days = await withGateway((gateway) => gateway.getContentRetentionDays(), "view");
+  // A session is enough: these are the deployment's facts, not an organization's.
+  const days = await withGateway(async (gateway) => {
+    await requireAuthContext(requestAuth(), getRequest());
+    return gateway.getContentRetentionDays();
+  });
   return {
     supportEmail: (env as { SUPPORT_EMAIL?: string }).SUPPORT_EMAIL?.trim() || null,
-    contentRetentionDays: days.ok ? days.data : null,
+    contentRetentionDays: days.ok ? Math.round(days.data) : null,
   };
 });
 

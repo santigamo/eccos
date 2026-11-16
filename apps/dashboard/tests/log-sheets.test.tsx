@@ -386,9 +386,12 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
     ).toContain("Each is deleted when its retention window ends.");
   });
 
-  test("on /webhooks the form is the action, so it carries no link", () => {
-    const html = renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} link={false} />);
-    expect(html).toContain("9 events are waiting");
+  test("on /webhooks it is the count alone: the panel below is the action and states the deadline", () => {
+    const html = renderToStaticMarkup(
+      <HeldNotice pending={9} hasForwardingTarget={false} retentionDays={30} countOnly />,
+    );
+    expect(html).toContain("9 events are waiting for a forwarding target.");
+    expect(html).not.toContain("deleted");
     expect(html).not.toContain("<a ");
   });
 

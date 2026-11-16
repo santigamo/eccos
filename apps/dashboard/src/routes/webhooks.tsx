@@ -104,8 +104,7 @@ function WebhooksPage() {
       <HeldNotice
         pending={ready?.status.counts.deliveries.pending ?? 0}
         hasForwardingTarget={config.url !== null}
-        retentionDays={retentionDays}
-        link={false}
+        countOnly
       />
       <ForwardingFacts
         config={config}

@@ -7,6 +7,7 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { LogPager } from "../components/logs/log-pager";
+import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchTrail, pageOfRows, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
@@ -252,7 +253,7 @@ function MessagesPage() {
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
   const counts = ready?.status.counts.outbound ?? {};
-  const hasForwardingTarget = root.ok ? root.hasForwardingTarget !== false : false;
+  const hasForwardingTarget = !targetMissing(root.ok ? root.hasForwardingTarget : null);
 
   const openMessage = (row: OutboundRow) =>
     navigate({ search: (prev) => ({ ...prev, message: row.id }) });
