@@ -1429,6 +1429,8 @@ export interface GatewayApi {
     organizationId: string,
     name?: string,
   ): Promise<{ accountId: string; status: "active" | "existing" }>;
+  /** Renames the account, following a workspace rename. */
+  setAccountName(accountId: string, name: string): Promise<void>;
   /** Read the one-to-one organization→account link (contract §2). Unknown
    * organization → null; `pending`/`disabled` links fail closed upstream. */
   getOrganizationAccountLink(

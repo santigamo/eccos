@@ -91,6 +91,20 @@ function forbiddenCopy(failure: Failure): FailureCopy {
   }
 }
 
+/** A page, or part of one, that only an owner or admin may use. Billing is named only while it is on. */
+export function adminOnlyCopy(page: "api-keys" | "settings", billing = false): FailureCopy {
+  if (page === "api-keys") {
+    return {
+      title: "Owner or admin only",
+      detail: "An owner or admin of this workspace creates and revokes its API keys. Ask one of them for a key.",
+    };
+  }
+  return {
+    title: "Managed by an owner or admin",
+    detail: `An owner or admin of this workspace manages ${billing ? "billing and conversation history" : "conversation history"}.`,
+  };
+}
+
 /**
  * What the console says about a refused template test send.
  *

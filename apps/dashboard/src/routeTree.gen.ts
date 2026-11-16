@@ -27,6 +27,7 @@ import { Route as DeliveriesRouteImport } from './routes/deliveries'
 import { Route as ConversationsRouteImport } from './routes/conversations'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as BroadcastsRouteImport } from './routes/broadcasts'
+import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
 import { Route as NumbersAttachTokenRouteImport } from './routes/numbers_.attach-token'
@@ -122,6 +123,11 @@ const BroadcastsRoute = BroadcastsRouteImport.update({
   path: '/broadcasts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiKeysRoute = ApiKeysRouteImport.update({
+  id: '/api-keys',
+  path: '/api-keys',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -145,6 +151,7 @@ const BroadcastsBroadcastIdRoute = BroadcastsBroadcastIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api-keys': typeof ApiKeysRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -169,6 +176,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api-keys': typeof ApiKeysRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -194,6 +202,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api-keys': typeof ApiKeysRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -220,6 +229,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/api-keys'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -244,6 +254,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/api-keys'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -268,6 +279,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/api-keys'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -293,6 +305,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiKeysRoute: typeof ApiKeysRoute
   BroadcastsRoute: typeof BroadcastsRoute
   ConnectRoute: typeof ConnectRoute
   ConversationsRoute: typeof ConversationsRoute
@@ -444,6 +457,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BroadcastsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api-keys': {
+      id: '/api-keys'
+      path: '/api-keys'
+      fullPath: '/api-keys'
+      preLoaderRoute: typeof ApiKeysRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -477,6 +497,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiKeysRoute: ApiKeysRoute,
   BroadcastsRoute: BroadcastsRoute,
   ConnectRoute: ConnectRoute,
   ConversationsRoute: ConversationsRoute,

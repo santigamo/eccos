@@ -1,11 +1,9 @@
 import { openPortal, startCheckout, type BillingState } from "../../server/gateway";
 import { BillingError, useBillingRedirect } from "./billing-redirect";
-import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
+import { Row, Rows, SectionFrame, SettingsSection } from "./settings-section";
 
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
-const ROW_CLASS = "flex items-center justify-between gap-4 px-(--frame-panel-px) py-2.5";
-const NOTE_CLASS = "mt-4 mb-0 block border-l-2 px-3 py-2 text-sm text-foreground";
+const NOTE_CLASS = "m-0 block border-l-2 px-3 py-2 text-sm text-foreground";
 
 export function billingStatusLabel(billing: BillingState): string {
   if (billing.connectPolicy === "closed") return "No active subscription";
@@ -35,50 +33,48 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
   const priced = closed || billing.hasCustomer;
 
   return (
-    <Frame variant="default" spacing="lg">
-      <FramePanel fit>
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">Billing</FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            Eccos Cloud is billed per connected number, never per message.
-            {closed ? " Messaging keeps working without a subscription; adding a number needs one." : ""}
-          </FrameDescription>
-        </FrameHeader>
+    <SettingsSection
+      id="billing"
+      title="Billing"
+      description={`Eccos Cloud is billed per connected number, never per message.${closed ? " Messaging keeps working without a subscription; adding a number needs one." : ""}`}
+    >
+      <SectionFrame flush>
         {returned ? (
-          <output className={`${NOTE_CLASS} ${closed ? "border-l-warning" : "border-l-(--mark)"}`}>
-            {checkoutReturnNote(billing, returned)}
-          </output>
+          <div className="px-5 pt-4">
+            <output className={`${NOTE_CLASS} ${closed ? "border-l-warning" : "border-l-(--mark)"}`}>
+              {checkoutReturnNote(billing, returned)}
+            </output>
+          </div>
         ) : null}
-        <dl className="my-0 -mx-(--frame-panel-px) mt-5 divide-y divide-(--line) border-y border-(--line)">
-          <div className={ROW_CLASS}>
-            <dt className={MACHINE_CLASS}>Status</dt>
-            <dd className="m-0 text-sm text-foreground">{billingStatusLabel(billing)}</dd>
-          </div>
-          <div className={ROW_CLASS}>
-            <dt className={MACHINE_CLASS}>Connected numbers</dt>
-            <dd className="m-0 text-sm text-foreground tabular-nums">{billing.numbers}</dd>
-          </div>
+        <Rows>
+          <Row label="Status">{billingStatusLabel(billing)}</Row>
+          <Row label="Connected numbers">
+            <span className="tabular-nums">{billing.numbers}</span>
+          </Row>
           {priced ? (
-            <div className={ROW_CLASS}>
-              <dt className={MACHINE_CLASS}>Monthly price</dt>
-              <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR + VAT</dd>
+            <Row label="Monthly price">
+              <span className="tabular-nums">{billing.monthlyEuros} EUR + VAT</span>
+            </Row>
+          ) : null}
+        </Rows>
+        {closed || billing.hasCustomer ? (
+          <div className="border-t border-(--line) px-5 py-4">
+            <div className="flex flex-wrap gap-2">
+              {closed ? (
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
+                  Start subscription
+                </Button>
+              ) : null}
+              {billing.hasCustomer ? (
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => openPortal())}>
+                  Manage billing
+                </Button>
+              ) : null}
             </div>
-          ) : null}
-        </dl>
-        <div className="mt-5 flex flex-wrap gap-2">
-          {closed ? (
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
-              Start subscription
-            </Button>
-          ) : null}
-          {billing.hasCustomer ? (
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => openPortal())}>
-              Manage billing
-            </Button>
-          ) : null}
-        </div>
-        <BillingError error={error} />
-      </FramePanel>
-    </Frame>
+            <BillingError error={error} />
+          </div>
+        ) : null}
+      </SectionFrame>
+    </SettingsSection>
   );
 }

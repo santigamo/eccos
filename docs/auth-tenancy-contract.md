@@ -108,6 +108,7 @@ defaults; `operator` and `viewer` are configured custom roles):
 | GDPR erasure (`eraseByPhone`) | owner | **Yes** | Owner-only destructive action |
 | Invitations & member role changes | owner/admin (Better Auth defaults) | **Yes** | Verified email required (§7) |
 | Organization create | any verified user | — | Own new org only; allowlisted signup (§7) |
+| Workspace rename | admin | — | `renameWorkspace` server function (§9): name only, never a slug; refused when the session moved to another workspace; the gateway account's name follows; ids-only audit line |
 | Organization delete | disabled in v1 | — | Rejected everywhere (§9) |
 
 "**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** a
@@ -211,7 +212,7 @@ across tenants and inside one user's own membership list.
 | `check-slug` | Probe slug availability | **Not served** — 404 before dispatch. A cross-tenant existence oracle with no legitimate caller: nothing in the console is slug-addressed |
 | `list`, `get`, `get-full` (GET) | List/read organizations | Session required; only memberships of the caller |
 | `set-active` | Set active organization | Wrapped by app validation: server re-verifies membership; result is UX state only (§5) |
-| `update` | Update organization (name, metadata) | **Not served** — 404 before dispatch, because the same slug-uniqueness probe is reachable through a rename. There is no rename UI in v1; when one is built it must be a server function that never accepts a slug. Metadata/slug changes **never authorize the account mapping** (§2) |
+| `update` | Update organization (name, metadata) | **Not served** — 404 before dispatch, because the same slug-uniqueness probe is reachable through a rename. Renaming goes through the `renameWorkspace` server function instead (Settings, owner/admin, §4), which calls Better Auth in process with the name only and never accepts or returns a slug. Metadata/slug changes **never authorize the account mapping** (§2) |
 | `delete` | Delete organization | **Disabled in v1** — rejected regardless of role |
 | `invite-member`, `cancel-invitation`, `remove-member`, `update-member-role` | Invite, cancel an invitation, remove a member, change a role | **Not served** — 404 before dispatch. Served only through the console's server functions (`src/members.ts`), which call them in process: owner/admin, only `admin`/`operator`/`viewer` may be granted, an owner is changed or removed only by an owner and never the last one, removing a member cancels the invitations they sent that are still pending, ids-only audit line, at most 20 invitations per inviter per hour (enforced in the plugin's `beforeCreateInvitation` hook). Step-up (§4) to follow |
 | `list-invitations` (GET) | Invitations | Owner/admin; recipients must be verified identities (§7) |

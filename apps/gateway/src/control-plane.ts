@@ -1158,6 +1158,13 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.getAccountBilling(id) as AccountBilling;
   }
 
+  setAccountName(accountId: string, name: string): void {
+    const id = this.requireAccount(accountId);
+    const clean = validateLabel(name, "name");
+    if (!clean) throw new Error("invalid name: required");
+    this.sql.exec("UPDATE accounts SET name = ? WHERE account_id = ?", clean, id);
+  }
+
   listBilledAccounts(): BilledAccount[] {
     return this.sql
       .exec(

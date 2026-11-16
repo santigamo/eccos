@@ -18,7 +18,7 @@ import { MEMBERS_RETRY } from "../../lib/members-copy";
 export function removeMemberCopy(role: string): string[] {
   return [
     "Their access ends on their next request.",
-    "API keys they created keep working. Revoke them in Settings if they should stop.",
+    "API keys they created keep working. Revoke them in API keys if they should stop.",
     "Invitations they sent that are still pending are cancelled.",
     ...(role === "admin" || isOwnerRole(role) ? ["The connection link they made stops working."] : []),
   ];

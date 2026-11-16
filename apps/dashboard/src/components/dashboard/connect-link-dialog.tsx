@@ -6,8 +6,8 @@ import { linkIsLive, linkStatusLine } from "../../lib/connect-link/status";
 import { failureCopy } from "../../lib/failure";
 import { followSignIn } from "../../lib/follow-sign-in";
 import { type ConnectLinkView, type Result, openConnectLink } from "../../server/gateway";
-
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
+import { CopyButton } from "./copy-button";
+import { MACHINE_CLASS } from "./plain-table";
 
 /** The workspace's connection link: copy it, replace it, and see how far its reader got. */
 export function ConnectLinkButton() {
@@ -45,7 +45,6 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
   // Only the call that makes a link returns its address: Eccos keeps a hash.
   const [url, setUrl] = useState<string | null>(null);
   const [pending, setPending] = useState(true);
-  const [copied, setCopied] = useState(false);
 
   // One request at a time: a second open or a double click must not make a second link.
   const inFlight = useRef(false);
@@ -54,7 +53,6 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
       if (inFlight.current) return;
       inFlight.current = true;
       setPending(true);
-      setCopied(false);
       try {
         const next = await load({ data: { fresh } });
         setView(next);
@@ -101,9 +99,7 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
       </output>
       <div className="flex items-center gap-2">
         {url ? (
-          <Button type="button" onClick={() => void navigator.clipboard.writeText(url).then(() => setCopied(true))}>
-            {copied ? "Copied" : "Copy link"}
-          </Button>
+          <CopyButton key={url} value={url} label="Copy link" />
         ) : null}
         {/* The one thing left to do when there is no address to copy. */}
         <Button

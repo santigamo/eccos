@@ -31,9 +31,10 @@ describe("idleRoutes", () => {
     expect(idleRoutes({ hasNumber: false, hasWaba: false, canAdminister: false })).toEqual(["/numbers", "/settings"]);
   });
 
-  test("Members is read ahead only for a role that may manage them", () => {
+  test("API keys and Members are read ahead only for a role that may administer them", () => {
     expect(idleRoutes({ hasNumber: false, hasWaba: false, canAdminister: true })).toEqual([
       "/numbers",
+      "/api-keys",
       "/members",
       "/settings",
     ]);

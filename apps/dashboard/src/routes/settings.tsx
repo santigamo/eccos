@@ -1,43 +1,30 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
-import { invalidatePage } from "../lib/invalidate";
+import { invalidatePage, invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import { Page } from "../ui";
 import {
   confirmCheckout,
   getBilling,
   getConversationRetention,
-  getGatewayOrigin,
-  listApiKeys,
-  type AccountKeyResource,
   type BillingState,
+  type Failure,
   type Result,
 } from "../server/gateway";
+import { FailureView } from "../components/dashboard/failure";
+import { SectionsSkeleton } from "../components/dashboard/settings-section";
+import { activeWorkspace } from "../lib/workspaces";
+import { adminOnlyCopy } from "../lib/failure";
+import { rootRole } from "../lib/root-role";
 import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billing-panel";
-import { ApiKeysPanel } from "../components/dashboard/api-keys";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Frame,
-  FrameDescription,
-  FrameHeader,
-  FramePanel,
-  FrameTitle,
-} from "../components/reui/frame";
+import { WorkspacePanel, type WorkspaceView } from "../components/dashboard/workspace-panel";
+import { RoleNote } from "../components/dashboard/role-note";
 import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
- * Settings — the workspace's own identifiers, its API keys and its conversation history window.
- *
- * It used to carry the forwarding target, the re-subscribe handshake and the
- * pasted-token panel. All three left, and each for its own reason: the first
- * two are what "webhooks" means and now live on /webhooks with the callback URL
- * they belong beside; the token panel moved to an unlisted route
- * (`numbers_.attach-token.tsx`) so the customers it can never serve stop
- * meeting it.
- *
- * The page keeps `requires: "none"` — but on the Workspace panel's own merits
- * now, not the token panel's: the account id is an account-level fact and does
- * not wait on a number. API keys are account-level too.
+ * Settings: the workspace itself, then billing and conversation history for a
+ * role that may administer them. `requires: "none"`, because nothing here waits
+ * on a number.
  */
 export const Route = createFileRoute("/settings")({
   staleTime: CONFIG_STALE_MS,
@@ -46,22 +33,20 @@ export const Route = createFileRoute("/settings")({
     billing: search.billing === "success" ? "success" : undefined,
     subscription_id: typeof search.subscription_id === "string" ? search.subscription_id : undefined,
   }),
-  loader: () => Promise.all([listApiKeys(), getConversationRetention(), getGatewayOrigin(), getBilling()]),
+  // Not gated on the role: the root may still be loading or stale. A role the
+  // page refuses gets cheap refusals here, and the view does not render them.
+  loader: () => Promise.all([getConversationRetention(), getBilling()]),
   component: SettingsPage,
   pendingComponent: () => (
     <Page title="Settings" kicker="Configuration">
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Skeleton className="h-40" />
-        <Skeleton className="h-40" />
-        <Skeleton className="h-56 lg:col-span-2" />
-      </div>
+      <SectionsSkeleton heights={["h-44", "h-40", "h-36"]} />
     </Page>
   ),
 });
 
 function SettingsPage() {
-  const scope = useLoaderData({ from: "__root__" });
-  const [keys, retention, gatewayOrigin, billing] = Route.useLoaderData();
+  const root = useLoaderData({ from: "__root__" });
+  const [retention, billing] = Route.useLoaderData();
   const router = useRouter();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -84,90 +69,76 @@ function SettingsPage() {
       current = false;
     };
   }, [search.billing, search.subscription_id, navigate, router]);
-  // Both post-organization stages carry the account, in two shapes. Reachable
-  // before any WABA exists, which is exactly why nothing here may need one.
-  const ready = scope.ok && scope.data.stage === "ready" ? scope.data.scope : null;
-  const pending =
-    scope.ok && scope.data.stage === "account-ready" ? scope.data.resources : null;
-  const accountId = ready?.accountId ?? pending?.account?.accountId;
-  const wabaId = ready?.selectedWabaId ?? pending?.wabas[0]?.wabaId;
+  const state = root.ok ? root.data : null;
+  const accountId =
+    state?.stage === "ready"
+      ? state.scope.accountId
+      : state?.stage === "account-ready"
+        ? state.resources.account?.accountId
+        : undefined;
+  const role = rootRole(root);
+  const workspace = root.user ? activeWorkspace(root.user.workspaces, root.user.activeWorkspaceId) : null;
   return (
     <SettingsView
+      rootFailure={root.ok ? null : root}
       accountId={accountId}
-      keys={keys}
+      workspace={workspace ? { id: workspace.id, name: workspace.name, role: role?.role ?? "" } : null}
+      canAdminister={role?.canAdminister}
+      billingOn={role?.billing}
       retention={retention}
-      wabaId={wabaId}
-      gatewayOrigin={gatewayOrigin.ok ? gatewayOrigin.data : null}
       billing={billing.ok ? billing.data : null}
       billingReturned={returned}
-      onKeysChanged={() => void invalidatePage(router)}
+      onChanged={() => void invalidatePage(router)}
+      // The root holds the name the workspace switcher shows.
+      onRenamed={() => void invalidateRoutes(router, rootRouteId)}
     />
   );
 }
 
-/**
- * The page itself, free of router hooks so it can be rendered directly
- * (`tests/settings-screen.test.tsx`).
- */
+/** The page itself, free of router hooks so it can be rendered directly (`tests/settings-screen.test.tsx`). */
 export function SettingsView({
+  rootFailure,
   accountId,
-  keys,
+  workspace,
+  canAdminister = false,
+  billingOn = false,
   retention,
-  wabaId,
-  gatewayOrigin,
   billing,
   billingReturned,
-  onKeysChanged,
+  onChanged,
+  onRenamed,
 }: {
+  /** The root read failed: its failure is the page, not a role refusal. */
+  rootFailure?: Failure | null;
   accountId?: string;
-  keys?: Result<AccountKeyResource[]>;
+  workspace?: WorkspaceView | null;
+  canAdminister?: boolean;
+  /** Billing is on for this deployment, whatever this role may do with it. */
+  billingOn?: boolean;
   retention?: Result<number | null>;
-  wabaId?: string;
-  gatewayOrigin?: string | null;
   /** Null while billing is off, and for a role that may not administer it. */
   billing?: BillingState | null;
   billingReturned?: CheckoutReturn | null;
-  onKeysChanged?: () => void;
+  onChanged?: () => void;
+  onRenamed?: () => void;
 }) {
   return (
     <Page title="Settings" kicker="Configuration">
-      <div className="grid items-start gap-4 lg:grid-cols-2">
-        {accountId ? <WorkspacePanel accountId={accountId} /> : null}
-        {accountId && retention ? (
-          <ConversationRetentionPanel retention={retention} onChanged={onKeysChanged} />
-        ) : null}
-        {accountId && billing ? <BillingPanel billing={billing} returned={billingReturned} /> : null}
-        {accountId && keys ? (
-          <div className="lg:col-span-2">
-            <ApiKeysPanel keys={keys} wabaId={wabaId} gatewayOrigin={gatewayOrigin} onChanged={onKeysChanged} />
-          </div>
-        ) : null}
-      </div>
+      {rootFailure ? (
+        <FailureView failure={rootFailure} />
+      ) : accountId ? (
+        <div className="flex flex-col gap-6">
+          <WorkspacePanel accountId={accountId} workspace={workspace} canRename={canAdminister} onRenamed={onRenamed} />
+          {canAdminister ? (
+            <>
+              {billing ? <BillingPanel billing={billing} returned={billingReturned} /> : null}
+              {retention ? <ConversationRetentionPanel retention={retention} onChanged={onChanged} /> : null}
+            </>
+          ) : (
+            <RoleNote copy={adminOnlyCopy("settings", billingOn)} />
+          )}
+        </div>
+      ) : null}
     </Page>
-  );
-}
-
-/** Identifiers an operator needs when they open a support thread or an API key. */
-function WorkspacePanel({ accountId }: { accountId: string }) {
-  return (
-    <Frame variant="default" spacing="lg">
-      <FramePanel fit>
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">Workspace</FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            The account scope every WABA, key, and log line in this console
-            belongs to. Quote it in support threads.
-          </FrameDescription>
-        </FrameHeader>
-        <dl className="my-0 -mx-(--frame-panel-px) mt-5 divide-y divide-(--line) border-y border-(--line)">
-          <div className="flex items-center justify-between gap-4 px-(--frame-panel-px) py-2.5">
-            <dt className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-              Account ID
-            </dt>
-            <dd className="m-0 font-mono text-xs break-all text-foreground">{accountId}</dd>
-          </div>
-        </dl>
-      </FramePanel>
-    </Frame>
   );
 }

@@ -3,8 +3,10 @@
  *
  * ONE joined query (member JOIN organization) keyed on the verified session
  * user id, single-flighted per Request like request-memo.ts: a WeakMap keyed by
- * the Request's Headers, so nothing survives the request. Roles stay
- * server-side; only id/name reach callers that build the public list.
+ * the Request's Headers, so nothing survives the request. The membership list
+ * the browser gets carries id/name only; the role string of the ACTIVE
+ * workspace reaches it as display data in the dashboard state (`RoleFlag`),
+ * and every authorization decision still re-reads it here.
  */
 
 import type { Auth } from "./auth";

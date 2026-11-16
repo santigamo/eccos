@@ -50,7 +50,7 @@ function resources(connectPolicy: ConnectPolicy): AccountResources {
 describe("billing off", () => {
   test("Settings has no billing section", () => {
     for (const billing of [undefined, null]) {
-      const html = renderToStaticMarkup(<SettingsView accountId="account-a" billing={billing} />);
+      const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={billing} />);
       expect(html).not.toContain("Billing");
       expect(html).not.toContain("subscription");
     }
@@ -82,7 +82,7 @@ describe("billing off", () => {
 
 describe("billing on", () => {
   test("a closed workspace is offered the subscription and told messaging keeps working", () => {
-    const html = renderToStaticMarkup(<SettingsView accountId="account-a" billing={closed} />);
+    const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={closed} />);
     expect(html).toContain("Billing");
     expect(html).toContain("No active subscription");
     expect(html).toContain("8 EUR + VAT");
@@ -92,7 +92,7 @@ describe("billing on", () => {
   });
 
   test("a subscribed workspace manages its billing and is not offered a second subscription", () => {
-    const html = renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} />);
+    const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />);
     expect(html).toContain("Manage billing");
     expect(html).not.toContain("Start subscription");
   });
@@ -111,10 +111,10 @@ describe("billing on", () => {
     expect(checkoutReturnNote(trial, { status: "active" })).toContain("subscription is active");
     expect(checkoutReturnNote(closed, { status: null })).toContain("still confirming");
     const html = renderToStaticMarkup(
-      <SettingsView accountId="account-a" billing={trial} billingReturned={{ status: "trialing" }} />,
+      <SettingsView accountId="account-a" canAdminister billing={trial} billingReturned={{ status: "trialing" }} />,
     );
     expect(html).toContain("trial has started");
-    expect(renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} />)).not.toContain("trial has started");
+    expect(renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />)).not.toContain("trial has started");
   });
 
   test("Numbers warns while closed and never blocks connecting", () => {
@@ -195,11 +195,11 @@ describe("billing on", () => {
   });
 
   test("a workspace opened by the operator with no Creem customer is billed separately and shown no price", () => {
-    const free = renderToStaticMarkup(<SettingsView accountId="account-a" billing={{ ...trial, hasCustomer: false }} />);
+    const free = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={{ ...trial, hasCustomer: false }} />);
     expect(free).toContain("Billed separately");
     expect(free).not.toContain("No subscription needed");
     expect(free).not.toContain("Monthly price");
-    expect(renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} />)).toContain("Monthly price");
+    expect(renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />)).toContain("Monthly price");
   });
 
   test("a refused new number says why and links to billing", () => {

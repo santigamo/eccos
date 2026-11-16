@@ -27,7 +27,7 @@ layout, so this is about confirming it degrades acceptably, not pixel-perfect mo
   at nothing) — every view should render its "Gateway unreachable" card, never a crash/500.
 - **First run**: sign up with a new email, verify it, and create a workspace on `/onboarding`.
   An account with no WABA must remain visibly distinct from the ready console. An API key created
-  in Settings is shown once; refreshing the page must not show it again. With `GATEWAY_PUBLIC_URL` configured, **Connect WhatsApp** must start the
+  on `/api-keys` is shown once; refreshing the page must not show it again. With `GATEWAY_PUBLIC_URL` configured, **Connect WhatsApp** must start the
   account-bound Embedded Signup handoff without asking for an account API key.
 - **Auth gate**: sign-in and redirects work on localhost `vite dev`; the host check (anything
   other than the `BETTER_AUTH_URL` host gets `403`) is only exercisable against a deployment.
@@ -226,10 +226,30 @@ Meta callback (Meta → Eccos). The forwarding target and Re-subscribe moved her
 
 ## Settings (`/settings`, `src/routes/settings.tsx`)
 
-- [ ] Visual: the Workspace panel shows the account id, in mono, and nothing else. The
-      forwarding target, Re-subscribe and the pasted-token panel have all left this page.
+- [ ] Visual: full-width sections, Workspace, Billing, Conversation history; from `lg` up the title
+      and description sit in the left third and the frame in the right two thirds, stacked below.
+      The Workspace frame ends on its last row with no band under it. API keys, the forwarding target, Re-subscribe and the pasted-token panel have all
+      left this page.
+- [ ] The Workspace panel shows the name, the account id with a Copy button, and your role. An
+      owner or admin can rename the workspace; the new name shows at once, the masthead workspace
+      switcher follows, and so does Overview > Scope > Account.
+- [ ] Without `administer` (operator, viewer): only the Workspace panel, read-only, and one note
+      saying an owner or admin manages conversation history (and billing, when billing is on).
+      Neither page reads the administer-only data for that role.
+- [ ] Billing links (the connect outcome's "Open billing") land on `/settings#billing`.
 - [ ] Reachable with no WABA at all (`requires: "none"`): the account id exists before a number
       does, and the page renders no failure card in that state.
+
+## API keys (`/api-keys`, `src/routes/api-keys.tsx`)
+
+- [ ] In the sidebar under Setup, after Webhooks, only for an owner or admin. On a short viewport
+      with the setup checklist showing, the navigation list scrolls inside the sidebar and every
+      item stays reachable. Reachable with no
+      WABA (`requires: "none"`).
+- [ ] "API keys" appears once, as the page heading; the sections are Keys (form and table) and
+      Send a message. Create, list and revoke keys; a new key is shown once with the send snippet filled in. Key
+      dates read as the UTC day, with the exact instant on hover.
+- [ ] An operator or viewer who opens the URL sees one note telling them to ask an owner or admin.
 
 ## Attach by token (`/numbers/attach-token`, `src/routes/numbers_.attach-token.tsx`)
 

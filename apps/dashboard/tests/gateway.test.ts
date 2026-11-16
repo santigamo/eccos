@@ -159,6 +159,8 @@ mock.module("../src/auth/tenant", () => ({
   ...realTenant,
   resolveMemberships: (...args: Parameters<typeof realTenant.resolveMemberships>) =>
     fakesActive ? Promise.resolve(fakeMemberships) : realTenant.resolveMemberships(...args),
+  memberRole: (...args: Parameters<typeof realTenant.memberRole>) =>
+    fakesActive ? Promise.resolve(fakeDeniedActions.has("administer") ? "operator" : "owner") : realTenant.memberRole(...args),
 }));
 
 // The seam throws the SAME typed errors the real guards do — the boundary in
@@ -542,14 +544,14 @@ describe("session bootstrap (auth-aware state)", () => {
     const result = await getDashboardState();
     expect(result).toEqual({
       ok: true,
-      data: { stage: "account-ready", canAdminister: true, resources: {
+      data: { stage: "account-ready", canAdminister: true, role: "owner", resources: {
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [], wabas: [], phones: [],
       } },
     });
     // A role that may not connect is told so by the state, which is what hides the controls.
     fakeDeniedActions = new Set(["administer", "erase"]);
-    expect(await getDashboardState()).toMatchObject({ ok: true, data: { canAdminister: false } });
+    expect(await getDashboardState()).toMatchObject({ ok: true, data: { canAdminister: false, role: "operator" } });
   });
 
   test("an account whose only WABA is awaiting a phone number stays inside the app", async () => {

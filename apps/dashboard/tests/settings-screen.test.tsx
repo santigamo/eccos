@@ -3,60 +3,134 @@ import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 
 /**
- * What is left of the Settings page (`routes/settings.tsx`), rendered through
- * the router-free `SettingsView`.
- *
- * The page used to carry three things it no longer does — the forwarding
- * target, the re-subscribe handshake and the pasted-token panel. The first two
- * are on /webhooks beside the callback URL they belong to
- * (`tests/webhooks-screen.test.tsx`); the token panel moved to an unlisted
- * route, and its invariants moved with it
- * (`tests/attach-token-screen.test.tsx`). These tests hold the page to what
- * survived, and — deliberately — to the absence of what left: a panel that
- * quietly comes back here is the decision being undone.
+ * The Settings page (`routes/settings.tsx`), rendered through the router-free
+ * `SettingsView`: Workspace, Billing and Conversation history as full-width
+ * two-column sections, each titled in the left third.
+ * API keys live on /api-keys (`tests/api-keys-screen.test.tsx`), and the panels
+ * that left earlier must not come back.
  */
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { SettingsView } = await import("../src/routes/settings");
-const { IssuedKeyNotice } = await import("../src/components/dashboard/api-keys");
+const { roleLabel } = await import("../src/components/dashboard/workspace-panel");
 const { ConversationRetentionPanel, RETENTION_CHOICES, saveRetentionChoice } = await import(
   "../src/components/dashboard/conversation-retention"
 );
 
-describe("SettingsView", () => {
-  const html = renderToStaticMarkup(<SettingsView accountId="account-a" />);
+const workspace = { id: "org-a", name: "Citta", role: "owner" };
+const billing = {
+  connectPolicy: "open" as const,
+  explicitPolicy: true,
+  hasCustomer: true,
+  numbers: 1,
+  monthlyEuros: 8,
+};
 
-  test("shows the account id, which is what an operator comes here for", () => {
-    expect(html).toContain("Workspace");
-    expect(html).toContain("Account ID");
+function text(html: string): string {
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+describe("SettingsView, owner or admin", () => {
+  const html = renderToStaticMarkup(
+    <SettingsView
+      accountId="account-a"
+      workspace={workspace}
+      canAdminister
+      billing={billing}
+      retention={{ ok: true, data: null }}
+    />,
+  );
+
+  test("the Workspace panel names the workspace, the account id with a copy control, and the role", () => {
+    expect(html).toContain("Citta");
+    expect(html).toContain("Rename");
     expect(html).toContain("account-a");
+    expect(html).toContain("Copy");
+    expect(text(html)).toContain("Your role Owner");
+    // A role is a state word: the neutral square tag, not prose.
+    expect(html).toMatch(/<span class="[^"]*border-\(--line-strong\)[^"]*">Owner<\/span>/);
   });
 
-  test("the panels that moved are gone, and did not leave a stub behind", () => {
-    // INVARIANT. Each of these strings is the visible trace of a panel that now
-    // lives elsewhere; finding one here means two pages own the same control.
-    expect(html).not.toContain("Attach by token");
-    expect(html).not.toContain("Meta access token");
-    expect(html).not.toContain("Forwarding target");
-    expect(html).not.toContain("Forwarding URL");
-    expect(html).not.toContain("Re-subscribe");
+  test("full-width sections, ordered Workspace, Billing, Conversation history, each titled and anchored", () => {
+    expect(html).not.toMatch(/max-w-(3xl|4xl|5xl)/);
+    for (const title of ["Workspace", "Billing", "Conversation history"]) {
+      expect(html).toMatch(new RegExp(`<h2[^>]*>${title}</h2>`));
+    }
+    const order = ['id="workspace"', 'id="billing"', 'id="conversation-history"'].map((id) => html.indexOf(id));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  test("no pointer to the unlisted token route survives here", () => {
-    // The old "no number yet" note said a number could be attached "by token
-    // below". Both the note and the panel are gone; a link would put the route
-    // back in the interface, which is precisely what unlisted means it must not
-    // be (routes/numbers_.attach-token.tsx).
-    expect(html).not.toContain("attach-token");
+  test("API keys are not here any more", () => {
+    expect(html).not.toContain("API keys");
+    expect(html).not.toContain("Create key");
+    expect(html).not.toContain("Bearer");
   });
 
-  test("nothing here needs a WABA, so nothing here can fail for want of one", () => {
-    // The page keeps `requires: "none"` on the Workspace panel's own merits,
-    // and it no longer reads anything WABA-scoped — so there is no failure card
-    // and no empty note to render. With no account resolved yet it renders the
-    // page chrome and stops, rather than blaming the gateway for a scope that
-    // simply does not exist yet (data rule 7).
+  test("the panels that moved earlier did not come back", () => {
+    for (const gone of ["Attach by token", "Meta access token", "Forwarding target", "Re-subscribe", "attach-token"]) {
+      expect(html).not.toContain(gone);
+    }
+  });
+});
+
+describe("SettingsView, without administer", () => {
+  const html = renderToStaticMarkup(
+    <SettingsView accountId="account-a" workspace={{ ...workspace, role: "operator" }} billingOn />,
+  );
+
+  test("the Workspace panel only, read-only", () => {
+    expect(html).toContain("Citta");
+    expect(html).toContain("account-a");
+    expect(text(html)).toContain("Your role Operator");
+    expect(html).not.toContain("Rename");
+    expect(html).not.toContain('id="billing"');
+    expect(html).not.toContain("Conversation history");
+  });
+
+  test("one note, a title and a sentence, explains who manages the rest; no panel refuses on its own", () => {
+    expect(text(html)).toContain(
+      "Managed by an owner or admin An owner or admin of this workspace manages billing and conversation history.",
+    );
+    expect(html).not.toContain("Not available to your role");
+  });
+
+  test("with billing off for the deployment, the note does not mention billing", () => {
+    const off = renderToStaticMarkup(<SettingsView accountId="account-a" workspace={workspace} />);
+    expect(off).toContain("An owner or admin of this workspace manages conversation history.");
+    expect(off).not.toContain("billing");
+  });
+});
+
+describe("SettingsView when the root read failed", () => {
+  test("an owner whose root read failed sees that failure, not a role refusal", () => {
+    const html = renderToStaticMarkup(
+      <SettingsView rootFailure={{ ok: false, kind: "unreachable", error: "fetch failed" }} accountId="account-a" />,
+    );
+    expect(html).toContain("Gateway unreachable");
+    expect(html).not.toContain("Managed by an owner or admin");
+    expect(html).not.toContain("Account ID");
+  });
+});
+
+describe("SettingsView, admin reads refused for a non-admin", () => {
+  test("the refused reads are not rendered", () => {
+    const html = renderToStaticMarkup(
+      <SettingsView
+        accountId="account-a"
+        workspace={{ ...workspace, role: "viewer" }}
+        retention={{ ok: false, kind: "forbidden", reason: "missing-permission", error: "missing" }}
+      />,
+    );
+    expect(html).toContain("Managed by an owner or admin");
+    expect(html).not.toContain("Not available to your role");
+    expect(html).not.toContain("Keep conversations");
+  });
+});
+
+describe("SettingsView before an account exists", () => {
+  test("renders the page chrome and stops, with no failure card", () => {
     const empty = renderToStaticMarkup(<SettingsView />);
     expect(empty).toContain("Settings");
     expect(empty).not.toContain("Gateway unreachable");
@@ -64,96 +138,15 @@ describe("SettingsView", () => {
   });
 });
 
-describe("API keys panel", () => {
-  const keys = {
-    ok: true as const,
-    data: [
-      { keyId: "key_live", label: "prod", createdAt: 1, revokedAt: null },
-      { keyId: "key_old", label: null, createdAt: 0, revokedAt: 2 },
-    ],
-  };
-
-  test("an administrator gets the create form, the list, and the send snippet", () => {
-    const html = renderToStaticMarkup(
-      <SettingsView
-        accountId="account-a"
-        keys={keys}
-        wabaId="1234567890"
-        gatewayOrigin="https://api.eccos.chat"
-      />,
-    );
-    expect(html).toContain("API keys");
-    expect(html).toContain("Create key");
-    expect(html).toContain("key_live");
-    expect(html).toContain("Revoke");
-    expect(html).toContain("Revoked");
-    expect(html).toContain("https://api.eccos.chat/v1/wabas/1234567890/messages");
-    expect(html).toContain("Authorization: Bearer &lt;API_KEY&gt;");
-  });
-
-  test("the send snippet keeps a placeholder when the gateway has no public URL", () => {
-    const html = renderToStaticMarkup(<SettingsView accountId="account-a" keys={keys} />);
-    expect(html).toContain("&lt;GATEWAY_URL&gt;/v1/wabas/&lt;WABA_ID&gt;/messages");
-  });
-
-  test("a role without administer sees the refusal, and no control to act with", () => {
-    const html = renderToStaticMarkup(
-      <SettingsView
-        accountId="account-a"
-        keys={{
-          ok: false,
-          kind: "forbidden",
-          reason: "missing-permission",
-          error: 'missing "administer" permission in this organization',
-        }}
-      />,
-    );
-    expect(html).toContain("API keys");
-    expect(html).toContain("Not available to your role");
-    expect(html).not.toContain("Create key");
-    expect(html).not.toContain("Revoke");
-    expect(html).not.toContain("Bearer");
-  });
-
-  test("with no WABA yet the snippet keeps the placeholder", () => {
-    const html = renderToStaticMarkup(
-      <SettingsView accountId="account-a" keys={{ ok: true, data: [] }} />,
-    );
-    expect(html).toContain("/v1/wabas/&lt;WABA_ID&gt;/messages");
-    expect(html).toContain("No keys yet");
-    // Conversations sends with no key, so the empty state must not say otherwise.
-    expect(html).toContain("Conversations in this console works without it");
-    expect(html).toContain('href="https://docs.eccos.chat/sending-messages"');
-  });
-
-  test("a new key is shown once, with a copy control and the warning", () => {
-    const html = renderToStaticMarkup(
-      <IssuedKeyNotice issued={{ keyId: "key_new", apiKey: "ek_secret" }} onDone={() => {}} />,
-    );
-    expect(html).toContain("ek_secret");
-    expect(html).toContain("Copy");
-    expect(html).toContain("You won&#x27;t see this key again");
-  });
-
-  test("a new key comes with the send call already filled in", () => {
-    const html = renderToStaticMarkup(
-      <IssuedKeyNotice
-        issued={{ keyId: "key_new", apiKey: "ek_secret" }}
-        wabaId="waba-a"
-        gatewayOrigin="https://gw.example"
-        onDone={() => {}}
-      />,
-    );
-    expect(html).toContain("https://gw.example/v1/wabas/waba-a/messages");
-    expect(html).toContain("Authorization: Bearer ek_secret");
-    expect(html).toContain("Read the API guide");
-  });
+test("roleLabel reads a comma-separated role string", () => {
+  expect(roleLabel("admin")).toBe("Admin");
+  expect(roleLabel("owner,admin")).toBe("Owner, Admin");
 });
 
 describe("Conversation history control (Settings)", () => {
   test("renders the control with keep-forever as the default and the three windows", () => {
     const html = renderToStaticMarkup(
-      <SettingsView accountId="account-a" keys={{ ok: true, data: [] }} retention={{ ok: true, data: null }} />,
+      <SettingsView accountId="account-a" canAdminister retention={{ ok: true, data: null }} />,
     );
     expect(html).toContain("Conversation history");
     expect(html).toContain("The short buffer used for forwarding is separate");
@@ -181,20 +174,13 @@ describe("Conversation history control (Settings)", () => {
     expect(windowed).toContain("Older conversations and contacts are deleted");
   });
 
-  test("a role without administer sees the refusal copy, not the control", () => {
+  test("a refusal from the server on a stale root flag still reads as a refusal, not a control", () => {
     const html = renderToStaticMarkup(
       <ConversationRetentionPanel
-        retention={{
-          ok: false,
-          kind: "forbidden",
-          reason: "missing-permission",
-          error: 'missing "administer" permission in this organization',
-        }}
+        retention={{ ok: false, kind: "forbidden", reason: "missing-permission", error: "missing" }}
       />,
     );
-    expect(html).toContain("Conversation history");
     expect(html).toContain("Not available to your role");
-    expect(html).not.toContain("Save");
     expect(html).not.toContain("Keep conversations");
   });
 
@@ -202,8 +188,8 @@ describe("Conversation history control (Settings)", () => {
     const html = renderToStaticMarkup(
       <ConversationRetentionPanel retention={{ ok: true, data: 30 }} />,
     );
-    expect(html).not.toContain("\u2014");
-    expect(html).not.toContain("\u2013");
+    expect(html).not.toContain("—");
+    expect(html).not.toContain("–");
   });
 });
 
@@ -239,5 +225,30 @@ describe("saveRetentionChoice (the Save outcome)", () => {
     expect(first.ok).toBe(false);
     expect(first.ok ? "" : first.error).toContain("Failed to fetch");
     expect(await saveRetentionChoice("365", save)).toEqual({ ok: true });
+  });
+});
+
+describe("rootRole (what both loaders and pages read from the root)", () => {
+  test("reads the role and whether billing is on, and nothing before an account exists", async () => {
+    const { rootRole } = await import("../src/lib/root-role");
+    const resources = { account: null, keys: [], wabas: [], phones: [] };
+    expect(
+      rootRole({ ok: true, data: { stage: "account-ready", resources, canAdminister: false, role: "viewer" } }),
+    ).toEqual({ canAdminister: false, role: "viewer", billing: false });
+    expect(
+      rootRole({
+        ok: true,
+        data: {
+          stage: "account-ready",
+          resources,
+          canAdminister: true,
+          role: "owner",
+          billing: { subscribed: false, canManage: true },
+        },
+      }),
+    ).toEqual({ canAdminister: true, role: "owner", billing: true });
+    expect(rootRole({ ok: true, data: { stage: "no-organization" } })).toBeNull();
+    expect(rootRole({ ok: false, kind: "unreachable", error: "down" })).toBeNull();
+    expect(rootRole(undefined)).toBeNull();
   });
 });

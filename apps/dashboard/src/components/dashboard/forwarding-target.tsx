@@ -10,6 +10,7 @@ import {
 } from "@/components/reui/frame";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { MACHINE_CLASS } from "./plain-table";
 
 /**
  * The forwarding target: where this WhatsApp Business Account's events go.
@@ -52,7 +53,6 @@ function NoticeBox({ notice }: { notice: Notice | null }) {
 
 /** The machine voice: Inter, 11px, uppercase, wide tracking (the design
  * contract's functional register — panel titles, form labels, captions). */
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 const LABEL_CLASS = `mb-1 block ${MACHINE_CLASS}`;
 
 /** 32 bytes as hex, minted in the browser. The server never proposes a secret:

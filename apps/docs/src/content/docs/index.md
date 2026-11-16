@@ -20,7 +20,7 @@ Meta WhatsApp Cloud API, so message bodies are Meta's own format
    that is on WhatsApp today off the app. The Numbers page then lists each number with its
    **Phone number ID** and **WABA** (WhatsApp Business Account) id. You need the WABA id in every
    API call.
-3. **Settings**, **API keys**: enter a label and press **Create key**. The key (prefix `ek_`) is
+3. **API keys** (under Setup, for an owner or admin): enter a label and press **Create key**. The key (prefix `ek_`) is
    shown once; store it. You can revoke it from the same list.
 4. **Webhooks**, **Forwarding target**: set the **Forwarding URL** (HTTPS) and a **Signing secret**
    (type one or press **Generate**), then **Save**. The secret is write-only: the console never
