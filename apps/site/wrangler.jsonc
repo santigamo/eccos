@@ -29,6 +29,8 @@
     { "pattern": "www.eccos.chat/*", "zone_name": "eccos.chat" }
   ],
 
-  // Kept on during setup so there is a URL to test against before DNS settles.
-  "workers_dev": true
+  // Off: a workers.dev twin serving the same pages is a duplicate host for
+  // search and answer engines.
+  "workers_dev": false,
+  "preview_urls": false
 }
