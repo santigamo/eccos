@@ -8,9 +8,13 @@
   `app.eccos.chat`: it answers only the host in `BETTER_AUTH_URL` and trusts only that origin.
   Unset, every public request gets `403`. Set it to your console's HTTPS origin **before** deploying
   this version, and drop any local patch to the host allowlist.
-- **Deploy the gateway first.** The API-key snippet in Settings now shows the gateway's own
+- **Deploy the gateway first.** The API-key snippet on the API keys page now shows the gateway's own
   `GATEWAY_PUBLIC_URL` (new `GatewayRPC.getPublicOrigin()`); against an older gateway it shows a
   `<GATEWAY_URL>` placeholder.
+- **Deploy the gateway first** for workspace rename too: the console calls the new
+  `GatewayRPC.setAccountName()` after renaming a workspace. Against an older gateway the rename
+  still succeeds in the console, but the gateway's account name keeps the old value (reported to
+  Sentry, not retried), so the Overview's account name and the ops census drift.
 - **Link previews** (`og:url`, `og:image`) use the host that served the page.
 
 ### Production config out of the public templates

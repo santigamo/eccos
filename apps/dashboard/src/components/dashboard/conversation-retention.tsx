@@ -2,13 +2,6 @@ import { isRedirect } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { setConversationRetention, type Result } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
-import {
-  Frame,
-  FrameDescription,
-  FrameHeader,
-  FramePanel,
-  FrameTitle,
-} from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -17,10 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
-const ERROR_CLASS =
-  "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs";
+import { MACHINE_CLASS, ERROR_CLASS } from "./plain-table";
+import { SectionFrame, SettingsSection } from "./settings-section";
 
 const KEEP_FOREVER = "forever";
 
@@ -103,24 +94,21 @@ export function ConversationRetentionPanel({
   }
 
   return (
-    <Frame variant="default" spacing="lg">
-      <FramePanel fit>
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">Conversation history</FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            How long Eccos keeps conversations and contacts. The short buffer used for
-            forwarding is separate and is not affected.
-          </FrameDescription>
-        </FrameHeader>
+    <SettingsSection
+      id="conversation-history"
+      title="Conversation history"
+      description="How long Eccos keeps conversations and contacts. The short buffer used for forwarding is separate and is not affected."
+    >
+      <SectionFrame>
 
         {retention.ok ? (
-          <form onSubmit={onSave} aria-busy={saving} className="mt-5 flex flex-col gap-3">
+          <form onSubmit={onSave} aria-busy={saving} className="flex flex-col gap-3">
             <div>
               <label htmlFor="conversation-retention" className={`mb-1 block ${MACHINE_CLASS}`}>
                 Keep conversations
               </label>
               <Select value={choice} onValueChange={(value) => setChoice(value ?? KEEP_FOREVER)}>
-                <SelectTrigger id="conversation-retention" size="sm" className="w-full rounded-none">
+                <SelectTrigger id="conversation-retention" size="sm" className="w-full max-w-xs rounded-none">
                   <SelectValue>{labelOf(choice)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent align="start">
@@ -154,14 +142,14 @@ export function ConversationRetentionPanel({
             ) : null}
           </form>
         ) : (
-          <div className="mt-5">
+          <div>
             <span className={`block ${MACHINE_CLASS}`}>{failureCopy(retention).title}</span>
             <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
               {failureCopy(retention).detail}
             </p>
           </div>
         )}
-      </FramePanel>
-    </Frame>
+      </SectionFrame>
+    </SettingsSection>
   );
 }

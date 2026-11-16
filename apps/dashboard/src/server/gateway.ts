@@ -34,7 +34,8 @@ import {
   requireAuthContext,
   requireGatewayPermission,
 } from "../auth/server-auth";
-import { ForbiddenError, resolveMemberships } from "../auth/tenant";
+import { ForbiddenError, memberRole, resolveMemberships } from "../auth/tenant";
+import { roleAllows } from "../auth/identity";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
   BroadcastDetail,
@@ -235,8 +236,11 @@ export type DashboardState =
   | { stage: "no-organization" }
   | ({ stage: "account-ready"; resources: AccountResources; billing?: BillingFlag } & RoleFlag)
   | ({ stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag } & RoleFlag);
-/** Whether the member's role may connect numbers and make connection links. The server refuses either way. */
-export type RoleFlag = { canAdminister: boolean };
+/**
+ * `canAdminister`: the member's role may connect numbers, manage keys and settings; the server refuses either way.
+ * `role`: Better Auth's role string, for display.
+ */
+export type RoleFlag = { canAdminister: boolean; role: string };
 /**
  * Present only while billing is on. `subscribed`: a closed account whose
  * subscription still exists, so billing opens its portal. `canManage`: the
@@ -1267,31 +1271,22 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // on EVERY page, /numbers included, where the note explaining the state
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
-        const canAdminister = await holdsPermission(auth, request, "administer");
+        const role = await memberRole(auth, request.headers, organizationId);
+        const canAdminister = roleAllows(role, "administer");
         const billing = billingEnabled(env)
           ? { billing: { subscribed: await closedSubscription(gateway, state), canManage: canAdminister } }
           : {};
-        if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, ...billing };
+        if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, role, ...billing };
         return {
           stage: "ready",
           canAdminister,
+          role,
           status: state.status.data,
           scope: dashboardScope(state.status.scope),
           ...billing,
         };
       }),
   );
-
-/** Whether the session's role holds `action` here; any other failure still throws. */
-async function holdsPermission(auth: Auth, request: Request, action: GatewayAction): Promise<boolean> {
-  try {
-    await requireGatewayPermission(auth, request, action);
-    return true;
-  } catch (err) {
-    if (err instanceof ForbiddenError) return false;
-    throw err;
-  }
-}
 
 /** Read only for a closed account: an open one is never pointed at billing. */
 async function closedSubscription(
@@ -1644,7 +1639,7 @@ export const openConnectLink = createServerFn({ method: "POST" })
       }),
   );
 
-// --- API keys (settings page, eccos-bm92) ---
+// --- API keys (/api-keys, eccos-bm92) ---
 
 const KEY_ID_PATTERN = /^key_[A-Za-z0-9]{1,64}$/;
 const MAX_KEY_LABEL_LENGTH = 200;

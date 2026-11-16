@@ -83,6 +83,8 @@ describe("SCOPE_REQUIREMENTS", () => {
       "/settings": "none",
       // Account-level, and listed only for a role with `administer`.
       "/members": "none",
+      // Account keys do not wait on a number either.
+      "/api-keys": "none",
       "/": "number",
       // Named but UNLISTED, the second route in that shape after
       // /numbers/attach-token: the forwarding queue is the destination of every
@@ -210,7 +212,7 @@ describe("the sidebar's groups", () => {
     ]);
     expect(NAV_MAIN.map((group) => group.items.map((item) => item.href))).toEqual([
       ["/"],
-      ["/numbers", "/webhooks"],
+      ["/numbers", "/webhooks", "/api-keys"],
       ["/conversations"],
       ["/templates", "/broadcasts", "/scheduled"],
       // TWO LOGS. One send used to produce a row in each of three: an outbound

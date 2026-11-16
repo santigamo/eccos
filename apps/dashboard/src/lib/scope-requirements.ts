@@ -51,6 +51,7 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/templates": "waba",
   "/settings": "none",
   "/members": "none",
+  "/api-keys": "none",
   "/": "number",
   "/deliveries": "number",
   "/events": "number",

@@ -97,7 +97,7 @@ describe("NumbersTable", () => {
     const state = resources({ wabaId: "waba-a", status: "active", phones: 1 });
     const html = renderToStaticMarkup(<NumbersTable resources={state} nextWabaId="waba-a" />);
     expect(text(html)).toContain("This number is live. Reply to customers from Conversations");
-    for (const to of ["/conversations", "/webhooks", "/settings"]) expect(html).toContain(`href="${to}?wabaId=waba-a"`);
+    for (const to of ["/conversations", "/webhooks", "/api-keys"]) expect(html).toContain(`href="${to}?wabaId=waba-a"`);
     // A note, never a success banner.
     expect(html).not.toContain("border-l-");
 

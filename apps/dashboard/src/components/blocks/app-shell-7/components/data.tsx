@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import {
   ActivityIcon,
   InboxIcon,
+  KeyRoundIcon,
   CalendarClockIcon,
   MegaphoneIcon,
   MessagesSquareIcon,
@@ -101,6 +102,13 @@ export const NAV_MAIN: NavGroup[] = [
         href: "/webhooks",
         icon: <WebhookIcon aria-hidden="true" />,
         requires: "waba",
+      },
+      {
+        id: "api-keys",
+        label: "API keys",
+        href: "/api-keys",
+        icon: <KeyRoundIcon aria-hidden="true" />,
+        adminOnly: true,
       },
     ],
   },

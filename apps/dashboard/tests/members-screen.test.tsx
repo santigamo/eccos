@@ -180,7 +180,7 @@ describe("removing a member states the cost", () => {
   test("for everyone: access ends, their API keys keep working", () => {
     expect(removeMemberCopy("operator")).toEqual([
       "Their access ends on their next request.",
-      "API keys they created keep working. Revoke them in Settings if they should stop.",
+      "API keys they created keep working. Revoke them in API keys if they should stop.",
       "Invitations they sent that are still pending are cancelled.",
     ]);
   });

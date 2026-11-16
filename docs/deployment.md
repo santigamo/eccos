@@ -67,8 +67,11 @@ can continue using their populated templates, with `keep_vars: true` added.
 The console no longer hard-codes `app.eccos.chat`: it answers only the host in `BETTER_AUTH_URL`.
 **Set `BETTER_AUTH_URL` to your console's HTTPS origin before deploying this version**, or every
 request gets `403 Forbidden`. If you patched the host allowlist in `src/server.ts` or
-`src/auth/config.ts`, drop that patch. The API-key snippet in Settings now shows the gateway's own
-`GATEWAY_PUBLIC_URL`, so deploy the gateway first.
+`src/auth/config.ts`, drop that patch. The API-key snippet on the API keys page now shows the gateway's own
+`GATEWAY_PUBLIC_URL`, so deploy the gateway first. The same order holds for workspace rename: the
+console calls the new `GatewayRPC.setAccountName()`, and against an older gateway the rename
+succeeds in the console while the gateway's account name keeps its old value, with nothing to
+reconcile it later.
 
 Production files are ignored and local to each checkout. Before retiring a worktree, transfer
 its populated files to the checkout used for deployment with `cp -n`, then verify the values

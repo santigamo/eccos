@@ -237,7 +237,7 @@ function NextNote({ count, wabaId }: { count: number; wabaId: string }) {
           set a forwarding target
         </Link>
         ; to send from your server,{" "}
-        <Link to="/settings" search={search} className={INLINE_LINK}>
+        <Link to="/api-keys" search={search} className={INLINE_LINK}>
           create an API key
         </Link>
         .

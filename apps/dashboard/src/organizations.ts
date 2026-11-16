@@ -13,8 +13,11 @@ import { z } from "zod";
 import * as Sentry from "@sentry/cloudflare";
 import { env } from "cloudflare:workers";
 import type { GatewayApi } from "@eccos/gateway-contract";
+import type { Failure } from "./server/gateway";
+import { auditEvent } from "./server/audit";
 import { getAuthForRequest } from "./auth/request-auth";
-import { UnauthorizedError, requireAuthContext } from "./auth/server-auth";
+import { UnauthorizedError, requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
+import { classifyFailure } from "./server/classify-failure";
 import {
   ForbiddenError,
   resolveMemberships,
@@ -245,6 +248,75 @@ export const createOrganization = createServerFn({ method: "POST" })
       }
     },
   );
+
+export const renameWorkspaceInput = z
+  .object({
+    organizationId: z.string().trim().min(1).max(128),
+    name: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
+const RENAME_RETRY = "Could not rename the workspace right now. Please try again.";
+
+/**
+ * The gateway keeps its own copy of the name; a failure there must not undo the
+ * rename the user sees. Returns the account id it renamed, null when it could not.
+ */
+async function syncAccountName(organizationId: string, name: string): Promise<string | null> {
+  try {
+    return await withGateway(async (gateway) => {
+      const link = await gateway.getOrganizationAccountLink(organizationId);
+      if (link?.status !== "active") throw new Error("no active account link");
+      await gateway.setAccountName(link.accountId, name);
+      return link.accountId;
+    });
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { area: "organizations", event: "account-rename-failed" },
+      extra: { organizationId },
+    });
+    return null;
+  }
+}
+
+/**
+ * Rename the workspace the page shows. In process, because the HTTP
+ * `organization/update` endpoint is blocked (`auth/blocked-endpoints.ts`); only
+ * the name is written and only the name is returned, so the slug never moves or leaks.
+ * A session that has since moved to another workspace (another tab) is refused.
+ */
+export const renameWorkspace = createServerFn({ method: "POST" })
+  .validator((input: unknown) => renameWorkspaceInput.parse(input))
+  .handler(async ({ data }): Promise<{ ok: true; data: { name: string } } | Failure> => {
+    try {
+      const auth = authInstance();
+      const request = currentRequest();
+      const organizationId = await requireGatewayPermission(auth, request, "administer");
+      if (organizationId !== data.organizationId) {
+        throw new ForbiddenError("session moved to another workspace", "workspace-changed");
+      }
+      const { session } = await requireAuthContext(auth, request);
+      await auth.api.updateOrganization({
+        body: { organizationId, data: { name: data.name } },
+        headers: request.headers,
+      });
+      const accountId = await syncAccountName(organizationId, data.name);
+      // No name in the line: ids only, like every other audit record.
+      auditEvent({
+        action: "workspace_rename",
+        actorUserId: session.userId,
+        organizationId,
+        accountId,
+        outcome: "success",
+        detail: accountId ? undefined : "gateway-name-not-synced",
+      });
+      return { ok: true, data: { name: data.name } };
+    } catch (err) {
+      const failure = await classifyFailure(err);
+      // An unexpected error's message is for Sentry, which classifyFailure told; the screen gets the retry line.
+      return failure.kind === "unreachable" ? { ...failure, error: RENAME_RETRY } : failure;
+    }
+  });
 
 const selectOrgInput = z
   .object({ organizationId: z.string().trim().min(1).max(128) })

@@ -88,6 +88,12 @@ export async function verifyMembership(
   return memberships.some((m) => m.id === organizationId);
 }
 
+/** The member's Better Auth role string in `organizationId`, "" when not a member. Display only. */
+export async function memberRole(auth: Auth, headers: Headers, organizationId: string): Promise<string> {
+  const memberships = await getMembershipsOnce(auth, headers);
+  return memberships.find((m) => m.id === organizationId)?.role ?? "";
+}
+
 /**
  * Require that the signed-in user holds `action` in the resolved organization.
  *

@@ -13,6 +13,7 @@ import {
 import { NAV_MAIN, type NavGroup } from "./data"
 import { useIdlePrefetch } from "@/hooks/use-idle-prefetch"
 import { hasNumberScope, hasWabaScope } from "@/lib/scope-requirements"
+import { rootRole } from "@/lib/root-role"
 
 export function NavMain() {
   const { pathname } = useLocation()
@@ -26,7 +27,7 @@ export function NavMain() {
   const scope = root.ok ? root.data : null
   const hasNumber = scope !== null && hasNumberScope(scope)
   const hasWaba = scope !== null && hasWabaScope(scope)
-  const canAdminister = scope !== null && "canAdminister" in scope && scope.canAdminister
+  const canAdminister = rootRole(root)?.canAdminister ?? false
   useIdlePrefetch({ hasNumber, hasWaba, canAdminister }, wabaId)
 
   return (

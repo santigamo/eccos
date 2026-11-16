@@ -118,6 +118,40 @@ Every route renders the same skeleton (the `Page` component in `src/ui.tsx`):
    the viewport (`flex min-h-full flex-col`) so structure reaches the bottom and
    the void reads as intentional.
 
+### Type tiers
+
+Inter carries three weights, each with one job, so a row reads at a glance. The machine voice
+and the pixel face keep the roles above. The classes live in `components/dashboard/plain-table.tsx`
+(`TITLE_TIER`, `IDENTITY_TIER`, `SECONDARY_TIER`, `SUPPORT_TIER`, `MACHINE_CLASS`, and the
+`SectionHeading` that wears the title tier); import them rather than writing the classes again.
+
+- **600, titles.** A section title is an `h2`: `text-base font-semibold text-foreground`. A count
+  beside it is `font-normal text-muted-foreground` ("Members 2"). A section title is never the
+  11px machine label: that label is for column headers and field labels, and using it for both
+  flattens the page.
+- **500, what the row is about.** A row's identity (a member's name, a key's label) and the value
+  in a label/value row: `text-sm font-medium text-foreground`.
+- **400, everything that supports it.** A second line under the identity (the key id under its
+  label): `text-xs text-muted-foreground`. Other cells and descriptions: `text-sm
+  text-muted-foreground`.
+- Mono only for machine identifiers and timestamps (account id, key id), never for a person's
+  email.
+- Column headers and field labels stay in the machine voice.
+- A role is a state word, not prose: the neutral square tag (`StatusTag`), no colour.
+
+### Settings sections
+
+A page of settings uses the whole content width, with structure instead of stretched controls.
+Each section is one full-width row: from `lg` up, the left third holds its title and
+description and the right two thirds hold the bordered `Frame` with its rows or controls;
+below `lg` they stack (`SettingsSection` in `components/dashboard/settings-section.tsx`).
+Sections are divided by a hairline. Label/value rows put the label in the machine voice, the
+value in the 500 tier and the row's action at the right edge, and the last row closes on the
+frame's own edge with no band under it. A control keeps a width of its own (`max-w-sm` for a
+text input, `max-w-xs` for a select) instead of stretching across the column. A table in a
+section spans the column and sizes its columns in percentages (data rule 4). /settings and
+/api-keys are built this way.
+
 ## Overlays (which surface, and which register)
 
 Anything that covers a page is one of three registers, and the register is chosen by

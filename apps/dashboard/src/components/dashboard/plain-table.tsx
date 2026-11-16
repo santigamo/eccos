@@ -1,7 +1,11 @@
 import type { ReactNode } from "react";
 
-/** The console's plain rail-separated table, shared by /numbers and /members. */
+/** The console's plain rail-separated table (/numbers, /members) and the classes every panel shares. */
+/** The functional register: Inter 11px uppercase (docs/DASHBOARD-DESIGN.md, "Two voices"). */
 export const MACHINE_CLASS = "text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
+/** A refused panel action, under the control that caused it. */
+export const ERROR_CLASS =
+  "bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs";
 export const ROW = "border-b border-(--line) transition-colors hover:bg-(--row-hover)";
 export const CELL = "px-3 py-2.5";
 /** For rows whose identity cell carries a second line. */
