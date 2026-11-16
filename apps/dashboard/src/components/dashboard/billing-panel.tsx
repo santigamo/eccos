@@ -38,7 +38,7 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className="text-sm font-semibold">Billing</FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            Eccos Cloud is billed per connected number. Messages are never billed.
+            Eccos Cloud is billed per connected number, never per message.
             {closed ? " Messaging keeps working without a subscription; adding a number needs one." : ""}
           </FrameDescription>
         </FrameHeader>
