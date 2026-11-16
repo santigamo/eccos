@@ -63,8 +63,17 @@ export function safeRedirectTarget(value: string | undefined): string | undefine
   return end === -1 ? pathname : pathname + value.slice(end);
 }
 
+function withRedirect(page: string, target: string | undefined): string {
+  const redirect = safeRedirectTarget(target);
+  return redirect ? `${page}?redirect=${encodeURIComponent(redirect)}` : page;
+}
+
 /** The sign-in page, carrying `target` as its bounce-back only when it is safe. */
 export function signInHref(target: string | undefined): string {
-  const redirect = safeRedirectTarget(target);
-  return redirect ? `/signin?redirect=${encodeURIComponent(redirect)}` : "/signin";
+  return withRedirect("/signin", target);
+}
+
+/** The sign-up page, carrying `target` through verification the same way. */
+export function signUpHref(target: string | undefined): string {
+  return withRedirect("/signup", target);
 }

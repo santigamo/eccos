@@ -102,9 +102,11 @@ describe("connect policy off (self-host)", () => {
       expect(resources.phones).toHaveLength(7);
       expect(i.getAccountBilling(TEST_ACCOUNT_ID)).toEqual({
         connectPolicy: "open",
+        explicitPolicy: false,
         customerId: null,
         subscriptionId: null,
       });
+      expect(i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open" }).explicitPolicy).toBe(true);
       expect(i.listBilledAccounts()).toEqual([]);
     });
   });
@@ -312,6 +314,7 @@ describe("connect policy default and billing state", () => {
     await cp((i) => i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_NEW"])));
     expect(await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed" })).toEqual({
       connectPolicy: "closed",
+      explicitPolicy: true,
       customerId: "cust_1",
       subscriptionId: "sub_1",
     });
@@ -327,13 +330,13 @@ describe("connect policy default and billing state", () => {
     // A stale writer that read another subscription changes nothing.
     expect(
       await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed", ifSubscriptionId: "sub_0" }),
-    ).toEqual(first);
+    ).toEqual({ ...first, explicitPolicy: true });
     expect(
       await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open", customerId: "", ifSubscriptionId: "sub_1" }),
-    ).toEqual(first);
+    ).toEqual({ ...first, explicitPolicy: true });
     expect(
       await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed", subscriptionId: null }),
-    ).toEqual({ connectPolicy: "closed", customerId: "cust_1", subscriptionId: null });
+    ).toEqual({ connectPolicy: "closed", explicitPolicy: true, customerId: "cust_1", subscriptionId: null });
     expect(await gateway.listBilledAccounts()).toEqual([]);
   });
 

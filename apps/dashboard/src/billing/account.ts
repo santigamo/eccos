@@ -8,6 +8,8 @@ export interface BillingState {
   numbers: number;
   monthlyEuros: number;
   hasCustomer: boolean;
+  /** The operator set this workspace's policy; false while it follows the deployment default. */
+  explicitPolicy: boolean;
 }
 
 export const BILLING_RETURN_PATH = "/settings?billing=success";
@@ -43,6 +45,7 @@ export async function billingState(gateway: GatewayApi, accountId: string): Prom
     numbers,
     monthlyEuros: monthlyPriceEuros(numbers),
     hasCustomer: billing.customerId !== null,
+    explicitPolicy: billing.explicitPolicy === true,
   };
 }
 

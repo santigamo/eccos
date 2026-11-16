@@ -52,12 +52,13 @@ async function signUpUser(
   auth: ReturnType<typeof createAuth>,
   email: string,
   password: string,
+  callbackURL?: string,
 ): Promise<Response> {
   return auth.handler(
     new Request(`${BASE_URL}/api/auth/sign-up/email`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: BASE_URL },
-      body: JSON.stringify({ email, password, name: "Test User" }),
+      body: JSON.stringify({ email, password, name: "Test User", callbackURL }),
     }),
   );
 }
@@ -208,6 +209,17 @@ describe("sign-up and email verification", () => {
     ).json()) as { user?: { email?: string; emailVerified?: boolean } };
     expect(session.user?.email).toBe("dana@example.com");
     expect(session.user?.emailVerified).toBe(true);
+  });
+
+  test("an invitee who signs up lands on the invitation after verifying, signed in", async () => {
+    const mail = new CaptureMailSender();
+    const { auth } = await createTestAuth(mail);
+    await signUpUser(auth, "invitee@example.com", "correct-horse-battery", "/invitations?id=inv_1");
+
+    const res = await auth.handler(new Request(mail.sent[0]!.variables.url!));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/invitations?id=inv_1");
+    expect(res.headers.get("set-cookie")).toBeTruthy();
   });
 
   test("replaying the verification link does NOT mint a second session", async () => {

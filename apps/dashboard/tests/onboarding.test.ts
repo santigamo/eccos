@@ -53,7 +53,14 @@ installServerFnMocks({
   getRequest: () => new Request("http://localhost:3000/", { headers: fakeRequestHeaders }),
 });
 
-const { createOrganization, createWorkspaceErrorCopy, inviteMember, acceptInvitation } =
+const {
+  createOrganization,
+  createWorkspaceErrorCopy,
+  inviteMember,
+  acceptInvitation,
+  getInvitation,
+  invitationFailure,
+} =
   await import("../src/organizations");
 const { createAuth } = await import("../src/auth/auth");
 const { CaptureMailSender } = await import("../src/auth/mail");
@@ -396,5 +403,160 @@ describe("createWorkspaceErrorCopy", () => {
       RETRY,
     );
     expect(createWorkspaceErrorCopy(null)).toBe(RETRY);
+  });
+});
+
+describe("invitation server functions", () => {
+  const UNAVAILABLE = /not available to the account you are signed in with/;
+  const RETRY = {
+    ok: false,
+    kind: "retry",
+    error: "Something went wrong with this invitation. Please try again.",
+  };
+
+  async function invite(auth: ReturnType<typeof createAuth>, db: Database, email: string) {
+    await signInAsServerFnCaller(auth, db, "reseller@corp.test");
+    const org = (await auth.api.createOrganization({
+      body: { name: "NACEX 2801", slug: mintSlug() },
+      headers: fakeRequestHeaders,
+    })) as { id: string };
+    const invitation = (await auth.api.createInvitation({
+      body: { email, role: "operator", organizationId: org.id },
+      headers: fakeRequestHeaders,
+    })) as { id: string };
+    return { organizationId: org.id, invitationId: invitation.id };
+  }
+
+  /** A gateway whose account link fails until `healthy` is set. */
+  function linkingGateway() {
+    const state = { healthy: true, linked: [] as string[] };
+    fakeEnv.GATEWAY = {
+      ensureOrganizationAccount: async (organizationId: string) => {
+        if (!state.healthy) throw new Error("control plane unavailable");
+        state.linked.push(organizationId);
+        return { accountId: "acc_1", status: "active" as const };
+      },
+    };
+    return state;
+  }
+
+  async function activeOrganization(auth: ReturnType<typeof createAuth>) {
+    const session = (await auth.api.getSession({ headers: fakeRequestHeaders })) as {
+      session: { activeOrganizationId?: string | null };
+    };
+    return session.session.activeOrganizationId;
+  }
+
+  test("the invitee reads the workspace name, accepts, and the joined workspace becomes active", async () => {
+    const { auth, db } = await createServerFnAuth();
+    const gateway = linkingGateway();
+    const { organizationId, invitationId } = await invite(auth, db, "agency@corp.test");
+
+    // The invitee already works in a workspace of their own.
+    await signInAsServerFnCaller(auth, db, "agency@corp.test");
+    const own = (await auth.api.createOrganization({
+      body: { name: "Own", slug: mintSlug() },
+      headers: fakeRequestHeaders,
+    })) as { id: string };
+    await auth.api.setActiveOrganization({ body: { organizationId: own.id }, headers: fakeRequestHeaders });
+
+    expect(await getInvitation({ data: { invitationId } })).toEqual({
+      ok: true,
+      data: { organizationName: "NACEX 2801", joined: false },
+    });
+    expect(await acceptInvitation({ data: { invitationId } })).toEqual({ ok: true, data: { organizationId } });
+    expect(gateway.linked).toEqual([organizationId]);
+    expect(await activeOrganization(auth)).toBe(organizationId);
+  });
+
+  test("an accept whose account link failed is finished by the retry, never refused as someone else's", async () => {
+    const { auth, db } = await createServerFnAuth();
+    const gateway = linkingGateway();
+    const { organizationId, invitationId } = await invite(auth, db, "agency@corp.test");
+    await signInAsServerFnCaller(auth, db, "agency@corp.test");
+
+    gateway.healthy = false;
+    expect(await acceptInvitation({ data: { invitationId } })).toEqual(RETRY);
+
+    // Better Auth has accepted it: the member is in, the link is not.
+    expect(await getInvitation({ data: { invitationId } })).toEqual({
+      ok: true,
+      data: { organizationName: "NACEX 2801", joined: true },
+    });
+    expect(await acceptInvitation({ data: { invitationId } })).toEqual(RETRY);
+
+    gateway.healthy = true;
+    await auth.api.setActiveOrganization({ body: { organizationId: null }, headers: fakeRequestHeaders });
+    expect(await acceptInvitation({ data: { invitationId } })).toEqual({ ok: true, data: { organizationId } });
+    expect(gateway.linked).toEqual([organizationId]);
+    expect(await activeOrganization(auth)).toBe(organizationId);
+
+    // The accepted invitation still tells another identity nothing.
+    await signInAsServerFnCaller(auth, db, "intruder@corp.test");
+    for (const result of [
+      await getInvitation({ data: { invitationId } }),
+      await acceptInvitation({ data: { invitationId } }),
+    ]) {
+      expect(result).toMatchObject({ ok: false, kind: "unavailable", error: expect.stringMatching(UNAVAILABLE) });
+    }
+  });
+
+  test("another identity gets the same sentence as a missing invitation, never the provider's", async () => {
+    const { auth, db } = await createServerFnAuth();
+    linkingGateway();
+    const { invitationId } = await invite(auth, db, "agency@corp.test");
+    await signInAsServerFnCaller(auth, db, "intruder@corp.test");
+
+    for (const id of [invitationId, "no-such-invitation"]) {
+      for (const result of [
+        await getInvitation({ data: { invitationId: id } }),
+        await acceptInvitation({ data: { invitationId: id } }),
+      ]) {
+        expect(result).toMatchObject({ ok: false, kind: "unavailable", error: expect.stringMatching(UNAVAILABLE) });
+      }
+    }
+  });
+
+  test("a lapsed session is its own kind on both calls, so the client goes to sign-in", async () => {
+    await createServerFnAuth();
+    linkingGateway();
+    for (const result of [
+      await getInvitation({ data: { invitationId: "inv_1" } }),
+      await acceptInvitation({ data: { invitationId: "inv_1" } }),
+    ]) {
+      expect(result).toMatchObject({ ok: false, kind: "signed-out" });
+    }
+  });
+
+  test("a read whose setup throws still answers with the page's own copy", async () => {
+    // A production origin with no secret: building the auth instance itself throws.
+    fakeEnv.BETTER_AUTH_URL = "https://console.example";
+    expect(await getInvitation({ data: { invitationId: "inv_1" } })).toEqual(RETRY);
+  });
+
+  test("only recognised codes get their own sentence; the rest are transient and logged without their message", () => {
+    const GONE = { ok: false, kind: "unavailable", error: "This invitation is no longer valid. Ask for a new one." };
+    expect(invitationFailure({ body: { code: "ORGANIZATION_NOT_FOUND" } })).toEqual(GONE);
+    expect(invitationFailure({ body: { code: "INVITER_IS_NO_LONGER_A_MEMBER_OF_THE_ORGANIZATION" } })).toEqual(GONE);
+    expect(invitationFailure({ body: { code: "EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION" } })).toMatchObject({
+      kind: "unavailable",
+      error: expect.stringMatching(/Verify your email address/),
+    });
+    expect(invitationFailure({ status: "UNAUTHORIZED" }).kind).toBe("signed-out");
+
+    const warn = console.warn;
+    const logged: string[] = [];
+    console.warn = (line: string) => void logged.push(line);
+    try {
+      // A bare status is not a diagnosis: never read as "wrong account".
+      expect(invitationFailure({ status: "BAD_REQUEST", body: { message: "nope" } })).toEqual(RETRY);
+      expect(invitationFailure(new Error('account "acc_secret" does not exist'))).toEqual(RETRY);
+      expect(invitationFailure(null)).toEqual(RETRY);
+    } finally {
+      console.warn = warn;
+    }
+    expect(logged).toHaveLength(3);
+    expect(logged.join("")).not.toContain("acc_secret");
+    expect(JSON.parse(logged[1]!)).toMatchObject({ event: "invitation-failed", code: null, error: "Error" });
   });
 });

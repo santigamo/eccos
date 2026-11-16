@@ -20,7 +20,7 @@ import { watchUnhandledSignIn } from "../lib/follow-sign-in"
 import { PUBLIC_PATHS } from "../auth/redirect-target"
 import type { AnalyticsConfig } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
-import { hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
+import { PRE_WORKSPACE_ROUTES, hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
 import type { Bootstrap } from "../lib/bootstrap"
 import { THEME_STORAGE_KEY, syncThemeColor } from "../lib/theme"
 import appCss from "../app.css?url"
@@ -220,7 +220,7 @@ export function onboardingWorkspaceCreated(stage: DashboardState["stage"]): bool
 export function rootRedirect(pathname: string, state: RootState): "/onboarding" | "/" | "/numbers" | undefined {
   if (!state.ok) return undefined
   const created = onboardingWorkspaceCreated(state.data.stage)
-  if (!created && pathname !== "/onboarding") return "/onboarding"
+  if (!created && !PRE_WORKSPACE_ROUTES.has(pathname)) return "/onboarding"
   if (created && pathname === "/onboarding") return "/"
   if (state.data.stage !== "no-organization" && !requirementSatisfied(pathname, state.data)) return "/numbers"
   return undefined

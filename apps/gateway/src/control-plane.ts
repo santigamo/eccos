@@ -6,7 +6,7 @@ import type {
   ConnectPolicy,
   ProvisioningStatus,
 } from "@eccos/gateway-contract";
-import { effectiveConnectPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
 import {
   coexistenceSyncStatus,
   historySyncDeadline,
@@ -1122,11 +1122,15 @@ export class EccosControlPlane extends DurableObject<Env> {
   getAccountBilling(accountId: string): AccountBilling | null {
     const id = validateAccountId(accountId);
     const row = this.sql
-      .exec("SELECT billing_customer_id, billing_subscription_id FROM accounts WHERE account_id = ?", id)
+      .exec(
+        "SELECT connect_policy, billing_customer_id, billing_subscription_id FROM accounts WHERE account_id = ?",
+        id,
+      )
       .toArray()[0];
     if (!row) return null;
     return {
-      connectPolicy: this.connectPolicyOf(id),
+      connectPolicy: effectiveConnectPolicy(row.connect_policy, this.env.CONNECT_POLICY_DEFAULT),
+      explicitPolicy: isStoredPolicy(row.connect_policy),
       customerId: (row.billing_customer_id as string | null) ?? null,
       subscriptionId: (row.billing_subscription_id as string | null) ?? null,
     };

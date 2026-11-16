@@ -227,8 +227,12 @@ export type DashboardState =
   | { stage: "no-organization" }
   | { stage: "account-ready"; resources: AccountResources; billing?: BillingFlag }
   | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag };
-/** Present only while billing is on. `subscribed`: a closed account whose subscription still exists, so billing opens its portal. */
-export type BillingFlag = { subscribed: boolean };
+/**
+ * Present only while billing is on. `subscribed`: a closed account whose
+ * subscription still exists, so billing opens its portal. `canManage`: the
+ * member's role may start or manage it, the same permission the checkout requires.
+ */
+export type BillingFlag = { subscribed: boolean; canManage: boolean };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1293,7 +1297,12 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
         const billing = billingEnabled(env)
-          ? { billing: { subscribed: await closedSubscription(gateway, state) } }
+          ? {
+              billing: {
+                subscribed: await closedSubscription(gateway, state),
+                canManage: await holdsPermission(auth, request, "administer"),
+              },
+            }
           : {};
         if (!state.status) return { stage: "account-ready", resources: state.resources, ...billing };
         return {
@@ -1304,6 +1313,17 @@ export const getDashboardState = createServerFn({ method: "GET" })
         };
       }),
   );
+
+/** Whether the session's role holds `action` here; any other failure still throws. */
+async function holdsPermission(auth: Auth, request: Request, action: GatewayAction): Promise<boolean> {
+  try {
+    await requireGatewayPermission(auth, request, action);
+    return true;
+  } catch (err) {
+    if (err instanceof ForbiddenError) return false;
+    throw err;
+  }
+}
 
 /** Read only for a closed account: an open one is never pointed at billing. */
 async function closedSubscription(

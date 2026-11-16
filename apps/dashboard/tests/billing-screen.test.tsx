@@ -13,8 +13,8 @@ const { normalizeConnectError } = await import("../src/components/dashboard/conn
 const { returnPathFor } = await import("../src/lib/connect-result");
 const { validateConfirmCheckoutInput } = await import("../src/server/gateway");
 
-const closed = { connectPolicy: "closed" as const, numbers: 2, monthlyEuros: 8, hasCustomer: false };
-const trial = { connectPolicy: "open" as const, numbers: 2, monthlyEuros: 8, hasCustomer: true };
+const closed = { connectPolicy: "closed" as const, numbers: 2, monthlyEuros: 8, hasCustomer: false, explicitPolicy: true };
+const trial = { connectPolicy: "open" as const, numbers: 2, monthlyEuros: 8, hasCustomer: true, explicitPolicy: true };
 
 function resources(connectPolicy: ConnectPolicy): AccountResources {
   return {
@@ -100,7 +100,10 @@ describe("billing on", () => {
   test("status labels come from the stored policy", () => {
     expect(billingStatusLabel(trial)).toBe("Active");
     expect(billingStatusLabel(closed)).toBe("No active subscription");
-    expect(billingStatusLabel({ ...trial, hasCustomer: false })).toBe("No subscription needed");
+    // Opened by the operator with no Creem customer: a reseller pays.
+    expect(billingStatusLabel({ ...trial, hasCustomer: false })).toBe("Billed separately");
+    // Open only because the deployment default is open.
+    expect(billingStatusLabel({ ...trial, hasCustomer: false, explicitPolicy: false })).toBe("No subscription needed");
   });
 
   test("the checkout return says what happened, and waits when the webhook has not landed", () => {
@@ -138,6 +141,38 @@ describe("billing on", () => {
     expect(open).not.toMatch(/<button[^>]*\sdisabled=/);
   });
 
+  test("a member who cannot manage billing is told who can, with no button and no price", () => {
+    const ASK = "Adding a new number needs an active subscription. Ask an owner or admin of this workspace to start it.";
+    const views = [
+      renderToStaticMarkup(<FirstRunConnect closed billing canManageBilling={false} />),
+      renderToStaticMarkup(<FirstRunConnect closed billing subscribed canManageBilling={false} />),
+      renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling={false} />),
+      renderToStaticMarkup(<NumbersView resources={resources("closed")} billing subscribed canManageBilling={false} />),
+    ];
+    for (const html of views) {
+      expect(html).toContain(ASK);
+      expect(html).not.toContain("Start subscription");
+      expect(html).not.toContain("Manage billing");
+      expect(html).not.toContain("EUR");
+    }
+    // Reconnecting what the workspace already has stays open to them.
+    expect(views[2]).toContain("+ Add number");
+    const refused = renderToStaticMarkup(
+      <NumbersView resources={resources("closed")} billing canManageBilling={false} connectError="subscription_required" />,
+    );
+    expect(refused).not.toContain("Open billing");
+  });
+
+  test("an owner or admin keeps the price and the button", () => {
+    const gate = renderToStaticMarkup(<FirstRunConnect closed billing canManageBilling />);
+    expect(gate).toContain("5 EUR per month for 1 number.");
+    expect(gate).toContain("Start subscription");
+    const notice = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling />);
+    expect(notice).toContain("Start subscription");
+    expect(closedNotice(true, 3, false)).not.toContain("EUR");
+    expect(closedNotice(false, 3, false)).toBe("This workspace cannot add new numbers.");
+  });
+
   test("the notice quotes what a checkout started now charges", () => {
     // `checkoutUrl` prices the numbers connected today, and at least one.
     expect(closedNotice(true, 0)).toContain("5 EUR per month for 1 number.");
@@ -159,9 +194,10 @@ describe("billing on", () => {
     expect(renderToStaticMarkup(<NumbersView resources={awaiting} billing />)).toContain("can be reconnected");
   });
 
-  test("a workspace that needs no subscription is shown no price", () => {
+  test("a workspace opened by the operator with no Creem customer is billed separately and shown no price", () => {
     const free = renderToStaticMarkup(<SettingsView accountId="account-a" billing={{ ...trial, hasCustomer: false }} />);
-    expect(free).toContain("No subscription needed");
+    expect(free).toContain("Billed separately");
+    expect(free).not.toContain("No subscription needed");
     expect(free).not.toContain("Monthly price");
     expect(renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} />)).toContain("Monthly price");
   });

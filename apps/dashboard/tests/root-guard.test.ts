@@ -29,6 +29,13 @@ describe("rootRedirect (per stage)", () => {
     expect(rootRedirect("/onboarding", noOrg)).toBeUndefined();
   });
 
+  test("an invitee reaches /invitations before any workspace or number exists (eccos-ayd9)", () => {
+    expect(rootRedirect("/invitations", noOrg)).toBeUndefined();
+    expect(rootRedirect("/invitations", accountReadyNoWaba)).toBeUndefined();
+    expect(rootRedirect("/invitations", accountReady)).toBeUndefined();
+    expect(rootRedirect("/invitations", ready)).toBeUndefined();
+  });
+
   test("account-ready leaves /onboarding and is bounced from pages that need a number", () => {
     expect(rootRedirect("/onboarding", accountReady)).toBe("/");
     expect(rootRedirect("/events", accountReady)).toBe("/numbers");
