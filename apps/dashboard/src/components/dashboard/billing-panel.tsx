@@ -9,7 +9,8 @@ const NOTE_CLASS = "mt-4 mb-0 block border-l-2 px-3 py-2 text-sm text-foreground
 
 export function billingStatusLabel(billing: BillingState): string {
   if (billing.connectPolicy === "closed") return "No active subscription";
-  return billing.hasCustomer ? "Active" : "No subscription needed";
+  // Open with no Creem customer: someone else pays, e.g. a reseller.
+  return billing.hasCustomer ? "Active" : "Billed separately";
 }
 
 /** What Creem said about the subscription a checkout just returned with; null when it did not say. */
@@ -29,7 +30,7 @@ export function checkoutReturnNote(billing: BillingState, { status }: CheckoutRe
 export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: CheckoutReturn | null }) {
   const { busy, error, leaveTo } = useBillingRedirect();
   const closed = billing.connectPolicy === "closed";
-  // With no subscription and none needed, a price would read as a charge.
+  // Billed separately: a price here would read as a second charge.
   const priced = closed || billing.hasCustomer;
 
   return (

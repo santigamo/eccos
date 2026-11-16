@@ -53,7 +53,14 @@ installServerFnMocks({
   getRequest: () => new Request("http://localhost:3000/", { headers: fakeRequestHeaders }),
 });
 
-const { createOrganization, createWorkspaceErrorCopy, inviteMember, acceptInvitation } =
+const {
+  createOrganization,
+  createWorkspaceErrorCopy,
+  inviteMember,
+  acceptInvitation,
+  getInvitation,
+  invitationErrorCopy,
+} =
   await import("../src/organizations");
 const { createAuth } = await import("../src/auth/auth");
 const { CaptureMailSender } = await import("../src/auth/mail");
@@ -396,5 +403,78 @@ describe("createWorkspaceErrorCopy", () => {
       RETRY,
     );
     expect(createWorkspaceErrorCopy(null)).toBe(RETRY);
+  });
+});
+
+describe("invitation server functions", () => {
+  const UNAVAILABLE = /not available to the account you are signed in with/;
+
+  async function invite(auth: ReturnType<typeof createAuth>, db: Database, email: string) {
+    await signInAsServerFnCaller(auth, db, "reseller@corp.test");
+    const org = (await auth.api.createOrganization({
+      body: { name: "NACEX 2801", slug: mintSlug() },
+      headers: fakeRequestHeaders,
+    })) as { id: string };
+    const invitation = (await auth.api.createInvitation({
+      body: { email, role: "operator", organizationId: org.id },
+      headers: fakeRequestHeaders,
+    })) as { id: string };
+    return { organizationId: org.id, invitationId: invitation.id };
+  }
+
+  test("the invitee reads the workspace name, accepts, and the joined workspace becomes active", async () => {
+    const { auth, db } = await createServerFnAuth();
+    const linked: string[] = [];
+    fakeEnv.GATEWAY = {
+      ensureOrganizationAccount: async (organizationId: string) => {
+        linked.push(organizationId);
+        return { accountId: "acc_1", status: "active" as const };
+      },
+    };
+    const { organizationId, invitationId } = await invite(auth, db, "agency@corp.test");
+
+    // The invitee already works in a workspace of their own.
+    await signInAsServerFnCaller(auth, db, "agency@corp.test");
+    const own = (await auth.api.createOrganization({
+      body: { name: "Own", slug: mintSlug() },
+      headers: fakeRequestHeaders,
+    })) as { id: string };
+    await auth.api.setActiveOrganization({ body: { organizationId: own.id }, headers: fakeRequestHeaders });
+
+    expect(await getInvitation({ data: { invitationId } })).toEqual({
+      ok: true,
+      data: { organizationName: "NACEX 2801" },
+    });
+    expect(await acceptInvitation({ data: { invitationId } })).toEqual({ ok: true, data: { organizationId } });
+    expect(linked).toEqual([organizationId]);
+    const session = (await auth.api.getSession({ headers: fakeRequestHeaders })) as {
+      session: { activeOrganizationId?: string | null };
+    };
+    expect(session.session.activeOrganizationId).toBe(organizationId);
+  });
+
+  test("another identity gets the same sentence as a missing invitation, never the provider's", async () => {
+    const { auth, db } = await createServerFnAuth();
+    const { invitationId } = await invite(auth, db, "agency@corp.test");
+    await signInAsServerFnCaller(auth, db, "intruder@corp.test");
+
+    for (const id of [invitationId, "no-such-invitation"]) {
+      for (const result of [
+        await getInvitation({ data: { invitationId: id } }),
+        await acceptInvitation({ data: { invitationId: id } }),
+      ]) {
+        expect(result.ok).toBe(false);
+        expect((result as { error: string }).error).toMatch(UNAVAILABLE);
+      }
+    }
+  });
+
+  test("an unrecognised failure collapses into the retry line", () => {
+    const RETRY = "Something went wrong with this invitation. Please try again.";
+    expect(invitationErrorCopy(new Error("D1_ERROR: no such table: invitation"))).toBe(RETRY);
+    expect(invitationErrorCopy(null)).toBe(RETRY);
+    expect(invitationErrorCopy({ body: { code: "EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION" } })).toMatch(
+      /Verify your email address/,
+    );
   });
 });

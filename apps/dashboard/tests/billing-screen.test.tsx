@@ -100,7 +100,7 @@ describe("billing on", () => {
   test("status labels come from the stored policy", () => {
     expect(billingStatusLabel(trial)).toBe("Active");
     expect(billingStatusLabel(closed)).toBe("No active subscription");
-    expect(billingStatusLabel({ ...trial, hasCustomer: false })).toBe("No subscription needed");
+    expect(billingStatusLabel({ ...trial, hasCustomer: false })).toBe("Billed separately");
   });
 
   test("the checkout return says what happened, and waits when the webhook has not landed", () => {
@@ -159,9 +159,10 @@ describe("billing on", () => {
     expect(renderToStaticMarkup(<NumbersView resources={awaiting} billing />)).toContain("can be reconnected");
   });
 
-  test("a workspace that needs no subscription is shown no price", () => {
+  test("an open workspace with no Creem customer is billed separately and shown no price", () => {
     const free = renderToStaticMarkup(<SettingsView accountId="account-a" billing={{ ...trial, hasCustomer: false }} />);
-    expect(free).toContain("No subscription needed");
+    expect(free).toContain("Billed separately");
+    expect(free).not.toContain("No subscription needed");
     expect(free).not.toContain("Monthly price");
     expect(renderToStaticMarkup(<SettingsView accountId="account-a" billing={trial} />)).toContain("Monthly price");
   });

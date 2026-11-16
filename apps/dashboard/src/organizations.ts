@@ -160,22 +160,28 @@ function authErrorCode(err: unknown): string {
   return "";
 }
 
+/**
+ * Server-side only: the operator keeps the diagnosis the customer no longer
+ * gets. Never the request body, never anything tenant-identifying.
+ */
+function warnUnmapped(event: string, code: string, err: unknown): void {
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      area: "organizations",
+      event,
+      code: code || null,
+      error: err instanceof Error ? err.message : String(err),
+    }),
+  );
+}
+
 /** Map a creation failure to customer-facing copy, logging the unmapped ones. */
 export function createWorkspaceErrorCopy(err: unknown): string {
   const code = authErrorCode(err);
   const mapped = CREATE_WORKSPACE_COPY[code];
   if (mapped) return mapped;
-  // Server-side only: the operator keeps the diagnosis the customer no longer
-  // gets. Never the request body, never anything tenant-identifying.
-  console.warn(
-    JSON.stringify({
-      level: "warn",
-      area: "organizations",
-      event: "create-workspace-failed",
-      code: code || null,
-      error: err instanceof Error ? err.message : String(err),
-    }),
-  );
+  warnUnmapped("create-workspace-failed", code, err);
   return CREATE_WORKSPACE_RETRY;
 }
 
@@ -294,6 +300,35 @@ export const inviteMember = createServerFn({ method: "POST" })
     },
   );
 
+const INVITATION_RETRY = "Something went wrong with this invitation. Please try again.";
+// One sentence for "not found", "expired" and "sent to someone else": telling
+// them apart would confirm an invitation id to an account it was not sent to.
+const INVITATION_UNAVAILABLE =
+  "This invitation is not available to the account you are signed in with. It may have expired or been sent to a different email address.";
+const INVITATION_UNVERIFIED = "Verify your email address, then open the invitation link again.";
+
+const INVITATION_COPY: Record<string, string> = {
+  UNAUTHORIZED: "Your session has expired. Sign in again to accept the invitation.",
+  BAD_REQUEST: INVITATION_UNAVAILABLE,
+  INVITATION_NOT_FOUND: INVITATION_UNAVAILABLE,
+  YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION: INVITATION_UNAVAILABLE,
+  ORGANIZATION_NOT_FOUND: INVITATION_UNAVAILABLE,
+  INVITER_IS_NO_LONGER_A_MEMBER_OF_THE_ORGANIZATION: INVITATION_UNAVAILABLE,
+  EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION: INVITATION_UNVERIFIED,
+  EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION: INVITATION_UNVERIFIED,
+  ORGANIZATION_MEMBERSHIP_LIMIT_REACHED:
+    "This workspace cannot take more members right now. Tell whoever invited you.",
+};
+
+/** Map an invitation failure to customer-facing copy (allowlist, as above). */
+export function invitationErrorCopy(err: unknown): string {
+  const code = authErrorCode(err);
+  const mapped = INVITATION_COPY[code];
+  if (mapped) return mapped;
+  warnUnmapped("invitation-failed", code, err);
+  return INVITATION_RETRY;
+}
+
 const acceptInviteInput = z
   .object({ invitationId: z.string().trim().min(1).max(256) })
   .strict();
@@ -327,7 +362,26 @@ export const acceptInvitation = createServerFn({ method: "POST" })
         }
         return { ok: true, data: { organizationId } };
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return { ok: false, error: invitationErrorCopy(err) };
+      }
+    },
+  );
+
+/** The pending invitation behind an accept link, for the invited identity only. */
+export const getInvitation = createServerFn({ method: "GET" })
+  .validator((input: unknown) => acceptInviteInput.parse(input))
+  .handler(
+    async ({
+      data,
+    }): Promise<{ ok: true; data: { organizationName: string } } | { ok: false; error: string }> => {
+      try {
+        const invitation = (await authInstance().api.getInvitation({
+          query: { id: data.invitationId },
+          headers: currentRequest().headers,
+        })) as { organizationName?: unknown } | null;
+        return { ok: true, data: { organizationName: String(invitation?.organizationName ?? "") } };
+      } catch (err) {
+        return { ok: false, error: invitationErrorCopy(err) };
       }
     },
   );

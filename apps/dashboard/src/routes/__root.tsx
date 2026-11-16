@@ -220,6 +220,9 @@ export function onboardingWorkspaceCreated(stage: DashboardState["stage"]): bool
 export function rootRedirect(pathname: string, state: RootState): "/onboarding" | "/" | "/numbers" | undefined {
   if (!state.ok) return undefined
   const created = onboardingWorkspaceCreated(state.data.stage)
+  // A first-time invitee has no workspace yet and must still reach the accept
+  // screen: joining one is the alternative to creating one.
+  if (!created && pathname === "/invitations") return undefined
   if (!created && pathname !== "/onboarding") return "/onboarding"
   if (created && pathname === "/onboarding") return "/"
   if (state.data.stage !== "no-organization" && !requirementSatisfied(pathname, state.data)) return "/numbers"

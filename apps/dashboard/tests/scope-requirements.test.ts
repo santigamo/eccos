@@ -62,6 +62,9 @@ describe("SCOPE_REQUIREMENTS", () => {
     // number exists is a product decision, and it should have to be made here.
     expect(SCOPE_REQUIREMENTS).toEqual({
       "/numbers": "none",
+      // Unlisted in the nav: accepting joins ANOTHER workspace, so it cannot
+      // wait on this one's number (eccos-ayd9).
+      "/invitations": "none",
       // `"none"`, and UNLISTED (see the nav test below): the pasted-token page
       // is how Meta's Cloud API test number gets attached, and an account with
       // no number is exactly who needs it (eccos-up9). Gating it on a WABA
@@ -93,9 +96,7 @@ describe("SCOPE_REQUIREMENTS", () => {
   });
 
   test("an unlisted route defaults to needing a number", () => {
-    // Preserves the old bounce for anything not named (e.g. /invitations): the
-    // safe direction is towards /numbers, not towards a page that will throw.
-    expect(requirementFor("/invitations")).toBe("number");
+    // The safe direction is towards /numbers, not towards a page that will throw.
     expect(requirementFor("/some/future/page")).toBe("number");
   });
 });
