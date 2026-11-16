@@ -141,6 +141,38 @@ describe("billing on", () => {
     expect(open).not.toMatch(/<button[^>]*\sdisabled=/);
   });
 
+  test("a member who cannot manage billing is told who can, with no button and no price", () => {
+    const ASK = "Adding a new number needs an active subscription. Ask an owner or admin of this workspace to start it.";
+    const views = [
+      renderToStaticMarkup(<FirstRunConnect closed billing canManageBilling={false} />),
+      renderToStaticMarkup(<FirstRunConnect closed billing subscribed canManageBilling={false} />),
+      renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling={false} />),
+      renderToStaticMarkup(<NumbersView resources={resources("closed")} billing subscribed canManageBilling={false} />),
+    ];
+    for (const html of views) {
+      expect(html).toContain(ASK);
+      expect(html).not.toContain("Start subscription");
+      expect(html).not.toContain("Manage billing");
+      expect(html).not.toContain("EUR");
+    }
+    // Reconnecting what the workspace already has stays open to them.
+    expect(views[2]).toContain("+ Add number");
+    const refused = renderToStaticMarkup(
+      <NumbersView resources={resources("closed")} billing canManageBilling={false} connectError="subscription_required" />,
+    );
+    expect(refused).not.toContain("Open billing");
+  });
+
+  test("an owner or admin keeps the price and the button", () => {
+    const gate = renderToStaticMarkup(<FirstRunConnect closed billing canManageBilling />);
+    expect(gate).toContain("5 EUR per month for 1 number.");
+    expect(gate).toContain("Start subscription");
+    const notice = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling />);
+    expect(notice).toContain("Start subscription");
+    expect(closedNotice(true, 3, false)).not.toContain("EUR");
+    expect(closedNotice(false, 3, false)).toBe("This workspace cannot add new numbers.");
+  });
+
   test("the notice quotes what a checkout started now charges", () => {
     // `checkoutUrl` prices the numbers connected today, and at least one.
     expect(closedNotice(true, 0)).toContain("5 EUR per month for 1 number.");

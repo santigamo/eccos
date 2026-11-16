@@ -18,12 +18,15 @@ function billingActionLabel(subscribed: boolean): string {
 export function SubscriptionNotice({
   billing,
   subscribed = false,
+  canManage = true,
   numbers,
   reconnect,
   className,
 }: {
   billing: boolean;
   subscribed?: boolean;
+  /** The member may start or manage the subscription (admin and above). */
+  canManage?: boolean;
   /** Billable numbers the workspace has now: what a checkout would charge for. */
   numbers: number;
   /** The workspace owns a WABA, so the fork can still re-register what it has. */
@@ -35,12 +38,12 @@ export function SubscriptionNotice({
     <div className={cn("mb-4 border-l-2 border-l-warning px-3 py-2", className)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 max-w-prose text-sm text-pretty text-foreground">
-          {closedNotice(billing, numbers)}
+          {closedNotice(billing, numbers, canManage)}
           {reconnect
             ? ` ${billing ? "Without one, " : ""}Meta's flow ends with the new number left out. Numbers already connected keep working and can be reconnected.`
             : null}
         </p>
-        {billing ? (
+        {billing && canManage ? (
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
             {billingActionLabel(subscribed)}
           </Button>
@@ -55,7 +58,13 @@ export function SubscriptionNotice({
  * First run on a closed workspace with billing on: there is nothing to
  * reconnect, so this stands where the connect fork would, before Meta's window.
  */
-export function SubscriptionGate({ subscribed = false }: { subscribed?: boolean }) {
+export function SubscriptionGate({
+  subscribed = false,
+  canManage = true,
+}: {
+  subscribed?: boolean;
+  canManage?: boolean;
+}) {
   const { busy, error, leaveTo } = useBillingRedirect();
   return (
     <Frame variant="default" spacing="lg" className="max-w-3xl">
@@ -65,14 +74,18 @@ export function SubscriptionGate({ subscribed = false }: { subscribed?: boolean 
             Subscription
           </FrameTitle>
           <FrameDescription className="max-w-prose text-pretty">
-            {closedNotice(true, 0)} Eccos does not charge per message. Once it is active, come back here to connect your number.
+            {closedNotice(true, 0, canManage)}
+            {canManage ? " Eccos does not charge per message." : ""} Once it is active, come back here to connect your
+            number.
           </FrameDescription>
         </FrameHeader>
-        <div className="pt-5">
-          <Button type="button" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
-            {billingActionLabel(subscribed)}
-          </Button>
-        </div>
+        {canManage ? (
+          <div className="pt-5">
+            <Button type="button" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
+              {billingActionLabel(subscribed)}
+            </Button>
+          </div>
+        ) : null}
         <BillingError error={error} />
       </FramePanel>
     </Frame>

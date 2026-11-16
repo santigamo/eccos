@@ -66,6 +66,7 @@ function NumbersPage() {
   const flag = "billing" in root.data ? root.data.billing : undefined;
   const billing = flag !== undefined;
   const subscribed = flag?.subscribed === true;
+  const canManageBilling = flag?.canManage === true;
   const wabas = resources?.wabas ?? [];
 
   // No account registry, or no number yet: both land on the connect flow, and
@@ -73,7 +74,12 @@ function NumbersPage() {
   // registry.
   if (!resources || wabas.length === 0) {
     const outcome = (
-      <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
+      <ConnectOutcome
+        connectError={connectError}
+        connectSkipped={connectSkipped}
+        billing={billing}
+        canManageBilling={canManageBilling}
+      />
     );
     const closed = resources?.account?.connectPolicy === "closed";
     return (
@@ -95,7 +101,7 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
-            <FirstRunConnect closed={closed} billing={billing} subscribed={subscribed} />
+            <FirstRunConnect closed={closed} billing={billing} subscribed={subscribed} canManageBilling={canManageBilling} />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -123,6 +129,7 @@ function NumbersPage() {
       supportEmail={root.deployment.supportEmail}
       billing={billing}
       subscribed={subscribed}
+      canManageBilling={canManageBilling}
       connectError={connectError}
       connectSkipped={connectSkipped}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
@@ -157,6 +164,7 @@ export function NumbersView({
   supportEmail,
   billing = false,
   subscribed = false,
+  canManageBilling = true,
   connectError,
   connectSkipped,
   onRefresh,
@@ -168,6 +176,8 @@ export function NumbersView({
   billing?: boolean;
   /** A subscription still exists, so billing opens its portal instead of a checkout. */
   subscribed?: boolean;
+  /** The member may start or manage the subscription; resolved server-side from their role. */
+  canManageBilling?: boolean;
   connectError?: ConnectFailureCode;
   connectSkipped?: number;
   /** Re-read the loader after the table's re-check changed something. */
@@ -189,13 +199,19 @@ export function NumbersView({
       <SubscriptionNotice
         billing={billing}
         subscribed={subscribed}
+        canManage={canManageBilling}
         numbers={billableCount(resources.wabas)}
         reconnect={resources.wabas.length > 0}
         className={className}
       />
     ) : null;
   const outcome = (
-    <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
+    <ConnectOutcome
+      connectError={connectError}
+      connectSkipped={connectSkipped}
+      billing={billing}
+      canManageBilling={canManageBilling}
+    />
   );
   return (
     <Page
@@ -243,12 +259,14 @@ export function FirstRunConnect({
   closed,
   billing,
   subscribed = false,
+  canManageBilling = true,
 }: {
   closed: boolean;
   billing: boolean;
   subscribed?: boolean;
+  canManageBilling?: boolean;
 }) {
-  if (closed && billing) return <SubscriptionGate subscribed={subscribed} />;
+  if (closed && billing) return <SubscriptionGate subscribed={subscribed} canManage={canManageBilling} />;
   return (
     <>
       {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}

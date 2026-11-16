@@ -2810,6 +2810,26 @@ describe("one gateway call per scoped read", () => {
     expect(calls).toEqual(["readDashboardState"]);
   });
 
+  test("with billing on, the state says whether this member's role may manage it", async () => {
+    const env = workerEnv as { CREEM_API_KEY?: string };
+    env.CREEM_API_KEY = "creem_test";
+    try {
+      contextBinding();
+      expect(await getDashboardState()).toMatchObject({
+        ok: true,
+        data: { billing: { subscribed: false, canManage: true } },
+      });
+      // An operator or viewer: can read the workspace, cannot administer it.
+      fakeDeniedActions = new Set(["administer"]);
+      expect(await getDashboardState()).toMatchObject({
+        ok: true,
+        data: { stage: "account-ready", billing: { subscribed: false, canManage: false } },
+      });
+    } finally {
+      delete env.CREEM_API_KEY;
+    }
+  });
+
   test("a gateway refusal keeps its message and is not cached", async () => {
     let attempt = 0;
     const { calls } = contextBinding({

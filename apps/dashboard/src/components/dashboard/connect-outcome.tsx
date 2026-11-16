@@ -52,7 +52,8 @@ export function ConnectOutcome({
   connectError,
   connectSkipped,
   billing,
-}: ConnectOutcomeSearch & { billing?: boolean }) {
+  canManageBilling = true,
+}: ConnectOutcomeSearch & { billing?: boolean; canManageBilling?: boolean }) {
   // Counted once per gateway redirect: a reload or Back renders the same URL.
   // Success carries no parameter; it is tracked in `connect-number.tsx`.
   useEffect(() => {
@@ -84,7 +85,7 @@ export function ConnectOutcome({
       aria-live="polite"
     >
       {detail}
-      {connectError === "subscription_required" && billing ? (
+      {connectError === "subscription_required" && billing && canManageBilling ? (
         <>
           {" "}
           <a href="/settings" className="underline underline-offset-2">
