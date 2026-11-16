@@ -80,4 +80,17 @@ describe("MessageBody template", () => {
     expect(html).toContain("hello_world");
     expect(html).toContain("This send filled no parameters.");
   });
+
+  test("a template row the console cannot read says so, not that it filled nothing", () => {
+    const unreadable = renderToStaticMarkup(<MessageBody entry={entry("template", {})} wabaId={WABA} />);
+    expect(unreadable).toContain("The console cannot read what this template message carried.");
+    expect(unreadable).not.toContain("filled no parameters");
+    const mediaOnly = renderToStaticMarkup(
+      <MessageBody
+        entry={entry("template", { name: "promo", components: [{ type: "header", parameters: [{ type: "image", image: {} }] }] })}
+        wabaId={WABA}
+      />,
+    );
+    expect(mediaOnly).toContain("The console cannot read");
+  });
 });

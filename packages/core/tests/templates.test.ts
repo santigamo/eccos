@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
+import { createTemplate, deleteTemplate, editTemplate, findTemplate, listTemplates } from "@eccos/core/templates";
 import type { MetaAppConfig } from "@eccos/core/config-schema";
 
 /**
@@ -341,5 +341,35 @@ describe("listTemplates", () => {
     const { requests } = stubFetch(() => Response.json({ data: [] }));
     await listTemplates(CFG);
     expect(requests[0]?.url).toBe("https://graph.facebook.com/v25.0/WABA_TEST/message_templates?limit=100");
+  });
+});
+
+describe("findTemplate", () => {
+  const page = (rows: Record<string, unknown>[], after?: string) =>
+    Response.json({ data: rows, ...(after ? { paging: { cursors: { after }, next: `https://graph.test/next?after=${after}` } } : {}) });
+
+  it("pages past substring matches until the exact name and language", async () => {
+    const pages = [
+      page([{ name: "promo_summer", language: "es" }, { name: "promo", language: "en" }], "c1"),
+      page([{ name: "promo", language: "es", id: "7" }], "c2"),
+    ];
+    const { requests } = stubFetch(() => pages.shift() ?? page([]));
+    const found = await findTemplate(CFG, "promo", "es", ["id", "name", "language"]);
+    expect(found).toEqual({ ok: true, template: { name: "promo", language: "es", id: "7" } });
+    expect(requests).toHaveLength(2);
+    expect(new URL(requests[1]!.url).searchParams.get("after")).toBe("c1");
+  });
+
+  it("is null when the list ends without it, and stops at the page cap", async () => {
+    stubFetch(() => page([{ name: "promo_x", language: "es" }]));
+    expect(await findTemplate(CFG, "promo", "es", ["name", "language"])).toEqual({ ok: true, template: null });
+    const { requests } = stubFetch(() => page([{ name: "promo_x", language: "es" }], "more"));
+    expect(await findTemplate(CFG, "promo", "es", ["name", "language"])).toEqual({ ok: true, template: null });
+    expect(requests).toHaveLength(10);
+  });
+
+  it("passes a Graph failure through", async () => {
+    stubFetch(() => Response.json({ error: { code: 80008 } }, { status: 400 }));
+    expect(await findTemplate(CFG, "promo", "es", ["name", "language"])).toMatchObject({ ok: false, status: 400 });
   });
 });

@@ -115,7 +115,7 @@ export function MessageBody({ entry, wabaId }: { entry: ThreadEntry; wabaId?: st
 
 /** With its copy, the words the customer read; without it, the values sent by slot, never today's template. */
 function TemplateBody({ entry }: { entry: ThreadEntry }) {
-  const { name, copy, values } = templateMessageOf(entry.message);
+  const { name, copy, values, filledNone } = templateMessageOf(entry.message);
   return (
     <>
       <p className="mb-1 text-[11px] text-muted-foreground">
@@ -146,8 +146,10 @@ function TemplateBody({ entry }: { entry: ThreadEntry }) {
             </div>
           ))}
         </dl>
-      ) : (
+      ) : filledNone ? (
         <p className="text-muted-foreground">This send filled no parameters.</p>
+      ) : (
+        <p className="text-muted-foreground">The console cannot read what this template message carried.</p>
       )}
     </>
   );

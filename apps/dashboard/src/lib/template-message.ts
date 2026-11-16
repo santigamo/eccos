@@ -12,12 +12,22 @@ export interface TemplateMessage {
   name: string | null;
   copy: TemplateCopy | null;
   values: RequestValue[];
+  /** The stored request names a template and fills no parameter: not a row that could not be read. */
+  filledNone: boolean;
 }
 
 export function templateMessageOf(message: MessageRecord): TemplateMessage {
   const content = contentOf(message);
   const reading = templateReading(content);
-  return { name: reading.template?.name ?? null, copy: copyOf(content.copy), values: reading.values };
+  const name = reading.template?.name ?? null;
+  return { name, copy: copyOf(content.copy), values: reading.values, filledNone: name !== null && !hasParameters(content.components) };
+}
+
+function hasParameters(components: unknown): boolean {
+  return (
+    Array.isArray(components) &&
+    components.some((c) => typeof c === "object" && c !== null && Array.isArray(c.parameters) && c.parameters.length > 0)
+  );
 }
 
 function copyOf(value: unknown): TemplateCopy | null {

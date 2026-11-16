@@ -81,7 +81,7 @@ describe("conversation store: live feed", () => {
     });
   });
 
-  it("labels an outbound template by its name and media by its caption", async () => {
+  it("stores no text for a template until its copy is known, and media by its caption", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const template = JSON.stringify({
         type: "template",
@@ -95,7 +95,7 @@ describe("conversation store: live feed", () => {
 
       const messages = i.getConversation({ waId: WA }).items;
       expect(messages.map((m) => [m.id, m.type, m.text])).toEqual([
-        ["wamid.TPL1", "template", "template:order_update"],
+        ["wamid.TPL1", "template", null],
         ["wamid.IMG1", "image", "Factura"],
       ]);
     });
@@ -113,10 +113,23 @@ describe("conversation store: live feed", () => {
     });
 
     function mockTemplates(answer: () => Response) {
-      return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-        if (String(input instanceof Request ? input.url : input).includes("/message_templates")) return answer();
+      return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (init?.method === "DELETE") return Response.json({ success: true });
+        if (url.includes("/message_templates")) return answer();
         return new Response("unexpected", { status: 500 });
       });
+    }
+
+    const definition = (body: string) =>
+      Response.json({ data: [{ name: "order_update", language: "es", components: [{ type: "BODY", text: body }] }] });
+
+    /** Sends the template and waits for the Durable Object's lookup and write to finish. */
+    async function sendAndSettle(i: EccosGateway, id: string) {
+      const recording = vi.spyOn(i as unknown as { recordTemplateCopy: () => Promise<void> }, "recordTemplateCopy");
+      i.logOutbound(id, WA, send, "sent", null);
+      await recording.mock.results.at(-1)!.value;
+      recording.mockRestore();
     }
 
     it("stores the copy the customer read, filled with the send's parameters", async () => {
@@ -136,8 +149,8 @@ describe("conversation store: live feed", () => {
         }),
       );
       await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-        i.logOutbound("wamid.TPLCOPY", WA, send, "sent", null);
-        await vi.waitFor(() => expect(i.getConversation({ waId: WA }).items[0]!.text).toBe("Hola Ada, tu pedido está listo."));
+        await sendAndSettle(i, "wamid.TPLCOPY");
+        expect(i.getConversation({ waId: WA }).items[0]!.text).toBe("Hola Ada, tu pedido está listo.");
         const content = JSON.parse(i.getConversation({ waId: WA }).items[0]!.content!);
         expect(content).toMatchObject({
           name: "order_update",
@@ -150,15 +163,39 @@ describe("conversation store: live feed", () => {
       expect(String(fetchSpy.mock.calls[0]![0])).toContain("name=order_update");
     });
 
-    it("stores the message as sent when the definition cannot be read", async () => {
+    it("stores the message as sent when the definition cannot be read, and keeps the miss", async () => {
       const fetchSpy = mockTemplates(() => Response.json({ error: { code: 1 } }, { status: 500 }));
       await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-        i.logOutbound("wamid.TPLNOCOPY", WA, send, "sent", null);
-        await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await sendAndSettle(i, "wamid.TPLNOCOPY");
+        await sendAndSettle(i, "wamid.TPLNOCOPY2");
         const [message] = i.getConversation({ waId: WA }).items;
-        expect(message!.text).toBe("template:order_update");
+        expect(message!.text).toBeNull();
         expect(JSON.parse(message!.content!)).not.toHaveProperty("copy");
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads the copy again once the console deletes the template", async () => {
+      const bodies = ["Antes {{1}}", "Después {{1}}"];
+      const fetchSpy = mockTemplates(() => definition(bodies.shift() ?? "?"));
+      await runInDurableObject(gatewayStub(), (i: EccosGateway) => sendAndSettle(i, "wamid.BEFORE"));
+      await new GatewayRPC(createExecutionContext(), env).deleteTemplate(
+        { wabaId: TEST_WABA_ID, name: "order_update", templateId: "123" },
+        TEST_ACCOUNT_ID,
+      );
+      await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+        await sendAndSettle(i, "wamid.AFTER");
+        expect(i.getConversation({ waId: WA }).items.map((m) => m.text)).toEqual(["Antes Ada", "Después Ada"]);
+      });
+      expect(fetchSpy.mock.calls.filter(([, init]) => init?.method !== "DELETE")).toHaveLength(2);
+    });
+
+    it("reads an older row's preview from its content, never its stored marker", async () => {
+      mockTemplates(() => Response.json({ data: [] }));
+      await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+        await sendAndSettle(i, "wamid.OLD");
+        i.sql.exec(`UPDATE messages SET text = 'template:order_update' WHERE id = 'wamid.OLD'`);
+        expect(i.listConversations().items[0]!.lastMessage).toMatchObject({ type: "template", text: null });
       });
     });
   });

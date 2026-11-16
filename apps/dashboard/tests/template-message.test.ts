@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { previewOf } from "../src/lib/conversations";
+import { describeEntry, previewOf } from "../src/lib/conversations";
 import { templateMessageOf } from "../src/lib/template-message";
 import type { MessageRecord } from "../src/server/gateway";
 
@@ -39,10 +39,16 @@ describe("templateMessageOf", () => {
   test("without a copy, keeps the values sent by slot", () => {
     const reading = templateMessageOf(sent(template));
     expect(reading.copy).toBeNull();
+    expect(reading.filledNone).toBe(false);
     expect(reading.values.map((value) => [value.slot, value.value])).toEqual([
       ["Header {{1}}", "A-17"],
       ["{{customer}}", "Ada"],
     ]);
+  });
+
+  test("only a named template with no parameters filled none", () => {
+    expect(templateMessageOf(sent({ name: "hello_world", language: { code: "en_US" } })).filledNone).toBe(true);
+    expect(templateMessageOf(sent({})).filledNone).toBe(false);
   });
 
   test("a copy without a body is no copy", () => {
@@ -50,12 +56,17 @@ describe("templateMessageOf", () => {
   });
 });
 
-describe("previewOf a template", () => {
-  test("shows the filled body when there is one, else the template's name", () => {
+describe("a template's preview", () => {
+  test("the list shows the filled body the gateway reads from the copy, else the Template label", () => {
     expect(previewOf({ type: "template", text: "Hola Ada", direction: "out", at: 1 })).toBe("You: Hola Ada");
-    expect(previewOf({ type: "template", text: "template:order_update", direction: "out", at: 1 })).toBe(
-      "You: Template: order_update",
-    );
     expect(previewOf({ type: "template", text: null, direction: "out", at: 1 })).toBe("You: Template");
+  });
+
+  test("a quote reads the copy, else the name, never the stored marker", () => {
+    const quote = (content: unknown) =>
+      describeEntry({ message: { ...sent(content), text: "template:order_update" }, text: "template:order_update", deleted: false }).preview;
+    expect(quote({ ...template, copy: { body: "Hola Ada" } })).toBe("Hola Ada");
+    expect(quote(template)).toBe("Template: order_update");
+    expect(quote({})).toBe("Template");
   });
 });

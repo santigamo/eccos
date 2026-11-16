@@ -94,7 +94,7 @@ export function messageFromOutbound(input: {
   request: string;
   phoneNumberId: string | null;
   at: number;
-}): NewMessage {
+}): NewMessage & { template: TemplateSend | null } {
   const body = parseRecord(input.request) ?? {};
   const type = typeof body.type === "string" ? body.type : "unknown";
   const typed = asRecord(body[type]);
@@ -116,17 +116,15 @@ export function messageFromOutbound(input: {
     status: "sent",
     targetId: reactedId ?? str(asRecord(body.context)?.message_id),
     phoneNumberId: input.phoneNumberId,
+    template: type === "template" ? templateSendOf(typed) : null,
   };
 }
 
-/** The template a stored send body names, with the parameters it filled; null for any other send. */
-export function templateSendOf(request: string): { name: string; language: string; components: unknown } | null {
-  const body = parseRecord(request);
-  const template = asRecord(body?.template);
-  const name = str(template?.name);
-  const language = str(asRecord(template?.language)?.code);
-  if (body?.type !== "template" || !name || !language) return null;
-  return { name, language, components: template?.components };
+/** A template send: the template it names and the parameters it filled. */
+export interface TemplateSend {
+  name: string;
+  language: string;
+  components: unknown;
 }
 
 /** A stored template message with what the customer read added under `copy`; its text becomes the filled body. */
@@ -174,14 +172,18 @@ function contentJson(fields: MessageContent): string | null {
   return Object.keys(content).length > 0 ? JSON.stringify(content) : null;
 }
 
-/** Text as the conversation shows it: a template is labelled by its name until its copy is known, media by its caption. */
+/** Text as the conversation shows it: a message's body, a media's caption. A template has none
+ * until its copy is known (`withTemplateCopy`). */
 function outboundText(type: string, typed: Record<string, unknown> | null): string | null {
   if (type === "text") return str(typed?.body);
-  if (type === "template") {
-    const name = str(typed?.name);
-    return name ? `template:${name}` : null;
-  }
+  if (type === "template") return null;
   return str(typed?.caption);
+}
+
+function templateSendOf(template: Record<string, unknown> | null): TemplateSend | null {
+  const name = str(template?.name);
+  const language = str(asRecord(template?.language)?.code);
+  return name && language ? { name, language, components: template?.components } : null;
 }
 
 function parseRecord(json: string): Record<string, unknown> | null {
