@@ -40,6 +40,10 @@ const LANDING_SHELL = [
 const LASTMOD = {
   "/": lastModified("src/page-content/landing.es.html", "src/pages/index.astro", ...LANDING_SHELL),
   "/en": lastModified("src/page-content/landing.html", "src/pages/en/index.astro", ...LANDING_SHELL),
+  "/pricing": lastModified("src/components/PricingPage.astro", "src/data/product.ts", ...SHELL),
+  "/en/pricing": lastModified("src/components/PricingPage.astro", "src/data/product.ts", ...SHELL),
+  "/coexistence": lastModified("src/components/CoexistencePage.astro", "src/data/product.ts", ...SHELL),
+  "/en/coexistence": lastModified("src/components/CoexistencePage.astro", "src/data/product.ts", ...SHELL),
   "/migrate": lastModified("src/page-content/migrate.html", "src/pages/migrate.astro", ...SHELL),
   "/privacy": lastModified("src/page-content/privacy.html", "src/pages/privacy.astro", ...SHELL),
   "/terms": lastModified("src/page-content/terms.html", "src/pages/terms.astro", ...SHELL),

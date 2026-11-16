@@ -2,11 +2,11 @@
 
 ![Eccos — self-hostable WhatsApp gateway on the official Meta Cloud API](docs/assets/banner.jpg)
 
-<h3>Self-hostable, open-source WhatsApp gateway on the official Meta Cloud API</h3>
+<h3>Self-hostable, open-source WhatsApp gateway on the official WhatsApp Business API (Meta Cloud API)</h3>
 
 <p>Your app, your token, no message quota — running as a single Bun binary or <strong>entirely on Cloudflare</strong> (Workers + Durable Objects).</p>
 
-<p><a href="https://eccos.chat"><strong>eccos.chat</strong></a> · <a href="https://eccos.chat/">Español</a> · <a href="https://eccos.chat/en">English</a></p>
+<p><a href="https://eccos.chat"><strong>eccos.chat</strong></a> · <a href="https://eccos.chat/">Español</a> · <a href="https://eccos.chat/en">English</a> · <a href="https://eccos.chat/en/pricing">Pricing</a> · <a href="https://eccos.chat/en/coexistence">Coexistence</a> · <a href="https://docs.eccos.chat">Docs</a></p>
 
 [![CI](https://github.com/santigamo/eccos/actions/workflows/ci.yml/badge.svg)](https://github.com/santigamo/eccos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-25D366.svg)](./LICENSE)

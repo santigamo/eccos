@@ -13,7 +13,7 @@
     "check": "astro check",
     "preview": "astro preview",
     "dev:worker": "astro build && wrangler dev",
-    "deploy": "astro build && wrangler deploy"
+    "deploy": "astro build && wrangler deploy && node scripts/indexnow.mjs"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
