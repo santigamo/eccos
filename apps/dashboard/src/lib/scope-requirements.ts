@@ -59,6 +59,9 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/conversations": "number",
 };
 
+/** The pages an account with no workspace yet may stay on: create one, or join one. */
+export const PRE_WORKSPACE_ROUTES: ReadonlySet<string> = new Set(["/onboarding", "/invitations"]);
+
 const DEFAULT_REQUIREMENT: ScopeRequirement = "number";
 
 export function requirementFor(pathname: string): ScopeRequirement {

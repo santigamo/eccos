@@ -423,6 +423,12 @@ describe("checkout return", () => {
       numbers: 5,
       monthlyEuros: 17,
       hasCustomer: true,
+      explicitPolicy: false,
+    });
+    const opened = { acc_1: { connectPolicy: "open" as const, explicitPolicy: true, customerId: null, subscriptionId: null } };
+    expect(await billingState(fakeGateway(opened).gateway, "acc_1")).toMatchObject({
+      hasCustomer: false,
+      explicitPolicy: true,
     });
   });
 });

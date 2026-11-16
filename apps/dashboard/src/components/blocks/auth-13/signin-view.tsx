@@ -86,6 +86,7 @@ export function SignInView({
         password={password}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
+        signUpHref={redirectTo && redirectTo !== "/" ? `/signup?redirect=${encodeURIComponent(redirectTo)}` : "/signup"}
       />
     </AuthSplitShell>
   );

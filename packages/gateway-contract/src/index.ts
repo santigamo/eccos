@@ -504,6 +504,8 @@ export interface AccountSummary {
 /** Billing state of one account. The ids belong to the billing provider; the gateway only stores them. */
 export interface AccountBilling {
   connectPolicy: ConnectPolicy;
+  /** The policy is stored on the account, not inherited from CONNECT_POLICY_DEFAULT. */
+  explicitPolicy: boolean;
   customerId: string | null;
   subscriptionId: string | null;
 }

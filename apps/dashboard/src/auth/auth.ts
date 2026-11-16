@@ -313,7 +313,7 @@ export function createAuth(config: AuthConfig) {
       // lets a top-level click out of a mail client set it at all — Strict
       // would not survive the redirect; and sign-up passes `callbackURL: "/"`,
       // where the root loader sends a session with no organization on to
-      // /onboarding.
+      // /onboarding, or the page it was sent from (an invitation link).
       //
       // The failure mode worth naming is a corporate link scanner that fetches
       // the URL before the human does. It degrades gracefully rather than

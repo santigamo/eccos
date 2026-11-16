@@ -12,6 +12,7 @@ import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { env } from "cloudflare:workers";
 import type { GatewayApi } from "@eccos/gateway-contract";
+import type { Auth } from "./auth/auth";
 import { getAuthForRequest } from "./auth/request-auth";
 import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
 import {
@@ -21,6 +22,7 @@ import {
   type Membership,
 } from "./auth/tenant";
 import { activeWorkspace } from "./lib/workspaces";
+import { INVITATION_COPY, INVITATION_RETRY, INVITATION_UNAVAILABLE } from "./lib/invitation-copy";
 
 export interface OrganizationView {
   id: string;
@@ -300,27 +302,7 @@ export const inviteMember = createServerFn({ method: "POST" })
     },
   );
 
-const INVITATION_RETRY = "Something went wrong with this invitation. Please try again.";
-// One sentence for "not found", "expired" and "sent to someone else": telling
-// them apart would confirm an invitation id to an account it was not sent to.
-const INVITATION_UNAVAILABLE =
-  "This invitation is not available to the account you are signed in with. It may have expired or been sent to a different email address.";
-const INVITATION_UNVERIFIED = "Verify your email address, then open the invitation link again.";
-
-const INVITATION_COPY: Record<string, string> = {
-  UNAUTHORIZED: "Your session has expired. Sign in again to accept the invitation.",
-  BAD_REQUEST: INVITATION_UNAVAILABLE,
-  INVITATION_NOT_FOUND: INVITATION_UNAVAILABLE,
-  YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION: INVITATION_UNAVAILABLE,
-  ORGANIZATION_NOT_FOUND: INVITATION_UNAVAILABLE,
-  INVITER_IS_NO_LONGER_A_MEMBER_OF_THE_ORGANIZATION: INVITATION_UNAVAILABLE,
-  EMAIL_VERIFICATION_REQUIRED_FOR_INVITATION: INVITATION_UNVERIFIED,
-  EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION: INVITATION_UNVERIFIED,
-  ORGANIZATION_MEMBERSHIP_LIMIT_REACHED:
-    "This workspace cannot take more members right now. Tell whoever invited you.",
-};
-
-/** Map an invitation failure to customer-facing copy (allowlist, as above). */
+/** Map an invitation failure to customer-facing copy (allowlist, `lib/invitation-copy.ts`). */
 export function invitationErrorCopy(err: unknown): string {
   const code = authErrorCode(err);
   const mapped = INVITATION_COPY[code];
@@ -329,9 +311,29 @@ export function invitationErrorCopy(err: unknown): string {
   return INVITATION_RETRY;
 }
 
-const acceptInviteInput = z
+export const acceptInviteInput = z
   .object({ invitationId: z.string().trim().min(1).max(256) })
   .strict();
+
+/**
+ * The workspace an ALREADY ACCEPTED invitation put the caller in, or null.
+ *
+ * Better Auth answers "not found" for an accepted invitation, which is what a
+ * retry meets when the accept went through but the account link after it did
+ * not. Only the invited identity that is now a member gets an answer here.
+ */
+async function joinedWorkspace(auth: Auth, request: Request, invitationId: string): Promise<Membership | null> {
+  const { session } = await requireAuthContext(auth, request);
+  const invitation = await (await auth.$context).adapter.findOne<{
+    email: string;
+    status: string;
+    organizationId: string;
+  }>({ model: "invitation", where: [{ field: "id", value: invitationId }] });
+  if (invitation?.status !== "accepted") return null;
+  if (invitation.email.toLowerCase() !== session.email.toLowerCase()) return null;
+  const memberships = await resolveMemberships(auth, request.headers);
+  return memberships.find((m) => m.id === invitation.organizationId) ?? null;
+}
 
 /** Accept an invitation as the signed-in matching identity (contract §7). */
 export const acceptInvitation = createServerFn({ method: "POST" })
@@ -339,27 +341,26 @@ export const acceptInvitation = createServerFn({ method: "POST" })
   .handler(
     async ({
       data,
-    }): Promise<
-      | { ok: true; data: { organizationId: string | null } }
-      | { ok: false; error: string }
-    > => {
+    }): Promise<{ ok: true; data: { organizationId: string } } | { ok: false; error: string }> => {
       try {
         const auth = authInstance();
         const request = currentRequest();
-        const accepted = (await auth.api.acceptInvitation({
-          body: { invitationId: data.invitationId },
-          headers: request.headers,
-        })) as { invitation?: { organizationId?: unknown } } | null;
-        const organizationId =
-          accepted?.invitation && typeof accepted.invitation.organizationId === "string"
-            ? accepted.invitation.organizationId
-            : null;
-        if (organizationId) {
-          // Defense in depth: make sure the joined organization is linked.
-          await withGateway((gateway) =>
-            gateway.ensureOrganizationAccount(organizationId),
-          );
+        let organizationId: string;
+        try {
+          const accepted = (await auth.api.acceptInvitation({
+            body: { invitationId: data.invitationId },
+            headers: request.headers,
+          })) as { invitation: { organizationId: string } };
+          organizationId = accepted.invitation.organizationId;
+        } catch (err) {
+          const joined = await joinedWorkspace(auth, request, data.invitationId).catch(() => null);
+          if (!joined) throw err;
+          organizationId = joined.id;
+          await auth.api.setActiveOrganization({ body: { organizationId }, headers: request.headers });
         }
+        // Defense in depth: make sure the joined organization is linked. A
+        // failure here leaves a member whose retry takes the branch above.
+        await withGateway((gateway) => gateway.ensureOrganizationAccount(organizationId));
         return { ok: true, data: { organizationId } };
       } catch (err) {
         return { ok: false, error: invitationErrorCopy(err) };
@@ -367,24 +368,33 @@ export const acceptInvitation = createServerFn({ method: "POST" })
     },
   );
 
-/** The pending invitation behind an accept link, for the invited identity only. */
+export interface InvitationView {
+  organizationName: string;
+  /** Already accepted by this identity: nothing to accept, only a workspace to open. */
+  joined: boolean;
+}
+
+/** The invitation behind an accept link, for the invited identity only. */
 export const getInvitation = createServerFn({ method: "GET" })
   .validator((input: unknown) => acceptInviteInput.parse(input))
-  .handler(
-    async ({
-      data,
-    }): Promise<{ ok: true; data: { organizationName: string } } | { ok: false; error: string }> => {
-      try {
-        const invitation = (await authInstance().api.getInvitation({
-          query: { id: data.invitationId },
-          headers: currentRequest().headers,
-        })) as { organizationName?: unknown } | null;
-        return { ok: true, data: { organizationName: String(invitation?.organizationName ?? "") } };
-      } catch (err) {
-        return { ok: false, error: invitationErrorCopy(err) };
-      }
-    },
-  );
+  .handler(async ({ data }): Promise<{ ok: true; data: InvitationView } | { ok: false; error: string }> => {
+    const auth = authInstance();
+    const request = currentRequest();
+    try {
+      const invitation = (await auth.api.getInvitation({
+        query: { id: data.invitationId },
+        headers: request.headers,
+      })) as { organizationName: string };
+      return { ok: true, data: { organizationName: invitation.organizationName, joined: false } };
+    } catch (err) {
+      const joined = await joinedWorkspace(auth, request, data.invitationId).catch(() => null);
+      if (joined) return { ok: true, data: { organizationName: joined.name, joined: true } };
+      // get-invitation raises "not found" from a bare status, with no code of
+      // its own; it must read like the accept's, or the pair is an id oracle.
+      const notFound = authErrorCode(err) === "BAD_REQUEST";
+      return { ok: false, error: notFound ? INVITATION_UNAVAILABLE : invitationErrorCopy(err) };
+    }
+  });
 
 /** List the signed-in user's pending invitations (identity plane only). */
 export const listMyInvitations = createServerFn({ method: "GET" }).handler(
