@@ -210,6 +210,14 @@ describe("TemplatesPage row actions", () => {
     expect(html).toContain('<span class="text-muted-foreground">');
   });
 
+  test("with no templates it says what they are for and offers the action", () => {
+    const html = render([]);
+    expect(html).toContain("NO TEMPLATES");
+    expect(html).toContain("has not written in the last 24 hours");
+    // Outline, not a second primary: the header's "New template" keeps that.
+    expect(html.split("New template").length).toBe(3);
+  });
+
   test("the kebab stays square and ghost — never a second primary", () => {
     // The page's ONE primary is "New template" above the grid, carrying the
     // `--caustic` glow. Square on every corner, like every control (law 1).

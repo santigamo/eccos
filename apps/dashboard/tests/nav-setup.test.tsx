@@ -19,7 +19,7 @@ import type { DashboardState } from "../src/server/gateway";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-let loaderData: { ok: boolean; data: DashboardState; hasForwardingTarget: boolean } | undefined;
+let loaderData: { ok: boolean; data: DashboardState; hasForwardingTarget: boolean | null } | undefined;
 let searchParams: { wabaId?: string } = {};
 
 // SPREAD, not replaced. `mock.module` swaps the module for the whole test
@@ -76,7 +76,7 @@ function stateFor(stage: DashboardState["stage"], replies = 0): DashboardState {
 
 function renderFor(
   stage: DashboardState["stage"],
-  hasForwardingTarget = false,
+  hasForwardingTarget: boolean | null = false,
   replies = 0,
 ): string {
   loaderData = { ok: true, data: stateFor(stage, replies), hasForwardingTarget };
@@ -117,5 +117,12 @@ describe("NavSetup rendering of the href contract", () => {
     // fully done checklist renders nothing at all.
     expect(setupComplete(setupStepsOf(stateFor("ready", 1), true))).toBe(true);
     expect(renderFor("ready", true, 1)).toBe("");
+  });
+
+  test("a target read that failed does not reopen the forwarding step", () => {
+    // `null` is unknown, never "no target": a finished checklist must not come
+    // back because one read failed.
+    expect(renderFor("ready", null, 1)).toBe("");
+    expect(renderFor("ready", false, 1)).toContain("Forwarding target");
   });
 });

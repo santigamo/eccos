@@ -328,7 +328,13 @@ Eccos system — the practices, not the brand):
 1. **Color only for meaningful state.** A healthy system is quiet: the status tag
    next to the heading suffices, and the health banner renders **only** when
    something is wrong (amber for degraded, red for unhealthy/unreachable). When an
-   operator sees a banner, it always means something.
+   operator sees a banner, it always means something. **Held events count as
+   something:** with a forwarding target confirmed missing and at least one event
+   waiting, the amber held banner renders at any count and under a `Healthy` tag, on
+   Status, on /webhooks and above the two logs (`HeldNotice`). It says that saving a
+   target sends them and when each is deleted. It stays off /conversations: an
+   inbox-only customer needs no server, and a standing warning there would mean
+   nothing. A target read that failed is unknown, and unknown says nothing.
 2. **Every metric links to its evidence.** Status is the index; the logs are the
    body. Counts navigate to the filtered log view that explains them
    (`failed 1` → `/deliveries?status=failed`). A number an operator cannot chase
@@ -356,7 +362,8 @@ Eccos system — the practices, not the brand):
 6. **Empty states have structure.** A pixel label (`NO DELIVERIES YET`), one
    normal-size muted sentence saying what will appear, and an action link only when
    a real action exists (clear filters, configure a target). Never a lone tiny
-   muted sentence.
+   muted sentence. A next step on a page that is working is the same anatomy as a
+   note under its table (`NextNote` on /numbers), never a green success banner.
 7. **A failure names only what it knows.** Server functions return a typed
    failure class (`unreachable` / `unauthenticated` / `forbidden`, decided from
    the thrown error's type in `src/server/gateway.ts`), and `FailureView`
@@ -401,7 +408,7 @@ Eccos system — the practices, not the brand):
     asks them to be one. So a surface holding a stored payload leads with what it can
     READ out of it and keeps the payload one `<details>` disclosure down
     (`RawDisclosure` in `components/logs/sheet-parts.tsx`), under a summary that states
-    the claim the payload backs — "exactly what your receiver got". Both halves are
+    the claim the payload backs — "exactly what your server got". Both halves are
     load-bearing: when Meta answers `132000`, that body is the only thing that explains
     why, so deleting it would push debugging out of the product into Cloudflare logs and
     leave the operator with nothing to hand their developer. A disclosure is **not** an

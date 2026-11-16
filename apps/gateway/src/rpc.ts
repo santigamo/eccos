@@ -19,7 +19,7 @@ import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
-import { isIdempotencyKey, sendBodyHash } from "./gateway";
+import { isIdempotencyKey, resolveRetentionDays, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
 import type {
   AccountKeyResource,
@@ -1255,6 +1255,10 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
   async getPublicOrigin(): Promise<string | null> {
     return this.env.GATEWAY_PUBLIC_URL?.trim() || null;
+  }
+
+  async getContentRetentionDays(): Promise<number> {
+    return resolveRetentionDays(this.env).contentDays;
   }
 
   /** Account-key management for the console (eccos-bm92): the same control-plane

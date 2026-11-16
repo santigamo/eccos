@@ -26,7 +26,7 @@ import { loaderFailure } from "../lib/failure";
 import { listInbound, retryDelivery } from "../server/gateway";
 import type { InboundRow } from "../server/gateway";
 import { formatCustomerId } from "../lib/customer-id";
-import { forwardReading } from "../lib/forwarding";
+import { forwardReading, targetMissing } from "../lib/forwarding";
 import {
   EMPTY_CELL,
   eventCountEntries,
@@ -333,7 +333,8 @@ function EventsPage() {
   const selectedWabaId = wabaId ?? ready?.scope.selectedWabaId;
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
-  const hasForwardingTarget = root.ok ? root.hasForwardingTarget : false;
+  const target = root.ok ? root.hasForwardingTarget : null;
+  const hasForwardingTarget = !targetMissing(target);
   const counts = ready?.status.counts;
   const pending = counts?.deliveries.pending ?? 0;
 
@@ -492,8 +493,9 @@ function EventsPage() {
           disagree about when forwarding is held. */}
       <HeldNotice
         pending={pending}
-        hasForwardingTarget={hasForwardingTarget}
+        hasForwardingTarget={target}
         wabaId={selectedWabaId}
+        retentionDays={root.ok ? root.deployment.contentRetentionDays : null}
       />
       {retryError ? (
         <p

@@ -99,13 +99,6 @@ export const NAV_MAIN: NavGroup[] = [
         icon: <WebhookIcon aria-hidden="true" />,
         requires: "waba",
       },
-      {
-        id: "templates",
-        label: "Templates",
-        href: "/templates",
-        icon: <FileTextIcon aria-hidden="true" />,
-        requires: "waba",
-      },
     ],
   },
   {
@@ -127,6 +120,15 @@ export const NAV_MAIN: NavGroup[] = [
     id: "sending",
     label: "Sending",
     items: [
+      // Under Sending, not Setup: a template is something you send with, and
+      // beside Numbers and Webhooks it read as a required step.
+      {
+        id: "templates",
+        label: "Templates",
+        href: "/templates",
+        icon: <FileTextIcon aria-hidden="true" />,
+        requires: "waba",
+      },
       {
         id: "broadcasts",
         label: "Broadcasts",

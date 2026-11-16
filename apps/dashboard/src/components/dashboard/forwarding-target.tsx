@@ -66,10 +66,13 @@ function generateSecret(): string {
 export function ForwardingTargetPanel({
   config,
   wabaId,
+  retentionDays,
   onSaved,
 }: {
   config: SubscriberConfig;
   wabaId?: string;
+  /** The gateway's content window, when the console has read it. */
+  retentionDays?: number | null;
   /** Called after a write lands, so the route can re-read its loader. */
   onSaved?: () => void;
 }) {
@@ -123,25 +126,20 @@ export function ForwardingTargetPanel({
         <FrameHeader className="gap-1.5 pt-0">
           <FrameTitle className={MACHINE_CLASS}>Forwarding target</FrameTitle>
           {hasTarget ? null : (
-            /* Data rule 6: structure, not a lone muted line — and no action of
-               its own, because the form below IS the action.
-
-               Both halves of the sentence are load-bearing. The first is true
-               only because the gateway HOLDS the queue while no target exists
-               (Phase 1.1); before that, events were being spent against a
-               destination that did not exist. The second is there because the
-               hold is BOUNDED: a held row past the content window is deleted
-               like any other expired content (`pruneExpired` in
-               apps/gateway/src/gateway.ts, docs/privacy.md). "Queued, not lost"
-               on its own would promise an archive this gateway deliberately
-               does not keep. */
+            /* Data rule 6: structure, and no action of its own, because the
+               form below IS the action. Both promises are the gateway's: saving
+               a target sets the alarm that drains the backlog, and a held row
+               past the content window is deleted (`pruneExpired` in
+               apps/gateway/src/gateway.ts, docs/privacy.md). */
             <FrameDescription className="max-w-prose text-pretty">
               <span className={`block ${MACHINE_CLASS}`}>No forwarding target</span>
               <span className="mt-1.5 block">
-                Events are queued, not attempted — nothing fails for want of a
-                receiver. Name one and the backlog goes out as soon as it is
-                saved; held events expire with the retention window like
-                everything else, so the wait is bounded.
+                The URL on your server where Eccos sends every message and status
+                as it arrives. You only need one if your own system should
+                receive them; Conversations works without it. Until you set one,
+                events are held: saving a target sends everything still held, and
+                each event is deleted{" "}
+                {retentionDays ? `${retentionDays} days after it arrived` : "when its retention window ends"}.
               </span>
             </FrameDescription>
           )}
@@ -264,9 +262,9 @@ export function SigningSecretField({
       {/* The functional register: what the field costs to use, and the way back
           when it is lost. Rotation is the recovery path precisely because the
           queue keeps retrying while the two sides disagree — nothing is dropped
-          in the window where the receiver is still verifying the old key. */}
+          in the window where the server is still verifying the old key. */}
       <p className={`mt-2 ${MACHINE_CLASS}`}>
-        Write-only · Lost it? set a new one here and in your receiver — deliveries
+        Write-only · Lost it? set a new one here and on your server — deliveries
         retry while the two disagree
       </p>
     </div>

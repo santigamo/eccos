@@ -121,6 +121,9 @@ describe("API keys panel", () => {
     );
     expect(html).toContain("/v1/wabas/&lt;WABA_ID&gt;/messages");
     expect(html).toContain("No keys yet");
+    // Conversations sends with no key, so the empty state must not say otherwise.
+    expect(html).toContain("Conversations in this console works without it");
+    expect(html).toContain('href="https://docs.eccos.chat/sending-messages"');
   });
 
   test("a new key is shown once, with a copy control and the warning", () => {
@@ -130,6 +133,20 @@ describe("API keys panel", () => {
     expect(html).toContain("ek_secret");
     expect(html).toContain("Copy");
     expect(html).toContain("You won&#x27;t see this key again");
+  });
+
+  test("a new key comes with the send call already filled in", () => {
+    const html = renderToStaticMarkup(
+      <IssuedKeyNotice
+        issued={{ keyId: "key_new", apiKey: "ek_secret" }}
+        wabaId="waba-a"
+        gatewayOrigin="https://gw.example"
+        onDone={() => {}}
+      />,
+    );
+    expect(html).toContain("https://gw.example/v1/wabas/waba-a/messages");
+    expect(html).toContain("Authorization: Bearer ek_secret");
+    expect(html).toContain("Read the API guide");
   });
 });
 

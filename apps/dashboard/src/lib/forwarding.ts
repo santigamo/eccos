@@ -174,3 +174,29 @@ export function batchEventSummary(payload: string): string {
     .map(([type, n]) => `${n} ${eventKindNoun(type, n)}`)
     .join(" · ");
 }
+
+/**
+ * The root's forwarding-target read is tri-state: `true`, `false`, or `null`
+ * when the read failed. Only a confirmed `false` is "no target": unknown never
+ * labels a row `held`, raises held copy or reopens the setup step.
+ */
+export function targetMissing(target: boolean | null | undefined): boolean {
+  return target === false;
+}
+
+/** How many events are held, the half of the held sentence every surface says. */
+export function heldCount(pending: number): string {
+  return `${pending} ${pending === 1 ? "event is" : "events are"} waiting for a forwarding target.`;
+}
+
+/**
+ * The held sentence, shared by the Status banner and `HeldNotice`. The deadline
+ * runs per event from its arrival (`pruneExpired` cuts on `created_at`), so it
+ * is never "N days from now". Saving a target sets the alarm that drains the
+ * backlog, which is the promise the middle sentence makes.
+ */
+export function heldSentence(pending: number, retentionDays?: number | null): string {
+  const one = pending === 1;
+  const deadline = retentionDays ? `${retentionDays} days after it arrived` : "when its retention window ends";
+  return `${heldCount(pending)} Save one and ${one ? "it is" : "they are"} sent right away. ${one ? "It" : "Each"} is deleted ${deadline}.`;
+}

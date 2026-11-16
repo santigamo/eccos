@@ -27,6 +27,8 @@ import {
   type ConnectOutcomeSearch,
 } from "../components/dashboard/connect-outcome";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
+import { selectWaba } from "@eccos/gateway-contract/select-waba";
+import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchWabaId } from "../lib/search";
 
 /** Scope selector plus the Embedded Signup outcome the gateway redirects with. */
@@ -52,7 +54,7 @@ export const Route = createFileRoute("/numbers")({
 function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
-  const { connectError, connectSkipped } = Route.useSearch();
+  const { wabaId, connectError, connectSkipped } = Route.useSearch();
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
@@ -111,6 +113,14 @@ function NumbersPage() {
   return (
     <NumbersView
       resources={resources}
+      // The WABA the root's target read resolved, by the same `selectWaba` call
+      // the gateway makes for it, and only when that read confirmed "none".
+      nextWabaId={
+        targetMissing(root.hasForwardingTarget)
+          ? selectWaba(resources.account?.accountId ?? "", wabas, wabaId, false, "any").wabaId
+          : undefined
+      }
+      supportEmail={root.deployment.supportEmail}
       billing={billing}
       subscribed={subscribed}
       connectError={connectError}
@@ -143,6 +153,8 @@ function NumbersPage() {
  */
 export function NumbersView({
   resources,
+  nextWabaId,
+  supportEmail,
   billing = false,
   subscribed = false,
   connectError,
@@ -150,6 +162,8 @@ export function NumbersView({
   onRefresh,
 }: {
   resources: AccountResources;
+  nextWabaId?: string;
+  supportEmail?: string | null;
   /** Whether this console has billing on, so a closed workspace can be pointed at it. */
   billing?: boolean;
   /** A subscription still exists, so billing opens its portal instead of a checkout. */
@@ -194,7 +208,12 @@ export function NumbersView({
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
-        <NumbersTable resources={resources} onRefresh={onRefresh} />
+        <NumbersTable
+          resources={resources}
+          nextWabaId={nextWabaId}
+          supportEmail={supportEmail}
+          onRefresh={onRefresh}
+        />
       </div>
       {/* Mounted only while open, so a previous attempt's inline error never
           greets the next one — the same remount-per-opening idiom /templates

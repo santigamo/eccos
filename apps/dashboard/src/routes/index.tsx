@@ -14,6 +14,7 @@ import type { DashboardScope, GatewayStatus } from "../server/gateway";
 import {
   COUNT_LINK,
   countTotal,
+  INLINE_LINK,
   FactCell,
   FactsStrip,
   Page,
@@ -47,11 +48,15 @@ function StatusPage() {
 
   if (result.data.stage !== "ready") return null;
 
-  const reading = healthReading(result.data.status, result.hasForwardingTarget);
+  const reading = healthReading(
+    result.data.status,
+    result.hasForwardingTarget,
+    result.deployment.contentRetentionDays,
+  );
 
   return (
     <Page title="Status" kicker="Gateway" actions={<HealthBadge reading={reading} />}>
-      <StatusBanner banner={reading.banner} wabaId={result.data.scope.selectedWabaId} />
+      <StatusBanner banners={reading.banners} wabaId={result.data.scope.selectedWabaId} />
       <StatusView status={result.data.status} scope={result.data.scope} />
     </Page>
   );
@@ -62,38 +67,25 @@ function StatusPage() {
  * element that appears and disappears is not reliably announced, an empty one
  * that fills up is. Healthy therefore costs no pixels — no banner, no margin.
  */
-function StatusBanner({ banner, wabaId }: { banner: HealthBanner | null; wabaId: string }) {
+function StatusBanner({ banners, wabaId }: { banners: HealthBanner[]; wabaId: string }) {
   return (
-    <output
-      className={
-        banner
-          ? cn(
-              "mb-4 block border-l-2 px-3 py-2 text-sm text-foreground",
-              banner.rail,
-            )
-          : undefined
-      }
-      aria-live="polite"
-    >
-      {banner?.detail}
-      {/* Data rule 2, applied to a state instead of a number: a banner naming a
-          state the operator can resolve carries the door to it. The scope rides
-          along, like every other link on this page — a target is per WABA. */}
-      {banner?.action ? (
-        <>
-          {" "}
-          <Link
-            to={banner.action.to}
-            search={{ wabaId }}
-            // The house link idiom (the `link` button variant): green ink, the
-            // console's interactivity signature, underlined on hover, green
-            // ring on focus.
-            className="text-ink underline-offset-4 transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            {banner.action.label}
-          </Link>
-        </>
-      ) : null}
+    <output className={banners.length > 0 ? "mb-4 flex flex-col gap-2" : undefined} aria-live="polite">
+      {banners.map((banner) => (
+        <span key={banner.detail} className={cn("block border-l-2 px-3 py-2 text-sm text-foreground", banner.rail)}>
+          {banner.detail}
+          {/* Data rule 2, applied to a state instead of a number: a line naming a
+              state the operator can resolve carries the door to it. The scope
+              rides along, like every other link on this page. */}
+          {banner.action ? (
+            <>
+              {" "}
+              <Link to={banner.action.to} search={{ wabaId, ...banner.action.search }} className={INLINE_LINK}>
+                {banner.action.label}
+              </Link>
+            </>
+          ) : null}
+        </span>
+      ))}
     </output>
   );
 }
@@ -223,7 +215,7 @@ function FactsStripSection({ counts, selectedWabaId }: { counts: GatewayStatus["
       </FactCell>
       <FactCell
         kicker="Forwards"
-        caption="batches to your subscriber"
+        caption="batches to your server"
         value={
           <Link
             to="/deliveries"

@@ -46,6 +46,7 @@ let pinnedRequest: Request | null = null;
 let gatewayBinding: Record<string, (...args: unknown[]) => unknown> | undefined;
 const workerEnv: {
   BETTER_AUTH_URL?: string;
+  SUPPORT_EMAIL?: string;
   readonly GATEWAY?: typeof gatewayBinding;
 } = {
   get GATEWAY() {
@@ -236,6 +237,7 @@ const {
   getSubscriberConfig,
   setSubscriberConfig,
   hasForwardingTarget,
+  getDeployment,
   resubscribe,
   recheckNumber,
   sendTemplateTest,
@@ -1854,14 +1856,36 @@ describe("getSubscriberConfig / setSubscriberConfig / resubscribe (Webhooks view
     expect(await hasForwardingTarget()).toBe(false);
   });
 
-  test("hasForwardingTarget says false rather than failing when there is no scope", async () => {
-    // An account with no WABA has no subscriber config to read, and "no
-    // forwarding target" is simply true there. A checklist row cannot render a
-    // failure card, and nothing else consumes this, so nothing loses a
-    // diagnosis by answering the question instead of throwing.
+  test("hasForwardingTarget says null, not false, when the read fails", async () => {
+    // The held banner fires on one pending row, so a failed read answered as
+    // "no target" would send an account that HAS one to go set it. The root
+    // loader never asks for an account with no WABA; that case is its own false.
     withResources({});
     gatewayBinding = undefined;
-    expect(await hasForwardingTarget()).toBe(false);
+    expect(await hasForwardingTarget()).toBeNull();
+  });
+
+  test("getDeployment carries the gateway's content window and the support address", async () => {
+    withResources({ getContentRetentionDays: async () => 45 });
+    expect(await getDeployment()).toEqual({ supportEmail: null, contentRetentionDays: 45 });
+    workerEnv.SUPPORT_EMAIL = " help@example.com ";
+    expect(await getDeployment()).toEqual({ supportEmail: "help@example.com", contentRetentionDays: 45 });
+    delete workerEnv.SUPPORT_EMAIL;
+    gatewayBinding = undefined;
+    expect(await getDeployment()).toEqual({ supportEmail: null, contentRetentionDays: null });
+  });
+
+  test("getDeployment needs a session and no organization permission, and rounds the days", async () => {
+    // A deployment-wide constant: a member whose role cannot `view` still gets it.
+    withResources({ getContentRetentionDays: async () => 29.6 });
+    fakeDeniedActions.add("view");
+    try {
+      expect((await getDeployment()).contentRetentionDays).toBe(30);
+    } finally {
+      fakeDeniedActions.delete("view");
+    }
+    fakeSessionHeaders = null;
+    expect((await getDeployment()).contentRetentionDays).toBeNull();
   });
 
   test("setSubscriberConfig unreachable: throw is surfaced as { ok: false }", async () => {

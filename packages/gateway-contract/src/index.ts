@@ -1262,6 +1262,8 @@ export interface GatewayApi {
   listAccountResources(accountId: string): Promise<AccountResources>;
   /** The gateway's public HTTPS origin (`GATEWAY_PUBLIC_URL`), null when unset. */
   getPublicOrigin(): Promise<string | null>;
+  /** Days the deployment keeps message content (`CONTENT_RETENTION_DAYS`, clamped); held events age out with it. */
+  getContentRetentionDays(): Promise<number>;
   /** The account's API keys, metadata only (never the secret or its hash). */
   listApiKeys(accountId: string): Promise<AccountKeyResource[]>;
   /** Issue an `ek_` key for the account; the raw key is returned once, here. */

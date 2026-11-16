@@ -314,6 +314,7 @@ describe("log pages", () => {
   const root = {
     ok: true,
     hasForwardingTarget: false,
+    deployment: { supportEmail: null, contentRetentionDays: 30 },
     data: {
       stage: "ready",
       status: { counts: { inbound: 0, inboundByType: {}, outbound: {}, deliveries: {} } },
