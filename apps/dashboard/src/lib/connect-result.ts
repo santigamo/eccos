@@ -29,10 +29,16 @@ export const QR_CODE_STEP = "WHATSAPP_BUSINESS_APP_ONBOARDING_QR_CODE";
 const CANCELLED_AT_QR_MESSAGE =
   "Meta's window was closed at the QR code step. Nothing changed. If Meta said the number lacks activity, use it in the WhatsApp Business app for about a week, then try again.";
 
-/** The cancel notice for the screen Meta's window was closed on, with Meta's error code when it reported one. */
-export function connectCancelledMessage(step?: string, errorCode?: string): string {
+/**
+ * The cancel notice for the screen Meta's window was closed on. When the
+ * customer reported an error from inside the flow, Meta's references for it
+ * are appended: the session id is what Meta's support asks for.
+ */
+export function connectCancelledMessage(step?: string, error?: { code?: string; sessionId?: string }): string {
   const base = step === QR_CODE_STEP ? CANCELLED_AT_QR_MESSAGE : CONNECT_CANCELLED_MESSAGE;
-  return errorCode ? `${base} Meta reported error ${errorCode}. Quote it if you contact support.` : base;
+  const refs = [error?.code && `error ${error.code}`, error?.sessionId && `session ${error.sessionId}`].filter(Boolean);
+  if (refs.length === 0) return base;
+  return `${base} Meta reported ${refs.join(", ")}. Quote ${refs.length > 1 ? "both" : "it"} if you contact support.`;
 }
 
 /**

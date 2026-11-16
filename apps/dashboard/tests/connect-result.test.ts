@@ -70,7 +70,7 @@ describe("judgeExchange", () => {
   });
 
   test("copy has no em dashes and never blames Meta for our own errors", () => {
-    for (const m of [connectCancelledMessage(), connectCancelledMessage(QR_CODE_STEP, "1"), popupBlockedMessage("app.eccos.chat"), popupHintMessage("app.eccos.chat")]) {
+    for (const m of [connectCancelledMessage(), connectCancelledMessage(QR_CODE_STEP, { code: "1", sessionId: "s" }), popupBlockedMessage("app.eccos.chat"), popupHintMessage("app.eccos.chat")]) {
       expect(m).not.toContain("—");
     }
     const failed = judgeExchange({ ok: false, error: "x", code: "failed" });
@@ -119,12 +119,16 @@ describe("connectCancelledMessage", () => {
     expect(m).toContain("closed at the QR code step. Nothing changed.");
     expect(m).toContain("use it in the WhatsApp Business app for about a week");
   });
-  test("appends Meta's error code on any step", () => {
+  test("appends Meta's references for a reported error, on any step", () => {
     for (const step of [undefined, QR_CODE_STEP]) {
-      expect(connectCancelledMessage(step, "131000")).toEndWith(
-        "Meta reported error 131000. Quote it if you contact support.",
+      expect(connectCancelledMessage(step, { code: "524126", sessionId: "f34b51d" })).toEndWith(
+        "Meta reported error 524126, session f34b51d. Quote both if you contact support.",
       );
     }
+    expect(connectCancelledMessage(undefined, { sessionId: "f34b51d" })).toEndWith(
+      "Meta reported session f34b51d. Quote it if you contact support.",
+    );
+    expect(connectCancelledMessage(undefined, {})).toBe(CONNECT_CANCELLED_MESSAGE);
   });
 });
 

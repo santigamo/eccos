@@ -74,8 +74,8 @@ const CONNECT_PATHS: ReadonlyArray<{
     tone: "muted",
     title: "I use this number in the WhatsApp Business app",
     detail:
-      "Keep using the app on your phone. Have it in hand: Meta shows a QR code to scan from the app and asks whether to share your chat history. Choose it during setup.",
-    caution: "Meta usually asks for about a week of real use in the Business app first",
+      "Keep using the app on your phone, and have it in hand: Meta shows a QR code to scan and asks during setup whether to share your chat history.",
+    caution: "Meta usually asks for about a week of real use first · Up to 20 messages per second",
   },
   {
     path: "new-number",
@@ -125,7 +125,8 @@ type Session = {
   attempt: number;
   count: number;
   step?: string;
-  errorCode?: string;
+  /** The error the customer reported from inside the flow, while nothing but a CANCEL has followed it. */
+  error?: { code?: string; sessionId?: string };
   openedAt: number;
   /** The window closed with no code, so the cancel notice is showing. */
   cancelled?: boolean;
@@ -194,7 +195,7 @@ export function ConnectNumberChoices({
   closed = false,
   onBusyChange,
   navigate = (path) => window.location.assign(path),
-  popupWatchdogMs = 8_000,
+  popupWatchdogMs = 4_000,
   abandonDelayMs = 1_500,
 }: {
   className?: string;
@@ -260,25 +261,27 @@ export function ConnectNumberChoices({
    * permanently mounted listener is not a permanently open door.
    */
   useEffect(() => {
-    // Meta's window is demonstrably open: the "may be behind this one" hint is wrong from here on.
-    function metaSeen() {
-      stopWatch.current?.();
-      setFeedback((now) => (now?.tone === "slow" ? null : now));
-    }
     function onMessage(event: MessageEvent) {
       const parsed = parseSessionEvent(event.origin, event.data);
       if (!parsed) return;
-      metaSeen();
       // Every message is recorded: the session id must never be lost. Only the
       // abandonment summary needs to know which attempt's window posted it.
       const mine = event.source ? sessions.current.get(event.source) : undefined;
+      // Meta's window is demonstrably open, so the "may be behind this one" hint
+      // goes. Not for a message from an older attempt's window.
+      if (!mine || mine.attempt === attempt.current) {
+        stopWatch.current?.();
+        setFeedback((now) => (now?.tone === "slow" ? null : now));
+      }
       if (mine) {
         mine.count += 1;
         if (parsed.currentStep) mine.step = parsed.currentStep;
-        if (parsed.errorCode) mine.errorCode = parsed.errorCode;
+        // An error the customer got past is not why the window closed.
+        if (parsed.errorCode) mine.error = { code: parsed.errorCode, sessionId: parsed.sessionId };
+        else if (parsed.event !== "CANCEL") mine.error = undefined;
         // Meta's CANCEL can land just after the window closed: the notice catches up.
         if (mine.cancelled && mine.attempt === attempt.current) {
-          const text = connectCancelledMessage(mine.step, mine.errorCode);
+          const text = connectCancelledMessage(mine.step, mine.error);
           setFeedback((now) => (now?.tone === "notice" ? { text, tone: "notice" } : now));
         }
       }
@@ -287,11 +290,7 @@ export function ConnectNumberChoices({
       void recordConnectSessionEvent({ data: parsed }).catch(() => {});
     }
     window.addEventListener("message", onMessage);
-    window.addEventListener("blur", metaSeen);
-    return () => {
-      window.removeEventListener("message", onMessage);
-      window.removeEventListener("blur", metaSeen);
-    };
+    return () => window.removeEventListener("message", onMessage);
   }, []);
 
   /**
@@ -466,7 +465,7 @@ export function ConnectNumberChoices({
       if (!isCurrent()) return;
       track("connect_outcome", { result: "cancelled" });
       mySession.cancelled = true;
-      setFeedback({ text: connectCancelledMessage(mySession.step, mySession.errorCode), tone: "notice" });
+      setFeedback({ text: connectCancelledMessage(mySession.step, mySession.error), tone: "notice" });
       setStarting(null);
     };
     let popup: Window | null | undefined;

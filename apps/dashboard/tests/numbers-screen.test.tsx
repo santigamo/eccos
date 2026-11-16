@@ -49,10 +49,10 @@ describe("ConnectNumberPanel", () => {
     // neither may quietly disappear in a copy edit.
     const html = render();
     expect(html).toContain("A number on WhatsApp today stops working in the app");
-    expect(html).toContain("about a week of real use in the Business app");
+    expect(html).toContain("Up to 20 messages per second");
+    expect(html).toContain("about a week of real use first");
     expect(html).toContain("QR code");
     expect(html).toContain("share your chat history");
-    expect(html).not.toContain("messages per second");
   });
 
   test("the heading is the caller's, so first run and add-another differ", () => {

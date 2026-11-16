@@ -478,33 +478,15 @@ describe("ConnectNumberChoices in a real DOM", () => {
       return { ok: true };
     };
     (window as unknown as { umami: unknown }).umami = { track: (n: string, d: unknown) => tracked.push([n, d]) };
-    const popup = { closed: false };
-    const original = window.open;
-    window.open = (() => popup) as unknown as typeof window.open;
-    (window as unknown as { FB: { login: unknown } }).FB.login = (cb: LoginCallback) => {
-      loginCalls += 1;
-      loginCallback = cb;
-      window.open("https://www.facebook.com/", "_blank");
-    };
-    const host = await mountChoices();
-    await act(async () => card(host, "A new number").click());
+    const { post } = await openObserved();
     await settle();
-    await act(async () => {
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          origin: "https://www.facebook.com",
-          source: popup as unknown as MessageEventSource,
-          data: JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "CANCEL", data: { current_step: "PHONE_NUMBER_SETUP" } }),
-        }),
-      );
-    });
+    await post("CANCEL", { current_step: "PHONE_NUMBER_SETUP" });
     await act(async () => loginCallback?.({ authResponse: null }));
     await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 40))));
     expect(events).toContainEqual({ event: "CANCEL", currentStep: "PHONE_NUMBER_SETUP" });
     expect(events).toContainEqual({ event: "POPUP_CLOSED", currentStep: "PHONE_NUMBER_SETUP" });
     expect(tracked.find(([n]) => n === "es_abandon")?.[1]).toMatchObject({ step: "PHONE_NUMBER_SETUP", events: 1 });
     delete (window as unknown as { umami?: unknown }).umami;
-    window.open = original;
   });
 
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
@@ -546,13 +528,25 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(live(host)).not.toContain("Meta reported error");
   });
 
-  test("a CANCEL that lands after the window closed still names the step and Meta's error code", async () => {
+  const REPORTED = { error_message: "x", error_code: "524126", session_id: "f34b51d", timestamp: "1" };
+
+  test("a CANCEL that lands after the window closed still names the step and Meta's references", async () => {
     const { host, post } = await openObserved();
+    await post("ERROR", REPORTED);
     await act(async () => loginCallback?.({ authResponse: null }));
     expect(live(host)).toContain("The Meta window was closed before a number was connected");
-    await post("CANCEL", { ...QR, error_code: "131000" });
+    await post("CANCEL", QR);
     expect(live(host)).toContain("closed at the QR code step");
-    expect(live(host)).toContain("Meta reported error 131000. Quote it if you contact support.");
+    expect(live(host)).toContain("Meta reported error 524126, session f34b51d. Quote both if you contact support.");
+  });
+
+  test("an error the customer got past is not quoted on a later cancel", async () => {
+    const { host, post } = await openObserved();
+    await post("ERROR", REPORTED);
+    await post("FINISH_ONLY_WABA", { waba_id: "100" });
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("Nothing changed");
+    expect(live(host)).not.toContain("Meta reported");
   });
 
   test("a late CANCEL from an older window does not rewrite a newer attempt", async () => {
@@ -578,13 +572,29 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(live(host)).toBe("");
   });
 
-  test("this window losing focus clears the hint", async () => {
+  test("losing focus after the hint keeps it and its Start again: allowing pop-ups takes focus too", async () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await wait(60);
-    expect(live(host)).toContain("Don't see Meta's window?");
     await act(async () => void window.dispatchEvent(new Event("blur")));
-    expect(live(host)).toBe("");
+    expect(live(host)).toContain("Don't see Meta's window?");
+    expect(live(host)).toContain("Start again");
+  });
+
+  test("a message from an older attempt's window does not clear a newer attempt's hint", async () => {
+    const { host, post } = await openObserved(20);
+    await act(async () => loginCallback?.({ authResponse: null }));
+    const original = window.open;
+    window.open = (() => ({ closed: false })) as unknown as typeof window.open;
+    try {
+      await act(async () => card(host, "A new number").click());
+      await wait(60);
+      await post("CANCEL", QR);
+      expect(live(host)).toContain("Don't see Meta's window?");
+      expect(live(host)).toContain("Start again");
+    } finally {
+      window.open = original;
+    }
   });
 
   test("a retry after a cancel logs in again and exchanges with its own handoff", async () => {
@@ -605,7 +615,6 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => card(host, "A new number").click());
     await settle();
     await wait(60);
-    expect(live(host)).toContain("Don't see Meta's window?");
     expect(live(host)).toContain("Don't see Meta's window?");
     expect(live(host)).not.toContain("should be open");
     expect(live(host)).toContain("Start again");
@@ -664,7 +673,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     const host = await mountChoices(20);
     await act(async () => card(host, "A new number").click());
     await settle();
-    await act(async () => void window.dispatchEvent(new Event("blur")));
+    window.dispatchEvent(new Event("blur"));
     await wait(60);
     expect(live(host)).toBe("");
     expect(card(host, "A new number").disabled).toBe(true);
