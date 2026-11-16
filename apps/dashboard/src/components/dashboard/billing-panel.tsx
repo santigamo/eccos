@@ -61,7 +61,7 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
           {priced ? (
             <div className={ROW_CLASS}>
               <dt className={MACHINE_CLASS}>Monthly price</dt>
-              <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR</dd>
+              <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR + VAT</dd>
             </div>
           ) : null}
         </dl>

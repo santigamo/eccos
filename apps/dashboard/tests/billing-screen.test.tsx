@@ -85,7 +85,7 @@ describe("billing on", () => {
     const html = renderToStaticMarkup(<SettingsView accountId="account-a" billing={closed} />);
     expect(html).toContain("Billing");
     expect(html).toContain("No active subscription");
-    expect(html).toContain("8 EUR");
+    expect(html).toContain("8 EUR + VAT");
     expect(html).toContain("Messaging keeps working");
     expect(html).toContain("Start subscription");
     expect(html).not.toContain("Manage billing");
@@ -120,7 +120,7 @@ describe("billing on", () => {
   test("Numbers warns while closed and never blocks connecting", () => {
     // A closed workspace must still be able to reconnect a number it already has.
     const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />);
-    expect(html).toContain("Adding a new number needs an active subscription: 5 EUR per month for 1 number. The price follows");
+    expect(html).toContain("Adding a new number needs an active subscription: 5 EUR per month + VAT for 1 number. The price follows");
     expect(html).toContain("new number left out");
     expect(html).toContain("Start subscription");
     expect(html).toContain("+ Add number");
@@ -129,7 +129,7 @@ describe("billing on", () => {
 
   test("first run on a closed workspace offers the subscription instead of Meta's window", () => {
     const html = renderToStaticMarkup(<FirstRunConnect closed billing />);
-    expect(html).toContain("needs an active subscription: 5 EUR per month for 1 number.");
+    expect(html).toContain("needs an active subscription: 5 EUR per month + VAT for 1 number.");
     expect(html).toContain("Start subscription");
     expect(html).not.toContain("WhatsApp Business app");
     const pastDue = renderToStaticMarkup(<FirstRunConnect closed billing subscribed />);
@@ -165,7 +165,7 @@ describe("billing on", () => {
 
   test("an owner or admin keeps the price and the button", () => {
     const gate = renderToStaticMarkup(<FirstRunConnect closed billing canManageBilling />);
-    expect(gate).toContain("5 EUR per month for 1 number.");
+    expect(gate).toContain("5 EUR per month + VAT for 1 number.");
     expect(gate).toContain("Start subscription");
     const notice = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling />);
     expect(notice).toContain("Start subscription");
@@ -175,10 +175,10 @@ describe("billing on", () => {
 
   test("the notice quotes what a checkout started now charges", () => {
     // `checkoutUrl` prices the numbers connected today, and at least one.
-    expect(closedNotice(true, 0)).toContain("5 EUR per month for 1 number.");
-    expect(closedNotice(true, 5)).toContain("17 EUR per month for 5 numbers.");
-    expect(closedNotice(true, 6)).toContain("19 EUR per month for 6 numbers.");
-    expect(closedNotice(true, 16)).toContain("49 EUR per month for 16 numbers.");
+    expect(closedNotice(true, 0)).toContain("5 EUR per month + VAT for 1 number.");
+    expect(closedNotice(true, 5)).toContain("17 EUR per month + VAT for 5 numbers.");
+    expect(closedNotice(true, 6)).toContain("19 EUR per month + VAT for 6 numbers.");
+    expect(closedNotice(true, 16)).toContain("49 EUR per month + VAT for 16 numbers.");
     expect(closedNotice(true, 3)).toContain("The price follows the numbers you connect.");
   });
 
