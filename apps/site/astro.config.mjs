@@ -44,6 +44,8 @@ const LASTMOD = {
   "/en/pricing": lastModified("src/components/PricingPage.astro", "src/data/product.ts", ...SHELL),
   "/coexistence": lastModified("src/components/CoexistencePage.astro", "src/data/product.ts", ...SHELL),
   "/en/coexistence": lastModified("src/components/CoexistencePage.astro", "src/data/product.ts", ...SHELL),
+  "/faq": lastModified("src/components/FaqPage.astro", "src/data/faq.ts", "src/data/product.ts", ...SHELL),
+  "/en/faq": lastModified("src/components/FaqPage.astro", "src/data/faq.ts", "src/data/product.ts", ...SHELL),
   "/migrate": lastModified("src/page-content/migrate.html", "src/pages/migrate.astro", ...SHELL),
   "/privacy": lastModified("src/page-content/privacy.html", "src/pages/privacy.astro", ...SHELL),
   "/terms": lastModified("src/page-content/terms.html", "src/pages/terms.astro", ...SHELL),

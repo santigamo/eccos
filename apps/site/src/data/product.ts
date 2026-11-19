@@ -216,6 +216,12 @@ export const PAGES: { url: string; title: string; answers: string }[] = [
       "What WhatsApp coexistence is, how to connect a number that is already in the WhatsApp Business app, what your backend receives, and Meta's requirements and limits.",
   },
   {
+    url: "https://eccos.chat/en/faq",
+    title: "Eccos FAQ (English; Spanish at /faq)",
+    answers:
+      "Pre-sales questions: what the price includes, Meta's template fees and verification limits, the free trial, coexistence, sending from your own scripts, webhooks, rate limits, workspaces, GDPR and moving to self-hosted.",
+  },
+  {
     url: "https://docs.eccos.chat",
     title: "Eccos Cloud API documentation",
     answers:

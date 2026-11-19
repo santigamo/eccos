@@ -1,0 +1,267 @@
+/**
+ * The /faq page: the landing's questions plus the pre-sales ones prospects keep
+ * emailing, grouped by topic. Landing items are reused by reference, so the
+ * page can tell them apart and leave their FAQPage markup to the landing.
+ */
+import { COPY, PRICING, SITE, type Locale } from "./product";
+
+export interface FaqItem {
+  q: string;
+  a: string;
+}
+
+export interface FaqGroup {
+  id: string;
+  title: string;
+  items: FaqItem[];
+}
+
+const [enBan, enCoexistence, enCost, enOfficial, enCompare, enSelfHost, , enMetaApp] = COPY.en.faq;
+const [esBan, esCoexistence, esCost, esOfficial, esCompare, esSelfHost, , esMetaApp] = COPY.es.faq;
+
+const trial = PRICING.trialDays;
+
+export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
+  en: [
+    {
+      id: "pricing",
+      title: "Price and trial",
+      items: [
+        enCost,
+        {
+          q: "Is everything included in the monthly price, or are there setup or per-message fees?",
+          a: "The monthly price per connected number is all Eccos charges. There is no setup fee and no fee per message: messages are unlimited on every plan. Prices do not include VAT, which is added at checkout. The only other cost is what Meta charges for some messages, which Meta bills to your business directly.",
+        },
+        {
+          q: "Does Meta charge extra for template messages?",
+          a: "Yes. Template messages, the ones a business sends to start a conversation, are charged by Meta at its own rates, by country and category (marketing, utility, authentication). Replies inside the 24-hour window after a customer writes to you carry no Meta charge. Meta bills these fees to the card on your business's own Meta account. Eccos does not take part in that bill and adds nothing on top.",
+        },
+        {
+          q: "Can I try Eccos before paying?",
+          a: `Yes. Creating an account and a workspace is free and needs no card, so you can look around the console first. To connect a number you subscribe, and the subscription starts with a ${trial}-day free trial that asks for a card. If you cancel before the trial ends, you are not charged; if not, the first monthly charge is made when the trial ends. You can cancel at any time from the billing section of the console.`,
+        },
+        enCompare,
+      ],
+    },
+    {
+      id: "meta",
+      title: "Meta account, verification and billing",
+      items: [
+        {
+          q: "Do I need any other provider besides Eccos?",
+          a: "No. You need a Meta business account with a WhatsApp Business Account, which you can create while connecting the number, and a payment method in Meta for the messages Meta charges for. Eccos covers the rest: the connection to the official API, the console, the API and the webhooks.",
+        },
+        {
+          q: "Do I need Meta business verification to start?",
+          a: "No. Without verification, Meta lets a business start conversations with up to 250 different customers in a rolling 24 hours, using template messages. Verifying the business, or sending enough messages that customers receive well, raises that limit to 2,000 and then higher, automatically. Each company verifies itself, in its own Meta business portfolio; Eccos does not need to do anything.",
+        },
+        enOfficial,
+        {
+          q: "What happens if Meta suspends the Eccos app?",
+          a: "Your number and your Meta billing belong to your business, not to Eccos, so they would not be affected. The WhatsApp Business app keeps working on your phone; only sending and receiving through the API would stop. You could then connect the same number to another provider, or to Eccos running on your own server.",
+        },
+        {
+          q: "Can each business pay Meta separately, or can I pay for all of them in one place?",
+          a: "Each business pays Meta with its own card, on its own Meta account. Paying Meta in one place for several businesses needs a Meta Solution Partner that offers a credit line. Eccos is a Tech Provider, so it cannot offer that.",
+        },
+      ],
+    },
+    {
+      id: "phone",
+      title: "Your number and the WhatsApp app",
+      items: [
+        enCoexistence,
+        {
+          q: "Does coexistence work with numbers from Spain, Portugal or Italy?",
+          a: "Yes. You can keep using the WhatsApp Business app on your phone with a Spanish, Portuguese or Italian number while the same number works through the API. The app has to be WhatsApp Business (not personal WhatsApp), version 2.24.17 or higher, and Meta disconnects the number if the app goes about 14 days without being opened. Meta's full conditions are at https://eccos.chat/en/coexistence.",
+        },
+        {
+          q: "Do messages I send from the phone or from WhatsApp Web reach my system?",
+          a: "Yes, on a number connected with coexistence. What your team sends from the WhatsApp Business app, or from WhatsApp Web linked to it, reaches your system as an echo event, with its delivery and read statuses. So your software knows when someone has already answered by hand.",
+        },
+        enBan,
+        {
+          q: "If I stop using Eccos, do I keep my number and the app?",
+          a: "Yes. The number and the WhatsApp Business Account belong to your business. If you leave, only the API connection through Eccos goes away: the app keeps working on your phone as before, and nothing has to be migrated or registered again. The conversation history stored in Eccos is deleted when you close the account, so export what you need first.",
+        },
+      ],
+    },
+    {
+      id: "api",
+      title: "Sending and receiving from your own systems",
+      items: [
+        {
+          q: "Can I send messages from my own server or script?",
+          a: "Yes. Any program that can make an HTTPS request can send: a Python script, a server, a NAS or an automation tool. In the console, open API keys (under Setup, for an owner or admin) and create a key. Your program then sends a POST request to the Eccos API with that key and the message. The guide, with an example, is at https://docs.eccos.chat/sending-messages.",
+        },
+        {
+          q: "Do I need a VPS or a public server?",
+          a: "Not to send. Sending is an outgoing HTTPS request, so it works from any machine with internet access, including a computer or a NAS in your office. To receive messages on your own system, you need a public HTTPS address that Eccos can call. If your machine is not public, a tunnel such as Cloudflare Tunnel gives it one. To read and answer conversations by hand you need no server at all: the console has an inbox.",
+        },
+        {
+          q: "Can I receive messages on my own HTTPS endpoint, and are the requests signed?",
+          a: "Yes. In the console, under Webhooks, set your HTTPS address and a signing secret. Every request is signed with that secret (HMAC-SHA256 of the body), so your system can check that it comes from Eccos. If your endpoint is down, Eccos retries for about an hour, and you can resend a failed batch from the console. Details are at https://docs.eccos.chat/webhooks.",
+        },
+        {
+          q: "Is there a limit on how many messages I can send?",
+          a: "Eccos does not limit how many messages you send in total: they are unlimited on every plan. The API sends up to 60 messages per minute per WhatsApp Business Account by default, and the limit can be raised on request. Meta has its own limits on how many customers you can contact first, which grow with verification and use.",
+        },
+        {
+          q: "Can several people use one number, or can I manage several companies?",
+          a: "Yes, both. You invite your team to a workspace, with different permissions, and everyone reads and answers the same conversations in the console, while the phone keeps working with coexistence. For several companies, create one workspace per company: each one sees only its own numbers, conversations and settings, and you switch between them in the console. Each workspace has its own subscription.",
+        },
+      ],
+    },
+    {
+      id: "privacy",
+      title: "Data and GDPR",
+      items: [
+        {
+          q: "Do you sign a data processing agreement under Article 28 of the GDPR?",
+          a: `Yes. On Eccos Cloud your business is the data controller and Eccos is the processor, under Article 28 of the GDPR. The agreement is available on request at ${SITE.email}.`,
+        },
+        {
+          q: "Where is my data stored, and who else processes it?",
+          a: "Eccos Cloud stores data in Cloudflare's European Union jurisdiction. The providers that process it for us are Cloudflare (hosting), Meta (the WhatsApp API every message goes through, which processes messages in its own data centres, in the United States by default), Sentry (error reports, with no message content) and Hetzner (a fallback server in Germany that only relays traffic and stores none of it). The full list is in the privacy policy, at https://eccos.chat/privacy.",
+        },
+        {
+          q: "How long do you keep my data, and can I turn storage off?",
+          a: "Conversation history is kept with no time limit by default; in Settings you can have it deleted automatically after a window, from 30 days up. The copy used to deliver events to your system deletes message content after 30 days by default. Storage cannot be switched off completely, but you can erase a customer's data at any time, by phone number.",
+        },
+      ],
+    },
+    {
+      id: "self-host",
+      title: "Self-hosting",
+      items: [
+        enSelfHost,
+        {
+          q: "If I move to self-hosted later, do I have to register my numbers again?",
+          a: "No. The number and the WhatsApp Business Account stay yours, so you connect them to your own deployment through your own Meta app, without registering the number again. Conversation history does not move by itself: export it from Eccos Cloud before you leave. The steps are at https://eccos.chat/migrate.",
+        },
+        enMetaApp,
+      ],
+    },
+  ],
+  es: [
+    {
+      id: "pricing",
+      title: "Precio y prueba",
+      items: [
+        esCost,
+        {
+          q: "¿El precio mensual lo incluye todo, o hay cuota de alta o cobro por mensaje?",
+          a: "El precio mensual por número conectado es todo lo que cobra Eccos. No hay cuota de alta ni cobro por mensaje: los mensajes son ilimitados en todos los planes. Los precios no incluyen el IVA, que se añade al pagar. El único coste aparte es lo que Meta cobra por algunos mensajes, y eso te lo factura Meta directamente.",
+        },
+        {
+          q: "¿Meta cobra aparte por los mensajes de plantilla?",
+          a: "Sí. Los mensajes de plantilla, los que envía una empresa para iniciar una conversación, los cobra Meta con sus propias tarifas, según el país y la categoría (marketing, utilidad, autenticación). Las respuestas dentro de las 24 horas siguientes a que un cliente te escriba no tienen coste de Meta. Meta cobra esas tarifas a la tarjeta de la cuenta de Meta de tu empresa. Eccos no participa en esa factura ni añade nada encima.",
+        },
+        {
+          q: "¿Puedo probar Eccos antes de pagar?",
+          a: `Sí. Crear la cuenta y el espacio de trabajo es gratis y no pide tarjeta, así que puedes ver la consola antes. Para conectar un número te suscribes, y la suscripción empieza con una prueba gratuita de ${trial} días que pide tarjeta. Si cancelas antes de que acabe la prueba, no se te cobra nada; si no, el primer cargo mensual se hace al terminar la prueba. Puedes cancelar cuando quieras desde la sección de facturación de la consola.`,
+        },
+        esCompare,
+      ],
+    },
+    {
+      id: "meta",
+      title: "Cuenta de Meta, verificación y facturación",
+      items: [
+        {
+          q: "¿Necesito algún otro proveedor además de Eccos?",
+          a: "No. Necesitas una cuenta de empresa en Meta con una cuenta de WhatsApp Business, que puedes crear al conectar el número, y un método de pago en Meta para los mensajes que cobra Meta. Eccos pone el resto: la conexión con la API oficial, la consola, la API y los webhooks.",
+        },
+        {
+          q: "¿Necesito verificar mi empresa en Meta para empezar?",
+          a: "No. Sin verificar, Meta deja a una empresa iniciar conversaciones con hasta 250 clientes distintos en 24 horas móviles, con mensajes de plantilla. Verificar la empresa, o enviar suficientes mensajes que los clientes reciban bien, sube ese límite a 2.000 y después más, de forma automática. Cada empresa se verifica ella misma, en su propio portfolio de empresa de Meta; Eccos no tiene que hacer nada.",
+        },
+        esOfficial,
+        {
+          q: "¿Qué pasa si Meta suspende la app de Eccos?",
+          a: "Tu número y tu facturación con Meta son de tu empresa, no de Eccos, así que no se verían afectados. La app de WhatsApp Business sigue funcionando en tu teléfono; solo dejarías de enviar y recibir por la API. Podrías conectar entonces el mismo número a otro proveedor, o a Eccos instalado en tu propio servidor.",
+        },
+        {
+          q: "¿Cada empresa puede pagar a Meta por separado, o puedo pagarlo todo desde un sitio?",
+          a: "Cada empresa paga a Meta con su propia tarjeta, en su propia cuenta de Meta. Pagar a Meta desde un solo sitio por varias empresas requiere un Solution Partner de Meta que ofrezca una línea de crédito. Eccos es Tech Provider, así que no puede ofrecerlo.",
+        },
+      ],
+    },
+    {
+      id: "phone",
+      title: "Tu número y la app de WhatsApp",
+      items: [
+        esCoexistence,
+        {
+          q: "¿La coexistencia funciona con números de España, Portugal o Italia?",
+          a: "Sí. Puedes seguir usando la app de WhatsApp Business en tu teléfono con un número español, portugués o italiano mientras ese mismo número funciona por la API. Tiene que ser la app de WhatsApp Business (no el WhatsApp personal), versión 2.24.17 o superior, y Meta desconecta el número si la app pasa unos 14 días sin abrirse. Las condiciones completas de Meta están en https://eccos.chat/coexistence.",
+        },
+        {
+          q: "¿Los mensajes que envío desde el teléfono o desde WhatsApp Web llegan a mi sistema?",
+          a: "Sí, en un número conectado con coexistencia. Lo que tu equipo envía desde la app de WhatsApp Business, o desde WhatsApp Web vinculado a ella, llega a tu sistema como evento echo, con sus estados de entrega y lectura. Así tu software sabe cuándo alguien ya ha contestado a mano.",
+        },
+        esBan,
+        {
+          q: "Si dejo de usar Eccos, ¿conservo mi número y la app?",
+          a: "Sí. El número y la cuenta de WhatsApp Business son de tu empresa. Si te vas, solo desaparece la conexión a la API a través de Eccos: la app sigue funcionando en tu teléfono como siempre y no hay que migrar ni volver a registrar nada. El historial de conversaciones guardado en Eccos se borra al cerrar la cuenta, así que exporta antes lo que necesites.",
+        },
+      ],
+    },
+    {
+      id: "api",
+      title: "Enviar y recibir desde tus propios sistemas",
+      items: [
+        {
+          q: "¿Puedo enviar mensajes desde mi propio servidor o script?",
+          a: "Sí. Cualquier programa que pueda hacer una petición HTTPS puede enviar: un script de Python, un servidor, un NAS o una herramienta de automatización. En la consola, abre API keys (en Setup, para el propietario o un administrador) y crea una clave. Tu programa envía después una petición POST a la API de Eccos con esa clave y el mensaje. La guía, con un ejemplo, está en https://docs.eccos.chat/sending-messages.",
+        },
+        {
+          q: "¿Necesito un VPS o un servidor público?",
+          a: "Para enviar, no. Enviar es una petición HTTPS de salida, así que funciona desde cualquier máquina con internet, también un ordenador o un NAS en tu oficina. Para recibir los mensajes en tu propio sistema necesitas una dirección HTTPS pública a la que Eccos pueda llamar. Si tu máquina no es pública, un túnel como Cloudflare Tunnel le da una. Para leer y contestar conversaciones a mano no necesitas ningún servidor: la consola tiene una bandeja de entrada.",
+        },
+        {
+          q: "¿Puedo recibir los mensajes en mi propio endpoint HTTPS? ¿Las peticiones van firmadas?",
+          a: "Sí. En la consola, en Webhooks, indicas tu dirección HTTPS y un secreto de firma. Cada petición va firmada con ese secreto (HMAC-SHA256 del cuerpo), así que tu sistema puede comprobar que viene de Eccos. Si tu endpoint está caído, Eccos reintenta durante una hora aproximadamente, y puedes reenviar un lote fallido desde la consola. Los detalles están en https://docs.eccos.chat/webhooks.",
+        },
+        {
+          q: "¿Hay un límite de mensajes?",
+          a: "Eccos no limita cuántos mensajes envías en total: son ilimitados en todos los planes. La API envía hasta 60 mensajes por minuto por cuenta de WhatsApp Business por defecto, y el límite se puede ampliar si lo pides. Meta tiene sus propios límites sobre a cuántos clientes puedes escribir primero, que crecen con la verificación y el uso.",
+        },
+        {
+          q: "¿Pueden usar un número varias personas? ¿Puedo gestionar varias empresas?",
+          a: "Sí, las dos cosas. Invitas a tu equipo a un espacio de trabajo, con distintos permisos, y todos leen y contestan las mismas conversaciones en la consola, mientras el teléfono sigue funcionando con coexistencia. Para varias empresas, crea un espacio de trabajo por empresa: cada uno ve solo sus números, sus conversaciones y su configuración, y cambias de uno a otro en la consola. Cada espacio de trabajo tiene su propia suscripción.",
+        },
+      ],
+    },
+    {
+      id: "privacy",
+      title: "Datos y RGPD",
+      items: [
+        {
+          q: "¿Firmáis un contrato de encargo del tratamiento (artículo 28 del RGPD)?",
+          a: `Sí. En Eccos Cloud tu empresa es la responsable del tratamiento y Eccos es el encargado, según el artículo 28 del RGPD. El contrato está disponible si lo pides en ${SITE.email}.`,
+        },
+        {
+          q: "¿Dónde se guardan mis datos y quién más los trata?",
+          a: "Eccos Cloud guarda los datos en la jurisdicción de la Unión Europea de Cloudflare. Los proveedores que los tratan por nuestra cuenta son Cloudflare (alojamiento), Meta (la API de WhatsApp por la que pasan todos los mensajes, que los procesa en sus propios centros de datos, en Estados Unidos por defecto), Sentry (informes de errores, sin contenido de mensajes) y Hetzner (un servidor de respaldo en Alemania que solo retransmite tráfico y no guarda nada). La lista completa está en la política de privacidad, en https://eccos.chat/privacy.",
+        },
+        {
+          q: "¿Cuánto tiempo guardáis mis datos? ¿Puedo desactivar el almacenamiento?",
+          a: "El historial de conversaciones se guarda sin límite de tiempo por defecto; en Settings puedes hacer que se borre solo pasado un plazo, a partir de 30 días. La copia que sirve para entregar los eventos a tu sistema borra el contenido de los mensajes a los 30 días por defecto. El almacenamiento no se puede desactivar del todo, pero puedes borrar los datos de un cliente cuando quieras, por número de teléfono.",
+        },
+      ],
+    },
+    {
+      id: "self-host",
+      title: "Autoalojamiento",
+      items: [
+        esSelfHost,
+        {
+          q: "Si más adelante paso a autoalojarlo, ¿tengo que volver a registrar mis números?",
+          a: "No. El número y la cuenta de WhatsApp Business siguen siendo tuyos, así que los conectas a tu propia instalación con tu propia app de Meta, sin volver a registrar el número. El historial de conversaciones no se mueve solo: expórtalo de Eccos Cloud antes de irte. Los pasos están en https://eccos.chat/migrate.",
+        },
+        esMetaApp,
+      ],
+    },
+  ],
+};
