@@ -4,7 +4,7 @@ import { ClientRouter } from "astro:transitions";
 import LandingSchema from "../components/LandingSchema.astro";
 import { SITE } from "../data/product";
 
-type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate" | "pricing" | "coexistence";
+type ActivePage = "privacy" | "terms" | "data-deletion" | "migrate" | "pricing" | "coexistence" | "faq";
 
 interface Props {
   title: string;
@@ -37,6 +37,7 @@ const enUrl = getAbsoluteLocaleUrl("en", bilingualPath);
 const paired = landing || Boolean(bilingualPath);
 const pricingUrl = getRelativeLocaleUrl(pageLocale, "pricing");
 const coexistenceUrl = getRelativeLocaleUrl(pageLocale, "coexistence");
+const faqUrl = getRelativeLocaleUrl(pageLocale, "faq");
 const hasPixelPreload = landing || notFound;
 const hasMigrationLink = landing || active === "migrate";
 const ogDescription = es
@@ -85,6 +86,7 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
     landing never crawled at all. Google's own guidance is hreflang plus a
     visible switch, which is what the masthead already offers. Don't put it
     back. */}
+<slot name="head" />
 <link rel="stylesheet" href="/styles.css">
 {landing && <script is:inline defer src="/js/shader.js" data-astro-rerun></script>}
 <script is:inline defer src="/js/site.js"></script>
@@ -137,6 +139,7 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
     </nav> : bilingualPath ? <nav class="nav" aria-label={es ? "Navegación principal" : "Primary"}>
       <a href={pricingUrl} aria-current={active === "pricing" ? "page" : undefined}>{es ? "Precios" : "Pricing"}</a>
       <a href={coexistenceUrl} aria-current={active === "coexistence" ? "page" : undefined}>{es ? "Coexistencia" : "Coexistence"}</a>
+      <a href={faqUrl} aria-current={active === "faq" ? "page" : undefined}>{es ? "Preguntas" : "FAQ"}</a>
       <a href="https://docs.eccos.chat">Docs</a>
       <a href="https://github.com/santigamo/eccos" rel="noreferrer">GitHub</a>
     </nav> : <nav class="nav" aria-label="Primary">
@@ -181,6 +184,7 @@ const ogUrl = canonical ?? getAbsoluteLocaleUrl(pageLocale);
           <a href={coexistenceUrl}>{es ? "Coexistencia" : "Coexistence"}</a>
           <a href={landing ? "#run" : `${localeHome}#run`}>{es ? "Cómo usarlo" : "Run it"}</a>
           <a href={landing ? "#data" : `${localeHome}#data`}>{es ? "Tus datos" : "Your data"}</a>
+          <a href={faqUrl}>{es ? "Preguntas frecuentes" : "FAQ"}</a>
           <a href="https://docs.eccos.chat">Docs</a>
         </nav>
         <nav class="foot-col" aria-label="Legal">

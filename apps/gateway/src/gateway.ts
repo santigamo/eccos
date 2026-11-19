@@ -2964,6 +2964,16 @@ export class EccosGateway extends DurableObject<Env> {
     return this.sql.exec(`SELECT 1 FROM media WHERE media_id = ? AND state = 'stored'`, mediaId).toArray().length > 0;
   }
 
+  /** `pending` while a message references the id and the download has not settled yet. */
+  mediaState(mediaId: string): "stored" | "pending" | "missing" {
+    const row = this.sql.exec(`SELECT state FROM media WHERE media_id = ?`, mediaId).toArray()[0];
+    if (row) return row.state === "stored" ? "stored" : row.state === "failed" ? "pending" : "missing";
+    const referenced = this.sql
+      .exec(`SELECT 1 FROM messages WHERE json_extract(content, '$.media.id') = ? LIMIT 1`, mediaId)
+      .toArray().length > 0;
+    return referenced ? "pending" : "missing";
+  }
+
   /** Cheap existence check — `LIMIT 1`, not a COUNT: the hold only needs to know
    * whether anything is waiting, and a target-less WABA can hold a lot of rows. */
   private hasPendingDeliveries(): boolean {

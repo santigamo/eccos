@@ -1,11 +1,27 @@
 ---
-title: Health and data endpoints
-description: "The health check, the WABA data export and the per-customer erasure endpoints of the Eccos Cloud API."
+title: Health, media and data endpoints
+description: "The health check, media file downloads, the WABA data export and the per-customer erasure endpoints of the Eccos Cloud API."
 ---
 
 ## Health
 
 `GET /health` needs no authentication and returns `{"ok":true,...}`.
+
+## Media files
+
+```
+GET  /v1/wabas/{wabaId}/media/{mediaId}
+```
+
+Events with an image, video, audio, document or sticker carry `media.id`, not the file. Eccos
+downloads the file from Meta in the background, usually within seconds, and keeps it as long as
+the message that references it. This endpoint returns it:
+
+| Status | Meaning |
+|---|---|
+| 200 | The file. `content-type` and `content-length` describe it, and `x-media-sha256` is its hex SHA-256 |
+| 409 | `{"ok":false,"error":"media_not_ready"}`: the download has not finished. Retry after the `retry-after` seconds |
+| 404 | `{"ok":false,"error":"media not found"}`: unknown id, erased, past retention, or Meta no longer had it |
 
 ## Data endpoints
 

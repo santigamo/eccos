@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import * as Sentry from "@sentry/cloudflare";
 import { getGatewayStubForWaba } from "./gateway-stub";
+import { getMedia } from "./media-store";
 import { releaseHeldBatches } from "./held-webhooks";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
@@ -1164,6 +1165,38 @@ app.get("/v1/wabas/:wabaId/export", async (c) => {
     deliveries: exported.deliveries.length,
   });
   return c.json({ ok: true, data: exported });
+});
+
+const MEDIA_ID_PATTERN = /^\d{1,32}$/;
+
+app.get("/v1/wabas/:wabaId/media/:mediaId", async (c) => {
+  const cid = correlationId(c);
+  const account = c.get("account") ?? null;
+  const wabaId = requestedWabaId(c);
+  const mediaId = c.req.param("mediaId");
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  if (!MEDIA_ID_PATTERN.test(mediaId)) return c.json({ ok: false, error: "media not found" }, 404);
+  const state = await getGatewayStubForWaba(c.env, wabaId).mediaState(mediaId);
+  const stored = state === "stored" ? await getMedia(c.env.MEDIA, wabaId, mediaId) : null;
+  if (!stored) {
+    if (state === "pending") {
+      logEvent("media_get", cid, 409, { wabaId, reason: "pending" });
+      c.header("retry-after", "30");
+      return c.json({ ok: false, error: "media_not_ready" }, 409);
+    }
+    logEvent("media_get", cid, 404, { wabaId });
+    return c.json({ ok: false, error: "media not found" }, 404);
+  }
+  logEvent("media_get", cid, 200, { wabaId, size: stored.size });
+  return new Response(stored.body, {
+    headers: {
+      "content-type": stored.contentType ?? "application/octet-stream",
+      "content-length": String(stored.size),
+      ...(stored.sha256 ? { "x-media-sha256": stored.sha256 } : {}),
+      "cache-control": "no-store",
+    },
+  });
 });
 
 const worker = {

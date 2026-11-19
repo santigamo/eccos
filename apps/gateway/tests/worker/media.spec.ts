@@ -6,6 +6,8 @@ import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { getMedia } from "../../src/media-store";
+import dataMd from "../../../docs/src/content/docs/data-endpoints.md?raw";
+import { codeSpans, tableRows } from "../docs-md";
 import { alarmOf, bootstrapAccount, gatewayStub, holdAlarms, runAlarm, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 const WA = "34600000001";
@@ -488,5 +490,71 @@ describe("GatewayRPC.getMedia", () => {
     await expect(rpc.getMedia({ wabaId: TEST_WABA_ID, mediaId: "5003" }, "foreign-account")).rejects.toThrow(
       /not owned by account/,
     );
+  });
+});
+
+describe("GET /v1/wabas/:wabaId/media/:mediaId", () => {
+  const fetchMedia = (mediaId: string, key = apiKey, wabaId = TEST_WABA_ID) =>
+    exports.default.fetch(`http://example.com/v1/wabas/${wabaId}/media/${mediaId}`, {
+      headers: { authorization: `Bearer ${key}` },
+    });
+
+  it("streams a stored file with its type, size and digest", async () => {
+    fakeMeta();
+    await gatewayStub().ingest([imageEvent("6001")]);
+    await runAlarm();
+
+    const res = await fetchMedia("6001");
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("content-length")).toBe(String(BYTES.length));
+    expect(res.headers.get("x-media-sha256")).toBe(await sha256Hex(BYTES));
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.text()).toBe(BYTES);
+  });
+
+  it("answers 409 with retry-after while the download has not happened yet", async () => {
+    await gatewayStub().ingest([imageEvent("6002")]);
+
+    const res = await fetchMedia("6002");
+
+    expect(res.status).toBe(409);
+    expect(res.headers.get("retry-after")).toBe("30");
+    expect(await res.json()).toEqual({ ok: false, error: "media_not_ready" });
+  });
+
+  it("answers 404 for an unknown, malformed or erased id", async () => {
+    fakeMeta();
+    await gatewayStub().ingest([imageEvent("6003")]);
+    await runAlarm();
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) =>
+      instance.sql.exec(`UPDATE media SET state = 'erased' WHERE media_id = '6003'`),
+    );
+
+    expect((await fetchMedia("6003")).status).toBe(404);
+    expect((await fetchMedia("6999")).status).toBe(404);
+    expect((await fetchMedia("not-a-media-id")).status).toBe(404);
+  });
+
+  it("refuses another account's WABA and a missing key", async () => {
+    fakeMeta();
+    await gatewayStub().ingest([imageEvent("6004")]);
+    await runAlarm();
+    const other = await bootstrapAccount("acc-other", "WABA_OTHER", [{ phoneNumberId: "PNID_OTHER" }]);
+
+    expect((await fetchMedia("6004", other.apiKey)).status).toBe(404);
+    const anonymous = await exports.default.fetch(`http://example.com/v1/wabas/${TEST_WABA_ID}/media/6004`);
+    expect(anonymous.status).toBe(401);
+  });
+
+  it("answers the bodies the docs table promises", async () => {
+    const rows = tableRows(dataMd, "| Status");
+    const documented = (status: string) => JSON.parse(codeSpans(rows.find((r) => r[0] === status)![1]!)[0]!);
+    expect(rows.map((r) => r[0])).toEqual(["200", "409", "404"]);
+    await gatewayStub().ingest([imageEvent("6005")]);
+
+    expect(await (await fetchMedia("6005")).json()).toEqual(documented("409"));
+    expect(await (await fetchMedia("6998")).json()).toEqual(documented("404"));
   });
 });
