@@ -91,7 +91,7 @@ export const COPY: Record<Locale, Copy> = {
       "MIT-licensed and self-hostable: your Meta app, your token, your infrastructure",
     ],
     isNot: [
-      "Eccos is not a message reseller: it never meters or marks up messages, and Meta bills each business directly for its own conversations.",
+      "Eccos is not a message reseller: it never meters or marks up messages, and Meta bills each business directly for the messages it charges for.",
       "Eccos does not use WhatsApp Web or any reverse-engineered client, unlike Evolution API, WAHA or OpenWA. It calls Meta's official Cloud API.",
       "Eccos is not a chatbot builder and has no visual flow editor: it is a gateway, and your application owns the conversation logic.",
       "Eccos is not a CRM or a helpdesk. The console has an inbox where a workspace reads its conversations and replies or reacts to them, but there are no tickets, assignments or customer records: that logic belongs to your application.",
@@ -104,11 +104,11 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "What is coexistence, and does Eccos support it?",
-        a: "Coexistence lets a business keep answering from the WhatsApp Business app on the phone while the same number also sends and receives through the Cloud API. Eccos supports it and forwards the staff's manual replies to your backend as echo events, so your system sees the whole conversation and not just what it sent. Twilio cannot do this, because it requires a number that is not already registered on WhatsApp.",
+        a: "Coexistence lets a business keep answering from the WhatsApp Business app on the phone while the same number also sends and receives through the Cloud API. Eccos supports it and forwards the staff's manual replies to your backend as echo events, so your system sees the whole conversation and not just what it sent.",
       },
       {
         q: "What does Eccos cost, and what do I pay Meta?",
-        a: `Eccos Cloud is priced per connected number: ${first.monthly} € a month for the first number, +${extra.monthly} € for numbers 2 to 5, ${mid.monthly} € flat for 6 to 15, ${high.monthly} € flat for 16 to 50 and +${beyond.plusPerNumber} € per number past 50, VAT not included. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for its own conversations, with that business's own payment method. Creating an account is free; subscribing, which you do before adding a number, starts a ${PRICING.trialDays}-day free trial that asks for a card, and you can cancel at any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of record. Self-hosting is free under the MIT licence.`,
+        a: `Eccos Cloud is priced per connected number: ${first.monthly} € a month for the first number, +${extra.monthly} € for numbers 2 to 5, ${mid.monthly} € flat for 6 to 15, ${high.monthly} € flat for 16 to 50 and +${beyond.plusPerNumber} € per number past 50, VAT not included. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for the messages it charges for, with that business's own payment method. Creating an account is free; subscribing, which you do before adding a number, starts a ${PRICING.trialDays}-day free trial that asks for a card, and you can cancel at any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of record. Self-hosting is free under the MIT licence.`,
       },
       {
         q: "Is Eccos an official WhatsApp Business API provider?",
@@ -147,7 +147,7 @@ export const COPY: Record<Locale, Copy> = {
       "Licencia MIT y autoalojable: tu app de Meta, tu token, tu infraestructura",
     ],
     isNot: [
-      "Eccos no revende mensajes: nunca los cuenta ni les aplica margen, y Meta factura a cada empresa directamente sus propias conversaciones.",
+      "Eccos no revende mensajes: nunca los cuenta ni les aplica margen, y Meta factura a cada empresa directamente los mensajes que cobra.",
       "Eccos no usa WhatsApp Web ni ningún cliente de ingeniería inversa, al contrario que Evolution API, WAHA u OpenWA. Llama a la Cloud API oficial de Meta.",
       "Eccos no es un constructor de chatbots ni tiene editor visual de flujos: es un gateway, y la lógica de la conversación es de tu aplicación.",
       "Eccos no es un CRM ni un helpdesk. La consola tiene una bandeja donde el equipo lee sus conversaciones y responde o reacciona a ellas, pero no hay tickets, asignaciones ni fichas de cliente: esa lógica es de tu aplicación.",
@@ -160,11 +160,11 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "¿Qué es coexistence y Eccos lo admite?",
-        a: "Coexistence permite que una empresa siga respondiendo desde la app de WhatsApp Business en el teléfono mientras el mismo número envía y recibe también por la Cloud API. Eccos lo admite y reenvía a tu backend las respuestas manuales del equipo como eventos echo, así que tu sistema ve la conversación completa y no solo lo que él envió. Twilio no puede hacerlo porque exige un número que no esté ya registrado en WhatsApp.",
+        a: "Coexistence permite que una empresa siga respondiendo desde la app de WhatsApp Business en el teléfono mientras el mismo número envía y recibe también por la Cloud API. Eccos lo admite y reenvía a tu backend las respuestas manuales del equipo como eventos echo, así que tu sistema ve la conversación completa y no solo lo que él envió.",
       },
       {
         q: "¿Cuánto cuesta Eccos y qué le pago a Meta?",
-        a: `Eccos Cloud se cobra por número conectado: ${first.monthly} € al mes el primero, +${extra.monthly} € los números 2 a 5, ${mid.monthly} € fijos de 6 a 15, ${high.monthly} € fijos de 16 a 50 y +${beyond.plusPerNumber} € por número a partir del 51, IVA no incluido. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente sus propias conversaciones, con el método de pago de esa empresa. Crear la cuenta es gratis; suscribirte, que es el paso previo a añadir un número, inicia una prueba gratuita de ${PRICING.trialDays} días que pide tarjeta, y puedes cancelar cuando quieras, con efecto al final del periodo. El pago y las facturas los gestiona Creem, que actúa como vendedor oficial (merchant of record). Autoalojarlo es gratis bajo licencia MIT.`,
+        a: `Eccos Cloud se cobra por número conectado: ${first.monthly} € al mes el primero, +${extra.monthly} € los números 2 a 5, ${mid.monthly} € fijos de 6 a 15, ${high.monthly} € fijos de 16 a 50 y +${beyond.plusPerNumber} € por número a partir del 51, IVA no incluido. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente los mensajes que cobra, con el método de pago de esa empresa. Crear la cuenta es gratis; suscribirte, que es el paso previo a añadir un número, inicia una prueba gratuita de ${PRICING.trialDays} días que pide tarjeta, y puedes cancelar cuando quieras, con efecto al final del periodo. El pago y las facturas los gestiona Creem, que actúa como vendedor oficial (merchant of record). Autoalojarlo es gratis bajo licencia MIT.`,
       },
       {
         q: "¿Eccos es un proveedor oficial de la API de WhatsApp Business?",

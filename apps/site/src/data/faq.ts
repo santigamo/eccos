@@ -34,7 +34,7 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "Does Meta charge extra for template messages?",
-          a: "Yes. Template messages, the ones a business sends to start a conversation, are charged by Meta at its own rates, by country and category (marketing, utility, authentication). Replies inside the 24-hour window after a customer writes to you carry no Meta charge. Meta bills these fees to the card on your business's own Meta account. Eccos does not take part in that bill and adds nothing on top.",
+          a: "Yes. Template messages, the ones a business sends to start a conversation, are charged by Meta at its own rates, by country and category (marketing, utility, authentication). Replies inside the 24-hour window after a customer writes to you are free up to 1,000 per number each month; Meta charges for them after that. Meta bills these fees to the payment method in your business's own WhatsApp Business Account. Eccos does not take part in that bill and adds nothing on top.",
         },
         {
           q: "Can I try Eccos before paying?",
@@ -53,16 +53,16 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "Do I need Meta business verification to start?",
-          a: "No. Without verification, Meta lets a business start conversations with up to 250 different customers in a rolling 24 hours, using template messages. Verifying the business, or sending enough messages that customers receive well, raises that limit to 2,000 and then higher, automatically. Each company verifies itself, in its own Meta business portfolio; Eccos does not need to do anything.",
+          a: "No. Without verification, Meta lets a business start conversations with up to 250 different customers in a rolling 24 hours, using template messages, shared by all the numbers in its business portfolio. Verifying the business, or delivering 2,000 good-quality template messages within 30 days, raises it to 2,000. After that it goes up automatically as you use it. Each company verifies itself, in its own Meta business portfolio; Eccos does not need to do anything.",
         },
         enOfficial,
         {
           q: "What happens if Meta suspends the Eccos app?",
-          a: "Your number and your Meta billing belong to your business, not to Eccos, so they would not be affected. The WhatsApp Business app keeps working on your phone; only sending and receiving through the API would stop. You could then connect the same number to another provider, or to Eccos running on your own server.",
+          a: "Your number, your WhatsApp Business Account and your Meta billing belong to your business, so they stay yours. The WhatsApp Business app on your phone does not depend on Eccos. Sending and receiving through the API would stop. To move to another provider, or to Eccos on your own server, you disconnect Eccos in the app and connect the number again through the new provider.",
         },
         {
           q: "Can each business pay Meta separately, or can I pay for all of them in one place?",
-          a: "Each business pays Meta with its own card, on its own Meta account. Paying Meta in one place for several businesses needs a Meta Solution Partner that offers a credit line. Eccos is a Tech Provider, so it cannot offer that.",
+          a: "Each business pays Meta with its own payment method, in its own WhatsApp Business Account. Paying Meta in one place for several businesses needs a Solution Partner's credit line. Eccos is a Tech Provider and does not offer one today.",
         },
       ],
     },
@@ -72,12 +72,12 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
       items: [
         enCoexistence,
         {
-          q: "Does coexistence work with numbers from Spain, Portugal or Italy?",
-          a: "Yes. You can keep using the WhatsApp Business app on your phone with a Spanish, Portuguese or Italian number while the same number works through the API. The app has to be WhatsApp Business (not personal WhatsApp), version 2.24.17 or higher, and Meta disconnects the number if the app goes about 14 days without being opened. Meta's full conditions are at https://eccos.chat/en/coexistence.",
+          q: "Does coexistence work in my country?",
+          a: "Coexistence works in every country where Meta offers it; Eccos adds no restriction of its own. If your number is not eligible, the connection screen will tell you. The app has to be WhatsApp Business (not personal WhatsApp), version 2.24.17 or higher, and Meta disconnects the number if the app goes about 14 days without being opened. Meta's conditions are at https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users",
         },
         {
           q: "Do messages I send from the phone or from WhatsApp Web reach my system?",
-          a: "Yes, on a number connected with coexistence. What your team sends from the WhatsApp Business app, or from WhatsApp Web linked to it, reaches your system as an echo event, with its delivery and read statuses. So your software knows when someone has already answered by hand.",
+          a: "Yes, on a number connected with coexistence. What your team sends from the WhatsApp Business app, or from WhatsApp Web linked to it, reaches your system as an echo event, so your software knows when someone has already answered by hand. Messages sent from WhatsApp for Windows are not mirrored.",
         },
         enBan,
         {
@@ -155,7 +155,7 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "¿Meta cobra aparte por los mensajes de plantilla?",
-          a: "Sí. Los mensajes de plantilla, los que envía una empresa para iniciar una conversación, los cobra Meta con sus propias tarifas, según el país y la categoría (marketing, utilidad, autenticación). Las respuestas dentro de las 24 horas siguientes a que un cliente te escriba no tienen coste de Meta. Meta cobra esas tarifas a la tarjeta de la cuenta de Meta de tu empresa. Eccos no participa en esa factura ni añade nada encima.",
+          a: "Sí. Los mensajes de plantilla, los que envía una empresa para iniciar una conversación, los cobra Meta con sus propias tarifas, según el país y la categoría (marketing, utilidad, autenticación). Las respuestas dentro de las 24 horas siguientes a que un cliente te escriba son gratis hasta 1.000 por número al mes; a partir de ahí Meta las cobra. Meta cobra esas tarifas al método de pago de la cuenta de WhatsApp Business de tu empresa. Eccos no participa en esa factura ni añade nada encima.",
         },
         {
           q: "¿Puedo probar Eccos antes de pagar?",
@@ -174,16 +174,16 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "¿Necesito verificar mi empresa en Meta para empezar?",
-          a: "No. Sin verificar, Meta deja a una empresa iniciar conversaciones con hasta 250 clientes distintos en 24 horas móviles, con mensajes de plantilla. Verificar la empresa, o enviar suficientes mensajes que los clientes reciban bien, sube ese límite a 2.000 y después más, de forma automática. Cada empresa se verifica ella misma, en su propio portfolio de empresa de Meta; Eccos no tiene que hacer nada.",
+          a: "No. Sin verificar, Meta deja a una empresa iniciar conversaciones con hasta 250 clientes distintos en 24 horas móviles, con mensajes de plantilla, compartidos por todos los números de su portfolio de empresa. Verificar la empresa, o entregar 2.000 mensajes de plantilla de buena calidad en 30 días, lo sube a 2.000. Después sube solo a medida que lo usas. Cada empresa se verifica ella misma, en su propio portfolio de empresa de Meta; Eccos no tiene que hacer nada.",
         },
         esOfficial,
         {
           q: "¿Qué pasa si Meta suspende la app de Eccos?",
-          a: "Tu número y tu facturación con Meta son de tu empresa, no de Eccos, así que no se verían afectados. La app de WhatsApp Business sigue funcionando en tu teléfono; solo dejarías de enviar y recibir por la API. Podrías conectar entonces el mismo número a otro proveedor, o a Eccos instalado en tu propio servidor.",
+          a: "Tu número, tu cuenta de WhatsApp Business y tu facturación con Meta son de tu empresa, así que siguen siendo tuyos. La app de WhatsApp Business del teléfono no depende de Eccos. Lo que se pararía es el envío y la recepción por la API. Para pasarte a otro proveedor, o a Eccos en tu propio servidor, desconectas Eccos en la app y vuelves a conectar el número con el nuevo proveedor.",
         },
         {
           q: "¿Cada empresa puede pagar a Meta por separado, o puedo pagarlo todo desde un sitio?",
-          a: "Cada empresa paga a Meta con su propia tarjeta, en su propia cuenta de Meta. Pagar a Meta desde un solo sitio por varias empresas requiere un Solution Partner de Meta que ofrezca una línea de crédito. Eccos es Tech Provider, así que no puede ofrecerlo.",
+          a: "Cada empresa paga a Meta con su propio método de pago, en su propia cuenta de WhatsApp Business. Pagar a Meta desde un solo sitio por varias empresas requiere la línea de crédito de un Solution Partner. Eccos es Tech Provider y hoy no la ofrece.",
         },
       ],
     },
@@ -193,12 +193,12 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
       items: [
         esCoexistence,
         {
-          q: "¿La coexistencia funciona con números de España, Portugal o Italia?",
-          a: "Sí. Puedes seguir usando la app de WhatsApp Business en tu teléfono con un número español, portugués o italiano mientras ese mismo número funciona por la API. Tiene que ser la app de WhatsApp Business (no el WhatsApp personal), versión 2.24.17 o superior, y Meta desconecta el número si la app pasa unos 14 días sin abrirse. Las condiciones completas de Meta están en https://eccos.chat/coexistence.",
+          q: "¿La coexistencia funciona en mi país?",
+          a: "La coexistencia funciona en todos los países donde Meta la ofrece; Eccos no añade ninguna restricción. Si tu número no es apto, te lo dirá la pantalla de conexión. Tiene que ser la app de WhatsApp Business (no el WhatsApp personal), versión 2.24.17 o superior, y Meta desconecta el número si la app pasa unos 14 días sin abrirse. Las condiciones de Meta están en https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users",
         },
         {
           q: "¿Los mensajes que envío desde el teléfono o desde WhatsApp Web llegan a mi sistema?",
-          a: "Sí, en un número conectado con coexistencia. Lo que tu equipo envía desde la app de WhatsApp Business, o desde WhatsApp Web vinculado a ella, llega a tu sistema como evento echo, con sus estados de entrega y lectura. Así tu software sabe cuándo alguien ya ha contestado a mano.",
+          a: "Sí, en un número conectado con coexistencia. Lo que tu equipo envía desde la app de WhatsApp Business, o desde WhatsApp Web vinculado a ella, llega a tu sistema como evento echo, así que tu software sabe cuándo alguien ya ha contestado a mano. Lo que se envía desde WhatsApp para Windows no se refleja.",
         },
         esBan,
         {
