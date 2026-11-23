@@ -302,7 +302,7 @@ endpoints above, so it is indistinguishable from one that was never registered.
 | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/.well-known/oauth-protected-resource*` under `/api/auth`, and `/.well-known/openid-configuration` at the root | Copies the plugins mount, OIDC discovery, and resource metadata | **Not served.** The resource metadata belongs to `apps/mcp`, and no OpenID scope is offered |
 | `GET /oauth2/authorize` | Start an authorization: PKCE `S256`, `resource` equal to the MCP resource | Browser navigation, rate-limited per address (10 per 60 s). Without a session it goes to sign-in or sign-up, which carry the signed authorization query forward and follow the URL Better Auth returns; sign-up's verification link returns to the pending authorization |
 | `POST /oauth2/continue` | Resume the authorization after the workspace step | Same-origin, session. The workspace must be one the user belongs to now, checked on the server: otherwise the answer is the workspace step again; it becomes the consent's reference id |
-| `POST /oauth2/consent` | Accept or deny on the consent page | Same-origin, session. A person holds at most 50 live grants per workspace: one more consent gets 400 `access_denied` telling them to revoke an agent under Settings → Connected agents. A client deleted since the workspace step gets 400 `invalid_client`. Consent is never skipped, for any client: every authorization request gets `prompt=consent` before its query is signed, so the consent page comes even when an earlier consent covers the same client, workspace and scopes. `prompt=none` gets `consent_required` at the redirect URI. Consent for a workspace the user has left is refused and stores nothing |
+| `POST /oauth2/consent` | Accept or deny on the consent page | Same-origin, session. A person holds at most 50 live grants per workspace, codes not yet exchanged included, also under concurrent consents: one more consent gets 400 `access_denied` and no code telling them to revoke an agent under Settings → Connected agents. A client deleted since the workspace step gets 400 `invalid_client`. Consent is never skipped, for any client: every authorization request gets `prompt=consent` before its query is signed, so the consent page comes even when an earlier consent covers the same client, workspace and scopes. `prompt=none` gets `consent_required` at the redirect URI. Consent for a workspace the user has left is refused and stores nothing |
 | `GET /oauth2/public-client`, `GET /oauth2/public-client-prelogin` | The client's name and redirect for the sign-in and consent pages | Same-origin. Public client metadata only |
 | `POST /oauth2/token` | Authorization code exchange and refresh | Public, cross-origin without cookies, body capped at 8 KiB (400 `invalid_request`). PKCE required; refresh tokens rotate, and a replay after the reuse window revokes the family. Access tokens are issued only for the MCP resource, last 10 minutes, and carry the workspace. Refused with RFC 6749's 400 `invalid_grant`, and no reason, when the user is no longer a member of it |
 | `POST /oauth2/register` | Dynamic client registration (RFC 7591), the fallback to client ID metadata documents | Public, unauthenticated, cross-origin without cookies, rate-limited per address (5 per 60 s). The body is capped at 8 KiB before parsing, and the stored metadata fields have their own limits (`src/server/oauth-request-limits.ts`); a refusal is RFC 7591's 400 `invalid_client_metadata` or `invalid_redirect_uri`. An hourly cron deletes unused clients; the bound is under "Growth bound" below |
@@ -326,8 +326,9 @@ its creation, so those refetches never keep it; its next authorization fetches t
 
 **Live grants and cleanup** (`src/auth/oauth-grants.ts` holds the one definition). A grant is one
 `oauthConsent` row: a person's consent for one client in one workspace. It is live only while it
-has an unrevoked refresh token that has not expired (30 days, renewed on each refresh), or a stored
-access token that has not expired. Revoking a grant revokes its refresh tokens, so it is dead at
+has an unrevoked refresh token that has not expired (30 days, renewed on each refresh), a stored
+access token that has not expired, or an authorization code not yet exchanged that has not expired
+(the configured code lifetime, 10 minutes; the exchange consumes it). Revoking a grant revokes its refresh tokens, so it is dead at
 once. The cron, every hour on the hour, first deletes each consent whose grant has been dead for
 24 hours, counted from the later of the consent and its last token's revocation or expiry (a
 consent whose code was never exchanged counts from the consent). It then deletes each registered
@@ -344,7 +345,11 @@ or document client created more than 24 hours ago that has no owner, no consent 
   185 MB (7,500 registered at about 60 MB, 15,000 document clients at about 120 MB, or about 75 MB
   under Better Auth's 5 KB document limit).
 - *Per person, beyond that.* Only a live grant keeps a client longer, and a person holds at most
-  50 per workspace, so 50 × 8 KiB, about 400 KB of client rows per person per workspace, for as long
+  50 per workspace, codes not yet exchanged included. The consent counts the person's other live
+  grants after its own code is written, and a consent that finds 50 deletes its code and is
+  refused instead of redirecting. The database runs one statement at a time, so of two consents at
+  49 the one that counts second sees the other's code: neither can make 51 (both may be refused),
+  so 50 × 8 KiB, about 400 KB of client rows per person per workspace, for as long
   as they keep refreshing. Per workspace, that is 50 × its members. Each refresh also leaves its
   rotated (revoked) refresh-token row, a few hundred bytes, until the client goes. The number of
   workspaces a person can create is not limited here.

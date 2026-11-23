@@ -33,7 +33,7 @@ import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from "better-auth/api";
 import { jwt } from "better-auth/plugins";
 import { CLIENT_METADATA_MAX_BYTES, clientMetadataRefusal } from "./client-metadata-limits";
-import { MAX_LIVE_GRANTS, otherLiveGrants } from "./oauth-grants";
+import { MAX_LIVE_GRANTS, otherLiveGrants, withdrawCodes } from "./oauth-grants";
 
 /** The scopes a grant may carry (design §3.2). There is none for `erase`. */
 export const MCP_SCOPES = [
@@ -192,12 +192,29 @@ async function clientExists(clientId: string): Promise<boolean> {
   return (await context.adapter.findOne({ model: "oauthClient", where: [{ field: "clientId", value: clientId }] })) !== null;
 }
 
+type ConsentContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+
+/** The grant a consent request asks for, once its person and workspace are known. */
+async function consentGrant(ctx: ConsentContext) {
+  const clientId = new URLSearchParams(String(ctx.body?.oauth_query ?? "")).get("client_id");
+  const session = await getSessionFromCtx(ctx);
+  const workspace = session ? await memberWorkspace(session.session) : undefined;
+  if (!clientId || !session || !workspace) return undefined;
+  return { userId: session.user.id, workspace, clientId };
+}
+
+const authDatabase = (ctx: ConsentContext) => ctx.context.options.database as Parameters<typeof otherLiveGrants>[0];
+
 /**
  * The grant rules Better Auth does not have (contract §9):
  * - Consent is refused with an OAuth error, not a 500, when its client is gone
  *   (the cleanup can delete one between the workspace step and consent).
  * - A person holds at most `MAX_LIVE_GRANTS` live grants per workspace
- *   (oauth-grants.ts); re-consenting to a client already held adds none.
+ *   (oauth-grants.ts); re-consenting to a client already held adds none. The
+ *   count before the consent refuses early; the count after it, once this
+ *   grant's code is written, is the guarantee: of two consents racing past the
+ *   first count, each sees the other's code in the second, and one over the cap
+ *   withdraws its code and answers the refusal instead of the redirect.
  * - Token and revocation answer `invalid_client` for a URL client id no
  *   authorization brought in, before Better Auth would try to resolve it
  *   (`cimdFetch` refuses that fetch too, for client ids sent another way).
@@ -217,15 +234,8 @@ const grantPolicy = {
             });
           }
           if (ctx.body?.accept !== true) return;
-          const session = await getSessionFromCtx(ctx);
-          const workspace = session ? await memberWorkspace(session.session) : undefined;
-          if (!session || !workspace) return;
-          const held = await otherLiveGrants(ctx.context.options.database as Parameters<typeof otherLiveGrants>[0], {
-            userId: session.user.id,
-            workspace,
-            clientId,
-          });
-          if (held >= MAX_LIVE_GRANTS) {
+          const grant = await consentGrant(ctx);
+          if (grant && (await otherLiveGrants(authDatabase(ctx), grant)) >= MAX_LIVE_GRANTS) {
             throw new APIError("BAD_REQUEST", { error: "access_denied", error_description: TOO_MANY_GRANTS });
           }
         }),
@@ -236,6 +246,19 @@ const grantPolicy = {
           const clientId = ctx.body?.client_id;
           if (typeof clientId !== "string" || !URL.canParse(clientId) || (await clientExists(clientId))) return;
           throw new APIError("BAD_REQUEST", { error: "invalid_client", error_description: "Unknown client" });
+        }),
+      },
+    ],
+    after: [
+      {
+        matcher: (ctx: { path?: string; body?: { accept?: unknown } }) => ctx.path === CONSENT_PATH && ctx.body?.accept === true,
+        handler: createAuthMiddleware(async (ctx) => {
+          const url = (ctx.context.returned as { url?: unknown } | undefined)?.url;
+          if (typeof url !== "string" || !new URL(url).searchParams.has("code")) return;
+          const grant = await consentGrant(ctx);
+          if (!grant || (await otherLiveGrants(authDatabase(ctx), grant)) < MAX_LIVE_GRANTS) return;
+          await withdrawCodes(authDatabase(ctx), grant);
+          throw new APIError("BAD_REQUEST", { error: "access_denied", error_description: TOO_MANY_GRANTS });
         }),
       },
     ],
