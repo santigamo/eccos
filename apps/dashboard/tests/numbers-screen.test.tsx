@@ -21,7 +21,7 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices, ConnectNumberPanel } =
   await import("../src/components/dashboard/connect-number");
-const { AddNumberButton } = await import("../src/routes/numbers");
+const { AddNumberButton, ASK_AN_ADMIN, FirstRunConnect, NumbersView } = await import("../src/routes/numbers");
 
 function render(heading = "Meta Embedded Signup"): string {
   return renderToStaticMarkup(<ConnectNumberPanel heading={heading} />);
@@ -50,6 +50,9 @@ describe("ConnectNumberPanel", () => {
     const html = render();
     expect(html).toContain("A number on WhatsApp today stops working in the app");
     expect(html).toContain("Up to 20 messages per second");
+    expect(html).toContain("about a week of real use first");
+    expect(html).toContain("QR code");
+    expect(html).toContain("share your chat history");
   });
 
   test("the heading is the caller's, so first run and add-another differ", () => {
@@ -61,12 +64,14 @@ describe("ConnectNumberPanel", () => {
     // button. It now presents an irreversible fork, and each path owes the
     // reader a title, a line of detail, and its consequence, which is six
     // pieces of copy that did not exist before. So the budget moved with the
-    // job rather than being deleted: 100 words is roughly that content and no
-    // prose. If this fails, the fix is almost certainly a sentence that crept
+    // job rather than being deleted: 100 words was roughly that content and no
+    // prose. The Business app card then gained what a first customer hit
+    // unwarned (the QR scan, the history choice, the week of use): 115.
+    // If this fails, the fix is almost certainly a sentence that crept
     // back into the description or a card detail, not a seventh piece of copy.
     const html = render();
     const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    expect(text.split(" ").length).toBeLessThan(100);
+    expect(text.split(" ").length).toBeLessThan(115);
   });
 
   test("panels and buttons stay square", () => {
@@ -157,6 +162,18 @@ describe("AddNumberButton", () => {
     );
     expect(html).toContain("+ Add number");
     expect(html).toContain('aria-expanded="true"');
+  });
+
+  test("a member who may not connect is told who can, and offered neither the fork nor the link", () => {
+    const html = renderToStaticMarkup(<FirstRunConnect closed={false} billing={false} canConnect={false} />);
+    expect(html).toContain(ASK_AN_ADMIN);
+    expect(html).not.toContain("Meta Embedded Signup");
+    expect(html).not.toContain("<button");
+    const resources = { account: null, keys: [], wabas: [], phones: [] } as unknown as Parameters<typeof NumbersView>[0]["resources"];
+    expect(renderToStaticMarkup(<NumbersView resources={resources} canConnect={false} />)).not.toContain(
+      "Copy connection link",
+    );
+    expect(renderToStaticMarkup(<NumbersView resources={resources} />)).toContain("Copy connection link");
   });
 
   test("the button never points at the token route", () => {

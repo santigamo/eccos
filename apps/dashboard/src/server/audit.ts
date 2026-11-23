@@ -37,6 +37,14 @@ export type SensitiveAction =
    * asks for. Never carries the authorization code or any token.
    */
   | "connect_session_event"
+  /** A workspace's connection link made (replacing any previous one). Never carries the token. */
+  | "connect_link_issue"
+  /**
+   * A connection link used by its anonymous bearer: a state minted, or a code
+   * exchanged. `actorUserId` is the admin who made the link, since nobody is
+   * signed in. Ids and the failure code only, never the token.
+   */
+  | "connect_link"
   /**
    * One template message sent from the console's "Send test" sheet.
    *
@@ -98,12 +106,17 @@ export type SensitiveAction =
   | "template_delete"
   | "api_key_issue"
   | "api_key_revoke"
+  /** The workspace renamed. Ids only, never the name; `detail` says when the gateway's copy did not follow. */
+  | "workspace_rename"
   /** The workspace's conversation retention changed. Carries the stored window
    * in days (null = keep forever); no conversation content. */
   | "conversation_retention_set"
   | "export_data"
   | "erase_by_phone"
   | "member_invited"
+  /** An invitation cancelled and sent again under a new id. Ids only, never the address. */
+  | "invitation_resent"
+  | "invitation_canceled"
   | "member_role_changed"
   | "member_removed";
 

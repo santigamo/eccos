@@ -9,14 +9,7 @@ import {
 import { failureCopy } from "../../lib/failure";
 import { withStepUp } from "../../lib/step-up";
 import { StepUpSheet } from "./step-up-sheet";
-import { fmtTsShort, ERROR_CLASS, MACHINE_CLASS } from "../../ui";
-import {
-  Frame,
-  FrameDescription,
-  FrameHeader,
-  FramePanel,
-  FrameTitle,
-} from "@/components/reui/frame";
+import { INLINE_LINK, fmtTs, fmtTsShort } from "../../ui";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,13 +22,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CopyButton } from "./copy-button";
+import { SectionFrame, SettingsSection } from "./settings-section";
+import { ERROR_CLASS, IDENTITY_TIER, MACHINE_CLASS, SECONDARY_TIER, SUPPORT_TIER } from "./plain-table";
 
 /**
  * Account API keys: create, list, revoke (eccos-bm92).
  *
- * Router-free like the forwarding-target panel: the route owns the list and
- * re-reads it through `onChanged`. Every action is `administer` on the server;
- * a role without it gets the refusal copy here instead of the controls.
+ * Router-free: the route owns the list and re-reads it through `onChanged`.
+ * Every action is `administer` on the server; the route renders this only for
+ * a role that holds it.
  */
 export function ApiKeysPanel({
   keys,
@@ -73,68 +69,81 @@ export function ApiKeysPanel({
   }
 
   return (
-    <Frame variant="default" spacing="lg">
-      <FramePanel fit>
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">API keys</FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            Keys let your server send messages and export data through the
-            Eccos API on behalf of this workspace.
-          </FrameDescription>
-        </FrameHeader>
-
+    <>
+      <SettingsSection
+        id="keys"
+        title="Keys"
+        description="Keys let your server send messages and export data through the Eccos API on behalf of this workspace."
+      >
         {keys.ok ? (
-          <>
-            {issued ? <IssuedKeyNotice issued={issued} onDone={() => setIssued(null)} /> : null}
-
-            <form onSubmit={onCreate} aria-busy={creating} className="mt-5 flex items-end gap-2">
-              <div className="min-w-0 flex-1">
-                <label htmlFor="api-key-label" className={`mb-1 block ${MACHINE_CLASS}`}>
-                  Label
-                </label>
-                <Input
-                  id="api-key-label"
-                  value={label}
-                  maxLength={200}
-                  onChange={(event) => setLabel(event.target.value)}
-                  placeholder="e.g. production server"
-                />
-              </div>
-              <Button type="submit" disabled={creating}>
-                {creating ? "Creating…" : "Create key"}
-              </Button>
-            </form>
-            {error ? (
-              <output aria-live="polite" className={ERROR_CLASS}>
-                {error}
-              </output>
-            ) : null}
-
-            <KeyList keys={keys.data} onRevoke={setRevoking} />
-            <SendSnippet wabaId={wabaId} gatewayOrigin={gatewayOrigin} />
-          </>
+          <SectionFrame flush>
+            <div className="flex flex-col gap-4 px-5 py-4">
+              {issued ? <IssuedKeyNotice issued={issued} onDone={() => setIssued(null)} /> : null}
+              <form onSubmit={onCreate} aria-busy={creating} className="flex flex-wrap items-end gap-2">
+                <div className="w-full max-w-sm">
+                  <label htmlFor="api-key-label" className={`mb-1.5 block ${MACHINE_CLASS}`}>
+                    Label
+                  </label>
+                  <Input
+                    id="api-key-label"
+                    value={label}
+                    maxLength={200}
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
+                    onChange={(event) => setLabel(event.target.value)}
+                    placeholder="e.g. production server"
+                  />
+                </div>
+                <Button type="submit" disabled={creating}>
+                  {creating ? "Creating…" : "Create key"}
+                </Button>
+              </form>
+              {error ? (
+                <output aria-live="polite" className={ERROR_CLASS}>
+                  {error}
+                </output>
+              ) : null}
+            </div>
+            <KeyTable keys={keys.data} onRevoke={setRevoking} />
+          </SectionFrame>
         ) : (
-          <KeysUnavailable keys={keys} />
+          <SectionFrame>
+            <KeysUnavailable keys={keys} />
+          </SectionFrame>
         )}
+      </SettingsSection>
 
-        {revoking ? (
-          <RevokeKeyDialog
-            target={revoking}
-            onOpenChange={(open) => {
-              if (!open) setRevoking(null);
-            }}
-            onRevoked={onChanged}
-          />
-        ) : null}
-      </FramePanel>
-    </Frame>
+      {keys.ok ? (
+        <SettingsSection
+          id="send"
+          title="Send a message"
+          description="Your server sends with a key in the Authorization header. The example uses this workspace's WhatsApp account, and a new key once you create one."
+        >
+          <SectionFrame>
+            <SendSnippet wabaId={wabaId} gatewayOrigin={gatewayOrigin} apiKey={issued?.apiKey} />
+          </SectionFrame>
+        </SettingsSection>
+      ) : null}
+
+      {revoking ? (
+        <RevokeKeyDialog
+          target={revoking}
+          onOpenChange={(open) => {
+            if (!open) setRevoking(null);
+          }}
+          onRevoked={onChanged}
+        />
+      ) : null}
+    </>
   );
 }
 
 function KeysUnavailable({ keys }: { keys: Extract<Result<AccountKeyResource[]>, { ok: false }> }) {
   const copy = failureCopy(keys);
   return (
-    <div className="mt-5">
+    <div>
       <span className={`block ${MACHINE_CLASS}`}>{copy.title}</span>
       <p className="mt-1.5 mb-0 text-sm text-muted-foreground">{copy.detail}</p>
     </div>
@@ -142,32 +151,17 @@ function KeysUnavailable({ keys }: { keys: Extract<Result<AccountKeyResource[]>,
 }
 
 /** The raw key, shown once. Exported so it can be rendered directly in tests. */
-export function IssuedKeyNotice({
-  issued,
-  onDone,
-}: {
-  issued: IssuedApiKey;
-  onDone: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
+export function IssuedKeyNotice({ issued, onDone }: { issued: IssuedApiKey; onDone: () => void }) {
   return (
-    <div className="mt-5 border border-(--line-strong) bg-(--ghost-fill) p-3">
+    <div className="border border-(--line-strong) bg-(--ghost-fill) p-3">
       <span className={`block ${MACHINE_CLASS}`}>New key</span>
       <code className="mt-2 block font-mono text-xs break-all text-foreground">{issued.apiKey}</code>
       <p className="mt-2 mb-0 text-xs text-warning-foreground">
-        Copy it now. You won't see this key again: Eccos stores only its hash.
+        Copy it now. You won't see this key again: Eccos stores only its hash. The send example below carries it
+        until you press Done.
       </p>
       <div className="mt-3 flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            void navigator.clipboard.writeText(issued.apiKey).then(() => setCopied(true))
-          }
-        >
-          {copied ? "Copied" : "Copy"}
-        </Button>
+        <CopyButton value={issued.apiKey} variant="outline" size="sm" />
         <Button type="button" variant="outline" size="sm" onClick={onDone}>
           Done
         </Button>
@@ -176,7 +170,10 @@ export function IssuedKeyNotice({
   );
 }
 
-export function KeyList({
+const HEAD_CELL = `px-5 py-2 text-left align-middle ${MACHINE_CLASS}`;
+
+/** The keys, newest first: the label is the row's identity, the key id its machine name. */
+export function KeyTable({
   keys,
   onRevoke,
 }: {
@@ -185,40 +182,68 @@ export function KeyList({
 }) {
   if (keys.length === 0) {
     return (
-      <div className="mt-5">
+      <div className="border-t border-(--line) px-5 py-4">
         <span className={`block ${MACHINE_CLASS}`}>No keys yet</span>
         <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
-          Keys you create appear here. Until one exists, this workspace can
-          receive events but not send.
+          Keys you create appear here. Your server needs one to send through
+          the API; Conversations in this console works without it.
         </p>
       </div>
     );
   }
   const sorted = [...keys].sort((a, b) => b.createdAt - a.createdAt);
   return (
-    <ul className="my-0 -mx-(--frame-panel-px) mt-5 list-none divide-y divide-(--line) border-y border-(--line) p-0">
-      {sorted.map((key) => (
-        <li
-          key={key.keyId}
-          className="flex items-center justify-between gap-4 px-(--frame-panel-px) py-2.5"
-        >
-          <div className="min-w-0">
-            <span className="block truncate text-sm text-foreground">{key.label ?? "Unlabelled"}</span>
-            <span className="block font-mono text-xs text-muted-foreground">
-              <span className="break-all">{key.keyId}</span> ·{" "}
-              <span className="whitespace-nowrap">created {fmtTsShort(key.createdAt)}</span>
-            </span>
-          </div>
-          {key.revokedAt === null ? (
-            <Button type="button" variant="outline" size="sm" onClick={() => onRevoke(key)}>
-              Revoke
-            </Button>
-          ) : (
-            <span className={`shrink-0 ${MACHINE_CLASS}`}>Revoked {fmtTsShort(key.revokedAt)}</span>
-          )}
-        </li>
-      ))}
-    </ul>
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-y border-(--line)">
+            <th scope="col" className={`w-[60%] ${HEAD_CELL}`}>
+              Key
+            </th>
+            <th scope="col" className={`w-[25%] ${HEAD_CELL}`}>
+              Created
+            </th>
+            <th scope="col" className={HEAD_CELL}>
+              <span className="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-(--line)">
+          {sorted.map((key) => (
+            <tr key={key.keyId}>
+              {/* max-w-0 lets an auto-layout cell truncate instead of pushing the other columns out. */}
+              <td className="max-w-0 px-5 py-3 align-middle">
+                <span className={`block truncate ${IDENTITY_TIER}`} title={key.label ?? undefined}>{key.label ?? "Unlabelled"}</span>
+                <span className={`block font-mono break-all ${SECONDARY_TIER}`}>{key.keyId}</span>
+              </td>
+              <td className={`px-5 py-3 align-middle whitespace-nowrap ${SUPPORT_TIER}`}>
+                <KeyDate at={key.createdAt} />
+              </td>
+              <td className="px-5 py-3 text-right align-middle">
+                {key.revokedAt === null ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => onRevoke(key)}>
+                    Revoke
+                  </Button>
+                ) : (
+                  <span className={`whitespace-nowrap ${SUPPORT_TIER}`}>
+                    Revoked <KeyDate at={key.revokedAt} />
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The UTC day, with the exact instant on hover: never relative, never localized. */
+function KeyDate({ at }: { at: number }) {
+  return (
+    <time dateTime={fmtTs(at)} title={fmtTsShort(at)} className="tabular-nums">
+      {fmtTs(at).slice(0, 10)}
+    </time>
   );
 }
 
@@ -284,18 +309,35 @@ function RevokeKeyDialog({
   );
 }
 
-/** How a key is used: the send endpoint, with this workspace's WABA when known. */
-export function SendSnippet({ wabaId, gatewayOrigin }: { wabaId?: string; gatewayOrigin?: string | null }) {
+const API_GUIDE_URL = "https://docs.eccos.chat/sending-messages";
+
+/** How a key is used: the send endpoint, with this workspace's WABA and a just-issued key when known. */
+export function SendSnippet({
+  wabaId,
+  gatewayOrigin,
+  apiKey,
+}: {
+  wabaId?: string;
+  gatewayOrigin?: string | null;
+  apiKey?: string;
+}) {
   const snippet = `curl -X POST ${gatewayOrigin ?? "<GATEWAY_URL>"}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
-  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Authorization: Bearer ${apiKey ?? "<API_KEY>"}" \\
   -H "Content-Type: application/json" \\
-  -d '{"to": "<PHONE>", "type": "text", "text": {"body": "Hello"}}'`;
+  -d '{"to": "<PHONE>", "type": "template", "template": {"name": "hello_world", "language": {"code": "en_US"}}}'`;
   return (
-    <div className="mt-5">
-      <span className={`block ${MACHINE_CLASS}`}>Send a message</span>
-      <pre className="mt-2 mb-0 overflow-x-auto border border-(--line) p-3 font-mono text-xs text-foreground">
+    <div>
+      <pre className="m-0 overflow-x-auto border border-(--line) p-3 font-mono text-xs text-foreground">
         {snippet}
       </pre>
+      <a
+        href={API_GUIDE_URL}
+        target="_blank"
+        rel="noreferrer"
+        className={`mt-2 inline-block text-sm ${INLINE_LINK}`}
+      >
+        Read the API guide
+      </a>
     </div>
   );
 }

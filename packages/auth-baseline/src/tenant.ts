@@ -36,6 +36,8 @@ export type ForbiddenReason =
   | "not-a-member"
   | "missing-permission"
   | StepUpReason
+  /** The page's workspace is not the one the session resolves now (another tab switched it). */
+  | "workspace-changed"
   | "other";
 
 /** Typed error for authenticated-but-forbidden requests. */

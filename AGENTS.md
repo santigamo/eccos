@@ -49,7 +49,10 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
 
 ## Rules
 
-- Code, identifiers, comments, and user-facing strings are in **English**.
+- Code, identifiers, comments, and user-facing strings are in **English**. One exception: the
+  public connection-link page (`/connect` in the console) is read by Spanish small businesses, so
+  it serves Spanish when `Accept-Language` prefers it. Its strings live in one module per language
+  (`apps/dashboard/src/lib/connect-link/{en,es}.ts`); everything else stays English.
 - **Workers account scope in v1.** `apps/gateway` always uses the account → WABA → phone
   control-plane registry; do not add global tenant credentials or compatibility modes. The Bun
   target in `src/` remains single-tenant until an explicit roadmap decision. The Workers'

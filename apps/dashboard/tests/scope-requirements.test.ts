@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  PRE_WORKSPACE_ROUTES,
   SCOPE_REQUIREMENTS,
   hasNumberScope,
   hasWabaScope,
@@ -62,6 +63,9 @@ describe("SCOPE_REQUIREMENTS", () => {
     // number exists is a product decision, and it should have to be made here.
     expect(SCOPE_REQUIREMENTS).toEqual({
       "/numbers": "none",
+      // Unlisted in the nav: accepting joins ANOTHER workspace, so it cannot
+      // wait on this one's number (eccos-ayd9).
+      "/invitations": "none",
       // `"none"`, and UNLISTED (see the nav test below): the pasted-token page
       // is how Meta's Cloud API test number gets attached, and an account with
       // no number is exactly who needs it (eccos-up9). Gating it on a WABA
@@ -77,6 +81,10 @@ describe("SCOPE_REQUIREMENTS", () => {
       // panel's: the account id is an account-level fact and does not wait on a
       // number. The token panel left for /numbers/attach-token.
       "/settings": "none",
+      // Account-level, and listed only for a role with `administer`.
+      "/members": "none",
+      // Account keys do not wait on a number either.
+      "/api-keys": "none",
       "/": "number",
       // Named but UNLISTED, the second route in that shape after
       // /numbers/attach-token: the forwarding queue is the destination of every
@@ -92,10 +100,12 @@ describe("SCOPE_REQUIREMENTS", () => {
     });
   });
 
+  test("only creating or joining a workspace is reachable before one exists", () => {
+    expect([...PRE_WORKSPACE_ROUTES].sort()).toEqual(["/invitations", "/onboarding"]);
+  });
+
   test("an unlisted route defaults to needing a number", () => {
-    // Preserves the old bounce for anything not named (e.g. /invitations): the
-    // safe direction is towards /numbers, not towards a page that will throw.
-    expect(requirementFor("/invitations")).toBe("number");
+    // The safe direction is towards /numbers, not towards a page that will throw.
     expect(requirementFor("/some/future/page")).toBe("number");
   });
 });
@@ -202,15 +212,15 @@ describe("the sidebar's groups", () => {
     ]);
     expect(NAV_MAIN.map((group) => group.items.map((item) => item.href))).toEqual([
       ["/"],
-      ["/numbers", "/webhooks", "/templates"],
+      ["/numbers", "/webhooks", "/api-keys"],
       ["/conversations"],
-      ["/broadcasts", "/scheduled"],
+      ["/templates", "/broadcasts", "/scheduled"],
       // TWO LOGS. One send used to produce a row in each of three: an outbound
       // message, a `delivered` callback under "Inbound", and a forwarding
       // batch. Messages and Events are the two UNITS; the forward is a state on
       // an event and the queue keeps its route without a row here.
       ["/messages", "/events"],
-      ["/settings"],
+      ["/members", "/settings"],
     ]);
   });
 

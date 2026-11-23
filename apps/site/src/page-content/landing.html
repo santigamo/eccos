@@ -5,13 +5,13 @@
     <div class="hero-bg" aria-hidden="true"></div>
     <div class="hero-scrim" aria-hidden="true"></div>
     <div class="wrap hero-inner">
-      <h1 class="reveal">The WhatsApp gateway<br class="br-lg"> priced <span class="px">per number</span></h1>
+      <h1 class="reveal">Automate WhatsApp without giving up the phone<br class="br-lg"> or paying <span class="px">per message</span></h1>
       <p class="lede reveal">
-        Eccos is an open-source WhatsApp gateway on Meta's official Cloud API: it puts
-        your numbers on the API and relays every event between them and your systems.
-        One number or fifty, yours or your clients', fully automated or still answered
-        by hand from the phone. Priced per connected number, never per message, and
-        every business pays Meta directly for its own conversations. MIT-licensed.
+        Eccos connects your WhatsApp number to your software through the official
+        WhatsApp Business API. Reminders, notifications and replies go out on their
+        own, your team keeps answering from the app they already use, and you pay a
+        flat fee per number, from €5 a month. It is an open-source WhatsApp gateway:
+        use ours, or install it on your own server.
       </p>
       <div class="actions reveal">
         <a class="btn btn-primary" href="https://app.eccos.chat/signup">Create your account</a>
@@ -29,10 +29,10 @@
   <!-- §2 facts strip --------------------------------------------------- -->
   <section class="band facts" aria-label="At a glance">
     <ul class="cells">
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Official Meta Cloud API</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Official WhatsApp API</li>
       <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>Open source · MIT</li>
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>Coexistence built in</li>
-      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>Businesses pay Meta directly</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>Keep using the app on your phone</li>
+      <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>Unlimited messages</li>
       <li class="cell"><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg>EU data residency</li>
     </ul>
   </section>
@@ -42,22 +42,23 @@
   <!-- §3 statement + feature rows -------------------------------------- -->
   <section class="band" id="how" aria-labelledby="how-h">
     <div class="wrap statement">
-      <h2 id="how-h" class="reveal">The gateway between Meta and <span class="px">your systems</span></h2>
+      <h2 id="how-h" class="reveal">What changes when you <span class="px">connect a number</span></h2>
       <p class="reveal">
-        The number might belong to a client you run WhatsApp for, to a user of your
-        product, or to you. Either way it connects as its own WhatsApp Business
-        Account through Meta's Embedded Signup, and from then on Eccos does two
-        things with it.
+        It can be your number, a client's you run WhatsApp for, or a user's of your
+        product. You connect it from the dashboard through Meta's official signup,
+        and you do not have to ask Meta for permissions or set anything up: we have
+        already done that.
       </p>
     </div>
 
     <article class="row">
       <div class="row-text reveal">
-        <h3>Receives and forwards</h3>
+        <h3>Everything that happens on the number reaches you</h3>
         <p>
-          It takes every event Meta sends about the number, incoming messages and
-          delivery and read receipts alike, and forwards each one to the endpoint
-          you choose, retrying when that endpoint is down.
+          Every message people write to you, and every delivered or read receipt,
+          reaches your software as it happens. If your server goes down for a
+          while, Eccos keeps it and tries again. And the conversations are in the
+          dashboard too.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -79,11 +80,11 @@
 
     <article class="row">
       <div class="row-text reveal">
-        <h3>Sends</h3>
+        <h3>Your messages go out on their own</h3>
         <p>
-          It sends the messages your system asks it to send, templates and media
-          included, through the official Cloud API. The sent and delivered receipts
-          come back through the same pipe.
+          Appointment reminders, order confirmations, delivery notices. Your
+          software asks Eccos to send them, now or scheduled for later, to one
+          person or to a list, and you know whether they arrived and were read.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -107,13 +108,12 @@
 
     <article class="row">
       <div class="row-text reveal">
-        <h3>The phone keeps answering</h3>
+        <h3>The phone works as it always did</h3>
         <p>
-          Meta calls it coexistence: the number stays live in the WhatsApp app while
-          the API sends alongside it. Whoever holds the phone keeps answering by
-          hand, and those typed replies reach your endpoint as echo events. Numbers
-          that live only on the API work just as well; coexistence is there for the
-          ones that don't.
+          Your team keeps replying from the WhatsApp Business app, on the same
+          number and with the same chats. What they type by hand reaches your
+          software too, so it does not send a reminder to someone who has already
+          been answered. Meta calls it coexistence. <a href="/en/coexistence">How WhatsApp coexistence works</a>.
         </p>
       </div>
       <div class="row-vis reveal">
@@ -135,12 +135,12 @@
   <!-- §4 the meter ----------------------------------------------------- -->
   <section class="band" id="meter" aria-labelledby="meter-h">
     <div class="wrap statement">
-      <h2 id="meter-h" class="reveal">The meter counts <span class="px">everything</span></h2>
+      <h2 id="meter-h" class="reveal">Pay per message and <span class="px">you pay for all of them</span></h2>
       <p class="reveal">
-        Per-message platforms count every message on a number: what your automation
-        sends, what customers write in, and every reply the owner types by hand.
-        One real month from a physiotherapy clinic, June 2026, read from its
-        per-message provider's own panel:
+        Platforms that charge per message do not count only what your software
+        sends. They also count what customers write to you and every reply someone
+        types by hand on the phone. This is one real month from a physiotherapy
+        clinic, June 2026, read from its provider's own panel:
       </p>
     </div>
 
@@ -186,11 +186,10 @@
       <p class="label reveal">Eccos Cloud</p>
       <h2 id="pricing-h" class="reveal">Flat per number, <span class="px">unlimited messages</span></h2>
       <p class="reveal">
-        One subscription covers every number you connect and every message those
-        numbers move. Meta does not let Tech Providers bill message usage;
-        conversation charges go from Meta to each business directly, on that
-        business's own payment method. So the meter is not discounted here. It
-        does not exist.
+        One flat fee covers every number you connect and all of their messages.
+        WhatsApp's message charges go from Meta to each business, on that
+        business's own card, and Eccos adds nothing on top. There is no meter to
+        watch here.
       </p>
     </div>
 
@@ -251,7 +250,8 @@
         MIT-licensed code on Cloudflare costs the $5/month Workers plan that
         Durable Objects require, and up to about half a million events a month
         that flat fee is the whole bill. The first cloud number costs €5. Pick
-        the five that suits you.
+        the five that suits you. <a href="/en/pricing">Full pricing, with worked examples
+        and how it compares</a>.
       </p>
     </div>
   </section>
@@ -261,16 +261,16 @@
   <!-- §6 modes --------------------------------------------------------- -->
   <section class="band" id="run" aria-labelledby="run-h">
     <div class="wrap statement solo">
-      <h2 id="run-h" class="reveal">Two ways to <span class="px">run it</span></h2>
+      <h2 id="run-h" class="reveal">On our servers <span class="px">or on yours</span></h2>
     </div>
     <div class="modes">
       <article class="mode reveal">
         <div class="mode-head">
-          <h3>Self-hosted</h3>
+          <h3>On your server</h3>
           <span class="tag tag-live">Available now</span>
         </div>
-        <p>The full gateway, open source under the MIT licence, on infrastructure you
-          control. Nothing about you or the businesses you connect ever reaches us.</p>
+        <p>All of Eccos, free and open source, installed wherever you choose.
+          Nothing of yours or of the businesses you connect passes through us.</p>
         <p class="label">What's included</p>
         <ul class="ticks">
           <li>Single-binary deploy on Bun</li>
@@ -286,9 +286,8 @@
           <h3>Eccos Cloud</h3>
           <span class="tag tag-live">Available now</span>
         </div>
-        <p>The same gateway, operated for you. Each business connects through the
-          same flow; you get the dashboard, the queue and the API without running
-          infrastructure.</p>
+        <p>We keep it running. You connect the numbers and use the dashboard and
+          the API, with nothing to install or watch over.</p>
         <p class="label">What to expect</p>
         <ul class="ticks">
           <li>We run the gateway for you</li>
@@ -317,24 +316,25 @@
       <article class="own reveal">
         <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-account-light.jpg"><img src="/assets/own-account.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
         <h3 class="own-title">Their account</h3>
-        <p>Each connected business brings its own WhatsApp Business Account through
-          Embedded Signup and puts its own payment method on file with Meta.
-          Conversation charges never pass through us, so they are never marked up.</p>
+        <p>Each business connects its own WhatsApp Business Account and puts its own
+          payment method on file with Meta. It pays Meta for its messages, with
+          nothing passing through Eccos and no markup, and the account stays its own
+          if it stops working with you.</p>
       </article>
       <article class="own reveal">
         <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-infra-light.jpg"><img src="/assets/own-infra.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
-        <h3 class="own-title">Your infrastructure</h3>
-        <p>The gateway is open source under the MIT licence. Deploy it as a single
-          Bun binary or on Cloudflare Workers and Durable Objects, in your own
-          account, or have Eccos Cloud run the same code for you.</p>
+        <h3 class="own-title">Your way out</h3>
+        <p>Eccos is open source under the MIT licence. If one day you would rather
+          run it yourself, you deploy the same code on your server or in your own
+          Cloudflare account and keep going. The move is <a href="/migrate">documented step by step</a>.</p>
       </article>
       <article class="own reveal">
         <div class="own-media"><picture class="own-pic"><source class="own-src-light" media="(prefers-color-scheme: light)" srcset="/assets/own-data-light.jpg"><img src="/assets/own-data.jpg" alt="" width="1200" height="1200" loading="lazy" decoding="async"></picture></div>
         <h3 class="own-title">Their data</h3>
-        <p>Each business's data stays isolated: never combined across businesses,
-          never sold, never used for advertising or to train models. When someone
-          asks to be forgotten, the gateway deletes by phone number and shows
-          per-table counts as the receipt.</p>
+        <p>Each business's data is kept apart: never mixed with another's, never
+          sold, never used for advertising or to train models. If someone asks for
+          theirs to be deleted, it is deleted by phone number and you keep the
+          receipt.</p>
       </article>
     </div>
   </section>

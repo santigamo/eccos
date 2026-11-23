@@ -27,7 +27,9 @@ export type MailTemplate =
   | "reset-password"
   | "invite-member"
   | "two-factor-code"
-  | "two-factor-changed";
+  | "two-factor-changed"
+  | "connect-link-connected"
+  | "connect-link-failed";
 
 /**
  * Declared variable sets, ONE CONSTANT PER TEMPLATE.
@@ -63,6 +65,9 @@ export const INVITE_MEMBER_VARIABLES = [
 export const TWO_FACTOR_CODE_VARIABLES = ["code", "name"] as const;
 /** `change` is one sentence saying what changed on the account's second factor. */
 export const TWO_FACTOR_CHANGED_VARIABLES = ["change", "name"] as const;
+/** To the admin who made a connection link: the workspace name and a fixed sentence, never a phone number. */
+export const CONNECT_LINK_CONNECTED_VARIABLES = ["workspace", "note", "url"] as const;
+export const CONNECT_LINK_FAILED_VARIABLES = ["workspace", "reason", "url"] as const;
 
 /** The declared set for a template, by name. */
 export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
@@ -71,6 +76,8 @@ export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
   "invite-member": INVITE_MEMBER_VARIABLES,
   "two-factor-code": TWO_FACTOR_CODE_VARIABLES,
   "two-factor-changed": TWO_FACTOR_CHANGED_VARIABLES,
+  "connect-link-connected": CONNECT_LINK_CONNECTED_VARIABLES,
+  "connect-link-failed": CONNECT_LINK_FAILED_VARIABLES,
 };
 
 /**

@@ -10,19 +10,28 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
+import * as Sentry from "@sentry/cloudflare";
 import { env } from "cloudflare:workers";
 import type { GatewayApi } from "@eccos/gateway-contract";
+import type { Failure } from "./server/gateway";
+import { auditEvent } from "./server/audit";
 import { getAuthForRequest } from "./auth/request-auth";
-import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
+import { UnauthorizedError, requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
+import { classifyFailure } from "./server/classify-failure";
 import {
   ForbiddenError,
   resolveMemberships,
   verifyMembership,
   type Membership,
 } from "./auth/tenant";
-import type { StepUpReason } from "@eccos/auth-baseline/step-up";
-import { stepUpReasonOfError } from "./auth/step-up-guard";
 import { activeWorkspace } from "./lib/workspaces";
+import { isReseller } from "./billing/reseller";
+import {
+  INVITATION_COPY,
+  INVITATION_RETRY,
+  INVITATION_SIGNED_OUT,
+  INVITATION_UNAVAILABLE,
+} from "./lib/invitation-copy";
 
 export interface OrganizationView {
   id: string;
@@ -53,6 +62,16 @@ function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<T> {
   const gateway = env.GATEWAY;
   if (!gateway) throw new Error("GATEWAY service binding is not configured");
   return fn(gateway);
+}
+
+/** A reseller's new workspace opens without a subscription; a failure leaves it closed for the operator to open. */
+async function openForReseller(userId: string, accountId: string): Promise<void> {
+  if (!isReseller(userId, env.RESELLER_USER_IDS)) return;
+  try {
+    await withGateway((gateway) => gateway.setAccountBilling(accountId, { connectPolicy: "open" }));
+  } catch (err) {
+    Sentry.captureException(err, { tags: { area: "billing", event: "reseller-open-failed" }, extra: { accountId } });
+  }
 }
 
 /** List the signed-in user's organizations with their account-link state. */
@@ -154,7 +173,7 @@ const CREATE_WORKSPACE_COPY: Record<string, string> = {
  * ones raised straight from a status. Anything else — a plain `Error`, an RPC
  * failure — has no code and lands on the generic branch by construction.
  */
-function authErrorCode(err: unknown): string {
+export function authErrorCode(err: unknown): string {
   if (!err || typeof err !== "object") return "";
   const e = err as { body?: { code?: unknown }; status?: unknown };
   if (typeof e.body?.code === "string") return e.body.code;
@@ -162,22 +181,29 @@ function authErrorCode(err: unknown): string {
   return "";
 }
 
+/**
+ * Server-side only: the operator keeps the diagnosis the customer no longer
+ * gets. The code and the error's class, never its message: that can carry an
+ * organization or account id.
+ */
+export function warnUnmapped(event: string, code: string, err: unknown): void {
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      area: "organizations",
+      event,
+      code: code || null,
+      error: err instanceof Error ? err.name : typeof err,
+    }),
+  );
+}
+
 /** Map a creation failure to customer-facing copy, logging the unmapped ones. */
 export function createWorkspaceErrorCopy(err: unknown): string {
   const code = authErrorCode(err);
   const mapped = CREATE_WORKSPACE_COPY[code];
   if (mapped) return mapped;
-  // Server-side only: the operator keeps the diagnosis the customer no longer
-  // gets. Never the request body, never anything tenant-identifying.
-  console.warn(
-    JSON.stringify({
-      level: "warn",
-      area: "organizations",
-      event: "create-workspace-failed",
-      code: code || null,
-      error: err instanceof Error ? err.message : String(err),
-    }),
-  );
+  warnUnmapped("create-workspace-failed", code, err);
   return CREATE_WORKSPACE_RETRY;
 }
 
@@ -203,6 +229,7 @@ export const createOrganization = createServerFn({ method: "POST" })
       try {
         const auth = authInstance();
         const request = currentRequest();
+        const { session } = await requireAuthContext(auth, request);
         const org = (await auth.api.createOrganization({
           body: { name: data.name, slug: crypto.randomUUID() },
           headers: request.headers,
@@ -214,12 +241,82 @@ export const createOrganization = createServerFn({ method: "POST" })
         const link = await withGateway((gateway) =>
           gateway.ensureOrganizationAccount(org.id as string, data.name),
         );
+        await openForReseller(session.userId, link.accountId);
         return { ok: true, data: { organizationId: org.id, accountId: link.accountId } };
       } catch (err) {
         return { ok: false, error: createWorkspaceErrorCopy(err) };
       }
     },
   );
+
+export const renameWorkspaceInput = z
+  .object({
+    organizationId: z.string().trim().min(1).max(128),
+    name: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
+const RENAME_RETRY = "Could not rename the workspace right now. Please try again.";
+
+/**
+ * The gateway keeps its own copy of the name; a failure there must not undo the
+ * rename the user sees. Returns the account id it renamed, null when it could not.
+ */
+async function syncAccountName(organizationId: string, name: string): Promise<string | null> {
+  try {
+    return await withGateway(async (gateway) => {
+      const link = await gateway.getOrganizationAccountLink(organizationId);
+      if (link?.status !== "active") throw new Error("no active account link");
+      await gateway.setAccountName(link.accountId, name);
+      return link.accountId;
+    });
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { area: "organizations", event: "account-rename-failed" },
+      extra: { organizationId },
+    });
+    return null;
+  }
+}
+
+/**
+ * Rename the workspace the page shows. In process, because the HTTP
+ * `organization/update` endpoint is blocked (`auth/blocked-endpoints.ts`); only
+ * the name is written and only the name is returned, so the slug never moves or leaks.
+ * A session that has since moved to another workspace (another tab) is refused.
+ */
+export const renameWorkspace = createServerFn({ method: "POST" })
+  .validator((input: unknown) => renameWorkspaceInput.parse(input))
+  .handler(async ({ data }): Promise<{ ok: true; data: { name: string } } | Failure> => {
+    try {
+      const auth = authInstance();
+      const request = currentRequest();
+      const organizationId = await requireGatewayPermission(auth, request, "administer");
+      if (organizationId !== data.organizationId) {
+        throw new ForbiddenError("session moved to another workspace", "workspace-changed");
+      }
+      const { session } = await requireAuthContext(auth, request);
+      await auth.api.updateOrganization({
+        body: { organizationId, data: { name: data.name } },
+        headers: request.headers,
+      });
+      const accountId = await syncAccountName(organizationId, data.name);
+      // No name in the line: ids only, like every other audit record.
+      auditEvent({
+        action: "workspace_rename",
+        actorUserId: session.userId,
+        organizationId,
+        accountId,
+        outcome: "success",
+        detail: accountId ? undefined : "gateway-name-not-synced",
+      });
+      return { ok: true, data: { name: data.name } };
+    } catch (err) {
+      const failure = await classifyFailure(err);
+      // An unexpected error's message is for Sentry, which classifyFailure told; the screen gets the retry line.
+      return failure.kind === "unreachable" ? { ...failure, error: RENAME_RETRY } : failure;
+    }
+  });
 
 const selectOrgInput = z
   .object({ organizationId: z.string().trim().min(1).max(128) })
@@ -256,92 +353,109 @@ export const selectOrganization = createServerFn({ method: "POST" })
     }
   });
 
-const inviteInput = z
-  .object({
-    email: z.string().trim().email(),
-    role: z.enum(["admin", "operator", "viewer"]),
-    organizationId: z.string().trim().min(1).max(128),
-  })
+export interface InvitationFailure {
+  ok: false;
+  /** `signed-out` goes to sign-in, `retry` is transient, `unavailable` will not change by asking again. */
+  kind: "signed-out" | "retry" | "unavailable";
+  error: string;
+}
+
+/** Classify an invitation failure and give it allowlisted copy (`lib/invitation-copy.ts`). */
+export function invitationFailure(err: unknown): InvitationFailure {
+  const code = authErrorCode(err);
+  if (code === "UNAUTHORIZED" || err instanceof UnauthorizedError) {
+    return { ok: false, kind: "signed-out", error: INVITATION_SIGNED_OUT };
+  }
+  const mapped = INVITATION_COPY[code];
+  if (mapped) return { ok: false, kind: "unavailable", error: mapped };
+  warnUnmapped("invitation-failed", code, err);
+  return { ok: false, kind: "retry", error: INVITATION_RETRY };
+}
+
+export const acceptInviteInput = z
+  .object({ invitationId: z.string().trim().min(1).max(256) })
   .strict();
 
 /**
- * Invite a verified email to the organization (owner/admin per contract §4).
- * A member invitation never provisions a new tenant: accepting joins the
- * existing organization and its already-linked account.
+ * The workspace an ALREADY ACCEPTED invitation put the caller in, or null.
+ *
+ * Better Auth answers "not found" for an accepted invitation, which is what a
+ * retry meets when the accept went through but the account link after it did
+ * not. Only the invited identity that is now a member gets an answer here.
  */
-export const inviteMember = createServerFn({ method: "POST" })
-  .validator((input: unknown) => inviteInput.parse(input))
-  .handler(
-    async ({
-      data,
-    }): Promise<{ ok: true } | { ok: false; error: string; reason?: StepUpReason }> => {
-      try {
-        const organizationId = await requireGatewayPermission(authInstance(), getRequest(), "administer");
-        if (organizationId !== data.organizationId) {
-          throw new ForbiddenError("organization mismatch");
-        }
-        const auth = authInstance();
-        const request = currentRequest();
-        await auth.api.createInvitation({
-          body: {
-            email: data.email,
-            role: data.role,
-            organizationId: data.organizationId,
-          },
-          headers: request.headers,
-          // sendInvitationEmail (wired in auth.ts) delivers via the mail adapter.
-        });
-        return { ok: true };
-      } catch (err) {
-        // Step-up is judged inside `createInvitation`, by the organization
-        // hook; its refusal carries the reason `withStepUp` acts on.
-        const reason = stepUpReasonOfError(err);
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-          ...(reason ? { reason } : {}),
-        };
-      }
-    },
-  );
-
-const acceptInviteInput = z
-  .object({ invitationId: z.string().trim().min(1).max(256) })
-  .strict();
+async function joinedWorkspace(invitationId: string): Promise<Membership | null> {
+  const auth = authInstance();
+  const request = currentRequest();
+  const { session } = await requireAuthContext(auth, request);
+  const invitation = await (await auth.$context).adapter.findOne<{
+    email: string;
+    status: string;
+    organizationId: string;
+  }>({ model: "invitation", where: [{ field: "id", value: invitationId }] });
+  if (invitation?.status !== "accepted") return null;
+  if (invitation.email.toLowerCase() !== session.email.toLowerCase()) return null;
+  const memberships = await resolveMemberships(auth, request.headers);
+  return memberships.find((m) => m.id === invitation.organizationId) ?? null;
+}
 
 /** Accept an invitation as the signed-in matching identity (contract §7). */
 export const acceptInvitation = createServerFn({ method: "POST" })
   .validator((input: unknown) => acceptInviteInput.parse(input))
   .handler(
-    async ({
-      data,
-    }): Promise<
-      | { ok: true; data: { organizationId: string | null } }
-      | { ok: false; error: string }
-    > => {
+    async ({ data }): Promise<{ ok: true; data: { organizationId: string } } | InvitationFailure> => {
       try {
         const auth = authInstance();
         const request = currentRequest();
-        const accepted = (await auth.api.acceptInvitation({
-          body: { invitationId: data.invitationId },
-          headers: request.headers,
-        })) as { invitation?: { organizationId?: unknown } } | null;
-        const organizationId =
-          accepted?.invitation && typeof accepted.invitation.organizationId === "string"
-            ? accepted.invitation.organizationId
-            : null;
-        if (organizationId) {
-          // Defense in depth: make sure the joined organization is linked.
-          await withGateway((gateway) =>
-            gateway.ensureOrganizationAccount(organizationId),
-          );
+        let organizationId: string;
+        try {
+          const accepted = (await auth.api.acceptInvitation({
+            body: { invitationId: data.invitationId },
+            headers: request.headers,
+          })) as { invitation: { organizationId: string } };
+          organizationId = accepted.invitation.organizationId;
+        } catch (err) {
+          const joined = await joinedWorkspace(data.invitationId).catch(() => null);
+          if (!joined) throw err;
+          organizationId = joined.id;
+          await auth.api.setActiveOrganization({ body: { organizationId }, headers: request.headers });
         }
+        // Defense in depth: make sure the joined organization is linked. A
+        // failure here leaves a member whose retry takes the branch above.
+        await withGateway((gateway) => gateway.ensureOrganizationAccount(organizationId));
         return { ok: true, data: { organizationId } };
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return invitationFailure(err);
       }
     },
   );
+
+export interface InvitationView {
+  organizationName: string;
+  /** Already accepted by this identity: nothing to accept, only a workspace to open. */
+  joined: boolean;
+}
+
+/** The invitation behind an accept link, for the invited identity only. */
+export const getInvitation = createServerFn({ method: "GET" })
+  .validator((input: unknown) => acceptInviteInput.parse(input))
+  .handler(async ({ data }): Promise<{ ok: true; data: InvitationView } | InvitationFailure> => {
+    try {
+      const invitation = (await authInstance().api.getInvitation({
+        query: { id: data.invitationId },
+        headers: currentRequest().headers,
+      })) as { organizationName: string };
+      return { ok: true, data: { organizationName: invitation.organizationName, joined: false } };
+    } catch (err) {
+      const joined = await joinedWorkspace(data.invitationId).catch(() => null);
+      if (joined) return { ok: true, data: { organizationName: joined.name, joined: true } };
+      // get-invitation raises "not found" from a bare status, with no code of
+      // its own; it must read like the accept's, or the pair is an id oracle.
+      if (authErrorCode(err) === "BAD_REQUEST") {
+        return { ok: false, kind: "unavailable", error: INVITATION_UNAVAILABLE };
+      }
+      return invitationFailure(err);
+    }
+  });
 
 /** List the signed-in user's pending invitations (identity plane only). */
 export const listMyInvitations = createServerFn({ method: "GET" }).handler(

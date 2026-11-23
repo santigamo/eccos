@@ -102,22 +102,27 @@ or reset token there would leave a live, action-capable credential in a third
 party's storage permanently. The token is read out of the URL Better Auth hands
 the callback (`extractTokenFromUrl`); the URL itself is never hashed.
 
-> **A future "resend invitation" button MUST be cancel-plus-recreate.** Better
+> **"Resend invitation" MUST be cancel-plus-recreate.** Better
 > Auth's reuse-the-same-invitation resend keeps the same invitation id and only
 > extends `expiresAt`, so the payload is identical under an identical key and
 > the provider dedupes it into `duplicate`: **the mail silently never sends**
 > while the console reports success. Cancelling and creating a new invitation
-> mints a new id, hence a new key, hence a real send. The console has no resend
-> invitation UI today; the note is in `src/auth/auth.ts` at `sendInvitationEmail`.
+> mints a new id, hence a new key, hence a real send. The console's Resend on
+> /members does exactly that (`resendInvitation` in `src/members.ts`); the note
+> is in `src/auth/auth.ts` at `sendInvitationEmail`.
 
 ### Templates
 
-Five templates: `verify-email`, `reset-password`, `invite-member`,
-`two-factor-code` and `two-factor-changed`. Each one's declared variable set is
-**one explicit constant** in `src/auth/mail.ts` (`VERIFY_EMAIL_VARIABLES`,
-`RESET_PASSWORD_VARIABLES`, `INVITE_MEMBER_VARIABLES`,
-`TWO_FACTOR_CODE_VARIABLES`, `TWO_FACTOR_CHANGED_VARIABLES`), so a
-provider-side rename is a one-line change.
+Seven templates: `verify-email`, `reset-password`, `invite-member`, the two for
+two-factor authentication (`two-factor-code`, `two-factor-changed`), and the two
+that tell an admin how their connection link went, `connect-link-connected`
+(`workspace`, `note`, `url`) and `connect-link-failed` (`workspace`, `reason`, `url`).
+`note` and `reason` are fixed sentences chosen by the console, never free text.
+Each one's declared variable set is **one explicit constant** in
+`src/auth/mail.ts`, so a provider-side rename is a one-line change. The
+connection-link mails are best effort: a send that fails is logged and never
+fails the connection, and they carry the workspace name and the console URL
+only, never a phone number or message content.
 
 | Template | Variables | Sent when |
 |---|---|---|

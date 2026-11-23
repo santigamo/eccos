@@ -67,8 +67,11 @@ can continue using their populated templates, with `keep_vars: true` added.
 The console no longer hard-codes `app.eccos.chat`: it answers only the host in `BETTER_AUTH_URL`.
 **Set `BETTER_AUTH_URL` to your console's HTTPS origin before deploying this version**, or every
 request gets `403 Forbidden`. If you patched the host allowlist in `src/server.ts` or
-`src/auth/config.ts`, drop that patch. The API-key snippet in Settings now shows the gateway's own
-`GATEWAY_PUBLIC_URL`, so deploy the gateway first.
+`src/auth/config.ts`, drop that patch. The API-key snippet on the API keys page now shows the gateway's own
+`GATEWAY_PUBLIC_URL`, so deploy the gateway first. The same order holds for workspace rename: the
+console calls the new `GatewayRPC.setAccountName()`, and against an older gateway the rename
+succeeds in the console while the gateway's account name keeps its old value, with nothing to
+reconcile it later.
 
 Production files are ignored and local to each checkout. Before retiring a worktree, transfer
 its populated files to the checkout used for deployment with `cp -n`, then verify the values
@@ -155,6 +158,7 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 | `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
 | `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
 | `META_GRAPH_VERSION` | `v25.0` | Passed to `FB.init`. Keep equal to the gateway's — see [Meta Graph API version](#meta-graph-api-version) |
+| `SUPPORT_EMAIL` | unset | Address the console links wherever it says "contact Eccos support". Unset leaves that sentence as plain text |
 | `ANALYTICS_SCRIPT_URL` | `""` | Umami tracker script URL. Either this or `ANALYTICS_WEBSITE_ID` empty renders no tracker at all |
 | `ANALYTICS_WEBSITE_ID` | `""` | Umami website id |
 | `ANALYTICS_DOMAINS` | `""` | Umami `data-domains`: exact hostnames the tracker counts on (no subdomain wildcard). Empty counts every hostname |
@@ -191,6 +195,7 @@ numbers, and an account that may not keeps sending, receiving and forwarding.
 | dashboard secret | `CREEM_WEBHOOK_SECRET` | Verifies `creem-signature` on `POST /api/billing/webhook` |
 | dashboard var | `CREEM_PRODUCT_ID` | The Creem product, e.g. `prod_XXXXXXXXXXXXXXXXXXXXXX`. Set it in the gitignored `wrangler.production.jsonc`, never in the template |
 | dashboard config | `"triggers": { "crons": ["0 4 * * *"] }` | Daily reconcile: prices each subscription for the account's connected numbers |
+| dashboard var | `RESELLER_USER_IDS` | Comma-separated user ids whose new workspaces open without a subscription, for a reseller invoiced separately. Their settings read "Billed separately". Existing workspaces are opened by the operator |
 
 The Creem product is a monthly subscription at 1 EUR per unit (a subscription's units are its
 monthly price in euros), with the free trial configured on the product and its default return URL
@@ -405,7 +410,7 @@ with no console still connects a number with an API key and a browser, exactly a
 > Client OAuth toggles are all **Yes**, including **Login with the JavaScript SDK**.
 
 > **Third-party script.** `https://connect.facebook.net/en_US/sdk.js` is the first and only
-> third-party script in the console. It is loaded lazily, on click, on the Numbers page alone — but
+> third-party script in the console. It is loaded when the connect screen mounts (so the click can open Meta's window at once), on the Numbers page alone — but
 > there is no Content-Security-Policy in this repository to constrain it. See
 > [docs/threat-model.md](./threat-model.md).
 

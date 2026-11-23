@@ -1,7 +1,10 @@
+import { sha256Hex } from "./encoding";
 import { DurableObject } from "cloudflare:workers";
 import { isBsuid } from "@eccos/core/bsuid";
 import { signPayload } from "@eccos/core/signature";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
+import { fillTemplate } from "@eccos/core/template-copy";
+import { findTemplate } from "@eccos/core/templates";
 import type { EventOrigin, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
   ContactRecord,
@@ -33,8 +36,11 @@ import {
   messageFromEvent,
   messageFromOutbound,
   statusFromEvent,
+  type TemplateSend,
   waIdOf,
+  withTemplateCopy,
 } from "./conversations";
+import { TemplateDefinitions } from "./template-definitions";
 import type { EccosControlPlane } from "./control-plane";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { type HistoryMessage, type SyncItem, mapSyncItem, syncItems } from "./history";
@@ -85,6 +91,7 @@ import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-
 import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
+import { watchGraph } from "./token-health";
 import { isPublicConfigKey } from "./private-config-keys";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
@@ -339,6 +346,7 @@ export class EccosGateway extends DurableObject<Env> {
   /** Set when a payload or webhook lands while alarm() runs. alarm()'s final setAlarm would
    * overwrite that wake with a later one, so alarm() checks this and wakes again at once. */
   private wakeArrived = false;
+  private templateDefinitions = new TemplateDefinitions((name, language) => this.loadTemplateDefinition(name, language));
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -777,6 +785,7 @@ export class EccosGateway extends DurableObject<Env> {
   ): void {
     const now = Date.now();
     const phoneId = phoneNumberId?.trim() || null;
+    let template = null as TemplateSend | null;
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
         `INSERT INTO outbound_messages
@@ -800,6 +809,7 @@ export class EccosGateway extends DurableObject<Env> {
         at: now,
       });
       this.storeMessage(message, now);
+      template = message.template;
       // A status callback can overtake the send's own response. It was stored
       // with no message to move, so replay it now that the message exists.
       const overtaken = this.sql
@@ -813,6 +823,40 @@ export class EccosGateway extends DurableObject<Env> {
         }
       }
     });
+    // After the send, never in its way: a template's copy is read from Meta and added when it comes back.
+    if (template && transportMessageId) this.ctx.waitUntil(this.recordTemplateCopy(transportMessageId, template));
+  }
+
+  /** Drops a template the console just edited or deleted, so the next send reads its new copy. */
+  forgetTemplate(name: string): void {
+    this.templateDefinitions.forget(name);
+  }
+
+  /** Stores what the customer read of a template send: its copy as Meta defined it at send time (within
+   * the definitions' five minutes), filled with the send's parameters. Without a definition the row stays as sent. */
+  private async recordTemplateCopy(messageId: string, send: TemplateSend): Promise<void> {
+    const definition = await this.templateDefinitions.get(send.name, send.language);
+    const copy = definition && fillTemplate(definition, send.components);
+    if (!copy) return;
+    const scope = `id = ? AND direction = 'out' AND type = 'template'`;
+    const row = this.sql.exec(`SELECT content FROM messages WHERE ${scope}`, messageId).toArray()[0];
+    if (!row) return;
+    const stored = withTemplateCopy(row.content as string | null, copy);
+    this.sql.exec(`UPDATE messages SET content = ?, text = ? WHERE ${scope}`, stored.content, stored.text, messageId);
+  }
+
+  private async loadTemplateDefinition(name: string, language: string): Promise<unknown[] | null> {
+    const token = await this.metaToken("templates");
+    if (token === "missing" || token === "unavailable") return null;
+    const cfg = {
+      META_GRAPH_VERSION: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
+      META_ACCESS_TOKEN: token,
+      META_WABA_ID: this.wabaIdForOps(),
+      fetch: this.watchedFetch(),
+    };
+    const found = await findTemplate(cfg, name, language, ["name", "language", "components"]);
+    const components = found.ok ? found.template?.components : null;
+    return Array.isArray(components) ? components : null;
   }
 
   /** A status that overtook its send was stored without the origin: add it to the event and its
@@ -1043,7 +1087,11 @@ export class EccosGateway extends DurableObject<Env> {
         `SELECT t.wa_id, t.type, t.text, t.direction, t.at, t.seq, t.message_count, c.name,
                 COALESCE(u.unread, 0) AS unread_count, COALESCE(rd.marked_unread, 0) AS marked_unread
          FROM (
-           SELECT wa_id, type, text, direction, at, rowid AS seq,
+           SELECT wa_id, type, direction, at, rowid AS seq,
+                  -- A template reads as its stored copy; older rows keep a 'template:<name>' marker in text, never shown.
+                  CASE WHEN type = 'template' THEN
+                    CASE WHEN json_valid(content) THEN json_extract(content, '$.copy.body') END
+                  ELSE text END AS text,
                   ROW_NUMBER() OVER (PARTITION BY wa_id ORDER BY at DESC, rowid DESC) AS rn,
                   COUNT(*) OVER (PARTITION BY wa_id) AS message_count
            FROM messages
@@ -1668,7 +1716,7 @@ export class EccosGateway extends DurableObject<Env> {
     if (!first) return 0;
 
     // The token comes before the claim: a run that dies here leaves no row `sending` with nothing sent.
-    const token = await this.metaToken();
+    const token = await this.metaToken("scheduled");
     if (token === "missing" || token === "unavailable") {
       // Nothing is spent: the rows wait, and expire if the WABA stays disconnected.
       this.sql.exec(
@@ -1759,6 +1807,7 @@ export class EccosGateway extends DurableObject<Env> {
       META_ACCESS_TOKEN: token,
       META_PHONE_NUMBER_ID: phoneNumberId,
       META_WABA_ID: this.wabaIdForOps(),
+      fetch: this.watchedFetch(),
     };
     const result = await sendMessage(cfg, body);
     const now = Date.now();
@@ -1871,7 +1920,7 @@ export class EccosGateway extends DurableObject<Env> {
         this.finishBroadcastIfDone(id, now);
         continue;
       }
-      token ??= await this.metaToken();
+      token ??= await this.metaToken("broadcast");
       if (token === "missing" || token === "unavailable") {
         this.requeue(id, due.map((row) => Number(row.seq)), Date.now());
         if (token === "missing") this.endBroadcast(id, "halted", "the WhatsApp Business Account is no longer connected", Date.now());
@@ -1885,6 +1934,7 @@ export class EccosGateway extends DurableObject<Env> {
         META_ACCESS_TOKEN: token,
         META_PHONE_NUMBER_ID: String(broadcast.phone_number_id),
         META_WABA_ID: this.wabaIdForOps(),
+        fetch: this.watchedFetch(),
       };
       const defaults =
         broadcast.default_components === null ? null : (JSON.parse(String(broadcast.default_components)) as unknown[]);
@@ -2914,6 +2964,16 @@ export class EccosGateway extends DurableObject<Env> {
     return this.sql.exec(`SELECT 1 FROM media WHERE media_id = ? AND state = 'stored'`, mediaId).toArray().length > 0;
   }
 
+  /** `pending` while a message references the id and the download has not settled yet. */
+  mediaState(mediaId: string): "stored" | "pending" | "missing" {
+    const row = this.sql.exec(`SELECT state FROM media WHERE media_id = ?`, mediaId).toArray()[0];
+    if (row) return row.state === "stored" ? "stored" : row.state === "failed" ? "pending" : "missing";
+    const referenced = this.sql
+      .exec(`SELECT 1 FROM messages WHERE json_extract(content, '$.media.id') = ? LIMIT 1`, mediaId)
+      .toArray().length > 0;
+    return referenced ? "pending" : "missing";
+  }
+
   /** Cheap existence check — `LIMIT 1`, not a COUNT: the hold only needs to know
    * whether anything is waiting, and a target-less WABA can hold a lot of rows. */
   private hasPendingDeliveries(): boolean {
@@ -2932,7 +2992,7 @@ export class EccosGateway extends DurableObject<Env> {
     const wakes: number[] = [];
     const due = this.dueMediaIds(now);
     if (due.length > 0) {
-      const token = await this.metaToken();
+      const token = await this.metaToken("media");
       if (token === "unavailable") {
         wakes.push(now + MEDIA_RETRY_MS);
       } else if (token !== "missing") {
@@ -2980,26 +3040,29 @@ export class EccosGateway extends DurableObject<Env> {
       .map((row) => String(row.media_id));
   }
 
-  /** The WABA's Meta token for the media downloads. `unavailable` when the lookup failed and
-   * `missing` when the control plane does not know the WABA. Both are logged, and neither is
-   * an attempt against a media id. */
-  private async metaToken(): Promise<string | "missing" | "unavailable"> {
+  /** The WABA's Meta token. `unavailable` when the lookup failed and `missing` when the control
+   * plane does not know the WABA; both are logged under the caller's `area`. */
+  private async metaToken(area: string): Promise<string | "missing" | "unavailable"> {
     try {
       const token = await getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps());
       if (token !== null) return token;
-      this.logMedia("token-waba-missing");
+      this.logWarn(area, "token-waba-missing");
       return "missing";
     } catch (error) {
-      this.logMedia("token-lookup-failed", error);
+      this.logWarn(area, "token-lookup-failed", error);
       return "unavailable";
     }
   }
 
   private logMedia(event: string, error?: unknown): void {
+    this.logWarn("media", event, error);
+  }
+
+  private logWarn(area: string, event: string, error?: unknown): void {
     console.warn(
       JSON.stringify({
         level: "warn",
-        area: "media",
+        area,
         event,
         wabaId: this.wabaIdForOps(),
         ...(error === undefined ? {} : { error: String(error).slice(0, 200) }),
@@ -3029,6 +3092,7 @@ export class EccosGateway extends DurableObject<Env> {
         mediaId,
         token,
         graphVersion: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
+        fetch: this.watchedFetch(),
       });
     } catch (error) {
       // A rejected token is the WABA's fault, not the media's: nothing is recorded and no attempt counted.
@@ -3405,6 +3469,11 @@ export class EccosGateway extends DurableObject<Env> {
     );
   }
 
+  /** The `fetch` for this WABA's Graph calls: a Graph 190 answer alerts the operator once (token-health.ts). */
+  private watchedFetch(): typeof fetch {
+    return watchGraph(this.env, (work) => this.ctx.waitUntil(work), this.wabaIdForOps());
+  }
+
   /** The WABA this object serves, read off its idFromName name (gateway-stub.ts). */
   private wabaIdForOps(): string {
     return this.ctx.id.name?.split(":waba:")[1] ?? "unknown";
@@ -3563,7 +3632,3 @@ function clampPage(limit?: number): number {
   return Math.min(v, OPERATOR_MAX_PAGE);
 }
 
-async function sha256Hex(s: string): Promise<string> {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}

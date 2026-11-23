@@ -74,8 +74,9 @@ extra fields depend on it. Unknown future types are forwarded with `messageType`
   "profileName": "Ana", "at": 1767225600000, "phoneNumberId": "1098765432" }
 ```
 
-`media.id` is a Meta media id. Eccos does not forward the file, and the API has no endpoint to
-download it.
+`media.id` is a Meta media id. Eccos does not put the file in the event: download it with
+[`GET /v1/wabas/{wabaId}/media/{mediaId}`](/data-endpoints#media-files). Media in echoes works
+the same way.
 
 `message` carries `replyTo` too when the customer quoted a message (for example an image
 sent as a reply) or answered a Flow, and `broadcastId` or `scheduleKey` the same way as on `reply`.

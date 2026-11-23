@@ -2,11 +2,15 @@ import { describe, expect, test } from "bun:test";
 import type { ConnectExchangeResult } from "@eccos/gateway-contract";
 import {
   CONNECT_CANCELLED_MESSAGE,
-  CONNECT_POPUP_BLOCKED_MESSAGE,
+  QR_CODE_STEP,
+  connectCancelledMessage,
   connectAudit,
-  handoffUsable,
   judgeExchange,
+  popupBlockedMessage,
+  popupHintMessage,
   returnPathFor,
+  secondsBucket,
+  watchPopup,
 } from "../src/lib/connect-result";
 
 const phone = { waba_id: "100", phone_number_id: "200", display_phone_number: "+1 555 0100" };
@@ -66,7 +70,7 @@ describe("judgeExchange", () => {
   });
 
   test("copy has no em dashes and never blames Meta for our own errors", () => {
-    for (const m of [CONNECT_CANCELLED_MESSAGE, CONNECT_POPUP_BLOCKED_MESSAGE]) {
+    for (const m of [connectCancelledMessage(), connectCancelledMessage(QR_CODE_STEP, { code: "1", sessionId: "s" }), popupBlockedMessage("app.eccos.chat"), popupHintMessage("app.eccos.chat")]) {
       expect(m).not.toContain("—");
     }
     const failed = judgeExchange({ ok: false, error: "x", code: "failed" });
@@ -91,12 +95,49 @@ describe("connectAudit", () => {
   });
 });
 
-describe("handoffUsable", () => {
-  test("needs at least 25 minutes of life left", () => {
-    const now = 1_000_000;
-    expect(handoffUsable(now + 30 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000, now)).toBe(true);
-    expect(handoffUsable(now + 25 * 60_000 - 1, now)).toBe(false);
-    expect(handoffUsable(now - 1, now)).toBe(false);
+describe("popup copy", () => {
+  test("the blocked message names the host and the way out", () => {
+    const m = popupBlockedMessage("app.eccos.chat");
+    expect(m).toContain("app.eccos.chat");
+    expect(m).toContain("allow pop-ups");
+  });
+  test("the hint claims neither a block nor an open window", () => {
+    const m = popupHintMessage("app.eccos.chat");
+    expect(m).toContain("It may be behind this one");
+    expect(m).toContain("If nothing opened, allow pop-ups for app.eccos.chat");
+    expect(m).not.toContain("blocked");
+  });
+});
+
+describe("connectCancelledMessage", () => {
+  test("is the generic notice for an unknown or ordinary step", () => {
+    expect(connectCancelledMessage()).toBe(CONNECT_CANCELLED_MESSAGE);
+    expect(connectCancelledMessage("PHONE_NUMBER_SETUP")).toBe(CONNECT_CANCELLED_MESSAGE);
+  });
+  test("names the QR step and the activity requirement", () => {
+    const m = connectCancelledMessage(QR_CODE_STEP);
+    expect(m).toContain("closed at the QR code step. Nothing changed.");
+    expect(m).toContain("use it in the WhatsApp Business app for about a week");
+  });
+  test("appends Meta's references for a reported error, on any step", () => {
+    for (const step of [undefined, QR_CODE_STEP]) {
+      expect(connectCancelledMessage(step, { code: "524126", sessionId: "f34b51d" })).toEndWith(
+        "Meta reported error 524126, session f34b51d. Quote both if you contact support.",
+      );
+    }
+    expect(connectCancelledMessage(undefined, { sessionId: "f34b51d" })).toEndWith(
+      "Meta reported session f34b51d. Quote it if you contact support.",
+    );
+    expect(connectCancelledMessage(undefined, {})).toBe(CONNECT_CANCELLED_MESSAGE);
+  });
+});
+
+describe("secondsBucket", () => {
+  test("rounds to coarse buckets", () => {
+    expect(secondsBucket(3_000)).toBe("<10s");
+    expect(secondsBucket(20_000)).toBe("<30s");
+    expect(secondsBucket(114_000)).toBe("<2m");
+    expect(secondsBucket(4 * 60_000)).toBe("<10m");
+    expect(secondsBucket(3_600_000)).toBe("10m+");
   });
 });

@@ -7,17 +7,19 @@ import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
 import { LogPager } from "../components/logs/log-pager";
+import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchTrail, pageOfRows, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
+import { awaitingMeta } from "../lib/awaiting-meta";
 import { MessageSheet } from "../components/logs/message-sheet";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
-import { loaderFailure } from "../lib/failure";
+import { loaderFailure, outboundErrorReading } from "../lib/failure";
 import { listOutbound } from "../server/gateway";
 import type { OutboundRow, OutboundTrailEvent } from "../server/gateway";
 import { normalizeSearchRowId, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
-import { EMPTY_CELL, errorReading, messageSummary, messageSummaryText } from "../lib/logs";
+import { EMPTY_CELL, messageSummary, messageSummaryText } from "../lib/logs";
 import { COUNT_LINK, Page, StatusCounts, StatusTag, fmtTs } from "../ui";
 import {
   Select,
@@ -167,6 +169,10 @@ const trailColumn = columnHelper.accessor("trail", {
   meta: { cellClassName: "whitespace-nowrap" },
 });
 
+function failedEvent(row: OutboundRow): OutboundTrailEvent | undefined {
+  return row.trail?.find((event) => event.type === "failed");
+}
+
 const phoneColumn = columnHelper.accessor("phone_number_id", {
   id: "phone_number_id",
   header: "Phone",
@@ -211,13 +217,20 @@ function messageColumns(onOpen?: (row: OutboundRow) => void, showPhone = true) {
       id: "error",
       header: "Error",
       cell: (info) => {
-        const raw = info.getValue();
-        if (!raw) return EMPTY_CELL;
-        const { code, text, label } = errorReading(raw);
+        const failed = failedEvent(info.row.original);
+        const error = outboundErrorReading(info.getValue(), failed ? (failed.errorCode ?? null) : undefined);
+        if (!error) return EMPTY_CELL;
+        const line = error.title ? `${error.title}. ${error.detail}` : error.detail;
         return (
-          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={label}>
-            {code ? <span className="font-mono text-xs">{code} · </span> : null}
-            {text}
+          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={line}>
+            {error.code ? <span className="font-mono text-xs">{error.code} · </span> : null}
+            {error.title ? (
+              <>
+                {error.title}. <span className="text-muted-foreground">{error.detail}</span>
+              </>
+            ) : (
+              error.detail
+            )}
           </span>
         );
       },
@@ -232,12 +245,12 @@ function MessagesPage() {
   const { status, before, trail, message, wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
-  const liveRefresh = useLiveRefresh("messages");
-  const refreshControls = <RefreshControls {...liveRefresh} />;
   const { rows, nextCursor } = useMemo(
     () => pageOfRows(result.ok ? result.data : [], PAGE_SIZE),
     [result],
   );
+  const liveRefresh = useLiveRefresh("messages", awaitingMeta(rows, Date.now()));
+  const refreshControls = <RefreshControls {...liveRefresh} />;
 
   if (!result.ok) {
     return (
@@ -252,7 +265,7 @@ function MessagesPage() {
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
   const counts = ready?.status.counts.outbound ?? {};
-  const hasForwardingTarget = root.ok ? root.hasForwardingTarget : false;
+  const hasForwardingTarget = !targetMissing(root.ok ? root.hasForwardingTarget : null);
 
   const openMessage = (row: OutboundRow) =>
     navigate({ search: (prev) => ({ ...prev, message: row.id }) });

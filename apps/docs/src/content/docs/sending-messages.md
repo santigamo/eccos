@@ -28,8 +28,19 @@ Success:
 
 Keep the `id`: it is the `transportMessageId` of the status events you will receive.
 
-Text (Meta only delivers free-form messages inside the 24-hour window after the customer last
-wrote to you; outside it, use a template):
+Start with an approved template. Free-form text only reaches contacts who wrote to you in the
+last 24 hours; otherwise Meta accepts the request and then fails it with error `131047`. Use
+any template from [`GET /templates`](#templates) (new WABAs usually have Meta's `hello_world`):
+
+```bash
+curl -X POST https://api.eccos.chat/v1/wabas/$WABA_ID/messages \
+  -H "Authorization: Bearer $ECCOS_API_KEY" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d '{"to":"34600000000","type":"template","template":{"name":"hello_world","language":{"code":"en_US"}}}'
+```
+
+Text, inside the 24-hour window:
 
 ```bash
 curl -X POST https://api.eccos.chat/v1/wabas/$WABA_ID/messages \
@@ -74,8 +85,8 @@ set to the template's message id.
 **Media.** Eccos has no media upload endpoint, and if you connected through Embedded Signup,
 Eccos holds the Meta credentials, so you cannot upload to Meta yourself. Send media by a public HTTPS `link` (as in the header above, or
 `{"type":"image","image":{"link":"https://..."}}`); Meta must be able to fetch it without
-authentication. Incoming media is the reverse gap: only the Meta media id is forwarded, and
-the API cannot return the file (see [`message` events](/event-reference)).
+authentication. Incoming media arrives as a Meta media id; download the file with
+[`GET /v1/wabas/{wabaId}/media/{mediaId}`](/data-endpoints#media-files).
 
 ## Templates
 

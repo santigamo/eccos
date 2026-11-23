@@ -24,7 +24,7 @@ export async function sendMessage(
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await (cfg.fetch ?? fetch)(url, {
       method: "POST",
       headers: {
         authorization: `Bearer ${cfg.META_ACCESS_TOKEN}`,
@@ -54,6 +54,9 @@ export async function sendMessage(
 export function sendOutcomeUnknown(result: SendResult): boolean {
   return !result.ok && (result.status === 0 || result.status >= 500 || result.status < 300);
 }
+
+/** Graph `error.code` for a rejected access token. */
+export const GRAPH_CODE_OAUTH = 190;
 
 export type MetaErrorCodes = { errorCode: number | null; errorSubcode: number | null; errorType: string | null };
 

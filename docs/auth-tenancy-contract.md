@@ -42,7 +42,7 @@ Two planes, two stores, one authority per concern:
 | Plane | Store | Owns |
 |---|---|---|
 | Identity plane | Better Auth on the dedicated auth D1 (§3) | users, sessions, credential accounts, organizations, members, invitations, verifications |
-| Data plane (authority) | `EccosControlPlane` Durable Object | accounts, WABAs, phones, hashed API keys, connect states, **`organization_accounts`** |
+| Data plane (authority) | `EccosControlPlane` Durable Object | accounts, WABAs, phones, hashed API keys, connect states, hashed connection links, **`organization_accounts`** |
 
 The identity plane answers *who is signed in and what role they hold in which organization*. The
 data plane answers *which Eccos account exists, which WABAs/phones it owns, which API keys work*.
@@ -104,17 +104,27 @@ defaults; `operator` and `viewer` are configured custom roles):
 | API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
 | Embedded Signup `/connect` start | admin | **Yes** | Issues the account-bound OAuth state |
 | Embedded Signup callback / code exchange | admin | — (by design) | Must present the state the stepped-up start issued. Meta's code is single-use and lives 30 seconds, so a step-up refusal here would lose it and force the whole flow again |
+| Connection link: make or replace | admin | **Yes** | One per workspace; see below. Reading its status needs no step-up |
 | Conversation retention write | admin | **Yes** | Shortening it purges history |
 | Export data | admin | **Yes** | |
 | GDPR erasure (`eraseByPhone`) | owner | **Yes** | Owner-only destructive action |
 | Invitations & member role changes | owner/admin (Better Auth defaults) | **Yes** | Verified email required (§7) |
 | Organization create | any verified user | — | Own new org only; allowlisted signup (§7) |
+| Workspace rename | admin | — | `renameWorkspace` server function (§9): name only, never a slug; refused when the session moved to another workspace; the gateway account's name follows; ids-only audit line |
 | Organization delete | disabled in v1 | — | Rejected everywhere (§9) |
 
 "**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** have
 proved that second factor within the step-up window (15 minutes); otherwise the server demands
 re-authentication before executing the action. A password alone never renews it, and neither does
 a session's age. Reads never require step-up.
+
+**The connection link is the one unauthenticated actor.** An admin makes a link for their
+workspace; whoever holds it may run Embedded Signup into that workspace from the public `/connect`
+page, with no Eccos session. The token is bound in the control plane to (account, creating user),
+lives 7 days, is spent by the first registration and revoked by the next link. The account always
+comes from the token's row, never from the request; the bearer can add their own WABA and can read
+nothing. A link stops resolving once its creator is no longer an owner or admin of the workspace,
+and its use is audited as `connect_link` under the creator's user id.
 
 ## 5. Session & active-organization rules
 
@@ -189,7 +199,8 @@ Better Auth's Organization plugin exposes HTTP endpoints under `/api/auth/organi
 exist and cannot all be removed, so each carries an explicit policy. The dashboard's own server
 functions remain the primary UI path; direct plugin calls are subject to the same rules.
 
-**Three of them are not served at all.** `src/server.ts` refuses `organization/create`,
+**Seven of them are not served at all**: the three slug-bearing endpoints below, and the four
+membership writes, whose rules and audit live in the console's server functions. `src/server.ts` refuses `organization/create`,
 `organization/check-slug` and `organization/update` with better-call's own 404 before the request
 reaches `auth.handler`, so a blocked endpoint is indistinguishable from one that was never
 registered. The reasoning lives in `src/auth/blocked-endpoints.ts`; the short version is that all
@@ -207,11 +218,12 @@ across tenants and inside one user's own membership list.
 | `check-slug` | Probe slug availability | **Not served** — 404 before dispatch. A cross-tenant existence oracle with no legitimate caller: nothing in the console is slug-addressed |
 | `list`, `get`, `get-full` (GET) | List/read organizations | Session required; only memberships of the caller |
 | `set-active` | Set active organization | Wrapped by app validation: server re-verifies membership; result is UX state only (§5) |
-| `update` | Update organization (name, metadata) | **Not served** — 404 before dispatch, because the same slug-uniqueness probe is reachable through a rename. There is no rename UI in v1; when one is built it must be a server function that never accepts a slug. Metadata/slug changes **never authorize the account mapping** (§2) |
+| `update` | Update organization (name, metadata) | **Not served** — 404 before dispatch, because the same slug-uniqueness probe is reachable through a rename. Renaming goes through the `renameWorkspace` server function instead (Settings, owner/admin, §4), which calls Better Auth in process with the name only and never accepts or returns a slug. Metadata/slug changes **never authorize the account mapping** (§2) |
 | `delete` | Delete organization | **Disabled in v1** — rejected regardless of role |
-| `create-invitation` (POST), `list-invitations` (GET) | Invitations | Owner/admin + verified email + step-up (§4); recipients must be verified identities (§7) |
-| `accept-invitation`, `reject-invitation`, `cancel-invitation`, `get-invitation` (GET) | Invitation lifecycle | Acceptance requires signed-in matching identity (§7); never provisions a tenant |
-| `add-member` (remove-member), `update-member-role` | Member add/remove, role update | Owner/admin per Better Auth defaults + verified email + step-up (§4) |
+| `invite-member`, `cancel-invitation`, `remove-member`, `update-member-role` | Invite, cancel an invitation, remove a member, change a role | **Not served** — 404 before dispatch. Served only through the console's server functions (`src/members.ts`), which call them in process: owner/admin, only `admin`/`operator`/`viewer` may be granted, an owner is changed or removed only by an owner and never the last one, removing a member cancels the invitations they sent that are still pending, ids-only audit line, at most 20 invitations per inviter per hour (enforced in the plugin's `beforeCreateInvitation` hook). Step-up (§4) to follow |
+| `list-invitations` (GET) | Invitations | Owner/admin; recipients must be verified identities (§7) |
+| `accept-invitation`, `reject-invitation`, `get-invitation` (GET) | Invitation lifecycle | Acceptance requires signed-in matching identity (§7); never provisions a tenant |
+| `add-member` | Member add | Server-only in Better Auth; not reachable over HTTP |
 | `transfer-ownership` | Ownership transfer | Owner→owner + step-up |
 
 Invariants for all of them: no endpoint issues or returns an API key; no endpoint creates or
@@ -225,7 +237,7 @@ server-side instead (§7/§8 anti-enumeration, applied to the organization plane
 
 | Condition | Behavior |
 |---|---|
-| Missing / invalid session | Pages redirect to sign-in; server functions return `401` |
+| Missing / invalid session | Pages redirect to sign-in; server functions return `401`. `/connect` and `/api/connect-link/*` are public: the link token is their credential |
 | Signed in, no organization membership | Organization onboarding screen (create/join an org) |
 | Mapping `pending` or `disabled`, or no `organization_accounts` row | **Fail closed** (`403`); no fallback resolution path |
 | Requested WABA not owned by the resolved account | Fail closed (existing `resolveScope` rule) |

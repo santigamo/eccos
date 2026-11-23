@@ -118,6 +118,40 @@ Every route renders the same skeleton (the `Page` component in `src/ui.tsx`):
    the viewport (`flex min-h-full flex-col`) so structure reaches the bottom and
    the void reads as intentional.
 
+### Type tiers
+
+Inter carries three weights, each with one job, so a row reads at a glance. The machine voice
+and the pixel face keep the roles above. The classes live in `components/dashboard/plain-table.tsx`
+(`TITLE_TIER`, `IDENTITY_TIER`, `SECONDARY_TIER`, `SUPPORT_TIER`, `MACHINE_CLASS`, and the
+`SectionHeading` that wears the title tier); import them rather than writing the classes again.
+
+- **600, titles.** A section title is an `h2`: `text-base font-semibold text-foreground`. A count
+  beside it is `font-normal text-muted-foreground` ("Members 2"). A section title is never the
+  11px machine label: that label is for column headers and field labels, and using it for both
+  flattens the page.
+- **500, what the row is about.** A row's identity (a member's name, a key's label) and the value
+  in a label/value row: `text-sm font-medium text-foreground`.
+- **400, everything that supports it.** A second line under the identity (the key id under its
+  label): `text-xs text-muted-foreground`. Other cells and descriptions: `text-sm
+  text-muted-foreground`.
+- Mono only for machine identifiers and timestamps (account id, key id), never for a person's
+  email.
+- Column headers and field labels stay in the machine voice.
+- A role is a state word, not prose: the neutral square tag (`StatusTag`), no colour.
+
+### Settings sections
+
+A page of settings uses the whole content width, with structure instead of stretched controls.
+Each section is one full-width row: from `lg` up, the left third holds its title and
+description and the right two thirds hold the bordered `Frame` with its rows or controls;
+below `lg` they stack (`SettingsSection` in `components/dashboard/settings-section.tsx`).
+Sections are divided by a hairline. Label/value rows put the label in the machine voice, the
+value in the 500 tier and the row's action at the right edge, and the last row closes on the
+frame's own edge with no band under it. A control keeps a width of its own (`max-w-sm` for a
+text input, `max-w-xs` for a select) instead of stretching across the column. A table in a
+section spans the column and sizes its columns in percentages (data rule 4). /settings and
+/api-keys are built this way.
+
 ## Overlays (which surface, and which register)
 
 Anything that covers a page is one of three registers, and the register is chosen by
@@ -328,7 +362,13 @@ Eccos system — the practices, not the brand):
 1. **Color only for meaningful state.** A healthy system is quiet: the status tag
    next to the heading suffices, and the health banner renders **only** when
    something is wrong (amber for degraded, red for unhealthy/unreachable). When an
-   operator sees a banner, it always means something.
+   operator sees a banner, it always means something. **Held events count as
+   something:** with a forwarding target confirmed missing and at least one event
+   waiting, the amber held banner renders at any count and under a `Healthy` tag, on
+   Status, on /webhooks and above the two logs (`HeldNotice`). It says that saving a
+   target sends them and when each is deleted. It stays off /conversations: an
+   inbox-only customer needs no server, and a standing warning there would mean
+   nothing. A target read that failed is unknown, and unknown says nothing.
 2. **Every metric links to its evidence.** Status is the index; the logs are the
    body. Counts navigate to the filtered log view that explains them
    (`failed 1` → `/deliveries?status=failed`). A number an operator cannot chase
@@ -356,7 +396,8 @@ Eccos system — the practices, not the brand):
 6. **Empty states have structure.** A pixel label (`NO DELIVERIES YET`), one
    normal-size muted sentence saying what will appear, and an action link only when
    a real action exists (clear filters, configure a target). Never a lone tiny
-   muted sentence.
+   muted sentence. A next step on a page that is working is the same anatomy as a
+   note under its table (`NextNote` on /numbers), never a green success banner.
 7. **A failure names only what it knows.** Server functions return a typed
    failure class (`unreachable` / `unauthenticated` / `forbidden`, decided from
    the thrown error's type in `src/server/gateway.ts`), and `FailureView`
@@ -401,7 +442,7 @@ Eccos system — the practices, not the brand):
     asks them to be one. So a surface holding a stored payload leads with what it can
     READ out of it and keeps the payload one `<details>` disclosure down
     (`RawDisclosure` in `components/logs/sheet-parts.tsx`), under a summary that states
-    the claim the payload backs — "exactly what your receiver got". Both halves are
+    the claim the payload backs — "exactly what your server got". Both halves are
     load-bearing: when Meta answers `132000`, that body is the only thing that explains
     why, so deleting it would push debugging out of the product into Cloudflare logs and
     leave the operator with nothing to hand their developer. A disclosure is **not** an

@@ -16,7 +16,10 @@ export function AppSidebar() {
   return (
     <Sidebar
       collapsible="icon"
-      className="top-(--header-height) h-[calc(100svh-var(--header-height))]!"
+      // Pinned by its edges rather than a `100svh` height: Chrome can report
+      // `svh` taller than the visible viewport, which pushed the column's end
+      // off screen where no scroll reaches it. The nav list scrolls inside.
+      className="top-(--header-height) bottom-0 h-auto!"
     >
       <SidebarContent className="gap-2 px-2 pt-2">
         <NavMain />

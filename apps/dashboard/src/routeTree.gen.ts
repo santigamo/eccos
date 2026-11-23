@@ -19,12 +19,15 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as NumbersRouteImport } from './routes/numbers'
 import { Route as MessagesRouteImport } from './routes/messages'
+import { Route as MembersRouteImport } from './routes/members'
 import { Route as InvitationsRouteImport } from './routes/invitations'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as DeliveriesRouteImport } from './routes/deliveries'
 import { Route as ConversationsRouteImport } from './routes/conversations'
+import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as BroadcastsRouteImport } from './routes/broadcasts'
+import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
 import { Route as NumbersAttachTokenRouteImport } from './routes/numbers_.attach-token'
@@ -80,6 +83,11 @@ const MessagesRoute = MessagesRouteImport.update({
   path: '/messages',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MembersRoute = MembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InvitationsRoute = InvitationsRouteImport.update({
   id: '/invitations',
   path: '/invitations',
@@ -105,9 +113,19 @@ const ConversationsRoute = ConversationsRouteImport.update({
   path: '/conversations',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConnectRoute = ConnectRouteImport.update({
+  id: '/connect',
+  path: '/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BroadcastsRoute = BroadcastsRouteImport.update({
   id: '/broadcasts',
   path: '/broadcasts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiKeysRoute = ApiKeysRouteImport.update({
+  id: '/api-keys',
+  path: '/api-keys',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -133,12 +151,15 @@ const BroadcastsBroadcastIdRoute = BroadcastsBroadcastIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api-keys': typeof ApiKeysRoute
   '/broadcasts': typeof BroadcastsRoute
+  '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/invitations': typeof InvitationsRoute
+  '/members': typeof MembersRoute
   '/messages': typeof MessagesRoute
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
@@ -155,12 +176,15 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api-keys': typeof ApiKeysRoute
   '/broadcasts': typeof BroadcastsRoute
+  '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/invitations': typeof InvitationsRoute
+  '/members': typeof MembersRoute
   '/messages': typeof MessagesRoute
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
@@ -178,12 +202,15 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api-keys': typeof ApiKeysRoute
   '/broadcasts': typeof BroadcastsRoute
+  '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
   '/deliveries': typeof DeliveriesRoute
   '/events': typeof EventsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/invitations': typeof InvitationsRoute
+  '/members': typeof MembersRoute
   '/messages': typeof MessagesRoute
   '/numbers': typeof NumbersRoute
   '/onboarding': typeof OnboardingRoute
@@ -202,12 +229,15 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/api-keys'
     | '/broadcasts'
+    | '/connect'
     | '/conversations'
     | '/deliveries'
     | '/events'
     | '/forgot-password'
     | '/invitations'
+    | '/members'
     | '/messages'
     | '/numbers'
     | '/onboarding'
@@ -224,12 +254,15 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/api-keys'
     | '/broadcasts'
+    | '/connect'
     | '/conversations'
     | '/deliveries'
     | '/events'
     | '/forgot-password'
     | '/invitations'
+    | '/members'
     | '/messages'
     | '/numbers'
     | '/onboarding'
@@ -246,12 +279,15 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/api-keys'
     | '/broadcasts'
+    | '/connect'
     | '/conversations'
     | '/deliveries'
     | '/events'
     | '/forgot-password'
     | '/invitations'
+    | '/members'
     | '/messages'
     | '/numbers'
     | '/onboarding'
@@ -269,12 +305,15 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiKeysRoute: typeof ApiKeysRoute
   BroadcastsRoute: typeof BroadcastsRoute
+  ConnectRoute: typeof ConnectRoute
   ConversationsRoute: typeof ConversationsRoute
   DeliveriesRoute: typeof DeliveriesRoute
   EventsRoute: typeof EventsRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   InvitationsRoute: typeof InvitationsRoute
+  MembersRoute: typeof MembersRoute
   MessagesRoute: typeof MessagesRoute
   NumbersRoute: typeof NumbersRoute
   OnboardingRoute: typeof OnboardingRoute
@@ -362,6 +401,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MessagesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/members': {
+      id: '/members'
+      path: '/members'
+      fullPath: '/members'
+      preLoaderRoute: typeof MembersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/invitations': {
       id: '/invitations'
       path: '/invitations'
@@ -397,11 +443,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConversationsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/connect': {
+      id: '/connect'
+      path: '/connect'
+      fullPath: '/connect'
+      preLoaderRoute: typeof ConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/broadcasts': {
       id: '/broadcasts'
       path: '/broadcasts'
       fullPath: '/broadcasts'
       preLoaderRoute: typeof BroadcastsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api-keys': {
+      id: '/api-keys'
+      path: '/api-keys'
+      fullPath: '/api-keys'
+      preLoaderRoute: typeof ApiKeysRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -437,12 +497,15 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiKeysRoute: ApiKeysRoute,
   BroadcastsRoute: BroadcastsRoute,
+  ConnectRoute: ConnectRoute,
   ConversationsRoute: ConversationsRoute,
   DeliveriesRoute: DeliveriesRoute,
   EventsRoute: EventsRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   InvitationsRoute: InvitationsRoute,
+  MembersRoute: MembersRoute,
   MessagesRoute: MessagesRoute,
   NumbersRoute: NumbersRoute,
   OnboardingRoute: OnboardingRoute,

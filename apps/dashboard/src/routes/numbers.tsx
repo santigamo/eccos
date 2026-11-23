@@ -11,8 +11,10 @@ import {
   ConnectNumberChoices,
   ConnectNumberPanel,
 } from "../components/dashboard/connect-number";
+import { ConnectLinkButton } from "../components/dashboard/connect-link-dialog";
 import { NumbersTable } from "../components/dashboard/numbers-table";
-import { SubscriptionNotice } from "../components/dashboard/subscription-notice";
+import { SubscriptionGate, SubscriptionNotice } from "../components/dashboard/subscription-notice";
+import { billableCount } from "../billing/account";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,6 +30,8 @@ import {
   type ConnectOutcomeSearch,
 } from "../components/dashboard/connect-outcome";
 import type { ConnectFailureCode } from "@eccos/gateway-contract";
+import { selectWaba } from "@eccos/gateway-contract/select-waba";
+import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchWabaId } from "../lib/search";
 
 /** Scope selector plus the Embedded Signup outcome the gateway redirects with. */
@@ -55,7 +59,7 @@ export const Route = createFileRoute("/numbers")({
 function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
-  const { connectError, connectSkipped } = Route.useSearch();
+  const { wabaId, connectError, connectSkipped } = Route.useSearch();
   const blocked = Route.useLoaderData();
   if (!root.ok) {
     return (
@@ -65,7 +69,12 @@ function NumbersPage() {
     );
   }
   const resources = resourcesFor(root.data);
-  const billing = "billing" in root.data && root.data.billing === true;
+  const flag = "billing" in root.data ? root.data.billing : undefined;
+  const billing = flag !== undefined;
+  const subscribed = flag?.subscribed === true;
+  const canManageBilling = flag?.canManage === true;
+  // Absent only on a state that predates the flag; the server refuses a member either way.
+  const canConnect = !("canAdminister" in root.data) || root.data.canAdminister;
   const wabas = resources?.wabas ?? [];
 
   // No account registry, or no number yet: both land on the connect flow, and
@@ -73,10 +82,16 @@ function NumbersPage() {
   // registry.
   if (!resources || wabas.length === 0) {
     const outcome = (
-      <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
+      <ConnectOutcome
+        connectError={connectError}
+        connectSkipped={connectSkipped}
+        billing={billing}
+        canManageBilling={canManageBilling}
+      />
     );
+    const closed = resources?.account?.connectPolicy === "closed";
     return (
-      <Page title="Connect WhatsApp" kicker="First run">
+      <Page title="Connect WhatsApp" kicker="First run" actions={closed || !canConnect ? undefined : <ConnectLinkButton />}>
         {/* Centred and LIFTED, the house treatment for a single-purpose frame
             — the same one `/workspaces/new` uses, and for the same reason: on a
             tall viewport a top-anchored panel leaves the eye and the cursor far
@@ -94,8 +109,14 @@ function NumbersPage() {
         <div className="flex flex-1 items-center justify-center pb-[10vh]">
           <div className="flex w-full max-w-3xl flex-col gap-6">
             {outcome}
-            {resources?.account?.connectPolicy === "closed" ? <SubscriptionNotice billing={billing} /> : null}
-            <ConnectNumberPanel heading="Meta Embedded Signup" blocked={blocked} />
+            <FirstRunConnect
+              closed={closed}
+              billing={billing}
+              subscribed={subscribed}
+              canManageBilling={canManageBilling}
+              canConnect={canConnect}
+              blocked={blocked}
+            />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
                 an unlisted route (`numbers_.attach-token.tsx`) precisely so the
@@ -113,7 +134,18 @@ function NumbersPage() {
   return (
     <NumbersView
       resources={resources}
+      // The WABA the root's target read resolved, by the same `selectWaba` call
+      // the gateway makes for it, and only when that read confirmed "none".
+      nextWabaId={
+        targetMissing(root.hasForwardingTarget)
+          ? selectWaba(resources.account?.accountId ?? "", wabas, wabaId, false, "any").wabaId
+          : undefined
+      }
+      supportEmail={root.deployment.supportEmail}
       billing={billing}
+      subscribed={subscribed}
+      canManageBilling={canManageBilling}
+      canConnect={canConnect}
       connectError={connectError}
       connectSkipped={connectSkipped}
       blocked={blocked}
@@ -145,7 +177,12 @@ function NumbersPage() {
  */
 export function NumbersView({
   resources,
+  nextWabaId,
+  supportEmail,
   billing = false,
+  subscribed = false,
+  canManageBilling = true,
+  canConnect = true,
   connectError,
   connectSkipped,
   blocked,
@@ -154,8 +191,16 @@ export function NumbersView({
   /** What stops the signed-in user connecting right now, for the add-number fork. */
   blocked?: ConnectBlock | null;
   resources: AccountResources;
+  nextWabaId?: string;
+  supportEmail?: string | null;
   /** Whether this console has billing on, so a closed workspace can be pointed at it. */
   billing?: boolean;
+  /** A subscription still exists, so billing opens its portal instead of a checkout. */
+  subscribed?: boolean;
+  /** The member may start or manage the subscription; resolved server-side from their role. */
+  canManageBilling?: boolean;
+  /** The member's role may connect numbers; resolved server-side. */
+  canConnect?: boolean;
   connectError?: ConnectFailureCode;
   connectSkipped?: number;
   /** Re-read the loader after the table's re-check changed something. */
@@ -171,22 +216,48 @@ export function NumbersView({
    * it is supposed to be refused.
    */
   const [busy, setBusy] = useState(false);
-  const closed = resources.account?.connectPolicy === "closed";
+  // One instance: it moves into the dialog while that is open.
+  const notice = (className?: string) =>
+    resources.account?.connectPolicy === "closed" ? (
+      <SubscriptionNotice
+        billing={billing}
+        subscribed={subscribed}
+        canManage={canManageBilling}
+        numbers={billableCount(resources.wabas)}
+        reconnect={resources.wabas.length > 0}
+        className={className}
+      />
+    ) : null;
   const outcome = (
-    <ConnectOutcome connectError={connectError} connectSkipped={connectSkipped} billing={billing} />
+    <ConnectOutcome
+      connectError={connectError}
+      connectSkipped={connectSkipped}
+      billing={billing}
+      canManageBilling={canManageBilling}
+    />
   );
   return (
     <Page
       title="Numbers"
       kicker="Connection"
-      actions={<AddNumberButton expanded={adding} onToggle={setAdding} />}
+      actions={
+        <>
+          {resources.account?.connectPolicy === "closed" || !canConnect ? null : <ConnectLinkButton />}
+          <AddNumberButton expanded={adding} onToggle={setAdding} />
+        </>
+      }
     >
       {outcome}
-      {closed ? <SubscriptionNotice billing={billing} /> : null}
+      {adding ? null : notice()}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
-        <NumbersTable resources={resources} onRefresh={onRefresh} />
+        <NumbersTable
+          resources={resources}
+          nextWabaId={nextWabaId}
+          supportEmail={supportEmail}
+          onRefresh={onRefresh}
+        />
       </div>
       {/* Mounted only while open, so a previous attempt's inline error never
           greets the next one — the same remount-per-opening idiom /templates
@@ -201,9 +272,45 @@ export function NumbersView({
           busy={busy}
           onBusyChange={setBusy}
           blocked={blocked}
+          notice={notice("mb-0")}
+          canConnect={canConnect}
         />
       ) : null}
     </Page>
+  );
+}
+
+/** Shown in place of the connect fork to a member whose role may not connect. */
+export const ASK_AN_ADMIN = "Ask an owner or admin of this workspace to connect a number.";
+
+/**
+ * First run. A closed workspace has nothing to reconnect, so the gateway would
+ * refuse whatever Meta returned: it is stopped here, before Meta's window. With
+ * billing on that means the subscription; without it the fork stays, switched off.
+ */
+export function FirstRunConnect({
+  closed,
+  billing,
+  subscribed = false,
+  canManageBilling = true,
+  canConnect = true,
+  blocked,
+}: {
+  closed: boolean;
+  billing: boolean;
+  subscribed?: boolean;
+  canManageBilling?: boolean;
+  canConnect?: boolean;
+  /** What stops the signed-in user connecting right now (role, step-up owed). */
+  blocked?: ConnectBlock | null;
+}) {
+  if (closed && billing) return <SubscriptionGate subscribed={subscribed} canManage={canManageBilling} />;
+  if (!canConnect) return <p className="m-0 text-sm text-muted-foreground">{ASK_AN_ADMIN}</p>;
+  return (
+    <>
+      {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}
+      <ConnectNumberPanel heading="Meta Embedded Signup" closed={closed} blocked={blocked} />
+    </>
   );
 }
 
@@ -234,12 +341,17 @@ function AddNumberDialog({
   busy,
   onBusyChange,
   blocked,
+  notice,
+  canConnect,
 }: {
   blocked?: ConnectBlock | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   busy: boolean;
   onBusyChange: (busy: boolean) => void;
+  /** The closed-workspace warning, read before the cards. They stay live: a number already here can be reconnected. */
+  notice?: React.ReactNode;
+  canConnect: boolean;
 }) {
   const description = useRef<HTMLParagraphElement>(null);
   return (
@@ -258,13 +370,18 @@ function AddNumberDialog({
         <DialogHeader>
           <DialogTitle>Add another number</DialogTitle>
           <DialogDescription ref={description} tabIndex={-1}>
-            {CONNECT_FORK_DESCRIPTION}
+            {canConnect ? CONNECT_FORK_DESCRIPTION : ASK_AN_ADMIN}
           </DialogDescription>
         </DialogHeader>
-        <ConnectNumberChoices onBusyChange={onBusyChange} blocked={blocked} />
-        {/* Nested: step-up from the fork opens inside this dialog. The notice
-            that opened it is gone once it passes, so focus returns here. */}
-        <StepUpSheet finalFocus={description} />
+        {canConnect ? (
+          <>
+            {notice}
+            <ConnectNumberChoices onBusyChange={onBusyChange} blocked={blocked} />
+            {/* Nested: step-up from the fork opens inside this dialog. The notice
+                that opened it is gone once it passes, so focus returns here. */}
+            <StepUpSheet finalFocus={description} />
+          </>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

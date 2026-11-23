@@ -381,7 +381,20 @@ function TemplatesPage() {
           ) : (
             <GridEmptyState
               label="NO TEMPLATES"
-              description="Message templates on this WhatsApp Business Account will appear here."
+              description="Templates are the only way to message a customer who has not written in the last 24 hours. Create one and Meta reviews it, often within minutes."
+              action={
+                selectedWabaId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none"
+                    onClick={() => setAuthoring(CREATE_MODE)}
+                  >
+                    New template
+                  </Button>
+                ) : undefined
+              }
             />
           )
         }

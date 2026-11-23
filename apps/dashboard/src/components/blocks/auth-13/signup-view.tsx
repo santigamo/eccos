@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { AUTH_LINK_EXPIRY_LABEL } from "@/auth/mail";
+import { signInHref } from "@/auth/redirect-target";
 import {
   AddressReadback,
   AUTH_ERROR_BANNER_CLASS,
@@ -32,7 +33,11 @@ import type { FormSubmitEvent } from "./components/login-form";
  * Eccos design contract (same shell as sign-in — machine-voice labels, the
  * real email+password flow, anti-enumeration posture, no external images).
  */
-export function SignUpView() {
+export function SignUpView({ redirectTo }: { redirectTo?: string }) {
+  // Where the verification link lands: an invitee who signs up must end on the
+  // invitation, not on /onboarding.
+  const callbackURL = redirectTo ?? "/";
+  const signIn = signInHref(redirectTo);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -64,7 +69,7 @@ export function SignUpView() {
         name,
         email,
         password,
-        callbackURL: "/",
+        callbackURL,
       });
     } catch {
       // Thrown client failure (network, non-JSON 5xx): reset pending and show
@@ -116,7 +121,7 @@ export function SignUpView() {
     try {
       const result = await authClient.$fetch("/send-verification-email", {
         method: "POST",
-        body: { email: sentEmail, callbackURL: "/" },
+        body: { email: sentEmail, callbackURL },
       });
       // better-fetch resolves with { data, error } instead of throwing; an
       // answered request has a status either way, and only a transport failure
@@ -184,7 +189,7 @@ export function SignUpView() {
               </Button>
               <ResendNote outcome={resendOutcome} />
               <a
-                href="/signin"
+                href={signIn}
                 className="text-muted-foreground mt-4 text-sm hover:text-foreground"
               >
                 Back to sign in
@@ -276,7 +281,7 @@ export function SignUpView() {
             <div className="text-muted-foreground text-sm">
               Already have an account?{" "}
               <a
-                href="/signin"
+                href={signIn}
                 className="text-foreground underline-offset-4 hover:underline"
               >
                 Sign in

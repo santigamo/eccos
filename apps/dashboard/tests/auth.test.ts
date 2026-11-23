@@ -53,12 +53,13 @@ async function signUpUser(
   auth: ReturnType<typeof createAuth>,
   email: string,
   password: string,
+  callbackURL?: string,
 ): Promise<Response> {
   return auth.handler(
     new Request(`${BASE_URL}/api/auth/sign-up/email`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: BASE_URL },
-      body: JSON.stringify({ email, password, name: "Test User" }),
+      body: JSON.stringify({ email, password, name: "Test User", callbackURL }),
     }),
   );
 }
@@ -210,6 +211,17 @@ describe("sign-up and email verification", () => {
     ).json()) as { user?: { email?: string; emailVerified?: boolean } };
     expect(session.user?.email).toBe("dana@example.com");
     expect(session.user?.emailVerified).toBe(true);
+  });
+
+  test("an invitee who signs up lands on the invitation after verifying, signed in", async () => {
+    const mail = new CaptureMailSender();
+    const { auth } = await createTestAuth(mail);
+    await signUpUser(auth, "invitee@example.com", "correct-horse-battery", "/invitations?id=inv_1");
+
+    const res = await auth.handler(new Request(mail.sent[0]!.variables.url!));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/invitations?id=inv_1");
+    expect(res.headers.get("set-cookie")).toBeTruthy();
   });
 
   test("replaying the verification link does NOT mint a second session", async () => {
@@ -389,14 +401,19 @@ describe("organization plugin", () => {
  * instead of silently un-blocking it. The second proves `src/server.ts` refuses
  * exactly those paths before dispatch.
  */
-describe("blocked slug-bearing organization endpoints", () => {
+describe("blocked organization endpoints", () => {
   const blocked = [
     "/api/auth/organization/create",
     "/api/auth/organization/check-slug",
     "/api/auth/organization/update",
+    // Membership writes: served only through the console's server functions.
+    "/api/auth/organization/invite-member",
+    "/api/auth/organization/cancel-invitation",
+    "/api/auth/organization/remove-member",
+    "/api/auth/organization/update-member-role",
   ];
 
-  test("the block list is exactly the three slug-bearing endpoints", () => {
+  test("the block list is exactly the slug-bearing endpoints and the membership writes", () => {
     expect([...BLOCKED_AUTH_ENDPOINTS].sort()).toEqual([...blocked].sort());
   });
 

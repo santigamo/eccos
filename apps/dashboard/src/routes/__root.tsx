@@ -15,14 +15,15 @@ import { StepUpSheet } from "../components/dashboard/step-up-sheet"
 import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
-import { type getDashboardState, hasForwardingTarget, type DashboardState } from "../server/gateway"
+import { type Deployment, type getDashboardState, getDeployment, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { useRootRefresh } from "../hooks/use-root-refresh"
 import { watchUnhandledSignIn } from "../lib/follow-sign-in"
 import { PUBLIC_PATHS } from "../auth/redirect-target"
-import type { AnalyticsConfig } from "../lib/analytics"
+import { CONNECT_LINK_PATH } from "../lib/connect-link/api"
+import { type AnalyticsConfig, analyticsFor } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
-import { hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
+import { PRE_WORKSPACE_ROUTES, hasWabaScope, requirementSatisfied } from "../lib/scope-requirements"
 import type { Bootstrap } from "../lib/bootstrap"
 import { THEME_STORAGE_KEY, syncThemeColor } from "../lib/theme"
 import appCss from "../app.css?url"
@@ -43,6 +44,24 @@ function loadAnalyticsConfig(): Promise<AnalyticsConfig | null> {
     return null
   })
   return documentAnalytics
+}
+
+const NO_DEPLOYMENT: Deployment = { supportEmail: null, contentRetentionDays: null }
+let documentDeployment: Promise<Deployment> | undefined
+
+/**
+ * Once per document, like the analytics config: deployment facts do not change
+ * under a page. Only a read that got the retention window is kept, so a failed
+ * one is asked again on the next load.
+ */
+async function loadDeployment(): Promise<Deployment> {
+  if (typeof window !== "undefined" && documentDeployment) return documentDeployment
+  const read = getDeployment().catch(() => NO_DEPLOYMENT)
+  if (typeof window === "undefined") return read
+  documentDeployment = read
+  const deployment = await read
+  if (deployment.contentRetentionDays === null && documentDeployment === read) documentDeployment = undefined
+  return deployment
 }
 
 type RootState = Awaited<ReturnType<typeof getDashboardState>>
@@ -82,15 +101,17 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
     // The checklist read is deliberately NOT folded into `getDashboardState`:
     // that shape drives the root redirect and the stage machine, and display
     // data has no business deciding where an operator lands.
-    const [user, forwardingTarget, analytics] = await Promise.all([
+    const [user, forwardingTarget, analytics, deployment] = await Promise.all([
       getSessionUser(),
       // No WABA yet means no forwarding target, without asking the gateway.
+      // `null` is a read that failed: unknown, never "no target".
       state.ok && hasWabaScope(state.data)
         ? hasForwardingTarget({ data: { wabaId: deps.wabaId } })
         : Promise.resolve(false),
       loadAnalyticsConfig(),
+      loadDeployment(),
     ])
-    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics }
+    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics, deployment }
   },
   head: () => ({
     meta: [
@@ -200,9 +221,9 @@ export function onboardingWorkspaceCreated(stage: DashboardState["stage"]): bool
  * the lock and the bounce cannot disagree.
  */
 export function rootRedirect(pathname: string, state: RootState): "/onboarding" | "/" | "/numbers" | undefined {
-  if (!state.ok) return undefined
+  if (!state.ok || pathname === CONNECT_LINK_PATH) return undefined
   const created = onboardingWorkspaceCreated(state.data.stage)
-  if (!created && pathname !== "/onboarding") return "/onboarding"
+  if (!created && !PRE_WORKSPACE_ROUTES.has(pathname)) return "/onboarding"
   if (created && pathname === "/onboarding") return "/"
   if (state.data.stage !== "no-organization" && !requirementSatisfied(pathname, state.data)) return "/numbers"
   return undefined
@@ -221,9 +242,9 @@ function RootComponent() {
   return (
     <RootDocument
       lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}
-      analytics={state.analytics}
+      analytics={analyticsFor(pathname, state.analytics)}
     >
-      {state.ok && state.data.stage !== "no-organization" ? (
+      {state.ok && state.data.stage !== "no-organization" && pathname !== CONNECT_LINK_PATH ? (
         // Authenticated tenant context. The chrome wraps every state that has
         // an organization, including the one with no WABA yet: the user is
         // signed in, so they must be able to see who they are and sign out.

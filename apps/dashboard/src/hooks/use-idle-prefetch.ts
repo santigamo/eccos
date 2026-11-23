@@ -28,9 +28,10 @@ const browserEnv: IdleEnv = {
 };
 
 /** The sidebar destinations whose scope requirement is met and that are safe to read ahead. */
-export function idleRoutes(scope: { hasNumber: boolean; hasWaba: boolean }): string[] {
+export function idleRoutes(scope: { hasNumber: boolean; hasWaba: boolean; canAdminister: boolean }): string[] {
   return NAV_MAIN.flatMap((group) => group.items)
     .filter((item) => !NEVER_IDLE.has(item.href))
+    .filter((item) => scope.canAdminister || !item.adminOnly)
     .filter((item) => (item.requires === "number" ? scope.hasNumber : item.requires === "waba" ? scope.hasWaba : true))
     .map((item) => item.href);
 }
@@ -59,16 +60,19 @@ export function startIdlePrefetch(tasks: Array<() => Promise<unknown>>, env: Idl
 }
 
 /** Warms the sidebar destinations the operator can open, once the first page is interactive. */
-export function useIdlePrefetch(scope: { hasNumber: boolean; hasWaba: boolean }, wabaId: string | undefined): void {
+export function useIdlePrefetch(
+  scope: { hasNumber: boolean; hasWaba: boolean; canAdminister: boolean },
+  wabaId: string | undefined,
+): void {
   const router = useRouter();
-  const { hasNumber, hasWaba } = scope;
+  const { hasNumber, hasWaba, canAdminister } = scope;
   useEffect(() => {
     startIdlePrefetch(
-      idleRoutes({ hasNumber, hasWaba }).map((to) => () =>
+      idleRoutes({ hasNumber, hasWaba, canAdminister }).map((to) => () =>
         router.state.location.pathname === to ? Promise.resolve() : router.preloadRoute({ to, search: { wabaId } } as never),
       ),
     );
-  }, [router, hasNumber, hasWaba, wabaId]);
+  }, [router, hasNumber, hasWaba, canAdminister, wabaId]);
 }
 
 /** Runs `run` when the browser is idle (skipped when hidden or saving data); cancelled on cleanup. */

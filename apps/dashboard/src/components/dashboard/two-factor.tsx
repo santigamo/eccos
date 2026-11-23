@@ -2,17 +2,11 @@ import { useId, useState, type FormEvent } from "react";
 import { authClient } from "../../auth/auth-client";
 import { showBackupCodes } from "../../lib/backup-codes";
 import { totpSecret, twoFactorErrorMessage } from "../../lib/two-factor";
-import { ERROR_CLASS, MACHINE_CLASS } from "../../ui";
+import { ERROR_CLASS, MACHINE_CLASS } from "./plain-table";
 import { PasswordField } from "../auth/password-field";
 import { TwoFactorCodeForm, verifyChallenge } from "../auth/two-factor-code-form";
 import { QrCode } from "./qr-code";
-import {
-  Frame,
-  FrameDescription,
-  FrameHeader,
-  FramePanel,
-  FrameTitle,
-} from "@/components/reui/frame";
+import { SectionFrame, SettingsSection } from "./settings-section";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -24,34 +18,29 @@ interface Setup {
 
 /**
  * Two-factor authentication (TOTP) for the signed-in user, on Settings.
- * Every control is a ghost: the page's one primary is Create key.
+ * Every control is a ghost.
  */
 export function TwoFactorPanel({ enabled }: { enabled: boolean }) {
   return (
-    <Frame variant="default" spacing="lg">
-      <FramePanel fit>
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">Two-factor authentication</FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            A code from an authenticator app at sign-in. Connecting numbers, API keys and
-            webhook settings require it.
-          </FrameDescription>
-        </FrameHeader>
-        <div className="mt-5">
-          {enabled ? (
-            <>
-              <span className={`block ${MACHINE_CLASS}`}>On</span>
-              <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
-                Sign-ins to this account ask for a code from your authenticator app.
-              </p>
-            </>
-          ) : (
-            // A full load: enrolling re-issued the session, so the loaders re-run.
-            <TwoFactorSetup onDone={() => window.location.assign("/settings")} />
-          )}
-        </div>
-      </FramePanel>
-    </Frame>
+    <SettingsSection
+      id="two-factor"
+      title="Two-factor authentication"
+      description="A code from an authenticator app at sign-in. Connecting numbers, API keys, members and webhook settings require it."
+    >
+      <SectionFrame>
+        {enabled ? (
+          <>
+            <span className={`block ${MACHINE_CLASS}`}>On</span>
+            <p className="mt-1.5 mb-0 text-sm text-muted-foreground">
+              Sign-ins to this account ask for a code from your authenticator app.
+            </p>
+          </>
+        ) : (
+          // A full load: enrolling re-issued the session, so the loaders re-run.
+          <TwoFactorSetup onDone={() => window.location.assign("/settings")} />
+        )}
+      </SectionFrame>
+    </SettingsSection>
   );
 }
 

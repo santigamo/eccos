@@ -6,7 +6,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { authClient } from "@/auth/auth-client";
 import { twoFactorErrorMessage, VERIFY_UNAVAILABLE } from "@/lib/two-factor";
-import { MACHINE_CLASS } from "@/ui";
+import { MACHINE_CLASS } from "@/components/dashboard/plain-table";
 import { ArrowRightIcon } from "lucide-react";
 
 /**

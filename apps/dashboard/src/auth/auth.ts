@@ -12,6 +12,7 @@
  */
 
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { authIpAddress, authRateLimit } from "@eccos/auth-baseline/rate-limit";
 import { organization, twoFactor } from "better-auth/plugins";
 import {
@@ -29,6 +30,9 @@ import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
 import { STEP_UP_WINDOW_SECONDS } from "./step-up";
 import { stepUpGuard, stepUpOrganizationHooks } from "./step-up-guard";
+import type { AttemptLimiter } from "../server/attempt-limit";
+import { INVITATION_RATE_LIMITED } from "../lib/members-copy";
+import { INVITATION_LIFETIME_DAYS } from "../lib/invitation-expiry";
 
 /**
  * Build the accept-invitation link for the dashboard UI.
@@ -208,6 +212,8 @@ export interface AuthConfig {
   trustedOrigins: string[];
   /** Application-owned email adapter (contract §8). */
   mail: MailSender;
+  /** Caps invitation sends per inviter. `authConfigFromEnv` always sets it; hand-built test configs may not. */
+  invitationLimiter?: AttemptLimiter;
 }
 
 function assertValidConfig(config: AuthConfig): void {
@@ -355,7 +361,7 @@ export function createAuth(config: AuthConfig) {
       // lets a top-level click out of a mail client set it at all — Strict
       // would not survive the redirect; and sign-up passes `callbackURL: "/"`,
       // where the root loader sends a session with no organization on to
-      // /onboarding.
+      // /onboarding, or the page it was sent from (an invitation link).
       //
       // The failure mode worth naming is a corporate link scanner that fetches
       // the URL before the human does. It degrades gracefully rather than
@@ -406,20 +412,38 @@ export function createAuth(config: AuthConfig) {
       organization({
         ac,
         roles: { owner, admin, operator, viewer },
-        // Step-up on invitations and member changes (contract §4), after
-        // Better Auth's own organization and role checks.
-        organizationHooks: stepUpOrganizationHooks,
         // Organization deletion is disabled in v1 (contract §4/§9): no
         // offboarding saga exists yet, so /organization/delete is rejected.
         disableOrganizationDeletion: true,
         // Invitations only go to verified identities (contract §7).
         requireEmailVerificationOnInvitation: true,
+        // Long enough for a small business to open the mail after a weekend.
+        invitationExpiresIn: INVITATION_LIFETIME_DAYS * 24 * 60 * 60,
+        organizationHooks: {
+          // Step-up on invitations and member changes (contract §4), after
+          // Better Auth's own organization and role checks.
+          ...stepUpOrganizationHooks,
+          // Every invitation comes through here: the console's server functions
+          // call the plugin in process, and its HTTP route is blocked
+          // (blocked-endpoints.ts). The cap lives in the plugin so it holds
+          // for any future caller too. Step-up first: a refused invitation
+          // spends none of the inviter's allowance.
+          beforeCreateInvitation: async ({ inviter }) => {
+            await stepUpOrganizationHooks.beforeCreateInvitation();
+            if (await config.invitationLimiter?.strike(inviter.id)) {
+              throw new APIError("TOO_MANY_REQUESTS", {
+                code: INVITATION_RATE_LIMITED,
+                message: "Too many invitations sent. Try again later.",
+              });
+            }
+          },
+        },
         // Invitation delivery through the application-owned mail adapter; the
         // link carries the invitation id (accepted by signed-in matching
         // identity via /api/auth/organization/accept-invitation).
         //
-        // WHEN A "RESEND INVITATION" BUTTON IS BUILT, IT MUST BE
-        // CANCEL-PLUS-RECREATE — never Better Auth's reuse-the-same-invitation
+        // "RESEND INVITATION" MUST BE CANCEL-PLUS-RECREATE (`resendInvitation`
+        // in src/members.ts) — never Better Auth's reuse-the-same-invitation
         // resend.
         //
         // The idempotency key is sha256("invite-member:" + email +

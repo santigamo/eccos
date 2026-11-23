@@ -1,0 +1,69 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { COPY, SITE, type Locale } from "../data/product";
+import { FAQ_PAGE } from "../data/faq";
+import { linkify } from "../lib/linkify";
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const es = locale === "es";
+const groups = FAQ_PAGE[locale];
+const canonical = `${SITE.url}${es ? "" : "/en"}/faq`;
+
+const title = es
+  ? "Preguntas frecuentes sobre Eccos: precio, Meta, API y RGPD"
+  : "Eccos FAQ: pricing, Meta, the API and GDPR";
+const description = es
+  ? "Respuestas a lo que se pregunta antes de contratar Eccos: qué incluye el precio, qué cobra Meta, la prueba gratuita, la coexistencia con la app de WhatsApp Business, la API, los webhooks y el RGPD."
+  : "Answers to what people ask before signing up for Eccos: what the price includes, what Meta charges, the free trial, coexistence with the WhatsApp Business app, the API, webhooks and GDPR.";
+
+// The landing's own questions are marked up there; Google wants one instance per site.
+const onLanding = new Set(COPY[locale].faq);
+const schema = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "@id": `${canonical}#faq`,
+  url: canonical,
+  inLanguage: locale,
+  about: { "@id": `${SITE.url}/#eccos` },
+  mainEntity: groups
+    .flatMap((group) => group.items)
+    .filter((item) => !onLanding.has(item))
+    .map((item) => ({ "@type": "Question", name: item.q, acceptedAnswer: { "@type": "Answer", text: item.a } })),
+};
+---
+
+<SiteLayout {title} {description} {canonical} {locale} bilingualPath="faq" active="faq">
+  <script slot="head" type="application/ld+json" is:inline set:html={JSON.stringify(schema)} />
+  <main class="shell doc" id="main">
+    <h1>{es ? "Preguntas frecuentes" : "Frequently asked questions"}</h1>
+    <p class="lede">
+      {
+        es
+          ? "Lo que nos preguntan antes de conectar un número, agrupado por tema. Si tu duda no está aquí, escríbenos a "
+          : "What people ask us before connecting a number, grouped by topic. If your question is not here, write to "
+      }<a href={`mailto:${SITE.email}`}>{SITE.email}</a>.
+    </p>
+    <nav aria-label={es ? "Temas" : "Topics"}>
+      <ul class="faq-topics">
+        {groups.map((group) => <li><a href={`#${group.id}`}>{group.title}</a></li>)}
+      </ul>
+    </nav>
+    {
+      groups.map((group) => (
+        <section id={group.id} aria-labelledby={`${group.id}-h`}>
+          <h2 id={`${group.id}-h`}>{group.title}</h2>
+          {group.items.map((item) => (
+            <>
+              <h3>{item.q}</h3>
+              <p>{linkify(item.a).map((part) => (part.href ? <a href={part.href}>{part.text}</a> : part.text))}</p>
+            </>
+          ))}
+        </section>
+      ))
+    }
+  </main>
+</SiteLayout>

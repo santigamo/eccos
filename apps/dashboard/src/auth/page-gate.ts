@@ -10,7 +10,7 @@
  * - anything else that cannot take HTML gets a 406 before it reaches the router.
  */
 
-import { PUBLIC_PATHS, signInHref } from "./redirect-target";
+import { PUBLIC_PATHS, SESSION_NEUTRAL_PATHS, signInHref } from "./redirect-target";
 
 const NO_STORE = { "cache-control": "private, no-store" };
 
@@ -18,7 +18,7 @@ const NO_STORE = { "cache-control": "private, no-store" };
  * The page-level gate, in order: static assets pass, a request that cannot
  * take HTML gets a 406, an anonymous server-function call a serialized
  * redirect, an anonymous page load a 302, and a signed-in user is bounced off
- * the auth pages (except /reset-password). `undefined` lets the request through.
+ * the auth pages (except the session-neutral ones). `undefined` lets the request through.
  * The session is read only once a check needs it.
  */
 export async function authGate(
@@ -32,7 +32,7 @@ export async function authGate(
   const isPublic = PUBLIC_PATHS.has(pathname);
   const session = await hasSession();
   if (!session && !isPublic) return serverFn ? serverFnSignIn(request) : signInRedirect(request);
-  if (session && isPublic && pathname !== "/reset-password") {
+  if (session && isPublic && !SESSION_NEUTRAL_PATHS.has(pathname)) {
     return new Response(null, { status: 302, headers: { location: "/", ...NO_STORE } });
   }
   return undefined;

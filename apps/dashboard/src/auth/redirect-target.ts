@@ -13,7 +13,11 @@ export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/signup",
   "/forgot-password",
   "/reset-password",
+  "/connect",
 ]);
+
+/** Public pages that serve a signed-in visitor too, instead of sending them into the console. */
+export const SESSION_NEUTRAL_PATHS: ReadonlySet<string> = new Set(["/reset-password", "/connect"]);
 
 /**
  * The app pages a sign-in may return to — every route in `routeTree.gen.ts`
@@ -22,6 +26,7 @@ export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
  */
 export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/",
+  "/api-keys",
   "/broadcasts",
   "/broadcasts/$broadcastId",
   "/scheduled",
@@ -29,6 +34,7 @@ export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/deliveries",
   "/events",
   "/invitations",
+  "/members",
   "/messages",
   "/numbers",
   "/numbers/attach-token",
@@ -63,8 +69,17 @@ export function safeRedirectTarget(value: string | undefined): string | undefine
   return end === -1 ? pathname : pathname + value.slice(end);
 }
 
+function withRedirect(page: string, target: string | undefined): string {
+  const redirect = safeRedirectTarget(target);
+  return redirect ? `${page}?redirect=${encodeURIComponent(redirect)}` : page;
+}
+
 /** The sign-in page, carrying `target` as its bounce-back only when it is safe. */
 export function signInHref(target: string | undefined): string {
-  const redirect = safeRedirectTarget(target);
-  return redirect ? `/signin?redirect=${encodeURIComponent(redirect)}` : "/signin";
+  return withRedirect("/signin", target);
+}
+
+/** The sign-up page, carrying `target` through verification the same way. */
+export function signUpHref(target: string | undefined): string {
+  return withRedirect("/signup", target);
 }

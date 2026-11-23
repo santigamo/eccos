@@ -1,3 +1,4 @@
+import { GRAPH_CODE_OAUTH } from "@eccos/core/send";
 import { putMedia } from "./media-store";
 
 /** Meta's largest media is a document at 100 MB. A bigger file is refused before any byte is read. */
@@ -6,8 +7,6 @@ const GRAPH_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 /** Graph subcode for "object does not exist", which is what an expired media id returns. */
 const GRAPH_SUBCODE_NONEXISTENT = 33;
-/** Graph code for an OAuth failure: the token is expired, revoked, or lacks the permission. */
-const GRAPH_CODE_OAUTH = 190;
 
 /** Retrying cannot succeed: Meta no longer has the id, or the file is over the limit. */
 export class MediaPermanentError extends Error {

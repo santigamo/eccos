@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/cloudflare";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { env } from "cloudflare:workers";
@@ -11,9 +10,18 @@ import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
+import { linkPeople } from "./connect-link-people";
 import { timedProxy } from "./timing";
+import { classifyFailure } from "./classify-failure";
 import { connectAudit } from "../lib/connect-result";
-import type { SessionEvent } from "../lib/embedded-signup";
+import { CONNECT_LINK_PATH } from "../lib/connect-link/api";
+import { linkIsLive } from "../lib/connect-link/status";
+import {
+  type EmbeddedSignupConfig,
+  embeddedSignupConfig,
+  validateCodeAndState,
+  validateSessionEvent,
+} from "../lib/embedded-signup";
 // The console's authoring gate, shared with the create sheet — and, by
 // construction, the same module as `analyzeTemplate`, which is what makes the
 // two agree. See `lib/template-params.ts`.
@@ -25,10 +33,10 @@ import { normalizeCustomerId } from "../lib/customer-id";
 import {
   requireAuthContext,
   requireGatewayPermission,
-  UnauthorizedError,
 } from "../auth/server-auth";
 import type { Grant } from "../auth/step-up";
-import { ForbiddenError, resolveMemberships } from "../auth/tenant";
+import { ForbiddenError, memberRole, resolveMemberships } from "../auth/tenant";
+import { roleAllows } from "../auth/identity";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
   BroadcastDetail,
@@ -40,6 +48,7 @@ import type {
   AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
+  ConnectLinkSummary,
   ConnectStartResult,
   ConversationListOpts,
   ConversationOpts,
@@ -226,8 +235,19 @@ export type DashboardOverviewResult = Result<DashboardOverview>;
 export type DashboardState =
   | { stage: "unassigned" }
   | { stage: "no-organization" }
-  | { stage: "account-ready"; resources: AccountResources; billing?: true }
-  | { stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: true };
+  | ({ stage: "account-ready"; resources: AccountResources; billing?: BillingFlag } & RoleFlag)
+  | ({ stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag } & RoleFlag);
+/**
+ * `canAdminister`: the member's role may connect numbers, manage keys and settings; the server refuses either way.
+ * `role`: Better Auth's role string, for display.
+ */
+export type RoleFlag = { canAdminister: boolean; role: string };
+/**
+ * Present only while billing is on. `subscribed`: a closed account whose
+ * subscription still exists, so billing opens its portal. `canManage`: the
+ * member's role may start or manage it, the same permission the checkout requires.
+ */
+export type BillingFlag = { subscribed: boolean; canManage: boolean };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1064,45 +1084,6 @@ async function withGateway<T>(
   }
 }
 
-/**
- * Name the failure from the error's type (eccos-k5a).
- *
- * `ForbiddenError` and `UnauthorizedError` are raised by the identity plane
- * before the RPC is attempted, so they say nothing about the gateway; anything
- * else escaping the call is a transport or RPC failure, which is the only case
- * allowed to blame the service binding. `instanceof` is the discriminator, with
- * the class's own `name` brand as the fallback that survives a duplicated
- * module copy (bundler chunk, test mock) — never the message text.
- */
-async function classifyFailure(err: unknown): Promise<Failure> {
-  if (err instanceof UnauthorizedError || isNamed(err, "UnauthorizedError")) {
-    return { ok: false, kind: "unauthenticated", error: message(err) };
-  }
-  if (err instanceof ForbiddenError || isNamed(err, "ForbiddenError")) {
-    const reason = (err as ForbiddenError).reason ?? "other";
-    if (reason === "select-organization") {
-      // The remedy is the choice itself, so this one branch pays to fetch it.
-      // A failure to list them degrades to the sentence without a picker,
-      // never to a wrong cause.
-      const organizations = await resolveMemberships(requestAuth(), getRequest().headers).catch(
-        () => [] as Membership[],
-      );
-      return { ok: false, kind: "forbidden", reason, error: message(err), organizations };
-    }
-    return { ok: false, kind: "forbidden", reason, error: message(err) };
-  }
-  Sentry.captureException(err);
-  return { ok: false, kind: "unreachable", error: message(err) };
-}
-
-function isNamed(err: unknown, name: string): boolean {
-  return err instanceof Error && err.name === name;
-}
-
-function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 type ResolvedScope = {
   wabaId: string;
   accountId: string;
@@ -1291,17 +1272,32 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // on EVERY page, /numbers included, where the note explaining the state
         // lives. Both consumers of this stage (the __root redirect and
         // numbers.tsx) already do the right thing with resources present.
-        // Present only while billing is on, so the console knows whether to point at it.
-        const billing = billingEnabled(env) ? { billing: true as const } : {};
-        if (!state.status) return { stage: "account-ready", resources: state.resources, ...billing };
+        const role = await memberRole(auth, request.headers, organizationId);
+        const canAdminister = roleAllows(role, "administer");
+        const billing = billingEnabled(env)
+          ? { billing: { subscribed: await closedSubscription(gateway, state), canManage: canAdminister } }
+          : {};
+        if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, role, ...billing };
         return {
           stage: "ready",
+          canAdminister,
+          role,
           status: state.status.data,
           scope: dashboardScope(state.status.scope),
           ...billing,
         };
       }),
   );
+
+/** Read only for a closed account: an open one is never pointed at billing. */
+async function closedSubscription(
+  gateway: GatewayApi,
+  state: { accountId: string; resources: AccountResources },
+): Promise<boolean> {
+  if (state.resources.account?.connectPolicy !== "closed") return false;
+  const stored = await gateway.getAccountBilling(state.accountId);
+  return Boolean(stored?.subscriptionId && stored.customerId);
+}
 
 export const getDashboardOverview = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
@@ -1373,33 +1369,38 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
  * still session-gated, because who may connect a number is an authorization
  * question regardless of how public the identifiers are.
  */
-export interface EmbeddedSignupConfig {
-  appId: string;
-  configId: string;
-  graphVersion: string;
-}
+export type { EmbeddedSignupConfig };
 
 export const getEmbeddedSignupConfig = createServerFn({ method: "GET" }).handler(
   async (): Promise<Result<EmbeddedSignupConfig | null>> => {
     try {
       await requireActor("administer");
-      const appId = env.META_APP_ID?.trim();
-      const configId = env.META_ES_CONFIG_ID?.trim();
-      if (!appId || !configId) return { ok: true, data: null };
-      return {
-        ok: true,
-        data: {
-          appId,
-          configId,
-          // Must match the gateway's; the SDK only uses it for the API version
-          // it would call with, which this flow never does.
-          graphVersion: env.META_GRAPH_VERSION?.trim() || "v25.0",
-        },
-      };
+      return { ok: true, data: embeddedSignupConfig(env) };
     } catch (err) {
       return classifyFailure(err);
     }
   },
+);
+
+/**
+ * Whether Connect can start, checked without creating a state or writing an
+ * audit event: the caller may administer, the gateway answers, it has a public
+ * address for Meta's redirect, and the organization's account (if it has one
+ * yet) is active. `startConnect` fails on the same conditions, but only after
+ * the customer has been through Meta's window.
+ */
+export const getConnectReadiness = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<{ ready: true } | { ready: false; reason: string }>> =>
+    withGateway(async (gateway, organizationId) => {
+      if (!(await gateway.getPublicOrigin())) {
+        return { ready: false as const, reason: "Connecting is not set up on this gateway yet: it has no public address. Ask whoever runs it." };
+      }
+      const link = organizationId ? await gateway.getOrganizationAccountLink(organizationId) : null;
+      if (link && link.status !== "active") {
+        return { ready: false as const, reason: "This workspace's account is not active, so numbers cannot be connected." };
+      }
+      return { ready: true as const };
+    }, "administer"),
 );
 
 /**
@@ -1430,16 +1431,8 @@ function validateConnectExchangeInput(input: unknown): {
   wabaId?: string;
 } {
   const record = inputRecord(input);
-  const code = record.code;
-  if (typeof code !== "string" || code.trim() === "" || code.length > 4096) {
-    throw new Error("code must be a non-empty string");
-  }
-  const state = record.state;
-  if (typeof state !== "string" || state.trim() === "" || state.length > 512) {
-    throw new Error("state must be a non-empty string");
-  }
   const wabaId = optionalWabaId(record.wabaId);
-  return { code: code.trim(), state: state.trim(), ...(wabaId ? { wabaId } : {}) };
+  return { ...validateCodeAndState(record), ...(wabaId ? { wabaId } : {}) };
 }
 
 /**
@@ -1564,35 +1557,6 @@ export const connectWithToken = createServerFn({ method: "POST" })
       }),
   );
 
-function validateSessionEventInput(input: unknown): SessionEvent {
-  const record = inputRecord(input);
-  const event = record.event;
-  if (typeof event !== "string" || event.trim() === "" || event.length > 128) {
-    throw new Error("event must be a non-empty string");
-  }
-  const field = (
-    key: "currentStep" | "errorCode" | "sessionId" | "wabaId" | "phoneNumberId",
-  ): string | undefined => {
-    const value = record[key];
-    if (value === undefined || value === null) return undefined;
-    if (typeof value !== "string" || value.length > 256) throw new Error(`${key} must be a string`);
-    return value.trim() || undefined;
-  };
-  const currentStep = field("currentStep");
-  const errorCode = field("errorCode");
-  const sessionId = field("sessionId");
-  const wabaId = field("wabaId");
-  const phoneNumberId = field("phoneNumberId");
-  return {
-    event: event.trim(),
-    ...(currentStep ? { currentStep } : {}),
-    ...(errorCode ? { errorCode } : {}),
-    ...(sessionId ? { sessionId } : {}),
-    ...(wabaId ? { wabaId } : {}),
-    ...(phoneNumberId ? { phoneNumberId } : {}),
-  };
-}
-
 /**
  * Record one Embedded Signup session event in the audit log.
  *
@@ -1608,7 +1572,7 @@ function validateSessionEventInput(input: unknown): SessionEvent {
  * origin, a server route must never depend on a client-side check.
  */
 export const recordConnectSessionEvent = createServerFn({ method: "POST" })
-  .validator(validateSessionEventInput)
+  .validator(validateSessionEvent)
   .handler(
     ({ data }): Promise<Result<{ recorded: true }>> =>
       withGateway(async (gateway) => {
@@ -1631,7 +1595,60 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
       }),
   );
 
-// --- API keys (settings page, eccos-bm92) ---
+/** The workspace's connection link. `url` is set only by the call that made the link. */
+export interface ConnectLinkView {
+  link: ConnectLinkSummary;
+  url: string | null;
+}
+
+/**
+ * Read the workspace's connection link, making one when there is none to wait
+ * for (never made, expired, or dead with its creator's access) or when `fresh`
+ * asks to replace it. `administer` to read, and the `connect` step-up row to
+ * make one (contract §4): the link lets its bearer add a number to this account.
+ */
+export const openConnectLink = createServerFn({ method: "POST" })
+  .validator((input: unknown) => ({ fresh: inputRecord(input ?? {}).fresh === true }))
+  .handler(
+    ({ data }): Promise<Result<ConnectLinkView>> =>
+      withGateway(async (gateway) => {
+        const { actor, accountId } = await adminActorAccount(gateway);
+        const current = data.fresh ? null : await gateway.getConnectLink(accountId);
+        // A live link whose creator may no longer connect resolves for nobody: replace it too.
+        const dead =
+          current &&
+          linkIsLive(current) &&
+          !(await linkPeople(env.DB, actor.organizationId, current.creatorUserId));
+        if (current && current.state !== "expired" && !dead) return { link: current, url: null };
+        await requireActor("connect");
+        // Without `replace` the gateway keeps a live link, so two dialogs opening at once share one.
+        const issued = await gateway.issueConnectLink(accountId, actor.session.userId, data.fresh || Boolean(dead));
+        if (issued === "exists") {
+          const link = await gateway.getConnectLink(accountId);
+          if (!link) throw new Error("the connection link could not be read");
+          return { link, url: null };
+        }
+        auditEvent({
+          action: "connect_link_issue",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId,
+          outcome: "success",
+        });
+        return {
+          link: {
+            state: "pending",
+            expiresAt: issued.expiresAt,
+            connectedPhone: null,
+            creatorUserId: actor.session.userId,
+          },
+          // In the fragment, so the token reaches no server log and no Referer.
+          url: `${new URL(getRequest().url).origin}${CONNECT_LINK_PATH}#${issued.token}`,
+        };
+      }),
+  );
+
+// --- API keys (/api-keys, eccos-bm92) ---
 
 const KEY_ID_PATTERN = /^key_[A-Za-z0-9]{1,64}$/;
 const MAX_KEY_LABEL_LENGTH = 200;
@@ -2253,26 +2270,44 @@ export const getSubscriberConfig = createServerFn({ method: "GET" })
   );
 
 /**
- * Whether a forwarding target exists — the one setup fact the root loader
+ * Whether a forwarding target exists: the one setup fact the root loader
  * cannot already see (`lib/setup-checklist.ts`).
  *
- * A BOOLEAN and not the config, on purpose: this rides every page load for the
- * sidebar checklist, and the URL itself is nobody's business outside the
- * Webhooks page. `action: "view"`, because seeing that a step is done is not
- * configuring anything.
+ * Not the config, on purpose: this rides every page load, and the URL itself is
+ * nobody's business outside the Webhooks page. `action: "view"`, because seeing
+ * that a step is done is not configuring anything.
  *
- * It answers `false` rather than a failure for an account that has no WABA yet:
- * there, "no forwarding target" is simply true, and a checklist row cannot show
- * a failure card. Nothing else consumes this, so nothing else loses a diagnosis.
+ * `null` when the read failed. The held banner fires on a single pending row,
+ * so a failed read must not pass for "no target" on an account that has one.
  */
 export const hasForwardingTarget = createServerFn({ method: "GET" })
   .validator(validateScopeInput)
-  .handler(async ({ data }): Promise<boolean> => {
+  .handler(async ({ data }): Promise<boolean | null> => {
     const res = await withScopedRead({ action: "view", wabaId: data?.wabaId, scope: "any" }, (gateway, org) =>
       gateway.readSubscriberConfig(org),
     );
-    return res.ok ? res.data.data.url !== null : false;
+    return res.ok ? res.data.data.url !== null : null;
   });
+
+/** Deployment-wide facts the console quotes; each is null when unset or unread. */
+export interface Deployment {
+  /** `SUPPORT_EMAIL`: where "contact Eccos support" leads. */
+  supportEmail: string | null;
+  /** The gateway's content window, which also bounds how long an event is held. */
+  contentRetentionDays: number | null;
+}
+
+export const getDeployment = createServerFn({ method: "GET" }).handler(async (): Promise<Deployment> => {
+  // A session is enough: these are the deployment's facts, not an organization's.
+  const days = await withGateway(async (gateway) => {
+    await requireAuthContext(requestAuth(), getRequest());
+    return gateway.getContentRetentionDays();
+  });
+  return {
+    supportEmail: (env as { SUPPORT_EMAIL?: string }).SUPPORT_EMAIL?.trim() || null,
+    contentRetentionDays: days.ok ? Math.round(days.data) : null,
+  };
+});
 
 /** Rotate the forwarding target. `secret` is only sent when the operator sets it. */
 export const setSubscriberConfig = createServerFn({ method: "POST" })

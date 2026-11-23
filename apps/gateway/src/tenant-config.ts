@@ -1,4 +1,4 @@
-import type { CoreConfig } from "@eccos/core/config-schema";
+import type { CoreConfig, MetaAppConfig } from "@eccos/core/config-schema";
 
 /** App-level Meta platform config shared by every tenant on the deployment. */
 export type AppConfig = Pick<
@@ -15,12 +15,15 @@ export type TenantConfig = Pick<
   | "META_WABA_ID"
   | "META_APP_SECRET"
   | "META_WEBHOOK_VERIFY_TOKEN"
->;
+> &
+  Pick<MetaAppConfig, "fetch">;
 
 export interface TenantCredentials {
   wabaId: string;
   phoneNumberId: string;
   metaAccessToken: string;
+  /** The `fetch` the WABA's Graph calls go through (see `watchGraph`). */
+  fetch?: typeof fetch;
 }
 
 /** App-level Meta config: signature/verify secrets are the only Worker tenant
@@ -49,5 +52,6 @@ export function tenantConfig(app: AppConfig, credentials: TenantCredentials): Te
     META_WABA_ID: credentials.wabaId,
     META_APP_SECRET: app.META_APP_SECRET,
     META_WEBHOOK_VERIFY_TOKEN: app.META_WEBHOOK_VERIFY_TOKEN,
+    ...(credentials.fetch ? { fetch: credentials.fetch } : {}),
   };
 }

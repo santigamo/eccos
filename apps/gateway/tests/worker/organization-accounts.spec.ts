@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EccosControlPlane } from "../../src/control-plane";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
+import { GatewayRPC } from "../../src/rpc";
 
 afterEach(async () => {
   await reset();
@@ -87,5 +88,20 @@ describe("organization_accounts mapping (contract §2)", () => {
         /invalid organizationId/,
       );
     });
+  });
+});
+
+describe("setAccountName (workspace rename)", () => {
+  it("renames the account over RPC and refuses an empty name or an unknown account", async () => {
+    const stub = getControlPlaneStub(env);
+    const { accountId } = await stub.ensureOrganizationAccount(ORG_ID, "Acme");
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+
+    await rpc.setAccountName(accountId, "  Acme Madrid ");
+    expect((await stub.listAccountResources(accountId)).account?.name).toBe("Acme Madrid");
+
+    await expect(rpc.setAccountName(accountId, "   ")).rejects.toThrow(/invalid name/);
+    await expect(rpc.setAccountName("acc_missing", "Other")).rejects.toThrow(/does not exist/);
+    expect((await stub.listAccountResources(accountId)).account?.name).toBe("Acme Madrid");
   });
 });

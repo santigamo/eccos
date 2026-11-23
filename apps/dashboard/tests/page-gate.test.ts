@@ -126,4 +126,9 @@ describe("authGate order", () => {
     expect((await authGate(req("/signin"), signedIn))?.headers.get("location")).toBe("/");
     expect(await authGate(req("/reset-password?token=t"), signedIn)).toBeUndefined();
   });
+
+  test("the connection-link page serves anyone, signed in or not", async () => {
+    expect(await authGate(req("/connect"), anonymous)).toBeUndefined();
+    expect(await authGate(req("/connect"), signedIn)).toBeUndefined();
+  });
 });

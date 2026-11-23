@@ -504,6 +504,8 @@ export interface AccountSummary {
 /** Billing state of one account. The ids belong to the billing provider; the gateway only stores them. */
 export interface AccountBilling {
   connectPolicy: ConnectPolicy;
+  /** The policy is stored on the account, not inherited from CONNECT_POLICY_DEFAULT. */
+  explicitPolicy: boolean;
   customerId: string | null;
   subscriptionId: string | null;
 }
@@ -612,6 +614,8 @@ export interface AccountWabaResource {
   provisionedAt: number | null;
   status: ProvisioningStatus;
   provisioningError: string | null;
+  /** Unix ms of the Meta token's expiry as last read: 0 never expires, null never read. */
+  tokenExpiresAt: number | null;
   phones: Omit<AccountPhoneResource, "wabaId">[];
   /** Coexistence state (eccos-vss). Already travelled over the binding before it
    * was declared here; declaring it is what lets the console read it. */
@@ -719,7 +723,67 @@ export type ConnectExchangeResult =
       /** Some numbers were new and the account may not add numbers; they were left out. */
       subscriptionRequired?: true;
     }
-  | { ok: false; error: string; code: ConnectFailureCode };
+  | {
+      ok: false;
+      error: string;
+      code: ConnectFailureCode;
+      /** The failure came after registrations were written: something may be connected, so a retry is not safe. */
+      partial?: true;
+    };
+
+/**
+ * Where a workspace's connection link stands, for the admin who made it.
+ * `unconfirmed`: an exchange broke off where it may already have registered
+ * something, so the link is spent and Numbers holds the truth.
+ */
+export type ConnectLinkState = "pending" | "opened" | "connected" | "unconfirmed" | "expired";
+
+export interface ConnectLinkSummary {
+  state: ConnectLinkState;
+  expiresAt: number;
+  /** The number the link connected, once it has. */
+  connectedPhone: string | null;
+  creatorUserId: string;
+}
+
+/** The raw token exists only here: the gateway keeps its hash. */
+export interface IssuedConnectLink {
+  token: string;
+  expiresAt: number;
+}
+
+/** What a link token resolves to. Only `active` may start or finish a connection. */
+export interface ConnectLinkGrant {
+  /** Names the link to the gateway and in idempotency keys. It cannot open the link, and never reaches a browser. */
+  linkId: string;
+  accountId: string;
+  organizationId: string;
+  creatorUserId: string;
+  state: "active" | "expired" | "used" | "revoked";
+  connectPolicy: ConnectPolicy;
+}
+
+/** A link taken for one exchange. `claimId` is null when the link is not active: nothing was taken. */
+export interface ConnectLinkClaim {
+  grant: ConnectLinkGrant;
+  claimId: string | null;
+}
+
+/** How a claimed exchange ended. */
+export type ConnectLinkSettlement =
+  | { kind: "connected"; phone: string | null }
+  | { kind: "failed"; code: ConnectFailureCode }
+  /** The exchange broke off where a registration may already have run. */
+  | { kind: "unknown" }
+  /** Nothing was attempted. */
+  | { kind: "released" };
+
+export interface ConnectLinkSettled {
+  /** Whether the link's creator should be told about this outcome. */
+  notify: boolean;
+  /** Where the link stands after it. */
+  state: ConnectLinkState | "revoked";
+}
 
 /**
  * One WhatsApp Business Account a pasted token can reach, offered to the
@@ -1260,6 +1324,8 @@ export interface GatewayApi {
   listAccountResources(accountId: string): Promise<AccountResources>;
   /** The gateway's public HTTPS origin (`GATEWAY_PUBLIC_URL`), null when unset. */
   getPublicOrigin(): Promise<string | null>;
+  /** Days the deployment keeps message content (`CONTENT_RETENTION_DAYS`, clamped); held events age out with it. */
+  getContentRetentionDays(): Promise<number>;
   /** The account's API keys, metadata only (never the secret or its hash). */
   listApiKeys(accountId: string): Promise<AccountKeyResource[]>;
   /** Issue an `ek_` key for the account; the raw key is returned once, here. */
@@ -1326,12 +1392,45 @@ export interface GatewayApi {
     token: string,
     wabaId?: string,
   ): Promise<ManualConnectResult>;
+  /** The account's current connection link, or null when none was ever made. */
+  getConnectLink(accountId: string): Promise<ConnectLinkSummary | null>;
+  /**
+   * Makes the account's one connection link, valid for 7 days. Without
+   * `replace` a live link is kept and the answer is `exists`, so two callers
+   * racing to make the first link end up with one. With it the previous link
+   * is revoked; an exchange already running on it still records its result.
+   */
+  issueConnectLink(accountId: string, creatorUserId: string, replace?: boolean): Promise<IssuedConnectLink | "exists">;
+  /** Null for a token that is unknown or whose account has no active organization. Changes nothing. */
+  resolveConnectLink(token: string): Promise<ConnectLinkGrant | null>;
+  /** Records that the link's page was opened. For a link the caller has resolved in full. */
+  markConnectLinkOpened(linkId: string): Promise<void>;
+  /**
+   * Takes the link for one exchange, so two bearers cannot both spend it:
+   * `busy` while another exchange holds it, null as `resolveConnectLink`.
+   */
+  claimConnectLink(token: string): Promise<ConnectLinkClaim | "busy" | null>;
+  /**
+   * `exchangeConnectCodeForAccountId` for a claim, settled before it answers:
+   * a registration spends the link, a failure frees it, and a failure once the
+   * registration write has started spends it as unconfirmed (`result: null`).
+   * Null for a claim that does not exist.
+   */
+  exchangeConnectCodeForClaim(
+    claimId: string,
+    code: string,
+    state: string,
+  ): Promise<(ConnectLinkSettled & { result: ConnectExchangeResult | null }) | null>;
+  /** Ends a claim without an exchange result. Null for a claim that does not exist. */
+  settleConnectLink(claimId: string, outcome: ConnectLinkSettlement): Promise<ConnectLinkSettled | null>;
   /** Idempotent one-to-one organization→account provisioning saga (contract
    * §2). Creates the Eccos account and the active link atomically; no API key. */
   ensureOrganizationAccount(
     organizationId: string,
     name?: string,
   ): Promise<{ accountId: string; status: "active" | "existing" }>;
+  /** Renames the account, following a workspace rename. */
+  setAccountName(accountId: string, name: string): Promise<void>;
   /** Read the one-to-one organization→account link (contract §2). Unknown
    * organization → null; `pending`/`disabled` links fail closed upstream. */
   getOrganizationAccountLink(

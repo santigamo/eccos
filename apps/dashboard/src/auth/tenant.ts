@@ -33,6 +33,8 @@ export type ForbiddenReason =
   | "not-a-member"
   | "missing-permission"
   | StepUpReason
+  /** The page's workspace is not the one the session resolves now (another tab switched it). */
+  | "workspace-changed"
   | "other";
 
 /** Typed error for authenticated-but-forbidden requests (used by route guards
@@ -86,6 +88,12 @@ export async function verifyMembership(
   if (!organizationId) return false;
   const memberships = await resolveMemberships(auth, headers);
   return memberships.some((m) => m.id === organizationId);
+}
+
+/** The member's Better Auth role string in `organizationId`, "" when not a member. Display only. */
+export async function memberRole(auth: Auth, headers: Headers, organizationId: string): Promise<string> {
+  const memberships = await getMembershipsOnce(auth, headers);
+  return memberships.find((m) => m.id === organizationId)?.role ?? "";
 }
 
 /**

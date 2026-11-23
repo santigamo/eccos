@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import * as Sentry from "@sentry/cloudflare";
 import { getGatewayStubForWaba } from "./gateway-stub";
+import { getMedia } from "./media-store";
 import { releaseHeldBatches } from "./held-webhooks";
 import { connectRoutes } from "./routes/connect";
 import { constantTimeEqual, verifyMetaSignature } from "@eccos/core/signature";
@@ -11,9 +12,11 @@ import {
 } from "@eccos/core/parser";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown } from "@eccos/core/send";
-import { listTemplates, TEMPLATE_FIELDS } from "@eccos/core/templates";
+import { findTemplate, listTemplates, TEMPLATE_FIELDS } from "@eccos/core/templates";
 import { authenticateRequest, extractApiKey, type RequestAccount } from "./tenant-auth";
 import { getAppConfig, tenantConfig } from "./tenant-config";
+import { watchGraph } from "./token-health";
+import { withTimeout } from "./with-timeout";
 import { getControlPlaneStub as getControlPlane } from "./control-plane-stub";
 import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
@@ -184,18 +187,6 @@ function configPresence(env: Bindings): Record<string, boolean> {
   return out;
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("durable object probe timed out")), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 app.get("/ready", async (c) => {
   const cid = correlationId(c);
   const config = configPresence(c.env);
@@ -204,7 +195,7 @@ app.get("/ready", async (c) => {
   let doOk = false;
   let doError: string | null = null;
   try {
-    await withTimeout(Promise.resolve(getControlPlane(c.env).getHealth()), 2000);
+    await withTimeout(Promise.resolve(getControlPlane(c.env).getHealth()), 2000, "durable object probe timed out");
     doOk = true;
   } catch (err) {
     doError = err instanceof Error ? err.message : "unknown error";
@@ -755,6 +746,9 @@ function isSendRecipient(to: string): boolean {
   return /^\+?[0-9][0-9 ().-]*$/.test(to) && digits >= 5 && digits <= 15;
 }
 
+const watched = (c: AppContext, wabaId: string) =>
+  watchGraph(c.env, (work) => c.executionCtx.waitUntil(work), wabaId);
+
 async function sendMessageRoute(c: AppContext) {
   const cid = correlationId(c);
   const account = c.get("account") ?? null;
@@ -781,6 +775,7 @@ async function sendMessageRoute(c: AppContext) {
     wabaId: target.waba.wabaId,
     phoneNumberId: target.phoneNumberId,
     metaAccessToken: target.metaAccessToken,
+    fetch: watched(c, target.waba.wabaId),
   });
   const { recipient } = target;
   const ids = { wabaId: target.waba.wabaId, phoneNumberId: target.phoneNumberId };
@@ -903,6 +898,7 @@ async function templatesRoute(c: AppContext) {
     wabaId: waba.wabaId,
     phoneNumberId: waba.phones[0]?.phoneNumberId ?? "",
     metaAccessToken: waba.metaAccessToken,
+    fetch: watched(c, waba.wabaId),
   });
   const result = await listTemplates(cfg, limit, { fields: TEMPLATE_FIELDS });
   if (!result.ok) {
@@ -935,15 +931,14 @@ async function templateRefusal(
     wabaId: waba.wabaId,
     phoneNumberId,
     metaAccessToken: waba.metaAccessToken,
+    fetch: watched(c, waba.wabaId),
   });
-  const templates = await listTemplates(cfg, 100, { fields: ["name", "language", "status"], name });
-  if (!templates.ok) {
+  const found = await findTemplate(cfg, name, language, ["name", "language", "status"]);
+  if (!found.ok) {
     logEvent(event, cid, 502, { wabaId: waba.wabaId, reason: "template_lookup_failed" });
-    return c.json({ ok: false, error: templates.error }, 502);
+    return c.json({ ok: false, error: found.error }, 502);
   }
-  const translation = ((templates.data as { data?: { name?: unknown; language?: unknown; status?: unknown }[] })?.data ?? []).find(
-    (row) => row.name === name && row.language === language,
-  );
+  const translation = found.template;
   if (!translation) return c.json({ ok: false, error: "template_not_found" }, 422);
   if (translation.status !== "APPROVED") {
     return c.json({ ok: false, error: "template_not_approved", templateStatus: translation.status }, 422);
@@ -1170,6 +1165,38 @@ app.get("/v1/wabas/:wabaId/export", async (c) => {
     deliveries: exported.deliveries.length,
   });
   return c.json({ ok: true, data: exported });
+});
+
+const MEDIA_ID_PATTERN = /^\d{1,32}$/;
+
+app.get("/v1/wabas/:wabaId/media/:mediaId", async (c) => {
+  const cid = correlationId(c);
+  const account = c.get("account") ?? null;
+  const wabaId = requestedWabaId(c);
+  const mediaId = c.req.param("mediaId");
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  if (!MEDIA_ID_PATTERN.test(mediaId)) return c.json({ ok: false, error: "media not found" }, 404);
+  const state = await getGatewayStubForWaba(c.env, wabaId).mediaState(mediaId);
+  const stored = state === "stored" ? await getMedia(c.env.MEDIA, wabaId, mediaId) : null;
+  if (!stored) {
+    if (state === "pending") {
+      logEvent("media_get", cid, 409, { wabaId, reason: "pending" });
+      c.header("retry-after", "30");
+      return c.json({ ok: false, error: "media_not_ready" }, 409);
+    }
+    logEvent("media_get", cid, 404, { wabaId });
+    return c.json({ ok: false, error: "media not found" }, 404);
+  }
+  logEvent("media_get", cid, 200, { wabaId, size: stored.size });
+  return new Response(stored.body, {
+    headers: {
+      "content-type": stored.contentType ?? "application/octet-stream",
+      "content-length": String(stored.size),
+      ...(stored.sha256 ? { "x-media-sha256": stored.sha256 } : {}),
+      "cache-control": "no-store",
+    },
+  });
 });
 
 const worker = {

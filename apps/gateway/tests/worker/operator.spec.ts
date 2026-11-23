@@ -151,6 +151,7 @@ describe("GatewayRPC", () => {
       displayPhone: "+34600000000",
     });
     expect(status.counts.inbound).toBe(1);
+    expect(await makeRpc().getContentRetentionDays()).toBe(30);
   });
 
   it("listDeliveries + retryDelivery work over RPC", async () => {

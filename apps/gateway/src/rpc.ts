@@ -11,14 +11,15 @@ import {
 import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
-import { createTemplate, deleteTemplate, editTemplate, listTemplates } from "@eccos/core/templates";
+import { type TokenHealth, watchGraph } from "./token-health";
+import { createTemplate, deleteTemplate, editTemplate, findTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
-import { isIdempotencyKey, sendBodyHash } from "./gateway";
+import { isIdempotencyKey, resolveRetentionDays, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
 import type {
   AccountKeyResource,
@@ -31,7 +32,13 @@ import type {
   AccountResources,
   BilledAccount,
   ConnectExchangeResult,
+  ConnectLinkClaim,
+  ConnectLinkGrant,
+  ConnectLinkSettled,
+  ConnectLinkSettlement,
+  ConnectLinkSummary,
   ConnectStartResult,
+  IssuedConnectLink,
   ConversationListOpts,
   ConversationOpts,
   ConversationSummary,
@@ -344,6 +351,10 @@ function assertTemplateContent(input: Pick<CreateTemplateInput, "bodyText" | "bo
  * credentials come from the registry, never from global env secrets.
  */
 export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
+  private watchedFetch(wabaId: string): typeof fetch {
+    return watchGraph(this.env, (work) => this.ctx.waitUntil(work), wabaId);
+  }
+
   private stubFor(wabaId: string) {
     return getGatewayStubForWaba(this.env, wabaId);
   }
@@ -385,6 +396,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: this.watchedFetch(waba.wabaId),
     });
     return {
       stub: this.stubFor(wabaId),
@@ -716,7 +728,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * that can reach another WABA's template must still not edit it from here.
    */
   async editTemplate(input: EditTemplateInput, accountId: string): Promise<EditTemplateResult> {
-    const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
+    const { config: cfg, stub } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
     if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
     if (!LANGUAGE_PATTERN.test(input.language)) throw new Error("invalid template language");
     if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
@@ -725,17 +737,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     }
     const { examples, footerText, buttons } = assertTemplateContent(input);
 
-    const found = await listTemplates(cfg, 100, { fields: ["id", "name", "language"], name: input.name });
+    const found = await findTemplate(cfg, input.name, input.language, ["id", "name", "language"]);
     if (!found.ok) {
       const { message } = graphError(found.error);
       return { ok: false, code: "graph", detail: message ?? `HTTP ${found.status}` };
     }
-    const rows =
-      (found.data as { data?: { id?: unknown; name?: unknown; language?: unknown }[] } | null)?.data ?? [];
-    const owned = rows.some(
-      (row) => row.id === input.templateId && row.name === input.name && row.language === input.language,
-    );
-    if (!owned) {
+    if (found.template?.id !== input.templateId) {
       return { ok: false, code: "not_found", detail: null };
     }
 
@@ -752,6 +759,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         code === 80008 ? "rate_limited" : code === 100 ? "invalid" : "graph";
       return { ok: false, code: mapped, detail: message ?? `HTTP ${result.status}` };
     }
+    // Best effort: the change is made at Meta, and a missed drop only lasts the cache lifetime.
+    await stub.forgetTemplate(input.name).catch(() => {});
     return { ok: true };
   }
 
@@ -760,7 +769,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * `wabaId` is re-read from the scoped record so the Graph call can never be
    * addressed at a WABA the account does not own. */
   async deleteTemplate(input: DeleteTemplateInput, accountId: string): Promise<DeleteTemplateResult> {
-    const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
+    const { config: cfg, stub } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
     // Defense in depth again: only a regressed console can produce these.
     if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
     if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
@@ -770,6 +779,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       const { message } = graphError(result.error);
       return { ok: false, code: "graph", detail: message ?? `HTTP ${result.status}` };
     }
+    // Best effort: the change is made at Meta, and a missed drop only lasts the cache lifetime.
+    await stub.forgetTemplate(input.name).catch(() => {});
     return { ok: true };
   }
 
@@ -1054,6 +1065,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: this.watchedFetch(waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
@@ -1165,6 +1177,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       wabaId: waba.wabaId,
       phoneNumberId: input.phoneNumberId,
       metaAccessToken: waba.metaAccessToken,
+      fetch: this.watchedFetch(waba.wabaId),
     });
     const stub = this.stubFor(waba.wabaId);
     const keyed = { key: input.idempotencyKey, bodyHash: await sendBodyHash(input.phoneNumberId, metaBody) };
@@ -1249,6 +1262,10 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return this.env.GATEWAY_PUBLIC_URL?.trim() || null;
   }
 
+  async getContentRetentionDays(): Promise<number> {
+    return resolveRetentionDays(this.env).contentDays;
+  }
+
   /** Account-key management for the console (eccos-bm92): the same control-plane
    * methods the admin HTTP routes use, scoped to the dashboard-resolved account. */
   async listApiKeys(accountId: string): Promise<AccountKeyResource[]> {
@@ -1286,6 +1303,11 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async setAccountBilling(accountId: string, billing: AccountBillingInput): Promise<AccountBilling> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).setAccountBilling(account, billing);
+  }
+
+  async setAccountName(accountId: string, name: string): Promise<void> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).setAccountName(account, name);
   }
 
   async listBilledAccounts(): Promise<BilledAccount[]> {
@@ -1371,6 +1393,66 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     );
   }
 
+  async getConnectLink(accountId: string): Promise<ConnectLinkSummary | null> {
+    return getControlPlaneStub(this.env).getConnectLink(requireAccountId(accountId, "accountId is required"));
+  }
+
+  async issueConnectLink(accountId: string, creatorUserId: string, replace?: boolean): Promise<IssuedConnectLink | "exists"> {
+    return getControlPlaneStub(this.env).issueConnectLink(
+      requireAccountId(accountId, "accountId is required"),
+      creatorUserId,
+      replace,
+    );
+  }
+
+  async resolveConnectLink(token: string): Promise<ConnectLinkGrant | null> {
+    return getControlPlaneStub(this.env).resolveConnectLink(token);
+  }
+
+  async markConnectLinkOpened(linkId: string): Promise<void> {
+    await getControlPlaneStub(this.env).markConnectLinkOpened(linkId);
+  }
+
+  async claimConnectLink(token: string): Promise<ConnectLinkClaim | "busy" | null> {
+    return getControlPlaneStub(this.env).claimConnectLink(token);
+  }
+
+  async settleConnectLink(claimId: string, outcome: ConnectLinkSettlement): Promise<ConnectLinkSettled | null> {
+    return getControlPlaneStub(this.env).settleConnectLink(claimId, outcome);
+  }
+
+  /**
+   * A throw from the exchange comes from before Meta is called (configuration,
+   * the state lookup), so it is an ordinary failure and the link stays usable.
+   * Only a failure once the registration write has started (`partial`) spends
+   * the link without a clean result.
+   */
+  async exchangeConnectCodeForClaim(
+    claimId: string,
+    code: string,
+    state: string,
+  ): Promise<(ConnectLinkSettled & { result: ConnectExchangeResult | null }) | null> {
+    const controlPlane = getControlPlaneStub(this.env);
+    const accountId = await controlPlane.connectLinkAccount(claimId);
+    if (!accountId) return null;
+    let result: ConnectExchangeResult;
+    try {
+      result = await this.exchangeConnectCodeForAccountId(accountId, code, state);
+    } catch (err) {
+      result = { ok: false, error: errorDetail(err), code: "failed" };
+    }
+    const unknown = !result.ok && result.partial === true;
+    const settled = await controlPlane.settleConnectLink(
+      claimId,
+      unknown
+        ? { kind: "unknown" }
+        : result.ok
+          ? { kind: "connected", phone: result.display_phone_number || null }
+          : { kind: "failed", code: result.code },
+    );
+    return settled && { ...settled, result: unknown ? null : result };
+  }
+
   /**
    * Connect a WABA from a token the operator pasted into the console
    * (eccos-up9).
@@ -1439,6 +1521,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
 
     const appConfig = getAppConfig(this.env);
     let discovered: Awaited<ReturnType<typeof wabaMatchesForTargetIds>>;
+    let health: TokenHealth | null = null;
     try {
       // Always first, selector or not: the two token verdicts gate every read,
       // and no id an operator types can make a foreign or dead token usable.
@@ -1449,6 +1532,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
         // no detail travels — Meta's text here would only compete with it.
         return { ok: false, code: inspection.kind, detail: null };
       }
+      health = inspection.health;
       if (selector) {
         // Seed, not filter — see the method comment. `target_ids` is not
         // consulted at all here; Meta's answer to the read is the check.
@@ -1502,6 +1586,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       onboardingType: "standard",
       ...(selector ? { wabaSelector: selector } : {}),
       discovered,
+      health,
     });
     if (result.ok) {
       const { ok: _ok, ...rest } = result;

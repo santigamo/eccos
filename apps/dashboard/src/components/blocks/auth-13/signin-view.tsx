@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { authClient } from "@/auth/auth-client";
+import { signUpHref } from "@/auth/redirect-target";
 import { AuthSplitShell } from "./components/auth";
 import { LoginForm, type FormSubmitEvent } from "./components/login-form";
 import { TwoFactorForm } from "./components/two-factor-form";
@@ -105,6 +106,7 @@ export function SignInView({
         password={password}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
+        signUpHref={signUpHref(redirectTo === "/" ? undefined : redirectTo)}
       />
     </AuthSplitShell>
   );

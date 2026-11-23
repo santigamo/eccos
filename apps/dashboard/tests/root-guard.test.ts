@@ -23,10 +23,23 @@ const accountReadyNoWaba = {
 const ready = { ok: true, data: { stage: "ready" } } as unknown as State;
 
 describe("rootRedirect (per stage)", () => {
+  test("the connection-link page is never redirected into the console", () => {
+    expect(rootRedirect("/connect", noOrg)).toBeUndefined();
+    expect(rootRedirect("/connect", accountReadyNoWaba)).toBeUndefined();
+  });
+
+
   test("no-organization is sent to /onboarding from anywhere else, and stays there", () => {
     expect(rootRedirect("/events", noOrg)).toBe("/onboarding");
     expect(rootRedirect("/", noOrg)).toBe("/onboarding");
     expect(rootRedirect("/onboarding", noOrg)).toBeUndefined();
+  });
+
+  test("an invitee reaches /invitations before any workspace or number exists (eccos-ayd9)", () => {
+    expect(rootRedirect("/invitations", noOrg)).toBeUndefined();
+    expect(rootRedirect("/invitations", accountReadyNoWaba)).toBeUndefined();
+    expect(rootRedirect("/invitations", accountReady)).toBeUndefined();
+    expect(rootRedirect("/invitations", ready)).toBeUndefined();
   });
 
   test("account-ready leaves /onboarding and is bounced from pages that need a number", () => {

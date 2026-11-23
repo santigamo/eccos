@@ -2,12 +2,13 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
   exchangeCodeForToken,
-  findWabaPhoneNumbersForToken,
+  discoverWabasForToken,
   type PhoneNumber,
 } from "../meta/connect-api";
 import { authenticateRequest } from "../tenant-auth";
 import { getAppConfig } from "../tenant-config";
 import { getControlPlaneStub } from "../control-plane-stub";
+import type { TokenHealth } from "../token-health";
 import { kickWabaProvisioning } from "../provisioning";
 import { isSubscriptionRequired } from "../connect-policy";
 import { constantTimeEqual } from "@eccos/core/signature";
@@ -108,7 +109,7 @@ export type MultiExchangeResult =
       warnings?: string[];
       subscriptionRequired?: true;
     }
-  | { ok: false; error: string; code: ConnectFailureCode };
+  | { ok: false; error: string; code: ConnectFailureCode; partial?: true };
 
 function escapeHtml(value: string): string {
   return value
@@ -456,13 +457,22 @@ export async function registerWabasForToken(
     wabaSelector?: string;
     /** Discovery result, when the caller already has one. */
     discovered?: Array<{ wabaId: string; phones: PhoneNumber[] }>;
+    /** What the caller's `debug_token` call said about the token, stored with each registration. */
+    health?: TokenHealth | null;
   },
 ): Promise<MultiExchangeResult> {
   const { accountId, businessToken, callbackOrigin, onboardingType, wabaSelector } = input;
+  // Set once registrations may exist: a failure after that is not a clean one.
+  let wrote = false;
   try {
     const appConfig = getAppConfig(env);
-    const discovered =
-      input.discovered ?? (await findWabaPhoneNumbersForToken(appConfig, businessToken));
+    let health = input.health ?? null;
+    let discovered = input.discovered;
+    if (!discovered) {
+      const found = await discoverWabasForToken(appConfig, businessToken);
+      discovered = found.matches;
+      health = found.health;
+    }
     if (discovered.length === 0) {
       return { ok: false, error: "could not infer WABA from token", code: "no_waba" };
     }
@@ -500,6 +510,7 @@ export async function registerWabasForToken(
       return { ok: false, error: "no available WABA could be registered", code: "owned" };
     }
 
+    wrote = true;
     const registrations = await controlPlane.beginWabaProvisioningBatch(
       availableMatches.map((match) => ({
         accountId,
@@ -511,11 +522,12 @@ export async function registerWabasForToken(
           displayPhoneNumber: p.display_phone_number ?? "",
         })),
         onboardingType,
+        ...(health ? { tokenHealth: health } : {}),
       })),
     );
 
     // An account that may not add numbers registers only what it already had.
-    const registered = registrations.map((registration) => {
+    const connected = registrations.map((registration) => {
       const refused = new Set(registration.refusedPhones?.map((phone) => phone.phoneNumberId));
       const match = availableMatches.find((candidate) => candidate.wabaId === registration.waba.wabaId);
       return { wabaId: registration.waba.wabaId, phones: (match?.phones ?? []).filter((phone) => !refused.has(phone.id)) };
@@ -523,7 +535,7 @@ export async function registerWabasForToken(
     const subscriptionRequired =
       registrations.length < availableMatches.length ||
       registrations.some((registration) => registration.refusedPhones !== undefined);
-    const primary = registered[0];
+    const primary = connected[0];
     if (!primary) return { ok: false, error: "WABA registration failed", code: "failed" };
 
     // The pending rows are durable now, so run provisioning here instead of
@@ -548,7 +560,7 @@ export async function registerWabasForToken(
       phone_number_id: primary.phones[0]?.id ?? "",
       display_phone_number: primary.phones[0]?.display_phone_number ?? "",
       status,
-      connected: registered.flatMap((m) =>
+      connected: connected.flatMap((m) =>
         m.phones.map((p) => ({
           waba_id: m.wabaId,
           phone_number_id: p.id,
@@ -560,7 +572,9 @@ export async function registerWabasForToken(
     };
   } catch (e) {
     const message = errorMessage(e);
-    return { ok: false, error: message, code: isSubscriptionRequired(e) ? "subscription_required" : "failed" };
+    // The policy refusal is thrown inside the registration transaction, so it wrote nothing.
+    if (isSubscriptionRequired(e)) return { ok: false, error: message, code: "subscription_required" };
+    return { ok: false, error: message, code: "failed", ...(wrote ? { partial: true as const } : {}) };
   }
 }
 

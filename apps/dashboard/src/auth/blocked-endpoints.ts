@@ -37,6 +37,11 @@
  * better-call/dist/router.mjs), so a blocked endpoint is indistinguishable from
  * one that was never registered — a 403 would itself confirm the endpoint
  * exists and is being withheld.
+ *
+ * The four membership writes are refused for a different reason: their rules
+ * live in the console's server functions (`src/members.ts`), which call them in
+ * process. Served over HTTP, any admin session could invite or grant `owner`
+ * or Better Auth's default `member` role, and the act would leave no audit line.
  */
 
 /** Exact paths (Better Auth is mounted at `/api/auth`) that never dispatch. */
@@ -44,12 +49,16 @@ export const BLOCKED_AUTH_ENDPOINTS: ReadonlySet<string> = new Set([
   "/api/auth/organization/create",
   "/api/auth/organization/check-slug",
   "/api/auth/organization/update",
+  "/api/auth/organization/invite-member",
+  "/api/auth/organization/cancel-invitation",
+  "/api/auth/organization/remove-member",
+  "/api/auth/organization/update-member-role",
 ]);
 
 /**
  * Whether this request path is one of the refused endpoints.
  *
- * All three are POST-only in Better Auth, so any other method already 404s;
+ * All of them are POST-only in Better Auth, so any other method already 404s;
  * matching on the path alone therefore changes nothing today and stays correct
  * if a future version adds a verb. The trailing-slash and case normalisation is
  * belt-and-braces for the same reason — better-call's router rejects both

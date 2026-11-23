@@ -82,6 +82,17 @@ describe("MessageDetail", () => {
     expect(html).toContain(">queued<");
   });
 
+  test("a failed trail event says what the code means, and a closed window points to Templates", () => {
+    const failed: OutboundRow = {
+      ...message,
+      trail: [{ type: "failed", at: 1_700_000_001_000, errorCode: "131047", deliveryStatus: null, deliveryAttempts: null }],
+    };
+    const html = renderToStaticMarkup(<MessageDetail row={failed} hasForwardingTarget={true} />);
+    expect(html).toContain("131047");
+    expect(html).toContain("Outside the 24-hour window.");
+    expect(html).toContain(">Open Templates<");
+  });
+
   test("a refused send explains why it has no trail, instead of showing a gap", () => {
     // Two different silences: no wamid means no callback can ever be about it,
     // which is not the same as "nothing back yet".
@@ -227,7 +238,7 @@ describe("EventDetail", () => {
       <EventDetail row={statusEvent} hasForwardingTarget={true} />,
     );
     expect(html).toContain("<details");
-    expect(html).toContain("Event JSON, exactly what your receiver got");
+    expect(html).toContain("Event JSON, exactly what your server got");
     expect(html).toContain("&quot;transportMessageId&quot;: &quot;wamid.");
     expect(html).toContain("2 other events");
   });
@@ -373,16 +384,32 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
       <HeldNotice pending={4} hasForwardingTarget={false} wabaId="WABA1" />,
     );
     expect(html).toContain("border-l-warning");
-    expect(html).toContain("Forwarding is held");
-    expect(html).toContain("4 events are waiting");
-    expect(html).toContain("nothing has failed");
+    expect(html).toContain("4 events are waiting for a forwarding target");
     expect(html).toContain('href="/webhooks"');
+  });
+
+  test("it states the deadline, with the gateway's days when it has them", () => {
+    expect(
+      renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} retentionDays={30} />),
+    ).toContain("Save one and they are sent right away. Each is deleted 30 days after it arrived.");
+    expect(
+      renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={false} />),
+    ).toContain("Each is deleted when its retention window ends.");
+  });
+
+  test("on /webhooks it is the count alone: the panel below is the action and states the deadline", () => {
+    const html = renderToStaticMarkup(
+      <HeldNotice pending={9} hasForwardingTarget={false} retentionDays={30} countOnly />,
+    );
+    expect(html).toContain("9 events are waiting for a forwarding target.");
+    expect(html).not.toContain("deleted");
+    expect(html).not.toContain("<a ");
   });
 
   test("one waiting event is one sentence, not `1 events`", () => {
     expect(
       renderToStaticMarkup(<HeldNotice pending={1} hasForwardingTarget={false} />),
-    ).toContain("One event is waiting");
+    ).toContain("1 event is waiting for a forwarding target. Save one and it is sent right away. It is deleted");
   });
 
   test("the live region stays mounted and says nothing when nothing is held", () => {
@@ -391,12 +418,14 @@ describe("HeldNotice (the third register in which the console says `held`)", () 
     // no margin (data rule 1).
     const withTarget = renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={true} />);
     expect(withTarget).toContain("<output");
-    expect(withTarget).not.toContain("Forwarding is held");
+    expect(withTarget).not.toContain("waiting");
+    // A failed target read is unknown, never "no target".
+    expect(renderToStaticMarkup(<HeldNotice pending={9} hasForwardingTarget={null} />)).not.toContain("waiting");
     expect(withTarget).not.toContain("border-l-warning");
     // Nothing waiting is not held either: a standing scold on a page that is
     // behaving is exactly what data rule 1 forbids.
     expect(
       renderToStaticMarkup(<HeldNotice pending={0} hasForwardingTarget={false} />),
-    ).not.toContain("Forwarding is held");
+    ).not.toContain("waiting");
   });
 });

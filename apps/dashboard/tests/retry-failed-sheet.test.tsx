@@ -332,7 +332,7 @@ describe("RetryFailedFields", () => {
     const html = render();
     expect(html).toContain("Sends every failed delivery enqueued in this window again.");
     expect(html).toContain("x-idempotency-key");
-    expect(html).toContain("so your receiver can drop repeats.");
+    expect(html).toContain("so your server can drop repeats.");
     expect(html).toContain("Older events arrive late.");
   });
 

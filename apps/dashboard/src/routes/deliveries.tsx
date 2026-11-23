@@ -23,12 +23,7 @@ import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
 import { listDeliveries, retryDelivery } from "../server/gateway";
 import type { DeliveryRecord } from "../server/gateway";
-import {
-  FORWARD_MAX_ATTEMPTS,
-  batchEventSummary,
-  deliveryMoment,
-  forwardReading,
-} from "../lib/forwarding";
+import { FORWARD_MAX_ATTEMPTS, batchEventSummary, deliveryMoment, forwardReading, targetMissing } from "../lib/forwarding";
 import { EMPTY_CELL } from "../lib/logs";
 import { normalizeSearchBefore, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { Page, StatusTag, fmtTs } from "../ui";
@@ -248,7 +243,8 @@ function DeliveriesPage() {
   const selectedWabaId = wabaId ?? ready?.scope.selectedWabaId;
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
-  const hasForwardingTarget = root.ok ? root.hasForwardingTarget : false;
+  const target = root.ok ? root.hasForwardingTarget : null;
+  const hasForwardingTarget = !targetMissing(target);
   const pending = ready?.status.counts.deliveries.pending ?? 0;
 
   const activeStatus = status ?? "all";
@@ -405,7 +401,7 @@ function DeliveriesPage() {
   ) : (
     <GridEmptyState
       label="NO BATCHES YET"
-      description="Forward attempts to your subscriber will appear here."
+      description="Batches forwarded to your server will appear here."
     />
   );
 
@@ -425,8 +421,9 @@ function DeliveriesPage() {
           disagree about when forwarding is held. */}
       <HeldNotice
         pending={pending}
-        hasForwardingTarget={hasForwardingTarget}
+        hasForwardingTarget={target}
         wabaId={selectedWabaId}
+        retentionDays={root.ok ? root.deployment.contentRetentionDays : null}
       />
       {retryError ? <p className="mb-4 border-l-2 border-destructive px-3 py-2 text-sm text-destructive-foreground" role="alert">{retryError}</p> : null}
       <LogGrid

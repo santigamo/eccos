@@ -469,11 +469,9 @@ describe("idempotency.md table", () => {
 
 describe("sending-messages.md", () => {
   const [success, template] = jsonFences(sendingMd);
-  const curlBody = JSON.parse(
-    fences(sendingMd)
-      .find((f) => f.lang === "bash")!
-      .code.match(/-d '(.*)'/)![1]!,
-  );
+  const [firstSend, textSend] = fences(sendingMd)
+    .filter((f) => f.lang === "bash")
+    .map((f) => JSON.parse(f.code.match(/-d '(.*)'/)![1]!));
 
   it("answers the documented success shape with Meta's message id", async () => {
     const id = (success!.messages as Array<{ id: string }>)[0]!.id;
@@ -484,7 +482,8 @@ describe("sending-messages.md", () => {
   });
 
   it.each([
-    ["text (curl)", curlBody],
+    ["first template (curl)", firstSend],
+    ["text (curl)", textSend],
     ["template", template],
   ])(
     "forwards the documented %s body to Meta unchanged but for messaging_product",

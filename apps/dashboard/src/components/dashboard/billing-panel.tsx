@@ -1,17 +1,15 @@
-import { isRedirect } from "@tanstack/react-router";
-import { useState } from "react";
-import { openPortal, startCheckout, type BillingState, type Result } from "../../server/gateway";
-import { failureCopy } from "../../lib/failure";
-import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
+import { openPortal, startCheckout, type BillingState } from "../../server/gateway";
+import { BillingError, useBillingRedirect } from "./billing-redirect";
 import { Button } from "@/components/ui/button";
-import { MACHINE_CLASS } from "../../ui";
+import { Row, Rows, SectionFrame, SettingsSection } from "./settings-section";
 
-const ROW_CLASS = "flex items-center justify-between gap-4 px-(--frame-panel-px) py-2.5";
-const NOTE_CLASS = "mt-4 mb-0 block border-l-2 px-3 py-2 text-sm text-foreground";
+const NOTE_CLASS = "m-0 block border-l-2 px-3 py-2 text-sm text-foreground";
 
 export function billingStatusLabel(billing: BillingState): string {
   if (billing.connectPolicy === "closed") return "No active subscription";
-  return billing.hasCustomer ? "Active" : "No subscription needed";
+  if (billing.hasCustomer) return "Active";
+  // Opened by the operator with no Creem customer: someone else pays, e.g. a reseller.
+  return billing.explicitPolicy ? "Billed separately" : "No subscription needed";
 }
 
 /** What Creem said about the subscription a checkout just returned with; null when it did not say. */
@@ -29,77 +27,54 @@ export function checkoutReturnNote(billing: BillingState, { status }: CheckoutRe
 
 /** Billing for the workspace. Rendered only while billing is on. */
 export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: CheckoutReturn | null }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, leaveTo } = useBillingRedirect();
   const closed = billing.connectPolicy === "closed";
-
-  async function leaveTo(target: () => Promise<Result<{ url: string }>>) {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await target();
-      if (res.ok) {
-        window.location.assign(res.data.url);
-        return;
-      }
-      setError(res.kind === "unreachable" ? "Billing could not be opened. Try again." : failureCopy(res).detail);
-    } catch (thrown) {
-      if (isRedirect(thrown)) throw thrown;
-      setError("Billing could not be opened. Try again.");
-    }
-    setBusy(false);
-  }
+  // With no subscription of its own, a price would read as a charge.
+  const priced = closed || billing.hasCustomer;
 
   return (
-    <Frame variant="default" spacing="lg">
-      <FramePanel fit>
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-sm font-semibold">Billing</FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            Eccos Cloud is billed per connected number. Messages are never billed.
-            {closed ? " Messaging keeps working without a subscription; adding a number needs one." : ""}
-          </FrameDescription>
-        </FrameHeader>
+    <SettingsSection
+      id="billing"
+      title="Billing"
+      description={`Eccos Cloud is billed per connected number, never per message.${closed ? " Messaging keeps working without a subscription; adding a number needs one." : ""}`}
+    >
+      <SectionFrame flush>
         {returned ? (
-          <output className={`${NOTE_CLASS} ${closed ? "border-l-warning" : "border-l-(--mark)"}`}>
-            {checkoutReturnNote(billing, returned)}
-          </output>
+          <div className="px-5 pt-4">
+            <output className={`${NOTE_CLASS} ${closed ? "border-l-warning" : "border-l-(--mark)"}`}>
+              {checkoutReturnNote(billing, returned)}
+            </output>
+          </div>
         ) : null}
-        <dl className="my-0 -mx-(--frame-panel-px) mt-5 divide-y divide-(--line) border-y border-(--line)">
-          <div className={ROW_CLASS}>
-            <dt className={MACHINE_CLASS}>Status</dt>
-            <dd className="m-0 text-sm text-foreground">{billingStatusLabel(billing)}</dd>
-          </div>
-          <div className={ROW_CLASS}>
-            <dt className={MACHINE_CLASS}>Connected numbers</dt>
-            <dd className="m-0 text-sm text-foreground tabular-nums">{billing.numbers}</dd>
-          </div>
-          <div className={ROW_CLASS}>
-            <dt className={MACHINE_CLASS}>Monthly price</dt>
-            <dd className="m-0 text-sm text-foreground tabular-nums">{billing.monthlyEuros} EUR</dd>
-          </div>
-        </dl>
-        <div className="mt-5 flex flex-wrap gap-2">
-          {closed ? (
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
-              Start subscription
-            </Button>
+        <Rows>
+          <Row label="Status">{billingStatusLabel(billing)}</Row>
+          <Row label="Connected numbers">
+            <span className="tabular-nums">{billing.numbers}</span>
+          </Row>
+          {priced ? (
+            <Row label="Monthly price">
+              <span className="tabular-nums">{billing.monthlyEuros} EUR + VAT</span>
+            </Row>
           ) : null}
-          {billing.hasCustomer ? (
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => openPortal())}>
-              Manage billing
-            </Button>
-          ) : null}
-        </div>
-        {error ? (
-          <output
-            aria-live="polite"
-            className="bg-destructive/10 text-destructive-foreground mt-3 block border border-destructive/20 p-3 text-xs"
-          >
-            {error}
-          </output>
+        </Rows>
+        {closed || billing.hasCustomer ? (
+          <div className="border-t border-(--line) px-5 py-4">
+            <div className="flex flex-wrap gap-2">
+              {closed ? (
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
+                  Start subscription
+                </Button>
+              ) : null}
+              {billing.hasCustomer ? (
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void leaveTo(() => openPortal())}>
+                  Manage billing
+                </Button>
+              ) : null}
+            </div>
+            <BillingError error={error} />
+          </div>
         ) : null}
-      </FramePanel>
-    </Frame>
+      </SectionFrame>
+    </SettingsSection>
   );
 }

@@ -43,7 +43,7 @@ describe("healthReading", () => {
   test("healthy raises no banner: the tag beside the heading already says it", () => {
     const reading = healthReading(status(), true);
     expect(reading.label).toBe("Healthy");
-    expect(reading.banner).toBeNull();
+    expect(reading.banners).toEqual([]);
   });
 
   test("degraded with a target keeps the generic capacity sentence", () => {
@@ -51,8 +51,8 @@ describe("healthReading", () => {
       status({ health: "degraded", counts: { inbound: 0, outbound: {}, deliveries: { pending: 12 } } }),
       true,
     );
-    expect(reading.banner?.detail).toBe("The gateway is running with reduced capacity.");
-    expect(reading.banner?.action).toBeUndefined();
+    expect(reading.banners[0]?.detail).toBe("The gateway is running with reduced capacity.");
+    expect(reading.banners[0]?.action).toBeUndefined();
   });
 
   test("degraded with held rows and no target names the real state and the way out", () => {
@@ -63,9 +63,31 @@ describe("healthReading", () => {
       status({ health: "degraded", counts: { inbound: 0, outbound: {}, deliveries: { pending: 12 } } }),
       false,
     );
-    expect(reading.banner?.detail).toContain("12 events are waiting for a forwarding target");
-    expect(reading.banner?.detail).not.toContain("reduced capacity");
-    expect(reading.banner?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
+    expect(reading.banners[0]?.detail).toContain("12 events are waiting for a forwarding target");
+    expect(reading.banners[0]?.detail).not.toContain("reduced capacity");
+    expect(reading.banners[0]?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
+  });
+
+  test("held events raise the banner under a Healthy tag, with the deadline", () => {
+    // Nine held events is below the gateway's `degraded` threshold. A first
+    // customer sat under a green tag with exactly that many.
+    const nine = status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 9 } } });
+    const reading = healthReading(nine, false, 30);
+    expect(reading.label).toBe("Healthy");
+    // The deadline runs per event from its arrival, and saving a target is
+    // what sends them: without that half an operator reads "lost".
+    expect(reading.banners[0]?.detail).toBe(
+      "9 events are waiting for a forwarding target. Save one and they are sent right away. Each is deleted 30 days after it arrived.",
+    );
+    expect(reading.banners[0]?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
+    expect(healthReading(nine, true, 30).banners).toEqual([]);
+  });
+
+  test("a target read that failed is unknown, and unknown raises nothing", () => {
+    // `null` is a failed read. The banner fires at one pending row, so reading
+    // it as "no target" would tell an account WITH a target to go set one.
+    const queued = status({ counts: { inbound: 0, outbound: {}, deliveries: { pending: 3 } } });
+    expect(healthReading(queued, null, 30).banners).toEqual([]);
   });
 
   test("one held event reads as one event, not '1 events'", () => {
@@ -73,21 +95,58 @@ describe("healthReading", () => {
       status({ health: "degraded", counts: { inbound: 0, outbound: {}, deliveries: { pending: 1 } } }),
       false,
     );
-    expect(reading.banner?.detail).toContain("1 event is waiting");
+    expect(reading.banners[0]?.detail).toContain("1 event is waiting");
   });
 
-  test("failed outbound sends keep the generic sentence, even with a held backlog", () => {
-    // Two unrelated reasons for `degraded`; one sentence naming only the queue
-    // would hide the other. The facts strip's red `failed` count carries it.
+  test("failed outbound sends keep their own line and their own door", () => {
+    // With a target there is nothing held: the only fact is the sends Meta
+    // refused, and its door is the failed messages, not the Webhooks page.
+    const reading = healthReading(
+      status({ health: "degraded", counts: { inbound: 0, outbound: { failed: 3 }, deliveries: {} } }),
+      true,
+      30,
+    );
+    expect(reading.banners).toEqual([
+      {
+        detail: "3 messages failed to send.",
+        rail: "border-l-warning",
+        action: { to: "/messages", label: "Open the failed messages", search: { status: "failed" } },
+      },
+    ]);
+  });
+
+  test("failed outbound sends and a held backlog are two lines, each with its action", () => {
     const reading = healthReading(
       status({
         health: "degraded",
-        counts: { inbound: 0, outbound: { failed: 3 }, deliveries: { pending: 12 } },
+        counts: { inbound: 0, outbound: { failed: 1 }, deliveries: { pending: 12 } },
       }),
       false,
+      30,
     );
-    expect(reading.banner?.detail).toBe("The gateway is running with reduced capacity.");
-    expect(reading.banner?.action).toBeUndefined();
+    expect(reading.banners.map((banner) => banner.action?.to)).toEqual(["/messages", "/webhooks"]);
+    expect(reading.banners[0]?.detail).toBe("1 message failed to send.");
+    expect(reading.banners[1]?.detail).toContain("12 events are waiting for a forwarding target");
+    expect(reading.banners[1]?.detail).not.toContain("failed");
+  });
+
+  test("an unhealthy gateway still says what is held, with the deadline", () => {
+    // Failed forwards do not make held events any less deletable. A target
+    // removed after failures leaves both facts standing, each with its door.
+    const reading = healthReading(
+      status({
+        health: "unhealthy",
+        counts: { inbound: 0, outbound: {}, deliveries: { failed: 2, pending: 20 } },
+      }),
+      false,
+      30,
+    );
+    expect(reading.banners.map((banner) => banner.rail)).toEqual(["border-l-destructive", "border-l-warning"]);
+    expect(reading.banners[0]?.action).toEqual({ to: "/deliveries", label: "Open the forwarding queue" });
+    expect(reading.banners[1]?.detail).toBe(
+      "20 events are waiting for a forwarding target. Save one and they are sent right away. Each is deleted 30 days after it arrived.",
+    );
+    expect(reading.banners[1]?.action).toEqual({ to: "/webhooks", label: "Set a forwarding target" });
   });
 
   test("unhealthy is never softened into a waiting message", () => {
@@ -101,9 +160,9 @@ describe("healthReading", () => {
       false,
     );
     expect(reading.label).toBe("Unhealthy");
-    expect(reading.banner?.detail).toBe(
-      "2 forwarded batches failed after every retry. Check your receiver, then retry them from the forwarding queue.",
+    expect(reading.banners[0]?.detail).toBe(
+      "2 forwarded batches failed after every retry. Check your server, then retry them from the forwarding queue.",
     );
-    expect(reading.banner?.action).toEqual({ to: "/deliveries", label: "Open the forwarding queue" });
+    expect(reading.banners[0]?.action).toEqual({ to: "/deliveries", label: "Open the forwarding queue" });
   });
 });

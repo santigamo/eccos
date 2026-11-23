@@ -1,4 +1,5 @@
 import { graphBaseUrl, type CoreConfig } from "@eccos/core/config-schema";
+import { GRAPH_CODE_OAUTH } from "@eccos/core/send";
 
 type MetaAppConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_APP_SECRET" | "META_APP_ID">;
 type MetaGraphConfig = Pick<CoreConfig, "META_GRAPH_VERSION">;
@@ -7,6 +8,22 @@ type MetaSubscriptionConfig = Pick<CoreConfig, "META_GRAPH_VERSION" | "META_WEBH
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+/** Unix ms; 0 means Meta says it never expires, null that it did not say. */
+export interface TokenHealth {
+  valid: boolean;
+  expiresAt: number | null;
+  dataAccessExpiresAt: number | null;
+}
+
+const ms = (seconds: unknown) =>
+  typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+
+/** The token's health from the `data` of a debug_token answer, or null when it carries no verdict. */
+function healthFromDebugData(data: Record<string, unknown> | null): TokenHealth | null {
+  if (typeof data?.is_valid !== "boolean") return null;
+  return { valid: data.is_valid, expiresAt: ms(data.expires_at), dataAccessExpiresAt: ms(data.data_access_expires_at) };
 }
 
 export class MetaGraphError extends Error {
@@ -39,7 +56,9 @@ export class MetaGraphError extends Error {
 function graphError(prefix: string, res: Response, json: unknown): MetaGraphError {
   const error = asRecord(asRecord(json)?.error);
   const message = typeof error?.message === "string" ? error.message : null;
-  return new MetaGraphError(prefix, res.status, message);
+  const code = typeof error?.code === "number" ? error.code : null;
+  const subcode = typeof error?.error_subcode === "number" ? error.error_subcode : null;
+  return new MetaGraphError(prefix, res.status, message, code, subcode);
 }
 
 /** code -> Business Integration System User access token (60 days). */
@@ -200,7 +219,7 @@ export function extractTokenTargetIds(payload: unknown): string[] {
  * a failure detail built from it, and this refactor must not reword it.
  */
 export type TokenInspection =
-  | { kind: "ok"; targetIds: string[] }
+  | { kind: "ok"; targetIds: string[]; health: TokenHealth | null }
   /**
    * The token was issued by a DIFFERENT Meta app than this deployment's.
    *
@@ -244,7 +263,7 @@ export async function inspectToken(cfg: MetaAppConfig, token: string): Promise<T
     const error = graphError("debug_token", res, json);
     const code = asRecord(asRecord(json)?.error)?.code;
     if (code === 100) return { kind: "foreign_app", error };
-    if (code === 190) return { kind: "invalid_token", error };
+    if (code === GRAPH_CODE_OAUTH) return { kind: "invalid_token", error };
     throw error;
   }
   const data = asRecord(asRecord(json)?.data);
@@ -255,7 +274,7 @@ export async function inspectToken(cfg: MetaAppConfig, token: string): Promise<T
     return { kind: "foreign_app", error: null };
   }
   if (data?.is_valid === false) return { kind: "invalid_token", error: null };
-  return { kind: "ok", targetIds: extractTokenTargetIds(json) };
+  return { kind: "ok", targetIds: extractTokenTargetIds(json), health: healthFromDebugData(data) };
 }
 
 /**
@@ -263,9 +282,9 @@ export async function inspectToken(cfg: MetaAppConfig, token: string): Promise<T
  * throw. It keeps that path's behaviour byte for byte — every non-`ok` verdict
  * was a thrown `MetaGraphError` before this seam existed, and still is.
  */
-async function listTokenTargetIds(cfg: MetaAppConfig, token: string): Promise<string[]> {
+async function inspectOrThrow(cfg: MetaAppConfig, token: string) {
   const inspection = await inspectToken(cfg, token);
-  if (inspection.kind === "ok") return inspection.targetIds;
+  if (inspection.kind === "ok") return inspection;
   throw inspection.error ?? new Error(`debug_token rejected the token: ${inspection.kind}`);
 }
 
@@ -281,7 +300,13 @@ export async function findWabaPhoneNumbersForToken(
   cfg: MetaAppConfig,
   token: string,
 ): Promise<Array<{ wabaId: string; phones: PhoneNumber[] }>> {
-  return wabaMatchesForTargetIds(cfg, await listTokenTargetIds(cfg, token), token);
+  return (await discoverWabasForToken(cfg, token)).matches;
+}
+
+/** {@link findWabaPhoneNumbersForToken} plus what the same `debug_token` call said about the token's expiry. */
+export async function discoverWabasForToken(cfg: MetaAppConfig, token: string) {
+  const inspection = await inspectOrThrow(cfg, token);
+  return { matches: await wabaMatchesForTargetIds(cfg, inspection.targetIds, token), health: inspection.health };
 }
 
 /**

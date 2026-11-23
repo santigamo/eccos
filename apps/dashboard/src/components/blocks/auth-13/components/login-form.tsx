@@ -37,7 +37,9 @@ export function LoginForm({
   onPasswordChange,
   fieldErrors = {},
   onFieldClear,
+  signUpHref = "/signup",
 }: {
+  signUpHref?: string;
   onSubmit: (event: FormSubmitEvent) => void;
   error: string | null;
   pending: boolean;
@@ -154,7 +156,7 @@ export function LoginForm({
         <Separator className="flex-1" />
       </div>
 
-      <a href="/signup" className="block">
+      <a href={signUpHref} className="block">
         <Button type="button" variant="outline" className="w-full">
           Create your account
         </Button>

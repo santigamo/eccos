@@ -14,6 +14,7 @@ import type { DashboardState } from "../server/gateway";
  *   exactly what an operator prepares BEFORE any traffic arrives. Both work on
  *   a WABA that is connected but still awaiting its phone number.
  * - `"none"` — /numbers is the way out of every locked state,
+ *   /invitations joins a different workspace and reads nothing of this one,
  *   /numbers/attach-token is the OTHER way out (it attaches Meta's Cloud API
  *   test number from a pasted token, eccos-up9, and that number's whole point
  *   is that the account has none yet), /workspaces/new is about the workspace
@@ -28,8 +29,7 @@ export type ScopeRequirement = "none" | "waba" | "number";
 
 /**
  * The map is exhaustive on purpose for the routes it names, and defaults the
- * rest to `"number"` — the old behaviour for anything unlisted (e.g.
- * /invitations), which bounced to /numbers.
+ * rest to `"number"`, which bounces to /numbers.
  *
  * It is deliberately NOT a mirror of `NAV_MAIN`: a route may be reachable
  * without being advertised. `/numbers/attach-token` is exactly that — it is in
@@ -44,11 +44,14 @@ export type ScopeRequirement = "none" | "waba" | "number";
  */
 export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/numbers": "none",
+  "/invitations": "none",
   "/numbers/attach-token": "none",
   "/workspaces/new": "none",
   "/webhooks": "waba",
   "/templates": "waba",
   "/settings": "none",
+  "/members": "none",
+  "/api-keys": "none",
   "/": "number",
   "/deliveries": "number",
   "/events": "number",
@@ -57,6 +60,9 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/scheduled": "number",
   "/conversations": "number",
 };
+
+/** The pages an account with no workspace yet may stay on: create one, or join one. */
+export const PRE_WORKSPACE_ROUTES: ReadonlySet<string> = new Set(["/onboarding", "/invitations"]);
 
 const DEFAULT_REQUIREMENT: ScopeRequirement = "number";
 

@@ -2,12 +2,14 @@ import type { ReactNode } from "react"
 import {
   ActivityIcon,
   InboxIcon,
+  KeyRoundIcon,
   CalendarClockIcon,
   MegaphoneIcon,
   MessagesSquareIcon,
   SendIcon,
   FileTextIcon,
   SettingsIcon,
+  UsersIcon,
   WebhookIcon,
   PhoneIcon,
 } from "lucide-react"
@@ -39,6 +41,8 @@ export type NavItem = {
    * redirects from; `tests/scope-requirements.test.ts` fails if they drift.
    */
   requires?: "waba" | "number"
+  /** Listed only for a role with `administer` (the root's `canAdminister`); the server refuses the rest anyway. */
+  adminOnly?: boolean
 }
 
 /**
@@ -100,11 +104,11 @@ export const NAV_MAIN: NavGroup[] = [
         requires: "waba",
       },
       {
-        id: "templates",
-        label: "Templates",
-        href: "/templates",
-        icon: <FileTextIcon aria-hidden="true" />,
-        requires: "waba",
+        id: "api-keys",
+        label: "API keys",
+        href: "/api-keys",
+        icon: <KeyRoundIcon aria-hidden="true" />,
+        adminOnly: true,
       },
     ],
   },
@@ -127,6 +131,15 @@ export const NAV_MAIN: NavGroup[] = [
     id: "sending",
     label: "Sending",
     items: [
+      // Under Sending, not Setup: a template is something you send with, and
+      // beside Numbers and Webhooks it read as a required step.
+      {
+        id: "templates",
+        label: "Templates",
+        href: "/templates",
+        icon: <FileTextIcon aria-hidden="true" />,
+        requires: "waba",
+      },
       {
         id: "broadcasts",
         label: "Broadcasts",
@@ -174,6 +187,13 @@ export const NAV_MAIN: NavGroup[] = [
     id: "workspace",
     label: "Workspace",
     items: [
+      {
+        id: "members",
+        label: "Members",
+        href: "/members",
+        icon: <UsersIcon aria-hidden="true" />,
+        adminOnly: true,
+      },
       {
         id: "settings",
         label: "Settings",

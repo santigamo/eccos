@@ -16,15 +16,28 @@ beforeEach(resetIdlePrefetch);
 
 describe("idleRoutes", () => {
   test("a ready workspace gets every destination except Meta-backed templates", () => {
-    const routes = idleRoutes({ hasNumber: true, hasWaba: true });
+    const routes = idleRoutes({ hasNumber: true, hasWaba: true, canAdminister: true });
     expect(routes).toContain("/conversations");
     expect(routes).toContain("/webhooks");
     expect(routes).not.toContain("/templates");
   });
 
   test("gated routes are skipped until their scope exists", () => {
-    expect(idleRoutes({ hasNumber: false, hasWaba: true })).toEqual(["/numbers", "/webhooks", "/settings"]);
-    expect(idleRoutes({ hasNumber: false, hasWaba: false })).toEqual(["/numbers", "/settings"]);
+    expect(idleRoutes({ hasNumber: false, hasWaba: true, canAdminister: false })).toEqual([
+      "/numbers",
+      "/webhooks",
+      "/settings",
+    ]);
+    expect(idleRoutes({ hasNumber: false, hasWaba: false, canAdminister: false })).toEqual(["/numbers", "/settings"]);
+  });
+
+  test("API keys and Members are read ahead only for a role that may administer them", () => {
+    expect(idleRoutes({ hasNumber: false, hasWaba: false, canAdminister: true })).toEqual([
+      "/numbers",
+      "/api-keys",
+      "/members",
+      "/settings",
+    ]);
   });
 });
 
