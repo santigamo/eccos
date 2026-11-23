@@ -75,31 +75,35 @@ export function singleFlight(invalidate: Invalidate, onBusy: (busy: boolean) => 
  * (search params) stay as they are and the rows keep their ids. The live
  * choice is remembered per page in localStorage, read after mount so the
  * server render and hydration agree on "off".
+ *
+ * `auto` polls too while the operator has made no choice on this page; a
+ * stored "off" wins over it.
  */
-export function useLiveRefresh(page: string): LiveRefresh {
+export function useLiveRefresh(page: string, auto = false): LiveRefresh {
   const router = useRouter()
-  const [live, setLiveState] = useState(false)
+  const [choice, setChoice] = useState<boolean | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const refresh = useMemo(() => singleFlight(() => invalidatePage(router), setRefreshing), [router])
 
   useEffect(() => {
-    setLiveState(readLive(page))
+    setChoice(readLiveChoice(page))
   }, [page])
 
   const setLive = useCallback(
     (next: boolean) => {
-      setLiveState(next)
+      setChoice(next)
       writeLive(page, next)
     },
     [page],
   )
 
+  const polling = choice ?? auto
   useEffect(() => {
-    if (!live) return
+    if (!polling) return
     return pollWhileVisible(refresh, LIVE_INTERVAL_MS, document)
-  }, [live, refresh])
+  }, [polling, refresh])
 
-  return { live, setLive, refreshing, refresh }
+  return { live: choice === true, setLive, refreshing, refresh }
 }
 
 /**
@@ -114,12 +118,18 @@ export function useAlwaysLive(): void {
 
 const liveKey = (page: string) => `eccos.live.${page}`
 
-export function readLive(page: string): boolean {
+/** The stored choice, or null when the operator never toggled this page. */
+export function readLiveChoice(page: string): boolean | null {
   try {
-    return localStorage.getItem(liveKey(page)) === "1"
+    const stored = localStorage.getItem(liveKey(page))
+    return stored === null ? null : stored === "1"
   } catch {
-    return false
+    return null
   }
+}
+
+export function readLive(page: string): boolean {
+  return readLiveChoice(page) === true
 }
 
 export function writeLive(page: string, live: boolean): void {

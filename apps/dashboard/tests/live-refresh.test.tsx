@@ -48,8 +48,16 @@ mock.module("@tanstack/react-router", () => ({
   }),
 }));
 
-const { pollWhileVisible, singleFlight, readLive, writeLive, useAlwaysLive, LIVE_INTERVAL_MS } =
-  await import("../src/hooks/use-live-refresh");
+const {
+  pollWhileVisible,
+  singleFlight,
+  readLive,
+  readLiveChoice,
+  writeLive,
+  useAlwaysLive,
+  useLiveRefresh,
+  LIVE_INTERVAL_MS,
+} = await import("../src/hooks/use-live-refresh");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 const { isNavigating } = await import("../src/components/dashboard/route-progress");
@@ -152,6 +160,50 @@ describe("useAlwaysLive", () => {
   });
 });
 
+describe("useLiveRefresh auto", () => {
+  // What is still polling once the stored choice has been read after mount.
+  async function pollsFor(stored: string | null, auto: boolean) {
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
+    const active = new Map<number, number>();
+    let nextId = 1;
+    globalThis.setInterval = ((_tick: () => void, ms: number) => {
+      active.set(nextId, ms);
+      return nextId++;
+    }) as unknown as typeof setInterval;
+    globalThis.clearInterval = ((id: number) => void active.delete(id)) as typeof clearInterval;
+    if (stored === null) localStorage.removeItem("eccos.live.auto-probe");
+    else localStorage.setItem("eccos.live.auto-probe", stored);
+    const root = createRoot(document.createElement("div"));
+    let live: boolean | undefined;
+    try {
+      const Probe = () => {
+        live = useLiveRefresh("auto-probe", auto).live;
+        return null;
+      };
+      await act(async () => root.render(<Probe />));
+      return { intervals: [...active.values()], live };
+    } finally {
+      await act(async () => root.unmount());
+      globalThis.setInterval = realSetInterval;
+      globalThis.clearInterval = realClearInterval;
+      localStorage.removeItem("eccos.live.auto-probe");
+    }
+  }
+
+  test("polls with no stored choice, without claiming Live is on", async () => {
+    expect(await pollsFor(null, true)).toEqual({ intervals: [LIVE_INTERVAL_MS], live: false });
+  });
+
+  test("a stored off wins over auto", async () => {
+    expect((await pollsFor("0", true)).intervals).toEqual([]);
+  });
+
+  test("nothing to wait for polls nothing", async () => {
+    expect((await pollsFor(null, false)).intervals).toEqual([]);
+  });
+});
+
 describe("singleFlight", () => {
   test("a call while a reload is in flight joins it instead of stacking", async () => {
     let calls = 0;
@@ -211,12 +263,13 @@ describe("live choice", () => {
         setItem: (key, value) => void store.set(key, value),
       },
       () => {
-        expect(readLive("events")).toBe(false);
+        expect(readLiveChoice("events")).toBeNull();
         writeLive("events", true);
         expect(readLive("events")).toBe(true);
         expect(readLive("messages")).toBe(false);
         writeLive("events", false);
         expect(readLive("events")).toBe(false);
+        expect(readLiveChoice("events")).toBe(false);
       },
     );
     expect(store.get("eccos.live.events")).toBe("0");

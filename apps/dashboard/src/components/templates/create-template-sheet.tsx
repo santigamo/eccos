@@ -183,6 +183,10 @@ export function editApprovedWarning(status: string | undefined): string | null {
     : null;
 }
 
+/** Said above the submit of an APPROVED template's edit, where the operator decides. */
+export const APPROVED_EDIT_NOTICE =
+  "This template is approved. Submitting sends it back to Meta's review, and messages using it fail until Meta approves it again, which can take up to 24 hours. An approved template can be edited once every 24 hours and up to 10 times in 30 days. If it is in active use, duplicate it as a new template instead.";
+
 function initialDraft(mode: TemplateSheetMode): TemplateDraft {
   return mode.kind === "create" ? EMPTY_DRAFT : mode.initial;
 }
@@ -530,6 +534,12 @@ export function CreateTemplateFields({
         ) : null}
       </div>
 
+      {categoryLocked && !(notice?.ok && "edited" in notice) ? (
+        <p className="m-0 max-w-prose border-l-2 border-l-warning px-3 py-2 text-sm text-pretty text-foreground">
+          {APPROVED_EDIT_NOTICE}
+        </p>
+      ) : null}
+
       <Button
         type="submit"
         className="w-fit self-start"
@@ -540,8 +550,7 @@ export function CreateTemplateFields({
       </Button>
       {editing ? (
         <p className="m-0 max-w-prose text-xs text-pretty text-muted-foreground">
-          Meta reviews every edit, and the template can't be sent until it is approved. An approved
-          template can be edited once every 24 hours and up to 10 times in 30 days.
+          Meta reviews every edit, and the template can't be sent until it is approved.
         </p>
       ) : null}
 

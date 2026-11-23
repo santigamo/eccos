@@ -82,6 +82,17 @@ describe("MessageDetail", () => {
     expect(html).toContain(">queued<");
   });
 
+  test("a failed trail event says what the code means, and a closed window points to Templates", () => {
+    const failed: OutboundRow = {
+      ...message,
+      trail: [{ type: "failed", at: 1_700_000_001_000, errorCode: "131047", deliveryStatus: null, deliveryAttempts: null }],
+    };
+    const html = renderToStaticMarkup(<MessageDetail row={failed} hasForwardingTarget={true} />);
+    expect(html).toContain("131047");
+    expect(html).toContain("Outside the 24-hour window.");
+    expect(html).toContain(">Open Templates<");
+  });
+
   test("a refused send explains why it has no trail, instead of showing a gap", () => {
     // Two different silences: no wamid means no callback can ever be about it,
     // which is not the same as "nothing back yet".

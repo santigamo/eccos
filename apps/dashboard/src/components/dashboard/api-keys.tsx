@@ -320,7 +320,7 @@ export function SendSnippet({
   const snippet = `curl -X POST ${gatewayOrigin ?? "<GATEWAY_URL>"}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
   -H "Authorization: Bearer ${apiKey ?? "<API_KEY>"}" \\
   -H "Content-Type: application/json" \\
-  -d '{"to": "<PHONE>", "type": "text", "text": {"body": "Hello"}}'`;
+  -d '{"to": "<PHONE>", "type": "template", "template": {"name": "hello_world", "language": {"code": "en_US"}}}'`;
   return (
     <div>
       <pre className="m-0 overflow-x-auto border border-(--line) p-3 font-mono text-xs text-foreground">

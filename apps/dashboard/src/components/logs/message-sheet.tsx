@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { GridEmptyState } from "../grid/empty-state";
 import { FactRow, MessagePanel, RawDisclosure, SheetSection } from "./sheet-parts";
 import type { OutboundRow, OutboundTrailEvent } from "../../server/gateway";
+import { metaErrorCopy, WINDOW_CLOSED_CODE } from "../../lib/failure";
 import { forwardReading } from "../../lib/forwarding";
 import {
   EMPTY_CELL,
@@ -13,7 +14,7 @@ import {
   prettyJson,
   requestReading,
 } from "../../lib/logs";
-import { COUNT_LINK, StatusTag, fmtTsShort } from "../../ui";
+import { COUNT_LINK, INLINE_LINK, StatusTag, fmtTsShort } from "../../ui";
 
 /**
  * ONE MESSAGE, HOP BY HOP — the console's forensic answer to "what happened to
@@ -108,6 +109,7 @@ export function MessageDetail({ row, hasForwardingTarget, wabaId }: MessageDetai
                 key={event.type}
                 event={event}
                 hasForwardingTarget={hasForwardingTarget}
+                wabaId={wabaId}
               />
             ))}
           </ul>
@@ -206,10 +208,13 @@ function SentContent({ request, wabaId }: { request: string; wabaId?: string }) 
 function TrailRow({
   event,
   hasForwardingTarget,
+  wabaId,
 }: {
   event: OutboundTrailEvent;
   hasForwardingTarget: boolean;
+  wabaId?: string;
 }) {
+  const failure = event.type === "failed" ? metaErrorCopy(event.errorCode) : null;
   const forward = forwardReading({
     status: event.deliveryStatus,
     attempts: event.deliveryAttempts,
@@ -231,6 +236,20 @@ function TrailRow({
           <span className="font-mono text-destructive-foreground text-xs">{event.errorCode}</span>
         ) : null}
       </span>
+      {failure ? (
+        <span className="order-last w-full text-sm">
+          <span className="text-foreground">{failure.title}.</span>{" "}
+          <span className="text-muted-foreground">{failure.detail}</span>
+          {event.errorCode === WINDOW_CLOSED_CODE ? (
+            <>
+              {" "}
+              <Link to="/templates" search={wabaId ? { wabaId } : {}} className={INLINE_LINK}>
+                Open Templates
+              </Link>
+            </>
+          ) : null}
+        </span>
+      ) : null}
       <span className="flex items-center gap-3">
         <span className="font-mono text-muted-foreground text-xs" title={String(event.at)}>
           {fmtTsShort(event.at)}

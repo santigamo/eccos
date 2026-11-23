@@ -343,3 +343,89 @@ export function tokenConnectFailureCopy(
       };
   }
 }
+
+/** Meta's error code for a free-text send outside the 24-hour window: the one failure a template resolves. */
+export const WINDOW_CLOSED_CODE = "131047";
+
+/**
+ * What a Meta error code means, for a send Meta refused or a message it later
+ * reported as `failed`. Checked against Meta's Cloud API error-code reference;
+ * a code missing here reads as Meta's own sentence, or as the bare code.
+ */
+const META_ERROR_COPY: Record<string, FailureCopy> = {
+  [WINDOW_CLOSED_CODE]: {
+    title: "Outside the 24-hour window",
+    detail:
+      "The customer has not written in the last 24 hours, so WhatsApp only accepts an approved template. Send a template to restart the conversation.",
+  },
+  "131026": {
+    title: "Recipient cannot receive messages",
+    detail:
+      "The number is not on WhatsApp, runs an outdated app, or has not accepted WhatsApp's latest terms. Ask the customer to update WhatsApp and message this number first.",
+  },
+  "131049": {
+    title: "Held back by Meta",
+    detail:
+      "Meta did not deliver this message to keep the customer's engagement healthy, usually because they received many marketing messages. This is not an Eccos error; try again later rather than resending now.",
+  },
+  "131050": {
+    title: "Customer stopped marketing messages",
+    detail: "The customer chose to stop receiving marketing messages from this business. Do not retry.",
+  },
+  "131051": {
+    title: "Unsupported message type",
+    detail: "WhatsApp does not support this kind of message. Send it as a supported type instead.",
+  },
+  "131053": {
+    title: "Media upload failed",
+    detail: "Meta could not upload the media in this message. Check that the file type and size are supported, then send again.",
+  },
+  "131056": {
+    title: "Too many messages to this customer",
+    detail:
+      "This number sent too many messages to the same customer in a short time. Wait before sending to them again; other customers are not affected.",
+  },
+  "130429": {
+    title: "Throughput limit reached",
+    detail: "This number hit Meta's message throughput limit. Wait a moment and send again, or send more slowly.",
+  },
+  "131042": {
+    title: "Payment issue",
+    detail:
+      "Meta found a problem with this WhatsApp Business account's payment method. Check billing in WhatsApp Manager.",
+  },
+  "131031": {
+    title: "Account locked",
+    detail:
+      "Meta locked this WhatsApp Business account, usually for a policy violation. Check its status in WhatsApp Manager.",
+  },
+  "368": {
+    title: "Blocked for a policy violation",
+    detail:
+      "Meta restricted this WhatsApp Business account for violating a platform policy. Review the violation in WhatsApp Manager.",
+  },
+  "132000": {
+    title: "Parameters do not match",
+    detail: "The send did not fill the template's variables as approved. Check the template and send every value it expects.",
+  },
+  "132001": {
+    title: "Template not available",
+    detail:
+      "The template does not exist in this language or is not approved yet. Check its name, language and status in Templates.",
+  },
+  "132015": {
+    title: "Template paused",
+    detail: "Meta paused this template for low quality. Edit it, and send again once Meta approves it.",
+  },
+  "132016": {
+    title: "Template disabled",
+    detail: "Meta disabled this template for good after repeated low-quality pauses. Create a new template with different content.",
+  },
+};
+
+/** The console's reading of a Meta error. `message` is Meta's own sentence, the fallback for a code it has no copy for. */
+export function metaErrorCopy(code: string | null, message: string | null = null): FailureCopy {
+  const known = code ? META_ERROR_COPY[code] : undefined;
+  if (known) return known;
+  return { title: "Meta error", detail: message ?? "Meta did not say why." };
+}

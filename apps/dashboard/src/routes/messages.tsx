@@ -11,10 +11,11 @@ import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchTrail, pageOfRows, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
+import { awaitingMeta } from "../lib/awaiting-meta";
 import { MessageSheet } from "../components/logs/message-sheet";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
-import { loaderFailure } from "../lib/failure";
+import { loaderFailure, metaErrorCopy } from "../lib/failure";
 import { listOutbound } from "../server/gateway";
 import type { OutboundRow, OutboundTrailEvent } from "../server/gateway";
 import { normalizeSearchRowId, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
@@ -168,6 +169,10 @@ const trailColumn = columnHelper.accessor("trail", {
   meta: { cellClassName: "whitespace-nowrap" },
 });
 
+function failedEvent(row: OutboundRow): OutboundTrailEvent | undefined {
+  return row.trail?.find((event) => event.type === "failed");
+}
+
 const phoneColumn = columnHelper.accessor("phone_number_id", {
   id: "phone_number_id",
   header: "Phone",
@@ -204,21 +209,34 @@ function messageColumns(onOpen?: (row: OutboundRow) => void, showPhone = true) {
     columnHelper.accessor("status", {
       id: "status",
       header: "Meta",
-      cell: (info) => <StatusTag status={info.getValue()} />,
+      // Meta accepted the send and the trail later reported `failed`: `sent` is
+      // still true of this hop, so the tag stays and the next hop is named beside it.
+      cell: (info) => (
+        <span className="flex items-center gap-1.5">
+          <StatusTag status={info.getValue()} />
+          {info.getValue() === "sent" && failedEvent(info.row.original) ? (
+            <span className="text-destructive-foreground text-xs">not delivered</span>
+          ) : null}
+        </span>
+      ),
       meta: { cellClassName: "whitespace-nowrap" },
     }),
     trailColumn,
     columnHelper.accessor("error", {
       id: "error",
       header: "Error",
+      // A refused send stores Meta's envelope; one that failed after Meta accepted it has only the trail's code.
       cell: (info) => {
         const raw = info.getValue();
-        if (!raw) return EMPTY_CELL;
-        const { code, text, label } = errorReading(raw);
+        const failed = failedEvent(info.row.original);
+        if (!raw && !failed) return EMPTY_CELL;
+        const reading = raw ? errorReading(raw) : null;
+        const code = reading ? reading.code : (failed?.errorCode ?? null);
+        const copy = metaErrorCopy(code, reading?.text ?? null);
         return (
-          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={label}>
+          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={reading?.label ?? copy.detail}>
             {code ? <span className="font-mono text-xs">{code} · </span> : null}
-            {text}
+            {copy.title}. <span className="text-muted-foreground">{copy.detail}</span>
           </span>
         );
       },
@@ -233,12 +251,12 @@ function MessagesPage() {
   const { status, before, trail, message, wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
-  const liveRefresh = useLiveRefresh("messages");
-  const refreshControls = <RefreshControls {...liveRefresh} />;
   const { rows, nextCursor } = useMemo(
     () => pageOfRows(result.ok ? result.data : [], PAGE_SIZE),
     [result],
   );
+  const liveRefresh = useLiveRefresh("messages", awaitingMeta(rows, Date.now()));
+  const refreshControls = <RefreshControls {...liveRefresh} />;
 
   if (!result.ok) {
     return (

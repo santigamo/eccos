@@ -3,7 +3,8 @@ import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
 import { canActOn, CONVERSATION_THREAD_ID, dividerBefore, senderLabelOf, type ThreadEntry } from "../../lib/conversations";
-import { fmtTs, fmtTsShort } from "../../ui";
+import { metaErrorCopy, WINDOW_CLOSED_CODE } from "../../lib/failure";
+import { INLINE_LINK, fmtTs, fmtTsShort } from "../../ui";
 import { GridEmptyState } from "../grid/empty-state";
 import { MessageActions } from "./message-actions";
 import { MessageBody } from "./message-body";
@@ -224,9 +225,10 @@ function MessageBubble({
             {outgoing && message.status ? (
               <span className={message.status === "failed" ? "text-destructive-foreground" : undefined}>
                 {message.status}
-                {message.status === "failed" && message.error ? `: ${message.error}` : ""}
+                {message.status === "failed" && failedCode(message.error) ? `: ${message.error}` : ""}
               </span>
             ) : null}
+            {outgoing && message.status === "failed" ? <FailureNote error={message.error} wabaId={wabaId} /> : null}
             {edited ? <span>Edited</span> : null}
             {message.origin === "history" ? <span>Imported history</span> : null}
           </footer>
@@ -249,6 +251,29 @@ function MessageBubble({
         </ul>
       ) : null}
     </li>
+  );
+}
+
+/** The gateway stores a failed send's Meta code, or Meta's sentence when there was no code. */
+function failedCode(error: string | null): string | null {
+  return error && /^\d+$/.test(error) ? error : null;
+}
+
+function FailureNote({ error, wabaId }: { error: string | null; wabaId?: string }) {
+  const code = failedCode(error);
+  const copy = metaErrorCopy(code, code ? null : error);
+  return (
+    <span className="w-full">
+      <span className="text-foreground">{copy.title}.</span> {copy.detail}
+      {code === WINDOW_CLOSED_CODE ? (
+        <>
+          {" "}
+          <Link to="/templates" search={wabaId ? { wabaId } : {}} className={INLINE_LINK}>
+            Open Templates
+          </Link>
+        </>
+      ) : null}
+    </span>
   );
 }
 
