@@ -10,6 +10,7 @@ import {
   previewBody,
   templateRowsOf,
   validateTemplateEdit,
+  validateTemplateSend,
 } from "@eccos/core/template-rules";
 
 /**
@@ -442,5 +443,25 @@ describe("validateTemplateEdit", () => {
   test("the template id is digits only", () => {
     expect(() => validateTemplateEdit({ ...EDIT, templateId: "../555" })).toThrow("invalid template id");
     expect(() => validateTemplateEdit({ ...EDIT, templateId: undefined })).toThrow("invalid template id");
+  });
+});
+
+describe("validateTemplateSend", () => {
+  const send = { templateName: "track_link", languageCode: "en_US" };
+
+  test("takes one value per dynamic URL button", () => {
+    expect(validateTemplateSend({ ...send, buttonParams: [{ index: 0, text: " A-1 " }, { index: 1, text: "B" }] })).toEqual({
+      ...send,
+      buttonParams: [
+        { index: 0, text: "A-1" },
+        { index: 1, text: "B" },
+      ],
+    });
+  });
+
+  test("refuses two values for the same button", () => {
+    expect(() => validateTemplateSend({ ...send, buttonParams: [{ index: 0, text: "a" }, { index: 0, text: "b" }] })).toThrow(
+      "each button parameter index can be given only once",
+    );
   });
 });

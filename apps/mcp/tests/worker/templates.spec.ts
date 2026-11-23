@@ -220,7 +220,7 @@ describe("template_create", () => {
     expect(auditLines()).toEqual([
       expect.objectContaining({
         action: "template_create",
-        resource: { wabaId: null, template: "order_ready", language: "en_US", category: "UTILITY" },
+        resource: { wabaId: "waba-a", template: "order_ready", language: "en_US", category: "UTILITY" },
         outcome: "success",
         detail: null,
       }),
@@ -260,7 +260,7 @@ describe("template_create", () => {
     expect(await writes("createTemplate")).toEqual([]);
   });
 
-  it("refuses a malformed name or an authentication category in the schema", async () => {
+  it("refuses a malformed name or an authentication category with the console's words", async () => {
     await seedA();
     const client = await as();
     const badName = await call(client, "template_create", { ...CREATE, name: "Order Ready" });
@@ -268,8 +268,11 @@ describe("template_create", () => {
     await client.close();
 
     expect(badName.isError).toBe(true);
-    expect(badName.text).toContain("name");
+    expect(badName.text).toBe(
+      "Refused before reaching Meta: template name must be lowercase letters, numbers and underscores. Fix it and call template_create again.",
+    );
     expect(auth.isError).toBe(true);
+    expect(auth.text).toBe("Refused before reaching Meta: template category must be MARKETING or UTILITY. Fix it and call template_create again.");
     expect(await writes("createTemplate")).toEqual([]);
   });
 
@@ -314,7 +317,7 @@ describe("template_edit", () => {
     });
     expect((await writes("editTemplate")).map((entry) => entry.input)).toEqual([{ wabaId: "waba-a", ...EDIT }]);
     expect(auditLines()).toEqual([
-      expect.objectContaining({ action: "template_edit", resource: { wabaId: null, template: "order_update", language: "en_US", templateId: "900100" } }),
+      expect.objectContaining({ action: "template_edit", resource: { wabaId: "waba-a", template: "order_update", language: "en_US", templateId: "900100" } }),
     ]);
   });
 
@@ -352,7 +355,7 @@ describe("template_delete", () => {
 
     expect(result.structuredContent).toEqual({ wabaId: "waba-a", templateId: "900300", name: "spring_promo", deleted: true });
     expect((await writes("deleteTemplate")).map((entry) => entry.input)).toEqual([{ wabaId: "waba-a", templateId: "900300", name: "spring_promo" }]);
-    expect(auditLines()).toEqual([expect.objectContaining({ action: "template_delete", resource: { wabaId: null, template: "spring_promo", templateId: "900300" } })]);
+    expect(auditLines()).toEqual([expect.objectContaining({ action: "template_delete", resource: { wabaId: "waba-a", template: "spring_promo", templateId: "900300" } })]);
   });
 
   it("says what to check when Meta refuses", async () => {
@@ -389,7 +392,9 @@ describe("template_send_test", () => {
       { wabaId: "waba-a", phoneNumberId: "111", to: "34600000011", templateName: "order_update", languageCode: "en_US", bodyParams: ["Ana", "A-1"], idempotencyKey: KEY },
     ]);
     const [audit] = auditLines();
-    expect(audit).toMatchObject({ action: "template_send_test", resource: { wabaId: null, phoneNumberId: null, template: "order_update", language: "en_US" }, outcome: "success" });
+    expect(audit).toMatchObject({ action: "template_send_test", outcome: "success" });
+    // The WABA and phone it resolved, not null for the ones the agent left out, as the console's audit records them.
+    expect(audit?.resource).toEqual({ wabaId: "waba-a", phoneNumberId: "111", template: "order_update", language: "en_US", messageId: "wamid.STUB1" });
     expect(JSON.stringify(lines)).not.toMatch(/34600000011|600-000|Ana/);
   });
 
@@ -429,7 +434,7 @@ describe("template_send_test", () => {
     [{ templateName: "spring_promo", languageCode: "es", bodyParams: [] }, 'Template "spring_promo" (es) cannot be sent from here: Its status is REJECTED; only an APPROVED template can be sent. Nothing was sent.'],
     [{ templateName: "login_code" }, expect.stringContaining("Authentication templates carry a one-time code")],
     [{ templateName: "missing" }, 'WABA "waba-a" has no template "missing" in en_US. Nothing was sent. Call templates_list to see its templates and languages.'],
-    [{ to: "12" }, expect.stringContaining("to must be a phone number in international format")],
+    [{ to: "12" }, expect.stringContaining("recipient must be 5 to 15 digits in international format, or a BSUID")],
     [{ bodyParams: ["Ana", "two\nlines"] }, "Refused before reaching Meta: template parameters cannot contain line breaks. Fix it and call template_send_test again."],
     [{ phoneNumberId: "999" }, "Phone number id 999 is not registered in this workspace. Call numbers_list to see every phone with its WABA."],
   ])("refuses before sending anything: %j", async (change, message) => {
