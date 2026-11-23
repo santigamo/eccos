@@ -21,7 +21,9 @@ Read [features/README.md](features/README.md) before driving. It indexes one rec
 | dashboard | http://localhost:3000 | `vite dev` in `apps/dashboard`, bound to the gateway over the `GATEWAY` RPC service binding. Reach it as `localhost`; it does not listen on `127.0.0.1` |
 | fake | http://127.0.0.1:8790 | `harness/fake-meta.ts`: Meta Graph API, a subscriber endpoint and the mail provider |
 
-The gateway entry changes one thing: outbound requests to `graph.facebook.com` and to `subscriber.eccos-verify.example` go to the fake. The dashboard sends mail to the fake through its own `RECCADO_ENDPOINT` setting. No other code path differs from production code. All secrets are fixed fake values printed by `$V env`.
+The gateway entry changes one thing: outbound requests to `graph.facebook.com` and to `subscriber.eccos-verify.example` go to the fake. The dashboard sends mail to the fake through its own `RECCADO_ENDPOINT` setting. The console runs from `harness/dashboard.vite.config.ts`, the same plugins as `apps/dashboard/vite.config.ts` pointed at a copy of its `wrangler.jsonc` under `.verify/run/dashboard`. No other code path differs from production code.
+
+The stack never reads your local environment. Both processes start with an empty environment apart from `PATH`, `HOME` and `TMPDIR`, and with no `.dev.vars` or `.env` beside their config: the gateway gets `--env-file .verify/run/empty.env`, and the console's config lives in the run directory. A `.dev.vars` you keep for your own `vite dev` or `wrangler dev` stays untouched and unused. All secrets are fixed fake values printed by `$V env`.
 
 The fake knows one WhatsApp Business Account: WABA `100200300`, phone number ID `555001`, display number `+34 600 000 001`, and one approved template `order_update` (`en_US`). Any Meta token is accepted. A send to `34600000999` is refused with Meta error `131026`. A Graph request the fake has no answer for returns a Meta-style `400` and is logged with `"handled":false`.
 
@@ -43,7 +45,7 @@ Only one stack runs per machine. The ports and the worker name `eccos` in wrangl
 $V doctor
 ```
 
-Read-only. It checks that the three processes are the ones this run started, that the gateway reports its secrets and control plane ready, that the gateway runs the rerouting entry, and that the dashboard serves `/signin`. Run it first whenever something looks off. On `FAIL`, read `.verify/run/<name>.log`.
+It checks that the three processes are the ones this run started and own their ports, that the gateway reports its secrets and control plane ready, that both run the harness and loaded no `.dev.vars` or `.env`, and that the dashboard serves `/signin`. Last, it signs up a throwaway `doctor+<time>@eccos-verify.example` user and waits for that mail in the fake's log, so a console wired to a real mail provider fails here. That sign-up is the only thing it writes. Run it first whenever something looks off. On `FAIL`, read `.verify/run/<name>.log`.
 
 ## Drive
 

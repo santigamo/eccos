@@ -36,11 +36,21 @@ usage: verify-eccos <command>
 EOF
 }
 
+# Every curl here talks to loopback; a developer's proxy settings must not apply.
+curl() { command curl --noproxy '*' "$@"; }
+
+# The stack starts with only these variables from your shell, so nothing you exported
+# (a real mail key, a real Meta token) reaches it.
+clean_env() { env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" TERM=dumb "$@"; }
+
 port_free() { # vite binds IPv6 loopback only, so probe both
   ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && ! (exec 3<>"/dev/tcp/::1/$1") 2>/dev/null
 }
 
 alive() { [[ -f "$RUN/$1.pid" ]] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
+
+# True while any process of <name>'s process group is left, even when its leader exited.
+group_alive() { [[ -f "$RUN/$1.pid" ]] && pgrep -g "$(cat "$RUN/$1.pid")" >/dev/null; }
 
 wait_for() { # <label> <url> <grep pattern>
   for _ in $(seq 1 90); do
@@ -51,11 +61,32 @@ wait_for() { # <label> <url> <grep pattern>
   return 1
 }
 
-start() { # <name> <dir> <command...>
+start() { # <name> <dir> [VAR=value...] <command...>, in the same clean environment as clean_env
   local name="$1" dir="$2"
   shift 2
-  (cd "$dir" && exec setsid "$@" >"$RUN/$name.log" 2>&1 </dev/null) &
+  (cd "$dir" && exec setsid env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" TERM=dumb "$@" >"$RUN/$name.log" 2>&1 </dev/null) &
   echo $! >"$RUN/$name.pid"
+}
+
+# The console's config, under the run directory: a copy of apps/dashboard/wrangler.jsonc
+# with absolute paths, harness/dashboard.vite.config.ts, and a link to its node_modules.
+# Wrangler reads .dev.vars and .env beside the config it is given, so the console never
+# sees the developer's files in apps/dashboard.
+dashboard_config() {
+  mkdir -p "$RUN/dashboard"
+  (cd "$REPO" && bun -e '
+    const ts = require("typescript");
+    const [src, out] = process.argv.slice(1);
+    const dir = require("node:path").dirname(src);
+    const { config, error } = ts.parseConfigFileTextToJson(src, require("node:fs").readFileSync(src, "utf8"));
+    if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+    delete config.$schema;
+    config.main = dir + "/" + config.main;
+    for (const db of config.d1_databases ?? []) db.migrations_dir = dir + "/" + db.migrations_dir;
+    require("node:fs").writeFileSync(out, JSON.stringify(config, null, 2));
+  ' "$REPO/apps/dashboard/wrangler.jsonc" "$RUN/dashboard/wrangler.json")
+  cp "$SKILL_DIR/harness/dashboard.vite.config.ts" "$RUN/dashboard/vite.config.ts"
+  ln -s "$REPO/apps/dashboard/node_modules" "$RUN/dashboard/node_modules"
 }
 
 cmd_launch() {
@@ -72,12 +103,15 @@ cmd_launch() {
   [[ -d "$REPO/node_modules" ]] || (cd "$REPO" && bun install)
   mkdir -p "$RUN"
   : >"$RUN/fake.jsonl"
+  : >"$RUN/empty.env"
+  dashboard_config
 
   start fake "$SKILL_DIR" bun harness/fake-meta.ts "$FAKE_PORT" "$RUN/fake.jsonl"
   wait_for fake "$FAKE/__health" eccos-verify-fake
 
   start gateway "$REPO/apps/gateway" bunx wrangler dev "$SKILL_DIR/harness/gateway-entry.ts" \
-    -c "$REPO/apps/gateway/wrangler.jsonc" --port "$GATEWAY_PORT" --persist-to "$RUN/gateway-state" \
+    -c "$REPO/apps/gateway/wrangler.jsonc" --env-file "$RUN/empty.env" \
+    --port "$GATEWAY_PORT" --persist-to "$RUN/gateway-state" \
     --define "__VERIFY_FAKE_ORIGIN__:\"$FAKE\"" \
     --var DO_JURISDICTION: --var GATEWAY_PUBLIC_URL:https://gateway.eccos-verify.example \
     --var "META_APP_SECRET:$APP_SECRET" --var "META_WEBHOOK_VERIFY_TOKEN:$VERIFY_TOKEN" \
@@ -86,16 +120,60 @@ cmd_launch() {
     --var ECCOS_TOKEN_ENCRYPTION_KEY:verify-token-encryption-key-not-a-real-secret
   wait_for gateway "$GATEWAY/ready" '"ok":true'
 
-  (cd "$REPO/apps/dashboard" && bunx wrangler d1 migrations apply eccos-auth --local >"$RUN/migrate.log" 2>&1)
-  BETTER_AUTH_SECRET=verify-only-better-auth-secret-32-chars \
+  (cd "$REPO/apps/dashboard" && clean_env bunx wrangler d1 migrations apply eccos-auth --local >"$RUN/migrate.log" 2>&1)
+  start dashboard "$REPO/apps/dashboard" \
+    BETTER_AUTH_SECRET=verify-only-better-auth-secret-32-chars \
     BETTER_AUTH_URL="$DASHBOARD" \
     RECCADO_API_KEY=verify-mail-key \
     RECCADO_ENDPOINT="$FAKE/mail/v1/mailboxes/verify/transactional/messages" \
     CLOUDFLARE_INCLUDE_PROCESS_ENV=true \
-    start dashboard "$REPO/apps/dashboard" bunx vite dev --port "$DASHBOARD_PORT" --strictPort
+    VERIFY_RUN_DIR="$RUN" VERIFY_DASHBOARD_DIR="$REPO/apps/dashboard" \
+    bunx vite dev --config "$RUN/dashboard/vite.config.ts" --port "$DASHBOARD_PORT" --strictPort
   wait_for dashboard "$DASHBOARD/signin" "<html"
 
   cmd_doctor
+}
+
+# True when a process of <name>'s process group listens on <port>.
+owns_port() {
+  local pgid listener
+  pgid="$(cat "$RUN/$1.pid")"
+  for listener in $(ss -ltnpH "sport = :$2" | grep -oE 'pid=[0-9]+' | cut -d= -f2); do
+    [[ "$(ps -o pgid= -p "$listener" | tr -d ' ')" == "$pgid" ]] && return 0
+  done
+  return 1
+}
+
+# True when a process of <name>'s group has a command line matching every pattern.
+runs_harness() {
+  local name="$1" pid
+  shift
+  for pid in $(pgrep -g "$(cat "$RUN/$name.pid")"); do
+    local cmdline ok=0 pattern
+    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)" || continue
+    for pattern in "$@"; do grep -qE "$pattern" <<<"$cmdline" || ok=1; done
+    [[ $ok -eq 0 ]] && return 0
+  done
+  return 1
+}
+
+# Wrangler logs where it took secrets from; only the run's empty file and process.env are ours.
+no_local_env_file() {
+  ! grep -hE 'Using (secrets|vars) defined in' "$RUN/gateway.log" "$RUN/dashboard.log" | grep -vE 'empty[.]env$|process[.]env$' | grep -q .
+}
+
+# Signs up a throwaway user and expects the verification mail in the fake's log.
+mail_reaches_fake() {
+  local email
+  email="doctor+$(date -u +%Y%m%dT%H%M%S%N)@eccos-verify.example"
+  curl -s -o /dev/null --max-time 20 -X POST "$DASHBOARD/api/auth/sign-up/email" \
+    -H "content-type: application/json" -H "origin: $DASHBOARD" \
+    --data "{\"name\":\"Doctor\",\"email\":\"$email\",\"password\":\"Verify-Passw0rd-2026!\"}" || return 1
+  for _ in $(seq 1 10); do
+    grep -F '"path":"/mail/' "$RUN/fake.jsonl" | grep -qiF "$email" && return 0
+    sleep 1
+  done
+  return 1
 }
 
 cmd_doctor() {
@@ -108,10 +186,16 @@ cmd_doctor() {
   check "fake process started by this run" alive fake
   check "gateway process started by this run" alive gateway
   check "dashboard process started by this run" alive dashboard
-  check "fake answers at $FAKE" bash -c "curl -sf --max-time 3 $FAKE/__health | grep -q eccos-verify-fake"
-  check "gateway ready at $GATEWAY (secrets + control plane)" bash -c "curl -sf --max-time 5 $GATEWAY/ready | grep -q '\"ok\":true'"
-  check "gateway reaches the fake instead of Meta" bash -c "grep -q 'gateway-entry.ts' '$RUN/gateway.log' || pgrep -f 'gateway-entry.ts' >/dev/null"
-  check "dashboard serves the sign-in page at $DASHBOARD" bash -c "curl -sf --max-time 10 $DASHBOARD/signin | grep -q '<html'"
+  check "port $FAKE_PORT belongs to this run's fake" owns_port fake "$FAKE_PORT"
+  check "port $GATEWAY_PORT belongs to this run's gateway" owns_port gateway "$GATEWAY_PORT"
+  check "port $DASHBOARD_PORT belongs to this run's dashboard" owns_port dashboard "$DASHBOARD_PORT"
+  check "fake answers at $FAKE" bash -c "curl --noproxy '*' -sf --max-time 3 $FAKE/__health | grep -q eccos-verify-fake"
+  check "gateway ready at $GATEWAY (secrets + control plane)" bash -c "curl --noproxy '*' -sf --max-time 5 $GATEWAY/ready | grep -q '\"ok\":true'"
+  check "gateway runs the rerouting entry, with no local env file" runs_harness gateway 'gateway-entry[.]ts' 'empty[.]env'
+  check "dashboard runs the harness config" runs_harness dashboard 'run/dashboard/vite[.]config[.]ts'
+  check "neither worker loaded a .dev.vars or .env" no_local_env_file
+  check "dashboard serves the sign-in page at $DASHBOARD" bash -c "curl --noproxy '*' -sf --max-time 10 $DASHBOARD/signin | grep -q '<html'"
+  check "a sign-up mails the fake, not a real provider" mail_reaches_fake
   if [[ $ok -ne 0 ]]; then
     echo "doctor: not worth driving; logs in $RUN/*.log" >&2
     exit 1
@@ -122,7 +206,7 @@ cmd_doctor() {
 cmd_stop() {
   [[ -d "$RUN" ]] || { echo "stop: nothing to stop"; return 0; }
   for name in dashboard gateway fake; do
-    if alive "$name"; then
+    if group_alive "$name"; then
       local pid
       pid="$(cat "$RUN/$name.pid")"
       kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
@@ -130,7 +214,7 @@ cmd_stop() {
   done
   sleep 2
   for name in dashboard gateway fake; do
-    if alive "$name"; then kill -KILL -- "-$(cat "$RUN/$name.pid")" 2>/dev/null || true; fi
+    if group_alive "$name"; then kill -KILL -- "-$(cat "$RUN/$name.pid")" 2>/dev/null || true; fi
   done
   rm -rf "$RUN"
   echo "stop: stopped; evidence kept in $VERIFY_HOME/evidence"
@@ -169,7 +253,7 @@ cmd_mail_link() {
   local email="${1:-}"
   [[ -n "$email" ]] || { usage; exit 2; }
   grep -F '"path":"/mail/' "$RUN/fake.jsonl" | grep -iF "$email" | tail -1 \
-    | grep -oE 'https?:[^"\\ ]+' | grep -vF "$FAKE" | head -1
+    | bun -e 'const l = (await Bun.stdin.text()).trim(); if (l) console.log(JSON.parse(JSON.parse(l).body).variables.url)'
 }
 
 cmd_follow_mail_link() {
@@ -181,10 +265,12 @@ cmd_follow_mail_link() {
 
 cmd_evidence() {
   local feature="${1:-}"
-  [[ -n "$feature" ]] || { usage; exit 2; }
-  local dir
+  [[ "$feature" =~ ^[a-z0-9-]+$ ]] || { echo "evidence: the feature id is lowercase letters, digits and dashes" >&2; exit 2; }
+  mkdir -p "$VERIFY_HOME/evidence"
+  local dir n=1
   dir="$VERIFY_HOME/evidence/$(date -u +%Y%m%dT%H%M%SZ)-$feature"
-  mkdir -p "$dir"
+  local base="$dir"
+  until mkdir "$dir" 2>/dev/null; do n=$((n + 1)); dir="$base-$n"; done
   echo "$dir"
 }
 
