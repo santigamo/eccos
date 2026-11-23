@@ -12,6 +12,8 @@ import { updateMemberRole, type MemberRole, type MembersMutation, type MemberVie
 import { roleInSentence } from "../../lib/member-roles";
 import { RoleChoices } from "./role-choices";
 import { followSignIn } from "../../lib/follow-sign-in";
+import { withStepUp } from "../../lib/step-up";
+import { StepUpSheet } from "./step-up-sheet";
 import { MEMBERS_RETRY } from "../../lib/members-copy";
 
 /** What moving from one role to another costs, or null when it costs nothing worth saying. */
@@ -49,7 +51,7 @@ export function ChangeRoleDialog({
     setSaving(true);
     setError(null);
     try {
-      const result = await updateMemberRole({ data: { memberId: target.memberId, role } });
+      const result = await withStepUp(() => updateMemberRole({ data: { memberId: target.memberId, role } }));
       onResult(result);
       if (result.ok || result.gone) onOpenChange(false);
       else setError(result.error);
@@ -100,6 +102,8 @@ export function ChangeRoleDialog({
             {saving ? "Saving…" : "Change role"}
           </Button>
         </DialogFooter>
+        {/* Nested: step-up for this write opens inside this surface. */}
+        <StepUpSheet />
       </DialogContent>
     </Dialog>
   );

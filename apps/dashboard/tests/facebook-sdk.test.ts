@@ -2,7 +2,11 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { afterAll, expect, test } from "bun:test";
 
 GlobalRegistrator.register();
-afterAll(() => GlobalRegistrator.unregister());
+afterAll(() => {
+  // The SDK these tests plant must not outlive the file: a later DOM test would load it.
+  delete (window as unknown as { FB?: unknown }).FB;
+  return GlobalRegistrator.unregister();
+});
 
 const { currentFacebookSdk, loadFacebookSdk } = await import("../src/lib/facebook-sdk.ts?fresh-module-state");
 

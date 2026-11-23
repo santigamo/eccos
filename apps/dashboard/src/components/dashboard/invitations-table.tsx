@@ -6,6 +6,7 @@ import { cancelInvitation, resendInvitation, type InvitationView, type MembersMu
 import { roleLabel } from "../../lib/member-roles";
 import { INVITATION_LIFETIME_DAYS, expiresIn } from "../../lib/invitation-expiry";
 import { followSignIn } from "../../lib/follow-sign-in";
+import { withStepUp } from "../../lib/step-up";
 import { MEMBERS_RETRY } from "../../lib/members-copy";
 import { StatusTag, fmtTsShort } from "../../ui";
 import { IDENTITY_TIER, MACHINE_CLASS, ROW, SECONDARY_TIER, SUPPORT_TIER, TALL_CELL, Th } from "./plain-table";
@@ -30,7 +31,7 @@ export function InvitationsTable({
     setBusy(true);
     setError(null);
     try {
-      const result = await run();
+      const result = await withStepUp(run);
       if (!result.ok) setError(result.error);
       if (result.ok || result.gone) onChanged();
     } catch (err) {
