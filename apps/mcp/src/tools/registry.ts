@@ -18,7 +18,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type AuditResource, auditEvent } from "../audit";
-import { CONSOLE_METHODS, type ClientsFor, GATEWAY_METHODS, type OneAction, LEAST_ROLE, forbiddenMessage, methodsFor } from "../permissions";
+import { CONSOLE_METHODS, type ClientsFor, type OneAction, LEAST_ROLE, forbiddenMessage, gatewayFor, methodsFor } from "../permissions";
 
 /** The actor `authorize` returned for this request, plus the scopes the token carries. */
 export type McpActor = Actor & { scope: string[] };
@@ -44,6 +44,8 @@ export interface ToolDeps {
   can(action: AgentAction): boolean;
   /** The console's public origin, where the pages a person opens live (`/connect`). Not a client, so not gated. */
   consoleOrigin: string;
+  /** Every action each tool in the registry needs ({@link toolActions}), so a result names a tool only when it may be called. */
+  toolActions: Readonly<Record<string, readonly AgentAction[]>>;
 }
 
 /**
@@ -69,12 +71,12 @@ export class ForbiddenError extends ToolError {
   }
 }
 
-export function capabilities(actor: Pick<Actor, "actions" | "role">, clients: Clients): Omit<ToolDeps, "consoleOrigin"> {
+export function capabilities(actor: Pick<Actor, "actions" | "role">, clients: Clients): Pick<ToolDeps, "can" | "for"> {
   const can = (action: AgentAction) => Object.hasOwn(LEAST_ROLE, action) && actor.actions.includes(action);
   const forAction = (action: AgentAction) => {
     if (!can(action)) throw new ForbiddenError(action, actor);
     return {
-      gateway: methodsFor(clients.gateway, GATEWAY_METHODS, action),
+      gateway: gatewayFor(clients.gateway, action),
       console: methodsFor(clients.console, CONSOLE_METHODS, action),
     };
   };
@@ -118,7 +120,15 @@ export interface ToolDefinition<I extends z.ZodObject = z.ZodObject, O extends z
   reads?: AgentAction[];
   /** The identifiers a mutating call's audit line carries. Never inputs that are content or secrets. */
   audit?(input: z.output<I>): AuditResource;
-  run(input: z.output<I>, actor: McpActor, deps: ToolDeps): Promise<z.input<O>>;
+  run(input: z.output<I>, actor: McpActor, deps: ToolDeps, trail: AuditTrail): Promise<z.input<O>>;
+}
+
+/** What a call adds to its own audit line once it has run. */
+export interface AuditTrail {
+  /** Identifiers known only after the call (a claim id, a key id). Never a token or a secret. */
+  note(ids: AuditResource): void;
+  /** A closed code saying which success this was (`created`, `exists`…). */
+  detail(code: string): void;
 }
 
 export const defineTool = <I extends z.ZodObject, O extends z.ZodObject>(tool: ToolDefinition<I, O>) => tool;
@@ -214,6 +224,7 @@ function declaresUrlElicitation(ctx: ServerContext): boolean {
 type Outcome = {
   result: ReturnType<typeof structured> | ReturnType<typeof errorText> | ReturnType<typeof inputRequired>;
   audit?: { outcome: "success" | "denied" | "failed"; detail: string | null };
+  noted?: AuditResource;
 };
 
 const denied = (result: Outcome["result"], detail: string): Outcome => ({ result, audit: { outcome: "denied", detail } });
@@ -280,18 +291,27 @@ async function invoke(
   ctx: ServerContext,
   step: StepUp,
 ): Promise<Outcome> {
+  const noted: AuditResource = {};
+  let detail: string | null = null;
+  const trail: AuditTrail = {
+    note: (ids) => Object.assign(noted, ids),
+    detail: (code) => {
+      detail = code;
+    },
+  };
   try {
     const guarded = await guard(tool, actor, deps, ctx, step);
     if (guarded) return guarded;
-    const value = await tool.run(input, actor, deps);
-    return { result: structured(value), audit: { outcome: "success", detail: null } };
+    const value = await tool.run(input, actor, deps, trail);
+    return { result: structured(value), audit: { outcome: "success", detail }, noted };
   } catch (error) {
-    if (error instanceof ForbiddenError) return denied(errorText(error.message), "forbidden");
-    if (error instanceof ToolError) return { result: errorText(error.message), audit: { outcome: "failed", detail: error.detail } };
+    if (error instanceof ForbiddenError) return { ...denied(errorText(error.message), "forbidden"), noted };
+    if (error instanceof ToolError) return { result: errorText(error.message), audit: { outcome: "failed", detail: error.detail }, noted };
     logFailure("tool_failure", tool.name, error);
     return {
       result: errorText(`Eccos could not complete ${tool.name}. Try again in a minute; if it keeps failing, tell the person.`),
       audit: { outcome: "failed", detail: null },
+      noted,
     };
   }
 }
@@ -323,15 +343,16 @@ export function registerTool(
       annotations: tool.annotations,
     },
     async (input: Record<string, unknown>, ctx: ServerContext) => {
-      const { result, audit } = await invoke(tool, input, actor, deps, ctx, step);
+      const { result, audit, noted } = await invoke(tool, input, actor, deps, ctx, step);
       if (audit && tool.annotations.readOnlyHint !== true) {
+        const resource = { ...tool.audit?.(input), ...noted };
         auditEvent({
           action: tool.name,
           actorUserId: actor.userId,
           organizationId: actor.organizationId,
           accountId: actor.accountId,
           clientId: actor.clientId,
-          resource: tool.audit?.(input) ?? null,
+          resource: Object.keys(resource).length > 0 ? resource : null,
           ...audit,
         });
       }

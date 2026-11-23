@@ -1,10 +1,12 @@
 import { McpServer, type ServerContext, createRequestStateCodec } from "@modelcontextprotocol/server";
 import { auditEvent } from "../audit";
+import { apiKeyCreate, apiKeyRevoke, apiKeysList } from "./api-keys";
 import { billingCheckoutLink, billingGet } from "./billing";
 import { connectLinkCreate, connectStatus } from "./connect";
 import { numberRecheck, numbersList, statusGet } from "./numbers";
 import { type Clients, type ElevationState, type McpActor, type ToolDefinition, capabilities, registerTool, toolActions } from "./registry";
 import { TEMPLATE_TOOLS } from "./templates";
+import { webhookGet, webhookResubscribe, webhookSet } from "./webhook";
 import { workspaceGet } from "./workspace-get";
 
 /** Every tool the server ships, one table. */
@@ -17,6 +19,12 @@ export const TOOLS: readonly ToolDefinition[] = [
   numbersList,
   numberRecheck,
   statusGet,
+  webhookGet,
+  webhookSet,
+  webhookResubscribe,
+  apiKeysList,
+  apiKeyCreate,
+  apiKeyRevoke,
   ...TEMPLATE_TOOLS,
 ];
 
@@ -94,7 +102,11 @@ export function createServer(
     }
   };
   const server = new McpServer({ name: "eccos", version: "0.1.0" }, codec ? { requestState: { verify } } : {});
-  const deps = { ...capabilities(actor, clients), consoleOrigin };
+  const deps = {
+    ...capabilities(actor, clients),
+    consoleOrigin,
+    toolActions: Object.fromEntries(registry.map((tool) => [tool.name, toolActions(tool)])),
+  };
   const step = { codec, console: clients.console };
   for (const tool of registry) {
     if (toolActions(tool).every((action) => actor.actions.includes(action))) registerTool(server, tool, actor, deps, step);
