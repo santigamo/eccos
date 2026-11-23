@@ -118,14 +118,17 @@ export const connectLinkCreate = defineTool({
   audit: (input) => ({ replace: String(input.replace) }),
   // The console's openConnectLink (apps/dashboard src/server/gateway.ts): keep a link that has
   // not expired unless asked to replace it, and let the gateway keep a live one on a race.
-  run: async (input, actor, deps) => {
+  run: async (input, actor, deps, trail) => {
     const { gateway } = deps.for("administer");
-    const exists = (link: ConnectLinkSummary) => ({
-      status: "exists" as const,
-      url: null,
-      ...linkView(link, actor, deps),
-      detail: `A connection link already exists (${link.state}); its URL was shown only to whoever made it. ${linkGuidance(link, actor, deps).detail} If the person does not have the link, call connect_link_create with replace: true.`,
-    });
+    const exists = (link: ConnectLinkSummary) => {
+      trail.detail("exists");
+      return {
+        status: "exists" as const,
+        url: null,
+        ...linkView(link, actor, deps),
+        detail: `A connection link already exists (${link.state}); its URL was shown only to whoever made it. ${linkGuidance(link, actor, deps).detail} If the person does not have the link, call connect_link_create with replace: true.`,
+      };
+    };
     const current = input.replace ? null : await gateway.getConnectLink(actor.accountId);
     if (current && current.state !== "expired") return exists(current);
     const issued = await gateway.issueConnectLink(actor.accountId, actor.userId, input.replace);
@@ -134,6 +137,7 @@ export const connectLinkCreate = defineTool({
       if (!link) throw new Error("the connection link could not be read");
       return exists(link);
     }
+    trail.detail(input.replace ? "replaced" : "created");
     return {
       status: "created" as const,
       // In the fragment, so the token reaches no server log and no Referer.
