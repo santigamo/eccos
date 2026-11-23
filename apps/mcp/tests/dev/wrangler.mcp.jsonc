@@ -1,0 +1,21 @@
+{
+  // Dev-only: apps/mcp under `wrangler dev` with CONSOLE bound to the stub ConsoleRPC
+  // (wrangler.console.jsonc) instead of the console, and GATEWAY to the local gateway.
+  // Otherwise the same as ../../wrangler.jsonc. Never deployed.
+  "$schema": "../../../../node_modules/wrangler/config-schema.json",
+  "name": "eccos-mcp",
+  "main": "../../src/index.ts",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "dev": { "port": 8788 },
+  "services": [
+    { "binding": "CONSOLE", "service": "eccos-console-stub", "entrypoint": "ConsoleRPC" },
+    { "binding": "GATEWAY", "service": "eccos", "entrypoint": "GatewayRPC" }
+  ],
+  "ratelimits": [{ "name": "MCP_RATE_LIMITER", "namespace_id": "4001", "simple": { "limit": 120, "period": 60 } }],
+  "vars": {
+    "MCP_RESOURCE": "http://localhost:8788/mcp",
+    "ISSUER": "http://localhost:3000",
+    "CONSOLE_ORIGIN": "http://localhost:3000"
+  }
+}
