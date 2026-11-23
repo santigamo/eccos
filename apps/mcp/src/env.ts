@@ -11,4 +11,10 @@ export interface Env {
   CONSOLE: ConsoleApi;
   GATEWAY: GatewayApi;
   MCP_RATE_LIMITER: RateLimit;
+  /**
+   * HMAC key that seals the step-up guard's `requestState` (a Worker secret, at least 32 bytes).
+   * It grants no access: elevation is always re-read from the console. Unset, the guard never
+   * uses URL elicitation and every client gets the structured approval result.
+   */
+  REQUEST_STATE_KEY?: string;
 }
