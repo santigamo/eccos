@@ -5,6 +5,7 @@ This directory is the maintained source for verifying what Eccos users can obser
 ## Baseline preconditions
 
 - `$V launch` ended with `doctor: healthy.`.
+- Run the baseline the way contributors have their checkout: with `apps/dashboard/.dev.vars` copied from `.dev.vars.example` as `apps/dashboard/README.md` says. Doctor must still be healthy, and the sign-up mail must still reach `$V fake-log /mail/`. A stack that reads that file sends mail elsewhere and cannot finish Console onboarding.
 - Never drive a stack this run did not launch.
 - Most recipes need an active number. Get one in either way and say which you used:
   - **Console baseline.** Follow [Console onboarding](./console-onboarding.md) through `onboard-attach`. This is the user path.
