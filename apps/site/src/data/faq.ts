@@ -122,7 +122,7 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "Where is my data stored, and who else processes it?",
-          a: "Eccos Cloud stores data in Cloudflare's European Union jurisdiction. The providers that process it for us are Cloudflare (hosting), Meta (the WhatsApp API every message goes through, which processes messages in its own data centres, in the United States by default), Sentry (error reports, with no message content) and Hetzner (a fallback server in Germany that only relays traffic and stores none of it). The full list is in the privacy policy, at https://eccos.chat/privacy.",
+          a: "Eccos Cloud stores data in Cloudflare's European Union jurisdiction. The providers that process it for us are Cloudflare (hosting), Sentry (error reports, with no message content) and Hetzner (a fallback server in Germany that only relays traffic and stores none of it). Every message also goes through Meta's WhatsApp API, which processes messages in its own data centres, in the United States by default; your business has its own account and contract with Meta, so Meta is your provider, not a subprocessor of Eccos. The full list is in the privacy policy, at https://eccos.chat/privacy.",
         },
         {
           q: "How long do you keep my data, and can I turn storage off?",
@@ -243,7 +243,7 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "¿Dónde se guardan mis datos y quién más los trata?",
-          a: "Eccos Cloud guarda los datos en la jurisdicción de la Unión Europea de Cloudflare. Los proveedores que los tratan por nuestra cuenta son Cloudflare (alojamiento), Meta (la API de WhatsApp por la que pasan todos los mensajes, que los procesa en sus propios centros de datos, en Estados Unidos por defecto), Sentry (informes de errores, sin contenido de mensajes) y Hetzner (un servidor de respaldo en Alemania que solo retransmite tráfico y no guarda nada). La lista completa está en la política de privacidad, en https://eccos.chat/privacy.",
+          a: "Eccos Cloud guarda los datos en la jurisdicción de la Unión Europea de Cloudflare. Los proveedores que los tratan por nuestra cuenta son Cloudflare (alojamiento), Sentry (informes de errores, sin contenido de mensajes) y Hetzner (un servidor de respaldo en Alemania que solo retransmite tráfico y no guarda nada). Todos los mensajes pasan además por la API de WhatsApp de Meta, que los procesa en sus propios centros de datos, en Estados Unidos por defecto; tu empresa tiene su propia cuenta y su propio contrato con Meta, así que Meta es tu proveedor y no un subencargado de Eccos. La lista completa está en la política de privacidad, en https://eccos.chat/privacy.",
         },
         {
           q: "¿Cuánto tiempo guardáis mis datos? ¿Puedo desactivar el almacenamiento?",
