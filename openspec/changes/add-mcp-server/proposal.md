@@ -41,7 +41,11 @@ Decisions already made by the owner:
   re-derives membership, role and account on **every** MCP request, so the tenancy contract's
   "re-resolved per request" rule holds for agents exactly as it does for browsers.
 - A tool inventory mapped to the existing role matrix, delivered in phases that each ship on
-  their own. The first phase needs no new gateway capability.
+  their own. The first phase needs one small gateway addition, the secret claim.
+- Admin rights that work like `sudo`: a long-lived grant, and a 24-hour approval by the person
+  that only sensitive tools need.
+- New secrets delivered by a one-time claim, so an API key goes from Eccos to the customer's
+  `.env` without entering a model's context.
 
 Details: [design.md](./design.md), requirements and acceptance criteria:
 [specs/mcp-server/spec.md](./specs/mcp-server/spec.md), sources and versions:
@@ -60,8 +64,9 @@ moments need a person, and the design keeps each to one link the agent hands ove
    trial asks for a card at Creem's checkout. An agent cannot enter a card.
 3. **Embedded Signup**, as accepted.
 
-Removing the second is a pricing decision, not an engineering one. Both are listed for the owner
-in [design.md § Open decisions](./design.md#open-decisions-for-the-owner).
+Removing the second is a pricing decision, not an engineering one. The owner accepted both for
+now ([design.md § Decisions](./design.md#decisions)). Sensitive actions add a fourth, lighter
+moment: approving them once per 24 hours, which can be done in the same visit as the first.
 
 "Buying a number" does not reduce to an API call either: every carrier that sells Spanish numbers
 requires the holder's identity and address documents, and Eccos selling numbers itself raises an
@@ -72,9 +77,9 @@ unanswered regulatory question. [number-purchase.md](./number-purchase.md) lays 
 | Area | Change |
 |---|---|
 | `apps/mcp` (new) | Worker with the MCP endpoint, protected-resource metadata and the tools |
-| `apps/dashboard` | Better Auth OAuth provider plugins, consent and workspace-selection pages, authorization-server metadata routes, a "Connected agents" settings section, the `ConsoleRPC` entrypoint, a D1 migration |
+| `apps/dashboard` | Better Auth OAuth provider plugins, consent, workspace-selection, approval and claim pages, authorization-server metadata routes, a "Connected agents" settings section, the `ConsoleRPC` entrypoint, a D1 migration |
 | `packages/console-contract` (new) | Types for `ConsoleRPC`, as `gateway-contract` is for `GatewayRPC` |
-| `apps/gateway`, `packages/gateway-contract` | Nothing in phases 1 and 2. Phase 3 adds phone-number management against the Graph API; phase 4 adds RPC methods to create broadcasts and scheduled sends |
+| `apps/gateway`, `packages/gateway-contract` | Phase 1 adds secret claims (one control-plane table, two RPC methods). Phase 3 adds phone-number management against the Graph API; phase 4 adds RPC methods to create broadcasts and scheduled sends |
 | `docs/auth-tenancy-contract.md`, `docs/threat-model.md` | Amended: a new credential type, a new trust boundary, new Better Auth endpoints (see design § Contract amendments) |
 | `better-auth` | Exact pin moves from 1.7.14 to 1.7.27, required by the plugins and overdue for the 2026-11-03 advisories |
 

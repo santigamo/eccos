@@ -43,7 +43,11 @@ show 2.3.1). Follow the peer, not the snippet.
   `405`. `route` defaults to `/mcp`. A custom domain needs `allowedHostnames` and
   `allowedOriginHostnames`.
 - Elicitation in the stateless handler is multi-round-trip only (`inputRequired`), with state
-  sealed into `requestState`. This design does not use it.
+  sealed into `requestState`. Through the legacy lane, "Pushed elicitation, sampling, and roots
+  requests fail immediately", so 2025-era clients cannot be elicited. Cloudflare's example shows
+  form mode only: <https://github.com/cloudflare/agents/tree/main/examples/mcp-elicitation-mrtr>.
+  `@modelcontextprotocol/server` 2.4.0 exports `inputRequired.elicitUrl` for URL mode (found by
+  unpacking the npm tarball). The design uses it for elevation approval (design § 3.3).
 - Transport: Streamable HTTP on one endpoint. Cloudflare's own MCP servers answer `410` on
   `/sse` since 2026-10-22.
   <https://developers.cloudflare.com/changelog/post/2026-10-22-cloudflare-mcp-servers-retire-sse/>
@@ -86,6 +90,20 @@ Calling a service binding from a tool is ordinary Workers RPC, also not shown in
 - Client registration: pre-registered, then CIMD (should), then DCR (may, **deprecated**: "New
   implementations should use Client ID Metadata Documents instead"), then asking the user.
   <https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration>
+- URL-mode elicitation exists in this revision (introduced in 2025-11-25, "may change in future
+  protocol revisions"). The server returns an `InputRequiredResult` carrying
+  `elicitation/create` with `mode: "url"`, `url` and `message`; the client must show the target
+  host and get consent before opening it, then retries the original request. "`action: "accept"`
+  indicates that the user has consented to the interaction. It does not mean that the interaction
+  is complete ... the server determines from the echoed `requestState` (or its own stored state)
+  whether the out-of-band interaction has completed, and either returns the final result or
+  responds with another `InputRequiredResult`." Clients declare it as `elicitation: { url: {} }`
+  and "Servers MUST NOT send elicitation requests with modes that are not supported by the
+  client." Servers "MUST use URL mode" for sensitive information. One caveat bears on this
+  design: "URL mode elicitation is *not* for authorizing the MCP client's access to the MCP
+  server (that's handled by MCP authorization)" and servers "MUST NOT rely on URL mode
+  elicitation to authorize users for themselves".
+  <https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation>
 - Insufficient scope at runtime: `403` with `error="insufficient_scope"`, the scopes needed and
   `resource_metadata`; clients re-authorize for the union.
 
@@ -135,8 +153,9 @@ What clients require, from their own documentation:
 
 Not verified, each a spike in tasks.md: the generated D1 migration for the OAuth and JWKS tables;
 JWT key storage on D1; the in-process call that verifies a raw access token with the auth
-instance; resuming an authorization after email verification; whether `scopeExpirations`
-expresses a shorter privileged grant; the Workers CIMD fetcher.
+instance; resuming an authorization after email verification; the Workers CIMD fetcher;
+`inputRequired.elicitUrl` running through `createMcpHandler`; which clients declare
+`elicitation.url`; whether using URL mode for elevation sits within the spec's caveat above.
 
 ## Repository facts this design relies on
 

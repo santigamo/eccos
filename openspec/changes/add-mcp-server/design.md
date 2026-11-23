@@ -45,6 +45,10 @@ What changed upstream since the Captain's first sketch, and why it matters:
   server.** `OAuthResourceServer` takes a `validateToken` function, publishes RFC 9728 metadata
   and builds the Bearer challenges. Cloudflare's own split topology has the resource Worker call
   the authorization Worker over a service binding to validate a token.
+- **The spec has a native way to send a person to a URL.** URL-mode elicitation: a tool returns
+  `input_required` with a URL, the client shows it, and retries the same call. MCP SDK 2.4.0
+  ships it as `inputRequired.elicitUrl`. Clients must declare support, and 2025-era clients
+  cannot receive it through the stateless handler.
 - **Dynamic Client Registration is deprecated in the MCP spec** in favour of Client ID Metadata
   Documents (CIMD). Claude and ChatGPT support both; Cursor documents DCR.
 - **Better Auth removed `oidcProvider` and the old in-tree `mcp` plugin in 1.7.0.** The current
@@ -69,8 +73,8 @@ flowchart LR
 
   subgraph Console["apps/dashboard · app.eccos.chat"]
     AS["Better Auth<br/>OAuth 2.1 authorization server<br/>/api/auth/oauth2/*, /api/auth/jwks"]
-    UI["Sign-in, workspace, consent,<br/>Connected agents, /connect"]
-    CRPC["ConsoleRPC<br/>authorize, billing"]
+    UI["Sign-in, workspace, consent,<br/>approve, claim, /connect"]
+    CRPC["ConsoleRPC<br/>authorize, elevation, billing"]
     D1[("auth D1")]
     AS --- D1
     CRPC --- D1
@@ -126,14 +130,17 @@ flowchart LR
   document lives outside that prefix, at `/.well-known/oauth-authorization-server/api/auth`, so
   `src/server.ts` serves it explicitly, before the page gate.
 - Pages: the existing sign-in and sign-up, a workspace step (pick one, or create the first), and
-  a consent page. Settings gains "Connected agents": the grants on this workspace, and Revoke.
+  a consent page; an approval page for elevation (§3.3) and a claim page for secrets (§3.6).
+  Settings gains "Connected agents": the grants on this workspace, whether each is elevated and
+  until when, End elevated access, and Revoke.
 - `ConsoleRPC`, a `WorkerEntrypoint` exported from the server entry **(spike: confirm the
   TanStack Start build keeps a named entrypoint export)**.
 
 **`packages/console-contract` (new).** The `ConsoleApi` interface and its types, mirroring
 `packages/gateway-contract`.
 
-**`apps/gateway`.** Unchanged until phase 3. `apps/mcp` becomes its second trusted caller.
+**`apps/gateway`.** Gains secret claims in phase 1 (§3.6) and is otherwise unchanged until
+phase 3. `apps/mcp` becomes its second trusted caller.
 
 ### 2.2 `ConsoleApi`
 
@@ -141,6 +148,8 @@ flowchart LR
 interface ConsoleApi {
   /** Verify the token for this resource and re-derive everything else. Never throws for a bad token. */
   authorize(resource: string, token: string): Promise<AuthorizeResult>;
+  /** Open (or return the pending) approval request for this grant. */
+  requestElevation(actor: ActorRef, tool: string): Promise<{ url: string; expiresAt: number }>;
   getBilling(actor: ActorRef): Promise<BillingState>;
   startCheckout(actor: ActorRef): Promise<{ url: string }>;
   openBillingPortal(actor: ActorRef): Promise<{ url: string }>;
@@ -157,8 +166,10 @@ interface Actor {
   accountId: string;
   /** The live role, read on this request. */
   role: "owner" | "admin" | "operator" | "viewer";
-  /** Role actions ∩ scope actions. The only thing a tool checks. */
+  /** Role actions ∩ scope actions. */
   actions: GatewayAction[];
+  /** Epoch ms until which this grant is elevated, or null. Only step-up tools read it. */
+  elevatedUntil: number | null;
   clientId: string;
 }
 ```
@@ -175,7 +186,8 @@ interface Actor {
    a member: refuse.
 4. Resolve `organization_accounts` through `GatewayRPC.getOrganizationAccountLink`. Anything but
    `active`: refuse.
-5. Return the actor with `actions = roleActions(role) ∩ scopeActions(scope)`.
+5. Read the grant's elevation, if any (§3.3).
+6. Return the actor with `actions = roleActions(role) ∩ scopeActions(scope)`.
 
 The reasons stay inside Eccos. The MCP Worker maps every refusal to the same `401` challenge, so a
 token holder learns nothing about why.
@@ -242,14 +254,14 @@ sequenceDiagram
   P->>C: sign in, or sign up and verify email
   P->>C: pick the workspace, or name the first one
   Note over C,G: first workspace: ensureOrganizationAccount
-  P->>C: consent (privileged scopes: fresh sign-in + TOTP)
+  P->>C: consent (optionally with step-up, which starts an elevation)
   C-->>A: redirect with code, iss
   A->>C: POST /api/auth/oauth2/token (code, verifier, resource)
   C-->>A: access token (JWT, aud = MCP resource), refresh token
   A->>M: POST /mcp tools/call + Bearer
   M->>C: ConsoleRPC.authorize(resource, token)
   C->>G: getOrganizationAccountLink(organizationId)
-  C-->>M: actor { userId, organizationId, accountId, role, actions }
+  C-->>M: actor { userId, organizationId, accountId, role, actions, elevatedUntil }
   M->>G: GatewayRPC.method(..., accountId)
   M-->>A: tool result
 ```
@@ -272,35 +284,95 @@ A token says: *this client may act as this user in this one workspace, within th
 Scopes mirror the role matrix, so there is one permission model to reason about, plus one scope
 for the action that spends the customer's money with Meta and reaches real people.
 
-| Scope | Allows | Role needed | Requested |
-|---|---|---|---|
-| `eccos:view` | Read status, numbers, templates, logs, billing state | viewer | By default |
-| `eccos:operate` | Retry deliveries, cancel broadcasts and scheduled sends, read the webhook config | operator | By default |
-| `eccos:send` | Send messages: test templates, text, broadcasts, scheduled sends | operator | By default |
-| `eccos:configure` | Templates, webhook config, resubscribe, re-check a number, phone settings | admin | On demand |
-| `eccos:administer` | Connection link, API keys, checkout, export | admin | On demand |
-| `offline_access` | A refresh token | any | By default |
+| Scope | Allows | Role needed |
+|---|---|---|
+| `eccos:view` | Read status, numbers, templates, logs, billing state | viewer |
+| `eccos:operate` | Retry deliveries, cancel broadcasts and scheduled sends, read the webhook config | operator |
+| `eccos:send` | Send messages: test templates, text, broadcasts, scheduled sends | operator |
+| `eccos:configure` | Templates, webhook config, resubscribe, re-check a number, phone settings | admin |
+| `eccos:administer` | Connection link, API keys, checkout, export | admin |
+| `offline_access` | A refresh token | any |
 
-There is no scope for `erase`. A tool that needs a scope the token lacks answers with the MCP
-scope challenge (`403`, `insufficient_scope`, the scopes it needs), and the client runs the
-authorization again for the union. That is how an agent that started read-only asks for more, and
-it puts a person in front of every escalation.
+There is no scope for `erase`. The server advertises all of them, so one consent covers
+everything the person's role allows, and the consent page lets the person untick what they do not
+want to delegate. A grant is long-lived: access tokens last 10 minutes and the refresh token
+slides for 30 days. Nothing in a grant expires early.
 
-### 3.3 Step-up, moved to where a person is
+A scope says what a grant may *ever* do. It is not what protects the sensitive actions; elevation
+is. A tool whose scope the person unticked answers with the MCP scope challenge (`403`,
+`insufficient_scope`), and the client runs the authorization again for the union.
 
-The contract requires TOTP and a recent sign-in for admin-class writes. An agent cannot type a
-TOTP code per call, and should not hold one. So the requirement moves to the moment of consent:
+### 3.3 Elevation: admin rights work like sudo
 
-- Granting `eccos:configure` or `eccos:administer` requires the consenting session to satisfy the
-  same policy as the console action (owner or admin with TOTP enrolled, signed in within 15
-  minutes). Otherwise the consent page asks the person to re-authenticate first.
-- A privileged grant is short. Access tokens live 10 minutes for every scope. Refresh for
-  `view`/`operate`/`send` slides for 30 days; a grant that includes `configure` or
-  `administer` ends 24 hours after consent, after which those tools answer with the scope
-  challenge again **(spike: express this with `scopeExpirations` or per-grant refresh lifetime)**.
-- This depends on PR #78 (TOTP and step-up enforcement) being merged first. Shipping privileged
-  MCP scopes while the console itself does not enforce step-up would make the agent path the
-  weaker one.
+The contract requires TOTP and a sign-in within 15 minutes for a set of console actions (§4,
+"MFA / step-up: Yes"). An agent cannot type a TOTP code and should not hold one, and a grant that
+loses its admin scopes every day would interrupt work that has nothing to do with them. So the
+two are separated, the way `sudo` separates a login from a privileged command:
+
+- The **grant** is long-lived and is never touched by privilege expiry.
+- **Step-up tools** are the tools behind those contract rows, and only those: `webhook_set`,
+  `webhook_resubscribe`, `api_key_create`, `api_key_revoke`, `connect_link_create`, and later
+  `number_set_pin`, `member_invite` and `export_start`. Templates, sends, retries and every read
+  are not step-up tools, exactly as in the console.
+- A step-up tool runs only while the grant holds a live **elevation**: a row in the auth D1 for
+  (user, client, workspace) with an expiry 24 hours after a person approved it. It is not in the
+  token, so no token is re-issued when it starts or ends. It lapses silently, and only step-up
+  tools notice.
+
+**Getting an elevation.** There are two ways, and both end in the same row.
+
+1. *At consent.* The consent page offers "Also allow sensitive actions for 24 hours". Accepting it
+   requires the step-up (re-enter password if the sign-in is older than 15 minutes, then TOTP) in
+   that same visit. An onboarding run therefore needs one approval, not two. Declining it does not
+   block the grant.
+2. *On demand.* When a step-up tool is called without a live elevation, the server calls
+   `ConsoleRPC.requestElevation`, which opens an approval request (or returns the pending one for
+   this grant) and yields one URL on the console. The person opens it, signs in as the grant's
+   user, passes the step-up, sees which agent and which tool asked, and approves. The agent calls
+   the same tool again with the same arguments and it runs.
+
+The approval URL is a pointer, not a capability: approving requires the signed-in session of the
+grant's own user, who must still be an owner or admin, the same rule as invitation links
+(contract §7). A request expires after 10 minutes.
+
+**How the agent is told.** One semantic, two carriers, chosen per request from what the client
+declares:
+
+- *URL-mode elicitation*, when the client declares `elicitation.url`. The tool returns
+  `inputRequired` with `inputRequired.elicitUrl({ url, message })` and seals the request id into
+  `requestState`. The client shows the host and asks the person before opening it, then retries
+  the call. On the retry the server reads the elevation again: present, the tool runs; absent, it
+  answers with the structured result below rather than a second prompt. A decline or cancel ends
+  the call with `elevation_declined`.
+- *A structured tool result*, for every other client, including all 2025-era ones:
+
+  ```json
+  {
+    "status": "approval_required",
+    "reason": "elevation_required",
+    "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
+    "approvalUrl": "https://app.eccos.chat/agents/approve?request=...",
+    "expiresAt": "2026-11-23T12:10:00Z",
+    "retry": { "tool": "api_key_create", "when": "after_approval", "sameArguments": true }
+  }
+  ```
+
+  It is returned with `isError: true` so no client mistakes it for success, and every step-up
+  tool's output schema includes this shape. `workspace_get` reports `elevatedUntil`, so an agent
+  can also check before it starts a batch of sensitive work.
+
+The spec says URL-mode elicitation "is not for authorizing the MCP client's access to the MCP
+server". Elevation is read as falling on the permitted side of that line: the client's token and
+scopes do not change, and what the URL collects is the person's re-authentication, which must not
+pass through the client. That reading, and each client's actual support for URL mode, are spike
+items. If either fails, the structured result is already the complete path and nothing else
+changes.
+
+**Ending it.** An elevation ends at its expiry, when the grant is revoked, or when the person ends
+it under Connected agents. A demotion needs no handling: the live role check already refuses.
+
+This depends on PR #78 (TOTP and step-up enforcement in the console). Step-up tools do not ship
+before it is merged, or the agent path would be the weaker one.
 
 ### 3.4 Client registration
 
@@ -312,8 +384,7 @@ Advertise both mechanisms, so that current and older clients connect:
   Worker has no private network to be rebound into, so the Workers fetcher is: HTTPS only, the
   `global_fetch_strictly_public` compatibility flag, no redirects, a size and time cap **(spike)**.
 - **DCR** (`allowDynamicClientRegistration` with unauthenticated registration) as the fallback
-  that Cursor and 2025-era clients need. Registered clients get no default scopes beyond
-  `eccos:view`, never skip consent, are rate-limited per address, and unused ones are deleted.
+  that Cursor and 2025-era clients need. Registered clients never skip consent, are rate-limited per address, and unused ones are deleted.
 
 The consent page shows the client's name **and the host of its redirect URI**, because under both
 mechanisms the name is chosen by whoever registered.
@@ -336,16 +407,77 @@ authorization flow *is* the sign-up:
 3. No workspace: the post-login step is the existing onboarding form. Creating the workspace runs
    the existing `createOrganization` path, including `ensureOrganizationAccount`. No API key is
    issued, as the contract requires.
-4. Consent, then the agent holds a token for that workspace.
+4. Consent, with the option to allow sensitive actions for 24 hours in the same visit, then the
+   agent holds a token for that workspace.
 
 From there the agent drives: `workspace_get` reports what is missing, `billing_checkout_link`
 returns the Creem URL when a subscription is required, `connect_link_create` returns the
-Embedded Signup link, `connect_status` and `numbers_list` follow provisioning, and the rest of
+Embedded Signup link (a step-up tool, already covered when elevation was given at consent), `connect_status` and `numbers_list` follow provisioning, and the rest of
 phase 1 finishes the setup.
 
 The contract's §7 describes sign-up as invite-only for the initial release. No allowlist exists in
 the code today and Eccos Cloud has been open to paying customers since 2026-11-12, so this design
 assumes open, email-verified sign-up.
+
+### 3.6 Secrets do not pass through the model
+
+A tool that mints a secret returns a **claim** instead of the secret. Today that is two tools:
+`api_key_create`, and `webhook_set` when it is asked to generate the signing secret.
+
+**What the tool returns.**
+
+```json
+{
+  "status": "claim_ready",
+  "message": "The API key has not been shown to you. Run the command to write it where it belongs, or give the link to a person. The claim works once and expires in 10 minutes; until it is claimed, no key exists.",
+  "claimUrl": "https://app.eccos.chat/claim#<token>",
+  "command": "printf 'ECCOS_API_KEY=%s\\n' \"$(curl -fsS -X POST https://app.eccos.chat/api/claim -d token=<token>)\" >> .env",
+  "expiresAt": "2026-11-23T12:10:00Z"
+}
+```
+
+- An agent with a shell or an HTTP tool runs the command (or its own equivalent into a secret
+  store). The value goes from Eccos to the file; it never enters the agent's context.
+- A person opens `claimUrl`, presses Reveal, and copies the value. That covers chat-only agents.
+
+**How a claim works.**
+
+- **Nothing is minted until it is claimed.** Creating a claim stores only its intent (account,
+  kind, label, creating user and client) next to the hash of a random token, in the control
+  plane, the way connection links are stored. The key is issued, or the signing secret generated
+  and stored, in the same Durable Object call that spends the claim. An unclaimed claim therefore
+  leaves nothing live: no key to revoke, no secret in force, no plaintext at rest at any point.
+  For `webhook_set`, the URL change applies at once and the previous secret stays in force until
+  the claim is spent.
+- **Single use, 10 minutes.** The first redemption gets the value as `text/plain` with
+  `Cache-Control: no-store`. Every later attempt gets `410`. A person or agent who gets `410`
+  without having claimed knows someone else did, and revokes the key, which by then is visible in
+  `api_keys_list` under its label.
+- **Redemption is a POST with the token in the body.** A GET never reveals or spends anything, so
+  link previews, scanners and prefetchers cannot burn or read a claim. The browser page carries
+  the token in the URL fragment, which reaches no server log and no `Referer`, as the connection
+  link does; the page posts it when the person presses Reveal.
+- **It resolves only while its creator may still do the thing**: the grant is alive and the user
+  is still an owner or admin, the same rule as the connection link.
+- Creating a claim is a step-up tool call and needs `eccos:administer` or `eccos:configure`.
+  Redeeming needs only the token. Both are audited, never with the token or the value.
+
+The claim page and `POST /api/claim` live on the console, beside the connection-link page and
+its API, with the same per-caller limit on wrong tokens. `apps/mcp` keeps one public route.
+
+**Opting in to an inline secret.** `api_key_create` accepts `delivery: "inline"`, which issues the
+key at once and returns it in the tool result, for agents that can neither fetch a URL nor rely
+on a person. The consent copy for `eccos:administer` says that an agent may ask for this. The
+default is always the claim.
+
+**A secret the customer already has.** `webhook_set` takes `secret: "generate" | "keep" |
+"remove"`, or `secretValue` to store a value the customer's receiver already uses. Only
+`secretValue` puts a secret in the model's context, in the inbound direction and by the caller's
+choice.
+
+**What stays inline.** The connection link is a bearer value too, but its purpose is to be handed
+to a person, so the agent must see it. It is already single-use, bound to its creator and limited
+to adding a number.
 
 ## 4. Tool inventory
 
@@ -355,31 +487,35 @@ returns `structuredContent`. Read tools carry `readOnlyHint`; `template_delete`,
 phones, tools take `wabaId` and `phoneNumberId` and refuse ids the account does not own; with
 exactly one, they default to it, as the console does. No tool takes an account or organization id.
 
-"Scope" is the scope the token needs; the role needed follows from §3.2.
+"Scope" is the scope the token needs; the role needed follows from §3.2. ⬆ marks a step-up tool,
+which also needs a live elevation (§3.3).
 
-### Phase 1: connect and set up (no gateway change)
+### Phase 1: connect and set up
 
 | Tool | Does | Scope | Backed by | Missing |
 |---|---|---|---|---|
-| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, and a setup checklist: subscription, numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources`, `getSubscriberConfig`, `listApiKeys` (count only), `listTemplates` | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
+| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, `elevatedUntil`, and a setup checklist: subscription, numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources`, `getSubscriberConfig`, `listApiKeys` (count only), `listTemplates` | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
 | `billing_get` | Whether numbers can be added, connected numbers, monthly price | view | `billing/account.ts` `billingState` | `ConsoleRPC.getBilling` |
 | `billing_checkout_link` | The Creem checkout URL, or the portal when a subscription exists | administer | `billing/account.ts` `checkoutUrl`, `portalUrl` | `ConsoleRPC.startCheckout`, `openBillingPortal` |
-| `connect_link_create` | Mint the Embedded Signup link for a person to open; `replace` to supersede a live one | administer | `issueConnectLink` | Nothing. The token exists only in this result, as today |
+| `connect_link_create` | Mint the Embedded Signup link for a person to open; `replace` to supersede a live one | administer ⬆ | `issueConnectLink` | Nothing. The token exists only in this result, as today |
 | `connect_status` | Link state (pending, opened, connected, unconfirmed, expired) and the number it connected | view | `getConnectLink` | Nothing |
 | `numbers_list` | WABAs and phones with provisioning status and error, coexistence state, token expiry | view | `listAccountResources` | Nothing |
 | `number_recheck` | Re-run provisioning for a WABA stuck in pending or failed | configure | `reconcileWaba` | Nothing |
 | `status_get` | Health and counters for a WABA | view | `getStatus` | Nothing |
 | `webhook_get` | Subscriber URL, whether a secret is set, the last forward | operate | `getSubscriberConfig` | Nothing. The secret is never returned |
-| `webhook_set` | Set the subscriber URL and secret | configure | `setSubscriberConfig` | Nothing |
-| `webhook_resubscribe` | Redo the Meta webhook subscription | configure | `resubscribe` | Nothing |
-| `api_keys_list` | Key ids, labels, created and revoked times | administer | `listApiKeys` | Nothing |
-| `api_key_create` | Issue a key; returned once | administer | `issueApiKey` | Nothing. See open decision 5 |
-| `api_key_revoke` | Revoke a key | administer | `revokeApiKey` | Nothing |
+| `webhook_set` | Set the subscriber URL; generate, keep, remove or supply the signing secret. A generated secret is delivered by claim | configure ⬆ | `setSubscriberConfig` | Secret claims in the control plane (§3.6) |
+| `webhook_resubscribe` | Redo the Meta webhook subscription | configure ⬆ | `resubscribe` | Nothing |
+| `api_keys_list` | Key ids, labels, created and revoked times, and pending claims | administer | `listApiKeys` | Pending claims in the read |
+| `api_key_create` | Create a claim for a new key; `delivery: "inline"` returns the key instead | administer ⬆ | `issueApiKey` | Secret claims in the control plane: `createSecretClaim`, `redeemSecretClaim` |
+| `api_key_revoke` | Revoke a key | administer ⬆ | `revokeApiKey` | Nothing |
 | `templates_list` | Templates with status, category, components | view | `listTemplates` | Nothing |
 | `template_create` | Submit a template to Meta | configure | `createTemplate` | Nothing |
 | `template_edit` | Edit a template | configure | `editTemplate` | Nothing |
 | `template_delete` | Delete a template | configure | `deleteTemplate` | Nothing |
 | `template_send_test` | Send an approved template to one recipient | send | `sendTemplateTest` | Nothing |
+
+The only gateway change in phase 1 is the secret claim: one control-plane table and two
+`GatewayRPC` methods, modelled on connection links.
 
 Phase 1 is everything needed for the full path with a number the customer brings through
 Embedded Signup: connect the agent, subscribe, connect the number, point the webhook, issue a key,
@@ -410,7 +546,7 @@ page says so for `eccos:view`.
 | `number_request_code` | Ask Meta to send the code by SMS or voice | configure | `POST /{phone}/request_code`, with a guard against repeated requests |
 | `number_verify_code` | Submit the code the person received | configure | `POST /{phone}/verify_code` |
 | `number_register` | Register the number for the Cloud API with a two-step PIN | configure | `POST /{phone}/register`; a decision on who chooses and who stores the PIN |
-| `number_set_pin` | Change the two-step PIN | administer | `POST /{phone}` with `pin` |
+| `number_set_pin` | Change the two-step PIN | administer ⬆ | `POST /{phone}` with `pin` |
 | `number_set_display_name` | Request a display name change | configure | `POST /{phone}` with `new_display_name`; surfacing the review result |
 | `business_profile_get`, `business_profile_set` | About, address, description, email, websites, picture | view, configure | `GET`/`POST /{phone}/whatsapp_business_profile`, media upload for the picture |
 
@@ -427,8 +563,8 @@ must report before it tries.
 | `broadcast_create` | Send a template to a list | send | A `GatewayRPC` method; creation exists only on public `/v1` |
 | `scheduled_put` | Schedule or replace a send | send | A `GatewayRPC` method; same |
 | `message_send_template` | Send a template outside the test sheet | send | Possibly none: `sendTemplateTest` may serve, to be decided with its audit semantics |
-| `members_list`, `member_invite` | The team | view, administer | `ConsoleRPC` methods over `src/members.ts`; an agent inviting people needs its own consent copy |
-| `export_start` | Data export | administer | A delivery channel that does not pass an export through the model's context |
+| `members_list`, `member_invite` | The team | view, administer ⬆ | `ConsoleRPC` methods over `src/members.ts`; an agent inviting people needs its own consent copy |
+| `export_start` | Data export | administer ⬆ | A delivery channel that does not pass an export through the model's context; the claim mechanism of §3.6 is the natural one |
 
 ### Phase 5: obtaining numbers
 
@@ -451,6 +587,8 @@ Measured against `docs/threat-model.md`.
 | OAuth refresh token | The agent; hashed in the auth D1 | Rotating; replay of a rotated token revokes the family; ends with the consent row |
 | JWT signing key | Auth D1, encrypted with `BETTER_AUTH_SECRET` | The session-JWT route (`/token`) is disabled so a session JWT cannot pass as an access token |
 | Consent rows | Auth D1 | The revocation switch; shown in Settings |
+| Elevation rows and approval requests | Auth D1 | Written only by a signed-in owner or admin who passed step-up; 24 hours; ended by revoke |
+| Secret claim token | The tool result, then the agent's shell or a person's browser; hashed in the control plane | Single use, 10 minutes, POST only, mints nothing until spent |
 
 `apps/mcp` itself holds none of them.
 
@@ -465,14 +603,17 @@ against the account) still run on every call, as they do for the console.
 
 | Threat | Mitigation | Residual risk |
 |---|---|---|
-| Stolen access or refresh token | Short access lifetime, rotation with replay detection, per-request grant check, Revoke in Settings, privileged grants end after 24 hours | Until revoked, the thief acts as the user within the granted scopes in one workspace |
+| Stolen access or refresh token | Short access lifetime, rotation with replay detection, per-request grant check, Revoke in Settings; step-up tools also need a live elevation, which a token cannot create | Until revoked, the thief acts as the user within the granted scopes in one workspace, and can use step-up tools only inside an elevation the person already approved |
 | Token replayed against another resource, or a session JWT presented as a token | `aud` must equal the MCP resource; `typ: at+jwt` and `azp` required; `/token` disabled | None known. Better Auth 1.7 recognises access JWTs by `azp`; nothing in Eccos signs custom JWTs |
 | Confused deputy: the token forwarded onward | The token stops at `apps/mcp`. `GatewayRPC` receives an account id over a private binding, never a bearer | None |
 | Cross-tenant access | No tool takes a tenant id; the account comes from the grant's workspace, re-resolved each request; the gateway re-checks WABA and phone ownership | The same as the console's, plus `apps/mcp` as a second place a bug could pass the wrong account. Covered by negative two-tenant tests per tool |
 | Stale privilege after a role change or removal | Role and membership are read on every request | One request |
-| Malicious or look-alike client (open registration) | Consent is never skipped; the page shows the redirect host; default scopes are read-only; registration is rate-limited | A person can still approve a client they should not. This is phishing, and the grant is visible and revocable |
-| Prompt injection: a WhatsApp message tells the agent to act | Message-reading tools (phase 2) and writing tools use different scopes; privileged scopes are on demand and short; destructive tools are annotated so clients confirm; erasure is not exposed | **Real and not removable by Eccos.** An agent holding `view` and `send` that reads hostile inbound text can be talked into sending. Document it; recommend separate grants for reading conversations and for administration |
-| Secrets in the model's context | `api_key_create` and `connect_link_create` return a secret by design; `webhook_set` receives one | The key or link passes through the agent and its provider. See open decision 5. Neither is ever logged |
+| Malicious or look-alike client (open registration) | Consent is never skipped; the page shows the redirect host; sensitive actions need the separate step-up; registration is rate-limited | A person can still approve a client they should not. This is phishing, and the grant is visible and revocable |
+| Prompt injection: a WhatsApp message tells the agent to act | Message-reading tools (phase 2) and writing tools use different scopes; step-up tools need an elevation a person approved knowing which tool asked; destructive tools are annotated so clients confirm; erasure is not exposed | **Real and not removable by Eccos.** An agent holding `view` and `send` that reads hostile inbound text can be talked into sending, and during an elevation into a step-up tool. Document it; recommend separate grants for reading conversations and for administration |
+| Secrets in the model's context | Minted secrets are delivered by claim, so the value goes from Eccos to its destination (§3.6) | Inline delivery when the caller opts in; a signing secret the caller supplies; the connection link, which is meant to be handed over. None is ever logged |
+| Claim token intercepted (it is a bearer value for 10 minutes, and it does pass through the model) | Single use; POST only, so previews and scanners neither read nor spend it; token in the body or the fragment, never a path or query; nothing exists until it is spent; a per-caller limit on wrong tokens; it stops resolving when its creator loses the right | Whoever reads the agent's context inside the window and redeems first gets the secret. The rightful redeemer then gets `410`, which is the signal to revoke the key, visible by then under its label |
+| Elevation abused: an agent asks for approval the person did not expect | The approval page names the agent, the workspace and the tool that asked; it requires the grant's own user, signed in, with TOTP; requests expire in 10 minutes and one is pending per grant | Sudo semantics: once approved, every step-up tool is open to that agent for 24 hours, not only the one that asked. The person can end it early |
+| Approval link sent to the wrong person | The link is a pointer; only the grant's user, still owner or admin, can approve | None |
 | Spend and abuse through sends | `eccos:send` is its own scope; a per-user, per-client rate limit in `apps/mcp` | **(spike)** confirm whether RPC sends pass `SEND_RATE_LIMITER`, which today sits on the HTTP route |
 | SSRF through CIMD fetches | HTTPS only, strictly public fetch, no redirects, size and time caps | Weaker than the DNS pinning Better Auth's docs ask for; a Worker has no internal network to reach |
 | Subscriber URL SSRF | Unchanged: `webhook_set` goes through `setSubscriberConfig` and its existing validation | As today (DNS rebinding after save) |
@@ -483,7 +624,8 @@ against the account) still run on every call, as they do for the console.
 
 Every mutating tool writes one audit line with the existing shape, extended by `via: "mcp"` and
 `clientId`. The actor is the user, so an incident review reads the same whether a person or their
-agent acted. Issuing a grant and revoking it are audited in the console.
+agent acted. Issuing a grant, revoking it, requesting, approving and ending an elevation, and creating and
+redeeming a claim are audited, never with a token or a secret.
 
 ### 5.5 Contract amendments this change requires
 
@@ -491,9 +633,10 @@ agent acted. Issuing a grant and revoking it are audited in the console.
 |---|---|
 | `auth-tenancy-contract.md` §2, §11 | "API keys remain the only machine credentials" becomes: API keys remain the only *account* credentials. An OAuth grant is a delegated *user* credential, bounded by that user's live role in one workspace |
 | §1 | The request-to-tenant flow gains a second entry: bearer token → `ConsoleRPC.authorize` → the same steps 3 to 6 |
-| §4 | The matrix gains the scope column and the step-up-at-consent rule |
+| §4 | The matrix gains the scope column. For an agent, "MFA / step-up: Yes" means a live elevation: the same TOTP and recent sign-in, given by the person at consent or on demand, valid for 24 hours |
 | §6 | The origin policy for pages and cookies is unchanged. The OAuth token, registration, JWKS and metadata endpoints answer cross-origin requests that carry no cookie |
 | §9 | The inventory gains the OAuth endpoints, each with its policy, and the refused client-administration endpoints |
+| §10 | `/claim` and `POST /api/claim` join `/connect` as public: the claim token is their credential |
 | `threat-model.md` | §1 assets, §2 the fifth boundary, a §3.5 for `apps/mcp`, the rows above in §4 |
 | `PRODUCTION-READINESS.md` | `apps/mcp` as an artifact with its own claim |
 
@@ -507,15 +650,16 @@ Each phase ships on its own and leaves the product coherent.
 | Phase | Contents | Depends on | Outcome |
 |---|---|---|---|
 | 0. Groundwork | `better-auth` 1.7.14 → 1.7.27 with the re-checks its own comments call for; merge PR #78; the spikes | — | Advisories closed; step-up enforced; the unknowns in this design answered |
-| 1. Connect and set up | Authorization server in the console, consent and workspace step, Connected agents, `ConsoleRPC`, `apps/mcp`, the 19 phase-1 tools, contract and threat-model amendments | 0 | An agent takes a customer from nothing to a tested number, with three human links |
+| 1. Connect and set up | Authorization server in the console, consent and workspace step, Connected agents, `ConsoleRPC`, `apps/mcp`, elevation, secret claims, the 19 phase-1 tools, contract and threat-model amendments | 0 | An agent takes a customer from nothing to a tested number, with three human links |
 | 2. Observe and operate | The phase-2 tools | 1 | An agent can run day-to-day operations and debug delivery |
 | 3. Phone management | Core and gateway Graph calls, the phase-3 tools, the same actions in the console | 1 | An agent can add and register a number the customer owns, and manage its profile |
 | 4. Campaigns and team | RPC methods for broadcasts and scheduled sends, members over `ConsoleRPC`, the phase-4 tools | 2 | Parity with the console for sending and team work |
 | 5. Obtaining numbers | Per the owner's decision | 3 | See number-purchase.md |
 
 **Recommended first delivery: phases 0 and 1.** It is the smallest thing that meets the stated
-goal, it needs no new gateway capability, and all of its risk is in the authorization work, which
-every later phase reuses unchanged.
+goal. Its only gateway change is the secret claim, and nearly all of its risk is in the
+authorization work, which every later phase reuses unchanged. Step-up tools ship only once PR #78
+is merged; if it slips, phase 1 can ship without them and add them behind it.
 
 ## 7. Trade-offs accepted
 
@@ -528,23 +672,32 @@ every later phase reuses unchanged.
   with several workspaces connect once per workspace.
 - **Scopes as coarse as roles** in exchange for one permission model. Finer scopes can be added
   later without breaking grants.
-- **Privileged work needs a person every 24 hours** in exchange for keeping the step-up rule
-  meaningful for agents.
+- **Sensitive work needs a person once every 24 hours** in exchange for keeping the step-up rule
+  meaningful for agents. Everything else is never interrupted.
+- **Elevation covers all step-up tools, not one call.** Per-call approval would be safer and
+  unusable; per-tool approval would need a person five times during onboarding.
+- **Two carriers for one approval** (URL-mode elicitation and a structured result) in exchange
+  for working on every client today.
+- **A claim is one more step for the agent** (run a command) in exchange for secrets that never
+  enter a model's context, and it puts a small table in the control plane.
 - **DCR stays on** although the spec deprecates it, because clients that customers use today
   still need it.
 - **Tool logic sits beside, not inside, the console's server functions.** Both call the same RPC
   methods. Any rule that today lives only in a server function moves down into `GatewayRPC` or
   `ConsoleRPC` before a tool exposes that operation; a tool never re-implements a console rule.
 
-## Open decisions for the owner
+## Decisions
 
-| # | Decision | Recommendation |
-|---|---|---|
-| 1 | **How customers obtain new numbers.** Guidance and registration of a number they own (A), their own carrier account (B), Eccos as holder with Meta's pre-verified numbers (C), a carrier partnership (D). See number-purchase.md | A in phase 3, B as phase 5. Hold C until there is a legal opinion on CNMC, the carrier's resale terms, Creem's answer and a price |
-| 2 | **Human steps beyond Embedded Signup.** Authorizing the agent is inherent to OAuth. The card at checkout is a pricing choice | Accept both. If a card-free start matters, let a new account connect its first number during the trial without a card; that is a billing change outside this spec |
-| 3 | **How long an agent keeps admin rights.** Step-up at consent, then a privileged grant of 24 hours | 24 hours, and merge PR #78 before phase 1 ships privileged scopes |
-| 4 | **Who may register as a client.** CIMD plus open DCR, or an allowlist of known clients | CIMD plus rate-limited DCR. An allowlist would lock out customers' own agents, which are the audience |
-| 5 | **Returning a new API key in a tool result.** It passes through the agent and its model provider | Return it. The agent needs it to finish the setup, the person granted `administer` knowingly, and the consent copy says so. The alternative is a one-time reveal link in the console, which adds a fourth human step |
-| 6 | **Placement and hostname.** `apps/mcp` at `mcp.eccos.chat`, or `/mcp` inside the console | `apps/mcp` at `mcp.eccos.chat` |
-| 7 | **Reading conversations over MCP** (phase 2) sends message content to the customer's model provider | Ship it, behind explicit consent copy, and say so in `docs/privacy.md` |
-| 8 | **Self-hosting.** Whether `apps/mcp` is documented for self-hosters in the first release | Ship it for Eccos Cloud first; document self-hosting once phase 1 is stable |
+Decided on SAN-3 on 2026-11-23. Decisions 3 and 5 were delegated to the Captain with the brief
+"the best and most elegant experience for people and for developers".
+
+| # | Decision | Choice | Why |
+|---|---|---|---|
+| 1 | How customers obtain new numbers | Register a number the customer owns in phase 3; the customer's own carrier account later; Eccos holding numbers stays on hold | Holding numbers needs a legal opinion on CNMC, a carrier's resale terms, Creem's answer and a price before it is worth building |
+| 2 | Human steps beyond Embedded Signup | Authorizing the agent and the card at checkout are accepted, for now | The first is inherent to OAuth; the second is a pricing choice that can change without touching this design |
+| 3 | Admin rights for an agent | Elevation, like sudo: a long-lived grant, and a 24-hour approval that only step-up tools need (§3.3) | Privilege expiry never interrupts ordinary work, and a sensitive call costs the person one link |
+| 4 | Who may register as a client | Client ID Metadata Documents plus rate-limited open dynamic registration | Customers' own agents are the audience; an allowlist would lock them out |
+| 5 | Delivering a new secret | A one-time claim; inline only when the caller asks (§3.6) | The secret reaches its destination without entering a model's context, and nothing is live if it is never claimed |
+| 6 | Placement and hostname | `apps/mcp` at `mcp.eccos.chat` | The console keeps its one-origin policy and the MCP stack upgrades on its own |
+| 7 | Reading conversations over MCP | Shipped in phase 2 behind explicit consent copy | It sends message content to the customer's model provider, which is theirs to decide |
+| 8 | Self-hosting documentation | After phase 1 is stable | Eccos Cloud first; documenting a moving target helps nobody |
