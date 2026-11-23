@@ -9,6 +9,7 @@ import {
   normalizeTemplateName,
   previewBody,
   templateRowsOf,
+  validateTemplateEdit,
 } from "@eccos/core/template-rules";
 
 /**
@@ -410,5 +411,36 @@ describe("templateRowsOf", () => {
     expect(templateRowsOf({ data: "nope" })).toEqual([]);
     expect(templateRowsOf(null)).toEqual([]);
     expect(templateRowsOf(undefined)).toEqual([]);
+  });
+});
+
+describe("validateTemplateEdit", () => {
+  const EDIT = {
+    templateId: " 555 ",
+    name: " order_update ",
+    language: "en_US",
+    bodyText: "Hi {{1}}",
+    bodyExamples: [" Ada "],
+  };
+
+  test("trims the identifiers and keeps the content rules of create", () => {
+    expect(validateTemplateEdit(EDIT)).toEqual({
+      templateId: "555",
+      name: "order_update",
+      language: "en_US",
+      bodyText: "Hi {{1}}",
+      bodyExamples: ["Ada"],
+    });
+    expect(() => validateTemplateEdit({ ...EDIT, bodyExamples: [] })).toThrow();
+  });
+
+  test("category is optional, and never AUTHENTICATION", () => {
+    expect(validateTemplateEdit({ ...EDIT, category: "MARKETING" }).category).toBe("MARKETING");
+    expect(() => validateTemplateEdit({ ...EDIT, category: "AUTHENTICATION" })).toThrow();
+  });
+
+  test("the template id is digits only", () => {
+    expect(() => validateTemplateEdit({ ...EDIT, templateId: "../555" })).toThrow("invalid template id");
+    expect(() => validateTemplateEdit({ ...EDIT, templateId: undefined })).toThrow("invalid template id");
   });
 });

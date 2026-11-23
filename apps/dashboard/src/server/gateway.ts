@@ -28,10 +28,10 @@ import { normalizeScheduledStatus, normalizeScheduleKey } from "../lib/scheduled
 // by construction, the same module as `analyzeTemplate`, which is what makes
 // them agree.
 import {
-  LANGUAGE_PATTERN,
+  TEMPLATE_ID_PATTERN,
   TEMPLATE_NAME_PATTERN,
-  validateTemplateContent,
   validateTemplateDraft,
+  validateTemplateEdit,
   validateTemplateSend,
 } from "@eccos/core/template-rules";
 import { isBsuid } from "@eccos/core/bsuid";
@@ -259,8 +259,6 @@ const WABA_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const PHONE_NUMBER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** Digits only, E.164's 15-digit ceiling — what the Cloud API accepts as `to`. */
 const RECIPIENT_PATTERN = /^[0-9]{5,15}$/;
-/** Graph template ids (`hsm_id`) are numeric. */
-const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 /** A pasted Meta access token: printable ASCII, no whitespace. */
 const META_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
 const MIN_META_TOKEN_LENGTH = 20;
@@ -777,27 +775,7 @@ export function validateEditTemplateInput(input: unknown): EditTemplateInput {
   const record = inputRecord(input);
   const wabaId = optionalWabaId(record.wabaId);
   if (!wabaId) throw new Error("wabaId is required");
-  if (typeof record.templateId !== "string" || !TEMPLATE_ID_PATTERN.test(record.templateId.trim())) {
-    throw new Error("invalid template id");
-  }
-  if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {
-    throw new Error("invalid template name");
-  }
-  if (typeof record.language !== "string" || !LANGUAGE_PATTERN.test(record.language.trim())) {
-    throw new Error("invalid template language");
-  }
-  const category = record.category;
-  if (category !== undefined && category !== "MARKETING" && category !== "UTILITY") {
-    throw new Error("template category must be MARKETING or UTILITY");
-  }
-  return {
-    wabaId,
-    templateId: record.templateId.trim(),
-    name: record.name.trim(),
-    language: record.language.trim(),
-    ...(category ? { category } : {}),
-    ...validateTemplateContent(record),
-  };
+  return { wabaId, ...validateTemplateEdit(record) };
 }
 
 /** One translation of one template, named by BOTH its name and its Graph id.

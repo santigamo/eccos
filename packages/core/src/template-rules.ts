@@ -480,6 +480,8 @@ export function normalizeTemplateName(raw: string): string {
 export const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 /** `en` / `es` / `en_US` / `pt_BR`. */
 export const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
+/** Graph template ids (`hsm_id`) are numeric. */
+export const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 const MAX_BODY_PARAM_LENGTH = 1024;
 /** A BUTTONS component carries at most 3 URL buttons (Meta's own cap). */
 const MAX_BUTTON_PARAMS = 3;
@@ -500,6 +502,14 @@ export interface TemplateDraft extends TemplateContent {
   name: string;
   language: string;
   category: TemplateCategory;
+}
+
+/** One translation's new content. `category` is absent to keep the current one. */
+export interface TemplateEdit extends TemplateContent {
+  templateId: string;
+  name: string;
+  language: string;
+  category?: TemplateCategory;
 }
 
 /** What a test send asks of the template: which one, and the values that fill it. */
@@ -647,6 +657,34 @@ export function validateTemplateDraft(record: Record<string, unknown>): Template
     name: record.name.trim(),
     language: record.language.trim(),
     category: record.category,
+    ...validateTemplateContent(record),
+  };
+}
+
+/**
+ * The edit rules. `name` and `language` identify the translation and cannot
+ * change; `category` is optional because Meta refuses to change an APPROVED
+ * template's.
+ */
+export function validateTemplateEdit(record: Record<string, unknown>): TemplateEdit {
+  if (typeof record.templateId !== "string" || !TEMPLATE_ID_PATTERN.test(record.templateId.trim())) {
+    throw new Error("invalid template id");
+  }
+  if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {
+    throw new Error("invalid template name");
+  }
+  if (typeof record.language !== "string" || !LANGUAGE_PATTERN.test(record.language.trim())) {
+    throw new Error("invalid template language");
+  }
+  const category = record.category;
+  if (category !== undefined && category !== "MARKETING" && category !== "UTILITY") {
+    throw new Error("template category must be MARKETING or UTILITY");
+  }
+  return {
+    templateId: record.templateId.trim(),
+    name: record.name.trim(),
+    language: record.language.trim(),
+    ...(category ? { category } : {}),
     ...validateTemplateContent(record),
   };
 }
