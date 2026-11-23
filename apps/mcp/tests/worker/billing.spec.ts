@@ -102,6 +102,7 @@ describe("billing_get", () => {
       );
     }
     expect(await consoleStub.billingCalls()).toEqual([]);
+    expect(await consoleStub.billingLinkCalls()).toEqual([]);
   });
 
   it("asks the console about the actor's own account only", async () => {
@@ -114,7 +115,7 @@ describe("billing_get", () => {
 
     expect(result.structuredContent).toMatchObject({ connectPolicy: "closed" });
     expect(await consoleStub.billingCalls()).toEqual([
-      { method: "getBilling", actor: { userId: actor.userId, organizationId: "org-a", accountId: "acct-a", clientId: "client-1" } },
+      { userId: actor.userId, organizationId: "org-a", accountId: "acct-a", clientId: "client-1" },
     ]);
     expect(await gatewayStub.calls()).toEqual([]);
   });
@@ -134,7 +135,7 @@ describe("billing_checkout_link", () => {
         "Give this checkout link to the person; they open it in a browser and pay by card. Then call billing_get to confirm numbers can be added.",
       nextTool: "billing_get",
     });
-    expect((await consoleStub.billingCalls()).map((entry) => entry.method)).toEqual(["startCheckout"]);
+    expect((await consoleStub.billingLinkCalls()).map((entry) => entry.method)).toEqual(["startCheckout"]);
   });
 
   it("returns the portal when a subscription is live, and for manage", async () => {
@@ -148,7 +149,7 @@ describe("billing_checkout_link", () => {
 
     expect(subscribe.structuredContent).toMatchObject({ kind: "portal", nextTool: null });
     expect(manage.structuredContent).toEqual(subscribe.structuredContent);
-    expect((await consoleStub.billingCalls()).map((entry) => entry.method)).toEqual(["startCheckout", "openBillingPortal"]);
+    expect((await consoleStub.billingLinkCalls()).map((entry) => entry.method)).toEqual(["startCheckout", "openBillingPortal"]);
   });
 
   it("says there is no portal before the first checkout", async () => {
@@ -186,6 +187,6 @@ describe("billing_checkout_link", () => {
     await client.close();
 
     expect(text).toMatch(/runs without billing/);
-    expect((await consoleStub.billingCalls()).map((entry) => entry.actor.accountId)).toEqual(["acct-a"]);
+    expect((await consoleStub.billingLinkCalls()).map((entry) => entry.actor.accountId)).toEqual(["acct-a"]);
   });
 });

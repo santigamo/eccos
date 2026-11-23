@@ -1,6 +1,7 @@
 import type { AccountWabaResource, CoexistenceResource } from "@eccos/gateway-contract";
 import { z } from "zod";
-import { ToolError, defineTool } from "./registry";
+import { offer } from "./next";
+import { ToolError, type ToolDeps, defineTool } from "./registry";
 import { isoTime, ownedWaba, wabaIdInput } from "./scope";
 
 const UNAVAILABLE_REASON = /^unavailable:(already_synced|history_sharing_off|not_permitted)$/;
@@ -31,7 +32,7 @@ function syncUnavailable(coexistence: CoexistenceResource): string {
  * What to tell the agent about one WABA, keyed on structured state exactly as the console's
  * Numbers page is (lib/provisioning-copy.ts, numbers-table.tsx), never on `provisioningError`.
  */
-function wabaGuidance(waba: AccountWabaResource): { detail: string; nextTool: string | null } {
+function wabaGuidance(waba: AccountWabaResource, deps: ToolDeps): { detail: string; nextTool: string | null } {
   const { coexistence } = waba;
   if (waba.status === "failed") {
     const subject = waba.phones.length > 0 ? "This number is" : "This WhatsApp Business account is";
@@ -48,24 +49,23 @@ function wabaGuidance(waba: AccountWabaResource): { detail: string; nextTool: st
         nextTool: null,
       };
     }
-    return {
-      detail: `${subject} not connected: Eccos could not finish the setup. Call number_recheck to retry it; if it stays failed, call connect_link_create with replace: true and have the person connect it again. If that fails too, the person should contact Eccos support.`,
-      nextTool: "number_recheck",
-    };
+    return offer(deps, `${subject} not connected: Eccos could not finish the setup.`, {
+      tool: "number_recheck",
+      call: "Call number_recheck to retry it. If it stays failed, the person connects it again through a new connection link (connect_link_create with replace: true); if that fails too, they should contact Eccos support.",
+    });
   }
   if (waba.status === "pending") {
-    return {
-      detail:
-        "Registered, but Eccos has not finished subscribing it to its Meta webhooks. Eccos keeps retrying on its own; call number_recheck to run that now.",
-      nextTool: "number_recheck",
-    };
+    return offer(deps, "Registered, but Eccos has not finished subscribing it to its Meta webhooks. Eccos keeps retrying on its own.", {
+      tool: "number_recheck",
+      call: "Call number_recheck to run that now.",
+    });
   }
   if (waba.phones.length === 0) {
-    return {
-      detail:
-        "Connected, but this WhatsApp Business account has no business phone number yet. The person adds one in WhatsApp Manager and Eccos picks it up on its own within minutes; nothing needs reconnecting. Call number_recheck once they have added it to check now.",
-      nextTool: "number_recheck",
-    };
+    return offer(
+      deps,
+      "Connected, but this WhatsApp Business account has no business phone number yet. The person adds one in WhatsApp Manager and Eccos picks it up on its own within minutes; nothing needs reconnecting.",
+      { tool: "number_recheck", call: "Call number_recheck once they have added it to check now." },
+    );
   }
   if (coexistence.status === "not_coexistence") {
     return {
@@ -75,7 +75,7 @@ function wabaGuidance(waba: AccountWabaResource): { detail: string; nextTool: st
     };
   }
   if (coexistence.status === "unavailable") return { detail: `Live. ${syncUnavailable(coexistence)}`, nextTool: null };
-  return { detail: "Live: it sends and receives messages. Call workspace_get to see what is left to set up.", nextTool: null };
+  return { detail: "Live: it sends and receives messages.", nextTool: null };
 }
 
 const provisioningStatus = z.enum(["pending", "active", "failed"]);
@@ -120,15 +120,17 @@ export const numbersList = defineTool({
     detail: z.string(),
     nextTool: z.string().nullable(),
   }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   run: async (_input, actor, deps) => {
-    const { gateway } = deps;
+    const { gateway } = deps.for("view");
     const { wabas } = await gateway.listAccountResources(actor.accountId);
     if (wabas.length === 0) {
       return {
         wabas: [],
-        detail: "No WhatsApp number is connected. Call connect_link_create and give the person the link; they connect a number through Embedded Signup.",
-        nextTool: "connect_link_create",
+        ...offer(deps, "No WhatsApp number is connected.", {
+          tool: "connect_link_create",
+          call: "Call connect_link_create and give the person the link; they connect a number through Embedded Signup.",
+        }),
       };
     }
     const rows = [...wabas]
@@ -148,7 +150,7 @@ export const numbersList = defineTool({
           status: waba.coexistence.status,
           historyDeadlineAt: isoTime(waba.coexistence.deadlineAt),
         },
-        ...wabaGuidance(waba),
+        ...wabaGuidance(waba, deps),
       }));
     const live = rows.filter((row) => row.status === "active").reduce((sum, row) => sum + row.phones.length, 0);
     const waiting = rows.find((row) => row.nextTool !== null);
@@ -184,7 +186,7 @@ export const numberRecheck = defineTool({
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   audit: (input) => ({ wabaId: input.wabaId ?? null }),
   run: async (input, actor, deps) => {
-    const { gateway } = deps;
+    const { gateway } = deps.for("configure");
     const waba = await ownedWaba(gateway, actor.accountId, input.wabaId);
     // The console offers Re-check only where it can change something (numbers-table.tsx).
     if (waba.status === "active" && waba.phones.length > 0) {
@@ -203,18 +205,17 @@ export const numberRecheck = defineTool({
         `Eccos could not re-check WABA ${waba.wabaId} just now (${result.error}). It keeps retrying on its own; call number_recheck again in a few minutes, and if it keeps failing the person should contact Eccos support.`,
       );
     }
-    const detail = {
-      active: `WABA ${waba.wabaId} is active. Call numbers_list to see its numbers.`,
-      pending: "Meta has not confirmed the webhook subscription yet. Eccos keeps retrying on its own; call numbers_list in a few minutes.",
-      failed: "This number could not be connected. Call numbers_list for what to do next.",
-    }[result.status];
+    const next = {
+      active: [`WABA ${waba.wabaId} is active.`, "Call numbers_list to see its numbers."],
+      pending: ["Meta has not confirmed the webhook subscription yet. Eccos keeps retrying on its own.", "Call numbers_list in a few minutes."],
+      failed: ["This number could not be connected.", "Call numbers_list for what to do next."],
+    }[result.status] as [string, string];
     return {
       wabaId: waba.wabaId,
       status: result.status,
       recheckRan: true,
       provisioningError: result.error,
-      detail,
-      nextTool: "numbers_list",
+      ...offer(deps, next[0], { tool: "numbers_list", call: next[1] }),
     };
   },
 });
@@ -248,9 +249,9 @@ export const statusGet = defineTool({
     connectedAt: z.string().nullable(),
     counts: z.object({ inbound: z.number(), inboundByType: counter, outbound: counter, deliveries: counter }),
   }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   run: async (input, actor, deps) => {
-    const { gateway } = deps;
+    const { gateway } = deps.for("view");
     const waba = await ownedWaba(gateway, actor.accountId, input.wabaId);
     if (waba.status !== "active") {
       throw new ToolError(

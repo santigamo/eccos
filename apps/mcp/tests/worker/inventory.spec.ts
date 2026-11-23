@@ -5,13 +5,13 @@ beforeEach(resetStubs);
 
 const SETUP_TOOLS = {
   billing_checkout_link: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  billing_get: { readOnlyHint: true, openWorldHint: false },
+  billing_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   connect_link_create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  connect_status: { readOnlyHint: true, openWorldHint: false },
+  connect_status: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   number_recheck: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  numbers_list: { readOnlyHint: true, openWorldHint: false },
-  status_get: { readOnlyHint: true, openWorldHint: false },
-  workspace_get: { readOnlyHint: true, openWorldHint: false },
+  numbers_list: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  status_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  workspace_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
 describe("tool inventory", () => {

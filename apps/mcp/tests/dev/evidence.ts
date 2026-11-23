@@ -5,7 +5,7 @@
  *
  *   bun run dev:gateway &      # or the verify-eccos stack: .agents/skills/verify-eccos/scripts/verify-eccos launch
  *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.console.jsonc --inspector-port 9241) &
- *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.mcp.jsonc) &
+ *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.mcp.jsonc --var REQUEST_STATE_KEY:$(openssl rand -base64 48)) &
  *   EVIDENCE_DIR=… bun apps/mcp/tests/dev/evidence.ts
  *
  * With VERIFY_ECCOS=1 (the verify-eccos stack, whose gateway talks to its fake Meta), the setup
@@ -26,9 +26,17 @@ mkdirSync(DIR, { recursive: true });
 const control = async (method: string, ...args: unknown[]) =>
   (await fetch(`${CONSOLE}/control/${method}`, { method: "POST", body: JSON.stringify(args) })).json();
 
-const token = `eyJhbGciOiJFZERTQSJ9.${btoa(JSON.stringify({ evidence: Date.now() })).replace(/=+$/, "")}.ZXZpZGVuY2U`;
+const mint = (label: string) =>
+  `eyJhbGciOiJFZERTQSJ9.${btoa(JSON.stringify({ evidence: label, at: Date.now() })).replace(/=+$/, "")}.ZXZpZGVuY2U`;
+const token = mint("owner");
+const viewerToken = mint("viewer");
+const refusedToken = mint("refused");
 const redact = (text: string) =>
-  text.replaceAll(token, "<token>").replace(/\/connect#[A-Za-z0-9._~-]+/g, "/connect#<link-token>");
+  text
+    .replaceAll(token, "<token>")
+    .replaceAll(viewerToken, "<viewer-token>")
+    .replaceAll(refusedToken, "<refused-token>")
+    .replace(/\/connect#[A-Za-z0-9._~-]+/g, "/connect#<link-token>");
 const save = (name: string, data: unknown) => {
   writeFileSync(`${DIR}/${name}`, `${redact(JSON.stringify(data, null, 2))}\n`);
   console.log(`wrote ${DIR}/${name}`);
@@ -128,7 +136,83 @@ save("03-console-calls.json", {
   authorizeCalls: ((await control("authorizeCalls")) as { resource: string }[]).map(({ resource }) => ({ resource, token: "<token>" })),
 });
 
-// 4. The setup tools (task 1.7) against the real gateway's data.
+const grant = (bearer: string, who: Partial<typeof actor>, scope: string[]) =>
+  control("grant", bearer, {
+    ok: true,
+    actor: { ...actor, ...who },
+    audience: `${MCP}/mcp`,
+    expiresAt: Math.floor(Date.now() / 1000) + 600,
+    scope,
+  });
+
+const sdk = async (bearer: string) => {
+  const client = new Client({ name: "eccos-evidence", version: "0" }, { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } });
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${MCP}/mcp`), { authProvider: { token: async () => bearer } } as never));
+  return client;
+};
+
+// 4. A viewer: billing is never asked for, and nextTool names only tools a viewer may call.
+await grant(viewerToken, { userId: "user-viewer", role: "viewer", actions: ["view"] }, ["eccos:view"]);
+const billingBefore = ((await control("billingCalls")) as unknown[]).length;
+const viewer = await sdk(viewerToken);
+const viewerTools = await viewer.listTools();
+const viewerWorkspace = await viewer.callTool({ name: "workspace_get", arguments: {} });
+await viewer.close();
+const billingAfter = (await control("billingCalls")) as unknown[];
+save("04-viewer-workspace-get.json", {
+  tools: viewerTools.tools.map(({ name }) => name),
+  getBillingCallsDuringViewerCall: billingAfter.length - billingBefore,
+  nextTools: (viewerWorkspace.structuredContent as { setup: { steps: { id: string; nextTool: unknown }[] } }).setup.steps.map(
+    ({ id, nextTool }) => ({ id, nextTool }),
+  ),
+  workspaceGet: viewerWorkspace,
+});
+
+// 5. A role refusal. workspace_get is the only tool and every role holds view, so the stub
+// console hands out a grant whose scope carries eccos:view while its actions do not: the shape
+// a real role ∩ scope gap takes once mutating tools exist (Worker specs cover fixture_configure).
+await grant(refusedToken, { userId: "user-refused", role: "viewer", actions: [] }, ["eccos:view"]);
+const refused = await sdk(refusedToken);
+const refusal = await refused.callTool({ name: "workspace_get", arguments: {} });
+await refused.close();
+save("05-role-refusal.json", {
+  note: "The audit line is in 05-role-refusal-audit.jsonl, read from the apps/mcp wrangler dev log.",
+  toolsCall: refusal,
+});
+
+// 6. Origin: a foreign port of the console's host is refused; the console origin is not.
+const originCall = (origin: string) =>
+  fetch(`${MCP}/mcp`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${token}`,
+      origin,
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "tools/list",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": { name: "evidence-raw", version: "0" },
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    }),
+  });
+const origins: Record<string, unknown> = {};
+for (const origin of ["http://localhost:9999", "https://localhost", "http://localhost:3000"]) {
+  const response = await originCall(origin);
+  origins[origin] = { status: response.status, body: (await response.text()).slice(0, 300) };
+}
+save("06-origin.json", { consoleOrigin: "http://localhost:3000", origins });
+
+// 7. The setup tools (task 1.7) against the real gateway's data.
 const transcript: { tool: string; arguments: Record<string, unknown>; isError: boolean; result: unknown }[] = [];
 const setup = new Client({ name: "eccos-evidence-setup", version: "0" }, { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } });
 await setup.connect(new StreamableHTTPClientTransport(new URL(`${MCP}/mcp`), { authProvider: { token: async () => token } } as never));
@@ -191,7 +275,7 @@ if (VERIFY_ECCOS) {
   gatewaySide.otherAccountId = other.accountId;
 }
 await setup.close();
-save("04-setup-tools.json", {
+save("07-setup-tools.json", {
   note: "Billing answers come from the stub ConsoleRPC (task 1.5 has not landed); every other tool reads the running gateway.",
   gateway: VERIFY_ECCOS ? "verify-eccos stack (fake Meta)" : "dev:gateway",
   gatewaySide,

@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 const elevated = (overrides = {}) => makeActor({ elevatedUntil: Date.now() + 3_600_000, ...overrides });
-const LINK_URL = /^https:\/\/console\.example\.test\/connect#ecl_[0-9a-f]{32}$/;
+const LINK_URL = /^http:\/\/localhost:3000\/connect#ecl_[0-9a-f]{32}$/;
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
 async function create(client: Client, args: Record<string, unknown> = {}) {
@@ -165,7 +165,7 @@ describe("connect_link_create", () => {
 
 describe("connect_status", () => {
   it("says none and names connect_link_create before any link exists", async () => {
-    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
+    const client = await connect(await grantToken(makeActor()));
     const result = await call(client, "connect_status");
     await client.close();
 
@@ -176,6 +176,19 @@ describe("connect_status", () => {
       createdByYou: null,
       detail: "No connection link was ever made for this workspace. Call connect_link_create to make one.",
       nextTool: "connect_link_create",
+    });
+  });
+
+  it("tells a viewer who can make the link instead of naming a tool it cannot call", async () => {
+    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
+    const result = await call(client, "connect_status");
+    await client.close();
+
+    expect(result.structuredContent).toMatchObject({
+      state: "none",
+      detail:
+        "No connection link was ever made for this workspace. This connection cannot do the next step: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+      nextTool: null,
     });
   });
 

@@ -42,7 +42,7 @@ async function onlyAccountA() {
 describe("numbers_list", () => {
   it("says to make a connection link when nothing is connected", async () => {
     await seedA();
-    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
+    const client = await connect(await grantToken(owner()));
     const result = await call(client, "numbers_list");
     await client.close();
 
@@ -51,6 +51,20 @@ describe("numbers_list", () => {
       wabas: [],
       detail: "No WhatsApp number is connected. Call connect_link_create and give the person the link; they connect a number through Embedded Signup.",
       nextTool: "connect_link_create",
+    });
+  });
+
+  it("names only tools a viewer may call", async () => {
+    await seedA(wabaIn("pending", "waba-1", "acct-a", ["111"]));
+    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
+    const result = (await call(client, "numbers_list")).structuredContent as { wabas: Record<string, unknown>[]; nextTool: unknown };
+    await client.close();
+
+    expect(result.nextTool).toBeNull();
+    expect(result.wabas[0]).toMatchObject({
+      nextTool: null,
+      detail:
+        "Registered, but Eccos has not finished subscribing it to its Meta webhooks. Eccos keeps retrying on its own. This connection cannot do the next step: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
     });
   });
 
@@ -87,7 +101,7 @@ describe("numbers_list", () => {
       tokenExpiry: "expires",
       tokenExpiresAt: "2027-01-01T00:00:00.000Z",
       coexistence: { onboardingType: "standard", verifiedOnboardingType: null, status: "not_applicable", historyDeadlineAt: null },
-      detail: "Live: it sends and receives messages. Call workspace_get to see what is left to set up.",
+      detail: "Live: it sends and receives messages.",
       nextTool: null,
     });
     expect(wabas[1]).toMatchObject({ tokenExpiry: "never", tokenExpiresAt: null, connectedAt: null });
@@ -145,7 +159,7 @@ describe("number_recheck", () => {
       status: "pending",
       recheckRan: true,
       provisioningError: "Meta has not confirmed subscribed_apps",
-      detail: "Meta has not confirmed the webhook subscription yet. Eccos keeps retrying on its own; call numbers_list in a few minutes.",
+      detail: "Meta has not confirmed the webhook subscription yet. Eccos keeps retrying on its own. Call numbers_list in a few minutes.",
       nextTool: "numbers_list",
     });
     expect((await gatewayStub.calls()).map((entry) => entry.method)).toEqual(["listAccountResources", "reconcileWaba"]);

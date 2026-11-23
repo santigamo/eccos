@@ -239,4 +239,70 @@ describe("secret claims", () => {
     expect(await rpc().listSecretClaims(accountId)).toEqual([]);
     expect(await storedSecret("WABA_A")).toBeNull();
   });
+
+  it("holds at most 20 pending claims per account", async () => {
+    const accountId = await workspace("org_agency", "WABA_A");
+    const claims = [];
+    for (let n = 0; n < 20; n++) claims.push(await keyClaim(accountId, `Key ${n}`));
+    const rows = () => cp((instance) => instance.sql.exec("SELECT COUNT(*) AS n FROM secret_claims").one().n);
+
+    expect(claims.every((claim) => typeof claim === "object")).toBe(true);
+    expect(await keyClaim(accountId)).toBe("too_many_pending");
+    expect(
+      await rpc().createSecretClaim(accountId, { kind: "subscriber_secret", wabaId: "WABA_A" }, creator),
+    ).toBe("too_many_pending");
+    expect(await rows()).toBe(20);
+    expect(await rpc().listSecretClaims(accountId)).toHaveLength(20);
+
+    const first = claims[0];
+    if (typeof first !== "object") throw new Error("not issued");
+    await rpc().redeemSecretClaim(first.token);
+    expect(await keyClaim(accountId)).toMatchObject({ claimId: expect.any(String) });
+    expect(await keyClaim(accountId)).toBe("too_many_pending");
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + SECRET_CLAIM_TTL_MS + 1_000);
+    expect(await keyClaim(accountId)).toMatchObject({ claimId: expect.any(String) });
+    expect(await rpc().listSecretClaims(accountId)).toHaveLength(1);
+  });
+
+  it("lets a new subscriber claim supersede the WABA's older one at the bound", async () => {
+    const accountId = await workspace("org_agency", "WABA_A");
+    const older = await rpc().createSecretClaim(accountId, { kind: "subscriber_secret", wabaId: "WABA_A" }, creator);
+    for (let n = 0; n < 19; n++) await keyClaim(accountId);
+
+    const newer = await rpc().createSecretClaim(accountId, { kind: "subscriber_secret", wabaId: "WABA_A" }, creator);
+    if (typeof older !== "object" || typeof newer !== "object") throw new Error("not issued");
+    expect(await rpc().redeemSecretClaim(older.token)).toBe("cancelled");
+    expect(await rpc().redeemSecretClaim(newer.token)).toMatchObject({ claim: { claimId: newer.claimId } });
+  });
+
+  it("cancels pending subscriber claims when the secret is set or cleared, and nothing else", async () => {
+    const accountId = await workspace("org_agency", "WABA_A");
+    const url = "https://subscriber.example/hook";
+    const subscriberClaim = () =>
+      rpc().createSecretClaim(accountId, { kind: "subscriber_secret", wabaId: "WABA_A" }, creator);
+    const key = await keyClaim(accountId);
+    const kept = await subscriberClaim();
+    await rpc().setSubscriberConfig({ url }, "WABA_A", accountId);
+    if (typeof key !== "object" || typeof kept !== "object") throw new Error("not issued");
+    expect(await rpc().resolveSecretClaim(kept.token)).toMatchObject({ claimId: kept.claimId });
+
+    await rpc().setSubscriberConfig({ url, secret: "operator-secret" }, "WABA_A", accountId);
+    expect(await rpc().resolveSecretClaim(kept.token)).toBeNull();
+    expect((await rpc().listSecretClaims(accountId)).map((claim) => claim.claimId)).toEqual([key.claimId]);
+    expect(await rpc().redeemSecretClaim(kept.token)).toBe("cancelled");
+    expect(await storedSecret("WABA_A")).toBe("operator-secret");
+    expect(Object.keys((await rpc().exportData("WABA_A", accountId)).config)).not.toContain(
+      "__SUBSCRIBER_SECRET_REVISION",
+    );
+
+    const cleared = await subscriberClaim();
+    await rpc().setSubscriberConfig({ url, secret: null }, "WABA_A", accountId);
+    if (typeof cleared !== "object") throw new Error("not issued");
+    expect(await rpc().redeemSecretClaim(cleared.token)).toBe("cancelled");
+    expect(await storedSecret("WABA_A")).toBeNull();
+
+    expect(await rpc().redeemSecretClaim(key.token)).toMatchObject({ claim: { claimId: key.claimId, kind: "api_key" } });
+  });
 });

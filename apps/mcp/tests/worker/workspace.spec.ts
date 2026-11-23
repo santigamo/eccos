@@ -1,7 +1,8 @@
 import type { Client } from "@modelcontextprotocol/client";
 import type { AccountResources } from "@eccos/gateway-contract";
 import { beforeEach, describe, expect, it } from "vitest";
-import { activeWaba, connect, consoleStub, gatewayStub, grantToken, makeActor, resetStubs } from "./helpers";
+import type { AgentAction, MemberRole } from "@eccos/console-contract";
+import { ALL_SCOPES, activeWaba, connect, consoleStub, gatewayStub, grantToken, makeActor, resetStubs } from "./helpers";
 
 beforeEach(resetStubs);
 
@@ -30,7 +31,7 @@ async function workspaceGet(client: Client) {
 }
 
 describe("workspace_get", () => {
-  it("reports an empty workspace and the next tool for every missing step", async () => {
+  it("reports an empty workspace, naming the next tool only where this connection may call it", async () => {
     const actor = makeActor({ role: "admin", actions: ["view", "administer"] });
     await gatewayStub.seed("acct-a", { resources: account("acct-a") });
     await consoleStub.setBilling("acct-a", CLOSED);
@@ -70,8 +71,8 @@ describe("workspace_get", () => {
             id: "webhook",
             state: "todo",
             count: null,
-            detail: "No forwarding target can be set until a WhatsApp Business account is connected.",
-            nextTool: "webhook_set",
+            detail: "No forwarding target can be set until a WhatsApp Business account is connected. This connection cannot do it: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+            nextTool: null,
             blockedBy: "number",
           },
           {
@@ -86,8 +87,8 @@ describe("workspace_get", () => {
             id: "template",
             state: "todo",
             count: 0,
-            detail: "No message template can be created until a WhatsApp Business account is connected.",
-            nextTool: "template_create",
+            detail: "No message template can be created until a WhatsApp Business account is connected. This connection cannot do it: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+            nextTool: null,
             blockedBy: "number",
           },
         ],
@@ -157,10 +158,10 @@ describe("workspace_get", () => {
     expect((result.structuredContent as { setup: { steps: { blockedBy: unknown }[] } }).setup.steps[1]?.blockedBy).toBeNull();
   });
 
-  it("says billing is for owners and admins when the role may not see it, and still reports the rest", async () => {
+  it("does not ask for billing without administer, says who can see it, and still reports the rest", async () => {
     await gatewayStub.seed("acct-a", { resources: account("acct-a") });
-    await consoleStub.setBilling("acct-a", { ok: false, code: "forbidden" });
-    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] })));
+    await consoleStub.setBilling("acct-a", OPEN);
+    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
     const result = await workspaceGet(client);
     await client.close();
 
@@ -170,12 +171,77 @@ describe("workspace_get", () => {
       id: "subscription",
       state: "unknown",
       count: null,
-      detail: "Billing is visible only to owners and admins of this workspace. Ask one of them whether a subscription is active.",
+      detail: "Billing needs the eccos:administer scope, held by an owner or admin, so it is not shown to this connection.",
       nextTool: null,
       blockedBy: null,
     });
     expect(steps.map((step) => step.id)).toEqual(["subscription", "number", "webhook", "api_key", "template"]);
     expect(steps[1]?.blockedBy).toBeNull();
+    expect(await consoleStub.billingCalls()).toEqual([]);
+  });
+
+  it("explains the console's own billing refusal to a connection that holds administer", async () => {
+    await gatewayStub.seed("acct-a", { resources: account("acct-a") });
+    await consoleStub.setBilling("acct-a", { ok: false, code: "forbidden" });
+    const client = await connect(await grantToken(makeActor({ role: "admin" })));
+    const result = await workspaceGet(client);
+    await client.close();
+
+    expect((result.structuredContent as { setup: { steps: unknown[] } }).setup.steps[0]).toEqual({
+      id: "subscription",
+      state: "unknown",
+      count: null,
+      detail: "Billing is visible only to owners and admins of this workspace. Ask one of them whether a subscription is active.",
+      nextTool: null,
+      blockedBy: null,
+    });
+  });
+
+  it("names every next tool for an owner holding every scope", async () => {
+    await gatewayStub.seed("acct-a", { resources: account("acct-a") });
+    await consoleStub.setBilling("acct-a", CLOSED);
+    const client = await connect(await grantToken(makeActor()));
+    const steps = ((await workspaceGet(client)).structuredContent as { setup: { steps: { nextTool: unknown }[] } }).setup.steps;
+    await client.close();
+
+    expect(steps.map((step) => step.nextTool)).toEqual([
+      "billing_checkout_link",
+      "connect_link_create",
+      "webhook_set",
+      "api_key_create",
+      "template_create",
+    ]);
+  });
+
+  it("names no tool an operator cannot call, and says who can", async () => {
+    await gatewayStub.seed("acct-a", { resources: account("acct-a") });
+    const client = await connect(
+      await grantToken(makeActor({ role: "operator", actions: ["view", "operate", "send"] }), ["eccos:view", "eccos:operate", "eccos:send"]),
+    );
+    const steps = ((await workspaceGet(client)).structuredContent as { setup: { steps: { id: string; nextTool: unknown; detail: string }[] } })
+      .setup.steps;
+    await client.close();
+
+    expect(steps.map((step) => step.nextTool)).toEqual([null, null, null, null, null]);
+    expect(steps.find((step) => step.id === "number")?.detail).toBe(
+      "No WhatsApp number is connected. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+    );
+    expect(steps.find((step) => step.id === "api_key")?.detail).toBe(
+      "No active API key. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+    );
+  });
+
+  it("advertises itself as read-only and idempotent", async () => {
+    const client = await connect(await grantToken(makeActor()));
+    const { tools } = await client.listTools();
+    await client.close();
+
+    expect(tools.find((tool) => tool.name === "workspace_get")?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
   });
 
   it("follows a WABA that is connected and not active yet, and a template read that failed", async () => {
@@ -226,5 +292,57 @@ describe("workspace_get", () => {
     expect(calls.every((call) => call.accountId === "acct-a")).toBe(true);
     expect(JSON.stringify(result.structuredContent)).not.toMatch(/acct-b|waba-b|org-b/);
     expect(result.structuredContent).toMatchObject({ workspace: { organizationId: "org-a" } });
+  });
+});
+
+/** What the console's actions resolve to: the role's actions (contract § 4) ∩ the granted scopes. */
+const ROLE_ACTIONS: Record<MemberRole, AgentAction[]> = {
+  owner: ["view", "operate", "send", "configure", "administer"],
+  admin: ["view", "operate", "send", "configure", "administer"],
+  operator: ["view", "operate", "send"],
+  viewer: ["view"],
+};
+
+describe("workspace_get billing gate", () => {
+  const WITHOUT_ADMINISTER = ALL_SCOPES.filter((scope) => scope !== "eccos:administer");
+
+  it.each(
+    (["owner", "admin", "operator", "viewer"] as const).flatMap((role) => [
+      [role, true, role === "owner" || role === "admin"] as const,
+      [role, false, false] as const,
+    ]),
+  )("%s, eccos:administer granted: %s → getBilling called: %s", async (role, administer, called) => {
+    const scope = administer ? ALL_SCOPES : WITHOUT_ADMINISTER;
+    const actions = ROLE_ACTIONS[role].filter((action) => scope.includes(`eccos:${action}`));
+    await gatewayStub.seed("acct-a", { resources: account("acct-a") });
+    await consoleStub.setBilling("acct-a", OPEN);
+    const client = await connect(await grantToken(makeActor({ role, actions }), scope));
+    const result = await workspaceGet(client);
+    await client.close();
+
+    const subscription = (result.structuredContent as { setup: { steps: { state: string }[] } }).setup.steps[0];
+    expect((await consoleStub.billingCalls()).length).toBe(called ? 1 : 0);
+    expect(subscription?.state).toBe(called ? "done" : "unknown");
+  });
+
+  it("never reads another account's billing, and without administer reads none", async () => {
+    await gatewayStub.seed("acct-a", { resources: account("acct-a") });
+    await gatewayStub.seed("acct-b", { resources: account("acct-b") });
+    await consoleStub.setBilling("acct-a", CLOSED);
+    await consoleStub.setBilling("acct-b", OPEN);
+    const admin = makeActor({ role: "admin", organizationId: "org-a", accountId: "acct-a" });
+    const operator = makeActor({ role: "operator", actions: ["view", "operate", "send"], organizationId: "org-b", accountId: "acct-b" });
+
+    const adminClient = await connect(await grantToken(admin));
+    const adminSteps = ((await workspaceGet(adminClient)).structuredContent as { setup: { steps: { state: string }[] } }).setup.steps;
+    await adminClient.close();
+    const operatorClient = await connect(await grantToken(operator, WITHOUT_ADMINISTER));
+    const operatorResult = await workspaceGet(operatorClient);
+    await operatorClient.close();
+
+    expect((await consoleStub.billingCalls()).map((ref) => ref.accountId)).toEqual(["acct-a"]);
+    expect(adminSteps[0]?.state).toBe("todo");
+    expect((operatorResult.structuredContent as { setup: { steps: { state: string }[] } }).setup.steps[0]?.state).toBe("unknown");
+    expect(JSON.stringify(operatorResult.structuredContent)).not.toMatch(/monthlyEuros|connectPolicy|Billing is active/);
   });
 });

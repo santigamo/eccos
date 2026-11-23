@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mode } from "./helpers";
 import { fixtureApp } from "./fixtures";
 import {
   METADATA_URL,
@@ -22,18 +23,65 @@ const names = async (token: string) => {
 };
 
 describe("origin", () => {
-  it("refuses a browser origin other than the console", async () => {
-    const token = await grantToken(makeActor());
-    const response = await postMcp(toolsList(), { token, headers: { origin: "https://evil.example" } });
+  // wrangler.vitest.jsonc: CONSOLE_ORIGIN is http://localhost:3000.
+  it.each(["https://evil.example", "http://localhost:9999", "https://localhost", "http://localhost", "null"])(
+    "refuses the browser origin %s",
+    async (origin) => {
+      const token = await grantToken(makeActor());
+      const response = await postMcp(toolsList(), { token, headers: { origin } });
 
-    expect(response.status).toBe(403);
-  });
+      expect(response.status).toBe(403);
+    },
+  );
 
   it("accepts the console origin and requests without one", async () => {
     const token = await grantToken(makeActor());
 
-    expect((await postMcp(toolsList(1), { token, headers: { origin: "https://console.example.test" } })).status).toBe(200);
+    expect((await postMcp(toolsList(1), { token, headers: { origin: "http://localhost:3000" } })).status).toBe(200);
     expect((await postMcp(toolsList(2), { token })).status).toBe(200);
+  });
+});
+
+describe("body cap", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Every way this Worker could parse a body: JSON.parse on text, or Request.json. */
+  const parsers = () => {
+    const parse = vi.spyOn(JSON, "parse");
+    const json = vi.spyOn(Request.prototype, "json");
+    return () => parse.mock.calls.length + json.mock.calls.length;
+  };
+
+  const oversized = () => JSON.stringify(toolsCall("workspace_get", { padding: "x".repeat(4 * 1024 * 1024) }));
+
+  it("refuses a body over 4 MiB by Content-Length before parsing it", async () => {
+    const token = await grantToken(makeActor());
+    const body = oversized();
+    const parsed = parsers();
+    const response = await postMcp(undefined, { token, raw: body, headers: { "content-length": String(body.length) } });
+    const calls = parsed();
+
+    expect(response.status).toBe(413);
+    expect(calls).toBe(0);
+  });
+
+  it("refuses a chunked body over 4 MiB while reading it, before parsing it", async () => {
+    const token = await grantToken(makeActor());
+    const bytes = new TextEncoder().encode(oversized());
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let offset = 0; offset < bytes.length; offset += 64 * 1024) controller.enqueue(bytes.slice(offset, offset + 64 * 1024));
+        controller.close();
+      },
+    });
+    const parsed = parsers();
+    const response = await postMcp(undefined, { token, raw: stream });
+    const calls = parsed();
+
+    expect(response.status).toBe(413);
+    expect(calls).toBe(0);
   });
 });
 
@@ -78,6 +126,7 @@ describe("effective permissions", () => {
       "connect_status",
       "fixture_configure",
       "fixture_secret_rotate",
+      "fixture_thing_revoke",
       "number_recheck",
       "numbers_list",
       "status_get",
@@ -86,16 +135,43 @@ describe("effective permissions", () => {
     expect(await names(viewer)).toEqual(["connect_status", "numbers_list", "status_get", "workspace_get"]);
   });
 
-  it("refuses a tool the role does not allow even when the scope is granted", async () => {
-    const token = await grantToken(makeActor({ role: "viewer", actions: ["view"] }));
-    const client = await connect(token, { target: fixtureApp });
-    const outcome = await client.callTool({ name: "fixture_configure", arguments: { wabaId: "waba-1" } }).then(
-      (result) => ({ result }),
-      (error: unknown) => ({ error: String(error) }),
-    );
+  it.each<[string, Mode]>([
+    ["2026-07-28", { pin: "2026-07-28" }],
+    ["2025-11-25", "legacy"],
+  ])("tells a %s client what a role lacks when the scope is granted, and audits it", async (_label, mode) => {
+    const lines: string[] = [];
+    vi.spyOn(console, "info").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    const actor = makeActor({ role: "viewer", actions: ["view"] });
+    const client = await connect(await grantToken(actor), { target: fixtureApp, mode });
+    const result = await client.callTool({ name: "fixture_configure", arguments: { wabaId: "waba-1" } });
     await client.close();
+    vi.restoreAllMocks();
 
-    expect(outcome).toEqual({ error: expect.stringContaining("fixture_configure") });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toBeUndefined();
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: "This connection cannot configure: that needs the eccos:configure scope, granted by a person who is an admin or above in this workspace. Ask such a person to connect the agent with that scope, or to do this in the Eccos console.",
+      },
+    ]);
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      {
+        level: "info",
+        area: "audit",
+        via: "mcp",
+        action: "fixture_configure",
+        actorUserId: actor.userId,
+        organizationId: actor.organizationId,
+        accountId: actor.accountId,
+        clientId: actor.clientId,
+        resource: null,
+        outcome: "denied",
+        detail: "forbidden",
+      },
+    ]);
     expect(await consoleStub.elevationCalls()).toEqual([]);
   });
 

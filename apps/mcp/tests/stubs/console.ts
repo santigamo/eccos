@@ -28,9 +28,11 @@ interface State {
   pending: Map<string, ElevationRequest>;
   elevationCalls: { actor: ActorRef; tool: string }[];
   billing: Map<string, BillingResult>;
-  billingLinks: Map<string, BillingLink>;
-  billingCalls: { method: string; actor: ActorRef }[];
   elevationRefusal: ElevationResult | null;
+  billingCalls: ActorRef[];
+  billingLinks: Map<string, BillingLink>;
+  billingLinkCalls: { method: string; actor: ActorRef }[];
+  authorizeFailure: string | null;
 }
 
 const fresh = (): State => ({
@@ -40,9 +42,11 @@ const fresh = (): State => ({
   pending: new Map(),
   elevationCalls: [],
   billing: new Map(),
-  billingLinks: new Map(),
-  billingCalls: [],
   elevationRefusal: null,
+  billingCalls: [],
+  billingLinks: new Map(),
+  billingLinkCalls: [],
+  authorizeFailure: null,
 });
 
 let state = fresh();
@@ -53,6 +57,7 @@ const grantKey = (actor: Pick<ActorRef, "userId" | "clientId" | "organizationId"
 export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
   async authorize(resource: string, token: string): Promise<AuthorizeResult> {
     state.authorizeCalls.push({ resource, token });
+    if (state.authorizeFailure !== null) throw new Error(state.authorizeFailure);
     const result = state.grants.get(token);
     if (!result) return { ok: false, code: "invalid_token" };
     if (!result.ok) return result;
@@ -73,17 +78,17 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
   }
 
   async getBilling(actor: ActorRef): Promise<BillingResult> {
-    state.billingCalls.push({ method: "getBilling", actor });
+    state.billingCalls.push(actor);
     return state.billing.get(actor.accountId) ?? { ok: false, code: "billing_disabled" };
   }
 
   async startCheckout(actor: ActorRef): Promise<BillingLink> {
-    state.billingCalls.push({ method: "startCheckout", actor });
+    state.billingLinkCalls.push({ method: "startCheckout", actor });
     return state.billingLinks.get(`${actor.accountId}:startCheckout`) ?? { ok: false, code: "billing_disabled" };
   }
 
   async openBillingPortal(actor: ActorRef): Promise<BillingLink> {
-    state.billingCalls.push({ method: "openBillingPortal", actor });
+    state.billingLinkCalls.push({ method: "openBillingPortal", actor });
     return state.billingLinks.get(`${actor.accountId}:openBillingPortal`) ?? { ok: false, code: "billing_disabled" };
   }
 
@@ -116,12 +121,21 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
     state.billingLinks.set(`${accountId}:${method}`, link);
   }
 
-  async billingCalls(): Promise<{ method: string; actor: ActorRef }[]> {
-    return state.billingCalls;
+  async billingLinkCalls(): Promise<{ method: string; actor: ActorRef }[]> {
+    return state.billingLinkCalls;
   }
 
   async refuseElevation(refusal: ElevationResult | null): Promise<void> {
     state.elevationRefusal = refusal;
+  }
+
+  /** Make `authorize` throw with `message` (null to stop), as a failing console would. */
+  async failAuthorize(message: string | null): Promise<void> {
+    state.authorizeFailure = message;
+  }
+
+  async billingCalls(): Promise<ActorRef[]> {
+    return state.billingCalls;
   }
 
   async authorizeCalls(): Promise<{ resource: string; token: string }[]> {

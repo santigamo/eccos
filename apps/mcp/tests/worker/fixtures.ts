@@ -17,6 +17,14 @@ export const rotateSecret = defineTool({
   run: async (input) => ({ status: "rotated" as const, wabaId: input.wabaId }),
 });
 
+/** A second step-up tool, so a state sealed for one can be replayed against the other. */
+export const revokeThing = defineTool({
+  ...rotateSecret,
+  name: "fixture_thing_revoke",
+  title: "Revoke a thing (test fixture)",
+  run: async (input) => ({ status: "rotated" as const, wabaId: input.wabaId }),
+});
+
 /** A configure-scope mutating tool that can be told to fail. */
 export const configureThing = defineTool({
   name: "fixture_configure",
@@ -34,4 +42,4 @@ export const configureThing = defineTool({
   },
 });
 
-export const fixtureApp = createApp([...TOOLS, rotateSecret, configureThing]);
+export const fixtureApp = createApp([...TOOLS, rotateSecret, revokeThing, configureThing]);

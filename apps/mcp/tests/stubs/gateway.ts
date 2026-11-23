@@ -36,10 +36,12 @@ const LINK_TTL_MS = 7 * 86_400_000;
 
 let accounts = new Map<string, AccountFixture>();
 let calls: { method: string; accountId: string }[] = [];
+let failing: { method: string; message: string } | null = null;
 let issues: ConnectLinkIssue[] = [];
 
 function owned(method: string, accountId: string, wabaId?: string): AccountFixture {
   calls.push({ method, accountId });
+  if (failing?.method === method) throw new Error(failing.message);
   const fixture = accounts.get(accountId) ?? { resources: EMPTY };
   if (wabaId !== undefined && !fixture.resources.wabas.some((waba) => waba.wabaId === wabaId)) {
     throw new Error(`WABA "${wabaId}" is not owned by account "${accountId}"`);
@@ -113,11 +115,17 @@ export class GatewayRPC extends WorkerEntrypoint {
   async reset(): Promise<void> {
     accounts = new Map();
     calls = [];
+    failing = null;
     issues = [];
   }
 
   async seed(accountId: string, fixture: AccountFixture): Promise<void> {
     accounts.set(accountId, fixture);
+  }
+
+  /** Make `method` throw with `message`, as a failing gateway would. */
+  async fail(method: string, message: string): Promise<void> {
+    failing = { method, message };
   }
 
   async calls(): Promise<{ method: string; accountId: string }[]> {

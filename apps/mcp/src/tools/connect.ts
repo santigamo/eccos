@@ -1,6 +1,7 @@
 import type { ConnectLinkSummary } from "@eccos/gateway-contract";
 import { z } from "zod";
-import { defineTool } from "./registry";
+import { offer } from "./next";
+import { type ToolDeps, defineTool } from "./registry";
 import { isoTime } from "./scope";
 
 /** The console's public connection page (apps/dashboard lib/connect-link/api.ts). */
@@ -9,40 +10,39 @@ const CONNECT_LINK_PATH = "/connect";
 const linkState = z.enum(["pending", "opened", "connected", "unconfirmed", "expired"]);
 
 /** Where a link stands and what the agent does next; the console's `linkStatusLine`, for an agent. */
-function linkGuidance(link: ConnectLinkSummary): { detail: string; nextTool: string | null } {
+function linkGuidance(link: ConnectLinkSummary, deps: ToolDeps): { detail: string; nextTool: string | null } {
   switch (link.state) {
     case "pending":
-      return {
-        detail: `The link has not been opened yet. It works until ${isoTime(link.expiresAt)}. Make sure the person has it, then call connect_status again later.`,
-        nextTool: "connect_status",
-      };
+      return offer(deps, `The link has not been opened yet. It works until ${isoTime(link.expiresAt)}.`, {
+        tool: "connect_status",
+        call: "Make sure the person has it, then call connect_status again later.",
+      });
     case "opened":
-      return {
-        detail: "The person opened the link and has not finished connecting a number. Call connect_status again in a minute or two.",
-        nextTool: "connect_status",
-      };
+      return offer(deps, "The person opened the link and has not finished connecting a number.", {
+        tool: "connect_status",
+        call: "Call connect_status again in a minute or two.",
+      });
     case "connected":
-      return {
-        detail: `${link.connectedPhone ? `The link connected ${link.connectedPhone}.` : "The link connected a WhatsApp Business account."} Call numbers_list to follow its setup.`,
-        nextTool: "numbers_list",
-      };
+      return offer(deps, link.connectedPhone ? `The link connected ${link.connectedPhone}.` : "The link connected a WhatsApp Business account.", {
+        tool: "numbers_list",
+        call: "Call numbers_list to follow its setup.",
+      });
     case "unconfirmed":
-      return {
-        detail:
-          "The link was used, but the result was not confirmed: something may already be connected. Call numbers_list before making a new link.",
-        nextTool: "numbers_list",
-      };
+      return offer(deps, "The link was used, but the result was not confirmed: something may already be connected.", {
+        tool: "numbers_list",
+        call: "Call numbers_list before making a new link.",
+      });
     case "expired":
-      return { detail: "The link expired unused. Call connect_link_create to make a new one.", nextTool: "connect_link_create" };
+      return offer(deps, "The link expired unused.", { tool: "connect_link_create", call: "Call connect_link_create to make a new one." });
   }
 }
 
-const linkView = (link: ConnectLinkSummary, actorUserId: string) => ({
+const linkView = (link: ConnectLinkSummary, actorUserId: string, deps: ToolDeps) => ({
   state: link.state,
   expiresAt: isoTime(link.expiresAt),
   connectedPhone: link.connectedPhone,
   createdByYou: link.creatorUserId === actorUserId,
-  ...linkGuidance(link),
+  ...linkGuidance(link, deps),
 });
 
 export const connectStatus = defineTool({
@@ -64,9 +64,9 @@ export const connectStatus = defineTool({
     detail: z.string(),
     nextTool: z.string().nullable(),
   }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   run: async (_input, actor, deps) => {
-    const { gateway } = deps;
+    const { gateway } = deps.for("view");
     const link = await gateway.getConnectLink(actor.accountId);
     if (!link) {
       return {
@@ -74,11 +74,13 @@ export const connectStatus = defineTool({
         expiresAt: null,
         connectedPhone: null,
         createdByYou: null,
-        detail: "No connection link was ever made for this workspace. Call connect_link_create to make one.",
-        nextTool: "connect_link_create",
+        ...offer(deps, "No connection link was ever made for this workspace.", {
+          tool: "connect_link_create",
+          call: "Call connect_link_create to make one.",
+        }),
       };
     }
-    return linkView(link, actor.userId);
+    return linkView(link, actor.userId, deps);
   },
 });
 
@@ -115,12 +117,12 @@ export const connectLinkCreate = defineTool({
   // The console's openConnectLink (apps/dashboard src/server/gateway.ts): keep a link that has
   // not expired unless asked to replace it, and let the gateway keep a live one on a race.
   run: async (input, actor, deps) => {
-    const { gateway } = deps;
+    const { gateway } = deps.for("administer");
     const exists = (link: ConnectLinkSummary) => ({
       status: "exists" as const,
       url: null,
-      ...linkView(link, actor.userId),
-      detail: `A connection link already exists (${link.state}); its URL was shown only to whoever made it. ${linkGuidance(link).detail} If the person does not have the link, call connect_link_create with replace: true.`,
+      ...linkView(link, actor.userId, deps),
+      detail: `A connection link already exists (${link.state}); its URL was shown only to whoever made it. ${linkGuidance(link, deps).detail} If the person does not have the link, call connect_link_create with replace: true.`,
     });
     const current = input.replace ? null : await gateway.getConnectLink(actor.accountId);
     if (current && current.state !== "expired") return exists(current);
@@ -138,8 +140,11 @@ export const connectLinkCreate = defineTool({
       expiresAt: isoTime(issued.expiresAt),
       connectedPhone: null,
       createdByYou: true,
-      detail: `Give this link to the person who manages the business's WhatsApp; they open it in a browser and follow Meta's steps. It works once, until ${isoTime(issued.expiresAt)}. Then call connect_status to follow their progress.`,
-      nextTool: "connect_status",
+      ...offer(
+        deps,
+        `Give this link to the person who manages the business's WhatsApp; they open it in a browser and follow Meta's steps. It works once, until ${isoTime(issued.expiresAt)}.`,
+        { tool: "connect_status", call: "Then call connect_status to follow their progress." },
+      ),
     };
   },
 });
