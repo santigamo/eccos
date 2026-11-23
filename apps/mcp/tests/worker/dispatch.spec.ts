@@ -71,8 +71,17 @@ describe("effective permissions", () => {
     const owner = await grantToken(makeActor());
     const viewer = await grantToken(makeActor({ role: "viewer", actions: ["view"] }));
 
-    expect(await names(owner)).toEqual(["fixture_configure", "fixture_secret_rotate", "workspace_get"]);
-    expect(await names(viewer)).toEqual(["workspace_get"]);
+    expect(await names(owner)).toEqual([
+      "fixture_configure",
+      "fixture_secret_rotate",
+      "template_create",
+      "template_delete",
+      "template_edit",
+      "template_send_test",
+      "templates_list",
+      "workspace_get",
+    ]);
+    expect(await names(viewer)).toEqual(["templates_list", "workspace_get"]);
   });
 
   it("refuses a tool the role does not allow even when the scope is granted", async () => {

@@ -12,6 +12,7 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",
     "@eccos/console-contract": "workspace:*",
+    "@eccos/core": "workspace:*",
     "@eccos/gateway-contract": "workspace:*",
     "@modelcontextprotocol/server": "2.4.0",
     "agents": "0.34.0",
