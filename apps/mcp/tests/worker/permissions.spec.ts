@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CONSOLE_METHODS, GATEWAY_METHODS, LEAST_ROLE, SCOPE_OF, forbiddenMessage } from "../../src/permissions";
 import { ForbiddenError, ToolError, capabilities } from "../../src/tools/registry";
 
-const listAccountResources = vi.fn(async () => "resources");
+const listAccountResources = vi.fn(async () => ({ account: null, keys: [], wabas: [], phones: [] }));
 const getBilling = vi.fn(async () => "billing");
 const clients = {
   gateway: { listAccountResources, issueApiKey: vi.fn(), eraseByPhone: vi.fn() } as unknown as GatewayApi,
@@ -32,7 +32,7 @@ describe("capabilities", () => {
     expect(Object.keys(view.console)).toEqual([]);
     expect("getBilling" in view.console).toBe(false);
     expect("issueApiKey" in view.gateway).toBe(false);
-    expect(await view.gateway.listAccountResources("acct-a")).toBe("resources");
+    expect(await view.gateway.listAccountResources("acct-a")).toEqual({ account: null, wabas: [], phones: [] });
     expect(listAccountResources).toHaveBeenCalledWith("acct-a");
     expect(await administer.console.getBilling({ userId: "u", organizationId: "o", accountId: "a", clientId: "c" })).toBe("billing");
     expect("listAccountResources" in administer.gateway).toBe(false);
@@ -41,7 +41,8 @@ describe("capabilities", () => {
   it("hands out no method the table leaves out, to any action", () => {
     const deps = capabilities({ role: "owner", actions: [...owner.actions] }, clients);
     for (const action of owner.actions) {
-      const { gateway, console } = deps.for(action);
+      // One action at a time; the loop variable's type is the union deps.for refuses.
+      const { gateway, console } = deps.for(action as never) as unknown as Record<"gateway" | "console", object>;
       expect("eraseByPhone" in gateway).toBe(false);
       expect("requestElevation" in console).toBe(false);
       expect("authorize" in console).toBe(false);

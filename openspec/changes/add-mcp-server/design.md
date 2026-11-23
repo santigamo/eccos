@@ -554,7 +554,7 @@ which also needs a live elevation (§3.3).
 
 | Tool | Does | Scope | Backed by | Missing |
 |---|---|---|---|---|
-| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, `elevatedUntil`, and a setup checklist: subscription (only for admin or owner, who may see billing), numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources` (its `keys` give the count; `listApiKeys` is administer, as in the console), `getSubscriberConfig`, `listTemplates` | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
+| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, `elevatedUntil`, and a setup checklist: subscription (only for admin or owner, who may see billing), numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources` (without `keys`), `hasSubscriber`, `listTemplates`; `getBilling` and `listApiKeys` (count only) when the connection holds administer | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
 | `billing_get` | Whether numbers can be added, connected numbers, monthly price. Admin or owner, as in the console, so an agent never sees more than its person | administer | `billing/account.ts` `billingState` | `ConsoleRPC.getBilling` |
 | `billing_checkout_link` | The Creem checkout URL, or the portal when a subscription exists | administer | `billing/account.ts` `checkoutUrl`, `portalUrl` | `ConsoleRPC.startCheckout`, `openBillingPortal` |
 | `connect_link_create` | Mint the Embedded Signup link for a person to open; `replace` to supersede a live one | administer ⬆ | `issueConnectLink` | Nothing. The token exists only in this result, as today |

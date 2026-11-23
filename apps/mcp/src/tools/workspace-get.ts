@@ -117,7 +117,7 @@ function numberStep(wabas: AccountWabaResource[], subscription: Draft): Draft {
   };
 }
 
-function webhookStep(wabaId: string | null, url: string | null): Draft {
+function webhookStep(wabaId: string | null, hasTarget: boolean): Draft {
   const base = { id: "webhook", count: null } as const;
   if (wabaId === null) {
     return {
@@ -128,7 +128,7 @@ function webhookStep(wabaId: string | null, url: string | null): Draft {
       blockedBy: "number",
     };
   }
-  if (url !== null) return { ...base, state: "done", fact: `Events from WABA ${wabaId} are forwarded to its subscriber URL.`, blockedBy: null };
+  if (hasTarget) return { ...base, state: "done", fact: `Events from WABA ${wabaId} are forwarded to its subscriber URL.`, blockedBy: null };
   return {
     ...base,
     state: "todo",
@@ -139,10 +139,19 @@ function webhookStep(wabaId: string | null, url: string | null): Draft {
 }
 
 /**
- * A count only, from the account's resources: a view read, as in the console's dashboard state.
- * Listing keys (`listApiKeys`) or creating them is administer.
+ * A count only. Which keys exist is administer, as on the console's API keys page, so `null`
+ * (the connection may not see them) says who can.
  */
-function apiKeyStep(active: number): Draft {
+function apiKeyStep(active: number | null, actor: McpActor): Draft {
+  if (active === null) {
+    return {
+      id: "api_key",
+      count: null,
+      blockedBy: null,
+      state: "unknown",
+      fact: `API keys are not shown to this connection. ${forbiddenMessage("administer", actor)}`,
+    };
+  }
   const base = { id: "api_key", count: active, blockedBy: null } as const;
   if (active > 0) return { ...base, state: "done", fact: `${plural(active, "active API key", "active API keys")}.` };
   return {
@@ -225,16 +234,18 @@ export const workspaceGet = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   run: async (_input, actor, deps) => {
     const { gateway } = deps.for("view");
-    const [billing, resources] = await Promise.all([
-      deps.can("administer") ? deps.for("administer").console.getBilling(actorRef(actor)) : null,
+    const administer = deps.can("administer") ? deps.for("administer") : null;
+    const [billing, resources, keys] = await Promise.all([
+      administer ? administer.console.getBilling(actorRef(actor)) : null,
       gateway.listAccountResources(actor.accountId),
+      administer ? administer.gateway.listApiKeys(actor.accountId) : null,
     ]);
-    // The forwarding target's existence is a view fact, as in the console's checklist
-    // (server/gateway.ts hasForwardingTarget); the URL itself is never returned.
+    // Whether a forwarding target exists is a view fact, as in the console's checklist
+    // (server/gateway.ts hasForwardingTarget); the config and its URL are operate.
     const waba = resources.wabas.length > 0 ? selectWaba(actor.accountId, resources.wabas, undefined, false, "any") : null;
-    const [subscriber, templates] = waba
+    const [hasTarget, templates] = waba
       ? await Promise.all([
-          gateway.getSubscriberConfig(waba.wabaId, actor.accountId),
+          gateway.hasSubscriber(waba.wabaId, actor.accountId),
           gateway.listTemplates(waba.wabaId, 100, actor.accountId),
         ])
       : [null, null];
@@ -243,8 +254,8 @@ export const workspaceGet = defineTool({
     const steps = [
       subscription,
       numberStep(resources.wabas, subscription),
-      webhookStep(waba?.wabaId ?? null, subscriber?.url ?? null),
-      apiKeyStep(resources.keys.filter((key) => key.revokedAt === null).length),
+      webhookStep(waba?.wabaId ?? null, hasTarget === true),
+      apiKeyStep(keys ? keys.filter((key) => key.revokedAt === null).length : null, actor),
       templateStep(waba?.wabaId ?? null, templates ? approvedTemplates(templates) : 0),
     ].map((draft) => offer(draft, actor, deps));
     return {

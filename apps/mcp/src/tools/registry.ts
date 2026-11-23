@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type AuditResource, auditEvent } from "../audit";
-import { CONSOLE_METHODS, type ClientsFor, GATEWAY_METHODS, forbiddenMessage, methodsFor } from "../permissions";
+import { CONSOLE_METHODS, type ClientsFor, GATEWAY_METHODS, type OneAction, LEAST_ROLE, forbiddenMessage, methodsFor } from "../permissions";
 
 /** The actor `authorize` returned for this request, plus the scopes the token carries. */
 export type McpActor = Actor & { scope: string[] };
@@ -32,7 +32,7 @@ export interface ToolDeps {
    * The gateway and console methods bound to `action` (permissions.ts), and nothing else;
    * throws a {@link ForbiddenError} when the actor lacks it.
    */
-  for<A extends AgentAction>(action: A): ClientsFor<A>;
+  for<A extends AgentAction>(action: A & OneAction<A>): ClientsFor<A>;
   can(action: AgentAction): boolean;
 }
 
@@ -50,17 +50,15 @@ export class ForbiddenError extends ToolError {
 }
 
 export function capabilities(actor: Pick<Actor, "actions" | "role">, clients: Clients): ToolDeps {
-  const can = (action: AgentAction) => actor.actions.includes(action);
-  return {
-    can,
-    for<A extends AgentAction>(action: A) {
-      if (!can(action)) throw new ForbiddenError(action, actor);
-      return {
-        gateway: methodsFor(clients.gateway, GATEWAY_METHODS, action),
-        console: methodsFor(clients.console, CONSOLE_METHODS, action),
-      } as unknown as ClientsFor<A>;
-    },
+  const can = (action: AgentAction) => Object.hasOwn(LEAST_ROLE, action) && actor.actions.includes(action);
+  const forAction = (action: AgentAction) => {
+    if (!can(action)) throw new ForbiddenError(action, actor);
+    return {
+      gateway: methodsFor(clients.gateway, GATEWAY_METHODS, action),
+      console: methodsFor(clients.console, CONSOLE_METHODS, action),
+    };
   };
+  return { can, for: forAction as unknown as ToolDeps["for"] };
 }
 
 /** What the step-up guard needs besides the tool's own clients. */
