@@ -40,5 +40,6 @@ Each file has an H1, one paragraph, then four H2 sections in this order: `Sub-fe
 - [Templates](./templates.md) covers listing templates over the API and in the console.
 - [Connect and provisioning](./connect-and-provisioning.md) covers attaching a number by token, admin bootstrap, and the provisioning states.
 - [Console onboarding](./console-onboarding.md) covers sign-up, email verification, workspace creation, and the log screens.
+- [Step-up](./step-up.md) covers TOTP setup, the `Confirm it's you` challenge, and the server-side refusals of sensitive actions.
 - [MCP setup tools](./mcp-setup-tools.md) covers the agent's billing, connection link, numbers, re-check and status tools over `apps/mcp`.
 - [MCP template tools](./mcp.md) covers the agent tools for templates and test sends, driven with the MCP SDK client.
