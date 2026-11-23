@@ -1,9 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/server";
+import { numberRecheck, numbersList, statusGet } from "./numbers";
 import { type McpActor, type ToolDefinition, type ToolDeps, registerTool } from "./registry";
 import { workspaceGet } from "./workspace-get";
 
 /** Every tool the server ships, one table. */
-export const TOOLS: readonly ToolDefinition[] = [workspaceGet];
+export const TOOLS: readonly ToolDefinition[] = [
+  workspaceGet,
+  numbersList,
+  numberRecheck,
+  statusGet,
+];
 
 /**
  * The MCP server for one request: only the tools whose action the actor has (live role ∩
