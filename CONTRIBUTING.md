@@ -33,7 +33,7 @@ Eccos is a **Bun workspace** (`packages/*` + `apps/*`) — a shared pure core + 
 
 ## Running the checks
 
-Every PR must pass one command. CI runs exactly this script and nothing else:
+Every PR must pass one command. CI's test-and-build job runs exactly this script:
 
 ```bash
 bun run check          # lint, typecheck, both test suites, site, docs, dashboard
