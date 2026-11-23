@@ -39,6 +39,14 @@ usage: verify-eccos <command>
   totp <email|secret> print the current TOTP code for a user enrolled by enroll-totp, or for
                       the key the console's setup sheet shows, to type into the console
   mail-code <email>   print the newest two-factor setup code mailed to <email>
+  age-step-up <email> make <email>'s step-up 16 minutes old, so the console asks again
+  stepup-actions [--check]
+                      list the console server functions that need step-up, from the source;
+                      --check fails when features/step-up.md lacks a row for one
+  stepup-matrix <email> <organization id> before|aged|after
+                      call every server function in step-up.md's table. before (no TOTP):
+                      each answers totp-required; aged (after age-step-up): each answers
+                      reauth-required; after (fresh step-up): none answers a step-up refusal
   serverfn <email> <src file> <export> [json]
                       call a console server function as that user, without the UI; the
                       file is relative to apps/dashboard, such as src/server/gateway.ts
@@ -72,8 +80,6 @@ signature() {
 
 # True when <name>'s PID file was written in this boot, so the PID can still be ours.
 this_boot() { [[ -f "$RUN/$1.pid" && "$(cat "$RUN/boot_id" 2>/dev/null)" == "$BOOT_ID" ]]; }
-
-alive() { this_boot "$1" && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
 
 # True while a process of <name>'s group is left that runs what this skill started, even
 # when its leader exited. A PID file from an earlier boot or a reused PID never matches.
@@ -149,6 +155,10 @@ cmd_launch() {
   wait_for gateway "$GATEWAY/ready" '"ok":true'
 
   (cd "$REPO/apps/dashboard" && clean_env bunx wrangler d1 migrations apply eccos-auth --local >"$RUN/migrate.log" 2>&1)
+  # The console's auth database outlives stop, and so do its rate-limit counters: every
+  # doctor and recipe signs up, so back-to-back launches would hit the sign-up limit.
+  (cd "$REPO/apps/dashboard" && clean_env bunx wrangler d1 execute eccos-auth --local \
+    --command 'delete from "rateLimit"' >>"$RUN/migrate.log" 2>&1)
   start dashboard "$REPO/apps/dashboard" \
     BETTER_AUTH_SECRET=verify-only-better-auth-secret-32-chars \
     BETTER_AUTH_URL="$DASHBOARD" \
@@ -211,9 +221,9 @@ cmd_doctor() {
     shift
     if "$@" >/dev/null 2>&1; then echo "ok    $label"; else echo "FAIL  $label"; ok=1; fi
   }
-  check "fake process started by this run" alive fake
-  check "gateway process started by this run" alive gateway
-  check "dashboard process started by this run" alive dashboard
+  check "fake process started by this run" group_alive fake
+  check "gateway process started by this run" group_alive gateway
+  check "dashboard process started by this run" group_alive dashboard
   check "port $FAKE_PORT belongs to this run's fake" owns_port fake "$FAKE_PORT"
   check "port $GATEWAY_PORT belongs to this run's gateway" owns_port gateway "$GATEWAY_PORT"
   check "port $DASHBOARD_PORT belongs to this run's dashboard" owns_port dashboard "$DASHBOARD_PORT"
@@ -254,6 +264,7 @@ cmd_stop() {
 cmd_webhook() {
   local source="${1:-}" bad="${2:-}"
   [[ -n "$source" ]] || { usage; exit 2; }
+  require_stack
   local body
   if [[ "$source" == "-" ]]; then body="$(cat)"; else body="$(cat "$source")"; fi
   body="${body//__NOW__/$(date +%s)}"
@@ -267,6 +278,7 @@ cmd_webhook() {
 cmd_admin() {
   local method="${1:-}" path="${2:-}" body="${3:-}"
   [[ -n "$method" && -n "$path" ]] || { usage; exit 2; }
+  require_stack
   if [[ -n "$body" ]]; then
     curl -s -w '\nHTTP %{http_code}\n' -X "$method" "$GATEWAY$path" \
       -H "authorization: Bearer $ADMIN_KEY" -H "content-type: application/json" --data "$body"
@@ -289,6 +301,7 @@ cmd_mail_link() {
 
 cmd_follow_mail_link() {
   local link
+  require_stack
   link="$(cmd_mail_link "$@")"
   [[ -n "$link" ]] || { echo "follow-mail-link: no mail captured for $1" >&2; exit 1; }
   curl -s -o /dev/null -w 'HTTP %{http_code} -> %{redirect_url}\n' "$link"
@@ -297,11 +310,28 @@ cmd_follow_mail_link() {
 PASSWORD="Verify-Passw0rd-2026!"
 
 auth_post() { # <email> <path> <json>: POST to Better Auth with that user's cookie jar
-  curl -s -b "$(jar "$1")" -c "$(jar "$1")" -X POST "$DASHBOARD/api/auth/$2" \
-    -H "content-type: application/json" -H "origin: $DASHBOARD" --data "$3"
+  local cookies
+  cookies="$(jar "$1")"
+  (umask 077 && curl -s -b "$cookies" -c "$cookies" -X POST "$DASHBOARD/api/auth/$2" \
+    -H "content-type: application/json" -H "origin: $DASHBOARD" --data "$3")
 }
 
-jar() { mkdir -p "$RUN/sessions" && echo "$RUN/sessions/$1.cookies"; }
+# Every command that sends a request to the stack first proves that the stack answering is
+# the one launch started: this boot, each process group running the harness, each port
+# owned by its group. Otherwise it sends nothing and writes nothing.
+require_stack() {
+  local name port
+  [[ -d "$RUN" ]] || { echo "verify-eccos: no stack launched; run 'verify-eccos launch' first" >&2; exit 1; }
+  for name in fake gateway dashboard; do
+    case "$name" in fake) port=$FAKE_PORT ;; gateway) port=$GATEWAY_PORT ;; dashboard) port=$DASHBOARD_PORT ;; esac
+    if ! group_alive "$name" || ! owns_port "$name" "$port"; then
+      echo "verify-eccos: port $port is not answered by the $name this skill launched; refusing. Run 'verify-eccos doctor'" >&2
+      exit 1
+    fi
+  done
+}
+
+jar() { (umask 077 && mkdir -p "$RUN/sessions") && echo "$RUN/sessions/$1.cookies"; }
 
 # The current TOTP code for <email>. A code is accepted once, so when this window's code
 # was already handed out, wait for the next 30-second window.
@@ -319,6 +349,7 @@ totp_code() {
 cmd_session() {
   local email="${1:-}" password="${2:-$PASSWORD}" answer
   [[ -n "$email" ]] || { usage; exit 2; }
+  require_stack
   rm -f "$(jar "$email")"
   answer="$(auth_post "$email" sign-in/email "{\"email\":\"$email\",\"password\":\"$password\"}")"
   if grep -q '"twoFactorRedirect":true' <<<"$answer"; then
@@ -332,7 +363,8 @@ cmd_session() {
 cmd_enroll_totp() {
   local email="${1:-}" password="${2:-$PASSWORD}" before code answer uri
   [[ -n "$email" ]] || { usage; exit 2; }
-  [[ -f "$(jar "$email")" ]] || { echo "enroll-totp: run 'verify-eccos session $email' first" >&2; exit 1; }
+  require_stack
+  [[ -f "$RUN/sessions/$email.cookies" ]] || { echo "enroll-totp: run 'verify-eccos session $email' first" >&2; exit 1; }
   before="$(grep -cF "$email" "$RUN/fake.jsonl" || true)"
   auth_post "$email" two-factor/send-enable-code "{\"password\":\"$password\"}" | grep -q '"status":true' \
     || { echo "enroll-totp: the enable code was not sent" >&2; exit 1; }
@@ -353,6 +385,7 @@ cmd_enroll_totp() {
 
 cmd_step_up() {
   local email="${1:-}"
+  require_stack
   [[ -f "$RUN/sessions/$email.totp" ]] || { echo "step-up: run 'verify-eccos enroll-totp $email' first" >&2; exit 1; }
   cmd_serverfn "$email" src/server/step-up.ts confirmStepUpCode "{\"code\":\"$(totp_code "$email")\"}"
 }
@@ -375,9 +408,41 @@ cmd_mail_code() {
 cmd_serverfn() {
   local email="${1:-}" file="${2:-}" name="${3:-}"
   [[ -n "$email" && -n "$file" && -n "$name" ]] || { usage; exit 2; }
-  [[ -f "$(jar "$email")" ]] || { echo "serverfn: run 'verify-eccos session $email' first" >&2; exit 1; }
+  require_stack
+  [[ -f "$RUN/sessions/$email.cookies" ]] || { echo "serverfn: run 'verify-eccos session $email' first" >&2; exit 1; }
   shift 3
   bun "$SKILL_DIR/harness/serverfn.ts" "$DASHBOARD" "$(jar "$email")" "$file" "$name" "$@"
+}
+
+cmd_age_step_up() {
+  local email="${1:-}"
+  [[ "$email" =~ ^[A-Za-z0-9.+_-]+@[A-Za-z0-9.-]+$ ]] || { usage; exit 2; }
+  require_stack
+  (cd "$REPO/apps/dashboard" && clean_env bunx wrangler d1 execute eccos-auth --local --command \
+    "update session set stepUpAt = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-16 minutes') where stepUpAt is not null and userId = (select id from user where email = lower('$email'))" \
+    >"$RUN/age-step-up.log" 2>&1) || { echo "age-step-up: the update failed; see $RUN/age-step-up.log" >&2; exit 1; }
+  echo "age-step-up: $email's step-up is now 16 minutes old"
+}
+
+cmd_stepup_actions() { bun "$SKILL_DIR/harness/stepup-actions.ts" "$@"; }
+
+cmd_stepup_matrix() {
+  local email="${1:-}" org="${2:-}" phase="${3:-}" failed=0 file name input out
+  [[ -n "$email" && -n "$org" && "$phase" =~ ^(before|aged|after)$ ]] || { usage; exit 2; }
+  require_stack
+  while IFS='|' read -r _ file name input _; do
+    file="$(sed -E 's/^ *`|` *$//g' <<<"$file")"
+    name="$(sed -E 's/^ *`|` *$//g' <<<"$name")"
+    input="$(sed -E "s/^ *\`|\` *$//g; s/<org>/$org/g" <<<"$input")"
+    [[ "$input" == "none" ]] && input=""
+    out="$(cmd_serverfn "$email" "$file" "$name" "$input" 2>&1 | tr -d '\n')"
+    if [[ "$phase" == before ]] && grep -q 'totp-required' <<<"$out"; then echo "ok    $name refused: totp-required"
+    elif [[ "$phase" == aged ]] && grep -q 'reauth-required' <<<"$out"; then echo "ok    $name refused: reauth-required"
+    elif [[ "$phase" == after ]] && grep -q '^HTTP 200' <<<"$out" && ! grep -qE 'totp-required|reauth-required' <<<"$out"; then
+      echo "ok    $name passed step-up: $(cut -c9-130 <<<"$out")"
+    else echo "FAIL  $name: $(cut -c1-200 <<<"$out")"; failed=1; fi
+  done < <(grep -E '^\| `src/' "$SKILL_DIR/features/step-up.md")
+  return $failed
 }
 
 cmd_evidence() {
@@ -420,6 +485,9 @@ case "${1:-}" in
   step-up) shift; cmd_step_up "$@" ;;
   totp) shift; cmd_totp "$@" ;;
   mail-code) shift; cmd_mail_code "$@" ;;
+  age-step-up) shift; cmd_age_step_up "$@" ;;
+  stepup-actions) shift; cmd_stepup_actions "$@" ;;
+  stepup-matrix) shift; cmd_stepup_matrix "$@" ;;
   serverfn) shift; cmd_serverfn "$@" ;;
   evidence) shift; cmd_evidence "$@" ;;
   env) cmd_env ;;

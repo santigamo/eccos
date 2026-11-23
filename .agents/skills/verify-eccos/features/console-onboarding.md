@@ -27,7 +27,7 @@ Preconditions:
 - An email never used on this machine, in `$EMAIL`, such as `vera+20261123T1300@eccos-verify.example`.
 
 - **Sign up.** Open `http://localhost:3000/signup`. Fill the textbox `Name` with `Vera Verify`, `Email` with `$EMAIL`, `Password` with `Verify-Passw0rd-2026!`, choose the button `Create account`. The heading becomes `Check your inbox` and the page shows `$EMAIL`.
-- **Mail sent.** Run `$V fake-log /mail/`. The newest line has `"template":"verify-email"` and `"to":"$EMAIL"`.
+- **Mail sent.** Run `$V fake-log /mail/ | grep -iF "$EMAIL" | tail -1`. The line holds `verify-email`, and the address in lower case: Better Auth lowercases it, and the mail body sits in the log as escaped JSON, so search for the address alone.
 - **Verify.** Open the URL printed by `$V mail-link $EMAIL` in the same browser, or run `$V follow-mail-link $EMAIL`, which prints `HTTP 302 -> http://localhost:3000/`.
 - **Sign in.** Open `http://localhost:3000/signin`. Fill `Email` and `Password`, choose the button `Sign in`. The page moves to `/onboarding` with the heading `Create your workspace`.
 - **Workspace.** Fill the textbox `Workspace name` with `Verify Workspace`, choose the button `Create workspace`. The page moves to `/numbers`, the breadcrumb button reads `Workspace: Verify Workspace`, and the heading is `Connect WhatsApp`.

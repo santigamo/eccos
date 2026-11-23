@@ -23,7 +23,7 @@ const cookie = readFileSync(jar, "utf8")
 const id = Buffer.from(JSON.stringify({ file: `/${file}?tss-serverfn-split`, export: `${name}_createServerFn_handler` })).toString(
   "base64url",
 );
-const payload = JSON.stringify(await toJSONAsync({ data: json === undefined ? undefined : JSON.parse(json), context: {} }));
+const payload = JSON.stringify(await toJSONAsync({ data: json ? JSON.parse(json) : undefined, context: {} }));
 const headers = { "x-tsr-serverfn": "true", origin, cookie };
 // A GET server function answers 405 to a POST; it takes the payload in the query instead.
 let response = await fetch(`${origin}/_serverFn/${id}`, {
@@ -38,7 +38,11 @@ const text = await response.text();
 let result: unknown = text;
 try {
   const decoded = fromJSON({ t: JSON.parse(text), f: 0, m: [] }) as { result?: unknown; error?: unknown };
-  result = decoded.error ?? decoded.result;
-} catch {}
+  result = decoded.error instanceof Error ? { thrown: decoded.error.message } : (decoded.error ?? decoded.result);
+} catch {
+  // A thrown error is serialized with TanStack's own Error plugin; keep its message.
+  const message = text.match(/"message":\{"t":1,"s":"((?:[^"\\]|\\.)*)"/)?.[1];
+  if (message) result = { thrown: JSON.parse(`"${message}"`) };
+}
 console.log(`HTTP ${response.status}`);
 console.log(typeof result === "string" ? result : JSON.stringify(result, null, 2));
