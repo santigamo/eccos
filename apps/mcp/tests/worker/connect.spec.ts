@@ -62,7 +62,7 @@ describe("connect_link_create", () => {
     expect(infoLines.length).toBeGreaterThan(0);
     expect(infoLines.join("\n")).not.toContain(token);
     expect(infoLines.map((line) => JSON.parse(line))).toEqual([
-      expect.objectContaining({ area: "audit", action: "connect_link_create", resource: { replace: "false" }, outcome: "success" }),
+      expect.objectContaining({ area: "audit", action: "connect_link_create", resource: { replace: "false" }, outcome: "success", detail: "created" }),
     ]);
   });
 
@@ -94,6 +94,22 @@ describe("connect_link_create", () => {
     expect(replaced).toMatchObject({ status: "created", url: expect.stringMatching(LINK_URL), createdByYou: true });
     expect(await gatewayStub.connectLinkIssues()).toEqual([{ accountId: "acct-a", creatorUserId: actor.userId, replace: true }]);
     expect((await gatewayStub.calls()).filter((entry) => entry.method === "getConnectLink")).toHaveLength(1);
+  });
+
+  it("says in the audit line whether the link was created, replaced or already existed", async () => {
+    await gatewayStub.seed("acct-a", {
+      resources: accountResources("acct-a"),
+      connectLink: { state: "pending", expiresAt: Date.UTC(2026, 10, 30), connectedPhone: null, creatorUserId: "u" },
+    });
+    const client = await connect(await grantToken(elevated()));
+    await create(client);
+    await create(client, { replace: true });
+    await client.close();
+
+    expect(infoLines.map((line) => JSON.parse(line)).map(({ outcome, detail }) => [outcome, detail])).toEqual([
+      ["success", "exists"],
+      ["success", "replaced"],
+    ]);
   });
 
   it("makes a new link when the last one expired", async () => {

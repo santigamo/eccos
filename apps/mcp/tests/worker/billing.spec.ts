@@ -105,6 +105,20 @@ describe("billing_get", () => {
     expect(await consoleStub.billingLinkCalls()).toEqual([]);
   });
 
+  it("needs only eccos:administer: a grant without eccos:view lists and runs it, since it reads nothing at view", async () => {
+    await consoleStub.setBilling("acct-a", OPEN);
+    const client = await connect(await grantToken(makeActor({ role: "admin", actions: ["administer"] }), ["eccos:administer"]));
+    const names = await listedTools(client);
+    const result = await call(client, "billing_get");
+    await client.close();
+
+    expect(names).toContain("billing_get");
+    expect(names).not.toContain("numbers_list");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ enabled: true, connectPolicy: "open" });
+    expect(await gatewayStub.calls()).toEqual([]);
+  });
+
   it("asks the console about the actor's own account only", async () => {
     await consoleStub.setBilling("acct-a", CLOSED);
     await consoleStub.setBilling("acct-b", OPEN);
