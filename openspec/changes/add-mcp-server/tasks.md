@@ -90,8 +90,8 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       check, scope challenge, both approval carriers, no authorization caching.
 - [x] 1.7 Tools: billing (`ConsoleRPC.getBilling`, `startCheckout`, `openBillingPortal`),
       connection link and status, numbers and status.
-- [ ] 1.8 Tools: webhook and API keys, with claim delivery and the inline opt-in. Ships after
-      1.4a to 1.4c.
+- [x] 1.8 Tools: webhook and API keys, with claim delivery and the inline opt-in. Built against
+      the stub console; claims are redeemed by the console's 1.4c page, which ships separately.
 - [x] 1.9 Tools: templates and test send.
 - [ ] 1.10 Two-account negative tests for every tool; the end-to-end scenario on a test
       deployment; deploy script and `docs/deployment.md` section for `apps/mcp`;
