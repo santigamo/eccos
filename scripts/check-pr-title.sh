@@ -5,9 +5,10 @@
 set -euo pipefail
 
 title="${1:-}"
-pattern='^(feat|fix|docs|refactor|perf|test|build|ci|chore|revert)\([a-z0-9][a-z0-9-]*\): [^ ].*$'
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)\([a-z0-9][a-z0-9-]*\)!?: [^[:space:]].*$'
+revert='^Revert ".+"$'
 
-if [[ "$title" =~ $pattern ]]; then
+if [[ "$title" =~ $pattern || "$title" =~ $revert ]]; then
   exit 0
 fi
 
@@ -16,7 +17,9 @@ PR title is not in the form type(scope): subject
 
   got:      $title
   expected: type(scope): subject
-  types:    feat fix docs refactor perf test build ci chore revert
+  types:    feat fix docs style refactor perf test build ci chore revert
+  breaking: add ! before the colon, as in feat(core)!: drop a field
+  reverts:  GitHub's Revert button title, Revert "<original title>", also passes
   scope:    the area the change lands in, lowercase: gateway, console, site, docs, core, repo, ...
   example:  fix(gateway): hold webhooks of a pending WABA instead of dropping them
 
