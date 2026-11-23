@@ -10,6 +10,9 @@ The repo is a **Bun workspace**: shared `@eccos/core` package + per-target apps.
 ```bash
 bun install            # install dependencies
 bun run dev            # Bun target, watch mode (http://localhost:3000)
+bun run check          # CI's test-and-build job, in CI's order; run it before every push
+./scripts/check-pr-title.sh "<title>"   # CI's separate PR title job: type(scope): subject
+bun run lint           # Biome lint (first step of check)
 bun run typecheck      # regenerates the Workers types, then tsc --noEmit
 bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers tests for the Cloudflare Workers target
@@ -65,6 +68,25 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
 - Webhook handler must return 200 quickly so Meta does not disable the subscription — except when
   storing the events fails (sync capture or ingest): then it answers 5xx so Meta retries.
 - This repo is **public/OSS** — never commit real tokens, secrets, or `.env`.
+
+## Rules and what enforces them
+
+A rule that nothing checks gets broken again. Each row pairs a rule with the check that fails when
+it is broken. When someone corrects you, fix the mistake and add its row; when the rule was already
+here with only prose behind it, give it a check in the same change. Drop a row once the mistake
+cannot happen.
+
+| Rule | Enforced by |
+| --- | --- |
+| Run CI's test-and-build job before you push | `bun run check` is the only step of `.github/workflows/ci.yml` |
+| Lint is clean on every commit | `bun run lint`, first step of `bun run check` |
+| A new test file runs without registering it | `bun run test` globs `packages/*/tests/*.test.ts` and `apps/gateway/tests/*.test.ts` |
+| PR titles read `type(scope): subject` | `scripts/check-pr-title.sh`, run by `.github/workflows/pr-title.yml` |
+| README's event shape matches `WhatsAppCallbackEvent` | `apps/gateway/tests/docs-readme-events.test.ts` |
+| The public docs' event examples and tables match the parser | `apps/gateway/tests/docs-events.test.ts`, `apps/gateway/tests/worker/docs-contract.spec.ts` |
+| Parser changes come with tests | Prose only (see Rules) |
+| `packages/core` stays free of HTTP and DB code | Prose only (see Rules) |
+| No secrets in the repository | Prose only (see Rules) |
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker

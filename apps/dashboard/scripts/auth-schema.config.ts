@@ -8,10 +8,11 @@
 import { Database } from "bun:sqlite";
 import { betterAuth } from "better-auth";
 import { organization, twoFactor } from "better-auth/plugins";
+import { stepUpGuard } from "../src/auth/step-up-guard";
 
 export const auth = betterAuth({
   database: new Database(":memory:"),
   secret: "schema-generation-only-secret-32-chars!!",
   emailAndPassword: { enabled: true },
-  plugins: [organization(), twoFactor()],
+  plugins: [organization(), twoFactor(), stepUpGuard()],
 });

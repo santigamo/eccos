@@ -1,8 +1,9 @@
 # Design: MCP server for agent-driven onboarding and management
 
 Verified against primary sources on 2026-11-23; versions and URLs are in
-[research.md](./research.md). Items marked **(spike)** were read in documentation but not run, and
-are the first tasks in [tasks.md](./tasks.md).
+[research.md](./research.md). The integration points the first draft could only read about were run
+in spike 0.3 on 2026-11-23; § 8 records each answer with its evidence, and the sections below
+already state the result. What still needs a hosted client or a deployment is listed in § 8.3.
 
 ## 1. Context the design must respect
 
@@ -125,16 +126,18 @@ flowchart LR
   `mcp({ resource, loginPage, consentPage, postLogin, ... })` from `@better-auth/mcp`, and
   `cimd()`. `mcp()` *is* the OAuth provider; `oauthProvider()` is not registered next to it.
   `resourceSeedScope: "process"` because the auth instance is built per request.
-- Issuer: `https://app.eccos.chat/api/auth`. The endpoints under `/api/auth/oauth2/*` and
-  `/api/auth/jwks` are already reached by the existing `/api/auth/*` dispatch. The RFC 8414
-  document lives outside that prefix, at `/.well-known/oauth-authorization-server/api/auth`, so
-  `src/server.ts` serves it explicitly, before the page gate.
+- Issuer: the bare console origin, `https://app.eccos.chat` (`jwt({ jwt: { issuer } })`). The
+  endpoints under `/api/auth/oauth2/*` and `/api/auth/jwks` are already reached by the existing
+  `/api/auth/*` dispatch. The RFC 8414 document lives at the root,
+  `/.well-known/oauth-authorization-server`, which `src/server.ts` serves explicitly before the
+  page gate. Claude and ChatGPT document only the root paths, and with an issuer of
+  `/api/auth` the root answered `406` (§ 8.2).
 - Pages: the existing sign-in and sign-up, a workspace step (pick one, or create the first), and
   a consent page; an approval page for elevation (§3.3) and a claim page for secrets (§3.6).
   Settings gains "Connected agents": the grants on this workspace, whether each is elevated and
   until when, End elevated access, and Revoke.
-- `ConsoleRPC`, a `WorkerEntrypoint` exported from the server entry **(spike: confirm the
-  TanStack Start build keeps a named entrypoint export)**.
+- `ConsoleRPC`, a `WorkerEntrypoint` exported from `src/server.ts` next to the default export.
+  The TanStack Start build keeps the named export and a service binding reaches it (§ 8.1).
 
 **`packages/console-contract` (new).** The `ConsoleApi` interface and its types, mirroring
 `packages/gateway-contract`.
@@ -178,10 +181,13 @@ interface Actor {
 
 1. Verify the JWT in process with the auth instance's own keys: signature, `iss`, `aud` equal to
    the resource, `exp`, `typ: at+jwt`, `azp` present. No network call and no key cache to go
-   stale **(spike: the in-process verification entry point in 1.7.27)**.
+   stale: `auth.api.getJwks()` read in process, then `jose`'s `createLocalJWKSet` and
+   `jwtVerify`. This uses only public APIs; the internal helper
+   (`@better-auth/oauth-provider/internal`) gives the same answers and is not used (§ 8.1).
 2. Confirm the grant is still alive: the consent row for (user, client, workspace) exists. Revoking
-   in "Connected agents" deletes it, so revocation takes effect on the next request rather than at
-   token expiry.
+   in "Connected agents" deletes it **and revokes the grant's refresh tokens**, so revocation takes
+   effect on the next request rather than at token expiry. Deleting the consent row alone does not
+   stop refresh: the spike refreshed successfully after it (§ 8.1).
 3. Re-read membership of the workspace named in the token and the member's **current** role. Not
    a member: refuse.
 4. Resolve `organization_accounts` through `GatewayRPC.getOrganizationAccountLink`. Anything but
@@ -248,7 +254,7 @@ sequenceDiagram
   M-->>A: 401 WWW-Authenticate: resource_metadata, scope
   A->>M: GET /.well-known/oauth-protected-resource/mcp
   M-->>A: resource, authorization_servers: [console issuer]
-  A->>C: GET /.well-known/oauth-authorization-server/api/auth
+  A->>C: GET /.well-known/oauth-authorization-server
   C-->>A: endpoints, S256, CIMD supported, registration_endpoint
   A->>P: open /api/auth/oauth2/authorize (PKCE, resource, scope)
   P->>C: sign in, or sign up and verify email
@@ -358,15 +364,20 @@ declares:
   ```
 
   It is returned with `isError: true` so no client mistakes it for success, and every step-up
-  tool's output schema includes this shape. `workspace_get` reports `elevatedUntil`, so an agent
+  tool's output schema is the union of its success shape and this one. The same JSON is also the
+  text block, because Claude Code and Cursor give the model only the text of an error result,
+  while Codex forwards only `structuredContent` (§ 8.2). Cursor validates `structuredContent`
+  against `outputSchema` even on errors and fails the call when it does not match, so the rule
+  for every tool is: an error result either matches the tool's output schema or carries no
+  structured content. `workspace_get` reports `elevatedUntil`, so an agent
   can also check before it starts a batch of sensitive work.
 
 The spec says URL-mode elicitation "is not for authorizing the MCP client's access to the MCP
 server". Elevation is read as falling on the permitted side of that line: the client's token and
 scopes do not change, and what the URL collects is the person's re-authentication, which must not
-pass through the client. That reading, and each client's actual support for URL mode, are spike
-items. If either fails, the structured result is already the complete path and nothing else
-changes.
+pass through the client. The round trip works with the MCP SDK client (§ 8.1); which hosted
+clients declare URL mode is still open (§ 8.3). If URL mode fails anywhere, the structured result
+is already the complete path and nothing else changes.
 
 **Ending it.** An elevation ends at its expiry, when the grant is revoked, or when the person ends
 it under Connected agents. A demotion needs no handling: the live role check already refuses.
@@ -382,7 +393,10 @@ Advertise both mechanisms, so that current and older clients connect:
   methods, `S256`). Claude and ChatGPT prefer it. Better Auth's `cimd()` requires an injected
   fetcher and ships one only for Node; its docs ask for DNS pinning that Workers cannot do. A
   Worker has no private network to be rebound into, so the Workers fetcher is: HTTPS only, the
-  `global_fetch_strictly_public` compatibility flag, no redirects, a size and time cap **(spike)**.
+  `global_fetch_strictly_public` compatibility flag on the console Worker, `GET` only, no
+  redirects, a size and time cap. Claude's and Claude Code's published documents resolve through
+  it; ChatGPT's answered `403` to the local runtime (§ 8.3). Nothing is cached, so each
+  authorization fetches the document again (about 90 ms).
 - **DCR** (`allowDynamicClientRegistration` with unauthenticated registration) as the fallback
   that Cursor and 2025-era clients need. Registered clients never skip consent, are rate-limited per address, and unused ones are deleted.
 
@@ -401,9 +415,12 @@ authorization flow *is* the sign-up:
 1. The person adds `https://mcp.eccos.chat/mcp` to their agent. The agent gets a `401`, discovers
    the console and opens the authorize URL.
 2. No session: the sign-in page, with sign-up one click away (`signup.page`). They sign up and
-   verify their email as today. The verification link returns them to the pending authorization
-   **(spike: the signed authorization query lives 10 minutes; when it has expired, the agent
-   simply connects again and the now-signed-in person lands on the next step)**.
+   verify their email as today. The sign-up page sets the verification link's `callbackURL` to
+   the pending authorization (the signed authorize URL), so the link returns them to it; sending
+   the signed query with sign-up alone does not, and the person lands on `/onboarding` (§ 8.1).
+   The signed query lives 10 minutes; when it has expired, the agent simply connects again and
+   the now-signed-in person lands on the next step. Sign-in and sign-up use Better Auth's
+   `oauthProviderClient` and follow the `url` it returns, or the authorization is dropped.
 3. No workspace: the post-login step is the existing onboarding form. Creating the workspace runs
    the existing `createOrganization` path, including `ensureOrganizationAccount`. No API key is
    issued, as the contract requires.
@@ -584,7 +601,7 @@ Measured against `docs/threat-model.md`.
 | Asset | Where it lives | Protection |
 |---|---|---|
 | OAuth access token | The agent, in transit | 10 minutes, audience-bound to the MCP resource, useless without a live grant, membership and account link |
-| OAuth refresh token | The agent; hashed in the auth D1 | Rotating; replay of a rotated token revokes the family; ends with the consent row |
+| OAuth refresh token | The agent; hashed in the auth D1 | Rotating; a replay within 30 seconds (`@better-auth/mcp`'s `refreshTokenReuseInterval`) gets the same response again, a later replay revokes the family; revoked together with the consent row |
 | JWT signing key | Auth D1, encrypted with `BETTER_AUTH_SECRET` | The session-JWT route (`/token`) is disabled so a session JWT cannot pass as an access token |
 | Consent rows | Auth D1 | The revocation switch; shown in Settings |
 | Elevation rows and approval requests | Auth D1 | Written only by a signed-in owner or admin who passed step-up; 24 hours; ended by revoke |
@@ -614,7 +631,7 @@ against the account) still run on every call, as they do for the console.
 | Claim token intercepted (it is a bearer value for 10 minutes, and it does pass through the model) | Single use; POST only, so previews and scanners neither read nor spend it; token in the body or the fragment, never a path or query; nothing exists until it is spent; a per-caller limit on wrong tokens; it stops resolving when its creator loses the right | Whoever reads the agent's context inside the window and redeems first gets the secret. The rightful redeemer then gets `410`, which is the signal to revoke the key, visible by then under its label |
 | Elevation abused: an agent asks for approval the person did not expect | The approval page names the agent, the workspace and the tool that asked; it requires the grant's own user, signed in, with TOTP; requests expire in 10 minutes and one is pending per grant | Sudo semantics: once approved, every step-up tool is open to that agent for 24 hours, not only the one that asked. The person can end it early |
 | Approval link sent to the wrong person | The link is a pointer; only the grant's user, still owner or admin, can approve | None |
-| Spend and abuse through sends | `eccos:send` is its own scope; a per-user, per-client rate limit in `apps/mcp` | **(spike)** confirm whether RPC sends pass `SEND_RATE_LIMITER`, which today sits on the HTTP route |
+| Spend and abuse through sends | `eccos:send` is its own scope; a per-user, per-client rate limit in `apps/mcp`; `GatewayRPC` sends already pass `checkSendRate` on the same `accountId:wabaId` key as `/v1` (§ 8.1) | The account's send budget is shared between the agent, the console and `/v1` |
 | SSRF through CIMD fetches | HTTPS only, strictly public fetch, no redirects, size and time caps | Weaker than the DNS pinning Better Auth's docs ask for; a Worker has no internal network to reach |
 | Subscriber URL SSRF | Unchanged: `webhook_set` goes through `setSubscriberConfig` and its existing validation | As today (DNS rebinding after save) |
 | Flooding the public endpoints | Cloudflare edge; Rate Limiting binding on `/mcp`; Better Auth's rate limiter on the OAuth endpoints | `authorize` costs D1 reads per request. An unauthenticated request never reaches it: a missing or malformed bearer is refused in `apps/mcp` |
@@ -685,6 +702,60 @@ is merged; if it slips, phase 1 can ship without them and add them behind it.
 - **Tool logic sits beside, not inside, the console's server functions.** Both call the same RPC
   methods. Any rule that today lives only in a server function moves down into `GatewayRPC` or
   `ConsoleRPC` before a tool exposes that operation; a tool never re-implements a console rule.
+
+## 8. Spike answers (task 0.3)
+
+Run on 2026-11-23 on the throwaway branch
+[`spike/mcp-0.3`](https://github.com/santigamo/eccos/tree/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike)
+(never merged), against local `wrangler dev`: the gateway, the console **as the production build**
+(`vite build`, then `wrangler dev` on `dist/server`), and a minimal `apps/mcp-spike` Worker. Versions
+are those in research.md: `better-auth` and its `mcp`, `oauth-provider` and `cimd` packages at
+1.7.27, `agents` 0.34.0, `@modelcontextprotocol/server` and `client` 2.4.0, `jose` 6.2.18. The
+README on that branch reruns every result; tokens in the evidence are redacted.
+
+### 8.1 Confirmed
+
+| Question | Answer | Evidence |
+|---|---|---|
+| The D1 migration for the OAuth and JWKS tables; JWT keys on D1 | `auth generate` with `scripts/auth-schema.config.ts` emits only the delta (`jwks`, `oauthClient`, `oauthResource`, `oauthClientResource`, `oauthRefreshToken`, `oauthAccessToken`, `oauthConsent`, `oauthClientAssertion`) and it applies to D1. The config needs `baseURL` set or generation fails with `Invalid URL`. The key is EdDSA (Ed25519), its private half encrypted with `BETTER_AUTH_SECRET`, no expiry, served at `/api/auth/jwks`. Regenerating from the final plugin config gives the same SQL | [06-refresh-keys.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/06-refresh-keys.json) |
+| Verifying a raw access token in process | Both `verifyJwsAccessToken` with the internal `getLocalJwksSource` and the public path (`auth.api.getJwks()`, `jose` `createLocalJWKSet` + `jwtVerify` with `typ: at+jwt`, `aud`, required `azp`, `sub`, `exp`) accept a valid token and refuse a wrong audience, a tampered token and a refresh token. 5 to 8 ms; the whole `authorize` (with D1 reads and `GatewayRPC`) 7 to 12 ms. Design uses the public path | [08-verify-compare.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/08-verify-compare.json), [ConsoleRPC](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/dashboard/src/spike/oauth-spike.ts) |
+| A named `WorkerEntrypoint` through the TanStack Start build | `export { ConsoleRPC }` from `src/server.ts` survives `vite build` (`dist/server/index.js` exports `ConsoleRPC` next to the default), and `apps/mcp-spike` reaches it over a service binding. Both end-to-end flows pass against the built artifact. A stale `dist` fails with "does not export an entrypoint named ConsoleRPC", so the build check belongs in CI | [01-flow-built-artifact.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/01-flow-built-artifact.json), [02-mcp-built-artifact.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/02-mcp-built-artifact.json) |
+| `OAuthResourceServer` and `createMcpHandler` inside Hono; the actor reaches tools | Yes. No token: `401` with `resource_metadata` and `scope`. Tools read the actor from `getMcpAuthContext().props.actor`, including the `accountId` from `GatewayRPC`. Deleting the consent row refuses the next request. `OAuthResourceServer` validates `resourceMetadata` when constructed, so a server configured from `env` is built on the first request | [02-mcp.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/02-mcp.json) |
+| `postLogin.consentReferenceId` and the workspace claim | The chosen organization becomes the consent's `referenceId`; `customAccessTokenClaims` checks membership and adds `https://eccos.chat/workspace`; refresh after the membership is removed answers `403 not_a_member`. **Refresh after the consent row is deleted still answers `200`**, hence the change in § 2.2 step 2 | [06-refresh-keys.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/06-refresh-keys.json) |
+| Refresh-token rotation | Rotation works. `@better-auth/mcp` defaults `refreshTokenReuseInterval` to 30 s: a replay inside it returns the identical response and mints nothing; a replay after it answers `invalid_grant` and revokes the whole family, including the newest token | [12-refresh-replay.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/12-refresh-replay.json) |
+| Resuming an authorization after email verification | Works only when the verification link's `callbackURL` is the signed authorize URL: it lands on the workspace step. Sending the signed query with sign-up (the default) or `prompt=create` gives a link back to `/`, which lands on `/onboarding`. On sign-in, the console page also dropped the authorization (landed on `/numbers`) until it used `oauthProviderClient` and followed the returned `url`; after that a real browser went sign-in → workspace → consent → client callback | [04-signup-resume.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/04-signup-resume.json), [browser/](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/browser/) |
+| `inputRequired.elicitUrl` through `createMcpHandler` | On 2026-07-28 with the SDK client: no `elicitation.url` declared gives the structured `approval_required` result; declared and declined gives `elevation_declined`; accepted without approving gives `approval_required`; approved in the console, the SDK retries by itself and the call succeeds. A forged `requestState` is refused with `-32602 invalid_request_state`. Client capabilities arrive per request in `_meta["io.modelcontextprotocol/clientCapabilities"]`. A 2025-11-25 client negotiates legacy mode and gets the structured result | [02-mcp.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/02-mcp.json) |
+| `isError: true` with structured content | The SDK client accepts it with a success-only output schema and with a union one, in both protocol modes, without throwing. The Inspector CLI prints the result and then exits with `tool_is_error` | [07-schema.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/07-schema.json), [10-inspector-cli.txt](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/10-inspector-cli.txt) |
+| Step-up inside the consent visit | Signed out with TOTP enrolled: sign-in answers `twoFactorRedirect`, and `verify-totp` with the signed query continues to the workspace step. Re-authentication of an aged session inside consent does the same; the fresh session has no active workspace, so the person picks it again before consenting | [05-stepup.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/05-stepup.json) |
+| Sends over `GatewayRPC` and `SEND_RATE_LIMITER` | They pass it: `apps/gateway/src/rpc.ts` calls `checkSendRate` on both send paths, and `send-test.spec.ts` asserts the shared `accountId:wabaId` key (both rate tests pass) | `apps/gateway/tests/worker/send-test.spec.ts`, `send-text.spec.ts` |
+
+### 8.2 Changed by the spike
+
+- **Issuer and discovery.** With the issuer at `/api/auth`, the root
+  `/.well-known/oauth-authorization-server` and `openid-configuration` answered `406`, and Claude
+  and ChatGPT document only root paths. The issuer is now the bare origin and the document is
+  served at the root; the SDK client's discovery finds it and the issuer matches
+  ([11-discovery.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/11-discovery.json)). § 2.1, § 3 and the spec are updated.
+- **Revocation.** Revoke also revokes the grant's refresh tokens (§ 2.2).
+- **Resume.** The sign-in and sign-up pages carry the authorization forward, and sign-up's
+  verification link points back at it (§ 3.5).
+- **The approval result's text block** carries the same JSON, and an error result either matches
+  the output schema or has no structured content (§ 3.3). From the client research: Claude Code
+  and Cursor give the model only the text of an error, Codex only the structured content, and
+  Cursor fails a call whose error does not match its output schema.
+- **The console Worker gains `global_fetch_strictly_public`.** It applies to every `fetch` the
+  console makes, so its other outbound calls (the mail endpoint in `auth/mail-reccado.ts`, Creem)
+  must target public hosts; the gateway is a service binding and is not affected. A self-hoster
+  whose mail endpoint is on a private address would need it on a public one.
+
+### 8.3 Still unverified
+
+| Question | Why | What it needs |
+|---|---|---|
+| Claude, ChatGPT and Cursor complete the flow | No hosted client can reach a local server without an account, and none was used | A test deployment (or a public tunnel to one) and Santi's accounts; ChatGPT documents custom MCP servers for Business and Enterprise plans only. Task 0.5 |
+| ChatGPT's client metadata document | Fetched from local `workerd`, `chatgpt.com/oauth/client.json` answers `403` (`text/html`, no `cf-mitigated`), with or without a User-Agent; curl, Node and Bun on the same machine get `200` ([03-cimd.json](https://github.com/santigamo/eccos/blob/3dd5d46630d3bfcd3a3562966d26b5b01162c8a3/apps/mcp-spike/evidence/03-cimd.json)). Production egress may differ. Its document also asks for `private_key_jwt` with a `jwks_uri`, which this flow has not exercised | One authorization from a deployed console. If it still fails, ChatGPT falls back to DCR, which works today |
+| Which clients declare `elicitation.url`, and how each shows the URL and an error result | Research only: Claude Code declares it on servers the user configured; Cursor and Claude connectors were not seen to; ChatGPT unknown | The same hosted runs; the structured result covers every client in the meantime |
+| `global_fetch_strictly_public` in production | Better Auth refuses private and reserved address literals before any fetch, and `localtest.me` (which resolves to loopback) failed as a network error; production was not tried | One CIMD fetch from the deployed console to a name that resolves to a private address |
 
 ## Decisions
 

@@ -15,6 +15,7 @@ import { createAuth } from "../src/auth/auth";
 import { CaptureMailSender } from "../src/auth/mail";
 import { requirePermission, verifyMembership } from "../src/auth/tenant";
 import { ForbiddenError } from "../src/auth/tenant";
+import { enrollTotp } from "./helpers/step-up";
 
 const BASE_URL = "http://localhost:3000";
 
@@ -98,6 +99,7 @@ async function createOrgWithViewer(
   viewerEmail?: string,
 ): Promise<Org> {
   const ownerHeaders = await verifiedUser(auth, db, ownerEmail);
+  enrollTotp(db, ownerEmail);
   const org = (await auth.api.createOrganization({
     body: { name, slug: mintSlug() },
     headers: ownerHeaders,
@@ -136,6 +138,7 @@ describe("fresh-state acceptance matrix", () => {
     const a = await createOrgWithViewer(auth, db, "dual-a", "a2-owner@corp.test", "dual@corp.test");
     // The dual user joins org B as OWNER (invited directly by b2-owner).
     const bOwnerHeaders = await verifiedUser(auth, db, "b2-owner@corp.test");
+    enrollTotp(db, "b2-owner@corp.test");
     const bOrg = (await auth.api.createOrganization({
       body: { name: "dual-b", slug: mintSlug() },
       headers: bOwnerHeaders,
