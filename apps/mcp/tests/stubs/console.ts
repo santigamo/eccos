@@ -16,6 +16,7 @@ import type {
   ElevationRequest,
   ElevationResult,
 } from "@eccos/console-contract";
+import type { GatewayApi } from "@eccos/gateway-contract";
 
 const APPROVAL_PAGE = "https://console.example.test/agents/approve";
 const REQUEST_TTL_MS = 10 * 60_000;
@@ -117,10 +118,21 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
   }
 }
 
-/** `wrangler dev` evidence runs drive the controls over HTTP: `POST /control/<method>` with a JSON array of arguments. */
+/**
+ * `wrangler dev` evidence runs drive the controls over HTTP: `POST /control/<method>` with a JSON
+ * array of arguments. With a GATEWAY binding (tests/dev/wrangler.console.jsonc),
+ * `POST /control/provision` creates a workspace's account in the local gateway, as the console's
+ * onboarding does, and issues one API key.
+ */
 export default {
-  async fetch(request: Request, env: unknown, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: { GATEWAY?: Pick<GatewayApi, "ensureOrganizationAccount" | "issueApiKey"> }, ctx: ExecutionContext): Promise<Response> {
     const method = new URL(request.url).pathname.replace(/^\/control\//, "");
+    if (method === "provision" && request.method === "POST" && env.GATEWAY) {
+      const [organizationId, name] = (await request.json()) as [string, string];
+      const { accountId } = await env.GATEWAY.ensureOrganizationAccount(organizationId, name);
+      const { keyId } = await env.GATEWAY.issueApiKey(accountId, "mcp-evidence");
+      return Response.json({ accountId, keyId });
+    }
     const controls = new ConsoleRPC(ctx, env as never) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
     const control = controls[method];
     if (request.method !== "POST" || typeof control !== "function") return new Response("Not Found", { status: 404 });
