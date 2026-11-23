@@ -45,7 +45,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
 
 ## Phase 1: connect and set up
 
-- [ ] 1.1 Amend `docs/auth-tenancy-contract.md` and `docs/threat-model.md` as listed in
+- [x] 1.1 Amend `docs/auth-tenancy-contract.md` and `docs/threat-model.md` as listed in
       design § 5.5. Documentation only, reviewed before the code that relies on it.
 - [ ] 1.2 Authorization server in the console: `jwt()` with the bare origin as issuer and
       `disabledPaths: ["/token"]`, `mcp()`, `cimd()` with the Workers fetcher, in `createAuth`
@@ -67,15 +67,21 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       "allow sensitive actions for 24 hours" on the consent page, End elevated access. Tests:
       only the grant's user with TOTP and a recent sign-in can approve; expiry; one pending
       request per grant; revoke ends it.
-- [ ] 1.4b Secret claims in the gateway: the control-plane table, `createSecretClaim` and
-      `redeemSecretClaim` on `GatewayRPC`, mint-on-redeem for API keys and the subscriber secret,
-      pending claims in the key list. Worker tests: single use, expiry leaves nothing, concurrency.
+- [x] 1.4b Secret claims in the gateway: the control-plane table, `createSecretClaim` and
+      `redeemSecretClaim` on `GatewayRPC`, mint-on-redeem for API keys (one control-plane call)
+      and the subscriber secret (a spend, then a write to the WABA's object), pending claims from
+      `listSecretClaims`. Worker tests: single use, expiry leaves nothing, concurrency. The
+      hardening follow-up adds cancellation by a newer secret or claim, a bound of 20 pending
+      claims per account, and `write_failed`.
 - [ ] 1.4c Claim page and `POST /api/claim` in the console: POST-only redemption, token in body
       or fragment, wrong-token limit, creator re-check. Tests: a GET spends nothing.
 - [ ] 1.5 `packages/console-contract`, `ConsoleRPC.authorize` and `requestElevation`. `authorize`
       verifies with `auth.api.getJwks()` and `jose`. Tests: every refusal in the spec's
       "re-derived on every request" requirement, against a real D1 and a control-plane stub; a
       CI check that the built `dist/server` still exports `ConsoleRPC`.
+  - [x] `packages/console-contract` (the `ConsoleApi` types, including the billing methods
+        that 1.7 needs) landed first, on its own, so the console and `apps/mcp` build against
+        one contract.
 - [ ] 1.6 `apps/mcp` skeleton: Hono, `OAuthResourceServer`, `createMcpHandler`, bindings,
       rate limit, audit helper, the step-up guard with both carriers (URL-mode elicitation and
       the structured result, its JSON also in the text block), `workspace_get` only. The server

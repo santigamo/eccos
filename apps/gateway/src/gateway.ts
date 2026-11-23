@@ -168,6 +168,8 @@ export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
  * same zero rows. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const LAST_SWEEP_KEY = "__last_sweep_at__";
+/** Bumped on every write of SUBSCRIBER_SECRET, so a secret claim made before it goes stale. */
+const SUBSCRIBER_SECRET_REVISION_KEY = "__SUBSCRIBER_SECRET_REVISION";
 /** How long a send's idempotency key dedupes a retry. */
 export const SEND_KEY_TTL_MS = DAY_MS;
 
@@ -902,7 +904,21 @@ export class EccosGateway extends DurableObject<Env> {
       for (const [k, v] of Object.entries(entries)) {
         this.sql.exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, k, v);
       }
+      if ("SUBSCRIBER_SECRET" in entries) this.bumpSubscriberSecretRevision();
     });
+  }
+
+  /** How many times SUBSCRIBER_SECRET has been written; 0 before the first write. */
+  subscriberSecretRevision(): number {
+    return Number(this.getConfigValue(SUBSCRIBER_SECRET_REVISION_KEY) ?? 0);
+  }
+
+  private bumpSubscriberSecretRevision(): void {
+    this.sql.exec(
+      `INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`,
+      SUBSCRIBER_SECRET_REVISION_KEY,
+      String(this.subscriberSecretRevision() + 1),
+    );
   }
 
   getConfigValue(key: string): string | null {
@@ -969,11 +985,24 @@ export class EccosGateway extends DurableObject<Env> {
       else put("SUBSCRIBER_WEBHOOK_URL", url);
       if (secret === null) drop("SUBSCRIBER_SECRET");
       else if (secret !== undefined) put("SUBSCRIBER_SECRET", secret);
+      if (secret !== undefined) this.bumpSubscriberSecretRevision();
     });
     // A target now exists, so release whatever the drain was holding for want of
     // one (see `alarm()`). Without this the backlog would sit until the next
     // ingest happened to set an alarm, i.e. until the next inbound message.
     if (url !== null) this.ctx.storage.setAlarm(Date.now());
+  }
+
+  /** Replaces only the signing secret, for a redeemed secret claim: the target is left as it is.
+   * False, writing nothing, when the secret was written since `expectedRevision`. */
+  setSubscriberSecret(secret: string, expectedRevision: number): boolean {
+    if (!/^[0-9a-f]{64}$/.test(secret)) throw new Error("invalid subscriber secret: expected 32 bytes as hex");
+    return this.ctx.storage.transactionSync(() => {
+      if (this.subscriberSecretRevision() !== expectedRevision) return false;
+      this.sql.exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, "SUBSCRIBER_SECRET", secret);
+      this.bumpSubscriberSecretRevision();
+      return true;
+    });
   }
 
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---

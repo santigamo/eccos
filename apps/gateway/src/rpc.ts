@@ -39,6 +39,12 @@ import type {
   ConnectLinkSummary,
   ConnectStartResult,
   IssuedConnectLink,
+  IssuedSecretClaim,
+  RedeemedSecretClaim,
+  SecretClaim,
+  SecretClaimCreator,
+  SecretClaimRefusal,
+  SecretClaimRequest,
   ConversationListOpts,
   ConversationOpts,
   ConversationSummary,
@@ -806,6 +812,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   ): Promise<{ ok: true }> {
     const { stub } = await this.scoped(wabaId, accountId, { anyStatus: true });
     await stub.setSubscriberConfig(input);
+    if (input.secret !== undefined) await getControlPlaneStub(this.env).cancelSubscriberSecretClaims(accountId, wabaId);
     return { ok: true };
   }
 
@@ -1281,6 +1288,70 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async revokeApiKey(accountId: string, keyId: string): Promise<boolean> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).revokeApiKey(account, keyId);
+  }
+
+  async createSecretClaim(
+    accountId: string,
+    request: SecretClaimRequest,
+    creator: SecretClaimCreator,
+  ): Promise<IssuedSecretClaim | "too_many_pending"> {
+    const account = requireAccountId(accountId, "accountId is required");
+    const wabaId = request?.kind === "subscriber_secret" ? request.wabaId : undefined;
+    const revision =
+      wabaId === undefined
+        ? undefined
+        : await (await this.scoped(wabaId, account, { anyStatus: true })).stub.subscriberSecretRevision();
+    const issued = await getControlPlaneStub(this.env).createSecretClaim(account, request, creator, revision);
+    if (issued === "too_many_pending") return issued;
+    console.log(
+      JSON.stringify({ level: "info", area: "rpc", event: "secret_claim_created", accountId: account, claimId: issued.claimId, kind: request.kind, wabaId }),
+    );
+    return issued;
+  }
+
+  async resolveSecretClaim(token: string): Promise<SecretClaim | null> {
+    return getControlPlaneStub(this.env).resolveSecretClaim(token);
+  }
+
+  /** The control plane spends the claim (and issues an API key in that same call); a
+   * subscriber secret is generated after the claim is spent and stored only if the WABA's
+   * secret revision is still the claim's, so a secret written since cancels the claim and a
+   * failed write leaves the previous secret in force. The target URL is not touched. */
+  async redeemSecretClaim(token: string): Promise<RedeemedSecretClaim | SecretClaimRefusal | null> {
+    const controlPlane = getControlPlaneStub(this.env);
+    const spent = await controlPlane.redeemSecretClaim(token);
+    if (spent === null || typeof spent === "string") return spent;
+    const { claim } = spent;
+    if ("keyId" in spent) {
+      console.log(
+        JSON.stringify({ level: "info", area: "rpc", event: "secret_claim_redeemed", accountId: claim.accountId, claimId: claim.claimId, kind: claim.kind, keyId: spent.keyId }),
+      );
+      return spent;
+    }
+    if (claim.kind !== "subscriber_secret") throw new Error("secret claim spent without a key");
+    const secret = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const ids = { accountId: claim.accountId, claimId: claim.claimId, kind: claim.kind, wabaId: claim.wabaId };
+    let written: boolean;
+    try {
+      written = await this.stubFor(claim.wabaId).setSubscriberSecret(secret, spent.secretRevision);
+    } catch (error) {
+      await controlPlane.markSecretClaimFailed(claim.claimId).catch(() => {});
+      console.log(
+        JSON.stringify({ level: "error", area: "rpc", event: "secret_claim_write_failed", ...ids, error: error instanceof Error ? error.message : String(error) }),
+      );
+      return "write_failed";
+    }
+    if (!written) {
+      await controlPlane.cancelSecretClaim(claim.claimId).catch(() => {});
+      return "cancelled";
+    }
+    console.log(JSON.stringify({ level: "info", area: "rpc", event: "secret_claim_redeemed", ...ids }));
+    return { claim, secret };
+  }
+
+  async listSecretClaims(accountId: string): Promise<SecretClaim[]> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).listSecretClaims(account);
   }
 
   /** Conversation retention for the account: null keeps conversations forever. */

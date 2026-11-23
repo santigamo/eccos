@@ -147,34 +147,61 @@ phase 3. `apps/mcp` becomes its second trusted caller.
 
 ### 2.2 `ConsoleApi`
 
+The contract is `packages/console-contract`; this is its shape. Every refusal is a value with a
+`code`, never a thrown error, because an error crossing Workers RPC keeps only its message. The
+grant can end between `authorize` and a later call, so every method can answer a grant refusal.
+
 ```ts
 interface ConsoleApi {
-  /** Verify the token for this resource and re-derive everything else. Never throws for a bad token. */
+  /** Verify the token for this resource and re-derive everything else. Called on every MCP request. */
   authorize(resource: string, token: string): Promise<AuthorizeResult>;
   /** Open (or return the pending) approval request for this grant. */
-  requestElevation(actor: ActorRef, tool: string): Promise<{ url: string; expiresAt: number }>;
-  getBilling(actor: ActorRef): Promise<BillingState>;
-  startCheckout(actor: ActorRef): Promise<{ url: string }>;
-  openBillingPortal(actor: ActorRef): Promise<{ url: string }>;
+  requestElevation(actor: ActorRef, tool: string): Promise<ElevationResult>;
+  /** Admin or owner only, as in the console. */
+  getBilling(actor: ActorRef): Promise<BillingResult>;
+  /** A checkout, or the portal while a subscription exists. Admin or owner. */
+  startCheckout(actor: ActorRef): Promise<BillingLink>;
+  openBillingPortal(actor: ActorRef): Promise<BillingLink>;
   // phase 4: members and invitations
 }
 
+type GrantRefusalCode = "revoked" | "not_a_member" | "no_account";
+
 type AuthorizeResult =
-  | { ok: true; actor: Actor; audience: string; expiresAt: number; scope: string[]; clientId: string }
-  | { ok: false; reason: "invalid_token" | "revoked" | "not_a_member" | "no_account" };
+  | { ok: true; actor: Actor; audience: string; expiresAt: number; scope: string[] }
+  | { ok: false; code: "invalid_token" | GrantRefusalCode };
+
+type ElevationResult =
+  | { ok: true; request: { requestId: string; url: string; expiresAt: number } }
+  | { ok: false; code: GrantRefusalCode | "forbidden" };
+
+type BillingResult =
+  | { ok: true; billing: BillingState }
+  | { ok: false; code: GrantRefusalCode | "forbidden" | "billing_disabled" };
+
+type BillingLink =
+  | { ok: true; kind: "checkout" | "portal"; url: string }
+  | { ok: false; code: GrantRefusalCode | "forbidden" | "billing_disabled" | "no_billing_account" };
+
+/** The baseline's actions without erase, plus send (granted only by eccos:send). */
+type AgentAction = Exclude<GatewayAction, "erase"> | "send";
 
 interface Actor {
   userId: string;
   organizationId: string;
   accountId: string;
-  /** The live role, read on this request. */
-  role: "owner" | "admin" | "operator" | "viewer";
+  /** The live role, read on this request; the auth baseline's role names. */
+  role: MemberRole;
   /** Role actions ∩ scope actions. */
-  actions: GatewayAction[];
-  /** Epoch ms until which this grant is elevated, or null. Only step-up tools read it. */
+  actions: AgentAction[];
+  /** Epoch ms, or null. Null unless the elevation was live when authorize ran; never a lapsed one.
+   *  Step-up tools still compare it against their own clock. */
   elevatedUntil: number | null;
   clientId: string;
 }
+
+/** Names the grant for a later call. Not evidence of a role: the console re-reads what it needs. */
+type ActorRef = Pick<Actor, "userId" | "organizationId" | "accountId" | "clientId">;
 ```
 
 `authorize` does, in order, on every MCP request:
@@ -192,10 +219,10 @@ interface Actor {
    a member: refuse.
 4. Resolve `organization_accounts` through `GatewayRPC.getOrganizationAccountLink`. Anything but
    `active`: refuse.
-5. Read the grant's elevation, if any (§3.3).
+5. Read the grant's elevation, if any (§3.3), and report it only while it is live.
 6. Return the actor with `actions = roleActions(role) ∩ scopeActions(scope)`.
 
-The reasons stay inside Eccos. The MCP Worker maps every refusal to the same `401` challenge, so a
+The refusal codes stay inside Eccos. The MCP Worker maps every refusal to the same `401` challenge, so a
 token holder learns nothing about why.
 
 ### 2.3 Why this shape
@@ -292,11 +319,11 @@ for the action that spends the customer's money with Meta and reaches real peopl
 
 | Scope | Allows | Role needed |
 |---|---|---|
-| `eccos:view` | Read status, numbers, templates, logs, billing state | viewer |
+| `eccos:view` | Read status, numbers, templates, logs | viewer |
 | `eccos:operate` | Retry deliveries, cancel broadcasts and scheduled sends, read the webhook config | operator |
 | `eccos:send` | Send messages: test templates, text, broadcasts, scheduled sends | operator |
 | `eccos:configure` | Templates, webhook config, resubscribe, re-check a number, phone settings | admin |
-| `eccos:administer` | Connection link, API keys, checkout, export | admin |
+| `eccos:administer` | Connection link, API keys, billing state and checkout, export | admin |
 | `offline_access` | A refresh token | any |
 
 There is no scope for `erase`. The server advertises all of them, so one consent covers
@@ -461,11 +488,15 @@ A tool that mints a secret returns a **claim** instead of the secret. Today that
 
 - **Nothing is minted until it is claimed.** Creating a claim stores only its intent (account,
   kind, label, creating user and client) next to the hash of a random token, in the control
-  plane, the way connection links are stored. The key is issued, or the signing secret generated
-  and stored, in the same Durable Object call that spends the claim. An unclaimed claim therefore
-  leaves nothing live: no key to revoke, no secret in force, no plaintext at rest at any point.
-  For `webhook_set`, the URL change applies at once and the previous secret stays in force until
-  the claim is spent.
+  plane, the way connection links are stored. The API key is issued in the same control-plane
+  call that spends the claim. The signing secret is generated after the spend and written to the
+  WABA's Durable Object with a compare-and-set on the secret's revision, so a newer secret or a
+  newer claim for the same WABA cancels an older claim, which then answers `cancelled`. If that
+  write fails, the previous secret stays in force and the claim answers `write_failed`. An
+  unclaimed claim therefore leaves nothing live: no key to revoke, no secret in force, no
+  plaintext at rest at any point. Pending claims, at most 20 per account, are listed by
+  `listSecretClaims` next to the key list. For `webhook_set`, the URL change applies at once and
+  the previous secret stays in force until the claim is spent.
 - **Single use, 10 minutes.** The first redemption gets the value as `text/plain` with
   `Cache-Control: no-store`. Every later attempt gets `410`. A person or agent who gets `410`
   without having claimed knows someone else did, and revokes the key, which by then is visible in
@@ -511,8 +542,8 @@ which also needs a live elevation (§3.3).
 
 | Tool | Does | Scope | Backed by | Missing |
 |---|---|---|---|---|
-| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, `elevatedUntil`, and a setup checklist: subscription, numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources`, `getSubscriberConfig`, `listApiKeys` (count only), `listTemplates` | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
-| `billing_get` | Whether numbers can be added, connected numbers, monthly price | view | `billing/account.ts` `billingState` | `ConsoleRPC.getBilling` |
+| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, `elevatedUntil`, and a setup checklist: subscription (only for admin or owner, who may see billing), numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources`, `getSubscriberConfig`, `listApiKeys` (count only), `listTemplates` | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
+| `billing_get` | Whether numbers can be added, connected numbers, monthly price. Admin or owner, as in the console, so an agent never sees more than its person | administer | `billing/account.ts` `billingState` | `ConsoleRPC.getBilling` |
 | `billing_checkout_link` | The Creem checkout URL, or the portal when a subscription exists | administer | `billing/account.ts` `checkoutUrl`, `portalUrl` | `ConsoleRPC.startCheckout`, `openBillingPortal` |
 | `connect_link_create` | Mint the Embedded Signup link for a person to open; `replace` to supersede a live one | administer ⬆ | `issueConnectLink` | Nothing. The token exists only in this result, as today |
 | `connect_status` | Link state (pending, opened, connected, unconfirmed, expired) and the number it connected | view | `getConnectLink` | Nothing |
