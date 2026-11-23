@@ -6,7 +6,11 @@
   // src/server.ts by convention; pointing `main` here keeps wrangler in sync.
   "main": "src/server.ts",
   "compatibility_date": "2026-06-12",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: every fetch() leaves over the public Internet,
+  // never to this zone's own Workers or a private address. It bounds the Client
+  // ID Metadata Document fetches (src/auth/oauth-provider.ts) and applies to
+  // all outbound calls, so the mail endpoint and Creem must be public hosts.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   // Preserve installation-specific vars omitted from this template.
   "keep_vars": true,
   // Run next to the auth D1 primary (FRA): every request makes several
@@ -40,6 +44,11 @@
   "vars": {
     // Must match the gateway (docs/deployment.md#meta-graph-api-version).
     "META_GRAPH_VERSION": "v25.0"
+    // The MCP resource the console issues access tokens for (the apps/mcp URL,
+    // e.g. https://mcp.example.com/mcp). Required when BETTER_AUTH_URL is https:
+    // the console fails closed without it. Unset in development means
+    // http://localhost:8788/mcp.
+    // "MCP_RESOURCE": "https://mcp.example.com/mcp",
     // Optional: links "contact Eccos support" in the console to this address.
     // "SUPPORT_EMAIL": "support@example.com",
     // "RESELLER_USER_IDS": "<user id>,<user id>"

@@ -23,6 +23,7 @@ import { billingFor } from "./billing/context";
 import { reconcileBilling } from "./billing/reconcile";
 import { billingWebhook } from "./billing/webhook";
 import { connectLinkApi } from "./server/connect-link-api";
+import { oauthCrossOriginApi } from "./server/oauth-cross-origin";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -74,14 +75,17 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
   if (billingResponse) return billingResponse;
   const linkResponse = connectLinkApi(request, pathname, env, waitUntil);
   if (linkResponse) return linkResponse;
+  // Refused BEFORE the auth instance is even built: endpoints the console does
+  // not serve, among them the slug-bearing organization ones and the OAuth
+  // administration surface (auth/blocked-endpoints.ts). The console's own
+  // flows use in-process `auth.api.*` and never reach here.
+  if (isBlockedAuthEndpoint(pathname)) {
+    return blockedAuthEndpointResponse();
+  }
+  // Before the page gate: the OAuth endpoints MCP clients call cross-origin.
+  const oauthResponse = oauthCrossOriginApi(request, pathname, () => getAuthForRequest(request, env));
+  if (oauthResponse) return oauthResponse;
   if (pathname.startsWith("/api/auth/")) {
-    // Refused BEFORE the auth instance is even built: these endpoints answer
-    // questions about the globally-unique organization slug, and `create`
-    // additionally bypasses the provisioning saga (auth/blocked-endpoints.ts).
-    // The console's own flows use in-process `auth.api.*` and never reach here.
-    if (isBlockedAuthEndpoint(pathname)) {
-      return blockedAuthEndpointResponse();
-    }
     const auth = getAuthForRequest(request, env);
     return auth.handler(request);
   }

@@ -8,6 +8,7 @@ import { authErrorMessage } from "@/components/auth/auth-page";
 import { validateEmail } from "./components/validation";
 import { track } from "@/lib/analytics";
 import { signInHref } from "@/auth/redirect-target";
+import { pendingAuthorizationURL } from "@/auth/pending-authorization";
 
 /**
  * Sign-in view on the reui auth-13 split-screen skeleton, adapted to the
@@ -79,13 +80,16 @@ export function SignInView({
       setError("Verify your email address first, then sign in again.");
       return;
     }
+    // Inside an OAuth authorization, Better Auth answers with the next step.
+    const next = (result.data as { url?: string } | null)?.url;
+    if (next) return window.location.assign(next);
     enter();
   }
 
   // Full navigation so the root loader re-resolves the fresh session; a full
   // URL assignment preserves query-string targets like /inbound?wabaId=.
   function enter() {
-    window.location.assign(redirectTo || "/");
+    window.location.assign(pendingAuthorizationURL(window.location.search) ?? (redirectTo || "/"));
   }
 
   if (challenged) {

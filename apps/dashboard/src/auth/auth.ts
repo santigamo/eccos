@@ -26,6 +26,7 @@ import {
   type SendOutcome,
 } from "./mail";
 import { enrollmentProof, type TwoFactorChange, type TwoFactorMail } from "./enrollment-proof";
+import { oauthAuthorizationServer } from "./oauth-provider";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
 import { STEP_UP_WINDOW_SECONDS } from "./step-up";
@@ -214,6 +215,8 @@ export interface AuthConfig {
   trustedOrigins: string[];
   /** Application-owned email adapter (contract §8). */
   mail: MailSender;
+  /** The MCP resource (MCP_RESOURCE): the audience of every access token this server issues. */
+  mcpResource: string;
   /** Caps invitation sends per inviter. `authConfigFromEnv` always sets it; hand-built test configs may not. */
   invitationLimiter?: AttemptLimiter;
 }
@@ -224,6 +227,9 @@ function assertValidConfig(config: AuthConfig): void {
   }
   if (!config.baseURL) {
     throw new Error("Auth baseURL is required");
+  }
+  if (!config.mcpResource) {
+    throw new Error("The MCP resource is required");
   }
 }
 
@@ -270,6 +276,7 @@ export function createAuth(config: AuthConfig) {
   assertValidConfig(config);
 
   const secureCookies = config.baseURL.startsWith("https://");
+  const authorizationServer = oauthAuthorizationServer(config);
 
   // NOTE: no explicit `BetterAuthOptions` annotation — the return-type
   // inference of `betterAuth` (and the plugin endpoints exposed on `auth.api`,
@@ -283,6 +290,7 @@ export function createAuth(config: AuthConfig) {
     secret: config.secret,
     baseURL: config.baseURL,
     trustedOrigins: config.trustedOrigins,
+    disabledPaths: authorizationServer.disabledPaths,
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
@@ -363,7 +371,8 @@ export function createAuth(config: AuthConfig) {
       // lets a top-level click out of a mail client set it at all — Strict
       // would not survive the redirect; and sign-up passes `callbackURL: "/"`,
       // where the root loader sends a session with no organization on to
-      // /onboarding, or the page it was sent from (an invitation link).
+      // /onboarding, or the page it was sent from (an invitation link), or the
+      // agent authorization it was opened for (pending-authorization.ts).
       //
       // The failure mode worth naming is a corporate link scanner that fetches
       // the URL before the human does. It degrades gracefully rather than
@@ -484,6 +493,8 @@ export function createAuth(config: AuthConfig) {
           });
         },
       }),
+      // The OAuth authorization server for the MCP resource (contract §9).
+      ...authorizationServer.plugins,
     ],
     advanced: {
       // Native joins: one statement for session+user and for member+organization

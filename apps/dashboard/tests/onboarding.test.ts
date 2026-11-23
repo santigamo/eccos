@@ -77,6 +77,7 @@ async function createTestAuth() {
     secret: SECRET,
     baseURL: BASE_URL,
     trustedOrigins: [BASE_URL],
+    mcpResource: "http://localhost:8788/mcp",
     mail: new CaptureMailSender(),
   });
   const { runMigrations } = await getMigrations(auth.options);
