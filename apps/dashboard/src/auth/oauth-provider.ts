@@ -29,8 +29,10 @@ import { cimd } from "@better-auth/cimd";
 import { getCurrentAuthEndpointContext } from "@better-auth/core/context";
 import { mcp } from "@better-auth/mcp";
 import type { ClientMetadataResourceFetch } from "@better-auth/oauth-provider";
-import { APIError } from "better-auth/api";
+import type { BetterAuthPlugin } from "better-auth";
+import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import { jwt } from "better-auth/plugins";
+import { CLIENT_METADATA_MAX_BYTES, clientMetadataRefusal } from "./client-metadata-limits";
 
 /** The scopes a grant may carry (design §3.2). There is none for `erase`. */
 export const MCP_SCOPES = [
@@ -45,7 +47,6 @@ export const MCP_SCOPES = [
 /** The access-token claim naming the grant's workspace (organization id). */
 export const WORKSPACE_CLAIM = "https://eccos.chat/workspace";
 
-const CIMD_MAX_BYTES = 64 * 1024;
 const CIMD_TIMEOUT_MS = 5_000;
 /** chatgpt.com answers 403 to a request without one (design §8.3). */
 export const CIMD_USER_AGENT = "Eccos-CIMD/1.0 (+https://eccos.chat)";
@@ -60,8 +61,11 @@ export const CIMD_USER_AGENT = "Eccos-CIMD/1.0 (+https://eccos.chat)";
  * over the public Internet. Better Auth itself refuses private and reserved
  * address literals before calling this. What is left to the transport: HTTPS
  * only, GET and HEAD only, no credentials in the URL, a redirect is returned
- * to the caller and never followed (which then refuses the document), and a
- * time and size cap. Nothing outlives the request's own auth instance.
+ * to the caller and never followed (which then refuses the document), a time
+ * cap, and the same size and field limits as a registration
+ * (client-metadata-limits.ts). A document outside them is refused, which fails
+ * the authorization with `invalid_client`. Nothing outlives the request's own
+ * auth instance.
  */
 export const cimdFetch: ClientMetadataResourceFetch = async (input, init) => {
   const request = new Request(input, init);
@@ -71,6 +75,7 @@ export const cimdFetch: ClientMetadataResourceFetch = async (input, init) => {
     throw new TypeError("Client metadata is fetched with GET or HEAD only");
   }
   if (url.username || url.password) throw new TypeError("Client metadata URLs carry no credentials");
+  await assertMayResolve(url.href);
   const headers = new Headers(request.headers);
   headers.set("user-agent", CIMD_USER_AGENT);
   const timeout = AbortSignal.timeout(CIMD_TIMEOUT_MS);
@@ -80,7 +85,7 @@ export const cimdFetch: ClientMetadataResourceFetch = async (input, init) => {
     redirect: "manual",
     signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
   });
-  if (Number(response.headers.get("content-length") ?? 0) > CIMD_MAX_BYTES) {
+  if (Number(response.headers.get("content-length") ?? 0) > CLIENT_METADATA_MAX_BYTES) {
     await response.body?.cancel();
     throw new TypeError("Client metadata document is too large");
   }
@@ -90,16 +95,45 @@ export const cimdFetch: ClientMetadataResourceFetch = async (input, init) => {
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         seen += chunk.byteLength;
-        if (seen > CIMD_MAX_BYTES) controller.error(new TypeError("Client metadata document is too large"));
+        if (seen > CLIENT_METADATA_MAX_BYTES) controller.error(new TypeError("Client metadata document is too large"));
         else controller.enqueue(chunk);
       },
     }),
   );
-  return new Response(capped, { status: response.status, statusText: response.statusText, headers: response.headers });
+  const body = await new Response(capped).text();
+  let document: unknown;
+  try {
+    document = JSON.parse(body);
+  } catch {
+    document = undefined;
+  }
+  const refused = response.ok && document !== undefined ? clientMetadataRefusal(document) : undefined;
+  if (refused) throw new TypeError(`Client metadata document refused: ${refused.description}`);
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 };
 
-/** Refuses the token unless `userId` is still a member of `organizationId`. */
-async function requireMembership(userId: string, organizationId: string): Promise<void> {
+/**
+ * Only the authorization endpoint brings in a client it has not seen. Token
+ * and revocation also resolve a client id that is a URL, and would otherwise
+ * fetch and store any document a caller names, outside the authorization
+ * endpoint's rate limit. A document client they know is refreshed as before.
+ */
+async function assertMayResolve(url: string): Promise<void> {
+  let context: ReturnType<typeof getCurrentAuthEndpointContext>;
+  try {
+    context = getCurrentAuthEndpointContext();
+  } catch {
+    return;
+  }
+  if (context.path === "/oauth2/authorize") return;
+  const known = await context.context.adapter.findOne({
+    model: "oauthClient",
+    where: [{ field: "clientId", value: url }],
+  });
+  if (!known) throw new TypeError("Client metadata documents are resolved only by the authorization endpoint");
+}
+
+async function isMember(userId: string, organizationId: string): Promise<boolean> {
   const { context } = getCurrentAuthEndpointContext();
   const member = await context.adapter.findOne({
     model: "member",
@@ -108,13 +142,83 @@ async function requireMembership(userId: string, organizationId: string): Promis
       { field: "organizationId", value: organizationId },
     ],
   });
-  if (!member) throw new APIError("FORBIDDEN", { message: "not_a_member" });
+  return member !== null;
 }
 
-function activeOrganizationId(session: Record<string, unknown>): string | undefined {
+/**
+ * The session's active workspace, only while the user is still a member of it.
+ * `organization/set-active` checks membership when it is set, but a session
+ * keeps the id after the user is removed.
+ */
+async function memberWorkspace(session: Record<string, unknown>): Promise<string | undefined> {
   const id = session.activeOrganizationId;
-  return typeof id === "string" && id ? id : undefined;
+  if (typeof id !== "string" || !id || typeof session.userId !== "string") return undefined;
+  return (await isMember(session.userId, id)) ? id : undefined;
 }
+
+/**
+ * RFC 6749 §5.2: a grant that can no longer issue tokens is `invalid_grant`,
+ * with no detail on why, so the client starts a new authorization.
+ */
+const invalidGrant = () => new APIError("BAD_REQUEST", { error: "invalid_grant" });
+
+/**
+ * Consent is never skipped (contract §9). Better Auth would skip the consent
+ * page when a stored consent already covers the client, workspace and scopes,
+ * so every authorization request is given `prompt=consent` before Better Auth
+ * signs its query: the workspace step, the consent page and every resume carry
+ * it, and only `oauth2/consent` removes it, after the person accepted, before
+ * it re-enters the authorize endpoint in process. Stored
+ * consents and the refresh tokens issued under them are left alone.
+ *
+ * `prompt=none` cannot be combined with another value. Such a request can
+ * never be answered without the person, so Better Auth's
+ * `interaction_required` for it is reported as what is missing,
+ * `consent_required` (OpenID Connect Core §3.1.2.6).
+ */
+const AUTHORIZE_PATH = "/oauth2/authorize";
+
+function promptValues(query: Record<string, unknown> | undefined): string[] {
+  return typeof query?.prompt === "string" ? query.prompt.split(" ").filter(Boolean) : [];
+}
+
+const forceConsent = {
+  id: "eccos-force-consent",
+  hooks: {
+    before: [
+      {
+        // The browser's own request only: `oauth2/consent` and the sign-in resume
+        // re-enter the authorize endpoint in process, carrying the signed query.
+        matcher: (ctx: { path?: string; request?: Request }) =>
+          ctx.path === AUTHORIZE_PATH && (!ctx.request || new URL(ctx.request.url).pathname.endsWith(AUTHORIZE_PATH)),
+        handler: createAuthMiddleware(async (ctx) => {
+          const prompt = promptValues(ctx.query);
+          if (prompt.includes("none") || prompt.includes("consent")) return;
+          return { context: { query: { ...ctx.query, prompt: [...prompt, "consent"].join(" ") } } };
+        }),
+      },
+    ],
+    after: [
+      {
+        matcher: (ctx: { path?: string; query?: Record<string, unknown> }) =>
+          ctx.path === AUTHORIZE_PATH && promptValues(ctx.query).includes("none"),
+        handler: createAuthMiddleware(async (ctx) => {
+          const returned = ctx.context.returned;
+          const location = isAPIError(returned)
+            ? new Headers(returned.headers).get("location")
+            : (returned as { url?: unknown } | undefined)?.url;
+          if (typeof location !== "string") return;
+          const url = new URL(location, ctx.context.baseURL);
+          if (url.searchParams.get("error") !== "interaction_required") return;
+          url.searchParams.set("error", "consent_required");
+          url.searchParams.set("error_description", "End-User consent is required");
+          if (isAPIError(returned)) throw ctx.redirect(url.href);
+          return ctx.json({ redirect: true, url: url.href });
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
 
 /**
  * The authorization server's share of the Better Auth options: spread
@@ -141,26 +245,29 @@ export function oauthAuthorizationServer(config: { baseURL: string; mcpResource:
         // The provider's default limit caps registrations per address.
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
+        // People authorize rarely, and each new metadata-document client id
+        // costs a fetch and a row: 10 per minute per address, not 30.
+        rateLimit: { authorize: { window: 60, max: 10 } },
         clientRegistrationDefaultApplicationType: "infer",
         postLogin: {
           page: "/oauth/workspace",
           // The person picks the workspace on every authorization; the
-          // continuation must then carry an active organization, which
-          // `organization/set-active` only sets for a membership.
-          shouldRedirect: ({ session, isContinuation }) => !isContinuation || !activeOrganizationId(session),
-          consentReferenceId: ({ session }) => {
-            const organizationId = activeOrganizationId(session);
-            if (!organizationId) throw new APIError("BAD_REQUEST", { message: "workspace_required" });
+          // continuation must then carry an active organization the user is
+          // still a member of, or it goes back to the workspace step.
+          shouldRedirect: async ({ session, isContinuation }) => !isContinuation || !(await memberWorkspace(session)),
+          consentReferenceId: async ({ session }) => {
+            const organizationId = session ? await memberWorkspace(session) : undefined;
+            if (!organizationId) throw new APIError("BAD_REQUEST", { error: "invalid_request", error_description: "workspace_required" });
             return organizationId;
           },
         },
         customAccessTokenClaims: async ({ user, referenceId }) => {
-          if (!user || !referenceId) throw new APIError("FORBIDDEN", { message: "workspace_required" });
-          await requireMembership(user.id, referenceId);
+          if (!user || !referenceId || !(await isMember(user.id, referenceId))) throw invalidGrant();
           return { [WORKSPACE_CLAIM]: referenceId };
         },
       }),
       cimd({ fetchClientMetadataResource: cimdFetch, metadataProfile: "mcp-2026-07-28" }),
+      forceConsent,
     ],
   };
 }

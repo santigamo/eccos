@@ -300,13 +300,13 @@ endpoints above, so it is indistinguishable from one that was never registered.
 |---|---|---|
 | `GET /.well-known/oauth-authorization-server` (root) | RFC 8414 metadata: endpoints, `S256`, `client_id_metadata_document_supported`, `none` among the token endpoint auth methods | Public, no session, cross-origin without cookies (§6). `src/server.ts` serves it before the page gate. It is the only metadata document |
 | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/.well-known/oauth-protected-resource*` under `/api/auth`, and `/.well-known/openid-configuration` at the root | Copies the plugins mount, OIDC discovery, and resource metadata | **Not served.** The resource metadata belongs to `apps/mcp`, and no OpenID scope is offered |
-| `GET /oauth2/authorize` | Start an authorization: PKCE `S256`, `resource` equal to the MCP resource | Browser navigation. Without a session it goes to sign-in or sign-up, which carry the signed authorization query forward and follow the URL Better Auth returns; sign-up's verification link returns to the pending authorization |
-| `POST /oauth2/continue` | Resume the authorization after the workspace step | Same-origin, session. The workspace must be one the user belongs to; it becomes the consent's reference id |
-| `POST /oauth2/consent` | Accept or deny on the consent page | Same-origin, session. Consent is never skipped, for any client |
+| `GET /oauth2/authorize` | Start an authorization: PKCE `S256`, `resource` equal to the MCP resource | Browser navigation, rate-limited per address (10 per 60 s). Without a session it goes to sign-in or sign-up, which carry the signed authorization query forward and follow the URL Better Auth returns; sign-up's verification link returns to the pending authorization |
+| `POST /oauth2/continue` | Resume the authorization after the workspace step | Same-origin, session. The workspace must be one the user belongs to now, checked on the server: otherwise the answer is the workspace step again; it becomes the consent's reference id |
+| `POST /oauth2/consent` | Accept or deny on the consent page | Same-origin, session. Consent is never skipped, for any client: every authorization request gets `prompt=consent` before its query is signed, so the consent page comes even when an earlier consent covers the same client, workspace and scopes. `prompt=none` gets `consent_required` at the redirect URI. Consent for a workspace the user has left is refused and stores nothing |
 | `GET /oauth2/public-client`, `GET /oauth2/public-client-prelogin` | The client's name and redirect for the sign-in and consent pages | Same-origin. Public client metadata only |
-| `POST /oauth2/token` | Authorization code exchange and refresh | Public, cross-origin without cookies. PKCE required; refresh tokens rotate, and a replay after the reuse window revokes the family. Access tokens are issued only for the MCP resource, last 10 minutes, and carry the workspace. Refused when the user is no longer a member of it |
-| `POST /oauth2/register` | Dynamic client registration (RFC 7591), the fallback to client ID metadata documents | Public, unauthenticated, cross-origin without cookies, rate-limited per address. Unused clients are deleted |
-| `POST /oauth2/revoke` | Token revocation by the client (RFC 7009) | Served. The client sends its id and the token; no session |
+| `POST /oauth2/token` | Authorization code exchange and refresh | Public, cross-origin without cookies, body capped at 8 KiB (400 `invalid_request`). PKCE required; refresh tokens rotate, and a replay after the reuse window revokes the family. Access tokens are issued only for the MCP resource, last 10 minutes, and carry the workspace. Refused with RFC 6749's 400 `invalid_grant`, and no reason, when the user is no longer a member of it |
+| `POST /oauth2/register` | Dynamic client registration (RFC 7591), the fallback to client ID metadata documents | Public, unauthenticated, cross-origin without cookies, rate-limited per address (5 per 60 s). The body is capped at 8 KiB before parsing, and the stored metadata fields have their own limits (`src/server/oauth-request-limits.ts`); a refusal is RFC 7591's 400 `invalid_client_metadata` or `invalid_redirect_uri`. An hourly cron deletes a registered client once it is older than 24 hours and holds no consent, refresh token or access token (document clients too, see below). So one address can keep at most about 25 hours of registrations: 5 per minute is 7,500 clients, at most 8 KiB each, about 60 MB |
+| `POST /oauth2/revoke` | Token revocation by the client (RFC 7009) | Served. The client sends its id and the token; no session. Body capped at 8 KiB (400 `invalid_request`) |
 | `GET /jwks` | The public half of the signing keys | Public, cross-origin without cookies |
 | `/token` (the `jwt` plugin's session JWT) | — | **Not registered** (`disabledPaths`), so a session JWT cannot pass as an access token |
 | `oauth2/introspect`, `oauth2/userinfo`, `oauth2/end-session`, `oauth2/end-session/confirm` | Introspection and OpenID Connect | **Not served.** No caller: `ConsoleRPC.authorize` verifies tokens in process, and no OpenID scope is offered |
@@ -314,8 +314,17 @@ endpoints above, so it is indistinguishable from one that was never registered.
 | `oauth2/create-client`, `oauth2/get-client`, `oauth2/get-clients`, `oauth2/update-client`, `oauth2/delete-client`, `oauth2/client/rotate-secret`, `oauth2/client/rotate-keys`, `admin/oauth2/*` | Client administration | **Not served.** No caller in Eccos |
 
 Client ID metadata documents are fetched with HTTPS only, the `global_fetch_strictly_public`
-compatibility flag on the console Worker, `GET` only, no redirects, and a size and time cap.
-Nothing is cached.
+compatibility flag on the console Worker, `GET` only, no redirects, and a 5 s time cap. A
+document gets the same limits as a registration: 8 KiB (Better Auth itself refuses one over
+5 KB) and the same per-field limits (`src/auth/client-metadata-limits.ts`); one outside them fails
+the authorization with `invalid_client`. Only `oauth2/authorize` brings in a document client it has
+not seen: `oauth2/token` and `oauth2/revoke` refuse an unknown URL client id without fetching it.
+The resolved client is kept as an `oauthClient` row marked with its discovery (`clientDiscoveryId`)
+and rewritten each time the document is fetched again. The hourly cleanup deletes it under the
+same rules as a registered client, counting 24 hours from that last fetch; its next authorization
+fetches the document again. So one address can keep at most about 25 hours of new document
+clients: 10 per minute is 15,000 rows, at most 8 KiB each, about 120 MB (about 75 MB under
+Better Auth's 5 KB limit). With registration's 60 MB, one address can hold at most about 185 MB.
 
 Invariants: no OAuth endpoint issues or returns an API key, or creates or modifies
 `organization_accounts`. A token's workspace is chosen by the signed-in user at consent from their

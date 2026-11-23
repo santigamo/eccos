@@ -18,7 +18,9 @@ import {
 } from "../src/auth/blocked-endpoints";
 import { CIMD_USER_AGENT, cimdFetch, WORKSPACE_CLAIM } from "../src/auth/oauth-provider";
 import { pendingAuthorizationURL } from "../src/auth/pending-authorization";
+import { deleteUnusedOAuthClients } from "../src/auth/oauth-client-cleanup";
 import { oauthCrossOriginApi } from "../src/server/oauth-cross-origin";
+import { OAUTH_BODY_LIMIT, oauthRequestWithinLimits } from "../src/server/oauth-request-limits";
 
 const BASE_URL = "http://localhost:3000";
 /**
@@ -55,7 +57,10 @@ async function serve(auth: Auth, request: Request): Promise<Response> {
   if (isBlockedAuthEndpoint(pathname)) return blockedAuthEndpointResponse();
   const crossOrigin = oauthCrossOriginApi(request, pathname, () => auth);
   if (crossOrigin) return crossOrigin;
-  if (pathname.startsWith("/api/auth/")) return auth.handler(request);
+  if (pathname.startsWith("/api/auth/")) {
+    const limited = await oauthRequestWithinLimits(request, pathname);
+    return limited instanceof Response ? limited : auth.handler(limited);
+  }
   return new Response("page gate", { status: 302, headers: { location: "/signin" } });
 }
 
@@ -108,6 +113,33 @@ async function registerClient(auth: Auth): Promise<string> {
   return ((await response.json()) as { client_id: string }).client_id;
 }
 
+const CIMD_CLIENT_ID = `${CLIENT_ORIGIN}/client.json`;
+
+/** Serves Client ID Metadata Documents from a fake origin until the returned restore is called. */
+function serveMetadataDocuments(document: (url: string) => Record<string, unknown> = () => ({})) {
+  const realFetch = globalThis.fetch;
+  const fetched: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    fetched.push(url);
+    return Response.json({
+      client_id: url,
+      client_name: "Agent",
+      redirect_uris: [REDIRECT_URI],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      ...document(url),
+    });
+  }) as unknown as typeof fetch;
+  return {
+    fetched,
+    restore: () => {
+      globalThis.fetch = realFetch;
+    },
+  };
+}
+
 /** GET authorize without a session: where it sends the browser, and the PKCE verifier. */
 async function startAuthorization(auth: Auth, clientId: string) {
   const { verifier, challenge } = await pkce();
@@ -138,8 +170,8 @@ function oauthQueryOf(url: string): string {
 }
 
 /** Sign-in, workspace step and consent, as the pages will drive them: the redirect with the code. */
-async function authorizeAsMember(auth: Auth, db: Database, email: string) {
-  const clientId = await registerClient(auth);
+async function authorizeAsMember(auth: Auth, db: Database, email: string, client?: string) {
+  const clientId = client ?? (await registerClient(auth));
   const { location, verifier } = await startAuthorization(auth, clientId);
   await signUpVerified(auth, db, email);
   const signIn = await post(auth, "/sign-in/email", { email, password: PASSWORD, oauth_query: oauthQueryOf(location.href) });
@@ -154,7 +186,41 @@ async function authorizeAsMember(auth: Auth, db: Database, email: string) {
   const consentPage = ((await resumed.json()) as { url: string }).url;
   const consent = await post(auth, "/oauth2/consent", { accept: true, oauth_query: oauthQueryOf(consentPage) }, cookie);
   const callback = new URL(((await consent.json()) as { url: string }).url);
-  return { clientId, verifier, callback, organizationId: organization!.id, workspaceStep, consentPage };
+  return { clientId, verifier, callback, organizationId: organization!.id, workspaceStep, consentPage, cookie };
+}
+
+/** GET authorize as a signed-in browser: where Better Auth sends it next. */
+async function authorizeSignedIn(auth: Auth, clientId: string, cookie: string, extra: Record<string, string> = {}) {
+  const { verifier, challenge } = await pkce();
+  const query = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: REDIRECT_URI,
+    scope: "eccos:view offline_access",
+    resource: RESOURCE,
+    state: "state-2",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    ...extra,
+  });
+  const response = await serve(auth, new Request(`${BASE_URL}/api/auth/oauth2/authorize?${query}`, { headers: { cookie } }));
+  expect(response.status).toBe(302);
+  return { location: new URL(response.headers.get("location")!, BASE_URL), verifier };
+}
+
+async function continueAfterWorkspace(auth: Auth, workspaceStep: URL, cookie: string): Promise<Response> {
+  return post(auth, "/oauth2/continue", { postLogin: true, oauth_query: oauthQueryOf(workspaceStep.href) }, cookie);
+}
+
+function exchangeCode(auth: Auth, clientId: string, callback: URL, verifier: string): Promise<Response> {
+  return tokenRequest(auth, {
+    grant_type: "authorization_code",
+    code: callback.searchParams.get("code")!,
+    code_verifier: verifier,
+    client_id: clientId,
+    redirect_uri: REDIRECT_URI,
+    resource: RESOURCE,
+  });
 }
 
 function tokenRequest(auth: Auth, form: Record<string, string>): Promise<Response> {
@@ -433,13 +499,80 @@ describe("client ID metadata documents", () => {
     ]);
   });
 
+  const clients = (db: Database) => (db.query('SELECT count(*) AS n FROM "oauthClient"').get() as { n: number }).n;
+
+  for (const [name, extra] of [
+    ["over 5 KB", { padding: "p".repeat(6 * 1024) }],
+    ["with a client_name over 100 characters", { client_name: "N".repeat(101) }],
+    ["with more than 5 redirect URIs", { redirect_uris: Array.from({ length: 6 }, (_, i) => `${CLIENT_ORIGIN}/cb/${i}`) }],
+    ["with a logo_uri over 512 characters", { logo_uri: `${CLIENT_ORIGIN}/${"l".repeat(512)}` }],
+  ] as const) {
+    test(`a document ${name} is refused and stores nothing`, async () => {
+      const { auth, db } = await testAuth();
+      const documents = serveMetadataDocuments(() => extra);
+      try {
+        const response = await authorizeWithClientId(auth, CIMD_CLIENT_ID);
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as { error: string }).error).toBe("invalid_client");
+      } finally {
+        documents.restore();
+      }
+      expect(clients(db)).toBe(0);
+    });
+  }
+
+  test("a document within the limits is accepted", async () => {
+    const { auth, db } = await testAuth();
+    const documents = serveMetadataDocuments(() => ({ client_name: "N".repeat(100), padding: "p".repeat(3 * 1024) }));
+    try {
+      expect((await authorizeWithClientId(auth, CIMD_CLIENT_ID)).status).toBe(302);
+    } finally {
+      documents.restore();
+    }
+    expect(clients(db)).toBe(1);
+  });
+
+  for (const [name, path, form] of [
+    ["token", "/api/auth/oauth2/token", { grant_type: "refresh_token", refresh_token: "x", client_id: CIMD_CLIENT_ID }],
+    ["revoke", "/api/auth/oauth2/revoke", { token: "x", client_id: CIMD_CLIENT_ID }],
+  ] as const) {
+    test(`${name} never resolves a metadata document the authorization endpoint has not`, async () => {
+      const { auth, db } = await testAuth();
+      const documents = serveMetadataDocuments();
+      try {
+        const response = await serve(
+          auth,
+          new Request(`${BASE_URL}${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded", origin: CLIENT_ORIGIN },
+            body: new URLSearchParams(form),
+          }),
+        );
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(response.status).toBeLessThan(500);
+        expect(documents.fetched).toEqual([]);
+      } finally {
+        documents.restore();
+      }
+      expect(clients(db)).toBe(0);
+    });
+  }
+
+  test("the authorization endpoint allows 10 requests per minute per address", async () => {
+    const { auth } = await testAuth();
+    const clientId = await registerClient(auth);
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) statuses.push((await authorizeWithClientId(auth, clientId)).status);
+    expect(statuses.slice(0, 10).every((status) => status === 302)).toBe(true);
+    expect(statuses[10]).toBe(429);
+  });
+
   test("the transport refuses http, other methods, credentials and oversized documents", async () => {
-    globalThis.fetch = (async () => new Response("x".repeat(70 * 1024))) as unknown as typeof fetch;
+    globalThis.fetch = (async () => new Response("x".repeat(8 * 1024 + 1))) as unknown as typeof fetch;
     await expect(cimdFetch("http://agent.example.com/c.json")).rejects.toThrow(/HTTPS/);
     await expect(cimdFetch("https://agent.example.com/c.json", { method: "POST" })).rejects.toThrow(/GET/);
     await expect(cimdFetch("https://user:pw@agent.example.com/c.json")).rejects.toThrow(/credentials/);
-    const response = await cimdFetch("https://agent.example.com/c.json");
-    await expect(response.text()).rejects.toThrow(/too large/);
+    await expect(cimdFetch("https://agent.example.com/c.json")).rejects.toThrow(/too large/);
   });
 });
 
@@ -516,8 +649,359 @@ describe("authorization code with PKCE", () => {
 
     db.query('DELETE FROM member WHERE "organizationId" = ?').run(flow.organizationId);
     const removed = await refresh(rotated.refresh_token);
-    expect(removed.status).toBe(403);
-    expect(await removed.text()).not.toContain("access_token");
+    expect(removed.status).toBe(400);
+    expect(await removed.json()).toEqual({ error: "invalid_grant" });
+  });
+
+  test("a code exchange is refused with invalid_grant once the user is no longer a member", async () => {
+    const { auth, db } = await testAuth();
+    const flow = await authorizeAsMember(auth, db, "owner@corp.test");
+    db.query('DELETE FROM member WHERE "organizationId" = ?').run(flow.organizationId);
+    const response = await exchangeCode(auth, flow.clientId, flow.callback, flow.verifier);
+    expect(response.status).toBe(400);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(await response.json()).toEqual({ error: "invalid_grant" });
+  });
+});
+
+describe("consent is never skipped (contract §9)", () => {
+  test("a repeat authorization for the same client, workspace and scopes reaches the consent page again", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    expect((await exchangeCode(auth, first.clientId, first.callback, first.verifier)).status).toBe(200);
+
+    const { location: workspaceStep, verifier } = await authorizeSignedIn(auth, first.clientId, first.cookie);
+    expect(workspaceStep.pathname).toBe("/oauth/workspace");
+    const resumed = await continueAfterWorkspace(auth, workspaceStep, first.cookie);
+    expect(resumed.status).toBe(200);
+    const consentPage = new URL(((await resumed.json()) as { url: string }).url, BASE_URL);
+    expect(consentPage.pathname).toBe("/oauth/consent");
+    expect(consentPage.searchParams.has("code")).toBe(false);
+
+    const consent = await post(auth, "/oauth2/consent", { accept: true, oauth_query: oauthQueryOf(consentPage.href) }, first.cookie);
+    const callback = new URL(((await consent.json()) as { url: string }).url);
+    expect(callback.origin + callback.pathname).toBe(REDIRECT_URI);
+    expect((await exchangeCode(auth, first.clientId, callback, verifier)).status).toBe(200);
+  });
+
+  test("an existing grant keeps refreshing after a repeat authorization", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    const issued = (await (await exchangeCode(auth, first.clientId, first.callback, first.verifier)).json()) as {
+      refresh_token: string;
+    };
+    const { location: workspaceStep } = await authorizeSignedIn(auth, first.clientId, first.cookie);
+    await continueAfterWorkspace(auth, workspaceStep, first.cookie);
+    const refreshed = await tokenRequest(auth, {
+      grant_type: "refresh_token",
+      refresh_token: issued.refresh_token,
+      client_id: first.clientId,
+      resource: RESOURCE,
+    });
+    expect(refreshed.status).toBe(200);
+  });
+
+  test("prompt=none answers consent_required at the redirect URI and issues no code", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    const { location } = await authorizeSignedIn(auth, first.clientId, first.cookie, { prompt: "none" });
+    expect(location.origin + location.pathname).toBe(REDIRECT_URI);
+    expect(location.searchParams.get("error")).toBe("consent_required");
+    expect(location.searchParams.get("state")).toBe("state-2");
+    expect(location.searchParams.has("code")).toBe(false);
+  });
+
+  test("a client's own prompt=consent or prompt=login still works", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    const { location } = await authorizeSignedIn(auth, first.clientId, first.cookie, { prompt: "consent" });
+    expect(location.pathname).toBe("/oauth/workspace");
+    const login = await authorizeSignedIn(auth, first.clientId, first.cookie, { prompt: "login" });
+    expect(login.location.pathname).toBe("/signin");
+  });
+});
+
+describe("the workspace step and consent, posted directly", () => {
+  test("continue never binds a workspace the user has left: it goes back to the workspace step", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    const { location: workspaceStep } = await authorizeSignedIn(auth, first.clientId, first.cookie);
+    db.query('DELETE FROM member WHERE "organizationId" = ?').run(first.organizationId);
+    db.query('DELETE FROM "oauthConsent"').run();
+
+    const resumed = await continueAfterWorkspace(auth, workspaceStep, first.cookie);
+    const next = new URL(((await resumed.json()) as { url: string }).url, BASE_URL);
+    expect(next.pathname).toBe("/oauth/workspace");
+    expect(next.searchParams.has("code")).toBe(false);
+    expect(db.query('SELECT count(*) AS n FROM "oauthConsent"').get()).toEqual({ n: 0 });
+  });
+
+  test("consent posted for a workspace the user has left is refused and stores nothing", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    const { location: workspaceStep } = await authorizeSignedIn(auth, first.clientId, first.cookie);
+    const consentPage = ((await (await continueAfterWorkspace(auth, workspaceStep, first.cookie)).json()) as { url: string })
+      .url;
+    db.query('DELETE FROM member WHERE "organizationId" = ?').run(first.organizationId);
+    db.query('DELETE FROM "oauthConsent"').run();
+
+    const consent = await post(auth, "/oauth2/consent", { accept: true, oauth_query: oauthQueryOf(consentPage) }, first.cookie);
+    expect(consent.status).toBeGreaterThanOrEqual(400);
+    expect(await consent.text()).not.toContain("code=");
+    expect(db.query('SELECT count(*) AS n FROM "oauthConsent"').get()).toEqual({ n: 0 });
+  });
+
+  test("another user's workspace can never become the session's workspace", async () => {
+    const { auth, db } = await testAuth();
+    const bob = await authorizeAsMember(auth, db, "bob@corp.test");
+    await signUpVerified(auth, db, "mallory@corp.test");
+    const cookie = cookiesOf(await post(auth, "/sign-in/email", { email: "mallory@corp.test", password: PASSWORD }));
+    const setActive = await post(auth, "/organization/set-active", { organizationId: bob.organizationId }, cookie);
+    expect(setActive.status).toBe(403);
+
+    const { location: workspaceStep } = await authorizeSignedIn(auth, bob.clientId, cookie);
+    const resumed = await continueAfterWorkspace(auth, workspaceStep, cookie);
+    expect(new URL(((await resumed.json()) as { url: string }).url, BASE_URL).pathname).toBe("/oauth/workspace");
+  });
+
+  test("continue posted straight after a prior consent still reaches the consent page", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    const resumed = await post(
+      auth,
+      "/oauth2/continue",
+      { postLogin: true, oauth_query: oauthQueryOf(first.workspaceStep) },
+      first.cookie,
+    );
+    expect(new URL(((await resumed.json()) as { url: string }).url, BASE_URL).pathname).toBe("/oauth/consent");
+  });
+});
+
+describe("request limits on the public OAuth endpoints", () => {
+  const register = (auth: Auth, body: BodyInit, headers: Record<string, string> = {}) =>
+    serve(
+      auth,
+      new Request(`${BASE_URL}/api/auth/oauth2/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: CLIENT_ORIGIN, ...headers },
+        body,
+        // @ts-expect-error Bun needs it for a streamed body; the Workers runtime ignores it.
+        duplex: "half",
+      }),
+    );
+  const metadata = (extra: Record<string, unknown>) =>
+    JSON.stringify({ client_name: "Agent", redirect_uris: [REDIRECT_URI], token_endpoint_auth_method: "none", ...extra });
+  const clients = (db: Database) => (db.query('SELECT count(*) AS n FROM "oauthClient"').get() as { n: number }).n;
+
+  test("a registration body over the cap is refused before parsing, and stores nothing", async () => {
+    const { auth, db } = await testAuth();
+    const response = await register(auth, metadata({ client_name: "A".repeat(OAUTH_BODY_LIMIT) }));
+    expect(response.status).toBe(400);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(((await response.json()) as { error: string }).error).toBe("invalid_client_metadata");
+    expect(clients(db)).toBe(0);
+  });
+
+  test("the cap holds for a streamed body that declares no length, or a smaller one", async () => {
+    const { auth, db } = await testAuth();
+    const big = new TextEncoder().encode(metadata({ client_name: "A".repeat(4 * OAUTH_BODY_LIMIT) }));
+    const stream = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let i = 0; i < big.length; i += 1024) controller.enqueue(big.slice(i, i + 1024));
+          controller.close();
+        },
+      });
+    expect((await register(auth, stream())).status).toBe(400);
+    expect((await register(auth, stream(), { "content-length": "100" })).status).toBe(400);
+    expect(clients(db)).toBe(0);
+  });
+
+  test("a registration within the limits is accepted", async () => {
+    const { auth, db } = await testAuth();
+    const response = await register(
+      auth,
+      metadata({
+        client_name: "N".repeat(100),
+        redirect_uris: Array.from({ length: 5 }, (_, i) => `${CLIENT_ORIGIN}/cb/${i}`),
+        client_uri: `${CLIENT_ORIGIN}/`,
+        contacts: ["ops@agent.example.com"],
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(clients(db)).toBe(1);
+  });
+
+  const LONG_URI = `${CLIENT_ORIGIN}/${"p".repeat(512)}`;
+  for (const [name, extra, error] of [
+    ["client_name over 100 characters", { client_name: "N".repeat(101) }, "invalid_client_metadata"],
+    ["more than 5 redirect URIs", { redirect_uris: Array.from({ length: 6 }, (_, i) => `${CLIENT_ORIGIN}/cb/${i}`) }, "invalid_redirect_uri"],
+    ["a redirect URI over 512 characters", { redirect_uris: [LONG_URI] }, "invalid_redirect_uri"],
+    ["a post-logout redirect URI over 512 characters", { post_logout_redirect_uris: [LONG_URI] }, "invalid_redirect_uri"],
+    ["client_uri over 512 characters", { client_uri: LONG_URI }, "invalid_client_metadata"],
+    ["logo_uri over 512 characters", { logo_uri: LONG_URI }, "invalid_client_metadata"],
+    ["policy_uri over 512 characters", { policy_uri: LONG_URI }, "invalid_client_metadata"],
+    ["tos_uri over 512 characters", { tos_uri: LONG_URI }, "invalid_client_metadata"],
+    ["jwks_uri over 512 characters", { jwks_uri: LONG_URI }, "invalid_client_metadata"],
+    ["more than 5 contacts", { contacts: Array.from({ length: 6 }, (_, i) => `c${i}@agent.example.com`) }, "invalid_client_metadata"],
+    ["a contact over 254 characters", { contacts: [`${"c".repeat(250)}@a.example`] }, "invalid_client_metadata"],
+    ["software_id over 128 characters", { software_id: "s".repeat(129) }, "invalid_client_metadata"],
+    ["software_version over 128 characters", { software_version: "1".repeat(129) }, "invalid_client_metadata"],
+    ["software_statement over 2048 characters", { software_statement: "j".repeat(2049) }, "invalid_client_metadata"],
+    ["metadata over 1024 characters", { metadata: { note: "m".repeat(1024) } }, "invalid_client_metadata"],
+  ] as const) {
+    test(`registration with ${name} is refused with ${error}`, async () => {
+      const { auth, db } = await testAuth();
+      const response = await register(auth, metadata(extra));
+      expect(response.status).toBe(400);
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      const body = (await response.json()) as { error: string; error_description: string };
+      expect(body.error).toBe(error);
+      expect(body.error_description).toBeTruthy();
+      expect(clients(db)).toBe(0);
+    });
+  }
+
+  for (const path of ["/api/auth/oauth2/token", "/api/auth/oauth2/revoke"]) {
+    test(`${path} refuses a body over the cap with invalid_request`, async () => {
+      const { auth } = await testAuth();
+      const response = await serve(
+        auth,
+        new Request(`${BASE_URL}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", origin: CLIENT_ORIGIN },
+          body: new URLSearchParams({
+            grant_type: "refresh_token",
+            client_id: "x",
+            refresh_token: "t".repeat(OAUTH_BODY_LIMIT),
+            token: "t".repeat(OAUTH_BODY_LIMIT),
+          }),
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe("invalid_request");
+    });
+  }
+});
+
+describe("unused registered clients are deleted", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  /** The D1 surface the cleanup uses, over bun:sqlite. */
+  const d1 = (db: Database) =>
+    ({
+      prepare: (sql: string) => ({
+        bind: (...params: string[]) => ({ run: async () => db.query(sql).run(...params) }),
+      }),
+    }) as unknown as D1Database;
+  const age = (db: Database, clientId: string, ms: number) => {
+    const at = new Date(Date.now() - ms).toISOString();
+    db.query('UPDATE "oauthClient" SET "createdAt" = ?, "updatedAt" = ? WHERE "clientId" = ?').run(at, at, clientId);
+  };
+  const exists = (db: Database, clientId: string) =>
+    db.query('SELECT 1 FROM "oauthClient" WHERE "clientId" = ?').get(clientId) !== null;
+
+  test("an old client with no grant goes, a fresh one stays", async () => {
+    const { auth, db } = await testAuth();
+    const old = await registerClient(auth);
+    const fresh = await registerClient(auth);
+    age(db, old, DAY_MS + 60_000);
+    age(db, fresh, DAY_MS - 60_000);
+    await deleteUnusedOAuthClients(d1(db));
+    expect(exists(db, old)).toBe(false);
+    expect(exists(db, fresh)).toBe(true);
+  });
+
+  for (const kept of ["oauthConsent", "oauthRefreshToken", "oauthAccessToken"] as const) {
+    test(`an old client that still holds a row in ${kept} is kept, and its grant still works`, async () => {
+      const { auth, db } = await testAuth();
+      const flow = await authorizeAsMember(auth, db, "owner@corp.test");
+      const issued = (await (await exchangeCode(auth, flow.clientId, flow.callback, flow.verifier)).json()) as {
+        refresh_token: string;
+      };
+      // Access tokens for the MCP resource are JWTs and never stored; an opaque one (no resource) would be.
+      db.query(
+        'INSERT INTO "oauthAccessToken" ("id", "token", "clientId", "userId", "expiresAt", "createdAt", "scopes") SELECT \'at\', \'opaque\', "clientId", "userId", "expiresAt", "createdAt", "scopes" FROM "oauthRefreshToken"',
+      ).run();
+      for (const table of ["oauthConsent", "oauthRefreshToken", "oauthAccessToken"]) {
+        if (table !== kept) db.query(`DELETE FROM "${table}"`).run();
+      }
+      age(db, flow.clientId, 30 * DAY_MS);
+      await deleteUnusedOAuthClients(d1(db));
+      expect(exists(db, flow.clientId)).toBe(true);
+      if (kept === "oauthRefreshToken") {
+        const refreshed = await tokenRequest(auth, {
+          grant_type: "refresh_token",
+          refresh_token: issued.refresh_token,
+          client_id: flow.clientId,
+          resource: RESOURCE,
+        });
+        expect(refreshed.status).toBe(200);
+      }
+    });
+  }
+
+  test("an unused metadata-document client goes after 24 hours, and the next authorization resolves it again", async () => {
+    const { auth, db } = await testAuth();
+    const documents = serveMetadataDocuments();
+    try {
+      await startAuthorization(auth, CIMD_CLIENT_ID);
+      expect(exists(db, CIMD_CLIENT_ID)).toBe(true);
+      age(db, CIMD_CLIENT_ID, DAY_MS + 60_000);
+      await deleteUnusedOAuthClients(d1(db));
+      expect(exists(db, CIMD_CLIENT_ID)).toBe(false);
+
+      const { location } = await startAuthorization(auth, CIMD_CLIENT_ID);
+      expect(location.pathname).toBe("/signin");
+      expect(exists(db, CIMD_CLIENT_ID)).toBe(true);
+    } finally {
+      documents.restore();
+    }
+  });
+
+  test("a metadata-document client resolved again within 24 hours is kept", async () => {
+    const { auth, db } = await testAuth();
+    const documents = serveMetadataDocuments();
+    try {
+      await startAuthorization(auth, CIMD_CLIENT_ID);
+      age(db, CIMD_CLIENT_ID, 30 * DAY_MS);
+      // A later request: the console builds its auth instance per request, so the document is fetched again.
+      const nextRequest = createAuth({
+        database: db,
+        secret: "test-secret-32-chars-minimum-length!!",
+        baseURL: BASE_URL,
+        trustedOrigins: [BASE_URL],
+        mcpResource: RESOURCE,
+        mail: new CaptureMailSender(),
+      });
+      await startAuthorization(nextRequest, CIMD_CLIENT_ID);
+      await deleteUnusedOAuthClients(d1(db));
+      expect(exists(db, CIMD_CLIENT_ID)).toBe(true);
+    } finally {
+      documents.restore();
+    }
+  });
+
+  test("a metadata-document client holding a grant is never deleted, and its grant still works", async () => {
+    const { auth, db } = await testAuth();
+    const documents = serveMetadataDocuments();
+    try {
+      const flow = await authorizeAsMember(auth, db, "owner@corp.test", CIMD_CLIENT_ID);
+      const issued = (await (await exchangeCode(auth, flow.clientId, flow.callback, flow.verifier)).json()) as {
+        refresh_token: string;
+      };
+      age(db, CIMD_CLIENT_ID, 30 * DAY_MS);
+      await deleteUnusedOAuthClients(d1(db));
+      expect(exists(db, CIMD_CLIENT_ID)).toBe(true);
+      const refreshed = await tokenRequest(auth, {
+        grant_type: "refresh_token",
+        refresh_token: issued.refresh_token,
+        client_id: CIMD_CLIENT_ID,
+        resource: RESOURCE,
+      });
+      expect(refreshed.status).toBe(200);
+    } finally {
+      documents.restore();
+    }
   });
 });
 

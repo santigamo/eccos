@@ -9,7 +9,8 @@
  * without its `Cookie` header, and any `Set-Cookie` is dropped from the answer.
  * Without a cookie, registration can only be the open kind, never one owned by
  * whoever happens to be signed in. Every other `/api/auth` path stays
- * same-origin and cookie-bound.
+ * same-origin and cookie-bound. The size limits on these bodies live in
+ * oauth-request-limits.ts.
  *
  * The RFC 8414 document lives at the root because the issuer is the bare
  * console origin and Claude and ChatGPT only look there (design §8.2). It is
@@ -20,6 +21,7 @@
 
 import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
 import type { Auth } from "../auth/auth";
+import { oauthRequestWithinLimits } from "./oauth-request-limits";
 
 export const AUTH_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 
@@ -62,9 +64,11 @@ export function oauthCrossOriginApi(
   if (!method) return undefined;
   return (async () => {
     if (request.method === "OPTIONS") return withCors(new Response(null, { status: 204 }), method);
-    const headers = new Headers(request.headers);
+    const limited = await oauthRequestWithinLimits(request, pathname);
+    if (limited instanceof Response) return withCors(limited, method);
+    const headers = new Headers(limited.headers);
     headers.delete("cookie");
-    const cookieless = new Request(request, { headers });
+    const cookieless = new Request(limited, { headers });
     const response =
       pathname === AUTH_SERVER_METADATA_PATH && request.method === "GET"
         ? await metadata(cookieless, auth())

@@ -25,8 +25,9 @@ The root `bun run deploy` and dashboard `bun run deploy` / `scripts/deploy-dashb
 a gitignored `wrangler.production.jsonc` and first run `scripts/check-production-config.ts`, which
 stops the deploy if either production file is missing, `GATEWAY_PUBLIC_URL` is not an HTTPS
 origin, the dashboard D1 id is still the placeholder, the gateway and dashboard
-`META_GRAPH_VERSION` differ, or the gateway's Durable Object bindings, migrations or R2 buckets
-drift from the template. It only reads local files.
+`META_GRAPH_VERSION` differ, the dashboard lacks the hourly `"0 * * * *"` cron trigger, or the
+gateway's Durable Object bindings, migrations or R2 buckets drift from the template. It only reads
+local files.
 
 Raw `wrangler deploy` and the gateway package's `bun run deploy` skip that check: they still
 deploy the template, for self-hosting and the Deploy to Cloudflare button. The template keeps the
@@ -76,6 +77,9 @@ reconcile it later.
 The console is also the OAuth authorization server for the MCP resource. **Set `MCP_RESOURCE`
 (see the vars below) and apply the auth D1 migrations before deploying this version**: without the
 var every request fails closed, and without `0006_oauth_provider.sql` the OAuth endpoints fail.
+Add the template's hourly trigger, `"triggers": { "crons": ["0 * * * *"] }`, to your production
+config too (keep `"0 4 * * *"` next to it if billing is on): it deletes dynamically registered
+OAuth clients that have stayed unused for 24 hours, and the preflight refuses a config without it.
 
 Production files are ignored and local to each checkout. Before retiring a worktree, transfer
 its populated files to the checkout used for deployment with `cp -n`, then verify the values
@@ -199,7 +203,7 @@ numbers, and an account that may not keeps sending, receiving and forwarding.
 | dashboard secret | `CREEM_API_KEY` | Turns billing on. A `creem_test_` key talks to Creem's test API |
 | dashboard secret | `CREEM_WEBHOOK_SECRET` | Verifies `creem-signature` on `POST /api/billing/webhook` |
 | dashboard var | `CREEM_PRODUCT_ID` | The Creem product, e.g. `prod_XXXXXXXXXXXXXXXXXXXXXX`. Set it in the gitignored `wrangler.production.jsonc`, never in the template |
-| dashboard config | `"triggers": { "crons": ["0 4 * * *"] }` | Daily reconcile: prices each subscription for the account's connected numbers |
+| dashboard config | `"triggers": { "crons": ["0 * * * *", "0 4 * * *"] }` | The second, daily trigger runs the reconcile: it prices each subscription for the account's connected numbers. The hourly one only deletes unused OAuth clients (see the production config section) |
 | dashboard var | `RESELLER_USER_IDS` | Comma-separated user ids whose new workspaces open without a subscription, for a reseller invoiced separately. Their settings read "Billed separately". Existing workspaces are opened by the operator |
 
 The Creem product is a monthly subscription at 1 EUR per unit (a subscription's units are its
@@ -207,7 +211,7 @@ monthly price in euros), with the free trial configured on the product and its d
 set to `<console origin>/settings?billing=success`. Creem's customer portal takes no return URL.
 
 The preflight refuses a deploy with only one of `CREEM_PRODUCT_ID` and
-`CONNECT_POLICY_DEFAULT=closed`, or with billing on and no cron trigger.
+`CONNECT_POLICY_DEFAULT=closed`, or with billing on and no trigger besides the hourly one.
 
 ## Deploy
 
