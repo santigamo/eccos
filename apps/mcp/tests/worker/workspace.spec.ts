@@ -71,7 +71,7 @@ describe("workspace_get", () => {
             id: "webhook",
             state: "todo",
             count: null,
-            detail: "No forwarding target can be set until a WhatsApp Business account is connected. This connection cannot do it: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+            detail: "No forwarding target can be set until a WhatsApp Business account is connected. This connection was not granted the eccos:configure scope that configure needs. Ask the person to connect the agent again and grant it.",
             nextTool: null,
             blockedBy: "number",
           },
@@ -87,7 +87,7 @@ describe("workspace_get", () => {
             id: "template",
             state: "todo",
             count: 0,
-            detail: "No message template can be created until a WhatsApp Business account is connected. This connection cannot do it: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+            detail: "No message template can be created until a WhatsApp Business account is connected. This connection was not granted the eccos:configure scope that configure needs. Ask the person to connect the agent again and grant it.",
             nextTool: null,
             blockedBy: "number",
           },
@@ -171,13 +171,15 @@ describe("workspace_get", () => {
       id: "subscription",
       state: "unknown",
       count: null,
-      detail: "Billing needs the eccos:administer scope, held by an owner or admin, so it is not shown to this connection.",
+      detail:
+        "Billing is not shown to this connection. This connection acts for a viewer, and administer needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
       nextTool: null,
       blockedBy: null,
     });
     expect(steps.map((step) => step.id)).toEqual(["subscription", "number", "webhook", "api_key", "template"]);
     expect(steps[1]?.blockedBy).toBeNull();
     expect(await consoleStub.billingCalls()).toEqual([]);
+    expect((await gatewayStub.calls()).map((call) => call.method)).not.toContain("listApiKeys");
   });
 
   it("explains the console's own billing refusal to a connection that holds administer", async () => {
@@ -224,10 +226,10 @@ describe("workspace_get", () => {
 
     expect(steps.map((step) => step.nextTool)).toEqual([null, null, null, null, null]);
     expect(steps.find((step) => step.id === "number")?.detail).toBe(
-      "No WhatsApp number is connected. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+      "No WhatsApp number is connected. This connection acts for an operator, and administer needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
     );
     expect(steps.find((step) => step.id === "api_key")?.detail).toBe(
-      "No active API key. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+      "No active API key. This connection acts for an operator, and administer needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
     );
   });
 

@@ -152,7 +152,7 @@ describe("effective permissions", () => {
     expect(result.content).toEqual([
       {
         type: "text",
-        text: "This connection cannot configure: that needs the eccos:configure scope, granted by a person who is an admin or above in this workspace. Ask such a person to connect the agent with that scope, or to do this in the Eccos console.",
+        text: "This connection acts for a viewer, and configure needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
       },
     ]);
     expect(lines.map((line) => JSON.parse(line))).toEqual([

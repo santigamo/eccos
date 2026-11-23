@@ -343,7 +343,7 @@ export const templatesList = defineTool({
   run: async (input, actor, deps) => {
     const { gateway } = deps.for("view");
     const point = pointer(deps);
-    const waba = await resolveWaba(gateway, point, actor.accountId, {
+    const waba = await resolveWaba(deps, point, actor.accountId, {
       wabaId: input.wabaId,
       mode: "any",
     });
@@ -422,7 +422,7 @@ export const templateCreate = defineTool({
     const { gateway } = deps.for("configure");
     const point = pointer(deps);
     const body = templateContent(input, "template_create");
-    const waba = await resolveWaba(gateway, point, actor.accountId, {
+    const waba = await resolveWaba(deps, point, actor.accountId, {
       wabaId: input.wabaId,
       mode: "any",
     });
@@ -522,7 +522,7 @@ export const templateEdit = defineTool({
     const { gateway } = deps.for("configure");
     const point = pointer(deps);
     const body = templateContent(input, "template_edit");
-    const waba = await resolveWaba(gateway, point, actor.accountId, {
+    const waba = await resolveWaba(deps, point, actor.accountId, {
       wabaId: input.wabaId,
       mode: "any",
     });
@@ -607,7 +607,7 @@ export const templateDelete = defineTool({
   run: async (input, actor, deps) => {
     const { gateway } = deps.for("configure");
     const point = pointer(deps);
-    const waba = await resolveWaba(gateway, point, actor.accountId, {
+    const waba = await resolveWaba(deps, point, actor.accountId, {
       wabaId: input.wabaId,
       mode: "any",
     });
@@ -814,17 +814,17 @@ export const templateSendTest = defineTool({
       text: buttonTexts[i] ?? "",
     }));
     const headerMedia = headerMediaOf(input.headerMedia);
-    const waba = await resolveWaba(gateway, point, actor.accountId, {
+    const waba = await resolveWaba(deps, point, actor.accountId, {
       wabaId: input.wabaId,
       phoneNumberId: input.phoneNumberId,
       mode: "active",
     });
     const phoneNumberId = resolvePhone(waba, point, input.phoneNumberId);
 
-    const listed = deps.can("view")
-      ? await gateway.listTemplates(waba.wabaId, LIST_LIMIT, actor.accountId)
-      : null;
-    if (listed?.ok) {
+    const listed = await deps
+      .for("view")
+      .gateway.listTemplates(waba.wabaId, LIST_LIMIT, actor.accountId);
+    if (listed.ok) {
       const rows = templateRowsOf(listed.data);
       const row = rows.find(
         (candidate) =>

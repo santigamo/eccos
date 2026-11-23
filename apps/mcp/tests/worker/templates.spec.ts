@@ -393,25 +393,14 @@ describe("template_send_test", () => {
     expect(JSON.stringify(lines)).not.toMatch(/34600000011|600-000|Ana/);
   });
 
-  it("skips the template pre-check, a view read, for a grant that may only send", async () => {
+  it("needs eccos:view to find the account's WABA, as the console does, and says so", async () => {
     await seedA();
     const client = await as(["send"], ["eccos:send"]);
     const result = await call(client, "template_send_test", SEND);
     await client.close();
 
-    expect(result.structuredContent).toMatchObject({ status: "accepted" });
-    expect((await gatewayStub.calls()).map((entry) => entry.method)).toEqual(["listAccountResources", "sendTemplateTest"]);
-  });
-
-  it("does not point a connection without view at numbers_list", async () => {
-    await seedA();
-    const client = await as(["send"], ["eccos:send"]);
-    const result = await call(client, "template_send_test", { ...SEND, phoneNumberId: "999" });
-    await client.close();
-
-    expect(result.text).toBe(
-      'Phone number id "999" is not registered in this workspace. This connection cannot call numbers_list (it needs the eccos:view scope); the person can check this in the Eccos console.',
-    );
+    expect(result.text).toBe("This connection was not granted the eccos:view scope that view needs. Ask the person to connect the agent again and grant it.");
+    expect(await gatewayStub.calls()).toEqual([]);
   });
 
   it("fills a media header and a dynamic URL button", async () => {

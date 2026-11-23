@@ -1,5 +1,5 @@
 import type { AgentAction } from "@eccos/console-contract";
-import type { AccountWabaResource, GatewayApi } from "@eccos/gateway-contract";
+import type { AccountWabaResource } from "@eccos/gateway-contract";
 import {
   type ScopeMode,
   selectWaba,
@@ -38,7 +38,7 @@ const list = (ids: string[]) => ids.map((id) => `"${id}"`).join(", ");
  * `mode: "active"` is the data-plane rule (sends); `"any"` is for WABA-level work (templates).
  */
 export async function resolveWaba(
-  gateway: GatewayApi,
+  deps: ToolDeps,
   point: Point,
   accountId: string,
   {
@@ -47,7 +47,9 @@ export async function resolveWaba(
     mode,
   }: { wabaId?: string; phoneNumberId?: string; mode: ScopeMode },
 ): Promise<AccountWabaResource> {
-  const { wabas } = await gateway.listAccountResources(accountId);
+  const { wabas } = await deps
+    .for("view")
+    .gateway.listAccountResources(accountId);
   const ids = wabas.map((waba) => waba.wabaId).sort();
   if (wabas.length === 0) {
     throw new ToolError(
