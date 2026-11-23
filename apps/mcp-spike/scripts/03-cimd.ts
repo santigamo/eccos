@@ -9,6 +9,7 @@ const fetchLog = () => readFileSync(LOG, "utf8").split("\n").filter((l) => l.inc
 
 async function tryClient(clientId: string, redirectUri?: string) {
   const before = fetchLog().length;
+  b.ip = `198.51.100.${Math.floor(Math.random() * 250) + 1}`;
   let doc: { redirect_uris?: string[]; client_name?: string; token_endpoint_auth_method?: string } | undefined;
   if (!redirectUri) {
     doc = (await (await fetch(clientId)).json()) as typeof doc;

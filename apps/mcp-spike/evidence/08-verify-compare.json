@@ -5,8 +5,8 @@
     "internalReason": null,
     "publicApi": {
       "ok": true,
-      "ms": 8,
-      "sub": "D3fhmBN2yOTZvwnqdS6rfTlgjGCyx8AA",
+      "ms": 6,
+      "sub": "BQAFlR1iplmxIx3flendqSbnOgZ0jJEi",
       "typ": "at+jwt"
     }
   },
@@ -16,7 +16,7 @@
     "internalReason": "invalid_token",
     "publicApi": {
       "ok": false,
-      "ms": 7,
+      "ms": 5,
       "error": "JWTClaimValidationFailed: unexpected \"aud\" claim value"
     }
   },
@@ -26,7 +26,7 @@
     "internalReason": "invalid_token",
     "publicApi": {
       "ok": false,
-      "ms": 8,
+      "ms": 6,
       "error": "JWSSignatureVerificationFailed: signature verification failed"
     }
   },

@@ -8,7 +8,7 @@
       ],
       "token_endpoint_auth_method": "none"
     },
-    "ms": 95,
+    "ms": 98,
     "status": 200,
     "landedOn": "http://localhost:3000/spike/workspace",
     "error": null,
@@ -27,7 +27,7 @@
       ],
       "token_endpoint_auth_method": "none"
     },
-    "ms": 80,
+    "ms": 72,
     "status": 200,
     "landedOn": "http://localhost:3000/spike/workspace",
     "error": null,
@@ -47,7 +47,7 @@
       ],
       "token_endpoint_auth_method": "none"
     },
-    "ms": 98,
+    "ms": 82,
     "status": 200,
     "landedOn": "http://localhost:3000/spike/workspace",
     "error": null,
@@ -66,7 +66,7 @@
       ],
       "token_endpoint_auth_method": "private_key_jwt"
     },
-    "ms": 49,
+    "ms": 36,
     "status": 400,
     "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
     "error": null,
@@ -80,7 +80,7 @@
   "negative": {
     "http": {
       "clientId": "http://example.com/client.json",
-      "ms": 51,
+      "ms": 42,
       "status": 200,
       "landedOn": "http://localhost:3000/api/auth/error",
       "error": "invalid_client",
@@ -90,7 +90,7 @@
     },
     "loopbackLiteral": {
       "clientId": "https://127.0.0.1/client.json",
-      "ms": 27,
+      "ms": 18,
       "status": 400,
       "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
       "error": null,
@@ -100,62 +100,68 @@
     },
     "privateLiteral": {
       "clientId": "https://10.0.0.1/client.json",
-      "ms": 26,
-      "status": 429,
+      "ms": 19,
+      "status": 400,
       "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
       "error": null,
       "errorDescription": null,
-      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "body": "{\"error\":\"invalid_client\",\"error_description\":\"client_id URL must not target a private or reserved address\"}",
       "transportCalls": []
     },
     "metadataLiteral": {
       "clientId": "https://169.254.169.254/client.json",
-      "ms": 25,
-      "status": 429,
+      "ms": 17,
+      "status": 400,
       "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
       "error": null,
       "errorDescription": null,
-      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "body": "{\"error\":\"invalid_client\",\"error_description\":\"client_id URL must not target a private or reserved address\"}",
       "transportCalls": []
     },
     "nameResolvingToLoopback": {
       "clientId": "https://localtest.me/client.json",
-      "ms": 26,
-      "status": 429,
+      "ms": 20,
+      "status": 400,
       "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
       "error": null,
       "errorDescription": null,
-      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
-      "transportCalls": []
+      "body": "{\"error\":\"invalid_client\",\"error_description\":\"Failed to fetch metadata document (network error or redirect blocked)\"}",
+      "transportCalls": [
+        "SPIKE_CIMD_FETCH https://localtest.me/client.json"
+      ]
     },
     "redirecting": {
       "clientId": "https://www.github.com/client.json",
-      "ms": 26,
-      "status": 429,
+      "ms": 65,
+      "status": 400,
       "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
       "error": null,
       "errorDescription": null,
-      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
-      "transportCalls": []
+      "body": "{\"error\":\"invalid_client\",\"error_description\":\"Metadata document fetch returned HTTP 301\"}",
+      "transportCalls": [
+        "SPIKE_CIMD_FETCH https://www.github.com/client.json"
+      ]
     },
     "notJson": {
       "clientId": "https://example.com/client.json",
-      "ms": 26,
-      "status": 429,
+      "ms": 40,
+      "status": 400,
       "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
       "error": null,
       "errorDescription": null,
-      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
-      "transportCalls": []
+      "body": "{\"error\":\"invalid_client\",\"error_description\":\"Metadata document fetch returned HTTP 404\"}",
+      "transportCalls": [
+        "SPIKE_CIMD_FETCH https://example.com/client.json"
+      ]
     },
     "ownConsole": {
       "clientId": "https://localhost:3000/client.json",
-      "ms": 27,
-      "status": 429,
+      "ms": 20,
+      "status": 400,
       "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
       "error": null,
       "errorDescription": null,
-      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "body": "{\"error\":\"invalid_client\",\"error_description\":\"client_id URL must not target a private or reserved address\"}",
       "transportCalls": []
     }
   }

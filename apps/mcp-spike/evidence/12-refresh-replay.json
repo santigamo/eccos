@@ -1,0 +1,65 @@
+{
+  "t0Prefix": "XEitWW",
+  "rowsBefore": [
+    {
+      "id": "nDD7lwFXRNWZXOPrYI3lpVw059DLQyAO",
+      "revoked": 0,
+      "rotated": 0,
+      "revokedType": "null",
+      "createdAt": "2026-11-23T13:35:17.000Z"
+    }
+  ],
+  "rotate_t0": {
+    "status": 200,
+    "t1Prefix": "poqWnb"
+  },
+  "rowsAfterRotate": [
+    {
+      "id": "nDD7lwFXRNWZXOPrYI3lpVw059DLQyAO",
+      "revoked": 1,
+      "rotated": 1,
+      "revokedType": "text",
+      "createdAt": "2026-11-23T13:35:17.000Z"
+    },
+    {
+      "id": "3693aEJNJ2OfO0xhA28FrosSqEkt7uCG",
+      "revoked": 0,
+      "rotated": 0,
+      "revokedType": "null",
+      "createdAt": "2026-11-23T13:35:19.000Z"
+    }
+  ],
+  "replay_t0": {
+    "status": 200,
+    "refreshPrefix": "poqWnb"
+  },
+  "rowsAfterReplay": [
+    {
+      "id": "nDD7lwFXRNWZXOPrYI3lpVw059DLQyAO",
+      "revoked": 1,
+      "rotated": 1,
+      "revokedType": "text",
+      "createdAt": "2026-11-23T13:35:17.000Z"
+    },
+    {
+      "id": "3693aEJNJ2OfO0xhA28FrosSqEkt7uCG",
+      "revoked": 0,
+      "rotated": 0,
+      "revokedType": "null",
+      "createdAt": "2026-11-23T13:35:19.000Z"
+    }
+  ],
+  "use_t1_after_replay": {
+    "status": 200,
+    "refreshPrefix": "sYGebQ"
+  },
+  "replay_t0_after_window": {
+    "status": 400,
+    "error": "invalid_grant"
+  },
+  "use_t2_after_late_replay": {
+    "status": 400,
+    "error": "invalid_grant"
+  },
+  "rowsEnd": []
+}

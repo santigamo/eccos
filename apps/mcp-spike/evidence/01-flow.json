@@ -112,9 +112,9 @@
   "registration": {
     "status": 201,
     "client": {
-      "client_id": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
+      "client_id": "UqXGjBxVyMHRHDuUUhPiHtOqYIGvGHHM",
       "scope": "eccos:view eccos:operate eccos:send eccos:configure eccos:administer offline_access",
-      "client_id_issued_at": 1795440618,
+      "client_id_issued_at": 1795441103,
       "client_name": "Spike Agent",
       "redirect_uris": [
         "http://127.0.0.1:53682/callback"
@@ -136,8 +136,8 @@
     }
   },
   "workspaces": {
-    "first": "p1KW00gFsmR1dFYeFntyGRAKaLwKfIwu",
-    "second": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh"
+    "first": "axhIs21g3X8v73Pw2edDV2UGhBm8L4BW",
+    "second": "huVxiJdgF2nyKO2elCLIpIy0LyISSlzb"
   },
   "afterAuthorize": "/spike/workspace",
   "continue": {
@@ -176,17 +176,17 @@
       "kid": "ADhhoxF67ZgPiBq2XYvYtxd2qJTX08Yw"
     },
     "payload": {
-      "https://eccos.chat/workspace": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
-      "sub": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
+      "https://eccos.chat/workspace": "huVxiJdgF2nyKO2elCLIpIy0LyISSlzb",
+      "sub": "BQAFlR1iplmxIx3flendqSbnOgZ0jJEi",
       "aud": "http://localhost:8788/mcp",
-      "client_id": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
-      "azp": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
+      "client_id": "UqXGjBxVyMHRHDuUUhPiHtOqYIGvGHHM",
+      "azp": "UqXGjBxVyMHRHDuUUhPiHtOqYIGvGHHM",
       "scope": "eccos:view eccos:operate eccos:configure eccos:administer offline_access",
-      "sid": "A0TeYcDMJft8a2Uo6UG7KY5DiGt7pQta",
+      "sid": "R2F9cUCvLfzN5TLpQG7a3icNog6VWNhv",
       "iss": "http://localhost:3000",
-      "iat": 1795440619,
-      "exp": 1795441219,
-      "jti": "C41BgemjgoxvSN6St6DTzZPqwg3eU75n"
+      "iat": 1795441104,
+      "exp": 1795441704,
+      "jti": "ObccMGadp9AXXpyePiy0_AIH_DpV1fmo"
     }
   },
   "claimMatchesChosenWorkspace": true,
@@ -600,11 +600,11 @@
     "GET http://localhost:3000/onboarding -> 200",
     "POST http://localhost:3000/spike/create-workspace -> 200",
     "POST http://localhost:3000/spike/create-workspace -> 200",
-    "GET http://localhost:3000/api/auth/oauth2/authorize?response_type=code&client_id=SmtXXucfCTahLRmbjKOQvBELtJUHadrh&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=eihexoXnOMus…&code_challenge_method=S256&state=state-179544…&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access -> 200",
-    "  (JSON redirect) -> /spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179544…&client_id=SmtXXucfCTahLRmbjKOQvBELtJUHadrh&code_challenge=eihexoXnOMus…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441219&ba_iat=1795440619131&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=BYPgjUikOiAf…",
+    "GET http://localhost:3000/api/auth/oauth2/authorize?response_type=code&client_id=UqXGjBxVyMHRHDuUUhPiHtOqYIGvGHHM&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=Qfr305_6tQkL…&code_challenge_method=S256&state=state-179544…&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access -> 200",
+    "  (JSON redirect) -> /spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179544…&client_id=UqXGjBxVyMHRHDuUUhPiHtOqYIGvGHHM&code_challenge=Qfr305_6tQkL…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441704&ba_iat=1795441104000&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=9JvyP7ulxuzQ…",
     "POST http://localhost:3000/api/auth/organization/set-active -> 200",
     "POST http://localhost:3000/api/auth/oauth2/continue -> 200",
-    "GET http://localhost:3000/spike/consent?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179544…&client_id=SmtXXucfCTahLRmbjKOQvBELtJUHadrh&code_challenge=eihexoXnOMus…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441219&ba_iat=1795440619182&ba_pl=A0TeYcDMJft8a2Uo6UG7KY5DiGt7pQta&ba_param=ba_iat&ba_param=ba_param&ba_param=ba_pl&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=iaVSTuSFfP8C… -> 200",
+    "GET http://localhost:3000/spike/consent?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179544…&client_id=UqXGjBxVyMHRHDuUUhPiHtOqYIGvGHHM&code_challenge=Qfr305_6tQkL…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441704&ba_iat=1795441104053&ba_pl=R2F9cUCvLfzN5TLpQG7a3icNog6VWNhv&ba_param=ba_iat&ba_param=ba_param&ba_param=ba_pl&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=vOWUd8hKCEzh… -> 200",
     "POST http://localhost:3000/api/auth/oauth2/consent -> 200"
   ]
 }

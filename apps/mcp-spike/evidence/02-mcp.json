@@ -16,21 +16,21 @@
     "content": [
       {
         "type": "text",
-        "text": "{\"actor\":{\"userId\":\"0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC\",\"organizationId\":\"8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh\",\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795441219,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC\",\"organizationId\":\"8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh\",\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\"}}}},\"clientCapabilities\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"spike-sdk-client\",\"version\":\"0\"},\"io.modelcontextprotocol/clientCapabilities\":{}}}"
+        "text": "{\"actor\":{\"userId\":\"Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn\",\"organizationId\":\"YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ\",\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795441604,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn\",\"organizationId\":\"YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ\",\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\"}}}},\"clientCapabilities\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"spike-sdk-client\",\"version\":\"0\"},\"io.modelcontextprotocol/clientCapabilities\":{}}}"
       }
     ],
     "structuredContent": {
       "actor": {
-        "userId": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
-        "organizationId": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
-        "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+        "userId": "Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn",
+        "organizationId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
+        "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
         "role": "owner",
         "elevatedUntil": null,
-        "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh"
+        "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa"
       },
       "authInfo": {
         "token": "<jwt>",
-        "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
+        "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa",
         "scopes": [
           "eccos:view",
           "eccos:operate",
@@ -38,17 +38,17 @@
           "eccos:administer",
           "offline_access"
         ],
-        "expiresAt": 1795441219,
+        "expiresAt": 1795441604,
         "resource": "http://localhost:8788/mcp",
         "extra": {
           "props": {
             "actor": {
-              "userId": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
-              "organizationId": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
-              "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+              "userId": "Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn",
+              "organizationId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
+              "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
               "role": "owner",
               "elevatedUntil": null,
-              "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh"
+              "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa"
             }
           }
         }
@@ -73,16 +73,16 @@
     "content": [
       {
         "type": "text",
-        "text": "{\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"resources\":{\"account\":{\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"name\":\"Workspace Two\",\"createdAt\":1795440619112,\"connectPolicy\":\"open\"},\"keys\":[],\"wabas\":[],\"phones\":[]}}"
+        "text": "{\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"resources\":{\"account\":{\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"name\":\"Workspace Two\",\"createdAt\":1795441004546,\"connectPolicy\":\"open\"},\"keys\":[],\"wabas\":[],\"phones\":[]}}"
       }
     ],
     "structuredContent": {
-      "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+      "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
       "resources": {
         "account": {
-          "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+          "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
           "name": "Workspace Two",
-          "createdAt": 1795440619112,
+          "createdAt": 1795441004546,
           "connectPolicy": "open"
         },
         "keys": [],
@@ -101,15 +101,15 @@
     "content": [
       {
         "type": "text",
-        "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3\",\"expiresAt\":\"2026-11-23T13:40:20.793Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+        "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb\",\"expiresAt\":\"2026-11-23T13:46:45.105Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
       }
     ],
     "structuredContent": {
       "status": "approval_required",
       "reason": "elevation_required",
       "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
-      "approvalUrl": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3",
-      "expiresAt": "2026-11-23T13:40:20.793Z",
+      "approvalUrl": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb",
+      "expiresAt": "2026-11-23T13:46:45.105Z",
       "retry": {
         "tool": "api_key_create",
         "when": "after_approval",
@@ -142,7 +142,7 @@
       {
         "mode": "url",
         "message": "Approve sensitive actions for this agent in the Eccos console.",
-        "url": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3"
+        "url": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb"
       }
     ]
   },
@@ -157,15 +157,15 @@
       "content": [
         {
           "type": "text",
-          "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3\",\"expiresAt\":\"2026-11-23T13:40:20.793Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+          "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb\",\"expiresAt\":\"2026-11-23T13:46:45.105Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
         }
       ],
       "structuredContent": {
         "status": "approval_required",
         "reason": "elevation_required",
         "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
-        "approvalUrl": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3",
-        "expiresAt": "2026-11-23T13:40:20.793Z",
+        "approvalUrl": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb",
+        "expiresAt": "2026-11-23T13:46:45.105Z",
         "retry": {
           "tool": "api_key_create",
           "when": "after_approval",
@@ -178,7 +178,7 @@
       {
         "mode": "url",
         "message": "Approve sensitive actions for this agent in the Eccos console.",
-        "url": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3"
+        "url": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb"
       }
     ]
   },
@@ -224,7 +224,7 @@
               "approve": {
                 "method": "elicitation/create",
                 "params": {
-                  "url": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3",
+                  "url": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb",
                   "message": "Approve sensitive actions for this agent in the Eccos console.",
                   "mode": "url"
                 }
@@ -288,15 +288,15 @@
             "content": [
               {
                 "type": "text",
-                "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3\",\"expiresAt\":\"2026-11-23T13:40:20.793Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+                "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb\",\"expiresAt\":\"2026-11-23T13:46:45.105Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
               }
             ],
             "structuredContent": {
               "status": "approval_required",
               "reason": "elevation_required",
               "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
-              "approvalUrl": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3",
-              "expiresAt": "2026-11-23T13:40:20.793Z",
+              "approvalUrl": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb",
+              "expiresAt": "2026-11-23T13:46:45.105Z",
               "retry": {
                 "tool": "api_key_create",
                 "when": "after_approval",
@@ -329,20 +329,20 @@
       "content": [
         {
           "type": "text",
-          "text": "{\"status\":\"claim_ready\",\"label\":\"ci\",\"elevatedUntil\":\"2026-11-24T13:30:21.081Z\"}"
+          "text": "{\"status\":\"claim_ready\",\"label\":\"ci\",\"elevatedUntil\":\"2026-11-24T13:36:45.395Z\"}"
         }
       ],
       "structuredContent": {
         "status": "claim_ready",
         "label": "ci",
-        "elevatedUntil": "2026-11-24T13:30:21.081Z"
+        "elevatedUntil": "2026-11-24T13:36:45.395Z"
       }
     },
     "elicitationSeenByClient": [
       {
         "mode": "url",
         "message": "Approve sensitive actions for this agent in the Eccos console.",
-        "url": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3"
+        "url": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb"
       }
     ],
     "approval": {
@@ -392,7 +392,7 @@
               "approve": {
                 "method": "elicitation/create",
                 "params": {
-                  "url": "http://localhost:3000/spike/approve?request=4b40edde-a792-4df9-a862-40ea4b84d2d3",
+                  "url": "http://localhost:3000/spike/approve?request=a463ea06-6a2f-4aa0-b599-c06164edfebb",
                   "message": "Approve sensitive actions for this agent in the Eccos console.",
                   "mode": "url"
                 }
@@ -456,13 +456,13 @@
             "content": [
               {
                 "type": "text",
-                "text": "{\"status\":\"claim_ready\",\"label\":\"ci\",\"elevatedUntil\":\"2026-11-24T13:30:21.081Z\"}"
+                "text": "{\"status\":\"claim_ready\",\"label\":\"ci\",\"elevatedUntil\":\"2026-11-24T13:36:45.395Z\"}"
               }
             ],
             "structuredContent": {
               "status": "claim_ready",
               "label": "ci",
-              "elevatedUntil": "2026-11-24T13:30:21.081Z"
+              "elevatedUntil": "2026-11-24T13:36:45.395Z"
             },
             "resultType": "complete",
             "_meta": {
@@ -488,21 +488,21 @@
     "content": [
       {
         "type": "text",
-        "text": "{\"actor\":{\"userId\":\"0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC\",\"organizationId\":\"8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh\",\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795441219,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC\",\"organizationId\":\"8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh\",\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\"}}}},\"clientCapabilities\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"spike-sdk-client\",\"version\":\"0\"},\"io.modelcontextprotocol/clientCapabilities\":{\"elicitation\":{\"url\":{}}}}}"
+        "text": "{\"actor\":{\"userId\":\"Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn\",\"organizationId\":\"YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ\",\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795441604,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn\",\"organizationId\":\"YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ\",\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\"}}}},\"clientCapabilities\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"spike-sdk-client\",\"version\":\"0\"},\"io.modelcontextprotocol/clientCapabilities\":{\"elicitation\":{\"url\":{}}}}}"
       }
     ],
     "structuredContent": {
       "actor": {
-        "userId": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
-        "organizationId": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
-        "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+        "userId": "Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn",
+        "organizationId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
+        "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
         "role": "owner",
         "elevatedUntil": null,
-        "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh"
+        "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa"
       },
       "authInfo": {
         "token": "<jwt>",
-        "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
+        "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa",
         "scopes": [
           "eccos:view",
           "eccos:operate",
@@ -510,17 +510,17 @@
           "eccos:administer",
           "offline_access"
         ],
-        "expiresAt": 1795441219,
+        "expiresAt": 1795441604,
         "resource": "http://localhost:8788/mcp",
         "extra": {
           "props": {
             "actor": {
-              "userId": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
-              "organizationId": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
-              "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+              "userId": "Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn",
+              "organizationId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
+              "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
               "role": "owner",
               "elevatedUntil": null,
-              "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh"
+              "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa"
             }
           }
         }
@@ -559,21 +559,21 @@
       "content": [
         {
           "type": "text",
-          "text": "{\"actor\":{\"userId\":\"0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC\",\"organizationId\":\"8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh\",\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795441219,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC\",\"organizationId\":\"8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh\",\"accountId\":\"acc_0fcb2ab6d41c4a96a8d714454aa40c5d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"SmtXXucfCTahLRmbjKOQvBELtJUHadrh\"}}}},\"clientCapabilities\":null}"
+          "text": "{\"actor\":{\"userId\":\"Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn\",\"organizationId\":\"YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ\",\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795441604,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn\",\"organizationId\":\"YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ\",\"accountId\":\"acc_2f94e4cf55804d538f914b019a5b954d\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"DBkShEpbMGsghemHRCWudGshxTHsfcZa\"}}}},\"clientCapabilities\":null}"
         }
       ],
       "structuredContent": {
         "actor": {
-          "userId": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
-          "organizationId": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
-          "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+          "userId": "Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn",
+          "organizationId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
+          "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
           "role": "owner",
           "elevatedUntil": null,
-          "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh"
+          "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa"
         },
         "authInfo": {
           "token": "<jwt>",
-          "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
+          "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa",
           "scopes": [
             "eccos:view",
             "eccos:operate",
@@ -581,17 +581,17 @@
             "eccos:administer",
             "offline_access"
           ],
-          "expiresAt": 1795441219,
+          "expiresAt": 1795441604,
           "resource": "http://localhost:8788/mcp",
           "extra": {
             "props": {
               "actor": {
-                "userId": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
-                "organizationId": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
-                "accountId": "acc_0fcb2ab6d41c4a96a8d714454aa40c5d",
+                "userId": "Os9gUU7jlzK9EhNDXmHPpcCZstdMfBjn",
+                "organizationId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
+                "accountId": "acc_2f94e4cf55804d538f914b019a5b954d",
                 "role": "owner",
                 "elevatedUntil": null,
-                "clientId": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh"
+                "clientId": "DBkShEpbMGsghemHRCWudGshxTHsfcZa"
               }
             }
           }
@@ -603,15 +603,15 @@
       "content": [
         {
           "type": "text",
-          "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=1af30602-9735-46e1-8fc1-bc32c662d1fd\",\"expiresAt\":\"2026-11-23T13:40:22.353Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+          "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=82848902-9daf-40ef-aa23-de03276b4c1c\",\"expiresAt\":\"2026-11-23T13:46:46.664Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
         }
       ],
       "structuredContent": {
         "status": "approval_required",
         "reason": "elevation_required",
         "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
-        "approvalUrl": "http://localhost:3000/spike/approve?request=1af30602-9735-46e1-8fc1-bc32c662d1fd",
-        "expiresAt": "2026-11-23T13:40:22.353Z",
+        "approvalUrl": "http://localhost:3000/spike/approve?request=82848902-9daf-40ef-aa23-de03276b4c1c",
+        "expiresAt": "2026-11-23T13:46:46.664Z",
         "retry": {
           "tool": "api_key_create",
           "when": "after_approval",

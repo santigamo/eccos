@@ -17,13 +17,13 @@
       "status": 200,
       "body": {
         "redirect": true,
-        "url": "/spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aadminister+offline_access&state=s&client_id=dKbLBnQfeHFIhqfJcRGBAZRfuRQBdMir&code_challenge=7FP6TuEn-AiE…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795440660&ba_iat=1795440060572&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=CnRMo%2Bhdak…"
+        "url": "/spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aadminister+offline_access&state=s&client_id=URFSbkhmruVKcvPqahgYxpRJabxKruAf&code_challenge=MZwVPZKRFV-i…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441620&ba_iat=1795441020555&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=1Ur2N2A5FZ5%…"
       }
     }
   },
   "B_reauth_in_consent": {
     "consentPage": "/spike/consent",
-    "agedSessionCreatedAt": "2026-11-23T12:21:31.611Z",
+    "agedSessionCreatedAt": "2026-11-23T12:37:31.660Z",
     "reauth": {
       "status": 200,
       "body": {
@@ -37,11 +37,11 @@
       "status": 200,
       "body": {
         "redirect": true,
-        "url": "/spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aadminister+offline_access&state=s&client_id=dKbLBnQfeHFIhqfJcRGBAZRfuRQBdMir&code_challenge=29va3w4IAItu…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795440720&ba_iat=1795440120562&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=4ff%2B4xEqLd…"
+        "url": "/spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aadminister+offline_access&state=s&client_id=URFSbkhmruVKcvPqahgYxpRJabxKruAf&code_challenge=XYnGMQxqIq4H…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441680&ba_iat=1795441080560&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=lJt5qFC0rAQD…"
       },
       "landedOn": "/spike/workspace"
     },
-    "freshSessionCreatedAt": "2026-11-23T13:22:00.552Z",
+    "freshSessionCreatedAt": "2026-11-23T13:38:00.548Z",
     "consentAccepted": {
       "status": 400,
       "body": {

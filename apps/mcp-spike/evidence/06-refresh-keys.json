@@ -28,7 +28,7 @@
   ],
   "refresh_after_consent_row_deleted": {
     "status": 200,
-    "workspaceClaim": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0"
+    "workspaceClaim": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ"
   },
   "refresh_after_membership_removed": {
     "status": 403,
@@ -40,22 +40,22 @@
     "status": 200,
     "body": {
       "access_token": "<jwt>",
-      "expires_in": 585,
-      "expires_at": 1795440762,
+      "expires_in": 596,
+      "expires_at": 1795441609,
       "token_type": "Bearer",
-      "refresh_token": "oMadto…",
+      "refresh_token": "ccRgKP…",
       "scope": "eccos:view eccos:operate eccos:configure eccos:administer offline_access"
     }
   },
   "refresh_rows": [
     {
       "revoked": 1,
-      "referenceId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+      "referenceId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
       "rotated": 1
     },
     {
       "revoked": 0,
-      "referenceId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+      "referenceId": "YB12sjYyJfrMrXLDYWHUdhf9UwC6yPnQ",
       "rotated": 0
     }
   ]
