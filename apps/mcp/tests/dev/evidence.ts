@@ -1,17 +1,19 @@
 /**
  * Drives `wrangler dev` for apps/mcp (port 8788) with the MCP SDK client, against the stub console
- * (tests/dev/wrangler.console.jsonc, port 8790) and the real local gateway (port 8787). Writes
+ * (tests/dev/wrangler.console.jsonc, port 8791) and the real local gateway (port 8787). Writes
  * transcripts without tokens to the directory named by EVIDENCE_DIR.
  *
- *   bun run dev:gateway &
+ *   bun run dev:gateway &      # or the verify-eccos stack: .agents/skills/verify-eccos/scripts/verify-eccos launch
  *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.console.jsonc --inspector-port 9241) &
- *   (cd apps/mcp && wrangler dev) &
+ *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.mcp.jsonc --var REQUEST_STATE_KEY:$(openssl rand -base64 48)) &
  *   EVIDENCE_DIR=… bun apps/mcp/tests/dev/evidence.ts
  *
- * With ECCOS_ADMIN_API_KEY set, it also attaches the verify-eccos fake's WABA to the workspace and
- * drives the template tools against it (.agents/skills/verify-eccos/features/mcp.md). CONSOLE_URL
- * moves the stub console off 8790, which that stack's fake uses.
+ * With VERIFY_ECCOS=1 (the verify-eccos stack, whose gateway talks to its fake Meta), the setup
+ * tools also run against a WABA registered through the gateway's admin route: pending, re-checked
+ * to active, then an inbound webhook counted by status_get.
+ * Then the template tools run against that WABA too (.agents/skills/verify-eccos/features/mcp.md).
  */
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
   Client,
@@ -20,9 +22,9 @@ import {
 } from "@modelcontextprotocol/client";
 
 const MCP = "http://localhost:8788";
-const CONSOLE = process.env.CONSOLE_URL ?? "http://localhost:8790";
+const CONSOLE = "http://localhost:8791";
 const GATEWAY = "http://localhost:8787";
-const ADMIN_KEY = process.env.ECCOS_ADMIN_API_KEY;
+const VERIFY_ECCOS = process.env.VERIFY_ECCOS === "1";
 const DIR = process.env.EVIDENCE_DIR ?? "evidence";
 mkdirSync(DIR, { recursive: true });
 
@@ -41,11 +43,12 @@ const viewerToken = mint("viewer");
 const refusedToken = mint("refused");
 const otherToken = mint("other");
 const redact = (text: string) =>
-  (ADMIN_KEY ? text.replaceAll(ADMIN_KEY, "<admin-key>") : text)
+  text
     .replaceAll(token, "<token>")
     .replaceAll(viewerToken, "<viewer-token>")
     .replaceAll(refusedToken, "<refused-token>")
-    .replaceAll(otherToken, "<other-token>");
+    .replaceAll(otherToken, "<other-token>")
+    .replace(/\/connect#[A-Za-z0-9._~-]+/g, "/connect#<link-token>");
 const save = (name: string, data: unknown) => {
   writeFileSync(`${DIR}/${name}`, `${redact(JSON.stringify(data, null, 2))}\n`);
   console.log(`wrote ${DIR}/${name}`);
@@ -350,56 +353,87 @@ save("07-forged-request-state.json", {
   response: { status: forgedResponse.status, body: (await forgedResponse.text()).replaceAll(forged, "<forged state>") },
 });
 
-if (ADMIN_KEY) {
-  // 8. Template tools against the real gateway, with Meta answered by the verify-eccos fake.
-  const admin = async (method: string, path: string, body?: unknown) => {
-    const response = await fetch(`${GATEWAY}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${ADMIN_KEY}`,
-        "content-type": "application/json",
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    return {
-      status: response.status,
-      body: (await response.json()) as { waba?: { status?: string } },
-    };
-  };
-  const register = await admin("POST", `/v1/accounts/${accountId}/wabas`, {
-    wabaId: "100200300",
+// 8. The setup tools (task 1.7) against the real gateway's data.
+const transcript: { tool: string; arguments: Record<string, unknown>; isError: boolean; result: unknown }[] = [];
+const setup = new Client({ name: "eccos-evidence-setup", version: "0" }, { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } });
+await setup.connect(new StreamableHTTPClientTransport(new URL(`${MCP}/mcp`), { authProvider: { token: async () => token } } as never));
+const run = async (tool: string, args: Record<string, unknown> = {}) => {
+  const result = await setup.callTool({ name: tool, arguments: args });
+  transcript.push({ tool, arguments: args, isError: result.isError === true, result: result.structuredContent ?? result.content });
+  return result;
+};
+const admin = (method: string, path: string, body?: unknown) =>
+  fetch(`${GATEWAY}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${process.env.ADMIN_KEY ?? "verify-admin-key"}`, "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).then(async (response) => ({ status: response.status, body: await response.json() }));
+const registerWaba = (account: string, wabaId: string, phoneNumberId: string) =>
+  admin("POST", `/v1/accounts/${account}/wabas`, {
+    wabaId,
     metaAccessToken: "fake-token",
     callbackUrl: "https://gateway.eccos-verify.example/webhooks/meta",
-    phones: [{ phoneNumberId: "555001", displayPhoneNumber: "+34600000001" }],
-  });
-  const reconcile = await admin(
-    "POST",
-    `/v1/accounts/${accountId}/wabas/100200300/reconcile`,
-  );
-  save("08-templates-setup.json", {
-    register: {
-      status: register.status,
-      wabaStatus: register.body?.waba?.status,
-    },
-    reconcile: {
-      status: reconcile.status,
-      wabaStatus: reconcile.body?.waba?.status,
-    },
+    phones: [{ phoneNumberId, displayPhoneNumber: "+34600000001" }],
   });
 
-  const client = await sdk(token);
-  const { tools } = await client.listTools();
+await run("numbers_list");
+await run("connect_status");
+await run("connect_link_create");
+await control("approve", actor, Date.now() + 86_400_000);
+await run("connect_link_create");
+await run("connect_status");
+await run("connect_link_create");
+await run("connect_link_create", { replace: true });
+await run("billing_get");
+await control("setBilling", accountId, {
+  ok: true,
+  billing: { connectPolicy: "closed", numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitPolicy: false },
+});
+await control("setBillingLink", accountId, "startCheckout", { ok: true, kind: "checkout", url: "https://creem.example/checkout/stub" });
+await run("billing_get");
+await run("billing_checkout_link");
+await run("billing_checkout_link", { purpose: "manage" });
+
+const gatewaySide: Record<string, unknown> = {};
+if (VERIFY_ECCOS) {
+  gatewaySide.registerWaba = (await registerWaba(accountId, "100200300", "555001")).status;
+  await run("numbers_list");
+  await run("status_get");
+  await run("number_recheck");
+  await run("numbers_list");
+  await run("number_recheck");
+  gatewaySide.webhook = execFileSync(".agents/skills/verify-eccos/scripts/verify-eccos", ["webhook", ".agents/skills/verify-eccos/fixtures/inbound-text.json"])
+    .toString()
+    .trim();
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await run("status_get");
+
+  // Two accounts: B owns a WABA; an actor of A names it.
+  const other = (await control("provision", "org-evidence-b", "Other Co")) as { accountId: string };
+  gatewaySide.otherAccountWaba = (await registerWaba(other.accountId, "700800900", "777001")).status;
+  await run("status_get", { wabaId: "700800900" });
+  await run("number_recheck", { wabaId: "700800900" });
+  gatewaySide.otherAccountId = other.accountId;
+}
+await setup.close();
+save("08-setup-tools.json", {
+  note: "Billing answers come from the stub ConsoleRPC (task 1.5 has not landed); every other tool reads the running gateway.",
+  gateway: VERIFY_ECCOS ? "verify-eccos stack (fake Meta)" : "dev:gateway",
+  gatewaySide,
+  transcript,
+});
+
+// 9. The template tools (task 1.9) against the same WABA, with Meta answered by the fake.
+if (VERIFY_ECCOS) {
+  const templates = await sdk(token);
+  const { tools } = await templates.listTools();
   const call = async (name: string, args: Record<string, unknown>) => ({
     name,
     arguments: args,
-    result: await client.callTool({ name, arguments: args }),
+    result: await templates.callTool({ name, arguments: args }),
   });
-  const order = {
-    to: "+34 611 111 111",
-    templateName: "order_update",
-    languageCode: "en_US",
-  };
-  const transcript = [
+  const order = { to: "+34 611 111 111", templateName: "order_update", languageCode: "en_US" };
+  const calls = [
     await call("templates_list", {}),
     await call("template_create", {
       name: "pickup_ready",
@@ -407,21 +441,9 @@ if (ADMIN_KEY) {
       category: "UTILITY",
       bodyText: "Hi {{1}}, order {{2}} is ready for pickup.",
       bodyExamples: ["Ana", "A-1042"],
-      buttons: [
-        {
-          text: "Track",
-          url: "https://shop.example/t/{{1}}",
-          exampleUrl: "https://shop.example/t/A-1042",
-        },
-      ],
+      buttons: [{ text: "Track", url: "https://shop.example/t/{{1}}", exampleUrl: "https://shop.example/t/A-1042" }],
     }),
-    await call("template_create", {
-      name: "bad_vars",
-      language: "en_US",
-      category: "UTILITY",
-      bodyText: "Hi {{name}}",
-      bodyExamples: ["Ana"],
-    }),
+    await call("template_create", { name: "bad_vars", language: "en_US", category: "UTILITY", bodyText: "Hi {{name}}", bodyExamples: ["Ana"] }),
     await call("template_edit", {
       templateId: "900100",
       name: "order_update",
@@ -429,74 +451,33 @@ if (ADMIN_KEY) {
       bodyText: "Hi {{1}}, order {{2}} shipped.",
       bodyExamples: ["Ana", "A-1"],
     }),
-    await call("template_send_test", {
-      ...order,
-      bodyParams: ["Ana", "A-1"],
-      idempotencyKey: crypto.randomUUID(),
-    }),
+    await call("template_send_test", { ...order, bodyParams: ["Ana", "A-1"], idempotencyKey: crypto.randomUUID() }),
     await call("template_send_test", { ...order, bodyParams: ["Ana"] }),
-    await call("template_send_test", {
-      ...order,
-      to: "34600000999",
-      bodyParams: ["Ana", "A-1"],
-    }),
-    await call("template_delete", {
-      templateId: "900100",
-      name: "order_update",
-    }),
+    await call("template_send_test", { ...order, to: "34600000999", bodyParams: ["Ana", "A-1"] }),
+    await call("templates_list", { wabaId: "700800900" }),
+    await call("template_delete", { templateId: "900100", name: "order_update" }),
   ];
-  await client.close();
+  await templates.close();
   save("09-template-tools.json", {
     tools: tools
       .filter((tool) => tool.name.includes("template"))
-      .map(({ name, annotations, inputSchema }) => ({
-        name,
-        annotations,
-        inputSchema,
-      })),
-    calls: transcript,
+      .map(({ name, annotations, inputSchema }) => ({ name, annotations, inputSchema })),
+    calls,
   });
 
-  // 9. Another workspace's agent naming this workspace's WABA and phone.
-  const other = (await control("provision", "org-evidence-b", "Other Co")) as {
-    accountId: string;
-  };
-  await grant(
-    otherToken,
-    {
-      userId: "user-evidence-b",
-      organizationId: "org-evidence-b",
-      accountId: other.accountId,
-    },
-    ["eccos:view", "eccos:send", "eccos:configure"],
-  );
+  // 10. The other workspace's agent naming this workspace's WABA and phone.
+  const otherAccountId = gatewaySide.otherAccountId as string;
+  await grant(otherToken, { userId: "user-evidence-b", organizationId: "org-evidence-b", accountId: otherAccountId }, [
+    "eccos:view",
+    "eccos:send",
+    "eccos:configure",
+  ]);
   const intruder = await sdk(otherToken);
   const foreign = [
-    await intruder.callTool({
-      name: "templates_list",
-      arguments: { wabaId: "100200300" },
-    }),
-    await intruder.callTool({
-      name: "template_delete",
-      arguments: {
-        wabaId: "100200300",
-        templateId: "900100",
-        name: "order_update",
-      },
-    }),
-    await intruder.callTool({
-      name: "template_send_test",
-      arguments: {
-        phoneNumberId: "555001",
-        ...order,
-        bodyParams: ["Ana", "A-1"],
-      },
-    }),
+    await intruder.callTool({ name: "templates_list", arguments: { wabaId: "100200300" } }),
+    await intruder.callTool({ name: "template_delete", arguments: { wabaId: "100200300", templateId: "900100", name: "order_update" } }),
+    await intruder.callTool({ name: "template_send_test", arguments: { phoneNumberId: "555001", ...order, bodyParams: ["Ana", "A-1"] } }),
   ];
   await intruder.close();
-  save("10-two-accounts.json", {
-    ownerAccount: accountId,
-    otherAccount: other.accountId,
-    results: foreign,
-  });
+  save("10-template-two-accounts.json", { ownerAccount: accountId, otherAccount: otherAccountId, results: foreign });
 }

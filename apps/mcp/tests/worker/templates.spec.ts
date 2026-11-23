@@ -155,9 +155,9 @@ describe("templates_list", () => {
     await client.close();
 
     expect(ambiguous.text).toBe(
-      'This workspace has 2 WhatsApp Business accounts, so pass wabaId: one of "waba-a", "waba-a2". Call numbers_list to see which phones each one has.',
+      "This workspace has 2 WhatsApp Business accounts: waba-a, waba-a2. Call again with wabaId set to one of them. Call numbers_list to see the numbers on each.",
     );
-    expect(unknown.text).toBe('WABA "waba-zz" is not connected to this workspace. Use one of: "waba-a", "waba-a2". Call numbers_list to see them with their phones.');
+    expect(unknown.text).toBe("WABA waba-zz is not connected to this workspace. Its WABAs are: waba-a, waba-a2. Call numbers_list to see them.");
     expect(chosen.structuredContent).toMatchObject({ wabaId: "waba-a2", templates: [{ name: "spring_promo" }] });
   });
 
@@ -173,7 +173,7 @@ describe("templates_list", () => {
     expect(owner.isError).toBe(true);
     expect(owner.text).toContain("Call connect_link_create");
     expect(refused.text).toBe(
-      "This workspace has no WhatsApp Business account connected yet. This connection cannot call connect_link_create (it needs the eccos:administer scope); the person can check this in the Eccos console.",
+      "No WhatsApp Business account is connected to this workspace yet. This connection was not granted the eccos:administer scope that administer needs. Ask the person to connect the agent again and grant it.",
     );
   });
 
@@ -240,15 +240,15 @@ describe("template_create", () => {
   });
 
   it.each([
-    [{ bodyText: "Hi {{name}}", bodyExamples: ["Ana"] }, "Named parameters cannot be created here — use {{1}}, {{2}}… instead. Fix it and call template_create again."],
-    [{ bodyText: "Hi {{1}} and {{3}}", bodyExamples: ["a", "b"] }, "Variables must run {{1}} to {{3}} with no gaps — {{2}} is missing. Fix it and call template_create again."],
-    [{ bodyExamples: ["Ana"] }, "This body has 2 variable(s), so bodyExamples needs exactly 2 value(s); it has 1. Fix it and call template_create again."],
-    [{ bodyExamples: ["Ana", "two\nlines"] }, "Example values cannot contain line breaks or tabs. Fix it and call template_create again."],
-    [{ footerText: "Order {{1}}" }, "A footer cannot contain variables like {{1}}. Fix it and call template_create again."],
-    [{ footerText: "  " }, "footerText cannot be empty; omit it for no footer. Fix it and call template_create again."],
-    [{ buttons: [{ text: "Shop", url: "https://shop.example", exampleUrl: "https://shop.example/x" }] }, "Button 1 has a static URL, so it carries no exampleUrl; remove it. Fix it and call template_create again."],
-    [{ buttons: [{ text: "Track", url: "https://shop.example/t/{{1}}" }] }, "Button 1 has a dynamic URL and needs an example URL. Fix it and call template_create again."],
-    [{ buttons: [{ text: "Shop", url: "ftp://shop.example" }] }, "Button 1's URL must start with https://. Fix it and call template_create again."],
+    [{ bodyText: "Hi {{name}}", bodyExamples: ["Ana"] }, "Refused before reaching Meta: Named parameters cannot be created here — use {{1}}, {{2}}… instead. Fix it and call template_create again."],
+    [{ bodyText: "Hi {{1}} and {{3}}", bodyExamples: ["a", "b"] }, "Refused before reaching Meta: Variables must run {{1}} to {{3}} with no gaps — {{2}} is missing. Fix it and call template_create again."],
+    [{ bodyExamples: ["Ana"] }, "Refused before reaching Meta: this body needs exactly 2 example value(s). Fix it and call template_create again."],
+    [{ bodyExamples: ["Ana", "two\nlines"] }, "Refused before reaching Meta: example values cannot contain line breaks. Fix it and call template_create again."],
+    [{ footerText: "Order {{1}}" }, "Refused before reaching Meta: footer text cannot contain placeholders. Fix it and call template_create again."],
+    [{ footerText: "  " }, "Refused before reaching Meta: footer text cannot be empty. Fix it and call template_create again."],
+    [{ buttons: [{ text: "Shop", url: "https://shop.example", exampleUrl: "https://shop.example/x" }] }, "Refused before reaching Meta: a static URL button carries no example. Fix it and call template_create again."],
+    [{ buttons: [{ text: "Track", url: "https://shop.example/t/{{1}}" }] }, "Refused before reaching Meta: a dynamic URL button needs an example url. Fix it and call template_create again."],
+    [{ buttons: [{ text: "Shop", url: "ftp://shop.example" }] }, "Refused before reaching Meta: button url must be https. Fix it and call template_create again."],
   ])("refuses what the console refuses, before reaching Meta: %j", async (change, message) => {
     await seedA();
     const client = await as();
@@ -324,7 +324,7 @@ describe("template_edit", () => {
     const result = await call(client, "template_edit", { ...EDIT, bodyExamples: [] });
     await client.close();
 
-    expect(result.text).toBe("This body has 2 variable(s), so bodyExamples needs exactly 2 value(s); it has 0. Fix it and call template_edit again.");
+    expect(result.text).toBe("Refused before reaching Meta: this body needs exactly 2 example value(s). Fix it and call template_edit again.");
     expect(await writes("editTemplate")).toEqual([]);
   });
 
@@ -393,13 +393,13 @@ describe("template_send_test", () => {
     expect(JSON.stringify(lines)).not.toMatch(/34600000011|600-000|Ana/);
   });
 
-  it("needs eccos:view to find the account's WABA, as the console does, and says so", async () => {
+  it("challenges a send-only grant for eccos:view, which finding the account's WABA needs, as in the console", async () => {
     await seedA();
-    const client = await as(["send"], ["eccos:send"]);
-    const result = await call(client, "template_send_test", SEND);
-    await client.close();
+    const token = await grantToken(makeActor({ actions: ["send"] }), ["eccos:send"]);
+    const response = await postMcp(toolsCall("template_send_test", SEND), { token });
 
-    expect(result.text).toBe("This connection was not granted the eccos:view scope that view needs. Ask the person to connect the agent again and grant it.");
+    expect(response.status).toBe(403);
+    expect(response.headers.get("www-authenticate")).toContain('error="insufficient_scope", scope="eccos:view"');
     expect(await gatewayStub.calls()).toEqual([]);
   });
 
@@ -430,8 +430,8 @@ describe("template_send_test", () => {
     [{ templateName: "login_code" }, expect.stringContaining("Authentication templates carry a one-time code")],
     [{ templateName: "missing" }, 'WABA "waba-a" has no template "missing" in en_US. Nothing was sent. Call templates_list to see its templates and languages.'],
     [{ to: "12" }, expect.stringContaining("to must be a phone number in international format")],
-    [{ bodyParams: ["Ana", "two\nlines"] }, "bodyParams values cannot contain line breaks or tabs; Meta refuses them."],
-    [{ phoneNumberId: "999" }, 'Phone number id "999" is not registered in this workspace. Call numbers_list to see every phone with its WABA.'],
+    [{ bodyParams: ["Ana", "two\nlines"] }, "Refused before reaching Meta: template parameters cannot contain line breaks. Fix it and call template_send_test again."],
+    [{ phoneNumberId: "999" }, "Phone number id 999 is not registered in this workspace. Call numbers_list to see every phone with its WABA."],
   ])("refuses before sending anything: %j", async (change, message) => {
     await seedA();
     const client = await as();
@@ -454,10 +454,10 @@ describe("template_send_test", () => {
     const pending = await call(again, "template_send_test", SEND);
     await again.close();
 
-    expect(ambiguous.text).toBe('WABA "waba-a" has 2 phone numbers, so pass phoneNumberId: one of "111", "113".');
+    expect(ambiguous.text).toBe("WABA waba-a has 2 phone numbers: 111, 113. Call again with phoneNumberId set to one of them.");
     expect(chosen.structuredContent).toMatchObject({ phoneNumberId: "113" });
     expect(pending.text).toBe(
-      'WABA "waba-a" is still being set up, so nothing can be sent from it yet. Call numbers_list to follow its provisioning, or number_recheck if it stays pending.',
+      "WABA waba-a is still being set up, so nothing can be sent from it yet. Call numbers_list to follow its provisioning, or number_recheck if it stays pending.",
     );
   });
 
@@ -512,7 +512,7 @@ describe("template tools: role and scope", () => {
   it("annotates reads, writes and the destructive delete", async () => {
     const tools = Object.fromEntries((await listed(["view", "send", "configure"])).map((tool) => [tool.name, tool.annotations]));
     expect(tools).toEqual({
-      templates_list: { readOnlyHint: true, openWorldHint: true },
+      templates_list: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       template_create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       template_edit: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       template_delete: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },

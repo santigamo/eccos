@@ -1,4 +1,12 @@
-import type { Actor, ActorRef, AgentAction, ConsoleApi, ElevationRequest, ElevationResult } from "@eccos/console-contract";
+import type {
+  Actor,
+  ActorRef,
+  AgentAction,
+  ConsoleApi,
+  ElevationRequest,
+  ElevationResult,
+  GrantRefusalCode,
+} from "@eccos/console-contract";
 import type { GatewayApi } from "@eccos/gateway-contract";
 import {
   type McpServer,
@@ -34,6 +42,8 @@ export interface ToolDeps {
    */
   for<A extends AgentAction>(action: A): ClientsFor<A>;
   can(action: AgentAction): boolean;
+  /** The console's public origin, where the pages a person opens live (`/connect`). Not a client, so not gated. */
+  consoleOrigin: string;
 }
 
 /**
@@ -59,7 +69,7 @@ export class ForbiddenError extends ToolError {
   }
 }
 
-export function capabilities(actor: Pick<Actor, "actions" | "role">, clients: Clients): ToolDeps {
+export function capabilities(actor: Pick<Actor, "actions" | "role">, clients: Clients): Omit<ToolDeps, "consoleOrigin"> {
   const can = (action: AgentAction) => actor.actions.includes(action);
   return {
     can,
@@ -102,12 +112,23 @@ export interface ToolDefinition<I extends z.ZodObject = z.ZodObject, O extends z
   /** The success shape. A step-up tool advertises its union with the approval shapes. */
   outputSchema: O;
   annotations: ToolAnnotations;
+  /**
+   * Other actions the tool's calls need besides `action`. Defaults to `["view"]`, because
+   * resolving the account's WABAs (`listAccountResources`) is view; a tool that reads nothing at
+   * view says `[]`.
+   */
+  reads?: AgentAction[];
   /** The identifiers a mutating call's audit line carries. Never inputs that are content or secrets. */
   audit?(input: z.output<I>): AuditResource;
   run(input: z.output<I>, actor: McpActor, deps: ToolDeps): Promise<z.input<O>>;
 }
 
 export const defineTool = <I extends z.ZodObject, O extends z.ZodObject>(tool: ToolDefinition<I, O>) => tool;
+
+/** Every action a tool's calls need: its own, then its reads. */
+export const toolActions = (tool: Pick<ToolDefinition, "action" | "reads">): AgentAction[] => [
+  ...new Set([tool.action, ...(tool.reads ?? ["view"])]),
+];
 
 const ELEVATION_INPUT = "elevation";
 
@@ -148,13 +169,18 @@ const structured = (value: Record<string, unknown>, isError = false) => ({
 
 const errorText = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
 
+/** Why a grant no longer stands (any console call can answer it), said so the agent knows what to do. */
+export const GRANT_REFUSED: Record<GrantRefusalCode, string> = {
+  revoked: "This agent's connection to Eccos was revoked. Ask the person to connect the agent again.",
+  not_a_member: "The person this agent acts for is no longer a member of the workspace. Ask them to connect the agent again from a workspace they belong to.",
+  no_account: "This workspace has no active Eccos account. Ask the person to check the workspace in the Eccos console.",
+};
+
 /** Why the console would not open an approval request, said so the agent knows what to do. */
 const ELEVATION_REFUSED: Record<Extract<ElevationResult, { ok: false }>["code"], string> = {
   forbidden:
     "Only an owner or admin of this workspace can approve sensitive actions, and the person this agent acts for is neither. Ask an owner or admin to do this in the Eccos console.",
-  revoked: "This agent's connection to Eccos was revoked. Ask the person to connect the agent again.",
-  not_a_member: "The person this agent acts for is no longer a member of the workspace. Ask them to connect the agent again from a workspace they belong to.",
-  no_account: "This workspace has no active Eccos account. Ask the person to check the workspace in the Eccos console.",
+  ...GRANT_REFUSED,
 };
 
 function approvalResult(tool: string, request: ElevationRequest) {
