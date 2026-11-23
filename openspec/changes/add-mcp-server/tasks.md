@@ -79,7 +79,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
   - [x] `packages/console-contract` (the `ConsoleApi` types, including the billing methods
         that 1.7 needs) landed first, on its own, so the console and `apps/mcp` build against
         one contract.
-- [ ] 1.6 `apps/mcp` skeleton: Hono, `OAuthResourceServer`, `createMcpHandler`, bindings,
+- [x] 1.6 `apps/mcp` skeleton: Hono, `OAuthResourceServer`, `createMcpHandler`, bindings,
       rate limit, audit helper, the step-up guard with both carriers (URL-mode elicitation and
       the structured result, its JSON also in the text block), `workspace_get` only. The server
       is built on the first request, since `OAuthResourceServer` validates its metadata when
