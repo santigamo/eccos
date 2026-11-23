@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# Launches, checks, drives and tears down a local Eccos stack for verification.
+# See ../SKILL.md. All state lives under $VERIFY_HOME (default: <repo>/.verify).
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$SKILL_DIR/../../.." && pwd)"
+VERIFY_HOME="${VERIFY_HOME:-$REPO/.verify}"
+RUN="$VERIFY_HOME/run"
+GATEWAY_PORT=8787
+DASHBOARD_PORT=3000
+FAKE_PORT=8790
+GATEWAY="http://localhost:$GATEWAY_PORT"
+DASHBOARD="http://localhost:$DASHBOARD_PORT"
+FAKE="http://127.0.0.1:$FAKE_PORT"
+
+# Fixed, fake, verification-only values. Never real credentials.
+APP_SECRET="verify-app-secret"
+VERIFY_TOKEN="verify-token"
+ADMIN_KEY="verify-admin-key"
+
+usage() {
+  cat <<EOF
+usage: verify-eccos <command>
+  launch              start the fake, the gateway and the dashboard; wait until usable
+  doctor              read-only check that the running stack is ours and healthy
+  stop                stop what launch started and delete run state (evidence is kept)
+  webhook <file|->    sign a Meta webhook body and POST it (add --bad-signature to break it);
+                      __NOW__ in the body becomes the current Unix time
+  admin <method> <path> [json]   call a gateway admin route with the bootstrap key
+  fake-log [filter]   print the fake's request log (JSONL), optionally only lines containing <filter>
+  mail-link <email>   print the newest link mailed to <email>
+  follow-mail-link <email>   open that link with curl, for harnesses that mask tokens in tool output
+  evidence <feature>  create and print a fresh evidence directory for <feature>
+  env                 print the URLs and fake values the stack runs with
+EOF
+}
+
+port_free() { # vite binds IPv6 loopback only, so probe both
+  ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && ! (exec 3<>"/dev/tcp/::1/$1") 2>/dev/null
+}
+
+alive() { [[ -f "$RUN/$1.pid" ]] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
+
+wait_for() { # <label> <url> <grep pattern>
+  for _ in $(seq 1 90); do
+    if curl -s --max-time 2 "$2" 2>/dev/null | grep -q "$3"; then return 0; fi
+    sleep 1
+  done
+  echo "launch: $1 did not become ready; see $RUN/$1.log" >&2
+  return 1
+}
+
+start() { # <name> <dir> <command...>
+  local name="$1" dir="$2"
+  shift 2
+  (cd "$dir" && exec setsid "$@" >"$RUN/$name.log" 2>&1 </dev/null) &
+  echo $! >"$RUN/$name.pid"
+}
+
+cmd_launch() {
+  if [[ -d "$RUN" ]]; then
+    echo "launch: $RUN exists; run 'verify-eccos doctor' or 'verify-eccos stop' first" >&2
+    exit 1
+  fi
+  for port in $GATEWAY_PORT $DASHBOARD_PORT $FAKE_PORT; do
+    if ! port_free "$port"; then
+      echo "launch: port $port is in use by something this skill did not start; refusing" >&2
+      exit 1
+    fi
+  done
+  [[ -d "$REPO/node_modules" ]] || (cd "$REPO" && bun install)
+  mkdir -p "$RUN"
+  : >"$RUN/fake.jsonl"
+
+  start fake "$SKILL_DIR" bun harness/fake-meta.ts "$FAKE_PORT" "$RUN/fake.jsonl"
+  wait_for fake "$FAKE/__health" eccos-verify-fake
+
+  start gateway "$REPO/apps/gateway" bunx wrangler dev "$SKILL_DIR/harness/gateway-entry.ts" \
+    -c "$REPO/apps/gateway/wrangler.jsonc" --port "$GATEWAY_PORT" --persist-to "$RUN/gateway-state" \
+    --define "__VERIFY_FAKE_ORIGIN__:\"$FAKE\"" \
+    --var DO_JURISDICTION: --var GATEWAY_PUBLIC_URL:https://gateway.eccos-verify.example \
+    --var "META_APP_SECRET:$APP_SECRET" --var "META_WEBHOOK_VERIFY_TOKEN:$VERIFY_TOKEN" \
+    --var META_APP_ID:verify-app-id --var META_ES_CONFIG_ID:verify-config-id \
+    --var "ECCOS_ADMIN_API_KEY:$ADMIN_KEY" \
+    --var ECCOS_TOKEN_ENCRYPTION_KEY:verify-token-encryption-key-not-a-real-secret
+  wait_for gateway "$GATEWAY/ready" '"ok":true'
+
+  (cd "$REPO/apps/dashboard" && bunx wrangler d1 migrations apply eccos-auth --local >"$RUN/migrate.log" 2>&1)
+  BETTER_AUTH_SECRET=verify-only-better-auth-secret-32-chars \
+    BETTER_AUTH_URL="$DASHBOARD" \
+    RECCADO_API_KEY=verify-mail-key \
+    RECCADO_ENDPOINT="$FAKE/mail/v1/mailboxes/verify/transactional/messages" \
+    CLOUDFLARE_INCLUDE_PROCESS_ENV=true \
+    start dashboard "$REPO/apps/dashboard" bunx vite dev --port "$DASHBOARD_PORT" --strictPort
+  wait_for dashboard "$DASHBOARD/signin" "<html"
+
+  cmd_doctor
+}
+
+cmd_doctor() {
+  local ok=0
+  check() { # <label> <command...>
+    local label="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then echo "ok    $label"; else echo "FAIL  $label"; ok=1; fi
+  }
+  check "fake process started by this run" alive fake
+  check "gateway process started by this run" alive gateway
+  check "dashboard process started by this run" alive dashboard
+  check "fake answers at $FAKE" bash -c "curl -sf --max-time 3 $FAKE/__health | grep -q eccos-verify-fake"
+  check "gateway ready at $GATEWAY (secrets + control plane)" bash -c "curl -sf --max-time 5 $GATEWAY/ready | grep -q '\"ok\":true'"
+  check "gateway reaches the fake instead of Meta" bash -c "grep -q 'gateway-entry.ts' '$RUN/gateway.log' || pgrep -f 'gateway-entry.ts' >/dev/null"
+  check "dashboard serves the sign-in page at $DASHBOARD" bash -c "curl -sf --max-time 10 $DASHBOARD/signin | grep -q '<html'"
+  if [[ $ok -ne 0 ]]; then
+    echo "doctor: not worth driving; logs in $RUN/*.log" >&2
+    exit 1
+  fi
+  echo "doctor: healthy. gateway $GATEWAY, dashboard $DASHBOARD, fake log $RUN/fake.jsonl"
+}
+
+cmd_stop() {
+  [[ -d "$RUN" ]] || { echo "stop: nothing to stop"; return 0; }
+  for name in dashboard gateway fake; do
+    if alive "$name"; then
+      local pid
+      pid="$(cat "$RUN/$name.pid")"
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+  sleep 2
+  for name in dashboard gateway fake; do
+    if alive "$name"; then kill -KILL -- "-$(cat "$RUN/$name.pid")" 2>/dev/null || true; fi
+  done
+  rm -rf "$RUN"
+  echo "stop: stopped; evidence kept in $VERIFY_HOME/evidence"
+}
+
+cmd_webhook() {
+  local source="${1:-}" bad="${2:-}"
+  [[ -n "$source" ]] || { usage; exit 2; }
+  local body
+  if [[ "$source" == "-" ]]; then body="$(cat)"; else body="$(cat "$source")"; fi
+  body="${body//__NOW__/$(date +%s)}"
+  local sig
+  sig="sha256=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$APP_SECRET" -hex | sed 's/^.* //')"
+  [[ "$bad" == "--bad-signature" ]] && sig="sha256=deadbeef"
+  curl -s -w '\nHTTP %{http_code}\n' -X POST "$GATEWAY/webhooks/meta" \
+    -H "content-type: application/json" -H "x-hub-signature-256: $sig" --data "$body"
+}
+
+cmd_admin() {
+  local method="${1:-}" path="${2:-}" body="${3:-}"
+  [[ -n "$method" && -n "$path" ]] || { usage; exit 2; }
+  if [[ -n "$body" ]]; then
+    curl -s -w '\nHTTP %{http_code}\n' -X "$method" "$GATEWAY$path" \
+      -H "authorization: Bearer $ADMIN_KEY" -H "content-type: application/json" --data "$body"
+  else
+    curl -s -w '\nHTTP %{http_code}\n' -X "$method" "$GATEWAY$path" -H "authorization: Bearer $ADMIN_KEY"
+  fi
+}
+
+cmd_fake_log() {
+  [[ -f "$RUN/fake.jsonl" ]] || { echo "fake-log: no running stack" >&2; exit 1; }
+  if [[ -n "${1:-}" ]]; then grep -F "\"path\":\"" "$RUN/fake.jsonl" | grep -F "$1" || true; else cat "$RUN/fake.jsonl"; fi
+}
+
+cmd_mail_link() {
+  local email="${1:-}"
+  [[ -n "$email" ]] || { usage; exit 2; }
+  grep -F '"path":"/mail/' "$RUN/fake.jsonl" | grep -iF "$email" | tail -1 \
+    | grep -oE 'https?:[^"\\ ]+' | grep -vF "$FAKE" | head -1
+}
+
+cmd_follow_mail_link() {
+  local link
+  link="$(cmd_mail_link "$@")"
+  [[ -n "$link" ]] || { echo "follow-mail-link: no mail captured for $1" >&2; exit 1; }
+  curl -s -o /dev/null -w 'HTTP %{http_code} -> %{redirect_url}\n' "$link"
+}
+
+cmd_evidence() {
+  local feature="${1:-}"
+  [[ -n "$feature" ]] || { usage; exit 2; }
+  local dir
+  dir="$VERIFY_HOME/evidence/$(date -u +%Y%m%dT%H%M%SZ)-$feature"
+  mkdir -p "$dir"
+  echo "$dir"
+}
+
+cmd_env() {
+  cat <<EOF
+GATEWAY=$GATEWAY
+DASHBOARD=$DASHBOARD
+FAKE=$FAKE
+META_APP_SECRET=$APP_SECRET
+META_WEBHOOK_VERIFY_TOKEN=$VERIFY_TOKEN
+ECCOS_ADMIN_API_KEY=$ADMIN_KEY
+FAKE_WABA_ID=100200300
+FAKE_PHONE_NUMBER_ID=555001
+RUN_DIR=$RUN
+EVIDENCE_DIR=$VERIFY_HOME/evidence
+EOF
+}
+
+case "${1:-}" in
+  launch) cmd_launch ;;
+  doctor) cmd_doctor ;;
+  stop) cmd_stop ;;
+  webhook) shift; cmd_webhook "$@" ;;
+  admin) shift; cmd_admin "$@" ;;
+  fake-log) shift; cmd_fake_log "$@" ;;
+  mail-link) shift; cmd_mail_link "$@" ;;
+  follow-mail-link) shift; cmd_follow_mail_link "$@" ;;
+  evidence) shift; cmd_evidence "$@" ;;
+  env) cmd_env ;;
+  *) usage; exit 2 ;;
+esac
