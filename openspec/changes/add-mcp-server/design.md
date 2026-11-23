@@ -115,10 +115,22 @@ flowchart LR
 - `createMcpHandler` from `agents/mcp/server` serves Streamable HTTP at `/mcp`, stateless, with
   `legacy: "stateless"` so 2025-era clients work. There is no `/sse`, no Durable Object and no
   KV. The server factory registers only the tools the caller's effective permissions allow.
-- Tools are plain functions of `(input, actor, { gateway, console })`, where `gateway` is
-  `GatewayApi` and `console` is `ConsoleApi`. They never see the token.
+- Tools are plain functions of `(input, actor, deps)`. `deps.for(action)` hands out
+  `{ gateway, console }` carrying only the `GatewayApi` and `ConsoleApi` methods that
+  `src/permissions.ts` binds to that action (the console's own gating for each), typed and built
+  that way, and only for an action the actor holds; otherwise it throws a tool error naming the
+  role or the scope that is missing. A method the table leaves out is reachable by no tool.
+  `deps.can(action)` asks first. A tool asks for the action each call needs, so a call the console cannot gate (an
+  `ActorRef` carries no scope) never leaves this Worker. Tools never see the token.
 - Bindings: `GATEWAY` (entrypoint `GatewayRPC`), `CONSOLE` (entrypoint `ConsoleRPC`), one Rate
-  Limiting binding. Vars: its own public origin, the issuer URL, the console origin. No secrets.
+  Limiting binding. Vars: its own public origin, the issuer URL, the console origin. One secret,
+  `REQUEST_STATE_KEY` (set with `wrangler secret put`, at least 32 bytes): the HMAC key that
+  seals the step-up guard's URL-elicitation `requestState` to { request id, tool } and the grant.
+  It grants no access, since elevation is always re-read from the console; unset, the guard
+  never uses URL elicitation and every client gets the structured approval result. A key shorter
+  than 32 bytes counts as unset, and one error line per isolate says so, never with the value.
+  A state the SDK refuses as forged or expired writes an audit line (`denied`,
+  `invalid_request_state`).
 
 **`apps/dashboard` (existing Worker) gains the authorization server.**
 
@@ -542,7 +554,7 @@ which also needs a live elevation (§3.3).
 
 | Tool | Does | Scope | Backed by | Missing |
 |---|---|---|---|---|
-| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, `elevatedUntil`, and a setup checklist: subscription (only for admin or owner, who may see billing), numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources`, `getSubscriberConfig`, `listApiKeys` (count only), `listTemplates` | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
+| `workspace_get` | Who the agent acts as, the workspace, role, granted scopes, `elevatedUntil`, and a setup checklist: subscription (only for admin or owner, who may see billing), numbers, webhook, API key, approved template | view | `authorize` result, `listAccountResources` (without `keys`), `hasSubscriber`, `listTemplates`; `getBilling` and `listApiKeys` (count only) when the connection holds administer | Nothing. The checklist mirrors `lib/setup-checklist.ts` |
 | `billing_get` | Whether numbers can be added, connected numbers, monthly price. Admin or owner, as in the console, so an agent never sees more than its person | administer | `billing/account.ts` `billingState` | `ConsoleRPC.getBilling` |
 | `billing_checkout_link` | The Creem checkout URL, or the portal when a subscription exists | administer | `billing/account.ts` `checkoutUrl`, `portalUrl` | `ConsoleRPC.startCheckout`, `openBillingPortal` |
 | `connect_link_create` | Mint the Embedded Signup link for a person to open; `replace` to supersede a live one | administer ⬆ | `issueConnectLink` | Nothing. The token exists only in this result, as today |
@@ -637,8 +649,9 @@ Measured against `docs/threat-model.md`.
 | Consent rows | Auth D1 | The revocation switch; shown in Settings |
 | Elevation rows and approval requests | Auth D1 | Written only by a signed-in owner or admin who passed step-up; 24 hours; ended by revoke |
 | Secret claim token | The tool result, then the agent's shell or a person's browser; hashed in the control plane | Single use, 10 minutes, POST only, mints nothing until spent |
+| `REQUEST_STATE_KEY` | `apps/mcp`, a Worker secret | Seals the approval state to { request id, tool } and the grant, for 10 minutes. A leaked key can forge an approval state, which still cannot run a tool: elevation is re-read from `authorize` on every request |
 
-`apps/mcp` itself holds none of them.
+Apart from that key, `apps/mcp` holds none of them: no storage and no credential that grants access.
 
 ### 5.2 New trust boundary
 
