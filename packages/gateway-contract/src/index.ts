@@ -1262,6 +1262,9 @@ export interface GatewayApi {
   ): Promise<RetryFailedResult>;
   listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult>;
   getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig>;
+  /** Whether the WABA has a forwarding target, and nothing else: the view-level
+   * fact behind a setup checklist. Same ownership check as getSubscriberConfig. */
+  hasSubscriber(wabaId: string, accountId: string): Promise<boolean>;
   setSubscriberConfig(
     input: SetSubscriberConfigInput,
     wabaId: string,

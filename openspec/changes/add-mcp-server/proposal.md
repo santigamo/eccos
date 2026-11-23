@@ -34,7 +34,10 @@ Decisions already made by the owner:
 ## What this change proposes
 
 - A new Worker, `apps/mcp`, that is a stateless MCP **resource server** on its own hostname. It
-  holds no secrets and no storage, and reaches the rest of Eccos only through service bindings.
+  holds no storage and no credential that grants access, and reaches the rest of Eccos only through
+  service bindings. Its one secret, `REQUEST_STATE_KEY`, seals the approval state; a leaked key can
+  forge an approval state, which still cannot run a tool because elevation is re-read from
+  `authorize` on every request.
 - The console's Better Auth instance becomes the OAuth 2.1 **authorization server** for it, with a
   consent screen that binds each grant to one workspace.
 - A second private RPC entrypoint on the console Worker (`ConsoleRPC`) that validates a token and
