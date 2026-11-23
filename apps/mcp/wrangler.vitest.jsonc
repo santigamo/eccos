@@ -19,6 +19,8 @@
   "vars": {
     "MCP_RESOURCE": "https://mcp.example.test/mcp",
     "ISSUER": "https://console.example.test",
-    "CONSOLE_ORIGIN": "https://console.example.test"
+    "CONSOLE_ORIGIN": "http://localhost:3000",
+    // Test-only sealing key; production sets REQUEST_STATE_KEY with `wrangler secret put`.
+    "REQUEST_STATE_KEY": "test-only-request-state-key-0123456789abcdef"
   }
 }

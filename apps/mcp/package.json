@@ -19,6 +19,7 @@
     "zod": "4.5.1"
   },
   "devDependencies": {
+    "@eccos/auth-baseline": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0"
   }
 }
