@@ -76,6 +76,52 @@ describe("capabilities", () => {
   });
 });
 
+describe("what each action's methods return", () => {
+  const resources = {
+    account: { accountId: "a", name: "Acme", createdAt: 1, connectPolicy: "open" },
+    keys: [{ keyId: "k1", label: "ci", createdAt: 1, revokedAt: null }],
+    wabas: [],
+    phones: [],
+  };
+  const gateway = { listAccountResources: vi.fn(async () => resources), hasSubscriber: vi.fn(async () => true) } as unknown as GatewayApi;
+
+  it("strips API keys from listAccountResources under view", async () => {
+    const deps = capabilities({ role: "owner", actions: [...owner.actions] }, { gateway, console: clients.console });
+    const read = await deps.for("view").gateway.listAccountResources("a");
+
+    expect(read).toEqual({ account: resources.account, wabas: [], phones: [] });
+    expect("keys" in read).toBe(false);
+    // @ts-expect-error keys are administer: the view read's type has none.
+    expect(read.keys).toBeUndefined();
+  });
+
+  it("answers hasSubscriber with a bare boolean under view", async () => {
+    const deps = capabilities({ role: "viewer", actions: ["view"] }, { gateway, console: clients.console });
+
+    expect(await deps.for("view").gateway.hasSubscriber("w", "a")).toBe(true);
+    // @ts-expect-error the subscriber config (its URL) is operate.
+    expect(deps.for("view").gateway.getSubscriberConfig).toBeUndefined();
+  });
+});
+
+describe("deps.for edge cases", () => {
+  it("does not accept a union of actions", () => {
+    const deps = capabilities({ role: "owner", actions: [...owner.actions] }, clients);
+    const either = (Math.random() > 2 ? "view" : "administer") as "view" | "administer";
+    // @ts-expect-error a union would hand out both actions' methods.
+    expect(() => deps.for(either)).not.toThrow();
+  });
+
+  it("refuses a made-up action with a sane message", () => {
+    const deps = capabilities({ role: "owner", actions: [...owner.actions] }, clients);
+
+    expect(deps.can("teleport" as never)).toBe(false);
+    expect(() => deps.for("teleport" as never)).toThrow(ForbiddenError);
+    expect(() => deps.for("teleport" as never)).toThrow('This connection cannot "teleport": Eccos has no such action.');
+    expect(forbiddenMessage("teleport" as never, { role: "owner" })).not.toMatch(/undefined/);
+  });
+});
+
 describe("forbiddenMessage", () => {
   it("names the role when the role falls short", () => {
     expect(forbiddenMessage("configure", { role: "viewer" })).toBe(
@@ -122,11 +168,24 @@ describe("permissions table", () => {
   const CONSOLE_GATING: Record<string, { action: "view" | "operate" | "configure" | "administer"; evidence: [string, string][] }> = {
     listAccountResources: {
       action: "view",
-      evidence: [[consoleGateway, `requireGatewayPermission(auth, request, "view"); const state = await gateway.readDashboardState(`]],
+      evidence: [
+        [consoleGateway, `const account = await resolveOrganizationAccount(gateway); return account.resources; }, "view"),`],
+        // Keys are the API keys page's, which is administer; under view they are stripped.
+        [consoleGateway, `/** Key metadata for the caller's account. \`administer\`, like issuing: which * keys exist is part of managing them. */`],
+      ],
     },
     getSubscriberConfig: {
+      action: "operate",
+      evidence: [[consoleGateway, `withScopedData({ action: "operate", wabaId: data?.wabaId, scope: "any" }, (gateway, org) => gateway.readSubscriberConfig(org),`]],
+    },
+    hasSubscriber: {
       action: "view",
-      evidence: [[consoleGateway, `withScopedRead({ action: "view", wabaId: data?.wabaId, scope: "any" }, (gateway, org) => gateway.readSubscriberConfig(org),`]],
+      evidence: [
+        [
+          consoleGateway,
+          `withScopedRead({ action: "view", wabaId: data?.wabaId, scope: "any" }, (gateway, org) => gateway.readSubscriberConfig(org), ); return res.ok ? res.data.data.url !== null : null;`,
+        ],
+      ],
     },
     listTemplates: {
       action: "view",

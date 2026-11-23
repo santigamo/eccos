@@ -179,7 +179,28 @@ describe("workspace_get", () => {
     expect(steps.map((step) => step.id)).toEqual(["subscription", "number", "webhook", "api_key", "template"]);
     expect(steps[1]?.blockedBy).toBeNull();
     expect(await consoleStub.billingCalls()).toEqual([]);
-    expect((await gatewayStub.calls()).map((call) => call.method)).not.toContain("listApiKeys");
+  });
+
+  it("reads only view-level facts for a viewer: whether a forwarding target exists, never its config or the keys", async () => {
+    await gatewayStub.seed("acct-a", {
+      resources: account("acct-a", {
+        wabas: [activeWaba("waba-1", "acct-a", ["111"])],
+        keys: [{ keyId: "k1", label: "ci-secret-label", createdAt: 1, revokedAt: null }],
+      }),
+      subscriber: { "waba-1": { url: "https://hooks.acme.example/wa", hasSecret: true, lastForward: null } },
+    });
+    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
+    const result = await workspaceGet(client);
+    await client.close();
+
+    const methods = (await gatewayStub.calls()).map((call) => call.method);
+    const steps = (result.structuredContent as { setup: { steps: { id: string; state: string }[] } }).setup.steps;
+    expect(methods).toContain("hasSubscriber");
+    expect(methods).not.toContain("getSubscriberConfig");
+    expect(methods).not.toContain("listApiKeys");
+    expect(steps.find((step) => step.id === "webhook")?.state).toBe("done");
+    expect(steps.find((step) => step.id === "api_key")?.state).toBe("unknown");
+    expect(JSON.stringify(result)).not.toMatch(/hooks\.acme|ci-secret-label|k1/);
   });
 
   it("explains the console's own billing refusal to a connection that holds administer", async () => {
@@ -228,8 +249,9 @@ describe("workspace_get", () => {
     expect(steps.find((step) => step.id === "number")?.detail).toBe(
       "No WhatsApp number is connected. This connection acts for an operator, and administer needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
     );
+    expect(steps.find((step) => step.id === "api_key")).toMatchObject({ state: "unknown", count: null });
     expect(steps.find((step) => step.id === "api_key")?.detail).toBe(
-      "No active API key. This connection acts for an operator, and administer needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
+      "API keys are not shown to this connection. This connection acts for an operator, and administer needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
     );
   });
 
