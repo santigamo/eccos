@@ -232,7 +232,7 @@ using the existing connection-link mechanism unchanged.
 - **THEN** the tool reports the existing link's state and that its URL cannot be read again
 
 #### Scenario: Subscription required
-- **WHEN** the account's connect policy is `closed`
+- **WHEN** the account's connect policy is `closed` and the agent acts for an owner or admin, the roles that may see billing
 - **THEN** `workspace_get` reports that a subscription is needed and `billing_checkout_link` returns the checkout URL
 
 #### Scenario: Outcome

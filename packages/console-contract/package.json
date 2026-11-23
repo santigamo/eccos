@@ -1,0 +1,13 @@
+{
+  "name": "@eccos/console-contract",
+  "version": "0.1.0",
+  "description": "Eccos console RPC contract: the ConsoleRPC types that apps/mcp calls and the dashboard Worker serves.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@eccos/auth-baseline": "workspace:*",
+    "@eccos/gateway-contract": "workspace:*"
+  }
+}

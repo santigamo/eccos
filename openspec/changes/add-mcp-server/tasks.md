@@ -76,6 +76,9 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       verifies with `auth.api.getJwks()` and `jose`. Tests: every refusal in the spec's
       "re-derived on every request" requirement, against a real D1 and a control-plane stub; a
       CI check that the built `dist/server` still exports `ConsoleRPC`.
+  - [x] `packages/console-contract` (the `ConsoleApi` types, including the billing methods
+        that 1.7 needs) landed first, on its own, so the console and `apps/mcp` build against
+        one contract.
 - [ ] 1.6 `apps/mcp` skeleton: Hono, `OAuthResourceServer`, `createMcpHandler`, bindings,
       rate limit, audit helper, the step-up guard with both carriers (URL-mode elicitation and
       the structured result, its JSON also in the text block), `workspace_get` only. The server
