@@ -1,18 +1,25 @@
 /**
  * Drives `wrangler dev` for apps/mcp (port 8788) with the MCP SDK client, against the stub console
- * (tests/dev/wrangler.console.jsonc, port 8790) and the real local gateway (port 8787). Writes
+ * (tests/dev/wrangler.console.jsonc, port 8791) and the real local gateway (port 8787). Writes
  * transcripts without tokens to the directory named by EVIDENCE_DIR.
  *
- *   bun run dev:gateway &
+ *   bun run dev:gateway &      # or the verify-eccos stack: .agents/skills/verify-eccos/scripts/verify-eccos launch
  *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.console.jsonc --inspector-port 9241) &
- *   (cd apps/mcp && wrangler dev) &
+ *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.mcp.jsonc --var REQUEST_STATE_KEY:$(openssl rand -base64 48)) &
  *   EVIDENCE_DIR=… bun apps/mcp/tests/dev/evidence.ts
+ *
+ * With VERIFY_ECCOS=1 (the verify-eccos stack, whose gateway talks to its fake Meta), the setup
+ * tools also run against a WABA registered through the gateway's admin route: pending, re-checked
+ * to active, then an inbound webhook counted by status_get.
  */
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { Client, StreamableHTTPClientTransport, discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/client";
 
 const MCP = "http://localhost:8788";
-const CONSOLE = "http://localhost:8790";
+const CONSOLE = "http://localhost:8791";
+const GATEWAY = "http://localhost:8787";
+const VERIFY_ECCOS = process.env.VERIFY_ECCOS === "1";
 const DIR = process.env.EVIDENCE_DIR ?? "evidence";
 mkdirSync(DIR, { recursive: true });
 
@@ -25,7 +32,11 @@ const token = mint("owner");
 const viewerToken = mint("viewer");
 const refusedToken = mint("refused");
 const redact = (text: string) =>
-  text.replaceAll(token, "<token>").replaceAll(viewerToken, "<viewer-token>").replaceAll(refusedToken, "<refused-token>");
+  text
+    .replaceAll(token, "<token>")
+    .replaceAll(viewerToken, "<viewer-token>")
+    .replaceAll(refusedToken, "<refused-token>")
+    .replace(/\/connect#[A-Za-z0-9._~-]+/g, "/connect#<link-token>");
 const save = (name: string, data: unknown) => {
   writeFileSync(`${DIR}/${name}`, `${redact(JSON.stringify(data, null, 2))}\n`);
   console.log(`wrote ${DIR}/${name}`);
@@ -235,4 +246,74 @@ save("07-forged-request-state.json", {
   note: "The audit line is in 07-forged-request-state-audit.jsonl, read from the apps/mcp wrangler dev log.",
   request: { ...forgedCall, params: { ...forgedCall.params, requestState: "<forged state>" } },
   response: { status: forgedResponse.status, body: (await forgedResponse.text()).replaceAll(forged, "<forged state>") },
+});
+
+// 8. The setup tools (task 1.7) against the real gateway's data.
+const transcript: { tool: string; arguments: Record<string, unknown>; isError: boolean; result: unknown }[] = [];
+const setup = new Client({ name: "eccos-evidence-setup", version: "0" }, { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } });
+await setup.connect(new StreamableHTTPClientTransport(new URL(`${MCP}/mcp`), { authProvider: { token: async () => token } } as never));
+const run = async (tool: string, args: Record<string, unknown> = {}) => {
+  const result = await setup.callTool({ name: tool, arguments: args });
+  transcript.push({ tool, arguments: args, isError: result.isError === true, result: result.structuredContent ?? result.content });
+  return result;
+};
+const admin = (method: string, path: string, body?: unknown) =>
+  fetch(`${GATEWAY}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${process.env.ADMIN_KEY ?? "verify-admin-key"}`, "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).then(async (response) => ({ status: response.status, body: await response.json() }));
+const registerWaba = (account: string, wabaId: string, phoneNumberId: string) =>
+  admin("POST", `/v1/accounts/${account}/wabas`, {
+    wabaId,
+    metaAccessToken: "fake-token",
+    callbackUrl: "https://gateway.eccos-verify.example/webhooks/meta",
+    phones: [{ phoneNumberId, displayPhoneNumber: "+34600000001" }],
+  });
+
+await run("numbers_list");
+await run("connect_status");
+await run("connect_link_create");
+await control("approve", actor, Date.now() + 86_400_000);
+await run("connect_link_create");
+await run("connect_status");
+await run("connect_link_create");
+await run("connect_link_create", { replace: true });
+await run("billing_get");
+await control("setBilling", accountId, {
+  ok: true,
+  billing: { connectPolicy: "closed", numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitPolicy: false },
+});
+await control("setBillingLink", accountId, "startCheckout", { ok: true, kind: "checkout", url: "https://creem.example/checkout/stub" });
+await run("billing_get");
+await run("billing_checkout_link");
+await run("billing_checkout_link", { purpose: "manage" });
+
+const gatewaySide: Record<string, unknown> = {};
+if (VERIFY_ECCOS) {
+  gatewaySide.registerWaba = (await registerWaba(accountId, "100200300", "555001")).status;
+  await run("numbers_list");
+  await run("status_get");
+  await run("number_recheck");
+  await run("numbers_list");
+  await run("number_recheck");
+  gatewaySide.webhook = execFileSync(".agents/skills/verify-eccos/scripts/verify-eccos", ["webhook", ".agents/skills/verify-eccos/fixtures/inbound-text.json"])
+    .toString()
+    .trim();
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await run("status_get");
+
+  // Two accounts: B owns a WABA; an actor of A names it.
+  const other = (await control("provision", "org-evidence-b", "Other Co")) as { accountId: string };
+  gatewaySide.otherAccountWaba = (await registerWaba(other.accountId, "700800900", "777001")).status;
+  await run("status_get", { wabaId: "700800900" });
+  await run("number_recheck", { wabaId: "700800900" });
+  gatewaySide.otherAccountId = other.accountId;
+}
+await setup.close();
+save("08-setup-tools.json", {
+  note: "Billing answers come from the stub ConsoleRPC (task 1.5 has not landed); every other tool reads the running gateway.",
+  gateway: VERIFY_ECCOS ? "verify-eccos stack (fake Meta)" : "dev:gateway",
+  gatewaySide,
+  transcript,
 });

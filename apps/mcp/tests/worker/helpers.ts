@@ -1,10 +1,11 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import type { Actor, ActorRef, AgentAction, AuthorizeResult, BillingResult, ElevationResult } from "@eccos/console-contract";
-import type { AccountWabaResource } from "@eccos/gateway-contract";
+import type { Actor, ActorRef, AgentAction, AuthorizeResult, BillingLink, BillingResult, ElevationResult } from "@eccos/console-contract";
+import type { AccountResources, AccountWabaResource } from "@eccos/gateway-contract";
+import { expect } from "vitest";
 import app from "../../src/index";
-import type { AccountFixture } from "../stubs/gateway";
+import type { AccountFixture, ConnectLinkIssue } from "../stubs/gateway";
 
 export const RESOURCE = "https://mcp.example.test/mcp";
 export const METADATA_URL = "https://mcp.example.test/.well-known/oauth-protected-resource/mcp";
@@ -16,6 +17,8 @@ interface ConsoleControls {
   revoke(token: string): Promise<void>;
   approve(actor: Pick<ActorRef, "userId" | "clientId" | "organizationId">, until: number): Promise<void>;
   setBilling(accountId: string, billing: BillingResult): Promise<void>;
+  setBillingLink(accountId: string, method: "startCheckout" | "openBillingPortal", link: BillingLink): Promise<void>;
+  billingLinkCalls(): Promise<{ method: string; actor: ActorRef }[]>;
   refuseElevation(refusal: ElevationResult | null): Promise<void>;
   failAuthorize(message: string | null): Promise<void>;
   billingCalls(): Promise<ActorRef[]>;
@@ -28,6 +31,7 @@ interface GatewayControls {
   seed(accountId: string, fixture: AccountFixture): Promise<void>;
   fail(method: string, message: string): Promise<void>;
   calls(): Promise<{ method: string; accountId: string }[]>;
+  connectLinkIssues(): Promise<ConnectLinkIssue[]>;
 }
 
 export const consoleStub = (env as unknown as { CONSOLE: ConsoleControls }).CONSOLE;
@@ -197,4 +201,40 @@ export function activeWaba(wabaId: string, accountId: string, phoneNumberIds: st
       error: null,
     },
   };
+}
+
+export function accountResources(accountId: string, wabas: AccountWabaResource[] = []): AccountResources {
+  return {
+    account: { accountId, name: "Acme", createdAt: 1, connectPolicy: "open" },
+    keys: [],
+    wabas,
+    phones: wabas.flatMap((waba) => waba.phones.map((phone) => ({ ...phone, wabaId: waba.wabaId }))),
+  };
+}
+
+export function wabaIn(status: AccountWabaResource["status"], wabaId: string, accountId: string, phoneNumberIds: string[] = []): AccountWabaResource {
+  return { ...activeWaba(wabaId, accountId, phoneNumberIds), status, provisionedAt: status === "active" ? 2 : null };
+}
+
+type CallResult = Awaited<ReturnType<Client["callTool"]>>;
+
+/** Call a tool; a structured result's text block must carry the same JSON. */
+export async function call(client: Client, name: string, args: Record<string, unknown> = {}): Promise<CallResult> {
+  const result = await client.callTool({ name, arguments: args });
+  if (result.structuredContent !== undefined) {
+    const [block] = result.content as { type: string; text: string }[];
+    expect(JSON.parse(block?.text ?? "null")).toEqual(result.structuredContent);
+  }
+  return result;
+}
+
+/** The text of an error result that carries no structured content. */
+export function errorOf(result: CallResult): string {
+  expect(result.isError).toBe(true);
+  expect(result.structuredContent).toBeUndefined();
+  return (result.content as { text: string }[])[0]?.text ?? "";
+}
+
+export async function listedTools(client: Client): Promise<string[]> {
+  return (await client.listTools()).tools.map((tool) => tool.name).sort();
 }

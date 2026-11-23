@@ -1,10 +1,22 @@
 import { McpServer, type ServerContext, createRequestStateCodec } from "@modelcontextprotocol/server";
 import { auditEvent } from "../audit";
-import { type Clients, type ElevationState, type McpActor, type ToolDefinition, capabilities, registerTool } from "./registry";
+import { billingCheckoutLink, billingGet } from "./billing";
+import { connectLinkCreate, connectStatus } from "./connect";
+import { numberRecheck, numbersList, statusGet } from "./numbers";
+import { type Clients, type ElevationState, type McpActor, type ToolDefinition, capabilities, registerTool, toolActions } from "./registry";
 import { workspaceGet } from "./workspace-get";
 
 /** Every tool the server ships, one table. */
-export const TOOLS: readonly ToolDefinition[] = [workspaceGet];
+export const TOOLS: readonly ToolDefinition[] = [
+  workspaceGet,
+  billingGet,
+  billingCheckoutLink,
+  connectLinkCreate,
+  connectStatus,
+  numbersList,
+  numberRecheck,
+  statusGet,
+];
 
 const REQUEST_STATE_TTL_SECONDS = 600;
 const MIN_KEY_BYTES = 32;
@@ -34,6 +46,8 @@ function usableKey(key: string | undefined): string | null {
 
 export interface ServerOptions {
   requestStateKey?: string;
+  /** The console's public origin, for links a person opens (`/connect`). */
+  consoleOrigin: string;
   /** The tool a `tools/call` with this JSON-RPC id names, for the audit line of a refused state. */
   toolOf?: (id: unknown) => string | undefined;
 }
@@ -48,8 +62,8 @@ export interface ServerOptions {
 export function createServer(
   actor: McpActor,
   clients: Clients,
-  registry: readonly ToolDefinition[] = TOOLS,
-  { requestStateKey, toolOf = () => undefined }: ServerOptions = {},
+  registry: readonly ToolDefinition[],
+  { requestStateKey, consoleOrigin, toolOf = () => undefined }: ServerOptions,
 ): McpServer {
   const key = usableKey(requestStateKey);
   const codec = key
@@ -78,10 +92,10 @@ export function createServer(
     }
   };
   const server = new McpServer({ name: "eccos", version: "0.1.0" }, codec ? { requestState: { verify } } : {});
-  const deps = capabilities(actor, clients);
+  const deps = { ...capabilities(actor, clients), consoleOrigin };
   const step = { codec, console: clients.console };
   for (const tool of registry) {
-    if (actor.actions.includes(tool.action)) registerTool(server, tool, actor, deps, step);
+    if (toolActions(tool).every((action) => actor.actions.includes(action))) registerTool(server, tool, actor, deps, step);
   }
   return server;
 }
