@@ -22,6 +22,9 @@ const enrollmentProofClient = {
 
 export const authClient = createAuthClient({
   baseURL: typeof window !== "undefined" ? window.location.origin : undefined,
+  // Looked up per call, not captured once, so a fetch installed after this
+  // module loads (Sentry's instrumentation, a test's stub) is the one used.
+  fetchOptions: { customFetchImpl: (input, init) => fetch(input, init) },
   plugins: [
     organizationClient({
       ac,

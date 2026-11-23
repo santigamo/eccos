@@ -30,6 +30,8 @@ import { Route as BroadcastsRouteImport } from './routes/broadcasts'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
+import { Route as OauthWorkspaceRouteImport } from './routes/oauth.workspace'
+import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
 import { Route as NumbersAttachTokenRouteImport } from './routes/numbers_.attach-token'
 import { Route as BroadcastsBroadcastIdRouteImport } from './routes/broadcasts_.$broadcastId'
 
@@ -138,6 +140,16 @@ const WorkspacesNewRoute = WorkspacesNewRouteImport.update({
   path: '/workspaces/new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OauthWorkspaceRoute = OauthWorkspaceRouteImport.update({
+  id: '/oauth/workspace',
+  path: '/oauth/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OauthConsentRoute = OauthConsentRouteImport.update({
+  id: '/oauth/consent',
+  path: '/oauth/consent',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const NumbersAttachTokenRoute = NumbersAttachTokenRouteImport.update({
   id: '/numbers_/attach-token',
   path: '/numbers/attach-token',
@@ -172,6 +184,8 @@ export interface FileRoutesByFullPath {
   '/webhooks': typeof WebhooksRoute
   '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
+  '/oauth/consent': typeof OauthConsentRoute
+  '/oauth/workspace': typeof OauthWorkspaceRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesByTo {
@@ -197,6 +211,8 @@ export interface FileRoutesByTo {
   '/webhooks': typeof WebhooksRoute
   '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
+  '/oauth/consent': typeof OauthConsentRoute
+  '/oauth/workspace': typeof OauthWorkspaceRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesById {
@@ -223,6 +239,8 @@ export interface FileRoutesById {
   '/webhooks': typeof WebhooksRoute
   '/broadcasts_/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers_/attach-token': typeof NumbersAttachTokenRoute
+  '/oauth/consent': typeof OauthConsentRoute
+  '/oauth/workspace': typeof OauthWorkspaceRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRouteTypes {
@@ -250,6 +268,8 @@ export interface FileRouteTypes {
     | '/webhooks'
     | '/broadcasts/$broadcastId'
     | '/numbers/attach-token'
+    | '/oauth/consent'
+    | '/oauth/workspace'
     | '/workspaces/new'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -275,6 +295,8 @@ export interface FileRouteTypes {
     | '/webhooks'
     | '/broadcasts/$broadcastId'
     | '/numbers/attach-token'
+    | '/oauth/consent'
+    | '/oauth/workspace'
     | '/workspaces/new'
   id:
     | '__root__'
@@ -300,6 +322,8 @@ export interface FileRouteTypes {
     | '/webhooks'
     | '/broadcasts_/$broadcastId'
     | '/numbers_/attach-token'
+    | '/oauth/consent'
+    | '/oauth/workspace'
     | '/workspaces/new'
   fileRoutesById: FileRoutesById
 }
@@ -326,6 +350,8 @@ export interface RootRouteChildren {
   WebhooksRoute: typeof WebhooksRoute
   BroadcastsBroadcastIdRoute: typeof BroadcastsBroadcastIdRoute
   NumbersAttachTokenRoute: typeof NumbersAttachTokenRoute
+  OauthConsentRoute: typeof OauthConsentRoute
+  OauthWorkspaceRoute: typeof OauthWorkspaceRoute
   WorkspacesNewRoute: typeof WorkspacesNewRoute
 }
 
@@ -478,6 +504,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspacesNewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/oauth/workspace': {
+      id: '/oauth/workspace'
+      path: '/oauth/workspace'
+      fullPath: '/oauth/workspace'
+      preLoaderRoute: typeof OauthWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth/consent': {
+      id: '/oauth/consent'
+      path: '/oauth/consent'
+      fullPath: '/oauth/consent'
+      preLoaderRoute: typeof OauthConsentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/numbers_/attach-token': {
       id: '/numbers_/attach-token'
       path: '/numbers/attach-token'
@@ -518,6 +558,8 @@ const rootRouteChildren: RootRouteChildren = {
   WebhooksRoute: WebhooksRoute,
   BroadcastsBroadcastIdRoute: BroadcastsBroadcastIdRoute,
   NumbersAttachTokenRoute: NumbersAttachTokenRoute,
+  OauthConsentRoute: OauthConsentRoute,
+  OauthWorkspaceRoute: OauthWorkspaceRoute,
   WorkspacesNewRoute: WorkspacesNewRoute,
 }
 export const routeTree = rootRouteImport

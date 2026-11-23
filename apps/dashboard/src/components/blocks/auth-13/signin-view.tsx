@@ -8,7 +8,7 @@ import { authErrorMessage } from "@/components/auth/auth-page";
 import { validateEmail } from "./components/validation";
 import { track } from "@/lib/analytics";
 import { signInHref } from "@/auth/redirect-target";
-import { pendingAuthorizationURL } from "@/auth/pending-authorization";
+import { pendingAuthorizationURL, withPendingAuthorization } from "@/auth/pending-authorization";
 
 /**
  * Sign-in view on the reui auth-13 split-screen skeleton, adapted to the
@@ -28,9 +28,12 @@ export function SignInView({
   const [pending, setPending] = useState(false);
   const [challenged, setChallenged] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | null>>({});
+  // Read after mount: the server render has no query of its own to carry.
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     document.title = "Sign in · Eccos";
+    setSearch(window.location.search);
   }, []);
 
   function clearField(key: string) {
@@ -95,7 +98,7 @@ export function SignInView({
   if (challenged) {
     return (
       <AuthSplitShell>
-        <TwoFactorForm onVerified={enter} restartHref={signInHref(redirectTo)} />
+        <TwoFactorForm onVerified={enter} restartHref={withPendingAuthorization(signInHref(redirectTo), search)} />
       </AuthSplitShell>
     );
   }
@@ -110,7 +113,7 @@ export function SignInView({
         password={password}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
-        signUpHref={signUpHref(redirectTo === "/" ? undefined : redirectTo)}
+        signUpHref={withPendingAuthorization(signUpHref(redirectTo === "/" ? undefined : redirectTo), search)}
       />
     </AuthSplitShell>
   );

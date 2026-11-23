@@ -28,6 +28,14 @@ describe("rootRedirect (per stage)", () => {
     expect(rootRedirect("/connect", accountReadyNoWaba)).toBeUndefined();
   });
 
+  test("the OAuth workspace and consent pages are never redirected, with or without a workspace", () => {
+    for (const page of ["/oauth/workspace", "/oauth/consent"]) {
+      expect(rootRedirect(page, noOrg)).toBeUndefined();
+      expect(rootRedirect(page, accountReadyNoWaba)).toBeUndefined();
+      expect(rootRedirect(page, ready)).toBeUndefined();
+    }
+  });
+
 
   test("no-organization is sent to /onboarding from anywhere else, and stays there", () => {
     expect(rootRedirect("/events", noOrg)).toBe("/onboarding");

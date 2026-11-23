@@ -38,6 +38,8 @@ export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/messages",
   "/numbers",
   "/numbers/attach-token",
+  "/oauth/consent",
+  "/oauth/workspace",
   "/onboarding",
   "/settings",
   "/templates",

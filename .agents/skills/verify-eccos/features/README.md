@@ -38,6 +38,7 @@ Each file has an H1, one paragraph, then four H2 sections in this order: `Sub-fe
 - [Webhook intake](./webhook-intake.md) covers Meta's verification challenge, signature checks, ingest, dedup, and forwarding to the subscriber.
 - [Send a message](./send-message.md) covers the public send API, Meta refusals, auth, and replying from Conversations.
 - [Templates](./templates.md) covers listing templates over the API and in the console.
+- [Agent authorization](./agent-authorization.md) covers an MCP agent's OAuth flow: sign-up resume, the workspace step, consent and the token's workspace claim.
 - [Connect and provisioning](./connect-and-provisioning.md) covers attaching a number by token, admin bootstrap, and the provisioning states.
 - [Console onboarding](./console-onboarding.md) covers sign-up, email verification, workspace creation, and the log screens.
 - [Console OAuth authorization server](./console-oauth.md) covers registration and its limits, consent, tokens, the cleanup of unused clients, and why CORS is checked on the built Worker.
