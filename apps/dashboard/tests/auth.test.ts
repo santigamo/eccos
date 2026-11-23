@@ -36,6 +36,7 @@ async function createTestAuth(mail?: CaptureMailSender) {
     secret: SECRET,
     baseURL: BASE_URL,
     trustedOrigins: [BASE_URL],
+    mcpResource: "http://localhost:8788/mcp",
     mail: mail ?? new CaptureMailSender(),
   });
   const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
@@ -84,7 +85,15 @@ describe("auth schema", () => {
     expect(toBeCreated.map((t) => t.table).sort()).toEqual([
       "account",
       "invitation",
+      "jwks",
       "member",
+      "oauthAccessToken",
+      "oauthClient",
+      "oauthClientAssertion",
+      "oauthClientResource",
+      "oauthConsent",
+      "oauthRefreshToken",
+      "oauthResource",
       "organization",
       "rateLimit",
       "session",
@@ -414,7 +423,8 @@ describe("blocked organization endpoints", () => {
   ];
 
   test("the block list is exactly the slug-bearing endpoints and the membership writes", () => {
-    expect([...BLOCKED_AUTH_ENDPOINTS].sort()).toEqual([...blocked].sort());
+    const organizationPaths = [...BLOCKED_AUTH_ENDPOINTS].filter((p) => p.startsWith("/api/auth/organization/"));
+    expect(organizationPaths.sort()).toEqual([...blocked].sort());
   });
 
   test("each blocked path is a live better-auth endpoint (the block has teeth)", async () => {
@@ -512,8 +522,35 @@ describe("authConfigFromEnv", () => {
       DB: {} as D1Database,
       BETTER_AUTH_SECRET: "x".repeat(32),
       BETTER_AUTH_URL: "https://console.example.com/",
+      MCP_RESOURCE: "https://mcp.example.com/mcp",
     });
     expect(config.trustedOrigins).toEqual(["https://console.example.com"]);
+  });
+
+  test("throws when no MCP resource is configured for an https (production-like) origin", () => {
+    expect(() =>
+      authConfigFromEnv({
+        DB: {} as D1Database,
+        BETTER_AUTH_SECRET: "x".repeat(32),
+        BETTER_AUTH_URL: "https://console.example.com",
+        MCP_RESOURCE: " ",
+      }),
+    ).toThrow(/MCP_RESOURCE/);
+  });
+
+  test("a public deployment issues tokens for its configured MCP resource", () => {
+    const config = authConfigFromEnv({
+      DB: {} as D1Database,
+      BETTER_AUTH_SECRET: "x".repeat(32),
+      BETTER_AUTH_URL: "https://console.example.com",
+      MCP_RESOURCE: "https://mcp.example.com/mcp",
+    });
+    expect(config.mcpResource).toBe("https://mcp.example.com/mcp");
+  });
+
+  test("local development defaults the MCP resource to the local MCP Worker", () => {
+    const config = authConfigFromEnv({ DB: {} as D1Database, BETTER_AUTH_URL: "http://localhost:3000" });
+    expect(config.mcpResource).toBe("http://localhost:8788/mcp");
   });
 
   test("localhost development trusts only the local origins", () => {

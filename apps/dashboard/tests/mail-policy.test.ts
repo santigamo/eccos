@@ -272,6 +272,7 @@ async function createTestAuth(mail: CaptureMailSender | ReccadoMailSender) {
     secret: SECRET,
     baseURL: BASE_URL,
     trustedOrigins: [BASE_URL],
+    mcpResource: "http://localhost:8788/mcp",
     mail,
   });
   const { runMigrations } = await getMigrations(auth.options);

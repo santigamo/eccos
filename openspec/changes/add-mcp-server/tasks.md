@@ -10,7 +10,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       order of the verified check and the auto-sign-in in email verification, the
       `runInBackgroundOrAwait` mail behaviour, `validateSchema`. Run the auth test suites.
       Done in PR #101.
-- [ ] 0.2 Merge PR #78 (TOTP and step-up enforcement), and make `PRODUCTION-READINESS.md` say one
+- [x] 0.2 Merge PR #78 (TOTP and step-up enforcement), and make `PRODUCTION-READINESS.md` say one
       thing about it.
 - [x] 0.3 Spike, on a branch that is not merged, answering with evidence:
   - the generated D1 migration for the OAuth and JWKS tables applies cleanly, and JWT key storage
@@ -47,7 +47,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
 
 - [x] 1.1 Amend `docs/auth-tenancy-contract.md` and `docs/threat-model.md` as listed in
       design § 5.5. Documentation only, reviewed before the code that relies on it.
-- [ ] 1.2 Authorization server in the console: `jwt()` with the bare origin as issuer and
+- [x] 1.2 Authorization server in the console: `jwt()` with the bare origin as issuer and
       `disabledPaths: ["/token"]`, `mcp()`, `cimd()` with the Workers fetcher, in `createAuth`
       and in `scripts/auth-schema.config.ts` (which needs `baseURL`); the committed migration;
       the root RFC 8414 route and its place before the page gate; `global_fetch_strictly_public`

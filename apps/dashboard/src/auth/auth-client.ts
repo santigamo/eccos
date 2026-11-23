@@ -10,6 +10,7 @@
 import { createAuthClient } from "better-auth/react";
 import { organizationClient, twoFactorClient } from "better-auth/client/plugins";
 import type { BetterAuthClientPlugin } from "better-auth/client";
+import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 import type { enrollmentProof } from "./enrollment-proof";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 
@@ -28,5 +29,9 @@ export const authClient = createAuthClient({
     }),
     twoFactorClient(),
     enrollmentProofClient,
+    // On a page opened by an OAuth authorization, adds its signed query to
+    // sign-in, sign-up and two-factor calls, whose answer then carries the
+    // `url` to continue at (oauth-provider.ts).
+    oauthProviderClient(),
   ],
 });

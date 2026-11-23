@@ -27,6 +27,7 @@ function authOn(db: Database) {
     secret: "test-secret-32-chars-minimum-length!!",
     baseURL: "http://localhost:3000",
     trustedOrigins: ["http://localhost:3000"],
+    mcpResource: "http://localhost:8788/mcp",
     mail: new CaptureMailSender(),
   });
 }
