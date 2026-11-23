@@ -153,11 +153,11 @@ grant carries `eccos:administer` can only view.
 
 | Scope | Allows | Console permission behind it | Least role |
 |---|---|---|---|
-| `eccos:view` | Status, numbers, templates, logs, billing state | `view` | viewer |
+| `eccos:view` | Status, numbers, templates, logs | `view` | viewer |
 | `eccos:operate` | Retry deliveries, cancel broadcasts and scheduled sends, read the subscriber config | `operate` | operator |
 | `eccos:send` | Send messages: test templates, text, broadcasts, scheduled sends | `operate` | operator |
 | `eccos:configure` | Templates, subscriber config write, resubscribe, re-check a number, phone settings | `configure` | admin |
-| `eccos:administer` | Connection link, API keys, checkout, export | `administer` | admin |
+| `eccos:administer` | Connection link, API keys, billing state and checkout, export | `administer` | admin |
 | `offline_access` | A refresh token | — | any |
 
 No scope allows `erase`. No agent path deletes an organization, transfers ownership, or changes a
