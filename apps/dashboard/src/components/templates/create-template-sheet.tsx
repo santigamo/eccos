@@ -38,7 +38,7 @@ import {
   normalizeTemplateName,
   previewBody,
   type DraftButton,
-} from "../../lib/template-params";
+} from "@eccos/core/template-rules";
 
 /**
  * Languages offered in the picker.
