@@ -115,10 +115,17 @@ flowchart LR
 - `createMcpHandler` from `agents/mcp/server` serves Streamable HTTP at `/mcp`, stateless, with
   `legacy: "stateless"` so 2025-era clients work. There is no `/sse`, no Durable Object and no
   KV. The server factory registers only the tools the caller's effective permissions allow.
-- Tools are plain functions of `(input, actor, { gateway, console })`, where `gateway` is
-  `GatewayApi` and `console` is `ConsoleApi`. They never see the token.
+- Tools are plain functions of `(input, actor, deps)`. `deps.for(action)` hands out
+  `{ gateway, console }` (`GatewayApi`, `ConsoleApi`) only for an action the actor holds and
+  otherwise throws a tool error naming the scope and the least role; `deps.can(action)` asks
+  first. A tool asks for the action each call needs, so a call the console cannot gate (an
+  `ActorRef` carries no scope) never leaves this Worker. Tools never see the token.
 - Bindings: `GATEWAY` (entrypoint `GatewayRPC`), `CONSOLE` (entrypoint `ConsoleRPC`), one Rate
-  Limiting binding. Vars: its own public origin, the issuer URL, the console origin. No secrets.
+  Limiting binding. Vars: its own public origin, the issuer URL, the console origin. One secret,
+  `REQUEST_STATE_KEY` (set with `wrangler secret put`, at least 32 bytes): the HMAC key that
+  seals the step-up guard's URL-elicitation `requestState` to { request id, tool } and the grant.
+  It grants no access, since elevation is always re-read from the console; unset, the guard
+  never uses URL elicitation and every client gets the structured approval result.
 
 **`apps/dashboard` (existing Worker) gains the authorization server.**
 
