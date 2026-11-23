@@ -6,7 +6,8 @@ import { fences } from "./docs-md";
 
 // README.md summarises `WhatsAppCallbackEvent` by hand. This test reads the
 // union from types.ts with the compiler and fails when the summary names a
-// different set of fields, so the README cannot fall behind the contract.
+// different set of fields, and when it lists an event type,
+// a suffix or a line that the union does not have.
 
 const typesPath = fileURLToPath(new URL("../../../packages/core/src/types.ts", import.meta.url));
 const readme = readFileSync(new URL("../../../README.md", import.meta.url), "utf8");
@@ -48,26 +49,74 @@ for (const member of union.isUnion() ? union.types : [union]) {
   );
 }
 
-const block = fences(readme).find((f) => f.lang === "ts" && f.code.includes('type: "reply"'));
-const fromReadme = new Map<string, string[]>();
-for (const line of block?.code.split("\n") ?? []) {
-  const match = line.match(/^\| \{ type: ([^;]+); (.*?) \}( & MessageContent)?/);
-  if (!match) continue;
-  const names = String(match[2])
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  fromReadme.set(String(match[1]), [...names, ...(match[3] ? ["& MessageContent"] : [])].sort());
+/** Field names per event type in the README's event shape block, or the reasons it cannot be read. */
+function readmeShapes(code: string): { shapes: Map<string, string[]>; problems: string[] } {
+  const shapes = new Map<string, string[]>();
+  const problems: string[] = [];
+  for (const raw of code.split("\n")) {
+    const line = raw.replace(/\s*\/\/.*$/, "").trim();
+    if (!line.startsWith("|")) continue;
+    const match = line.match(/^\| \{ type: ([^;]+); (.*?) \}(.*)$/);
+    if (!match) {
+      problems.push(`cannot read the line: ${line}`);
+      continue;
+    }
+    const [, type, body, suffix] = match as unknown as [string, string, string, string];
+    if (suffix.trim() !== "" && suffix.trim() !== "& MessageContent") {
+      problems.push(`${type}: unknown suffix "${suffix.trim()}"; the union only intersects MessageContent`);
+      continue;
+    }
+    if (shapes.has(type)) problems.push(`${type}: listed more than once`);
+    const names = body
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    shapes.set(type, [...names, ...(suffix.trim() ? ["& MessageContent"] : [])].sort());
+  }
+  return { shapes, problems };
 }
 
+/** Every way the README block differs from the union; empty when it matches. */
+function mismatches(code: string): string[] {
+  const { shapes, problems } = readmeShapes(code);
+  for (const type of fromTypes.keys()) if (!shapes.has(type)) problems.push(`${type}: missing from the README`);
+  for (const [type, names] of shapes) {
+    const expected = fromTypes.get(type);
+    if (!expected) problems.push(`${type}: not a WhatsAppCallbackEvent type`);
+    else if (names.join(",") !== expected.join(","))
+      problems.push(`${type}: README has [${names.join(", ")}], types.ts declares [${expected.join(", ")}]`);
+  }
+  return problems;
+}
+
+const block = fences(readme).find((f) => f.lang === "ts" && f.code.includes('type: "reply"'));
+if (!block) throw new Error("README.md has no ts block with the event shape");
+const code = block.code;
+const lineOf = (type: string) => {
+  const line = code.split("\n").find((l) => l.startsWith(`| { type: "${type}";`));
+  if (!line) throw new Error(`no ${type} line in the README block`);
+  return line;
+};
+
 describe("README.md event shape", () => {
-  it("lists every event type of WhatsAppCallbackEvent, and no other", () => {
-    expect([...fromReadme.keys()].sort()).toEqual([...fromTypes.keys()].sort());
+  it("matches WhatsAppCallbackEvent exactly", () => {
+    expect(mismatches(code), "edit the event shape block in README.md to match packages/core/src/types.ts").toEqual([]);
   });
 
-  for (const [type, expected] of fromTypes) {
-    it(`${type}: the README names the fields types.ts declares`, () => {
-      expect(fromReadme.get(type), "edit the event shape block in README.md to match packages/core/src/types.ts").toEqual(expected);
-    });
-  }
+  describe("fails on", () => {
+    const cases: [string, string][] = [
+      ["an intersection the member does not have", code.replace(lineOf("echo"), lineOf("echo").replace(" }", " } & EventOrigin"))],
+      ["a misspelled intersection", code.replace("} & MessageContent", "} & MessageContents")],
+      ["an event type the union does not have", `${code}\n| { type: "deleted" }`],
+      ["a stale duplicate line", code.replace(lineOf("reply"), `${lineOf("reply").replace(" phoneNumberId?;", "")}\n${lineOf("reply")}`)],
+      ["a missing field", code.replace(lineOf("reply"), lineOf("reply").replace(" phoneNumberId?;", ""))],
+      ["an event type the README lacks", code.replace(`${lineOf("echo")}\n`, "")],
+    ];
+    for (const [name, variant] of cases) {
+      it(name, () => {
+        expect(variant).not.toBe(code);
+        expect(mismatches(variant)).not.toEqual([]);
+      });
+    }
+  });
 });
