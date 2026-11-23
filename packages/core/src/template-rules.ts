@@ -17,11 +17,20 @@
  * this gained a send capability without gaining a file-upload path, a storage
  * decision, or a fetcher of its own.
  *
- * Pure, type-free of `cloudflare:workers`, so it is exercisable directly under
- * plain `bun test` (same discipline as `lib/failure.ts`).
+ * Lives in `@eccos/core` so every surface that authors or sends a template
+ * (the console, the MCP server) applies one set of rules. Pure: no HTTP, no
+ * storage, no framework types.
  */
 
-import type { TemplateHeaderMediaFormat } from "@eccos/gateway-contract";
+/** The header formats the console can fill from a link. LOCATION is not one of
+ * them: it carries latitude/longitude/name/address rather than an asset. */
+export type TemplateHeaderMediaFormat = "image" | "video" | "document";
+
+export interface TemplateHeaderMedia {
+  format: TemplateHeaderMediaFormat;
+  /** Public `https://` URL. Fetched by Meta, never by Eccos. */
+  link: string;
+}
 
 export type TemplateSendability =
   | {
@@ -257,7 +266,7 @@ export function previewBody(bodyText: string, values: string[]): string {
 // enforcement: the create form must never author a template that
 // `analyzeTemplate` would later call `unsupported`, because the row Meta
 // returns for it is the row the "Send test" sheet reads. The agreement is
-// asserted as a property in tests/template-params.test.ts.
+// asserted as a property in tests/template-rules.test.ts.
 
 /** Meta's ceiling for a template BODY component. */
 const MAX_BODY_LENGTH = 1024;
@@ -458,4 +467,322 @@ export function normalizeTemplateName(raw: string): string {
     .replace(/\s+/g, "_")
     .replace(/[^a-z0-9_]/g, "")
     .slice(0, 512);
+}
+
+// --- Request rules: what an authoring or send request may carry --------------
+//
+// Each takes the request's fields as a record and throws an `Error` whose
+// message is the first rule broken, worded for the operator. The caller owns
+// everything around them: reading the request, the WABA and number it names,
+// the recipient, and the idempotency key.
+
+/** Meta's template-name charset. */
+export const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
+/** `en` / `es` / `en_US` / `pt_BR`. */
+export const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
+/** Graph template ids (`hsm_id`) are numeric. */
+export const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
+const MAX_BODY_PARAM_LENGTH = 1024;
+/** A BUTTONS component carries at most 3 URL buttons (Meta's own cap). */
+const MAX_BUTTON_PARAMS = 3;
+/** Upper bound for a URL button's 0-based slot index in the BUTTONS component. */
+const MAX_BUTTON_URL_INDEX = 9;
+
+export type TemplateCategory = "MARKETING" | "UTILITY";
+
+/** The content half of a console-authored template, shared by create and edit. */
+export interface TemplateContent {
+  bodyText: string;
+  bodyExamples?: string[];
+  footerText?: string;
+  buttons?: { text: string; url: string; exampleUrl?: string }[];
+}
+
+export interface TemplateDraft extends TemplateContent {
+  name: string;
+  language: string;
+  category: TemplateCategory;
+}
+
+/** One translation's new content. `category` is absent to keep the current one. */
+export interface TemplateEdit extends TemplateContent {
+  templateId: string;
+  name: string;
+  language: string;
+  category?: TemplateCategory;
+}
+
+/** What a test send asks of the template: which one, and the values that fill it. */
+export interface TemplateSendRequest {
+  templateName: string;
+  languageCode: string;
+  bodyParams?: string[];
+  buttonParams?: { index: number; text: string }[];
+  headerMedia?: TemplateHeaderMedia;
+}
+
+/**
+ * The send rules: the template's name and language, then its positional body
+ * values, its dynamic URL button values and its media header link.
+ *
+ * `buttonParams` gets the same treatment as `bodyParams`: at most three
+ * entries, an integer 0-based slot index within bounds, and a text value
+ * without line breaks. Included only when non-empty, exactly like
+ * `bodyParams`.
+ */
+export function validateTemplateSend(record: Record<string, unknown>): TemplateSendRequest {
+  if (typeof record.templateName !== "string" || !TEMPLATE_NAME_PATTERN.test(record.templateName.trim())) {
+    throw new Error("invalid template name");
+  }
+  if (typeof record.languageCode !== "string" || !LANGUAGE_PATTERN.test(record.languageCode.trim())) {
+    throw new Error("invalid template language");
+  }
+  const raw = record.bodyParams;
+  if (raw !== undefined && !Array.isArray(raw)) throw new Error("bodyParams must be an array");
+  const bodyParams = (raw ?? []) as unknown[];
+  if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+  const values = bodyParams.map((value) => {
+    if (typeof value !== "string") throw new Error("template parameters must be strings");
+    const text = value.trim();
+    if (!text) throw new Error("every template parameter needs a value");
+    if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("template parameter is too long");
+    // Meta rejects newlines and tabs inside a text parameter outright, so this
+    // is a refusal the operator can act on rather than a 132000 from Graph.
+    if (/[\n\t]/.test(text)) throw new Error("template parameters cannot contain line breaks");
+    return text;
+  });
+  const rawButtons = record.buttonParams;
+  if (rawButtons !== undefined && !Array.isArray(rawButtons)) {
+    throw new Error("buttonParams must be an array");
+  }
+  const buttonParams = (rawButtons ?? []) as unknown[];
+  if (buttonParams.length > MAX_BUTTON_PARAMS) throw new Error("too many button parameters");
+  const buttons = buttonParams.map((value) => {
+    const button = value as Record<string, unknown>;
+    if (!button || typeof button !== "object" || Array.isArray(button)) {
+      throw new Error("button parameters must be objects");
+    }
+    if (typeof button.index !== "number" || !Number.isInteger(button.index)) {
+      throw new Error("button parameter index must be a whole number");
+    }
+    if (button.index < 0 || button.index > MAX_BUTTON_URL_INDEX) {
+      throw new Error("button parameter index is out of range");
+    }
+    if (typeof button.text !== "string") throw new Error("every button parameter needs a value");
+    const text = button.text.trim();
+    if (!text) throw new Error("every button parameter needs a value");
+    if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("button parameter is too long");
+    if (/[\n\t]/.test(text)) {
+      throw new Error("button parameters cannot contain line breaks");
+    }
+    return { index: button.index, text };
+  });
+  const headerMedia = validateHeaderMedia(record.headerMedia);
+  return {
+    templateName: record.templateName.trim(),
+    languageCode: record.languageCode.trim(),
+    ...(values.length > 0 ? { bodyParams: values } : {}),
+    ...(buttons.length > 0 ? { buttonParams: buttons } : {}),
+    ...(headerMedia ? { headerMedia } : {}),
+  };
+}
+
+/**
+ * The media header's one field: a link Meta will fetch.
+ *
+ * `https` ONLY, and that is not decoration. Meta dereferences this URL from its
+ * own network, so an `http` link leaks the asset in transit and a `data:` or
+ * `file:` one is a shape Meta cannot use at all. Embedded credentials are
+ * refused too — a URL carrying a username or password is one an operator did
+ * not mean to hand to a third party's fetcher.
+ *
+ * Eccos itself never dereferences it: this validator parses the URL, it does
+ * not open it, so nothing here can be turned into a request made on Eccos'
+ * behalf.
+ */
+function validateHeaderMedia(value: unknown): TemplateHeaderMedia | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("headerMedia must be an object");
+  }
+  const media = value as Record<string, unknown>;
+  const format = media.format;
+  if (typeof format !== "string" || !HEADER_MEDIA_FORMATS.includes(format as TemplateHeaderMediaFormat)) {
+    throw new Error("headerMedia format must be image, video or document");
+  }
+  if (typeof media.link !== "string") throw new Error("the header needs a media link");
+  const link = media.link.trim();
+  if (!link) throw new Error("the header needs a media link");
+  if (link.length > MAX_HEADER_LINK_LENGTH) throw new Error("header media link is too long");
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    throw new Error("header media link must be a full URL");
+  }
+  if (url.protocol !== "https:") throw new Error("header media link must start with https://");
+  if (url.username || url.password) {
+    throw new Error("header media link must not carry credentials");
+  }
+  return { format: format as TemplateHeaderMediaFormat, link };
+}
+
+const HEADER_MEDIA_FORMATS: TemplateHeaderMediaFormat[] = ["image", "video", "document"];
+/** Meta's own cap is far higher; this is a sanity bound on operator input. */
+const MAX_HEADER_LINK_LENGTH = 2048;
+
+/**
+ * The authoring rules: name, language, category, then the content.
+ *
+ * It runs the very `analyzeDraftBody` the create form runs, so a request that
+ * skipped the UI cannot author a body the "Send test" sheet would later refuse.
+ *
+ * The refused set: AUTHENTICATION, media headers, quick-replies, carousels and
+ * OTP/copy-code/flow buttons stay outside exactly as `analyzeTemplate` keeps
+ * them unbuildable.
+ */
+export function validateTemplateDraft(record: Record<string, unknown>): TemplateDraft {
+  if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {
+    throw new Error("template name must be lowercase letters, numbers and underscores");
+  }
+  if (typeof record.language !== "string" || !LANGUAGE_PATTERN.test(record.language.trim())) {
+    throw new Error("invalid template language");
+  }
+  if (record.category !== "MARKETING" && record.category !== "UTILITY") {
+    // AUTHENTICATION is absent by design, not by omission: those are preset
+    // content plus OTP buttons, a creation shape this console does not build.
+    throw new Error("template category must be MARKETING or UTILITY");
+  }
+  return {
+    name: record.name.trim(),
+    language: record.language.trim(),
+    category: record.category,
+    ...validateTemplateContent(record),
+  };
+}
+
+/**
+ * The edit rules. `name` and `language` identify the translation and cannot
+ * change; `category` is optional because Meta refuses to change an APPROVED
+ * template's.
+ */
+export function validateTemplateEdit(record: Record<string, unknown>): TemplateEdit {
+  if (typeof record.templateId !== "string" || !TEMPLATE_ID_PATTERN.test(record.templateId.trim())) {
+    throw new Error("invalid template id");
+  }
+  if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {
+    throw new Error("invalid template name");
+  }
+  if (typeof record.language !== "string" || !LANGUAGE_PATTERN.test(record.language.trim())) {
+    throw new Error("invalid template language");
+  }
+  const category = record.category;
+  if (category !== undefined && category !== "MARKETING" && category !== "UTILITY") {
+    throw new Error("template category must be MARKETING or UTILITY");
+  }
+  return {
+    templateId: record.templateId.trim(),
+    name: record.name.trim(),
+    language: record.language.trim(),
+    ...(category ? { category } : {}),
+    ...validateTemplateContent(record),
+  };
+}
+
+/**
+ * The content rules, shared by create and edit: a body `analyzeDraftBody`
+ * accepts, exactly one example per `{{n}}`, a static footer, and up to three
+ * https URL buttons. A dynamic URL (a `{{n}}` placeholder) REQUIRES its
+ * example URL; a static URL carries none.
+ *
+ * Examples are mandatory, one per `{{n}}`: Meta requires an example value for
+ * every parameter, and they are what its reviewers read. Their character rules
+ * are the send rules', byte for byte: an example travels to Meta as content
+ * exactly as a send parameter does.
+ */
+export function validateTemplateContent(record: Record<string, unknown>): TemplateContent {
+  if (typeof record.bodyText !== "string") throw new Error("template body is required");
+  // Not trimmed: leading and trailing whitespace is part of the message Meta
+  // will store, and silently rewriting an operator's body would make the
+  // preview a lie. Only its emptiness is judged on the trimmed form.
+  const bodyText = record.bodyText;
+  const draft = analyzeDraftBody(bodyText);
+  if (!draft.ok) throw new Error(draft.reason);
+
+  const raw = record.bodyExamples;
+  if (raw !== undefined && !Array.isArray(raw)) throw new Error("bodyExamples must be an array");
+  const examples = (raw ?? []) as unknown[];
+  if (examples.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+  if (examples.length !== draft.paramCount) {
+    throw new Error(`this body needs exactly ${draft.paramCount} example value(s)`);
+  }
+  const values = examples.map((value) => {
+    if (typeof value !== "string") throw new Error("example values must be strings");
+    const text = value.trim();
+    if (!text) throw new Error("every variable needs an example value");
+    if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("example value is too long");
+    // Meta rejects newlines and tabs inside a text parameter outright — the
+    // same rule the send validator applies, for the same reason.
+    if (/[\n\t]/.test(text)) throw new Error("example values cannot contain line breaks");
+    return text;
+  });
+
+  const footerRaw = record.footerText;
+  if (footerRaw !== undefined) {
+    if (typeof footerRaw !== "string") throw new Error("footer text is required when present");
+    const footer = footerRaw.trim();
+    if (!footer) throw new Error("footer text cannot be empty");
+    if (footer.length > MAX_FOOTER_LENGTH) throw new Error("footer text is too long");
+    if (/\{\{/.test(footer)) throw new Error("footer text cannot contain placeholders");
+    if (/[\n\t]/.test(footer)) throw new Error("footer text cannot contain line breaks");
+  }
+
+  const rawButtons = record.buttons;
+  if (rawButtons !== undefined && !Array.isArray(rawButtons)) throw new Error("buttons must be an array");
+  const buttonList = (rawButtons ?? []) as unknown[];
+  if (buttonList.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
+  const buttons = buttonList.map((value) => {
+    const button = value as Record<string, unknown>;
+    if (!button || typeof button !== "object" || Array.isArray(button)) {
+      throw new Error("buttons must be objects");
+    }
+    if (typeof button.text !== "string") throw new Error("every button needs a label");
+    const text = button.text.trim();
+    if (!text) throw new Error("every button needs a label");
+    if (text.length > MAX_BUTTON_TEXT_LENGTH) throw new Error("button label is too long");
+    if (typeof button.url !== "string") throw new Error("every button needs a url");
+    const url = button.url.trim();
+    if (!url) throw new Error("every button needs a url");
+    if (!/^https?:\/\//.test(url)) throw new Error("button url must be https");
+    if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
+      throw new Error("buttons cannot contain line breaks");
+    }
+    const dynamic = url.includes("{{");
+    if (dynamic) {
+      if (typeof button.exampleUrl !== "string") {
+        throw new Error("a dynamic URL button needs an example url");
+      }
+      const example = button.exampleUrl.trim();
+      if (!example) throw new Error("a dynamic URL button needs an example url");
+      if (!/^https?:\/\//.test(example)) {
+        throw new Error("button example url must be https");
+      }
+    } else if (button.exampleUrl !== undefined && button.exampleUrl !== "") {
+      throw new Error("a static URL button carries no example");
+    }
+    return {
+      text,
+      url,
+      ...(dynamic && button.exampleUrl
+        ? { exampleUrl: String(button.exampleUrl).trim() }
+        : {}),
+    };
+  });
+
+  return {
+    bodyText,
+    ...(values.length > 0 ? { bodyExamples: values } : {}),
+    ...(footerRaw !== undefined ? { footerText: String(footerRaw).trim() } : {}),
+    ...(buttons.length > 0 ? { buttons } : {}),
+  };
 }

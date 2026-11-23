@@ -21,7 +21,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { analyzeTemplate, canSendTemplate, templateRowsOf } from "../lib/template-params";
+import { analyzeTemplate, canSendTemplate, templateRowsOf } from "@eccos/core/template-rules";
 import {
   authoringReading,
   canEditStatus,
