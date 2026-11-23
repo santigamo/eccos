@@ -14,7 +14,10 @@
 import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { authIpAddress, authRateLimit } from "@eccos/auth-baseline/rate-limit";
-import { organization, twoFactor } from "better-auth/plugins";
+import { jwt, organization, twoFactor } from "better-auth/plugins";
+import { mcp } from "@better-auth/mcp";
+import { cimd } from "@better-auth/cimd";
+import { workersCimdFetch } from "../spike/cimd-fetch";
 import {
   AUTH_LINK_EXPIRY_SECONDS,
   deriveIdempotencyKey,
@@ -211,6 +214,8 @@ export interface AuthConfig {
   trustedOrigins: string[];
   /** Application-owned email adapter (contract §8). */
   mail: MailSender;
+  /** SPIKE: the MCP protected resource identifier (tokens' audience). */
+  mcpResource: string;
   /** Caps invitation sends per inviter. `authConfigFromEnv` always sets it; hand-built test configs may not. */
   invitationLimiter?: AttemptLimiter;
 }
@@ -241,6 +246,8 @@ export function createAuth(config: AuthConfig) {
     secret: config.secret,
     baseURL: config.baseURL,
     trustedOrigins: config.trustedOrigins,
+    // SPIKE: session JWTs share the access-token signing key; the session-JWT route is off.
+    disabledPaths: ["/token"],
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
@@ -367,6 +374,43 @@ export function createAuth(config: AuthConfig) {
       // TOTP for owner/admin step-up before sensitive actions (contract §8);
       // enrollment UI ships with the eccos-0x0.7 dashboard pass.
       twoFactor(),
+      // ── SPIKE (task 0.3) ───────────────────────────────────────────────
+      jwt({ disableSettingJwtHeader: true }),
+      mcp({
+        loginPage: "/signin",
+        consentPage: "/spike/consent",
+        signup: { page: "/signup" },
+        resource: config.mcpResource,
+        resourceSeedScope: "process",
+        scopes: ["eccos:view", "eccos:operate", "eccos:send", "eccos:configure", "eccos:administer", "offline_access"],
+        accessTokenExpiresIn: 600,
+        allowDynamicClientRegistration: true,
+        allowUnauthenticatedClientRegistration: true,
+        clientRegistrationDefaultApplicationType: "infer",
+        postLogin: {
+          page: "/spike/workspace",
+          // Always show the workspace step once per authorization; the continuation
+          // (after the person picked) must carry an active organization.
+          shouldRedirect: ({ session, isContinuation }) =>
+            !isContinuation || !(session as { activeOrganizationId?: string }).activeOrganizationId,
+          consentReferenceId: ({ session }) => {
+            const org = (session as { activeOrganizationId?: string }).activeOrganizationId;
+            if (!org) throw new APIError("BAD_REQUEST", { message: "workspace_required" });
+            return org;
+          },
+        },
+        customAccessTokenClaims: async ({ user, referenceId }) => {
+          if (!user || !referenceId) throw new APIError("FORBIDDEN", { message: "no_workspace" });
+          const row = await (config.database as D1Database)
+            .prepare('SELECT role FROM member WHERE userId = ? AND organizationId = ?')
+            .bind(user.id, referenceId)
+            .first<{ role: string }>();
+          if (!row) throw new APIError("FORBIDDEN", { message: "not_a_member" });
+          return { "https://eccos.chat/workspace": referenceId };
+        },
+      }),
+      cimd({ fetchClientMetadataResource: workersCimdFetch, metadataProfile: "mcp-2026-07-28" }),
+      // ── /SPIKE ─────────────────────────────────────────────────────────
       organization({
         ac,
         roles: { owner, admin, operator, viewer },

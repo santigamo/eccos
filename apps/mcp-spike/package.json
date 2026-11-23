@@ -1,0 +1,22 @@
+{
+  "name": "@eccos/mcp-spike",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "THROWAWAY spike for openspec/changes/add-mcp-server task 0.3. Never merged.",
+  "scripts": {
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "agents": "0.34.0",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@cloudflare/workers-oauth-provider": "1.2.4",
+    "hono": "4.13.21",
+    "zod": "4.5.1",
+    "@eccos/gateway-contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "wrangler": "4.166.0"
+  }
+}

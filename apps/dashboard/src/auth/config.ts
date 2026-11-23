@@ -44,6 +44,7 @@ export interface AuthEnv {
   DB: unknown;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
+  MCP_RESOURCE?: string;
   RECCADO_API_KEY?: string;
   RECCADO_ENDPOINT?: string;
 }
@@ -84,6 +85,7 @@ export function authConfigFromEnv(env: AuthEnv): AuthConfig {
     database: env.DB,
     secret: secret || `dev-insecure-secret-${LOCAL_ORIGIN}-0000000000`,
     baseURL,
+    mcpResource: env.MCP_RESOURCE?.trim() || "http://localhost:8788/mcp",
     trustedOrigins,
     mail: createMailSenderFromEnv(env),
     invitationLimiter: invitationLimiter(env.DB as D1Database),

@@ -1,0 +1,18 @@
+{
+  // THROWAWAY spike for openspec/changes/add-mcp-server task 0.3. Never deployed, never merged.
+  "name": "eccos-mcp-spike",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "vars": {
+    "MCP_RESOURCE": "http://localhost:8788/mcp",
+    "ISSUER": "http://localhost:3000/api/auth",
+    // Spike only. A real deployment that seals requestState needs this as a secret.
+    "REQUEST_STATE_KEY": "spike-only-request-state-key-not-a-secret"
+  },
+  "services": [
+    { "binding": "CONSOLE", "service": "eccos-dashboard", "entrypoint": "ConsoleRPC" },
+    { "binding": "GATEWAY", "service": "eccos", "entrypoint": "GatewayRPC" }
+  ]
+}

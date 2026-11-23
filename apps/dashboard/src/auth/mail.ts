@@ -330,6 +330,8 @@ export class ConsoleMailSender implements MailSender {
         idempotencyKey: msg.idempotencyKey,
       }),
     );
+    // SPIKE ONLY (never merge): expose the link so the driver script can follow it.
+    console.info("SPIKE_MAIL_URL " + JSON.stringify({ template: msg.template, to: msg.to, url: msg.variables.url }));
     return { status: "sent" };
   }
 }

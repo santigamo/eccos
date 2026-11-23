@@ -1,0 +1,723 @@
+{
+  "A_tools": [
+    "whoami",
+    "api_key_create",
+    "gateway_probe"
+  ],
+  "A_whoami": {
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "eccos-mcp-spike",
+        "version": "0.0.0"
+      }
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"actor\":{\"userId\":\"JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE\",\"organizationId\":\"IKJODuoQvgYCCr0Pd32pssK10pKcWqU0\",\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795440270,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE\",\"organizationId\":\"IKJODuoQvgYCCr0Pd32pssK10pKcWqU0\",\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\"}}}},\"clientCapabilities\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"spike-sdk-client\",\"version\":\"0\"},\"io.modelcontextprotocol/clientCapabilities\":{}}}"
+      }
+    ],
+    "structuredContent": {
+      "actor": {
+        "userId": "JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE",
+        "organizationId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+        "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+        "role": "owner",
+        "elevatedUntil": null,
+        "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS"
+      },
+      "authInfo": {
+        "token": "<jwt>",
+        "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS",
+        "scopes": [
+          "eccos:view",
+          "eccos:operate",
+          "eccos:configure",
+          "eccos:administer",
+          "offline_access"
+        ],
+        "expiresAt": 1795440270,
+        "resource": "http://localhost:8788/mcp",
+        "extra": {
+          "props": {
+            "actor": {
+              "userId": "JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE",
+              "organizationId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+              "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+              "role": "owner",
+              "elevatedUntil": null,
+              "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS"
+            }
+          }
+        }
+      },
+      "clientCapabilities": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "spike-sdk-client",
+          "version": "0"
+        },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  },
+  "A_gateway": {
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "eccos-mcp-spike",
+        "version": "0.0.0"
+      }
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"resources\":{\"account\":{\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"name\":\"Workspace Two\",\"createdAt\":1795439670250,\"connectPolicy\":\"open\"},\"keys\":[],\"wabas\":[],\"phones\":[]}}"
+      }
+    ],
+    "structuredContent": {
+      "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+      "resources": {
+        "account": {
+          "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+          "name": "Workspace Two",
+          "createdAt": 1795439670250,
+          "connectPolicy": "open"
+        },
+        "keys": [],
+        "wabas": [],
+        "phones": []
+      }
+    }
+  },
+  "A_stepup_structured": {
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "eccos-mcp-spike",
+        "version": "0.0.0"
+      }
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c\",\"expiresAt\":\"2026-11-23T13:24:30.970Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+      }
+    ],
+    "structuredContent": {
+      "status": "approval_required",
+      "reason": "elevation_required",
+      "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
+      "approvalUrl": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c",
+      "expiresAt": "2026-11-23T13:24:30.970Z",
+      "retry": {
+        "tool": "api_key_create",
+        "when": "after_approval",
+        "sameArguments": true
+      }
+    },
+    "isError": true
+  },
+  "B_decline": {
+    "result": {
+      "_meta": {
+        "io.modelcontextprotocol/serverInfo": {
+          "name": "eccos-mcp-spike",
+          "version": "0.0.0"
+        }
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"status\":\"elevation_declined\",\"action\":\"decline\"}"
+        }
+      ],
+      "structuredContent": {
+        "status": "elevation_declined",
+        "action": "decline"
+      },
+      "isError": true
+    },
+    "elicitationSeenByClient": [
+      {
+        "mode": "url",
+        "message": "Approve sensitive actions for this agent in the Eccos console.",
+        "url": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c"
+      }
+    ]
+  },
+  "C_accept_without_approval": {
+    "result": {
+      "_meta": {
+        "io.modelcontextprotocol/serverInfo": {
+          "name": "eccos-mcp-spike",
+          "version": "0.0.0"
+        }
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c\",\"expiresAt\":\"2026-11-23T13:24:30.970Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+        }
+      ],
+      "structuredContent": {
+        "status": "approval_required",
+        "reason": "elevation_required",
+        "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
+        "approvalUrl": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c",
+        "expiresAt": "2026-11-23T13:24:30.970Z",
+        "retry": {
+          "tool": "api_key_create",
+          "when": "after_approval",
+          "sameArguments": true
+        }
+      },
+      "isError": true
+    },
+    "elicitationSeenByClient": [
+      {
+        "mode": "url",
+        "message": "Approve sensitive actions for this agent in the Eccos console.",
+        "url": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c"
+      }
+    ]
+  },
+  "C_wire": [
+    {
+      "request": {
+        "headers": {
+          "authorization": "Bearer <jwt>",
+          "mcp-method": "tools/call",
+          "mcp-name": "api_key_create",
+          "mcp-protocol-version": "2026-07-28"
+        },
+        "body": {
+          "method": "tools/call",
+          "params": {
+            "name": "api_key_create",
+            "arguments": {
+              "label": "ci"
+            },
+            "_meta": {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientInfo": {
+                "name": "spike-sdk-client",
+                "version": "0"
+              },
+              "io.modelcontextprotocol/clientCapabilities": {
+                "elicitation": {
+                  "url": {}
+                }
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "result": {
+            "resultType": "input_required",
+            "inputRequests": {
+              "approve": {
+                "method": "elicitation/create",
+                "params": {
+                  "url": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c",
+                  "message": "Approve sensitive actions for this agent in the Eccos console.",
+                  "mode": "url"
+                }
+              }
+            },
+            "requestState": "v1.eyJwIjp7InJlcXVlc3RJZCI6IjQ3YjE3MWM5LWRjMTAtNDdkZC04OGNjLTcyYzBiZGY2MjMxYyIsImFza2VkIjoxNzk1NDM5NjcxMTY0fSwiZXhwIjoxNzk1NDQwMjcxfQ.pypiK30EvIALLL7nnNci5vuONn2QxMt-RKeGXDqW97U",
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "eccos-mcp-spike",
+                "version": "0.0.0"
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 0
+        }
+      }
+    },
+    {
+      "request": {
+        "headers": {
+          "authorization": "Bearer <jwt>",
+          "mcp-method": "tools/call",
+          "mcp-name": "api_key_create",
+          "mcp-protocol-version": "2026-07-28"
+        },
+        "body": {
+          "method": "tools/call",
+          "params": {
+            "name": "api_key_create",
+            "arguments": {
+              "label": "ci"
+            },
+            "inputResponses": {
+              "approve": {
+                "action": "accept"
+              }
+            },
+            "requestState": "v1.eyJwIjp7InJlcXVlc3RJZCI6IjQ3YjE3MWM5LWRjMTAtNDdkZC04OGNjLTcyYzBiZGY2MjMxYyIsImFza2VkIjoxNzk1NDM5NjcxMTY0fSwiZXhwIjoxNzk1NDQwMjcxfQ.pypiK30EvIALLL7nnNci5vuONn2QxMt-RKeGXDqW97U",
+            "_meta": {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientInfo": {
+                "name": "spike-sdk-client",
+                "version": "0"
+              },
+              "io.modelcontextprotocol/clientCapabilities": {
+                "elicitation": {
+                  "url": {}
+                }
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c\",\"expiresAt\":\"2026-11-23T13:24:30.970Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+              }
+            ],
+            "structuredContent": {
+              "status": "approval_required",
+              "reason": "elevation_required",
+              "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
+              "approvalUrl": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c",
+              "expiresAt": "2026-11-23T13:24:30.970Z",
+              "retry": {
+                "tool": "api_key_create",
+                "when": "after_approval",
+                "sameArguments": true
+              }
+            },
+            "isError": true,
+            "resultType": "complete",
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "eccos-mcp-spike",
+                "version": "0.0.0"
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 1
+        }
+      }
+    }
+  ],
+  "D_approved": {
+    "result": {
+      "_meta": {
+        "io.modelcontextprotocol/serverInfo": {
+          "name": "eccos-mcp-spike",
+          "version": "0.0.0"
+        }
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"status\":\"claim_ready\",\"label\":\"ci\",\"elevatedUntil\":\"2026-11-24T13:14:31.338Z\"}"
+        }
+      ],
+      "structuredContent": {
+        "status": "claim_ready",
+        "label": "ci",
+        "elevatedUntil": "2026-11-24T13:14:31.338Z"
+      }
+    },
+    "elicitationSeenByClient": [
+      {
+        "mode": "url",
+        "message": "Approve sensitive actions for this agent in the Eccos console.",
+        "url": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c"
+      }
+    ],
+    "approval": {
+      "pageStatus": 200,
+      "approveStatus": 200
+    }
+  },
+  "D_wire": [
+    {
+      "request": {
+        "headers": {
+          "authorization": "Bearer <jwt>",
+          "mcp-method": "tools/call",
+          "mcp-name": "api_key_create",
+          "mcp-protocol-version": "2026-07-28"
+        },
+        "body": {
+          "method": "tools/call",
+          "params": {
+            "name": "api_key_create",
+            "arguments": {
+              "label": "ci"
+            },
+            "_meta": {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientInfo": {
+                "name": "spike-sdk-client",
+                "version": "0"
+              },
+              "io.modelcontextprotocol/clientCapabilities": {
+                "elicitation": {
+                  "url": {}
+                }
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "result": {
+            "resultType": "input_required",
+            "inputRequests": {
+              "approve": {
+                "method": "elicitation/create",
+                "params": {
+                  "url": "http://localhost:3000/spike/approve?request=47b171c9-dc10-47dd-88cc-72c0bdf6231c",
+                  "message": "Approve sensitive actions for this agent in the Eccos console.",
+                  "mode": "url"
+                }
+              }
+            },
+            "requestState": "v1.eyJwIjp7InJlcXVlc3RJZCI6IjQ3YjE3MWM5LWRjMTAtNDdkZC04OGNjLTcyYzBiZGY2MjMxYyIsImFza2VkIjoxNzk1NDM5NjcxMjc1fSwiZXhwIjoxNzk1NDQwMjcxfQ.Wt81MAILvgvkrnqFqny2n29LxloY5e0qPJtjn5falgk",
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "eccos-mcp-spike",
+                "version": "0.0.0"
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 0
+        }
+      }
+    },
+    {
+      "request": {
+        "headers": {
+          "authorization": "Bearer <jwt>",
+          "mcp-method": "tools/call",
+          "mcp-name": "api_key_create",
+          "mcp-protocol-version": "2026-07-28"
+        },
+        "body": {
+          "method": "tools/call",
+          "params": {
+            "name": "api_key_create",
+            "arguments": {
+              "label": "ci"
+            },
+            "inputResponses": {
+              "approve": {
+                "action": "accept"
+              }
+            },
+            "requestState": "v1.eyJwIjp7InJlcXVlc3RJZCI6IjQ3YjE3MWM5LWRjMTAtNDdkZC04OGNjLTcyYzBiZGY2MjMxYyIsImFza2VkIjoxNzk1NDM5NjcxMjc1fSwiZXhwIjoxNzk1NDQwMjcxfQ.Wt81MAILvgvkrnqFqny2n29LxloY5e0qPJtjn5falgk",
+            "_meta": {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientInfo": {
+                "name": "spike-sdk-client",
+                "version": "0"
+              },
+              "io.modelcontextprotocol/clientCapabilities": {
+                "elicitation": {
+                  "url": {}
+                }
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"status\":\"claim_ready\",\"label\":\"ci\",\"elevatedUntil\":\"2026-11-24T13:14:31.338Z\"}"
+              }
+            ],
+            "structuredContent": {
+              "status": "claim_ready",
+              "label": "ci",
+              "elevatedUntil": "2026-11-24T13:14:31.338Z"
+            },
+            "resultType": "complete",
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "eccos-mcp-spike",
+                "version": "0.0.0"
+              }
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 1
+        }
+      }
+    }
+  ],
+  "D_whoami_after": {
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "eccos-mcp-spike",
+        "version": "0.0.0"
+      }
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"actor\":{\"userId\":\"JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE\",\"organizationId\":\"IKJODuoQvgYCCr0Pd32pssK10pKcWqU0\",\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795440270,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE\",\"organizationId\":\"IKJODuoQvgYCCr0Pd32pssK10pKcWqU0\",\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\"}}}},\"clientCapabilities\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"spike-sdk-client\",\"version\":\"0\"},\"io.modelcontextprotocol/clientCapabilities\":{\"elicitation\":{\"url\":{}}}}}"
+      }
+    ],
+    "structuredContent": {
+      "actor": {
+        "userId": "JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE",
+        "organizationId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+        "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+        "role": "owner",
+        "elevatedUntil": null,
+        "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS"
+      },
+      "authInfo": {
+        "token": "<jwt>",
+        "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS",
+        "scopes": [
+          "eccos:view",
+          "eccos:operate",
+          "eccos:configure",
+          "eccos:administer",
+          "offline_access"
+        ],
+        "expiresAt": 1795440270,
+        "resource": "http://localhost:8788/mcp",
+        "extra": {
+          "props": {
+            "actor": {
+              "userId": "JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE",
+              "organizationId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+              "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+              "role": "owner",
+              "elevatedUntil": null,
+              "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS"
+            }
+          }
+        }
+      },
+      "clientCapabilities": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "spike-sdk-client",
+          "version": "0"
+        },
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": {
+            "url": {}
+          }
+        }
+      }
+    }
+  },
+  "D_forged_requestState": {
+    "status": 200,
+    "body": {
+      "jsonrpc": "2.0",
+      "id": 9,
+      "error": {
+        "code": -32602,
+        "message": "Invalid or expired requestState",
+        "data": {
+          "reason": "invalid_request_state"
+        }
+      }
+    }
+  },
+  "E_legacy": {
+    "negotiated": "2025-11-25",
+    "whoami": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"actor\":{\"userId\":\"JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE\",\"organizationId\":\"IKJODuoQvgYCCr0Pd32pssK10pKcWqU0\",\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\"},\"authInfo\":{\"token\":\"<jwt>\",\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\",\"scopes\":[\"eccos:view\",\"eccos:operate\",\"eccos:configure\",\"eccos:administer\",\"offline_access\"],\"expiresAt\":1795440270,\"resource\":\"http://localhost:8788/mcp\",\"extra\":{\"props\":{\"actor\":{\"userId\":\"JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE\",\"organizationId\":\"IKJODuoQvgYCCr0Pd32pssK10pKcWqU0\",\"accountId\":\"acc_112261936f724705a1ac787bfdbc3ab7\",\"role\":\"owner\",\"elevatedUntil\":null,\"clientId\":\"hzNNPVzoXJWARquuRnrheNzcvOmDdkrS\"}}}},\"clientCapabilities\":null}"
+        }
+      ],
+      "structuredContent": {
+        "actor": {
+          "userId": "JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE",
+          "organizationId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+          "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+          "role": "owner",
+          "elevatedUntil": null,
+          "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS"
+        },
+        "authInfo": {
+          "token": "<jwt>",
+          "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS",
+          "scopes": [
+            "eccos:view",
+            "eccos:operate",
+            "eccos:configure",
+            "eccos:administer",
+            "offline_access"
+          ],
+          "expiresAt": 1795440270,
+          "resource": "http://localhost:8788/mcp",
+          "extra": {
+            "props": {
+              "actor": {
+                "userId": "JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE",
+                "organizationId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+                "accountId": "acc_112261936f724705a1ac787bfdbc3ab7",
+                "role": "owner",
+                "elevatedUntil": null,
+                "clientId": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS"
+              }
+            }
+          }
+        },
+        "clientCapabilities": null
+      }
+    },
+    "stepup": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=fab2dd60-0002-4d2d-bf98-5e916efb418b\",\"expiresAt\":\"2026-11-23T13:24:32.711Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+        }
+      ],
+      "structuredContent": {
+        "status": "approval_required",
+        "reason": "elevation_required",
+        "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
+        "approvalUrl": "http://localhost:3000/spike/approve?request=fab2dd60-0002-4d2d-bf98-5e916efb418b",
+        "expiresAt": "2026-11-23T13:24:32.711Z",
+        "retry": {
+          "tool": "api_key_create",
+          "when": "after_approval",
+          "sameArguments": true
+        }
+      },
+      "isError": true
+    },
+    "elicitationSeenByClient": []
+  },
+  "E_wire_first": [
+    {
+      "request": {
+        "headers": {
+          "authorization": "Bearer <jwt>"
+        },
+        "body": {
+          "method": "initialize",
+          "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+              "elicitation": {
+                "url": {},
+                "form": {}
+              }
+            },
+            "clientInfo": {
+              "name": "spike-sdk-client",
+              "version": "0"
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "result": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+              "tools": {
+                "listChanged": true
+              }
+            },
+            "serverInfo": {
+              "name": "eccos-mcp-spike",
+              "version": "0.0.0"
+            }
+          },
+          "jsonrpc": "2.0",
+          "id": 0
+        }
+      }
+    },
+    {
+      "request": {
+        "headers": {
+          "authorization": "Bearer <jwt>",
+          "mcp-protocol-version": "2025-11-25"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "notifications/initialized"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": ""
+      }
+    }
+  ],
+  "F_revocation": {
+    "beforeOk": true,
+    "after": {
+      "thrown": "UnauthorizedError: Unauthorized"
+    }
+  },
+  "F_wire_last": {
+    "request": {
+      "headers": {
+        "authorization": "Bearer <jwt>",
+        "mcp-method": "tools/call",
+        "mcp-name": "whoami",
+        "mcp-protocol-version": "2026-07-28"
+      },
+      "body": {
+        "method": "tools/call",
+        "params": {
+          "name": "whoami",
+          "arguments": {},
+          "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {
+              "name": "spike-sdk-client",
+              "version": "0"
+            },
+            "io.modelcontextprotocol/clientCapabilities": {}
+          }
+        },
+        "jsonrpc": "2.0",
+        "id": 1
+      }
+    },
+    "response": {
+      "status": 401,
+      "wwwAuthenticate": "Bearer realm=\"OAuth\", resource_metadata=\"http://localhost:8788/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", scope=\"eccos:view\"",
+      "body": ""
+    }
+  }
+}

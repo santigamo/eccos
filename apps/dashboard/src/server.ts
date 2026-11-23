@@ -23,6 +23,10 @@ import { billingFor } from "./billing/context";
 import { reconcileBilling } from "./billing/reconcile";
 import { billingWebhook } from "./billing/webhook";
 import { connectLinkApi } from "./server/connect-link-api";
+import { spikePages, spikePublic } from "./spike/oauth-spike";
+
+// SPIKE (task 0.3): the named entrypoint, exported next to the default export.
+export { ConsoleRPC } from "./spike/oauth-spike";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -74,6 +78,8 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
   if (billingResponse) return billingResponse;
   const linkResponse = connectLinkApi(request, pathname, env, waitUntil);
   if (linkResponse) return linkResponse;
+  const spikePublicResponse = spikePublic(request, pathname, env as never);
+  if (spikePublicResponse) return spikePublicResponse;
   if (pathname.startsWith("/api/auth/")) {
     // Refused BEFORE the auth instance is even built: these endpoints answer
     // questions about the globally-unique organization slug, and `create`
@@ -93,6 +99,8 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
     return (await resolveSession(auth, request)) !== null;
   });
   if (gated) return gated;
+  const spikePage = await spikePages(request, pathname, env as never);
+  if (spikePage) return spikePage;
 
   const response = await startHandler(request, opts);
   const report = finishTiming(request);
