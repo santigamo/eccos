@@ -29,6 +29,9 @@ export const LOCAL_ORIGIN = "http://localhost:3000";
 export const VITE_DEV_ORIGIN = "http://localhost:5173";
 export const VITE_DEV_ORIGIN_LOOPBACK = "http://127.0.0.1:5173";
 
+/** The MCP Worker's resource under local `wrangler dev` (apps/mcp, port 8788). */
+export const LOCAL_MCP_RESOURCE = "http://localhost:8788/mcp";
+
 /** Development-only hosts (workers.dev-style bypasses are NOT in this list). */
 const DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -44,6 +47,7 @@ export interface AuthEnv {
   DB: unknown;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
+  MCP_RESOURCE?: string;
   RECCADO_API_KEY?: string;
   RECCADO_ENDPOINT?: string;
 }
@@ -75,6 +79,12 @@ export function authConfigFromEnv(env: AuthEnv): AuthConfig {
     // Fail closed: a public deployment without an auth secret must not boot.
     throw new Error("BETTER_AUTH_SECRET must be configured for production");
   }
+  // Same rule for the audience of every access token: a public deployment
+  // names its own MCP resource, never the local one.
+  const mcpResource = env.MCP_RESOURCE?.trim() || (isDev ? LOCAL_MCP_RESOURCE : "");
+  if (!mcpResource) {
+    throw new Error("MCP_RESOURCE must be configured for production");
+  }
 
   const trustedOrigins = isDev
     ? [LOCAL_ORIGIN, "http://127.0.0.1:3000", VITE_DEV_ORIGIN, VITE_DEV_ORIGIN_LOOPBACK]
@@ -85,6 +95,7 @@ export function authConfigFromEnv(env: AuthEnv): AuthConfig {
     secret: secret || `dev-insecure-secret-${LOCAL_ORIGIN}-0000000000`,
     baseURL,
     trustedOrigins,
+    mcpResource,
     mail: createMailSenderFromEnv(env),
     invitationLimiter: invitationLimiter(env.DB as D1Database),
   };

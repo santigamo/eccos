@@ -19,6 +19,7 @@ async function createTestAuth() {
     secret: "test-secret-32-chars-minimum-length!!",
     baseURL: BASE_URL,
     trustedOrigins: [BASE_URL],
+    mcpResource: "http://localhost:8788/mcp",
     mail,
   });
   const { runMigrations } = await getMigrations(auth.options);
