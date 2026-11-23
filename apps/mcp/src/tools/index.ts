@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/server";
+import { connectLinkCreate, connectStatus } from "./connect";
 import { numberRecheck, numbersList, statusGet } from "./numbers";
 import { type McpActor, type ToolDefinition, type ToolDeps, registerTool } from "./registry";
 import { workspaceGet } from "./workspace-get";
@@ -6,6 +7,8 @@ import { workspaceGet } from "./workspace-get";
 /** Every tool the server ships, one table. */
 export const TOOLS: readonly ToolDefinition[] = [
   workspaceGet,
+  connectLinkCreate,
+  connectStatus,
   numbersList,
   numberRecheck,
   statusGet,

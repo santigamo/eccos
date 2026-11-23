@@ -72,6 +72,8 @@ describe("effective permissions", () => {
     const viewer = await grantToken(makeActor({ role: "viewer", actions: ["view"] }));
 
     expect(await names(owner)).toEqual([
+      "connect_link_create",
+      "connect_status",
       "fixture_configure",
       "fixture_secret_rotate",
       "number_recheck",
@@ -79,7 +81,7 @@ describe("effective permissions", () => {
       "status_get",
       "workspace_get",
     ]);
-    expect(await names(viewer)).toEqual(["numbers_list", "status_get", "workspace_get"]);
+    expect(await names(viewer)).toEqual(["connect_status", "numbers_list", "status_get", "workspace_get"]);
   });
 
   it("refuses a tool the role does not allow even when the scope is granted", async () => {
