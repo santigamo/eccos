@@ -19,11 +19,15 @@
  * adapter's job is to report the outcome faithfully — not to decide.
  */
 
-/** The five transactional templates registered with the provider. */
+import { sha256Hex } from "../lib/sha256";
+
+/** The transactional templates registered with the provider. */
 export type MailTemplate =
   | "verify-email"
   | "reset-password"
   | "invite-member"
+  | "two-factor-code"
+  | "two-factor-changed"
   | "connect-link-connected"
   | "connect-link-failed";
 
@@ -57,6 +61,10 @@ export const INVITE_MEMBER_VARIABLES = [
   "workspace",
 ] as const;
 
+/** The code that proves inbox control before two-factor setup. */
+export const TWO_FACTOR_CODE_VARIABLES = ["code", "name"] as const;
+/** `change` is one sentence saying what changed on the account's second factor. */
+export const TWO_FACTOR_CHANGED_VARIABLES = ["change", "name"] as const;
 /** To the admin who made a connection link: the workspace name and a fixed sentence, never a phone number. */
 export const CONNECT_LINK_CONNECTED_VARIABLES = ["workspace", "note", "url"] as const;
 export const CONNECT_LINK_FAILED_VARIABLES = ["workspace", "reason", "url"] as const;
@@ -66,6 +74,8 @@ export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
   "verify-email": VERIFY_EMAIL_VARIABLES,
   "reset-password": RESET_PASSWORD_VARIABLES,
   "invite-member": INVITE_MEMBER_VARIABLES,
+  "two-factor-code": TWO_FACTOR_CODE_VARIABLES,
+  "two-factor-changed": TWO_FACTOR_CHANGED_VARIABLES,
   "connect-link-connected": CONNECT_LINK_CONNECTED_VARIABLES,
   "connect-link-failed": CONNECT_LINK_FAILED_VARIABLES,
 };
@@ -271,11 +281,7 @@ export async function deriveIdempotencyKey(
   to: string,
   unique: string,
 ): Promise<string> {
-  const data = new TextEncoder().encode(`${template}:${to}:${unique}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return sha256Hex(`${template}:${to}:${unique}`);
 }
 
 /**

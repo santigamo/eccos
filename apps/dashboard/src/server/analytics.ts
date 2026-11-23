@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import { getAuthForRequest } from "../auth/request-auth";
 import { resolveSession } from "../auth/session";
 import type { AnalyticsConfig } from "../lib/analytics";
+import { sha256Hex } from "../lib/sha256";
 
 interface AnalyticsEnv {
   ANALYTICS_SCRIPT_URL?: string;
@@ -40,9 +41,5 @@ export const getAnalyticsConfig = createServerFn({ method: "GET" }).handler(
 
 /** First 16 hex chars of SHA-256("eccos:" + id): the raw id never leaves the Worker. */
 export async function hashUserId(userId: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`eccos:${userId}`));
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 16);
+  return (await sha256Hex(`eccos:${userId}`)).slice(0, 16);
 }

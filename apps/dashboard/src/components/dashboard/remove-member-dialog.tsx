@@ -12,6 +12,8 @@ import {
 import { removeMember, type MembersMutation, type MemberView } from "../../members";
 import { isOwnerRole } from "../../lib/member-roles";
 import { followSignIn } from "../../lib/follow-sign-in";
+import { withStepUp } from "../../lib/step-up";
+import { StepUpSheet } from "./step-up-sheet";
 import { MEMBERS_RETRY } from "../../lib/members-copy";
 
 /** What removing this member costs. Exported so the wording is asserted directly. */
@@ -41,7 +43,7 @@ export function RemoveMemberDialog({
     setRemoving(true);
     setError(null);
     try {
-      const result = await removeMember({ data: { memberId: target.memberId } });
+      const result = await withStepUp(() => removeMember({ data: { memberId: target.memberId } }));
       onResult(result);
       if (result.ok || result.gone) onOpenChange(false);
       else setError(result.error);
@@ -74,6 +76,8 @@ export function RemoveMemberDialog({
             {removing ? "Removing…" : "Remove member"}
           </AlertDialogAction>
         </AlertDialogFooter>
+        {/* Nested: step-up for this write opens inside this surface. */}
+        <StepUpSheet />
       </AlertDialogContent>
     </AlertDialog>
   );
