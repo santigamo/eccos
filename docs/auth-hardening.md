@@ -142,11 +142,11 @@ the session.
 
 | Matrix row | Where |
 |---|---|
-| Embedded Signup start, token attach | `STEP_UP_ROWS.connect`: `startConnect`, `connectWithToken` |
+| Embedded Signup start, token attach, making a connection link | `STEP_UP_ROWS.connect`: `startConnect`, `connectWithToken`, `openConnectLink` when it makes or replaces a link (reading its status needs none) |
 | API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
 | Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
 | Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
-| Invitations and member role changes | `stepUpOrganizationHooks`, Better Auth's `organizationHooks` (`beforeCreateInvitation`, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`). `inviteMember` reaches the first through `createInvitation` and returns the refusal's reason |
+| Invitations and member changes | Every write in `src/members.ts` (invite, resend, cancel, change role, remove) calls `requireStepUp` after its role check and returns the refusal's reason; resend and cancel write the invitation row through the adapter, which no hook sees. Better Auth's `organizationHooks` gate the plugin's own calls again (`stepUpOrganizationHooks`: `beforeCreateInvitation`, before the invitation rate limit spends a strike, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`) |
 | Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`, once the account has a second factor: `change-password`, `change-email`, `two-factor/enable`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`. An account with no TOTP can still change its password, and enroll with the mailed code; `get-totp-uri` is refused for it |
 
 `STEP_UP_ROWS` is the single table for the Eccos server functions: a function
