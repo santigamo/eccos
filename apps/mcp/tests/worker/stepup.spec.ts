@@ -262,22 +262,48 @@ describe("sealed requestState", () => {
     expect(result?.structuredContent).toMatchObject({ status: "elevation_declined", action: "decline" });
   });
 
-  it("refuses a forged state with -32602 before the tool runs", async () => {
-    const token = await grantToken(makeActor());
+  it("refuses a forged state with -32602 before the tool runs, and audits it", async () => {
+    const actor = makeActor();
+    const token = await grantToken(actor);
     await prompt(token);
     const forged = btoa(JSON.stringify({ requestId: "anything", tool: "fixture_secret_rotate" }));
     const elevations = (await consoleStub.elevationCalls()).length;
+    const lines: string[] = [];
+    vi.spyOn(console, "info").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
     const answer = await rpc(
       await postMcp(rawCall("fixture_secret_rotate", { requestState: forged, inputResponses: declined }, 2), { token, target: fixtureApp }),
     );
+    vi.restoreAllMocks();
 
     expect(answer.error?.code).toBe(-32602);
     expect(answer.result).toBeUndefined();
     expect((await consoleStub.elevationCalls()).length).toBe(elevations);
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      {
+        level: "info",
+        area: "audit",
+        via: "mcp",
+        action: "fixture_secret_rotate",
+        actorUserId: actor.userId,
+        organizationId: actor.organizationId,
+        accountId: actor.accountId,
+        clientId: actor.clientId,
+        resource: null,
+        outcome: "denied",
+        detail: "invalid_request_state",
+      },
+    ]);
+    expect(lines.join("\n")).not.toContain(forged);
   });
 
-  it("refuses a state another grant minted", async () => {
+  it("refuses a state another grant minted, and audits it", async () => {
     const requestState = await prompt(await grantToken(makeActor()));
+    const lines: string[] = [];
+    vi.spyOn(console, "info").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
     const answer = await rpc(
       await postMcp(rawCall("fixture_secret_rotate", { requestState, inputResponses: declined }, 2), {
         token: await grantToken(makeActor()),
@@ -285,7 +311,10 @@ describe("sealed requestState", () => {
       }),
     );
 
+    vi.restoreAllMocks();
+
     expect(answer.error?.code).toBe(-32602);
+    expect(lines.map((line) => JSON.parse(line))).toMatchObject([{ outcome: "denied", detail: "invalid_request_state" }]);
   });
 
   it("refuses a state minted for another tool", async () => {
@@ -365,7 +394,7 @@ describe("without a sealing key", () => {
         area: "mcp",
         event: "url_elicitation_unavailable",
         tool: "fixture_secret_rotate",
-        reason: "REQUEST_STATE_KEY is not set",
+        reason: "REQUEST_STATE_KEY is unset or shorter than 32 bytes",
       },
     ]);
     expect(warnings.join("\n")).not.toContain((env as unknown as { REQUEST_STATE_KEY: string }).REQUEST_STATE_KEY);
