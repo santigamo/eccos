@@ -30,9 +30,10 @@ import { getCurrentAuthEndpointContext } from "@better-auth/core/context";
 import { mcp } from "@better-auth/mcp";
 import type { ClientMetadataResourceFetch } from "@better-auth/oauth-provider";
 import type { BetterAuthPlugin } from "better-auth";
-import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from "better-auth/api";
 import { jwt } from "better-auth/plugins";
 import { CLIENT_METADATA_MAX_BYTES, clientMetadataRefusal } from "./client-metadata-limits";
+import { MAX_LIVE_GRANTS, otherLiveGrants } from "./oauth-grants";
 
 /** The scopes a grant may carry (design §3.2). There is none for `erase`. */
 export const MCP_SCOPES = [
@@ -182,6 +183,65 @@ function promptValues(query: Record<string, unknown> | undefined): string[] {
   return typeof query?.prompt === "string" ? query.prompt.split(" ").filter(Boolean) : [];
 }
 
+const CONSENT_PATH = "/oauth2/consent";
+const CLIENT_AUTHENTICATED_PATHS = new Set(["/oauth2/token", "/oauth2/revoke"]);
+const TOO_MANY_GRANTS = `This workspace already has ${MAX_LIVE_GRANTS} connected agents for your account. Revoke one under Settings → Connected agents, then connect again.`;
+
+async function clientExists(clientId: string): Promise<boolean> {
+  const { context } = getCurrentAuthEndpointContext();
+  return (await context.adapter.findOne({ model: "oauthClient", where: [{ field: "clientId", value: clientId }] })) !== null;
+}
+
+/**
+ * The grant rules Better Auth does not have (contract §9):
+ * - Consent is refused with an OAuth error, not a 500, when its client is gone
+ *   (the cleanup can delete one between the workspace step and consent).
+ * - A person holds at most `MAX_LIVE_GRANTS` live grants per workspace
+ *   (oauth-grants.ts); re-consenting to a client already held adds none.
+ * - Token and revocation answer `invalid_client` for a URL client id no
+ *   authorization brought in, before Better Auth would try to resolve it
+ *   (`cimdFetch` refuses that fetch too, for client ids sent another way).
+ */
+const grantPolicy = {
+  id: "eccos-grant-policy",
+  hooks: {
+    before: [
+      {
+        matcher: (ctx: { path?: string }) => ctx.path === CONSENT_PATH,
+        handler: createAuthMiddleware(async (ctx) => {
+          const clientId = new URLSearchParams(String(ctx.body?.oauth_query ?? "")).get("client_id");
+          if (!clientId || !(await clientExists(clientId))) {
+            throw new APIError("BAD_REQUEST", {
+              error: "invalid_client",
+              error_description: "This agent is no longer registered. Start connecting it again from the agent.",
+            });
+          }
+          if (ctx.body?.accept !== true) return;
+          const session = await getSessionFromCtx(ctx);
+          const workspace = session ? await memberWorkspace(session.session) : undefined;
+          if (!session || !workspace) return;
+          const held = await otherLiveGrants(ctx.context.options.database as Parameters<typeof otherLiveGrants>[0], {
+            userId: session.user.id,
+            workspace,
+            clientId,
+          });
+          if (held >= MAX_LIVE_GRANTS) {
+            throw new APIError("BAD_REQUEST", { error: "access_denied", error_description: TOO_MANY_GRANTS });
+          }
+        }),
+      },
+      {
+        matcher: (ctx: { path?: string }) => CLIENT_AUTHENTICATED_PATHS.has(ctx.path ?? ""),
+        handler: createAuthMiddleware(async (ctx) => {
+          const clientId = ctx.body?.client_id;
+          if (typeof clientId !== "string" || !URL.canParse(clientId) || (await clientExists(clientId))) return;
+          throw new APIError("BAD_REQUEST", { error: "invalid_client", error_description: "Unknown client" });
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
+
 const forceConsent = {
   id: "eccos-force-consent",
   hooks: {
@@ -268,6 +328,7 @@ export function oauthAuthorizationServer(config: { baseURL: string; mcpResource:
       }),
       cimd({ fetchClientMetadataResource: cimdFetch, metadataProfile: "mcp-2026-07-28" }),
       forceConsent,
+      grantPolicy,
     ],
   };
 }
