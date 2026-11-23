@@ -29,6 +29,27 @@ export interface MessageContent {
   errorMessage?: string;
 }
 
+/**
+ * Meta's `referral`, camel-cased: set on the first message a customer sends from a
+ * click-to-WhatsApp ad or a post. Only the fields Meta sent are present.
+ */
+export interface Referral {
+  /** `ad` or `post`. */
+  sourceType?: string;
+  /** The id of the ad or post. */
+  sourceId?: string;
+  sourceUrl?: string;
+  headline?: string;
+  body?: string;
+  /** `image` or `video`. */
+  mediaType?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  thumbnailUrl?: string;
+  /** The ad click id. The Conversions API needs it to attribute the conversation to the ad. */
+  ctwaClid?: string;
+}
+
 /** Where Eccos sent the message an event is about: a status's message, or the message `replyTo` names. Absent for messages sent any other way. */
 export interface EventOrigin {
   /** The broadcast that sent it. */
@@ -73,6 +94,8 @@ export type WhatsAppCallbackEvent =
       payload?: string;
       /** The id (wamid) of the message this one replies to: a quoted message, the template or interactive message whose button was tapped, or the Flow message answered. */
       replyTo?: string;
+      /** The ad or post the customer came from, when Meta sends one. */
+      referral?: Referral;
     } & EventOrigin)
   | {
       type: "echo";
@@ -98,6 +121,8 @@ export type WhatsAppCallbackEvent =
       profileName?: string;
       /** The id (wamid) of the message this one replies to: a quoted message, the template or interactive message whose button was tapped, or the Flow message answered. */
       replyTo?: string;
+      /** The ad or post the customer came from, when Meta sends one. */
+      referral?: Referral;
     } & MessageContent & EventOrigin)
   | ({
       type: "message_echo";
