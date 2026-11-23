@@ -547,8 +547,13 @@ returns `structuredContent`. Read tools carry `readOnlyHint`; `template_delete`,
 phones, tools take `wabaId` and `phoneNumberId` and refuse ids the account does not own; with
 exactly one, they default to it, as the console does. No tool takes an account or organization id.
 
-"Scope" is the scope the token needs; the role needed follows from §3.2. ⬆ marks a step-up tool,
-which also needs a live elevation (§3.3).
+"Scope" is the scope of the tool's own action; the role needed follows from §3.2. ⬆ marks a step-up
+tool, which also needs a live elevation (§3.3). A tool that finds the account's WABAs
+(`listAccountResources`) also needs `eccos:view`, and is neither listed nor run without it: that is
+every tool below except `billing_get`, `billing_checkout_link`, `connect_link_create`,
+`connect_status`, `api_keys_list`, `api_key_create` and `api_key_revoke`. So `number_recheck`,
+`webhook_get`, `webhook_set`, `webhook_resubscribe`, the template tools and `template_send_test`
+need view next to their own scope.
 
 ### Phase 1: connect and set up
 
