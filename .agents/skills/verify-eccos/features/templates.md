@@ -26,5 +26,5 @@ Preconditions:
 ## Gotchas
 
 - The fake serves one fixed template. Filters and paging need more than one, so they are not provable here. `packages/core/tests/templates.test.ts` covers them.
-- The console's `New template`, edit and delete flows are not mapped yet. The fake answers a create with status `PENDING` and a delete with success, but nobody has driven those screens. Add a recipe before claiming them.
+- The console's `New template`, edit and delete flows are not mapped yet. The fake keeps templates per WABA: it adds a create as `PENDING`, applies an edit at once and removes a deleted translation, but nobody has driven those screens. Add a recipe before claiming them.
 - Template status changes arrive from Meta as webhooks. No fixture ships for them yet.

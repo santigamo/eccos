@@ -25,7 +25,7 @@ The gateway entry changes one thing: outbound requests to `graph.facebook.com` a
 
 The stack never reads your local environment. Both processes start with an empty environment apart from `PATH`, `HOME` and `TMPDIR`, and with no `.dev.vars` or `.env` beside their config: the gateway gets `--env-file .verify/run/empty.env`, and the console's config lives in the run directory. A `.dev.vars` you keep for your own `vite dev` or `wrangler dev` stays untouched and unused. All secrets are fixed fake values printed by `$V env`.
 
-The fake knows one WhatsApp Business Account: WABA `100200300`, phone number ID `555001`, display number `+34 600 000 001`, and one approved template `order_update` (`en_US`). Any Meta token is accepted. A send to `34600000999` is refused with Meta error `131026`. A Graph request the fake has no answer for returns a Meta-style `400` and is logged with `"handled":false`.
+The fake knows one WhatsApp Business Account: WABA `100200300`, phone number ID `555001`, display number `+34 600 000 001`, and one approved template `order_update` (`en_US`, id `900100`). It keeps templates per WABA: a create adds a `PENDING` row to that WABA, an edit (`POST /<template id>`) replaces the row's content at once, and a delete removes it; another WABA starts with none. Any Meta token is accepted. A send to `34600000999` is refused with Meta error `131026`. A Graph request the fake has no answer for returns a Meta-style `400` and is logged with `"handled":false`.
 
 ## Launch
 

@@ -16,7 +16,9 @@ if (!port || !logFile) {
 const UNDELIVERABLE = "34600000999";
 const WABA_ID = "100200300";
 const PHONE = { id: "555001", display_phone_number: "+34 600 000 001", verified_name: "Eccos Verify" };
-const TEMPLATE = {
+type Template = { id: string; name: string; language: string; status: string; category: string; components: unknown[] };
+
+const TEMPLATE: Template = {
   id: "900100",
   name: "order_update",
   language: "en_US",
@@ -24,6 +26,15 @@ const TEMPLATE = {
   category: "UTILITY",
   components: [{ type: "BODY", text: "Hi {{1}}, your order {{2}} is on its way.", example: { body_text: [["Ana", "A-1"]] } }],
 };
+
+/** Templates per WABA, as Meta keeps them: WABA_ID starts with TEMPLATE, any other WABA with none. */
+const templates = new Map<string, Template[]>([[WABA_ID, [TEMPLATE]]]);
+const templatesOf = (wabaId: string): Template[] => {
+  const rows = templates.get(wabaId) ?? [];
+  templates.set(wabaId, rows);
+  return rows;
+};
+let nextTemplateId = 900101;
 
 let sent = 0;
 
@@ -59,10 +70,27 @@ function graph(method: string, path: string, query: URLSearchParams, body: strin
     if (method === "GET") return json({ data: [{ whatsapp_business_api_data: { id: "verify-app-id", name: "Eccos Verify" } }] });
     return json({ success: true });
   }
-  if (edge === "message_templates") {
-    if (method === "GET") return json({ data: [TEMPLATE], paging: {} });
-    if (method === "POST") return json({ id: "900101", status: "PENDING", category: "UTILITY" });
-    if (method === "DELETE") return json({ success: true });
+  if (edge === "message_templates" && first !== undefined) {
+    const rows = templatesOf(first);
+    if (method === "GET") {
+      const name = query.get("name");
+      return json({ data: rows.filter((row) => (name ? row.name.includes(name) : true)), paging: {} });
+    }
+    if (method === "POST") {
+      const draft = JSON.parse(body) as { name: string; language: string; category: string; components: unknown[] };
+      const id = String(nextTemplateId++);
+      rows.push({ id, name: draft.name, language: draft.language, status: "PENDING", category: draft.category, components: draft.components });
+      return json({ id, status: "PENDING", category: draft.category });
+    }
+    if (method === "DELETE") {
+      // Meta deletes one translation by hsm_id and name, or every translation by name.
+      const name = query.get("name");
+      const hsmId = query.get("hsm_id");
+      const keep = rows.filter((row) => !(row.name === name && (hsmId === null || row.id === hsmId)));
+      if (keep.length === rows.length) return metaError(400, 100, `Template ${name} not found`);
+      templates.set(first, keep);
+      return json({ success: true });
+    }
   }
   if (edge === "messages" && method === "POST") {
     const to = (JSON.parse(body) as { to?: string }).to ?? "";
@@ -73,6 +101,15 @@ function graph(method: string, path: string, query: URLSearchParams, body: strin
       contacts: [{ input: to, wa_id: to }],
       messages: [{ id: `wamid.FAKE${sent}` }],
     });
+  }
+  // A template edit is a POST to the translation's own id; the fake approves the new content at once.
+  if (first !== undefined && first !== PHONE.id && /^[0-9]+$/.test(first) && edge === undefined && method === "POST") {
+    const row = [...templates.values()].flat().find((candidate) => candidate.id === first);
+    if (!row) return metaError(400, 100, `Unsupported post request. Object with ID '${first}' does not exist`);
+    const edit = JSON.parse(body) as { components?: unknown[]; category?: string };
+    if (edit.components) row.components = edit.components;
+    if (edit.category) row.category = edit.category;
+    return json({ success: true });
   }
   if (first === PHONE.id && edge === undefined && method === "GET" && query.has("fields")) {
     return json({ id: PHONE.id, is_on_biz_app: false, platform_type: "CLOUD_API" });
