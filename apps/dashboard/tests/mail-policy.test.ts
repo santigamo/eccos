@@ -335,13 +335,13 @@ describe("no raw token ever leaves in a header", () => {
   });
 });
 
-describe("what better-auth 1.7.2 does with a thrown send (documented gap)", () => {
+describe("what better-auth does with a thrown send (documented gap, re-read at 1.7.27)", () => {
   test("sign-up SWALLOWS the throw, so the undeliverable branch cannot fire there yet", async () => {
     // better-auth wraps the sign-up send in `runInBackgroundOrAwait`
-    // (dist/context/create-context.mjs:214), which awaits inside a try/catch
+    // (dist/context/create-context.mjs:215), which awaits inside a try/catch
     // and only LOGS a rejection. The same is true of create-invitation
-    // (dist/plugins/organization/routes/crud-invites.mjs:226) and
-    // forgot-password (dist/api/routes/password.mjs:83).
+    // (dist/plugins/organization/routes/crud-invites.mjs:230) and
+    // forgot-password (dist/api/routes/password.mjs:82).
     //
     // This test pins that reality so it FAILS LOUDLY the day better-auth
     // propagates instead — at which point the console branch starts working
