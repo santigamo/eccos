@@ -55,5 +55,9 @@
     "CONSOLE_ORIGIN": "http://localhost:3000"
   }
 
-  // No secrets: tokens are verified by the console over the CONSOLE binding.
+  // One secret, and it grants no access: REQUEST_STATE_KEY (at least 32 bytes) seals the
+  // step-up guard's URL-elicitation state. Set it with `wrangler secret put REQUEST_STATE_KEY`;
+  // for `wrangler dev`, copy .dev.vars.example to .dev.vars. Unset, the guard never uses URL
+  // elicitation and every client gets the structured approval result. Tokens are verified by
+  // the console over the CONSOLE binding; apps/mcp holds no credential.
 }

@@ -17,6 +17,8 @@ interface ConsoleControls {
   approve(actor: Pick<ActorRef, "userId" | "clientId" | "organizationId">, until: number): Promise<void>;
   setBilling(accountId: string, billing: BillingResult): Promise<void>;
   refuseElevation(refusal: ElevationResult | null): Promise<void>;
+  failAuthorize(message: string | null): Promise<void>;
+  billingCalls(): Promise<ActorRef[]>;
   authorizeCalls(): Promise<{ resource: string; token: string }[]>;
   elevationCalls(): Promise<{ actor: ActorRef; tool: string }[]>;
 }
@@ -24,6 +26,7 @@ interface ConsoleControls {
 interface GatewayControls {
   reset(): Promise<void>;
   seed(accountId: string, fixture: AccountFixture): Promise<void>;
+  fail(method: string, message: string): Promise<void>;
   calls(): Promise<GatewayCall[]>;
 }
 
@@ -72,14 +75,14 @@ export async function grantToken(actor: Actor, scope: string[] = ALL_SCOPES): Pr
 
 type FetchApp = { fetch(request: Request, env: unknown, ctx: ExecutionContext): Response | Promise<Response> };
 
-/** `fetch` into an app instance, in this isolate, with the test Worker's bindings. */
-export function fetcher(target: FetchApp = app) {
+/** `fetch` into an app instance, in this isolate, with the test Worker's bindings (or `bindings`). */
+export function fetcher(target: FetchApp = app, bindings: object = env) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     // An incoming request carries Host; one built in a test does not.
     request.headers.set("host", new URL(request.url).host);
     const ctx = createExecutionContext();
-    const response = await target.fetch(request, env, ctx);
+    const response = await target.fetch(request, bindings, ctx);
     await waitOnExecutionContext(ctx);
     return response;
   };
@@ -88,10 +91,16 @@ export function fetcher(target: FetchApp = app) {
 /** A raw JSON-RPC POST to /mcp, as a 2026-07-28 client sends it. */
 export function postMcp(
   body: unknown,
-  { token, headers = {}, target = app }: { token?: string; headers?: Record<string, string>; target?: FetchApp } = {},
+  {
+    token,
+    headers = {},
+    target = app,
+    raw,
+  }: { token?: string; headers?: Record<string, string>; target?: FetchApp; raw?: BodyInit } = {},
 ): Promise<Response> {
   return fetcher(target)(RESOURCE, {
     method: "POST",
+    ...(raw instanceof ReadableStream ? { duplex: "half" } : {}),
     headers: {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
@@ -100,13 +109,13 @@ export function postMcp(
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...headers,
     },
-    body: JSON.stringify(body),
-  });
+    body: raw ?? JSON.stringify(body),
+  } as RequestInit);
 }
 
 /** The 2026-07-28 transport repeats the method (and a tool's name) in headers. */
 function mcpHeaders(body: unknown): Record<string, string> {
-  const { method, params } = body as { method?: string; params?: { name?: string } };
+  const { method, params } = (body ?? {}) as { method?: string; params?: { name?: string } };
   return {
     ...(method ? { "mcp-method": method } : {}),
     ...(method === "tools/call" && params?.name ? { "mcp-name": params.name } : {}),
@@ -127,7 +136,7 @@ export const toolsCall = (name: string, args: Record<string, unknown> = {}, id =
   params: { name, arguments: args, _meta: envelope() },
 });
 
-const envelope = () => ({
+export const envelope = () => ({
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
   "io.modelcontextprotocol/clientInfo": { name: "raw-test", version: "0" },
   "io.modelcontextprotocol/clientCapabilities": {},
@@ -140,11 +149,13 @@ export async function connect(
   token: string,
   {
     target = app,
+    bindings = env,
     mode = { pin: "2026-07-28" },
     capabilities = {},
     onElicit,
   }: {
     target?: FetchApp;
+    bindings?: object;
     mode?: Mode;
     capabilities?: Record<string, unknown>;
     onElicit?: (params: Record<string, unknown>) => Promise<{ action: "accept" | "decline" | "cancel" }>;
@@ -157,7 +168,7 @@ export async function connect(
   await client.connect(
     new StreamableHTTPClientTransport(new URL(RESOURCE), {
       authProvider: { token: async () => token },
-      fetch: fetcher(target),
+      fetch: fetcher(target, bindings),
     } as never),
   );
   return client;

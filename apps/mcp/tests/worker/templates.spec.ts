@@ -139,7 +139,7 @@ describe("templates_list", () => {
 
     expect(result.isError).toBe(true);
     expect(result.text).toBe(
-      'Meta did not return the templates of WABA "waba-a". Meta said: "Error validating access token" Try again in a minute; if Meta says the access token is invalid or expired, call numbers_list to check the number\'s token.',
+      'Meta did not return the templates of WABA "waba-a". Meta said: "Error validating access token" Try again in a minute. If Meta says the access token is invalid or expired, call numbers_list to check the number\'s token.',
     );
   });
 
@@ -157,18 +157,24 @@ describe("templates_list", () => {
     expect(ambiguous.text).toBe(
       'This workspace has 2 WhatsApp Business accounts, so pass wabaId: one of "waba-a", "waba-a2". Call numbers_list to see which phones each one has.',
     );
-    expect(unknown.text).toBe('WABA "waba-zz" is not connected to this workspace. Use one of: "waba-a", "waba-a2", or call numbers_list to see them with their phones.');
+    expect(unknown.text).toBe('WABA "waba-zz" is not connected to this workspace. Use one of: "waba-a", "waba-a2". Call numbers_list to see them with their phones.');
     expect(chosen.structuredContent).toMatchObject({ wabaId: "waba-a2", templates: [{ name: "spring_promo" }] });
   });
 
-  it("points at connect_link_create when no number is connected", async () => {
+  it("points at connect_link_create when no number is connected, only for a connection that may call it", async () => {
     await gatewayStub.seed("acct-a", { resources: account("acct-a", []) });
-    const client = await as(["view"]);
-    const result = await call(client, "templates_list");
-    await client.close();
+    const admin = await as(["view", "administer"]);
+    const owner = await call(admin, "templates_list");
+    await admin.close();
+    const viewer = await as(["view"]);
+    const refused = await call(viewer, "templates_list");
+    await viewer.close();
 
-    expect(result.isError).toBe(true);
-    expect(result.text).toContain("Call connect_link_create");
+    expect(owner.isError).toBe(true);
+    expect(owner.text).toContain("Call connect_link_create");
+    expect(refused.text).toBe(
+      "This workspace has no WhatsApp Business account connected yet. This connection cannot call connect_link_create (it needs the eccos:administer scope); the person can check this in the Eccos console.",
+    );
   });
 
   it("works on a WABA still waiting for its number, as the console does", async () => {
@@ -197,7 +203,7 @@ describe("template_create", () => {
       status: "PENDING",
       category: "MARKETING",
       categoryChanged: true,
-      next: 'Meta is reviewing it. Call templates_list with name "order_ready" until its status is APPROVED, then template_send_test.',
+      next: 'Meta is reviewing it. Call templates_list with name "order_ready" until its status is APPROVED. Then call template_send_test.',
     });
     expect((await writes("createTemplate")).map((entry) => entry.input)).toEqual([
       {
@@ -220,6 +226,17 @@ describe("template_create", () => {
       }),
     ]);
     expect(JSON.stringify(lines)).not.toContain("pickup");
+  });
+
+  it("does not point a connection that cannot send at template_send_test", async () => {
+    await seedA();
+    const client = await as(["view", "configure"]);
+    const result = await call(client, "template_create", CREATE);
+    await client.close();
+
+    expect(result.structuredContent).toMatchObject({
+      next: 'Meta is reviewing it. Call templates_list with name "order_ready" until its status is APPROVED.',
+    });
   });
 
   it.each([
@@ -259,7 +276,7 @@ describe("template_create", () => {
   it.each([
     [
       { ok: false, code: "name_taken", detail: "dup" },
-      'A template named "order_ready" already exists in en_US on WABA "waba-a", or was deleted less than 30 days ago (Meta locks the name). Pick another name, or call templates_list with name "order_ready" and use template_edit on the existing one.',
+      'A template named "order_ready" already exists in en_US on WABA "waba-a", or was deleted less than 30 days ago (Meta locks the name). Pick another name. To change the existing one, call templates_list with name "order_ready" and use template_edit.',
     ],
     [{ ok: false, code: "invalid", detail: "Param text has too many variables" }, 'Meta refused the template\'s content. Meta said: "Param text has too many variables" Fix it and call template_create again.'],
     [
@@ -384,6 +401,17 @@ describe("template_send_test", () => {
 
     expect(result.structuredContent).toMatchObject({ status: "accepted" });
     expect((await gatewayStub.calls()).map((entry) => entry.method)).toEqual(["listAccountResources", "sendTemplateTest"]);
+  });
+
+  it("does not point a connection without view at numbers_list", async () => {
+    await seedA();
+    const client = await as(["send"], ["eccos:send"]);
+    const result = await call(client, "template_send_test", { ...SEND, phoneNumberId: "999" });
+    await client.close();
+
+    expect(result.text).toBe(
+      'Phone number id "999" is not registered in this workspace. This connection cannot call numbers_list (it needs the eccos:view scope); the person can check this in the Eccos console.',
+    );
   });
 
   it("fills a media header and a dynamic URL button", async () => {

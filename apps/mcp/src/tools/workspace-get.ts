@@ -1,8 +1,9 @@
-import type { BillingResult } from "@eccos/console-contract";
+import type { AgentAction, BillingResult } from "@eccos/console-contract";
 import type { AccountWabaResource, TemplatesResult } from "@eccos/gateway-contract";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { z } from "zod";
-import { actorRef, defineTool, isElevated } from "./registry";
+import { LEAST_ROLE, SCOPE_OF } from "../permissions";
+import { type ToolDeps, actorRef, defineTool, isElevated } from "./registry";
 
 const STEP_IDS = ["subscription", "number", "webhook", "api_key", "template"] as const;
 const step = z.object({
@@ -11,7 +12,7 @@ const step = z.object({
   /** Numbers on active WABAs, active API keys, approved templates; null where nothing is counted. */
   count: z.number().int().nullable(),
   detail: z.string(),
-  /** The tool that makes progress on this step, or null when there is nothing to do. */
+  /** The tool that makes progress on this step, when this connection may call it; else null. */
   nextTool: z.string().nullable(),
   /** A step that must be done first. */
   blockedBy: z.enum(STEP_IDS).nullable(),
@@ -19,85 +20,135 @@ const step = z.object({
 
 type Step = z.infer<typeof step>;
 
+/** The tools a step can point at, with the action each needs (design § 4). */
+const NEXT_TOOL_ACTION = {
+  billing_checkout_link: "administer",
+  connect_link_create: "administer",
+  numbers_list: "view",
+  webhook_set: "configure",
+  api_key_create: "administer",
+  template_create: "configure",
+} as const satisfies Record<string, AgentAction>;
+
+type NextTool = keyof typeof NEXT_TOOL_ACTION;
+
+/** A step before it is told who may act on it: `fact` says where it stands, `call` how `nextTool` moves it. */
+type Draft = Omit<Step, "detail" | "nextTool"> & { fact: string; next?: { tool: NextTool; call?: string } };
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-function subscriptionStep(result: BillingResult): Step {
-  const base = { id: "subscription", count: null, nextTool: null, blockedBy: null } as const;
+const holders = (action: AgentAction) => (LEAST_ROLE[action] === "admin" ? "an owner or admin" : `an ${LEAST_ROLE[action]} or above`);
+
+/** Point at the next tool only when this connection may call it; otherwise say who can do the step. */
+function offer({ fact, next, ...rest }: Draft, deps: ToolDeps): Step {
+  if (!next) return { ...rest, detail: fact, nextTool: null };
+  const action = NEXT_TOOL_ACTION[next.tool];
+  if (deps.can(action)) return { ...rest, detail: next.call ? `${fact} ${next.call}` : fact, nextTool: next.tool };
+  return {
+    ...rest,
+    detail: `${fact} This connection cannot do it: it needs the ${SCOPE_OF[action]} scope, which ${holders(action)} can grant, or they can do it in the Eccos console.`,
+    nextTool: null,
+  };
+}
+
+/** `null` when this connection may not see billing (contract § 4: billing state is administer). */
+function subscriptionStep(result: BillingResult | null): Draft {
+  const base = { id: "subscription", count: null, blockedBy: null } as const;
+  if (result === null) {
+    return {
+      ...base,
+      state: "unknown",
+      fact: `Billing needs the ${SCOPE_OF.administer} scope, held by ${holders("administer")}, so it is not shown to this connection.`,
+    };
+  }
   if (!result.ok) {
     switch (result.code) {
       case "billing_disabled":
-        return { ...base, state: "not_applicable", detail: "This deployment runs without billing, so no subscription is needed." };
+        return { ...base, state: "not_applicable", fact: "This deployment runs without billing, so no subscription is needed." };
       case "forbidden":
         return {
           ...base,
           state: "unknown",
-          detail: "Billing is visible only to owners and admins of this workspace. Ask one of them whether a subscription is active.",
+          fact: "Billing is visible only to owners and admins of this workspace. Ask one of them whether a subscription is active.",
         };
       default:
         return {
           ...base,
           state: "unknown",
-          detail: "Billing could not be read because this connection no longer stands. Ask the person to connect the agent again.",
+          fact: "Billing could not be read because this connection no longer stands. Ask the person to connect the agent again.",
         };
     }
   }
-  if (result.billing.connectPolicy === "open") {
-    return { ...base, state: "done", detail: "Billing is active: numbers can be added." };
-  }
+  if (result.billing.connectPolicy === "open") return { ...base, state: "done", fact: "Billing is active: numbers can be added." };
   return {
     ...base,
     state: "todo",
-    detail: "A subscription is required before a number can be connected. Call billing_checkout_link and give the person the link.",
-    nextTool: "billing_checkout_link",
+    fact: "A subscription is required before a number can be connected.",
+    next: { tool: "billing_checkout_link", call: "Call billing_checkout_link and give the person the link." },
   };
 }
 
 /** The console's rule (lib/setup-checklist.ts): done with an active WABA, in progress with any WABA. */
-function numberStep(wabas: AccountWabaResource[], subscription: Step): Step {
+function numberStep(wabas: AccountWabaResource[], subscription: Draft): Draft {
   const active = wabas.filter((waba) => waba.status === "active");
   const count = active.reduce((sum, waba) => sum + waba.phones.length, 0);
-  const base = { id: "number", count } as const;
   if (active.length > 0) {
-    return { ...base, state: "done", detail: `${plural(count, "number is", "numbers are")} connected and active.`, nextTool: null, blockedBy: null };
+    return { id: "number", count, state: "done", fact: `${plural(count, "number is", "numbers are")} connected and active.`, blockedBy: null };
   }
   if (wabas.length > 0) {
     return {
-      ...base,
+      id: "number",
+      count,
       state: "in_progress",
-      detail: "A WhatsApp Business account is connected but no number is active yet. Call numbers_list to see its provisioning status.",
-      nextTool: "numbers_list",
+      fact: "A WhatsApp Business account is connected but no number is active yet.",
+      next: { tool: "numbers_list", call: "Call numbers_list to see its provisioning status." },
       blockedBy: null,
     };
   }
   return {
-    ...base,
+    id: "number",
+    count,
     state: "todo",
-    detail: "No WhatsApp number is connected. Call connect_link_create and give the person the link; they connect a number through Embedded Signup.",
-    nextTool: "connect_link_create",
+    fact: "No WhatsApp number is connected.",
+    next: {
+      tool: "connect_link_create",
+      call: "Call connect_link_create and give the person the link; they connect a number through Embedded Signup.",
+    },
     blockedBy: subscription.state === "todo" ? "subscription" : null,
   };
 }
 
-function webhookStep(wabaId: string | null, url: string | null): Step {
-  const base = { id: "webhook", count: null, nextTool: "webhook_set" } as const;
+function webhookStep(wabaId: string | null, url: string | null): Draft {
+  const base = { id: "webhook", count: null } as const;
   if (wabaId === null) {
-    return { ...base, state: "todo", detail: "No forwarding target can be set until a WhatsApp Business account is connected.", blockedBy: "number" };
+    return {
+      ...base,
+      state: "todo",
+      fact: "No forwarding target can be set until a WhatsApp Business account is connected.",
+      next: { tool: "webhook_set" },
+      blockedBy: "number",
+    };
   }
-  if (url !== null) {
-    return { ...base, state: "done", detail: `Events from WABA ${wabaId} are forwarded to its subscriber URL.`, nextTool: null, blockedBy: null };
-  }
+  if (url !== null) return { ...base, state: "done", fact: `Events from WABA ${wabaId} are forwarded to its subscriber URL.`, blockedBy: null };
   return {
     ...base,
     state: "todo",
-    detail: `No subscriber URL is set for WABA ${wabaId}, so inbound events are held. Call webhook_set with the URL that should receive them.`,
+    fact: `No subscriber URL is set for WABA ${wabaId}, so inbound events are held.`,
+    next: { tool: "webhook_set", call: "Call webhook_set with the URL that should receive them." },
     blockedBy: null,
   };
 }
 
-function apiKeyStep(active: number): Step {
+/** A count only, a view fact (design § 4); listing or creating keys is administer. */
+function apiKeyStep(active: number): Draft {
   const base = { id: "api_key", count: active, blockedBy: null } as const;
-  if (active > 0) return { ...base, state: "done", detail: `${plural(active, "active API key", "active API keys")}.`, nextTool: null };
-  return { ...base, state: "todo", detail: "No active API key. Call api_key_create to issue one for the /v1 API.", nextTool: "api_key_create" };
+  if (active > 0) return { ...base, state: "done", fact: `${plural(active, "active API key", "active API keys")}.` };
+  return {
+    ...base,
+    state: "todo",
+    fact: "No active API key.",
+    next: { tool: "api_key_create", call: "Call api_key_create to issue one for the /v1 API." },
+  };
 }
 
 /** Meta's template list (`data.data`), counted the way the console decides a template can be sent. */
@@ -108,14 +159,15 @@ function approvedTemplates(result: TemplatesResult): number | null {
   return rows.filter((row) => String((row as { status?: unknown })?.status ?? "").toUpperCase() === "APPROVED").length;
 }
 
-function templateStep(wabaId: string | null, approved: number | null): Step {
-  const base = { id: "template", nextTool: "template_create" } as const;
+function templateStep(wabaId: string | null, approved: number | null): Draft {
+  const base = { id: "template" } as const;
   if (wabaId === null) {
     return {
       ...base,
       state: "todo",
       count: 0,
-      detail: "No message template can be created until a WhatsApp Business account is connected.",
+      fact: "No message template can be created until a WhatsApp Business account is connected.",
+      next: { tool: "template_create" },
       blockedBy: "number",
     };
   }
@@ -124,8 +176,7 @@ function templateStep(wabaId: string | null, approved: number | null): Step {
       ...base,
       state: "unknown",
       count: null,
-      detail: "Templates could not be read from Meta just now. Call workspace_get again later.",
-      nextTool: null,
+      fact: "Templates could not be read from Meta just now. Call workspace_get again later.",
       blockedBy: null,
     };
   }
@@ -134,8 +185,7 @@ function templateStep(wabaId: string | null, approved: number | null): Step {
       ...base,
       state: "done",
       count: approved,
-      detail: `${plural(approved, "approved template", "approved templates")} on WABA ${wabaId}.`,
-      nextTool: null,
+      fact: `${plural(approved, "approved template", "approved templates")} on WABA ${wabaId}.`,
       blockedBy: null,
     };
   }
@@ -143,7 +193,8 @@ function templateStep(wabaId: string | null, approved: number | null): Step {
     ...base,
     state: "todo",
     count: 0,
-    detail: `No approved message template on WABA ${wabaId}. Call template_create; Meta reviews a template before it can be sent.`,
+    fact: `No approved message template on WABA ${wabaId}.`,
+    next: { tool: "template_create", call: "Call template_create; Meta reviews a template before it can be sent." },
     blockedBy: null,
   };
 }
@@ -156,7 +207,8 @@ export const workspaceGet = defineTool({
   description: [
     "Returns who you act as in Eccos (user and role), the workspace this connection is bound to, the scopes and actions this connection allows,",
     "whether sensitive actions are approved (elevatedUntil, ISO time or null) and a setup checklist: subscription, WhatsApp number, webhook,",
-    "API key and an approved message template. Each missing step names the tool to call next (nextTool) and any step it waits on (blockedBy).",
+    "API key and an approved message template. Each missing step names the tool to call next (nextTool) when this connection may call it,",
+    "says who can do it otherwise, and names any step it waits on (blockedBy).",
     "Call this first, and again after each setup step to see what is left. It changes nothing.",
   ].join(" "),
   inputSchema: z.object({}),
@@ -168,13 +220,16 @@ export const workspaceGet = defineTool({
     elevatedUntil: z.string().nullable(),
     setup: z.object({ complete: z.boolean(), steps: z.array(step) }),
   }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
-  run: async (_input, actor, { gateway, console }) => {
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  run: async (_input, actor, deps) => {
+    const { gateway } = deps.for("view");
     const [billing, resources, keys] = await Promise.all([
-      console.getBilling(actorRef(actor)),
+      deps.can("administer") ? deps.for("administer").console.getBilling(actorRef(actor)) : null,
       gateway.listAccountResources(actor.accountId),
       gateway.listApiKeys(actor.accountId),
     ]);
+    // The forwarding target's existence is a view fact, as in the console's checklist
+    // (server/gateway.ts hasForwardingTarget); the URL itself is never returned.
     const waba = resources.wabas.length > 0 ? selectWaba(actor.accountId, resources.wabas, undefined, false, "any") : null;
     const [subscriber, templates] = waba
       ? await Promise.all([
@@ -190,7 +245,7 @@ export const workspaceGet = defineTool({
       webhookStep(waba?.wabaId ?? null, subscriber?.url ?? null),
       apiKeyStep(keys.filter((key) => key.revokedAt === null).length),
       templateStep(waba?.wabaId ?? null, templates ? approvedTemplates(templates) : 0),
-    ];
+    ].map((draft) => offer(draft, deps));
     return {
       actingAs: { userId: actor.userId, role: actor.role },
       workspace: { organizationId: actor.organizationId },
@@ -201,4 +256,3 @@ export const workspaceGet = defineTool({
     };
   },
 });
-

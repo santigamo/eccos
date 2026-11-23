@@ -1,16 +1,36 @@
 import type { Actor, ActorRef, AgentAction, ConsoleApi, ElevationRequest, ElevationResult } from "@eccos/console-contract";
 import type { GatewayApi } from "@eccos/gateway-contract";
-import { type McpServer, type ServerContext, type ToolAnnotations, inputRequired, inputResponse } from "@modelcontextprotocol/server";
+import {
+  type McpServer,
+  type RequestStateCodec,
+  type ServerContext,
+  type ToolAnnotations,
+  inputRequired,
+  inputResponse,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type AuditResource, auditEvent } from "../audit";
+import { forbiddenMessage } from "../permissions";
 
 /** The actor `authorize` returned for this request, plus the scopes the token carries. */
 export type McpActor = Actor & { scope: string[] };
 
-/** Everything a tool may call. Tools never see the token. */
-export interface ToolDeps {
+/** The private bindings a tool calls through. Tools never see the token. */
+export interface Clients {
   gateway: GatewayApi;
   console: ConsoleApi;
+}
+
+/**
+ * What a tool may call, gated by the actor's actions (live role ∩ granted scopes). A tool asks
+ * for the clients of the action each call needs, so no call reaches the console or the gateway
+ * on an action the caller does not hold: the console cannot tell, because an `ActorRef` carries
+ * no scope.
+ */
+export interface ToolDeps {
+  /** The clients for `action`; throws a {@link ForbiddenError} when the actor lacks it. */
+  for(action: AgentAction): Clients;
+  can(action: AgentAction): boolean;
 }
 
 /**
@@ -25,6 +45,32 @@ export class ToolError extends Error {
     super(message);
   }
 }
+
+/** The caller lacks the action a call needs. */
+export class ForbiddenError extends ToolError {
+  constructor(readonly action: AgentAction) {
+    super(forbiddenMessage(action));
+  }
+}
+
+export function capabilities(actor: Pick<Actor, "actions">, clients: Clients): ToolDeps {
+  const can = (action: AgentAction) => actor.actions.includes(action);
+  return {
+    can,
+    for(action) {
+      if (!can(action)) throw new ForbiddenError(action);
+      return clients;
+    },
+  };
+}
+
+/** What the step-up guard seals into `requestState` when it sends a client to the approval page. */
+export interface ElevationState {
+  requestId: string;
+  tool: string;
+}
+
+export type ElevationStateCodec = RequestStateCodec<ElevationState>;
 
 /**
  * One tool, as data. `createServer` registers it only when `action` is among the actor's
@@ -64,6 +110,10 @@ const elevationDeclined = z.object({
   action: z.enum(["decline", "cancel"]),
   message: z.string(),
 });
+
+/** A sealed state the SDK accepted, but for another tool or a request that is no longer pending. */
+const STALE_STATE = (tool: string) =>
+  `This approval prompt does not match a pending approval request for ${tool}. Call ${tool} again with the same arguments to get a current approval link.`;
 
 export const isElevated = (actor: Pick<Actor, "elevatedUntil">) =>
   actor.elevatedUntil !== null && actor.elevatedUntil > Date.now();
@@ -107,14 +157,11 @@ function approvalResult(tool: string, request: ElevationRequest) {
 }
 
 function declinedResult(tool: string, action: "decline" | "cancel") {
-  return structured(
-    {
-      status: "elevation_declined",
-      action,
-      message: `The person declined to approve sensitive actions for this agent. Do not retry ${tool} unless they ask you to; calling it again asks for approval again.`,
-    } satisfies z.input<typeof elevationDeclined>,
-    true,
-  );
+  const message =
+    action === "decline"
+      ? `The person declined to approve sensitive actions for this agent. Do not retry ${tool} unless they ask you to; calling it again asks for approval again.`
+      : `The person closed the approval prompt without answering. Call ${tool} again with the same arguments when they are ready to approve.`;
+  return structured({ status: "elevation_declined", action, message } satisfies z.input<typeof elevationDeclined>, true);
 }
 
 /** Client capabilities arrive per request on 2026-07-28; 2025-era requests carry none. */
@@ -130,37 +177,59 @@ type Outcome = {
   audit?: { outcome: "success" | "denied" | "failed"; detail: string | null };
 };
 
+const denied = (result: Outcome["result"], detail: string): Outcome => ({ result, audit: { outcome: "denied", detail } });
+
 /**
  * The step-up guard (design § 3.3). Elevation is read only from this request's actor. Without
- * it, a client that declares URL elicitation is sent to the approval page once; its retry
- * carries the person's answer in `inputResponses`, so no request state is needed: a decline
- * ends the call, an accept without an approval falls through to the structured result that
- * every other client gets.
+ * it, a client that declares URL elicitation is sent to the approval page once, with the request
+ * id and the tool sealed into `requestState`; the SDK refuses a forged or expired state before
+ * this runs. The retry must carry a state for this tool and for the request still pending;
+ * then a decline or cancel ends the call, and an accept without an approval falls through to
+ * the structured result every other client gets. Without a sealing key there is no URL
+ * elicitation at all: the structured result works for every client.
  */
-async function guard(tool: ToolDefinition, actor: McpActor, deps: ToolDeps, ctx: ServerContext): Promise<Outcome | null> {
+async function guard(
+  tool: ToolDefinition,
+  actor: McpActor,
+  deps: ToolDeps,
+  ctx: ServerContext,
+  codec: ElevationStateCodec | null,
+): Promise<Outcome | null> {
   if (!tool.stepUp || isElevated(actor)) return null;
+  const clients = deps.for(tool.action);
   const answer = inputResponse(ctx.mcpReq.inputResponses, ELEVATION_INPUT);
-  if (answer.kind === "elicit" && answer.action !== "accept") {
-    return { result: declinedResult(tool.name, answer.action), audit: { outcome: "denied", detail: "elevation_declined" } };
-  }
-  const elevation = await deps.console.requestElevation(actorRef(actor), tool.name);
-  if (!elevation.ok) {
-    return { result: errorText(ELEVATION_REFUSED[elevation.code]), audit: { outcome: "denied", detail: elevation.code } };
-  }
+  const state = codec ? ctx.mcpReq.requestState<ElevationState>() : undefined;
+  const retry = codec !== null && (answer.kind !== "missing" || state !== undefined);
+  if (retry && state?.tool !== tool.name) return denied(errorText(STALE_STATE(tool.name)), "request_state_mismatch");
+
+  const elevation = await clients.console.requestElevation(actorRef(actor), tool.name);
+  if (!elevation.ok) return denied(errorText(ELEVATION_REFUSED[elevation.code]), elevation.code);
   const { request } = elevation;
-  if (answer.kind === "missing" && declaresUrlElicitation(ctx)) {
-    return {
-      result: inputRequired({
-        inputRequests: {
-          [ELEVATION_INPUT]: inputRequired.elicitUrl({
-            url: request.url,
-            message: "Approve sensitive actions for this agent in the Eccos console, then come back here.",
-          }),
-        },
-      }),
-    };
+
+  if (retry) {
+    if (state?.requestId !== request.requestId) return denied(errorText(STALE_STATE(tool.name)), "request_state_mismatch");
+    if (answer.kind === "elicit" && answer.action !== "accept") {
+      return denied(declinedResult(tool.name, answer.action), answer.action === "decline" ? "elevation_declined" : "elevation_cancelled");
+    }
+  } else if (declaresUrlElicitation(ctx)) {
+    if (codec) {
+      return {
+        result: inputRequired({
+          inputRequests: {
+            [ELEVATION_INPUT]: inputRequired.elicitUrl({
+              url: request.url,
+              message: "Approve sensitive actions for this agent in the Eccos console, then come back here.",
+            }),
+          },
+          requestState: await codec.mint({ requestId: request.requestId, tool: tool.name }, ctx),
+        }),
+      };
+    }
+    console.warn(
+      JSON.stringify({ level: "warn", area: "mcp", event: "url_elicitation_unavailable", tool: tool.name, reason: "REQUEST_STATE_KEY is not set" }),
+    );
   }
-  return { result: approvalResult(tool.name, request), audit: { outcome: "denied", detail: "elevation_required" } };
+  return denied(approvalResult(tool.name, request), "elevation_required");
 }
 
 async function invoke(
@@ -169,15 +238,17 @@ async function invoke(
   actor: McpActor,
   deps: ToolDeps,
   ctx: ServerContext,
+  codec: ElevationStateCodec | null,
 ): Promise<Outcome> {
-  const guarded = await guard(tool, actor, deps, ctx);
-  if (guarded) return guarded;
   try {
+    const guarded = await guard(tool, actor, deps, ctx, codec);
+    if (guarded) return guarded;
     const value = await tool.run(input, actor, deps);
     return { result: structured(value), audit: { outcome: "success", detail: null } };
   } catch (error) {
+    if (error instanceof ForbiddenError) return denied(errorText(error.message), "forbidden");
     if (error instanceof ToolError) return { result: errorText(error.message), audit: { outcome: "failed", detail: error.detail } };
-    console.error(JSON.stringify({ level: "error", area: "mcp", tool: tool.name, error: String(error) }));
+    logFailure("tool_failure", tool.name, error);
     return {
       result: errorText(`Eccos could not complete ${tool.name}. Try again in a minute; if it keeps failing, tell the person.`),
       audit: { outcome: "failed", detail: null },
@@ -185,7 +256,22 @@ async function invoke(
   }
 }
 
-export function registerTool(server: McpServer, tool: ToolDefinition, actor: McpActor, deps: ToolDeps): void {
+/**
+ * One line for a failure of the console, the gateway or a tool. The error's name only: its
+ * message can carry anything the failing side put in it, a token included.
+ */
+export function logFailure(event: string, tool: string | null, error: unknown): void {
+  const name = error instanceof Error ? error.name : typeof error;
+  console.error(JSON.stringify({ level: "error", area: "mcp", event, tool, error: name }));
+}
+
+export function registerTool(
+  server: McpServer,
+  tool: ToolDefinition,
+  actor: McpActor,
+  deps: ToolDeps,
+  codec: ElevationStateCodec | null,
+): void {
   const outputSchema = tool.stepUp ? z.union([tool.outputSchema, approvalRequired, elevationDeclined]) : tool.outputSchema;
   server.registerTool(
     tool.name,
@@ -197,7 +283,7 @@ export function registerTool(server: McpServer, tool: ToolDefinition, actor: Mcp
       annotations: tool.annotations,
     },
     async (input: Record<string, unknown>, ctx: ServerContext) => {
-      const { result, audit } = await invoke(tool, input, actor, deps, ctx);
+      const { result, audit } = await invoke(tool, input, actor, deps, ctx, codec);
       if (audit && tool.annotations.readOnlyHint !== true) {
         auditEvent({
           action: tool.name,
