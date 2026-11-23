@@ -45,7 +45,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
 
 ## Phase 1: connect and set up
 
-- [ ] 1.1 Amend `docs/auth-tenancy-contract.md` and `docs/threat-model.md` as listed in
+- [x] 1.1 Amend `docs/auth-tenancy-contract.md` and `docs/threat-model.md` as listed in
       design § 5.5. Documentation only, reviewed before the code that relies on it.
 - [ ] 1.2 Authorization server in the console: `jwt()` with the bare origin as issuer and
       `disabledPaths: ["/token"]`, `mcp()`, `cimd()` with the Workers fetcher, in `createAuth`
@@ -67,7 +67,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       "allow sensitive actions for 24 hours" on the consent page, End elevated access. Tests:
       only the grant's user with TOTP and a recent sign-in can approve; expiry; one pending
       request per grant; revoke ends it.
-- [ ] 1.4b Secret claims in the gateway: the control-plane table, `createSecretClaim` and
+- [x] 1.4b Secret claims in the gateway: the control-plane table, `createSecretClaim` and
       `redeemSecretClaim` on `GatewayRPC`, mint-on-redeem for API keys and the subscriber secret,
       pending claims in the key list. Worker tests: single use, expiry leaves nothing, concurrency.
 - [ ] 1.4c Claim page and `POST /api/claim` in the console: POST-only redemption, token in body
