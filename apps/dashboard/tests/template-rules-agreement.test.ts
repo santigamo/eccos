@@ -83,9 +83,20 @@ const urls = [
   "//example.com",
   "example.com",
   "https://ex.com/{{",
+  "https:ex.com/a.png",
+  "HTTPS://EX.COM/A.PNG",
+  "https:\\\\ex.com\\a.png",
+  "https://example.com/a\u00a0b.png",
   "",
   "   ",
 ];
+/** Built in the caller, never parsed from JSON: a structured-clone caller (Workers RPC) keeps holes. */
+function holed(length: number, filled: Record<number, unknown> = {}): unknown[] {
+  const list = new Array(length);
+  for (const [index, value] of Object.entries(filled)) list[Number(index)] = value;
+  return list;
+}
+const arrayLike = (...values: unknown[]) => ({ ...values, length: values.length });
 const params = ["Ada", " Ada ", "", " ", "\t", "\n", "a\nb", "a\tb", "x".repeat(1024), "x".repeat(1025), "✅ ok", "{{1}}", "\u00a0", "ok\r"];
 const placeholder = () => pick(["{{1}}", "{{2}}", "{{3}}", "{{ 1 }}", "{{01}}", "{{0}}", "{{name}}", "{{", "}}", "{{4}}", "{{30}}", "{{31}}"]);
 
@@ -221,9 +232,17 @@ const sendBase = {
 const sendFields: Record<string, unknown[]> = {
   templateName: [...J, ...names],
   languageCode: [...J, ...langs],
-  bodyParams: [...J, Array.from({ length: 30 }, () => "v"), Array.from({ length: 31 }, () => "v")],
+  bodyParams: [
+    ...J,
+    Array.from({ length: 30 }, () => "v"),
+    Array.from({ length: 31 }, () => "v"),
+    holed(2),
+    holed(2, { 1: "42" }),
+    arrayLike("Ada", "42"),
+    new Set(["Ada", "42"]),
+  ],
   "bodyParams.0": [...J, ...params],
-  buttonParams: [...J, [0, 1, 2, 3].map((index) => ({ index, text: "t" }))],
+  buttonParams: [...J, [0, 1, 2, 3].map((index) => ({ index, text: "t" })), holed(1), arrayLike({ index: 1, text: "abc" })],
   "buttonParams.0": [...J, "x"],
   "buttonParams.0.index": [...J, 0, 9, 10, -1, 1.5, "1", 2 ** 53],
   "buttonParams.0.text": [...J, ...params],
@@ -249,10 +268,17 @@ const createFields: Record<string, unknown[]> = {
   language: [...J, ...langs],
   category: [...J, "MARKETING", "UTILITY", "AUTHENTICATION", "marketing"],
   bodyText: [...J, "", " ", "Hi {{1}}", "Hi {{1}} {{2}} {{3}}", "{{name}}", "{{0}} {{1}}", "{{1}} {{3}}", "x".repeat(1025), " Hi {{1}}, order {{2}} "],
-  bodyExamples: [...J, ["a"], ["a", "b", "c"], Array.from({ length: 31 }, () => "v")],
+  bodyExamples: [...J, ["a"], ["a", "b", "c"], Array.from({ length: 31 }, () => "v"), holed(2), holed(2, { 0: "Ada" }), arrayLike("Ada", "42")],
   "bodyExamples.0": [...J, ...params],
   footerText: [...J, "", " ", "x".repeat(60), "x".repeat(61), "a {{1}}", "a\nb", "a\tb"],
-  buttons: [...J, [], Array.from({ length: 4 }, () => ({ text: "a", url: "https://e.com" }))],
+  buttons: [
+    ...J,
+    [],
+    Array.from({ length: 4 }, () => ({ text: "a", url: "https://e.com" })),
+    holed(1),
+    holed(2, { 1: { text: "Open", url: "https://example.com" } }),
+    arrayLike({ text: "Open", url: "https://example.com" }),
+  ],
   "buttons.0": [...J, "x"],
   "buttons.0.text": [...J, "", " ", "x".repeat(25), "x".repeat(26), "a\nb"],
   "buttons.0.url": [...J, ...urls],
@@ -301,6 +327,10 @@ function compare(
     if (!Bun.deepEquals(atGateway, { ok: true, value: templatePart(atConsole.value) }, true)) {
       disagree(input, atConsole, atGateway);
     }
+    // What the gateway accepts is what Meta receives as JSON: no hole or other value JSON would rewrite.
+    if (atGateway.ok && !Bun.deepEquals(JSON.parse(JSON.stringify(atGateway.value)), atGateway.value, true)) {
+      disagree(input, atConsole, atGateway);
+    }
   }
   return tally;
 }
@@ -317,6 +347,9 @@ const CONTENT_REFUSALS = [
   "example values cannot contain line breaks",
   "a static URL button carries no example",
   "button url is at most 2000 characters",
+  "example values must be strings",
+  "buttons must be objects",
+  "bodyExamples must be an array",
 ];
 
 describe("the console and the gateway agree on template requests", () => {
@@ -331,6 +364,10 @@ describe("the console and the gateway agree on template requests", () => {
         "header media link must not carry credentials",
         "header media link must be a full URL",
         "template parameters cannot contain line breaks",
+        "template parameters must be strings",
+        "button parameters must be objects",
+        "bodyParams must be an array",
+        "header media link must start with https://",
       ],
     );
   });

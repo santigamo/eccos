@@ -469,8 +469,61 @@ describe("button url and header link bounds", () => {
     const send = (link: string) =>
       validateTemplateSend({ templateName: "order_update", languageCode: "en_US", headerMedia: { format: "image", link } });
     expect(send(" https://cdn.e.cc/a.png ").headerMedia).toEqual({ format: "image", link: "https://cdn.e.cc/a.png" });
-    for (const link of ["https://cdn.e.cc/a b.png", "https://cdn.e.cc/a\nb.png", "https://cdn.e.cc/a\tb.png"]) {
+    for (const link of ["https://cdn.e.cc/a b.png", "https://cdn.e.cc/a\nb.png", "https://cdn.e.cc/a\tb.png", "https://cdn.e.cc/a\u00a0b.png"]) {
       expect(() => send(link), JSON.stringify(link)).toThrow("header media link cannot contain spaces or line breaks");
     }
+  });
+});
+
+describe("a header link is written https:// exactly", () => {
+  const send = (link: string) => () =>
+    validateTemplateSend({ templateName: "order_update", languageCode: "en_US", headerMedia: { format: "image", link } });
+
+  test("forms the URL parser reads as https but Meta's fetcher may not are refused", () => {
+    for (const link of ["https:ex.com/a.png", "HTTPS://EX.COM/A.PNG", "Https://ex.com/a.png", "https:\\\\ex.com\\a.png", "https:/ex.com/a.png"]) {
+      expect(send(link), link).toThrow("header media link must start with https://");
+    }
+    expect(send("https://ex.com/a.png")).not.toThrow();
+  });
+});
+
+describe("array holes, as a structured-clone caller sends them", () => {
+  const draft = { name: "order_update", language: "en_US", category: "UTILITY" };
+  const send = { templateName: "order_update", languageCode: "en_US" };
+  // biome-ignore lint/suspicious/noSparseArray: the hole is the input under test
+  const hole = [, "Ada"];
+
+  test("a hole is a missing value, never a skipped one", () => {
+    expect(() => validateTemplateSend({ ...send, bodyParams: hole })).toThrow("template parameters must be strings");
+    expect(() => validateTemplateSend({ ...send, bodyParams: new Array(2) })).toThrow("template parameters must be strings");
+    expect(() => validateTemplateSend({ ...send, buttonParams: new Array(1) })).toThrow("button parameters must be objects");
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi {{1}} {{2}}", bodyExamples: hole })).toThrow(
+      "example values must be strings",
+    );
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi", buttons: new Array(1) })).toThrow("buttons must be objects");
+    expect(() => validateTemplateEdit({ ...draft, templateId: "1", bodyText: "Hi {{1}}", bodyExamples: new Array(1) })).toThrow(
+      "example values must be strings",
+    );
+  });
+
+  test("only a real array is a list: array-likes and other iterables are refused", () => {
+    const arrayLike = { 0: "Ada", length: 1 };
+    expect(() => validateTemplateSend({ ...send, bodyParams: arrayLike })).toThrow("bodyParams must be an array");
+    expect(() => validateTemplateSend({ ...send, bodyParams: new Set(["Ada"]) })).toThrow("bodyParams must be an array");
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi {{1}}", bodyExamples: arrayLike })).toThrow(
+      "bodyExamples must be an array",
+    );
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi", buttons: new Map() })).toThrow("buttons must be an array");
+  });
+
+  test("an array subclass is read by index, not through its own iterator or map", () => {
+    class Sneaky extends Array<unknown> {
+      override map<U>(): U[] {
+        return [] as U[];
+      }
+      override *[Symbol.iterator](): ArrayIterator<unknown> {}
+    }
+    const values = Sneaky.from(["Ada", "a\nb"]) as unknown[];
+    expect(() => validateTemplateSend({ ...send, bodyParams: values })).toThrow("template parameters cannot contain line breaks");
   });
 });

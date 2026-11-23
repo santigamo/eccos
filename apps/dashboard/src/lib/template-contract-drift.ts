@@ -35,6 +35,6 @@ export const templateTypesMatchContract: [
   Same<TemplateEdit, Omit<Contract.EditTemplateInput, "wabaId">>,
   Same<
     TemplateSendRequest,
-    Pick<Contract.SendTemplateTestInput, "templateName" | "languageCode" | "bodyParams" | "buttonParams" | "headerMedia">
+    Omit<Contract.SendTemplateTestInput, "wabaId" | "phoneNumberId" | "to" | "idempotencyKey">
   >,
 ] = [true, true, true, true, true, true, true];

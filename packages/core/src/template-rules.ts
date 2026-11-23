@@ -481,6 +481,15 @@ export function normalizeTemplateName(raw: string): string {
 // everything around them: reading the request, the WABA and number it names,
 // the recipient, and the idempotency key.
 
+/**
+ * A request array's elements by index. A Workers RPC caller sends structured
+ * clones, which keep an array's holes, and `map` skips a hole; read this way a
+ * hole is `undefined` and is refused like any other missing value.
+ */
+function elements(list: unknown[]): unknown[] {
+  return Array.from({ length: list.length }, (_, index) => list[index]);
+}
+
 /** Meta's template-name charset. */
 export const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 /** `en` / `es` / `en_US` / `pt_BR`. */
@@ -546,7 +555,7 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
   if (raw !== undefined && !Array.isArray(raw)) throw new Error("bodyParams must be an array");
   const bodyParams = (raw ?? []) as unknown[];
   if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
-  const values = bodyParams.map((value) => {
+  const values = elements(bodyParams).map((value) => {
     if (typeof value !== "string") throw new Error("template parameters must be strings");
     const text = value.trim();
     if (!text) throw new Error("every template parameter needs a value");
@@ -562,7 +571,7 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
   }
   const buttonParams = (rawButtons ?? []) as unknown[];
   if (buttonParams.length > MAX_BUTTON_PARAMS) throw new Error("too many button parameters");
-  const buttons = buttonParams.map((value) => {
+  const buttons = elements(buttonParams).map((value) => {
     const button = value as Record<string, unknown>;
     if (!button || typeof button !== "object" || Array.isArray(button)) {
       throw new Error("button parameters must be objects");
@@ -626,7 +635,9 @@ function validateHeaderMedia(value: unknown): TemplateHeaderMedia | null {
   } catch {
     throw new Error("header media link must be a full URL");
   }
-  if (url.protocol !== "https:") throw new Error("header media link must start with https://");
+  if (url.protocol !== "https:" || !link.startsWith("https://")) {
+    throw new Error("header media link must start with https://");
+  }
   if (url.username || url.password) {
     throw new Error("header media link must not carry credentials");
   }
@@ -722,7 +733,7 @@ function validateTemplateContent(record: Record<string, unknown>): TemplateConte
   if (examples.length !== draft.paramCount) {
     throw new Error(`this body needs exactly ${draft.paramCount} example value(s)`);
   }
-  const values = examples.map((value) => {
+  const values = elements(examples).map((value) => {
     if (typeof value !== "string") throw new Error("example values must be strings");
     const text = value.trim();
     if (!text) throw new Error("every variable needs an example value");
@@ -747,7 +758,7 @@ function validateTemplateContent(record: Record<string, unknown>): TemplateConte
   if (rawButtons !== undefined && !Array.isArray(rawButtons)) throw new Error("buttons must be an array");
   const buttonList = (rawButtons ?? []) as unknown[];
   if (buttonList.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
-  const buttons = buttonList.map((value) => {
+  const buttons = elements(buttonList).map((value) => {
     const button = value as Record<string, unknown>;
     if (!button || typeof button !== "object" || Array.isArray(button)) {
       throw new Error("buttons must be objects");
