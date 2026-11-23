@@ -39,6 +39,9 @@ Every PR must pass one command. CI's test-and-build job runs exactly this script
 bun run check          # lint, typecheck, both test suites, site, docs, dashboard
 ```
 
+CI also runs a separate job on the PR title, which must read `type(scope): subject`. Check yours
+locally with `./scripts/check-pr-title.sh "<title>"`.
+
 Its parts run on their own while you work:
 
 ```bash
