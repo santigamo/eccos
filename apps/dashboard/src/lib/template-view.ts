@@ -5,7 +5,7 @@
  */
 
 import type { TemplateDraft } from "../components/templates/create-template-sheet";
-import { analyzeDraftBody, type TemplateListRow } from "./template-params";
+import { analyzeDraftBody, type TemplateListRow } from "@eccos/core/template-rules";
 
 export type HeaderFormat = "IMAGE" | "VIDEO" | "DOCUMENT" | "LOCATION";
 
