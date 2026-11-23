@@ -1,0 +1,24 @@
+{
+  "name": "@eccos/mcp",
+  "version": "0.1.0",
+  "description": "Eccos MCP server: Streamable HTTP at /mcp, authorized per request by the console's ConsoleRPC.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "cf-types": "wrangler types --strict-vars=false",
+    "test:workers": "vitest run"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.4",
+    "@eccos/console-contract": "workspace:*",
+    "@eccos/gateway-contract": "workspace:*",
+    "@modelcontextprotocol/server": "2.4.0",
+    "agents": "0.34.0",
+    "hono": "4.13.21",
+    "zod": "4.5.1"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0"
+  }
+}

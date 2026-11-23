@@ -1,0 +1,59 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eccos-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
+  // Preserve installation-specific vars omitted from this template.
+  "keep_vars": true,
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  // Self-host template. MCP_RESOURCE must be the exact public URL clients use,
+  // so a deployment serves it on one hostname: a custom domain here, or keep the
+  // real values in a gitignored wrangler.production.jsonc (docs/deployment.md).
+  // "routes": [{ "pattern": "mcp.example.com", "custom_domain": true }],
+  "workers_dev": false,
+
+  "dev": {
+    "port": 8788
+  },
+
+  // The console's ConsoleRPC authorizes every request and serves elevation and
+  // billing; GatewayRPC serves the account's data. Both are private bindings:
+  // apps/mcp never reaches either over public HTTP and holds no credential.
+  "services": [
+    { "binding": "CONSOLE", "service": "eccos-dashboard", "entrypoint": "ConsoleRPC" },
+    { "binding": "GATEWAY", "service": "eccos", "entrypoint": "GatewayRPC" }
+  ],
+
+  // Per user and client (key `userId:clientId`), checked after the token is
+  // authorized. The namespace id is account-wide: keep it distinct from the
+  // gateway's (1001, 3001).
+  "ratelimits": [
+    {
+      "name": "MCP_RATE_LIMITER",
+      "namespace_id": "4001",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ],
+
+  "vars": {
+    // The canonical resource: the URL clients connect to, and the audience every
+    // access token must carry. Defaults are for `wrangler dev` next to the
+    // console (localhost:3000) and the gateway (localhost:8787).
+    "MCP_RESOURCE": "http://localhost:8788/mcp",
+    // The console's Better Auth issuer: the bare console origin (design § 8.2).
+    "ISSUER": "http://localhost:3000",
+    // The only browser origin allowed to call /mcp.
+    "CONSOLE_ORIGIN": "http://localhost:3000"
+  }
+
+  // No secrets: tokens are verified by the console over the CONSOLE binding.
+}

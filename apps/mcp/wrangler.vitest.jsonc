@@ -1,0 +1,24 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eccos-mcp-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
+  // The stub console and gateway are auxiliary workers (vitest.config.ts).
+  "services": [
+    { "binding": "CONSOLE", "service": "eccos-dashboard", "entrypoint": "ConsoleRPC" },
+    { "binding": "GATEWAY", "service": "eccos", "entrypoint": "GatewayRPC" }
+  ],
+  "ratelimits": [
+    {
+      "name": "MCP_RATE_LIMITER",
+      "namespace_id": "4001",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+  "vars": {
+    "MCP_RESOURCE": "https://mcp.example.test/mcp",
+    "ISSUER": "https://console.example.test",
+    "CONSOLE_ORIGIN": "https://console.example.test"
+  }
+}
