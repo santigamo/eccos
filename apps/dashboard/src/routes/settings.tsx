@@ -17,14 +17,16 @@ import { adminOnlyCopy } from "../lib/failure";
 import { rootRole } from "../lib/root-role";
 import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billing-panel";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
+import { TwoFactorPanel } from "../components/dashboard/two-factor";
 import { WorkspacePanel, type WorkspaceView } from "../components/dashboard/workspace-panel";
 import { RoleNote } from "../components/dashboard/role-note";
 import { CONFIG_STALE_MS } from "../lib/route-stale";
 
 /**
  * Settings: the workspace itself, then billing and conversation history for a
- * role that may administer them. `requires: "none"`, because nothing here waits
- * on a number.
+ * role that may administer them, then the signed-in user's own two-factor
+ * authentication, for every role. `requires: "none"`, because nothing here
+ * waits on a number.
  */
 export const Route = createFileRoute("/settings")({
   staleTime: CONFIG_STALE_MS,
@@ -86,6 +88,7 @@ function SettingsPage() {
       canAdminister={role?.canAdminister}
       billingOn={role?.billing}
       retention={retention}
+      twoFactorEnabled={root.user?.twoFactorEnabled}
       billing={billing.ok ? billing.data : null}
       billingReturned={returned}
       onChanged={() => void invalidatePage(router)}
@@ -103,6 +106,7 @@ export function SettingsView({
   canAdminister = false,
   billingOn = false,
   retention,
+  twoFactorEnabled,
   billing,
   billingReturned,
   onChanged,
@@ -116,6 +120,8 @@ export function SettingsView({
   /** Billing is on for this deployment, whatever this role may do with it. */
   billingOn?: boolean;
   retention?: Result<number | null>;
+  /** The signed-in user's own; undefined while the root has no user. */
+  twoFactorEnabled?: boolean;
   /** Null while billing is off, and for a role that may not administer it. */
   billing?: BillingState | null;
   billingReturned?: CheckoutReturn | null;
@@ -126,19 +132,24 @@ export function SettingsView({
     <Page title="Settings" kicker="Configuration">
       {rootFailure ? (
         <FailureView failure={rootFailure} />
-      ) : accountId ? (
+      ) : (
         <div className="flex flex-col gap-6">
-          <WorkspacePanel accountId={accountId} workspace={workspace} canRename={canAdminister} onRenamed={onRenamed} />
-          {canAdminister ? (
+          {accountId ? (
             <>
-              {billing ? <BillingPanel billing={billing} returned={billingReturned} /> : null}
-              {retention ? <ConversationRetentionPanel retention={retention} onChanged={onChanged} /> : null}
+              <WorkspacePanel accountId={accountId} workspace={workspace} canRename={canAdminister} onRenamed={onRenamed} />
+              {canAdminister ? (
+                <>
+                  {billing ? <BillingPanel billing={billing} returned={billingReturned} /> : null}
+                  {retention ? <ConversationRetentionPanel retention={retention} onChanged={onChanged} /> : null}
+                </>
+              ) : (
+                <RoleNote copy={adminOnlyCopy("settings", billingOn)} />
+              )}
             </>
-          ) : (
-            <RoleNote copy={adminOnlyCopy("settings", billingOn)} />
-          )}
+          ) : null}
+          {twoFactorEnabled === undefined ? null : <TwoFactorPanel enabled={twoFactorEnabled} />}
         </div>
-      ) : null}
+      )}
     </Page>
   );
 }

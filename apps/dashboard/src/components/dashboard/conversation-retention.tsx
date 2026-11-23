@@ -2,6 +2,7 @@ import { isRedirect } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { setConversationRetention, type Result } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { withStepUp } from "../../lib/step-up";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -81,7 +82,7 @@ export function ConversationRetentionPanel({
     setError(null);
     try {
       const outcome = await saveRetentionChoice(choice, (days) =>
-        setConversationRetention({ data: { days } }),
+        withStepUp(() => setConversationRetention({ data: { days } })),
       );
       if (!outcome.ok) {
         setError(outcome.error);

@@ -5,6 +5,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { inviteMember, memberEmail, type MemberRole } from "../../members";
 import { INVITATION_LIFETIME_DAYS } from "../../lib/invitation-expiry";
 import { followSignIn } from "../../lib/follow-sign-in";
+import { withStepUp } from "../../lib/step-up";
+import { StepUpSheet } from "./step-up-sheet";
 import { MEMBERS_RETRY } from "../../lib/members-copy";
 import { RoleChoices } from "./role-choices";
 
@@ -45,7 +47,7 @@ export function InviteMemberForm({
     onBusyChange?.(true);
     setError(null);
     try {
-      const result = await inviteMember({ data: { email, role, organizationId } });
+      const result = await withStepUp(() => inviteMember({ data: { email, role, organizationId } }));
       if (!result.ok) {
         setError(result.error);
         return;
@@ -134,6 +136,8 @@ export function InviteMemberSheet({
           </SheetDescription>
         </SheetHeader>
         <InviteMemberForm organizationId={organizationId} onBusyChange={setBusy} onDirtyChange={setDirty} onInvited={onInvited} />
+        {/* Nested: step-up for this write opens inside this surface. */}
+        <StepUpSheet />
       </SheetContent>
     </Sheet>
   );
