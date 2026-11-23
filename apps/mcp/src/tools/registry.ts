@@ -13,8 +13,18 @@ export interface ToolDeps {
   console: ConsoleApi;
 }
 
-/** A failure the agent can act on; its message is the whole error result, so say what to do next. */
-export class ToolError extends Error {}
+/**
+ * A failure the agent can act on; its message is the whole error result, so say what to do next.
+ * `detail` is the closed failure code (a gateway code, never free text) the audit line records.
+ */
+export class ToolError extends Error {
+  constructor(
+    message: string,
+    readonly detail: string | null = null,
+  ) {
+    super(message);
+  }
+}
 
 /**
  * One tool, as data. `createServer` registers it only when `action` is among the actor's
@@ -166,7 +176,7 @@ async function invoke(
     const value = await tool.run(input, actor, deps);
     return { result: structured(value), audit: { outcome: "success", detail: null } };
   } catch (error) {
-    if (error instanceof ToolError) return { result: errorText(error.message), audit: { outcome: "failed", detail: null } };
+    if (error instanceof ToolError) return { result: errorText(error.message), audit: { outcome: "failed", detail: error.detail } };
     console.error(JSON.stringify({ level: "error", area: "mcp", tool: tool.name, error: String(error) }));
     return {
       result: errorText(`Eccos could not complete ${tool.name}. Try again in a minute; if it keeps failing, tell the person.`),
