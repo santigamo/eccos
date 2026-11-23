@@ -170,17 +170,18 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
   A recipient-policy refusal (`recipient_rejected_by_policy`) shows the same
   "blocked" message for the same reason; the log keeps the distinct reason.
 
-> **Known gap — better-auth 1.7.2 swallows these throws at two of the three call
-> sites.** Sign-up (`dist/api/routes/sign-up.mjs`), forgot-password
+> **Known gap — better-auth (re-read at 1.7.27) swallows these throws at two of the
+> three call sites.** Sign-up (`dist/api/routes/sign-up.mjs`), forgot-password
 > (`dist/api/routes/password.mjs`) and create-invitation
 > (`dist/plugins/organization/routes/crud-invites.mjs`) all wrap the send in
-> `ctx.context.runInBackgroundOrAwait` (`dist/context/create-context.mjs:214`),
+> `ctx.context.runInBackgroundOrAwait` (`dist/context/create-context.mjs:215`),
 > which awaits the promise inside a `try/catch` and merely **logs** a rejection.
 > So the sign-up and invitation `undeliverable` messages do not reach the
 > response today; only `POST /send-verification-email` re-throws
-> (`dist/api/routes/email-verification.mjs:117`). The policy is written to the
-> contract regardless — it is correct, it starts surfacing the moment better-auth
-> propagates, and the structured log is the durable record meanwhile. The
+> (`dist/api/routes/email-verification.mjs:117`). Since 1.7.21 better-auth
+> states this for sign-up outright: a thrown `sendVerificationEmail` is logged and the
+> sign-up succeeds. The policy is written to the contract regardless — it is correct
+> where the throw surfaces, and the structured log is the durable record elsewhere. The
 > behaviour is pinned by a test in `tests/mail-policy.test.ts` so it fails loudly
 > when it changes. (Incidentally this is *why* the reset flow's "swallow" is
 > belt-and-braces rather than the only thing standing between us and an oracle.)

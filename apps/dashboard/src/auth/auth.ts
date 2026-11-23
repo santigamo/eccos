@@ -60,16 +60,18 @@ export function buildInvitationAcceptLink(baseURL: string, invitationId: string)
  * because the reasoning below is the actual deliverable, not the four lines of
  * code under it.
  *
- * A NOTE ON WHERE THESE THROWS SURFACE (better-auth 1.7.2): sign-up, forgot
- * password, and create-invitation all wrap the send in
- * `ctx.context.runInBackgroundOrAwait` (dist/context/create-context.mjs:214),
+ * A NOTE ON WHERE THESE THROWS SURFACE (re-read at better-auth 1.7.27): sign-up,
+ * forgot password, and create-invitation all wrap the send in
+ * `ctx.context.runInBackgroundOrAwait` (dist/context/create-context.mjs:215),
  * which awaits the promise inside a try/catch and merely LOGS a rejection. So
  * a throw from this layer does NOT currently reach the sign-up or invitation
  * response — only `POST /send-verification-email` re-throws it
- * (dist/api/routes/email-verification.mjs:117). The policy is written to the
- * contract anyway: it is correct, it is what surfaces the moment better-auth
- * propagates, and the structured log below is the durable record in the
- * meantime. See docs/auth-email-delivery.md.
+ * (dist/api/routes/email-verification.mjs:117). Since 1.7.21 this is
+ * better-auth's stated behavior for sign-up, not an accident: a thrown
+ * `sendVerificationEmail` is logged and the sign-up succeeds. The policy is
+ * written to the contract anyway: it is correct where the throw does surface,
+ * and the structured log below is the durable record everywhere else. See
+ * docs/auth-email-delivery.md.
  */
 
 /** What a policy needs in order to log without ever touching a token. */
@@ -350,8 +352,8 @@ export function createAuth(config: AuthConfig) {
       // for the full hour however many times it is replayed. What makes the
       // link one-shot is not the token but the ORDER of the handler — the
       // `user.emailVerified` branch returns before the auto-sign-in block ever
-      // runs (better-auth 1.7.2, api/routes/email-verification.mjs, the check
-      // at :287 vs. the session mint at :297). So the link mints exactly one
+      // runs (re-read at better-auth 1.7.27, api/routes/email-verification.mjs,
+      // the check at :279 vs. the session mint at :289). So the link mints exactly one
       // session, and only while the account is still unverified. If a future
       // upgrade reorders those two, this option silently becomes a replayable
       // magic link — that is the thing to re-read on a better-auth bump.
@@ -488,7 +490,9 @@ export function createAuth(config: AuthConfig) {
       // instead of fallback queries (each D1 round trip is ~55 ms).
       // validateSchema: createAuth() runs per request and 1.7.3+ introspects the
       // schema on every new instance (D1 falls back to ~2 PRAGMAs per table, and
-      // each auth call awaits it). Schema drift is guarded by migrations + tests.
+      // each auth call awaits it). 1.7.22 moved the check to first use, but it
+      // is still once per instance, so it stays off here (re-read at 1.7.27).
+      // Schema drift is guarded by migrations + tests.
       database: { joins: true, validateSchema: false },
       // Explicit production posture: origin validation MUST run regardless of
       // NODE_ENV (Better Auth otherwise skips it in test environments).
