@@ -1,4 +1,12 @@
-import type { Actor, ActorRef, AgentAction, ConsoleApi, ElevationRequest, ElevationResult } from "@eccos/console-contract";
+import type {
+  Actor,
+  ActorRef,
+  AgentAction,
+  ConsoleApi,
+  ElevationRequest,
+  ElevationResult,
+  GrantRefusalCode,
+} from "@eccos/console-contract";
 import type { GatewayApi } from "@eccos/gateway-contract";
 import { type McpServer, type ServerContext, type ToolAnnotations, inputRequired, inputResponse } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -11,6 +19,8 @@ export type McpActor = Actor & { scope: string[] };
 export interface ToolDeps {
   gateway: GatewayApi;
   console: ConsoleApi;
+  /** The console's public origin, where the pages a person opens live (`/connect`). */
+  consoleOrigin: string;
 }
 
 /** A failure the agent can act on; its message is the whole error result, so say what to do next. */
@@ -73,13 +83,18 @@ const structured = (value: Record<string, unknown>, isError = false) => ({
 
 const errorText = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
 
+/** Why a grant no longer stands (any console call can answer it), said so the agent knows what to do. */
+export const GRANT_REFUSED: Record<GrantRefusalCode, string> = {
+  revoked: "This agent's connection to Eccos was revoked. Ask the person to connect the agent again.",
+  not_a_member: "The person this agent acts for is no longer a member of the workspace. Ask them to connect the agent again from a workspace they belong to.",
+  no_account: "This workspace has no active Eccos account. Ask the person to check the workspace in the Eccos console.",
+};
+
 /** Why the console would not open an approval request, said so the agent knows what to do. */
 const ELEVATION_REFUSED: Record<Extract<ElevationResult, { ok: false }>["code"], string> = {
   forbidden:
     "Only an owner or admin of this workspace can approve sensitive actions, and the person this agent acts for is neither. Ask an owner or admin to do this in the Eccos console.",
-  revoked: "This agent's connection to Eccos was revoked. Ask the person to connect the agent again.",
-  not_a_member: "The person this agent acts for is no longer a member of the workspace. Ask them to connect the agent again from a workspace they belong to.",
-  no_account: "This workspace has no active Eccos account. Ask the person to check the workspace in the Eccos console.",
+  ...GRANT_REFUSED,
 };
 
 function approvalResult(tool: string, request: ElevationRequest) {

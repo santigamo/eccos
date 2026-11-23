@@ -81,7 +81,7 @@ function resourceServer(env: Env, registry: readonly ToolDefinition[]) {
         if (scope) return insufficientScope(ctx.auth, [scope]);
 
         const caller = { ...actor, scope: ctx.auth.scope };
-        const deps = { gateway: bindings.GATEWAY, console: bindings.CONSOLE };
+        const deps = { gateway: bindings.GATEWAY, console: bindings.CONSOLE, consoleOrigin: new URL(bindings.CONSOLE_ORIGIN).origin };
         const mcp = createMcpHandler(() => createServer(caller, deps, registry), {
           route: "/mcp",
           legacy: "stateless",

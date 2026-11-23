@@ -28,6 +28,8 @@ interface State {
   pending: Map<string, ElevationRequest>;
   elevationCalls: { actor: ActorRef; tool: string }[];
   billing: Map<string, BillingResult>;
+  billingLinks: Map<string, BillingLink>;
+  billingCalls: { method: string; actor: ActorRef }[];
   elevationRefusal: ElevationResult | null;
 }
 
@@ -38,6 +40,8 @@ const fresh = (): State => ({
   pending: new Map(),
   elevationCalls: [],
   billing: new Map(),
+  billingLinks: new Map(),
+  billingCalls: [],
   elevationRefusal: null,
 });
 
@@ -69,15 +73,18 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
   }
 
   async getBilling(actor: ActorRef): Promise<BillingResult> {
+    state.billingCalls.push({ method: "getBilling", actor });
     return state.billing.get(actor.accountId) ?? { ok: false, code: "billing_disabled" };
   }
 
-  async startCheckout(): Promise<BillingLink> {
-    return { ok: false, code: "billing_disabled" };
+  async startCheckout(actor: ActorRef): Promise<BillingLink> {
+    state.billingCalls.push({ method: "startCheckout", actor });
+    return state.billingLinks.get(`${actor.accountId}:startCheckout`) ?? { ok: false, code: "billing_disabled" };
   }
 
-  async openBillingPortal(): Promise<BillingLink> {
-    return { ok: false, code: "billing_disabled" };
+  async openBillingPortal(actor: ActorRef): Promise<BillingLink> {
+    state.billingCalls.push({ method: "openBillingPortal", actor });
+    return state.billingLinks.get(`${actor.accountId}:openBillingPortal`) ?? { ok: false, code: "billing_disabled" };
   }
 
   // Test controls. The real ConsoleRPC has none of these.
@@ -103,6 +110,14 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
 
   async setBilling(accountId: string, billing: BillingResult): Promise<void> {
     state.billing.set(accountId, billing);
+  }
+
+  async setBillingLink(accountId: string, method: "startCheckout" | "openBillingPortal", link: BillingLink): Promise<void> {
+    state.billingLinks.set(`${accountId}:${method}`, link);
+  }
+
+  async billingCalls(): Promise<{ method: string; actor: ActorRef }[]> {
+    return state.billingCalls;
   }
 
   async refuseElevation(refusal: ElevationResult | null): Promise<void> {
