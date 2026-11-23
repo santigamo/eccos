@@ -14,6 +14,8 @@ import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { type TokenHealth, watchGraph } from "./token-health";
 import { createTemplate, deleteTemplate, editTemplate, findTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
+import { TEMPLATE_ID_PATTERN, TEMPLATE_NAME_PATTERN } from "@eccos/core/template-rules";
+import { templateDraftRequest, templateEditRequest, templateSendRequest } from "./template-requests";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
 import { reconcileWaba, resubscribeWaba } from "./provisioning";
@@ -80,7 +82,6 @@ import type {
   RetryFailedResult,
   RetryFailedWindow,
   SendTemplateTestInput,
-  TemplateHeaderMediaFormat,
   SendTemplateTestResult,
   SendTestFailureCode,
   SendTextFailureCode,
@@ -161,41 +162,10 @@ function requireAccountId(accountId: string | undefined, message: string): strin
 /** Digits only, E.164's 15-digit ceiling. The console normalizes; this re-checks. */
 const TO_PATTERN = /^[0-9]{5,15}$/;
 const TO_ERROR = "to must be 5-15 digits or a BSUID";
-/** Meta's own template-name charset. */
-const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
-/** `en` / `es` / `en_US` / `pt_BR`. */
-const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
-const MAX_BODY_PARAMS = 30;
-const MAX_BODY_PARAM_LENGTH = 1024;
 /** Meta's ceiling for a free-text message body. */
 const MAX_TEXT_LENGTH = 4096;
 /** Code units a reaction's emoji may span; the one-grapheme rule is the dashboard validator's. */
 const MAX_EMOJI_LENGTH = 32;
-/** A BUTTONS component carries at most 3 URL buttons — the same cap the
- * create validator applies, so a later-created template can always be sent. */
-const MAX_BUTTON_PARAMS = 3;
-/** Upper bound for a URL button's 0-based slot index in the BUTTONS
- * component. Meta caps BUTTONS at 3 buttons, so this is a loose ceiling that
- * exists to bound the index, not to mirror Meta's exact count. */
-const MAX_BUTTON_URL_INDEX = 9;
-/** The header formats a template can carry that a single link can fill. */
-const HEADER_MEDIA_FORMATS: TemplateHeaderMediaFormat[] = ["image", "video", "document"];
-const MAX_HEADER_LINK_LENGTH = 2048;
-/** Meta's body ceiling for a template component. */
-const MAX_TEMPLATE_BODY_LENGTH = 1024;
-/** Meta documents ~60 chars for a footer; the console's create validator uses
- * the same explicit ceiling so the gateway's mirrored throw is reachable only
- * by a regressed caller. */
-const MAX_FOOTER_LENGTH = 60;
-/** A BUTTONS component takes at most 3 URL buttons (Meta's own cap). */
-const MAX_CREATE_BUTTONS = 3;
-/** Meta's conservative button label ceiling — the console validates the same
- * figure, and a longer label is refused at create time, never at send. */
-const MAX_BUTTON_TEXT_LENGTH = 25;
-/** Ceiling for a URL or an example URL on a URL button. */
-const MAX_BUTTON_URL_LENGTH = 2000;
-/** Graph template ids (`hsm_id`) are numeric. */
-const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 /** What the console's template list reads. Named explicitly: quality, rejection
  * reason and last edit are not in Meta's default response. */
 const TEMPLATE_LIST_FIELDS = [
@@ -225,9 +195,6 @@ const META_TOKEN_PATTERN = /^[\x21-\x7e]{20,1024}$/;
  * the mirrored throw, loose enough for the registry's own ids.
  */
 const WABA_SELECTOR_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-/** The only two categories the console authors; AUTHENTICATION is a different
- * creation shape (preset content + OTP buttons) and is not offered. */
-const TEMPLATE_CATEGORIES = new Set(["MARKETING", "UTILITY"]);
 
 /**
  * Graph error codes worth naming, from Meta's Cloud API error reference.
@@ -286,60 +253,6 @@ function createTemplateFailure(code: number | null, subcode: number | null): Cre
   if (code === 80008) return "rate_limited";
   if (code === 100) return "invalid";
   return "graph";
-}
-
-/** The content rules shared by create and edit: body, examples, footer, URL buttons. */
-function assertTemplateContent(input: Pick<CreateTemplateInput, "bodyText" | "bodyExamples" | "footerText" | "buttons">) {
-  const examples = input.bodyExamples ?? [];
-  if (typeof input.bodyText !== "string" || input.bodyText.length === 0) {
-    throw new Error("template body is required");
-  }
-  if (input.bodyText.length > MAX_TEMPLATE_BODY_LENGTH) throw new Error("template body is too long");
-  if (examples.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
-  for (const value of examples) {
-    if (typeof value !== "string" || value.length === 0 || value.length > MAX_BODY_PARAM_LENGTH) {
-      throw new Error("example values must be 1-1024 characters");
-    }
-  }
-  const footerText = input.footerText;
-  if (footerText !== undefined) {
-    if (typeof footerText !== "string" || footerText.length === 0) {
-      throw new Error("footer text is required when present");
-    }
-    if (footerText.length > MAX_FOOTER_LENGTH) throw new Error("footer text is too long");
-    if (/[\n\t]/.test(footerText)) throw new Error("footer text must not contain newlines or tabs");
-    if (/\{\{/.test(footerText)) throw new Error("footer text cannot contain placeholders");
-  }
-  const buttons = input.buttons ?? [];
-  if (buttons.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
-  for (const button of buttons) {
-    if (typeof button !== "object" || button === null) {
-      throw new Error("buttons must be objects");
-    }
-    const { text, url, exampleUrl } = button as {
-      text?: unknown;
-      url?: unknown;
-      exampleUrl?: unknown;
-    };
-    if (typeof text !== "string" || text.length === 0 || text.length > MAX_BUTTON_TEXT_LENGTH) {
-      throw new Error("button text must be 1-25 characters");
-    }
-    if (typeof url !== "string" || url.length === 0 || url.length > MAX_BUTTON_URL_LENGTH) {
-      throw new Error("button url is required");
-    }
-    if (!/^https?:\/\//.test(url)) throw new Error("button url must be http(s)");
-    if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
-      throw new Error("button text and url cannot contain newlines or tabs");
-    }
-    const dynamic = url.includes("{{");
-    if (dynamic && (typeof exampleUrl !== "string" || exampleUrl.length === 0)) {
-      throw new Error("a dynamic URL button requires an example url");
-    }
-    if (exampleUrl !== undefined && typeof exampleUrl !== "string") {
-      throw new Error("button example url must be a string");
-    }
-  }
-  return { examples, footerText, buttons };
 }
 
 /**
@@ -685,23 +598,20 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async createTemplate(input: CreateTemplateInput, accountId: string): Promise<CreateTemplateResult> {
     const { config: cfg } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
 
-    // Defense in depth, throw-not-code: the dashboard validator is the strict
-    // one and the only caller, so reaching any of these means that validator
-    // regressed — a programmer error, which belongs in the logs as a throw
-    // rather than in the UI as a failure code.
-    if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
-    if (!LANGUAGE_PATTERN.test(input.language)) throw new Error("invalid template language");
-    if (!TEMPLATE_CATEGORIES.has(input.category)) throw new Error("invalid template category");
-    const { examples, footerText, buttons } = assertTemplateContent(input);
+    // The gateway is where the template rules hold for every caller (console,
+    // MCP server, anything on the binding), as throws. The console runs the
+    // same core rules first, so its messages are unchanged. Only the
+    // normalized values reach Meta.
+    const draft = templateDraftRequest(input);
 
     const result = await createTemplate(cfg, {
-      name: input.name,
-      language: input.language,
-      category: input.category,
-      bodyText: input.bodyText,
-      ...(examples.length > 0 ? { examples } : {}),
-      ...(footerText !== undefined ? { footerText } : {}),
-      ...(buttons.length > 0 ? { buttons } : {}),
+      name: draft.name,
+      language: draft.language,
+      category: draft.category,
+      bodyText: draft.bodyText,
+      ...(draft.bodyExamples ? { examples: draft.bodyExamples } : {}),
+      ...(draft.footerText !== undefined ? { footerText: draft.footerText } : {}),
+      ...(draft.buttons ? { buttons: draft.buttons } : {}),
     });
     if (!result.ok) {
       const { code, subcode, message } = graphError(result.error);
@@ -721,7 +631,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       ok: true,
       id: typeof data?.id === "string" ? data.id : "",
       status: typeof data?.status === "string" ? data.status : "PENDING",
-      category: typeof data?.category === "string" ? data.category : input.category,
+      category: typeof data?.category === "string" ? data.category : draft.category,
     };
   }
 
@@ -735,29 +645,23 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    */
   async editTemplate(input: EditTemplateInput, accountId: string): Promise<EditTemplateResult> {
     const { config: cfg, stub } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
-    if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
-    if (!LANGUAGE_PATTERN.test(input.language)) throw new Error("invalid template language");
-    if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
-    if (input.category !== undefined && !TEMPLATE_CATEGORIES.has(input.category)) {
-      throw new Error("invalid template category");
-    }
-    const { examples, footerText, buttons } = assertTemplateContent(input);
+    const edit = templateEditRequest(input);
 
-    const found = await findTemplate(cfg, input.name, input.language, ["id", "name", "language"]);
+    const found = await findTemplate(cfg, edit.name, edit.language, ["id", "name", "language"]);
     if (!found.ok) {
       const { message } = graphError(found.error);
       return { ok: false, code: "graph", detail: message ?? `HTTP ${found.status}` };
     }
-    if (found.template?.id !== input.templateId) {
+    if (found.template?.id !== edit.templateId) {
       return { ok: false, code: "not_found", detail: null };
     }
 
-    const result = await editTemplate(cfg, input.templateId, {
-      bodyText: input.bodyText,
-      ...(examples.length > 0 ? { examples } : {}),
-      ...(footerText !== undefined ? { footerText } : {}),
-      ...(buttons.length > 0 ? { buttons } : {}),
-      ...(input.category ? { category: input.category } : {}),
+    const result = await editTemplate(cfg, edit.templateId, {
+      bodyText: edit.bodyText,
+      ...(edit.bodyExamples ? { examples: edit.bodyExamples } : {}),
+      ...(edit.footerText !== undefined ? { footerText: edit.footerText } : {}),
+      ...(edit.buttons ? { buttons: edit.buttons } : {}),
+      ...(edit.category ? { category: edit.category } : {}),
     });
     if (!result.ok) {
       const { code, message } = graphError(result.error);
@@ -766,7 +670,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       return { ok: false, code: mapped, detail: message ?? `HTTP ${result.status}` };
     }
     // Best effort: the change is made at Meta, and a missed drop only lasts the cache lifetime.
-    await stub.forgetTemplate(input.name).catch(() => {});
+    await stub.forgetTemplate(edit.name).catch(() => {});
     return { ok: true };
   }
 
@@ -776,7 +680,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
    * addressed at a WABA the account does not own. */
   async deleteTemplate(input: DeleteTemplateInput, accountId: string): Promise<DeleteTemplateResult> {
     const { config: cfg, stub } = await this.scoped(input.wabaId, accountId, { anyStatus: true });
-    // Defense in depth again: only a regressed console can produce these.
+    // Enforced here for every caller on the binding, as throws.
     if (!TEMPLATE_NAME_PATTERN.test(input.name)) throw new Error("invalid template name");
     if (!TEMPLATE_ID_PATTERN.test(input.templateId)) throw new Error("invalid template id");
 
@@ -983,52 +887,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       };
     }
 
-    // Defense in depth. The dashboard validator is the strict one and the only
-    // caller; reaching any of these means that validator regressed, which is a
-    // programmer error and belongs in the logs as a throw, not in the UI as a
-    // failure code.
-    const bodyParams = input.bodyParams ?? [];
-    const buttonParams = input.buttonParams ?? [];
+    // The gateway is where the template rules hold for every caller (console,
+    // MCP server, anything on the binding), as throws. The console runs the
+    // same core rules first, so its messages are unchanged. Only the
+    // normalized values reach Meta.
     if (!TO_PATTERN.test(input.to) && !isBsuid(input.to)) throw new Error(TO_ERROR);
-    if (!TEMPLATE_NAME_PATTERN.test(input.templateName)) throw new Error("invalid templateName");
-    if (!LANGUAGE_PATTERN.test(input.languageCode)) throw new Error("invalid languageCode");
-    if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many body parameters");
-    for (const value of bodyParams) {
-      if (typeof value !== "string" || value.length === 0 || value.length > MAX_BODY_PARAM_LENGTH) {
-        throw new Error("body parameters must be 1-1024 characters");
-      }
-      if (/[\n\t]/.test(value)) throw new Error("body parameters must not contain newlines or tabs");
-    }
-    if (buttonParams.length > MAX_BUTTON_PARAMS) throw new Error("too many button parameters");
-    for (const button of buttonParams) {
-      if (typeof button !== "object" || button === null) throw new Error("button parameters must be objects");
-      const { index, text } = button as { index?: unknown; text?: unknown };
-      if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > MAX_BUTTON_URL_INDEX) {
-        throw new Error("button parameter index must be an integer 0-9");
-      }
-      if (typeof text !== "string" || text.length === 0 || text.length > MAX_BODY_PARAM_LENGTH) {
-        throw new Error("button parameter text must be 1-1024 characters");
-      }
-      if (/[\n\t]/.test(text)) throw new Error("button parameters must not contain newlines or tabs");
-    }
-    const headerMedia = input.headerMedia;
-    if (headerMedia !== undefined) {
-      if (typeof headerMedia !== "object" || headerMedia === null) {
-        throw new Error("headerMedia must be an object");
-      }
-      if (!HEADER_MEDIA_FORMATS.includes(headerMedia.format)) {
-        throw new Error("headerMedia format must be image, video or document");
-      }
-      const link = headerMedia.link;
-      if (typeof link !== "string" || link.length === 0 || link.length > MAX_HEADER_LINK_LENGTH) {
-        throw new Error("headerMedia link must be 1-2048 characters");
-      }
-      // `https` only. Meta dereferences this from its own network, so `http`
-      // leaks the asset in transit and no other scheme is fetchable at all.
-      // Eccos never opens it — this checks the string and nothing more.
-      if (!link.startsWith("https://")) throw new Error("headerMedia link must be https");
-      if (/[\s]/.test(link)) throw new Error("headerMedia link must not contain whitespace");
-    }
+    const { templateName, languageCode, bodyParams = [], buttonParams = [], headerMedia } = templateSendRequest(input);
 
     if (!(await checkSendRate(this.env, account, waba.wabaId))) {
       return { ok: false, code: "rate_limited", detail: null };
@@ -1069,8 +933,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       to: input.to,
       type: "template",
       template: {
-        name: input.templateName,
-        language: { code: input.languageCode },
+        name: templateName,
+        language: { code: languageCode },
         ...(components.length > 0 ? { components } : {}),
       },
     };

@@ -84,6 +84,8 @@ cannot happen.
 | PR titles read `type(scope): subject` | `scripts/check-pr-title.sh`, run by `.github/workflows/pr-title.yml` |
 | README's event shape matches `WhatsAppCallbackEvent` | `apps/gateway/tests/docs-readme-events.test.ts` |
 | The public docs' event examples and tables match the parser | `apps/gateway/tests/docs-events.test.ts`, `apps/gateway/tests/worker/docs-contract.spec.ts` |
+| The gateway enforces the core template rules for every GatewayRPC caller, with the console's messages | `apps/dashboard/tests/template-rules-agreement.test.ts`, `apps/gateway/tests/worker/create-template.spec.ts`, `apps/gateway/tests/worker/send-test.spec.ts` |
+| Template restated types match `packages/gateway-contract`, optional fields included | `apps/dashboard/src/lib/template-contract-drift.ts`, run by `bun run typecheck` |
 | Parser changes come with tests | Prose only (see Rules) |
 | `packages/core` stays free of HTTP and DB code | Prose only (see Rules) |
 | No secrets in the repository | Prose only (see Rules) |

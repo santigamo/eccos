@@ -345,6 +345,8 @@ export const MAX_FOOTER_LENGTH = 60;
 export const MAX_CREATE_BUTTONS = 3;
 /** Meta's conservative button-label ceiling, applied at authoring time. */
 export const MAX_BUTTON_TEXT_LENGTH = 25;
+/** A sanity bound on a button URL; Meta's own ceiling is not documented. */
+const MAX_BUTTON_URL_LENGTH = 2000;
 
 /** One URL button as the create sheet collects it. A dynamic URL (a `{{n}}`
  * placeholder) REQUIRES `exampleUrl`; a static URL carries none. */
@@ -408,6 +410,9 @@ export function analyzeDraftButtons(buttons: DraftButton[]): DraftAnalysis {
     }
     if (!/^https?:\/\//.test(url)) {
       return { ok: false, reason: `Button ${index + 1}'s URL must start with https://.` };
+    }
+    if (url.length > MAX_BUTTON_URL_LENGTH) {
+      return { ok: false, reason: `Button ${index + 1}'s URL is over ${MAX_BUTTON_URL_LENGTH} characters.` };
     }
     const dynamic = url.includes("{{");
     if (dynamic && !button.exampleUrl.trim()) {
@@ -476,6 +481,15 @@ export function normalizeTemplateName(raw: string): string {
 // everything around them: reading the request, the WABA and number it names,
 // the recipient, and the idempotency key.
 
+/**
+ * A request array's elements by index. A Workers RPC caller sends structured
+ * clones, which keep an array's holes, and `map` skips a hole; read this way a
+ * hole is `undefined` and is refused like any other missing value.
+ */
+function elements(list: unknown[]): unknown[] {
+  return Array.from({ length: list.length }, (_, index) => list[index]);
+}
+
 /** Meta's template-name charset. */
 export const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 /** `en` / `es` / `en_US` / `pt_BR`. */
@@ -541,7 +555,7 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
   if (raw !== undefined && !Array.isArray(raw)) throw new Error("bodyParams must be an array");
   const bodyParams = (raw ?? []) as unknown[];
   if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
-  const values = bodyParams.map((value) => {
+  const values = elements(bodyParams).map((value) => {
     if (typeof value !== "string") throw new Error("template parameters must be strings");
     const text = value.trim();
     if (!text) throw new Error("every template parameter needs a value");
@@ -557,7 +571,7 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
   }
   const buttonParams = (rawButtons ?? []) as unknown[];
   if (buttonParams.length > MAX_BUTTON_PARAMS) throw new Error("too many button parameters");
-  const buttons = buttonParams.map((value) => {
+  const buttons = elements(buttonParams).map((value) => {
     const button = value as Record<string, unknown>;
     if (!button || typeof button !== "object" || Array.isArray(button)) {
       throw new Error("button parameters must be objects");
@@ -614,13 +628,16 @@ function validateHeaderMedia(value: unknown): TemplateHeaderMedia | null {
   const link = media.link.trim();
   if (!link) throw new Error("the header needs a media link");
   if (link.length > MAX_HEADER_LINK_LENGTH) throw new Error("header media link is too long");
+  if (/\s/.test(link)) throw new Error("header media link cannot contain spaces or line breaks");
   let url: URL;
   try {
     url = new URL(link);
   } catch {
     throw new Error("header media link must be a full URL");
   }
-  if (url.protocol !== "https:") throw new Error("header media link must start with https://");
+  if (url.protocol !== "https:" || !link.startsWith("https://")) {
+    throw new Error("header media link must start with https://");
+  }
   if (url.username || url.password) {
     throw new Error("header media link must not carry credentials");
   }
@@ -700,7 +717,7 @@ export function validateTemplateEdit(record: Record<string, unknown>): TemplateE
  * are the send rules', byte for byte: an example travels to Meta as content
  * exactly as a send parameter does.
  */
-export function validateTemplateContent(record: Record<string, unknown>): TemplateContent {
+function validateTemplateContent(record: Record<string, unknown>): TemplateContent {
   if (typeof record.bodyText !== "string") throw new Error("template body is required");
   // Not trimmed: leading and trailing whitespace is part of the message Meta
   // will store, and silently rewriting an operator's body would make the
@@ -716,7 +733,7 @@ export function validateTemplateContent(record: Record<string, unknown>): Templa
   if (examples.length !== draft.paramCount) {
     throw new Error(`this body needs exactly ${draft.paramCount} example value(s)`);
   }
-  const values = examples.map((value) => {
+  const values = elements(examples).map((value) => {
     if (typeof value !== "string") throw new Error("example values must be strings");
     const text = value.trim();
     if (!text) throw new Error("every variable needs an example value");
@@ -741,7 +758,7 @@ export function validateTemplateContent(record: Record<string, unknown>): Templa
   if (rawButtons !== undefined && !Array.isArray(rawButtons)) throw new Error("buttons must be an array");
   const buttonList = (rawButtons ?? []) as unknown[];
   if (buttonList.length > MAX_CREATE_BUTTONS) throw new Error("a template can carry at most 3 buttons");
-  const buttons = buttonList.map((value) => {
+  const buttons = elements(buttonList).map((value) => {
     const button = value as Record<string, unknown>;
     if (!button || typeof button !== "object" || Array.isArray(button)) {
       throw new Error("buttons must be objects");
@@ -754,6 +771,7 @@ export function validateTemplateContent(record: Record<string, unknown>): Templa
     const url = button.url.trim();
     if (!url) throw new Error("every button needs a url");
     if (!/^https?:\/\//.test(url)) throw new Error("button url must be https");
+    if (url.length > MAX_BUTTON_URL_LENGTH) throw new Error("button url is at most 2000 characters");
     if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
       throw new Error("buttons cannot contain line breaks");
     }

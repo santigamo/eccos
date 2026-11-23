@@ -91,7 +91,7 @@ Recommendation: sheet.
 
 ## 5. "Send test" defers to the API on every template — the message is right, the send path is too narrow
 
-**Not a bug in the message.** `lib/template-params.ts:75` (`analyzeTemplate`) refuses only
+**Not a bug in the message.** `analyzeTemplate` in `packages/core/src/template-rules.ts` refuses only
 what the console genuinely cannot build, and each refusal names its real reason. Checked
 against Citta's four production templates, all four legitimately hit it:
 
@@ -115,7 +115,7 @@ is no way to express a button URL parameter or a text-header parameter, and
    `SendTemplateTestInput` with a button-parameter component, teach the gateway to build
    Meta's `components: [{type:"button", sub_type:"url", index:"0", parameters:[…]}]`, and
    drop the corresponding refusal.
-2. **Text-header parameters.** `template-params.ts:112` refuses these with a comment
+2. **Text-header parameters.** `analyzeTemplate`'s header check refuses these with a comment
    explaining the real reason — mixing two positional groups is where the numbering starts
    lying to the operator. So this needs a UI that *labels* which group each input belongs
    to, not just another text box. Do it after 1, and only with that labelling.

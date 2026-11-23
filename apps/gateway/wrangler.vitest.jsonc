@@ -11,6 +11,9 @@
       { "name": "CONTROL_PLANE", "class_name": "EccosControlPlane" }
     ]
   },
+  // The worker's own GatewayRPC entrypoint, so a spec can call it across the
+  // real binding (structured clone), as the console and the MCP server do.
+  "services": [{ "binding": "GATEWAY_RPC", "service": "eccos-test", "entrypoint": "GatewayRPC" }],
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "eccos-media-test", "jurisdiction": "eu" }
   ],

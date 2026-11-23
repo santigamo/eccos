@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayRPC } from "../../src/rpc";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { bootstrapAccount, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { validateTemplateSend } from "@eccos/core/template-rules";
 
 /**
  * `sendTemplateTest` — the console's one send surface (the "Send test" sheet).
@@ -323,5 +324,63 @@ describe("GatewayRPC.sendTemplateTest", () => {
       expect(error, JSON.stringify(bad)).not.toBeNull();
     }
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses what the console refuses, with the console's message, for any caller on the binding", async () => {
+    const fetchSpy = mockSendOk();
+    for (const bad of [
+      { headerMedia: { format: "image", link: "https://u:p@example.com/x.png" } },
+      { headerMedia: { format: "image", link: "not a url" } },
+      { headerMedia: { format: "image", link: "https:" } },
+      { bodyParams: ["a\nb"] },
+      { templateName: "Hello" },
+    ]) {
+      const request = input(bad);
+      let expected = "";
+      try {
+        validateTemplateSend(request as unknown as Record<string, unknown>);
+      } catch (error) {
+        expected = (error as Error).message;
+      }
+      expect(expected, JSON.stringify(bad)).not.toBe("");
+      await expect(makeRpc().sendTemplateTest(request, TEST_ACCOUNT_ID), JSON.stringify(bad)).rejects.toThrow(expected);
+    }
+    expect(fetchSpy.mock.calls.filter(([, init]) => (init?.method ?? "GET") !== "GET")).toHaveLength(0);
+  });
+
+  it("refuses a header link with a space with the core message", async () => {
+    const fetchSpy = mockSendOk();
+    await expect(
+      makeRpc().sendTemplateTest(
+        input({ headerMedia: { format: "image", link: "https://cdn.e.cc/a b.png" } }),
+        TEST_ACCOUNT_ID,
+      ),
+    ).rejects.toThrow("header media link cannot contain spaces or line breaks");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends Meta the normalized values, as the console would", async () => {
+    const fetchSpy = mockSendOk();
+    const result = await makeRpc().sendTemplateTest(
+      input({
+        templateName: " hello_world ",
+        languageCode: " en_US ",
+        bodyParams: [" Ada "],
+        buttonParams: [{ index: 0, text: " T-4 " }],
+        headerMedia: { format: "image", link: " https://cdn.e.cc/a.png " },
+      }),
+      TEST_ACCOUNT_ID,
+    );
+    expect(result).toEqual({ ok: true, messageId: "wamid.SENT" });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.template).toEqual({
+      name: "hello_world",
+      language: { code: "en_US" },
+      components: [
+        { type: "header", parameters: [{ type: "image", image: { link: "https://cdn.e.cc/a.png" } }] },
+        { type: "body", parameters: [{ type: "text", text: "Ada" }] },
+        { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: "T-4" }] },
+      ],
+    });
   });
 });
