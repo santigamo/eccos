@@ -130,9 +130,14 @@ describe("effective permissions", () => {
       "number_recheck",
       "numbers_list",
       "status_get",
+      "template_create",
+      "template_delete",
+      "template_edit",
+      "template_send_test",
+      "templates_list",
       "workspace_get",
     ]);
-    expect(await names(viewer)).toEqual(["numbers_list", "status_get", "workspace_get"]);
+    expect(await names(viewer)).toEqual(["numbers_list", "status_get", "templates_list", "workspace_get"]);
   });
 
   it.each<[string, Mode]>([

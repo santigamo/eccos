@@ -4,6 +4,7 @@ import { billingCheckoutLink, billingGet } from "./billing";
 import { connectLinkCreate, connectStatus } from "./connect";
 import { numberRecheck, numbersList, statusGet } from "./numbers";
 import { type Clients, type ElevationState, type McpActor, type ToolDefinition, capabilities, registerTool, toolActions } from "./registry";
+import { TEMPLATE_TOOLS } from "./templates";
 import { workspaceGet } from "./workspace-get";
 
 /** Every tool the server ships, one table. */
@@ -16,6 +17,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   numbersList,
   numberRecheck,
   statusGet,
+  ...TEMPLATE_TOOLS,
 ];
 
 const REQUEST_STATE_TTL_SECONDS = 600;

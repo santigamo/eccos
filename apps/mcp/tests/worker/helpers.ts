@@ -5,7 +5,7 @@ import type { Actor, ActorRef, AgentAction, AuthorizeResult, BillingLink, Billin
 import type { AccountResources, AccountWabaResource } from "@eccos/gateway-contract";
 import { expect } from "vitest";
 import app from "../../src/index";
-import type { AccountFixture, ConnectLinkIssue } from "../stubs/gateway";
+import type { AccountFixture, ConnectLinkIssue, GatewayCall } from "../stubs/gateway";
 
 export const RESOURCE = "https://mcp.example.test/mcp";
 export const METADATA_URL = "https://mcp.example.test/.well-known/oauth-protected-resource/mcp";
@@ -30,7 +30,7 @@ interface GatewayControls {
   reset(): Promise<void>;
   seed(accountId: string, fixture: AccountFixture): Promise<void>;
   fail(method: string, message: string): Promise<void>;
-  calls(): Promise<{ method: string; accountId: string }[]>;
+  calls(): Promise<GatewayCall[]>;
   connectLinkIssues(): Promise<ConnectLinkIssue[]>;
 }
 

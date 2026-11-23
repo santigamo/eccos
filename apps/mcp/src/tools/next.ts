@@ -11,6 +11,8 @@ const TOOL_ACTION = {
   number_recheck: "configure",
   numbers_list: "view",
   template_create: "configure",
+  template_send_test: "send",
+  templates_list: "view",
   webhook_set: "configure",
 } as const satisfies Record<string, AgentAction>;
 

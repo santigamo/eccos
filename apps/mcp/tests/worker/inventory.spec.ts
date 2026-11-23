@@ -11,6 +11,11 @@ const SETUP_TOOLS = {
   number_recheck: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   numbers_list: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   status_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  template_create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  template_delete: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  template_edit: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  template_send_test: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  templates_list: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   workspace_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
@@ -51,6 +56,6 @@ describe("tool inventory", () => {
     const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
     await client.close();
 
-    expect(names).toEqual(["numbers_list", "status_get", "workspace_get"]);
+    expect(names).toEqual(["numbers_list", "status_get", "templates_list", "workspace_get"]);
   });
 });

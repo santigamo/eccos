@@ -46,8 +46,18 @@ export interface ToolDeps {
   consoleOrigin: string;
 }
 
-/** A failure the agent can act on; its message is the whole error result, so say what to do next. */
-export class ToolError extends Error {}
+/**
+ * A failure the agent can act on; its message is the whole error result, so say what to do next.
+ * `detail` is the closed failure code (a gateway code, never free text) the audit line records.
+ */
+export class ToolError extends Error {
+  constructor(
+    message: string,
+    readonly detail: string | null = null,
+  ) {
+    super(message);
+  }
+}
 
 /** The caller lacks the action a call needs. */
 export class ForbiddenError extends ToolError {
@@ -277,7 +287,7 @@ async function invoke(
     return { result: structured(value), audit: { outcome: "success", detail: null } };
   } catch (error) {
     if (error instanceof ForbiddenError) return denied(errorText(error.message), "forbidden");
-    if (error instanceof ToolError) return { result: errorText(error.message), audit: { outcome: "failed", detail: null } };
+    if (error instanceof ToolError) return { result: errorText(error.message), audit: { outcome: "failed", detail: error.detail } };
     logFailure("tool_failure", tool.name, error);
     return {
       result: errorText(`Eccos could not complete ${tool.name}. Try again in a minute; if it keeps failing, tell the person.`),
