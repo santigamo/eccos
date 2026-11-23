@@ -785,6 +785,41 @@ export interface ConnectLinkSettled {
   state: ConnectLinkState | "revoked";
 }
 
+/** What a secret claim mints when it is redeemed. */
+export type SecretClaimRequest = { kind: "api_key"; label?: string } | { kind: "subscriber_secret"; wabaId: string };
+
+/** Who asked for a claim: the user and the OAuth client (an id or a client metadata URL). */
+export interface SecretClaimCreator {
+  userId: string;
+  clientId: string;
+}
+
+/** The raw token exists only here: the gateway keeps its hash. `claimId` names the claim without opening it. */
+export interface IssuedSecretClaim {
+  claimId: string;
+  token: string;
+  expiresAt: number;
+}
+
+interface SecretClaimBase {
+  claimId: string;
+  accountId: string;
+  organizationId: string;
+  creatorUserId: string;
+  clientId: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+/** A pending claim: nothing it mints exists yet. */
+export type SecretClaim = SecretClaimBase &
+  ({ kind: "api_key"; label: string | null } | { kind: "subscriber_secret"; wabaId: string });
+
+/** A spent claim and the secret it minted. The secret exists only in this value. */
+export type RedeemedSecretClaim =
+  | { claim: SecretClaim & { kind: "api_key" }; keyId: string; secret: string }
+  | { claim: SecretClaim & { kind: "subscriber_secret" }; secret: string };
+
 /**
  * One WhatsApp Business Account a pasted token can reach, offered to the
  * operator as a choice.
@@ -1333,6 +1368,32 @@ export interface GatewayApi {
   /** Revoke one of the account's keys. False when the key is not the account's
    * or is already revoked. */
   revokeApiKey(accountId: string, keyId: string): Promise<boolean>;
+  /**
+   * Records a one-time claim on an API key or a WABA's subscriber secret,
+   * valid for 10 minutes. Mints nothing: the secret is made when the claim is
+   * redeemed. Throws for an unknown account, a bad label or creator, or a WABA
+   * the account does not own.
+   */
+  createSecretClaim(
+    accountId: string,
+    request: SecretClaimRequest,
+    creator: SecretClaimCreator,
+  ): Promise<IssuedSecretClaim>;
+  /**
+   * The pending claim a token opens, or null when it is unknown, spent,
+   * expired, its account has no active organization, or its WABA is no longer
+   * the account's. Changes nothing.
+   */
+  resolveSecretClaim(token: string): Promise<SecretClaim | null>;
+  /**
+   * Spends the claim and mints its secret, once. Null for a token that opens
+   * no claim; `gone` for a claim that is spent, expired or no longer resolves.
+   * A subscriber secret is stored after the claim is spent: if that write
+   * fails the claim is gone and the previous secret stays in force.
+   */
+  redeemSecretClaim(token: string): Promise<RedeemedSecretClaim | "gone" | null>;
+  /** The account's pending claims, newest first. */
+  listSecretClaims(accountId: string): Promise<SecretClaim[]>;
   /** Start Embedded Signup for one already-resolved account id (the dashboard
    * resolves it from the organization link; never a browser-supplied id).
    *
