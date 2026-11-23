@@ -200,3 +200,39 @@ for (const origin of ["http://localhost:9999", "https://localhost", "http://loca
   origins[origin] = { status: response.status, body: (await response.text()).slice(0, 300) };
 }
 save("06-origin.json", { consoleOrigin: "http://localhost:3000", origins });
+
+// 7. A forged approval state: the SDK refuses it with -32602 and the server writes an audit line
+// (denied, invalid_request_state), read from the apps/mcp wrangler dev log.
+const forged = btoa(JSON.stringify({ requestId: "forged", tool: "workspace_get" }));
+const forgedCall = {
+  jsonrpc: "2.0",
+  id: 7,
+  method: "tools/call",
+  params: {
+    name: "workspace_get",
+    arguments: {},
+    requestState: forged,
+    _meta: {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": { name: "evidence-raw", version: "0" },
+      "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {} } },
+    },
+  },
+};
+const forgedResponse = await fetch(`${MCP}/mcp`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    authorization: `Bearer ${token}`,
+    "mcp-protocol-version": "2026-07-28",
+    "mcp-method": "tools/call",
+    "mcp-name": "workspace_get",
+  },
+  body: JSON.stringify(forgedCall),
+});
+save("07-forged-request-state.json", {
+  note: "The audit line is in 07-forged-request-state-audit.jsonl, read from the apps/mcp wrangler dev log.",
+  request: { ...forgedCall, params: { ...forgedCall.params, requestState: "<forged state>" } },
+  response: { status: forgedResponse.status, body: (await forgedResponse.text()).replaceAll(forged, "<forged state>") },
+});
