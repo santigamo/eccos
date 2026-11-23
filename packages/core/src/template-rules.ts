@@ -577,6 +577,10 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
     }
     return { index: button.index, text };
   });
+  // Two values for one button cannot both be sent; Meta would refuse the message.
+  if (new Set(buttons.map((button) => button.index)).size !== buttons.length) {
+    throw new Error("each button parameter index can be given only once");
+  }
   const headerMedia = validateHeaderMedia(record.headerMedia);
   return {
     templateName: record.templateName.trim(),
