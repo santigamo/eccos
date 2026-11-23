@@ -1,8 +1,9 @@
-import type { AgentAction, BillingResult } from "@eccos/console-contract";
+import type { BillingResult } from "@eccos/console-contract";
 import type { AccountWabaResource, TemplatesResult } from "@eccos/gateway-contract";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { z } from "zod";
-import { LEAST_ROLE, SCOPE_OF } from "../permissions";
+import { SCOPE_OF } from "../permissions";
+import { type NextTool, holders, offer } from "./next";
 import { type ToolDeps, actorRef, defineTool, isElevated } from "./registry";
 
 const STEP_IDS = ["subscription", "number", "webhook", "api_key", "template"] as const;
@@ -20,36 +21,12 @@ const step = z.object({
 
 type Step = z.infer<typeof step>;
 
-/** The tools a step can point at, with the action each needs (design § 4). */
-const NEXT_TOOL_ACTION = {
-  billing_checkout_link: "administer",
-  connect_link_create: "administer",
-  numbers_list: "view",
-  webhook_set: "configure",
-  api_key_create: "administer",
-  template_create: "configure",
-} as const satisfies Record<string, AgentAction>;
-
-type NextTool = keyof typeof NEXT_TOOL_ACTION;
-
 /** A step before it is told who may act on it: `fact` says where it stands, `call` how `nextTool` moves it. */
 type Draft = Omit<Step, "detail" | "nextTool"> & { fact: string; next?: { tool: NextTool; call?: string } };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-const holders = (action: AgentAction) => (LEAST_ROLE[action] === "admin" ? "an owner or admin" : `an ${LEAST_ROLE[action]} or above`);
-
-/** Point at the next tool only when this connection may call it; otherwise say who can do the step. */
-function offer({ fact, next, ...rest }: Draft, deps: ToolDeps): Step {
-  if (!next) return { ...rest, detail: fact, nextTool: null };
-  const action = NEXT_TOOL_ACTION[next.tool];
-  if (deps.can(action)) return { ...rest, detail: next.call ? `${fact} ${next.call}` : fact, nextTool: next.tool };
-  return {
-    ...rest,
-    detail: `${fact} This connection cannot do it: it needs the ${SCOPE_OF[action]} scope, which ${holders(action)} can grant, or they can do it in the Eccos console.`,
-    nextTool: null,
-  };
-}
+const toStep = ({ fact, next, ...rest }: Draft, deps: ToolDeps): Step => ({ ...rest, ...offer(deps, fact, next) });
 
 /** `null` when this connection may not see billing (contract § 4: billing state is administer). */
 function subscriptionStep(result: BillingResult | null): Draft {
@@ -245,7 +222,7 @@ export const workspaceGet = defineTool({
       webhookStep(waba?.wabaId ?? null, subscriber?.url ?? null),
       apiKeyStep(keys.filter((key) => key.revokedAt === null).length),
       templateStep(waba?.wabaId ?? null, templates ? approvedTemplates(templates) : 0),
-    ].map((draft) => offer(draft, deps));
+    ].map((draft) => toStep(draft, deps));
     return {
       actingAs: { userId: actor.userId, role: actor.role },
       workspace: { organizationId: actor.organizationId },

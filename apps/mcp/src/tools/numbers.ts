@@ -187,7 +187,7 @@ export const numberRecheck = defineTool({
   audit: (input) => ({ wabaId: input.wabaId ?? null }),
   run: async (input, actor, deps) => {
     const { gateway } = deps.for("configure");
-    const waba = await ownedWaba(gateway, actor.accountId, input.wabaId);
+    const waba = await ownedWaba(deps, gateway, actor.accountId, input.wabaId);
     // The console offers Re-check only where it can change something (numbers-table.tsx).
     if (waba.status === "active" && waba.phones.length > 0) {
       return {
@@ -252,7 +252,7 @@ export const statusGet = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   run: async (input, actor, deps) => {
     const { gateway } = deps.for("view");
-    const waba = await ownedWaba(gateway, actor.accountId, input.wabaId);
+    const waba = await ownedWaba(deps, gateway, actor.accountId, input.wabaId);
     if (waba.status !== "active") {
       throw new ToolError(
         `WABA ${waba.wabaId} is ${waba.status}, not active, so it has no status yet. Call numbers_list to see why and what to do.`,

@@ -64,7 +64,7 @@ describe("numbers_list", () => {
     expect(result.wabas[0]).toMatchObject({
       nextTool: null,
       detail:
-        "Registered, but Eccos has not finished subscribing it to its Meta webhooks. Eccos keeps retrying on its own. This connection cannot do the next step: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+        "Registered, but Eccos has not finished subscribing it to its Meta webhooks. Eccos keeps retrying on its own. This connection cannot do it: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
     });
   });
 
@@ -172,7 +172,7 @@ describe("number_recheck", () => {
     await client.close();
 
     expect(text).toBe(
-      "This workspace has 2 WhatsApp Business accounts: waba-1, waba-2. Call again with wabaId set to one of them; numbers_list shows the numbers on each.",
+      "This workspace has 2 WhatsApp Business accounts: waba-1, waba-2. Call again with wabaId set to one of them. Call numbers_list to see the numbers on each.",
     );
     expect((await gatewayStub.calls()).map((entry) => entry.method)).toEqual(["listAccountResources"]);
   });
@@ -216,6 +216,17 @@ describe("number_recheck", () => {
     expect(await gatewayStub.calls()).toEqual([]);
   });
 
+  it("names numbers_list in a refusal only when this connection may call it", async () => {
+    await seedA(wabaIn("pending", "waba-a", "acct-a"));
+    const client = await connect(await grantToken(makeActor({ role: "admin", actions: ["configure"] }), ["eccos:configure"]));
+    const text = errorOf(await call(client, "number_recheck", { wabaId: "waba-x" }));
+    await client.close();
+
+    expect(text).toBe(
+      "WABA waba-x is not connected to this workspace. Its WABAs are: waba-a. This connection cannot do it: it needs the eccos:view scope, which a viewer or above can grant, or they can do it in the Eccos console.",
+    );
+  });
+
   it("refuses a WABA of another account and never calls the gateway for it", async () => {
     await seedA(wabaIn("pending", "waba-a", "acct-a"));
     await seedB();
@@ -254,6 +265,17 @@ describe("status_get", () => {
       connectedAt: "2026-11-20T10:00:00.000Z",
       counts: STATUS.counts,
     });
+  });
+
+  it("tells a viewer with no WABA who can connect one", async () => {
+    await seedA();
+    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
+    const text = errorOf(await call(client, "status_get"));
+    await client.close();
+
+    expect(text).toBe(
+      "No WhatsApp Business account is connected to this workspace yet. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+    );
   });
 
   it("sends a WABA that is not active to numbers_list", async () => {

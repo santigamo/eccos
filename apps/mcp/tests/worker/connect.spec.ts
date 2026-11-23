@@ -187,7 +187,7 @@ describe("connect_status", () => {
     expect(result.structuredContent).toMatchObject({
       state: "none",
       detail:
-        "No connection link was ever made for this workspace. This connection cannot do the next step: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+        "No connection link was ever made for this workspace. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
       nextTool: null,
     });
   });
