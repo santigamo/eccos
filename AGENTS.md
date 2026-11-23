@@ -68,6 +68,25 @@ Bun workspace (`packages/*` + `apps/*`); the Bun self-host target lives at `src/
   storing the events fails (sync capture or ingest): then it answers 5xx so Meta retries.
 - This repo is **public/OSS** — never commit real tokens, secrets, or `.env`.
 
+## Rules and what enforces them
+
+A rule that nothing checks gets broken again. Each row pairs a rule with the check that fails when
+it is broken. When someone corrects you, fix the mistake and add its row; when the rule was already
+here with only prose behind it, give it a check in the same change. Drop a row once the mistake
+cannot happen.
+
+| Rule | Enforced by |
+| --- | --- |
+| Run everything CI runs before you push | `bun run check` is the only step of `.github/workflows/ci.yml` |
+| Lint is clean on every commit | `bun run lint`, first step of `bun run check` |
+| A new test file runs without registering it | `bun run test` globs `packages/*/tests/*.test.ts` and `apps/gateway/tests/*.test.ts` |
+| PR titles read `type(scope): subject` | `scripts/check-pr-title.sh`, run by `.github/workflows/pr-title.yml` |
+| README's event shape matches `WhatsAppCallbackEvent` | `apps/gateway/tests/docs-readme-events.test.ts` |
+| The public docs' event examples and tables match the parser | `apps/gateway/tests/docs-events.test.ts`, `tests/worker/docs-contract.spec.ts` |
+| Parser changes come with tests | Prose only (see Rules) |
+| `packages/core` stays free of HTTP and DB code | Prose only (see Rules) |
+| No secrets in the repository | Prose only (see Rules) |
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
