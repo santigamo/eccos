@@ -5,6 +5,8 @@ import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
 import { linkIsLive, linkStatusLine } from "../../lib/connect-link/status";
 import { failureCopy } from "../../lib/failure";
 import { followSignIn } from "../../lib/follow-sign-in";
+import { withStepUp } from "../../lib/step-up";
+import { StepUpSheet } from "./step-up-sheet";
 import { type ConnectLinkView, type Result, openConnectLink } from "../../server/gateway";
 import { CopyButton } from "./copy-button";
 import { MACHINE_CLASS } from "./plain-table";
@@ -34,6 +36,8 @@ function ConnectLinkDialog({ onOpenChange }: { onOpenChange: (open: boolean) => 
           </DialogDescription>
         </DialogHeader>
         <ConnectLinkPanel />
+        {/* Nested: step-up for making the link opens inside this dialog. */}
+        <StepUpSheet />
       </DialogContent>
     </Dialog>
   );
@@ -54,7 +58,7 @@ export function ConnectLinkPanel({ load = openConnectLink }: { load?: typeof ope
       inFlight.current = true;
       setPending(true);
       try {
-        const next = await load({ data: { fresh } });
+        const next = await withStepUp(() => load({ data: { fresh } }));
         setView(next);
         if (next.ok && next.data.url) setUrl(next.data.url);
       } catch (err) {

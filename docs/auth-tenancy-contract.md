@@ -102,8 +102,10 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Subscriber config write | admin | **Yes** | TOTP (owner/admin) + ≤15 min recent auth |
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |
 | API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
-| Embedded Signup `/connect` start + callback | admin | **Yes** | Account-bound OAuth state |
-| Connection link: make or replace | admin | **Yes** | One per workspace; see below |
+| Embedded Signup `/connect` start | admin | **Yes** | Issues the account-bound OAuth state |
+| Embedded Signup callback / code exchange | admin | — (by design) | Must present the state the stepped-up start issued. Meta's code is single-use and lives 30 seconds, so a step-up refusal here would lose it and force the whole flow again |
+| Connection link: make or replace | admin | **Yes** | One per workspace; see below. Reading its status needs no step-up |
+| Conversation retention write | admin | **Yes** | Shortening it purges history |
 | Export data | admin | **Yes** | |
 | GDPR erasure (`eraseByPhone`) | owner | **Yes** | Owner-only destructive action |
 | Invitations & member role changes | owner/admin (Better Auth defaults) | **Yes** | Verified email required (§7) |
@@ -111,9 +113,10 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Workspace rename | admin | — | `renameWorkspace` server function (§9): name only, never a slug; refused when the session moved to another workspace; the gateway account's name follows; ids-only audit line |
 | Organization delete | disabled in v1 | — | Rejected everywhere (§9) |
 
-"**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** a
-recent authentication within the step-up window (15 minutes); otherwise the server demands
-re-authentication before executing the action. Reads never require step-up.
+"**Yes**" means: the acting user must have TOTP MFA enrolled (owner/admin roles) **and** have
+proved that second factor within the step-up window (15 minutes); otherwise the server demands
+re-authentication before executing the action. A password alone never renews it, and neither does
+a session's age. Reads never require step-up.
 
 **The connection link is the one unauthenticated actor.** An admin makes a link for their
 workspace; whoever holds it may run Embedded Signup into that workspace from the public `/connect`
@@ -178,11 +181,14 @@ and its use is audited as `connect_link` under the creator's user id.
   eccos-0x0.11. Provider secrets live only in Worker secrets/bindings; the interface ships in
   eccos-0x0.2 so auth flows are testable with a stub sender.
 - **MFA policy**: TOTP is **required for owner/admin roles before sensitive actions** — connect,
-  API keys, export, erasure, membership/role changes, and subscriber config write (§4). eccos-0x0.7
-  implements enrollment and enforcement; this contract fixes the policy.
-- **Recent-authentication step-up window: 15 minutes.** A sensitive action requires an
-  authentication (fresh sign-in or step-up challenge) within the last 15 minutes; older sessions
-  must re-authenticate first.
+  API keys, export, erasure, membership/role changes, and subscriber config write (§4). Enrollment
+  and enforcement are implemented (`eccos-eyel`; docs/auth-hardening.md, "Step-up enforcement");
+  this contract fixes the policy. **Setting up TOTP requires a code mailed to the account's
+  verified address**, so the password alone never yields a second factor, and every change to
+  the second factor is notified by email.
+- **Recent-authentication step-up window: 15 minutes.** A sensitive action requires the second
+  factor to have been proved within the last 15 minutes, by a sign-in that included it or by the
+  step-up challenge on the current session; otherwise the code is asked for again first.
 - **Recovery** uses the email reset flow with **anti-enumeration generic responses** — identical
   responses and timing whether or not the address exists; reset links only work for verified,
   existing identities.
@@ -214,7 +220,7 @@ across tenants and inside one user's own membership list.
 | `set-active` | Set active organization | Wrapped by app validation: server re-verifies membership; result is UX state only (§5) |
 | `update` | Update organization (name, metadata) | **Not served** — 404 before dispatch, because the same slug-uniqueness probe is reachable through a rename. Renaming goes through the `renameWorkspace` server function instead (Settings, owner/admin, §4), which calls Better Auth in process with the name only and never accepts or returns a slug. Metadata/slug changes **never authorize the account mapping** (§2) |
 | `delete` | Delete organization | **Disabled in v1** — rejected regardless of role |
-| `invite-member`, `cancel-invitation`, `remove-member`, `update-member-role` | Invite, cancel an invitation, remove a member, change a role | **Not served** — 404 before dispatch. Served only through the console's server functions (`src/members.ts`), which call them in process: owner/admin, only `admin`/`operator`/`viewer` may be granted, an owner is changed or removed only by an owner and never the last one, removing a member cancels the invitations they sent that are still pending, ids-only audit line, at most 20 invitations per inviter per hour (enforced in the plugin's `beforeCreateInvitation` hook). Step-up (§4) to follow |
+| `invite-member`, `cancel-invitation`, `remove-member`, `update-member-role` | Invite, cancel an invitation, remove a member, change a role | **Not served** — 404 before dispatch. Served only through the console's server functions (`src/members.ts`), which call them in process: owner/admin, only `admin`/`operator`/`viewer` may be granted, an owner is changed or removed only by an owner and never the last one, removing a member cancels the invitations they sent that are still pending, ids-only audit line, at most 20 invitations per inviter per hour (enforced in the plugin's `beforeCreateInvitation` hook). Every one needs step-up (§4), checked by those functions and again by the plugin's organization hooks |
 | `list-invitations` (GET) | Invitations | Owner/admin; recipients must be verified identities (§7) |
 | `accept-invitation`, `reject-invitation`, `get-invitation` (GET) | Invitation lifecycle | Acceptance requires signed-in matching identity (§7); never provisions a tenant |
 | `add-member` | Member add | Server-only in Better Auth; not reachable over HTTP |

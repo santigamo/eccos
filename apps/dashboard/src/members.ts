@@ -1,8 +1,8 @@
 /**
  * Workspace members and invitations (contract §4/§7/§9).
  *
- * Every function requires `administer`, and the organization is the one that
- * check resolves. A member or invitation id is looked up inside that
+ * Every function requires `administer`, and every write also requires step-up
+ * (contract §4). The organization is the one the role check resolves. A member or invitation id is looked up inside that
  * organization only, so an id from another workspace reads exactly like one
  * that does not exist. Better Auth's HTTP routes for these writes are blocked
  * (`auth/blocked-endpoints.ts`), so these functions are the only way in.
@@ -16,7 +16,10 @@ import { z } from "zod";
 import type { Auth } from "./auth/auth";
 import { invitationLimiter } from "./auth/config";
 import { getAuthForRequest } from "./auth/request-auth";
+import { isStepUpReason, type StepUpReason } from "@eccos/auth-baseline/step-up";
 import { requireAuthContext, requireGatewayPermission } from "./auth/server-auth";
+import { requireStepUp } from "./auth/step-up";
+import { stepUpReasonOfError } from "./auth/step-up-guard";
 import { ForbiddenError } from "./auth/tenant";
 import { auditEvent, type SensitiveAction } from "./server/audit";
 import type { Result } from "./server/gateway";
@@ -70,6 +73,8 @@ export interface MembersFailure {
   error: string;
   /** The member or invitation no longer exists here: re-read the page. */
   gone?: boolean;
+  /** Refused for step-up: `withStepUp` asks the operator and runs the write again. */
+  reason?: StepUpReason;
 }
 
 export type MembersMutation = { ok: true } | MembersFailure;
@@ -167,7 +172,10 @@ const GONE = new Set(["MEMBER_NOT_FOUND", "INVITATION_NOT_FOUND"]);
  * Map a write's failure to allowlisted copy. Anything without a code of ours
  * goes through `classifyFailure`, which names it and reports the unexpected.
  */
-async function membersFailure(err: unknown): Promise<MembersFailure> {
+async function membersFailure(thrown: unknown): Promise<MembersFailure> {
+  // Better Auth's own hook refused (`stepUpOrganizationHooks`): the same refusal as `requireStepUp`'s.
+  const hookRefusal = stepUpReasonOfError(thrown);
+  const err = hookRefusal ? new ForbiddenError("step-up required", hookRefusal) : thrown;
   const code = authErrorCode(err);
   const mapped = MEMBERS_COPY[code];
   if (mapped) return GONE.has(code) ? { ok: false, error: mapped, gone: true } : { ok: false, error: mapped };
@@ -177,6 +185,7 @@ async function membersFailure(err: unknown): Promise<MembersFailure> {
   return {
     ok: false,
     error: failure.reason === "missing-permission" ? ASK_TO_MANAGE_MEMBERS : failureCopy(failure).detail,
+    ...(isStepUpReason(failure.reason) ? { reason: failure.reason } : {}),
   };
 }
 
@@ -192,6 +201,9 @@ async function mutate(
   let caller: Caller;
   try {
     caller = await requireAdministrator();
+    // Here and not only in Better Auth's hooks: cancelling and resending an
+    // invitation write through the adapter, which no hook sees.
+    await requireStepUp(caller.auth, caller.headers);
   } catch (err) {
     return membersFailure(err);
   }

@@ -86,6 +86,8 @@ The `Idempotency-Key` header is **mandatory** and is always a SHA-256 hex digest
 | `verify-email` | `sha256("verify-email:" + to + ":" + <verification token>)` |
 | `reset-password` | `sha256("reset-password:" + to + ":" + <reset token>)` |
 | `invite-member` | `sha256("invite-member:" + to + ":" + invitation.id)` |
+| `two-factor-code` | `sha256("two-factor-code:" + to + ":" + <hash of the code>)` |
+| `two-factor-changed` | `sha256("two-factor-changed:" + to + ":" + <change> + ":" + <random id>)` |
 
 The property that makes this correct: **the key derives from the unique element
 of the payload, so key and payload move together.** A framework retry replays
@@ -111,7 +113,8 @@ the callback (`extractTokenFromUrl`); the URL itself is never hashed.
 
 ### Templates
 
-Five templates: `verify-email`, `reset-password`, `invite-member`, and the two
+Seven templates: `verify-email`, `reset-password`, `invite-member`, the two for
+two-factor authentication (`two-factor-code`, `two-factor-changed`), and the two
 that tell an admin how their connection link went, `connect-link-connected`
 (`workspace`, `note`, `url`) and `connect-link-failed` (`workspace`, `reason`, `url`).
 `note` and `reason` are fixed sentences chosen by the console, never free text.
@@ -120,6 +123,16 @@ Each one's declared variable set is **one explicit constant** in
 connection-link mails are best effort: a send that fails is logged and never
 fails the connection, and they carry the workspace name and the console URL
 only, never a phone number or message content.
+
+| Template | Variables | Sent when |
+|---|---|---|
+| `two-factor-code` | `code`, `name` | Someone signed in asks to set up two-factor authentication. `code` is 8 characters, valid 10 minutes, single use |
+| `two-factor-changed` | `change`, `name` | Two-factor authentication was turned on or off, or backup codes were regenerated. `change` is one sentence saying which |
+
+> **Register `two-factor-code` and `two-factor-changed` with the provider
+> before deploying the code that sends them.** Until `two-factor-code` exists
+> there, the send is refused (`template_not_found`) and nobody can enroll, so
+> every step-up row stays closed to accounts without TOTP.
 
 **Variable validation is exact in both directions**: a missing declared
 placeholder *or* an extra undeclared variable is a hard reject. The adapter
@@ -142,6 +155,8 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 | Sign-up / verification | log, continue | **surface** — bounded, membership-neutral message |
 | Password reset | log, continue | **swallow**, log, keep the generic response |
 | Invitation | log, continue | **surface** to the inviter |
+| Two-factor setup code | log, continue | **surface**: the setup cannot go on without it |
+| Two-factor change notice | log, continue | log; the change already happened |
 
 - **Sign-up may surface it** because an existing account short-circuits *before*
   any send happens, so it discloses the deliverability of a freshly typed

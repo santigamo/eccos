@@ -3,6 +3,8 @@ import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-route
 import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
+import { getConnectBlock, type ConnectBlock } from "../server/connect-block";
+import { StepUpSheet } from "../components/dashboard/step-up-sheet";
 import { FailureView } from "../components/dashboard/failure";
 import {
   CONNECT_FORK_DESCRIPTION,
@@ -41,6 +43,8 @@ export const Route = createFileRoute("/numbers")({
     connectError: normalizeConnectError(search.connectError),
     connectSkipped: normalizeConnectSkipped(search.connectSkipped),
   }),
+  // What the connect fork owes (role, step-up), read with the page, not the shell.
+  loader: () => getConnectBlock(),
   component: NumbersPage,
 });
 
@@ -56,6 +60,7 @@ function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
   const { wabaId, connectError, connectSkipped } = Route.useSearch();
+  const blocked = Route.useLoaderData();
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
@@ -110,6 +115,7 @@ function NumbersPage() {
               subscribed={subscribed}
               canManageBilling={canManageBilling}
               canConnect={canConnect}
+              blocked={blocked}
             />
             {/* NOTHING POINTS AT THE PASTED-TOKEN PATH FROM HERE, on purpose.
                 A sentence used to send operators to it in Settings; it is now
@@ -142,6 +148,7 @@ function NumbersPage() {
       canConnect={canConnect}
       connectError={connectError}
       connectSkipped={connectSkipped}
+      blocked={blocked}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
     />
   );
@@ -178,8 +185,11 @@ export function NumbersView({
   canConnect = true,
   connectError,
   connectSkipped,
+  blocked,
   onRefresh,
 }: {
+  /** What stops the signed-in user connecting right now, for the add-number fork. */
+  blocked?: ConnectBlock | null;
   resources: AccountResources;
   nextWabaId?: string;
   supportEmail?: string | null;
@@ -261,6 +271,7 @@ export function NumbersView({
           }}
           busy={busy}
           onBusyChange={setBusy}
+          blocked={blocked}
           notice={notice("mb-0")}
           canConnect={canConnect}
         />
@@ -283,19 +294,22 @@ export function FirstRunConnect({
   subscribed = false,
   canManageBilling = true,
   canConnect = true,
+  blocked,
 }: {
   closed: boolean;
   billing: boolean;
   subscribed?: boolean;
   canManageBilling?: boolean;
   canConnect?: boolean;
+  /** What stops the signed-in user connecting right now (role, step-up owed). */
+  blocked?: ConnectBlock | null;
 }) {
   if (closed && billing) return <SubscriptionGate subscribed={subscribed} canManage={canManageBilling} />;
   if (!canConnect) return <p className="m-0 text-sm text-muted-foreground">{ASK_AN_ADMIN}</p>;
   return (
     <>
       {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}
-      <ConnectNumberPanel heading="Meta Embedded Signup" closed={closed} />
+      <ConnectNumberPanel heading="Meta Embedded Signup" closed={closed} blocked={blocked} />
     </>
   );
 }
@@ -326,9 +340,11 @@ function AddNumberDialog({
   onOpenChange,
   busy,
   onBusyChange,
+  blocked,
   notice,
   canConnect,
 }: {
+  blocked?: ConnectBlock | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   busy: boolean;
@@ -360,7 +376,10 @@ function AddNumberDialog({
         {canConnect ? (
           <>
             {notice}
-            <ConnectNumberChoices onBusyChange={onBusyChange} />
+            <ConnectNumberChoices onBusyChange={onBusyChange} blocked={blocked} />
+            {/* Nested: step-up from the fork opens inside this dialog. The notice
+                that opened it is gone once it passes, so focus returns here. */}
+            <StepUpSheet finalFocus={description} />
           </>
         ) : null}
       </DialogContent>
