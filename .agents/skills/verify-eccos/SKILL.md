@@ -55,6 +55,12 @@ Gateway, over HTTP:
 - `$V admin <METHOD> <path> [json]` calls an admin bootstrap route with the admin key.
 - Account routes take `curl` with `authorization: Bearer <api key>`. Get a key from the console's API keys page or from `$V admin POST /v1/accounts '{"accountId":"<id>"}'`.
 
+Console, over HTTP without the UI, for server-side checks such as refusals:
+
+- `$V session <email>` signs in and keeps the cookie under `.verify/run/sessions/`. Once `enroll-totp` ran for that email, it answers the TOTP prompt itself, and that sign-in counts as a fresh step-up.
+- `$V serverfn <email> <src file> <export> [json]` calls a console server function the way the browser does, with the file relative to `apps/dashboard`. For example: `$V serverfn $EMAIL src/server/gateway.ts issueApiKey '{"label":"verify"}'`. It prints the status and the decoded result. It is the user path minus the UI, so say so in a proof.
+- `$V enroll-totp <email>` turns on TOTP for a signed-in user. The setup code is mailed through the fake, and the secret stays in the run directory. `$V step-up <email>` confirms with a fresh code. `$V totp <email|key>` prints the current code; `$V mail-code <email>` prints the newest setup code mailed to that address. Use the last two in the console's own dialogs.
+
 Console, in a browser: use whatever browser automation your harness has. Address elements by route and by ARIA role and name, as the feature files list them. Do not wait for network idle. The console polls, so wait for the element or text you expect.
 
 External side effects:
