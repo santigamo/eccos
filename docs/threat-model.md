@@ -229,8 +229,10 @@ This surface is specified in [openspec/changes/add-mcp-server](../openspec/chang
 to 1.10 of that change build them, and this section names the file once a mitigation lands.
 
 - **Surface:** `apps/mcp` serves MCP over Streamable HTTP at `/mcp` on its own host, plus its
-  protected-resource metadata. It holds no storage and no secret, and reaches the rest of Eccos only
-  through the `ConsoleRPC` and `GatewayRPC` service bindings. The console gains the OAuth
+  protected-resource metadata. It holds no storage and no credential that grants access. Its one
+  secret, `REQUEST_STATE_KEY`, seals the approval state; a leaked key can forge an approval state,
+  which still cannot run a tool, because elevation is re-read from `authorize` on every request. It
+  reaches the rest of Eccos only through the `ConsoleRPC` and `GatewayRPC` service bindings. The console gains the OAuth
   endpoints listed in [auth-tenancy-contract.md](./auth-tenancy-contract.md) §9, the workspace,
   consent, approval, and claim pages, Connected agents in Settings, and `POST /api/claim`.
 - **Mitigation, the token is a pointer:** `apps/mcp` never verifies or parses a token itself. It

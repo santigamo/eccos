@@ -644,8 +644,9 @@ Measured against `docs/threat-model.md`.
 | Consent rows | Auth D1 | The revocation switch; shown in Settings |
 | Elevation rows and approval requests | Auth D1 | Written only by a signed-in owner or admin who passed step-up; 24 hours; ended by revoke |
 | Secret claim token | The tool result, then the agent's shell or a person's browser; hashed in the control plane | Single use, 10 minutes, POST only, mints nothing until spent |
+| `REQUEST_STATE_KEY` | `apps/mcp`, a Worker secret | Seals the approval state to { request id, tool } and the grant, for 10 minutes. A leaked key can forge an approval state, which still cannot run a tool: elevation is re-read from `authorize` on every request |
 
-`apps/mcp` itself holds none of them.
+Apart from that key, `apps/mcp` holds none of them: no storage and no credential that grants access.
 
 ### 5.2 New trust boundary
 
