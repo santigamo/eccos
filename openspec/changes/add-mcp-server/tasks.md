@@ -45,7 +45,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
 
 ## Phase 1: connect and set up
 
-- [ ] 1.1 Amend `docs/auth-tenancy-contract.md` and `docs/threat-model.md` as listed in
+- [x] 1.1 Amend `docs/auth-tenancy-contract.md` and `docs/threat-model.md` as listed in
       design § 5.5. Documentation only, reviewed before the code that relies on it.
 - [ ] 1.2 Authorization server in the console: `jwt()` with the bare origin as issuer and
       `disabledPaths: ["/token"]`, `mcp()`, `cimd()` with the Workers fetcher, in `createAuth`
