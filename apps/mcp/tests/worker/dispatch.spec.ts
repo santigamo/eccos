@@ -72,6 +72,8 @@ describe("effective permissions", () => {
     const viewer = await grantToken(makeActor({ role: "viewer", actions: ["view"] }));
 
     expect(await names(owner)).toEqual([
+      "billing_checkout_link",
+      "billing_get",
       "connect_link_create",
       "connect_status",
       "fixture_configure",
