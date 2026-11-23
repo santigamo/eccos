@@ -4,7 +4,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import type { Actor, ActorRef, AgentAction, AuthorizeResult, BillingResult, ElevationResult } from "@eccos/console-contract";
 import type { AccountWabaResource } from "@eccos/gateway-contract";
 import app from "../../src/index";
-import type { AccountFixture } from "../stubs/gateway";
+import type { AccountFixture, GatewayCall } from "../stubs/gateway";
 
 export const RESOURCE = "https://mcp.example.test/mcp";
 export const METADATA_URL = "https://mcp.example.test/.well-known/oauth-protected-resource/mcp";
@@ -24,7 +24,7 @@ interface ConsoleControls {
 interface GatewayControls {
   reset(): Promise<void>;
   seed(accountId: string, fixture: AccountFixture): Promise<void>;
-  calls(): Promise<{ method: string; accountId: string }[]>;
+  calls(): Promise<GatewayCall[]>;
 }
 
 export const consoleStub = (env as unknown as { CONSOLE: ConsoleControls }).CONSOLE;
