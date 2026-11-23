@@ -799,6 +799,13 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return stub.getSubscriberConfig();
   }
 
+  /** Whether a forwarding target is set, without the URL: the view-level read.
+   * Ownership is checked exactly as {@link getSubscriberConfig} checks it. */
+  async hasSubscriber(wabaId: string, accountId: string): Promise<boolean> {
+    const { stub } = await this.scoped(wabaId, accountId, { anyStatus: true });
+    return (await stub.getSubscriberConfig()).url !== null;
+  }
+
   /** Write the forwarding target. Persists to DO config; see
    * {@link SetSubscriberConfigInput} for what each field means — a null `url`
    * removes the target and a null `secret` removes the secret, as separate
