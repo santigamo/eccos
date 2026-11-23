@@ -43,12 +43,13 @@ default scopes.
 
 The console's Better Auth instance SHALL issue OAuth 2.1 access tokens for the MCP resource:
 authorization code with PKCE `S256`, resource indicators, authorization server metadata (RFC
-8414) at the issuer's well-known path, Client ID Metadata Documents, and Dynamic Client
-Registration as a fallback. Access tokens SHALL be JWTs whose audience is the MCP resource.
+8414) at the root well-known path of an issuer that is the bare console origin, Client ID
+Metadata Documents, and Dynamic Client Registration as a fallback. Access tokens SHALL be JWTs whose audience is the MCP resource.
 
 #### Scenario: Metadata advertises what clients need
-- **WHEN** a client fetches `/.well-known/oauth-authorization-server/api/auth` on the console
-- **THEN** the document lists the authorize, token and registration endpoints, `S256`, `client_id_metadata_document_supported: true` and `none` as a token endpoint auth method
+- **WHEN** a client fetches `/.well-known/oauth-authorization-server` on the console
+- **THEN** its `issuer` is the console origin, exactly as named in the protected resource metadata
+- **AND** the document lists the authorize, token and registration endpoints, `S256`, `client_id_metadata_document_supported: true` and `none` as a token endpoint auth method
 - **AND** the request succeeds without a session and from another origin
 
 #### Scenario: A session JWT is not an access token
@@ -142,6 +143,7 @@ be carried in the token. Step-up tools SHALL NOT ship before the console itself 
 #### Scenario: Elevation on demand, client without URL elicitation
 - **WHEN** an agent without a live elevation calls `webhook_set` and its client does not declare `elicitation.url`
 - **THEN** the result has `isError: true` and structured content with `status: "approval_required"`, `reason: "elevation_required"`, an `approvalUrl` on the console, `expiresAt`, and a retry hint naming the same tool and arguments
+- **AND** the text content carries the same JSON, `approvalUrl` included, and the structured content validates against the tool's output schema
 - **AND** nothing was changed
 
 #### Scenario: Elevation on demand, client with URL elicitation
