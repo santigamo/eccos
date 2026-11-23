@@ -19,6 +19,7 @@ import {
 import { CIMD_USER_AGENT, cimdFetch, WORKSPACE_CLAIM } from "../src/auth/oauth-provider";
 import { pendingAuthorizationURL, withPendingAuthorization } from "../src/auth/pending-authorization";
 import { deleteUnusedOAuthClients } from "../src/auth/oauth-client-cleanup";
+import { GRANT_IS_LIVE } from "../src/auth/oauth-grants";
 import { oauthCrossOriginApi } from "../src/server/oauth-cross-origin";
 import { OAUTH_BODY_LIMIT, oauthRequestWithinLimits } from "../src/server/oauth-request-limits";
 
@@ -548,8 +549,10 @@ describe("client ID metadata documents", () => {
             body: new URLSearchParams(form),
           }),
         );
-        expect(response.status).toBeGreaterThanOrEqual(400);
-        expect(response.status).toBeLessThan(500);
+        expect(response.status).toBe(400);
+        const body = (await response.json()) as { error: string; error_description?: string };
+        expect(body.error).toBe("invalid_client");
+        expect(body.error_description ?? "").not.toMatch(/fetch/i);
         expect(documents.fetched).toEqual([]);
       } finally {
         documents.restore();
@@ -958,7 +961,7 @@ describe("unused registered clients are deleted", () => {
     }
   });
 
-  test("a metadata-document client resolved again within 24 hours is kept", async () => {
+  test("fetching the document again, as a token call does, keeps no unused document client alive", async () => {
     const { auth, db } = await testAuth();
     const documents = serveMetadataDocuments();
     try {
@@ -973,9 +976,11 @@ describe("unused registered clients are deleted", () => {
         mcpResource: RESOURCE,
         mail: new CaptureMailSender(),
       });
-      await startAuthorization(nextRequest, CIMD_CLIENT_ID);
+      const before = documents.fetched.length;
+      await tokenRequest(nextRequest, { grant_type: "refresh_token", refresh_token: "x", client_id: CIMD_CLIENT_ID, resource: RESOURCE });
+      expect(documents.fetched.length).toBe(before + 1);
       await deleteUnusedOAuthClients(d1(db));
-      expect(exists(db, CIMD_CLIENT_ID)).toBe(true);
+      expect(exists(db, CIMD_CLIENT_ID)).toBe(false);
     } finally {
       documents.restore();
     }
@@ -1001,6 +1006,175 @@ describe("unused registered clients are deleted", () => {
       expect(refreshed.status).toBe(200);
     } finally {
       documents.restore();
+    }
+  });
+});
+
+describe("a consent holds its client only while its grant is live", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const d1 = (db: Database) =>
+    ({
+      prepare: (sql: string) => ({
+        bind: (...params: string[]) => ({ run: async () => db.query(sql).run(...params) }),
+      }),
+    }) as unknown as D1Database;
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const count = (db: Database, sql: string, ...params: string[]) =>
+    (db.query(sql).get(...params) as { n: number }).n;
+  const ageGrant = (db: Database, clientId: string, ms: number) => {
+    db.query('UPDATE "oauthClient" SET "createdAt" = ?1, "updatedAt" = ?1 WHERE "clientId" = ?2').run(ago(ms), clientId);
+    db.query('UPDATE "oauthConsent" SET "createdAt" = ?1, "updatedAt" = ?1 WHERE "clientId" = ?2').run(ago(ms), clientId);
+  };
+  const consents = (db: Database, clientId: string) =>
+    count(db, 'SELECT count(*) AS n FROM "oauthConsent" WHERE "clientId" = ?', clientId);
+  const clients = (db: Database, clientId: string) =>
+    count(db, 'SELECT count(*) AS n FROM "oauthClient" WHERE "clientId" = ?', clientId);
+  const liveGrants = (db: Database, clientId: string) =>
+    count(db, `SELECT count(*) AS n FROM "oauthConsent" WHERE "clientId" = ?2 AND ${GRANT_IS_LIVE}`, new Date().toISOString(), clientId);
+
+  async function issued(auth: Auth, db: Database) {
+    const flow = await authorizeAsMember(auth, db, "owner@corp.test");
+    const tokens = (await (await exchangeCode(auth, flow.clientId, flow.callback, flow.verifier)).json()) as {
+      refresh_token: string;
+    };
+    return { ...flow, refreshToken: tokens.refresh_token };
+  }
+
+  test("a revoked grant is dead, and 24 hours after the revocation its consent and client go", async () => {
+    const { auth, db } = await testAuth();
+    const grant = await issued(auth, db);
+    expect(liveGrants(db, grant.clientId)).toBe(1);
+    const revoked = await serve(
+      auth,
+      new Request(`${BASE_URL}/api/auth/oauth2/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: CLIENT_ORIGIN },
+        body: new URLSearchParams({ token: grant.refreshToken, token_type_hint: "refresh_token", client_id: grant.clientId }),
+      }),
+    );
+    expect(revoked.status).toBe(200);
+    expect(liveGrants(db, grant.clientId)).toBe(0);
+
+    ageGrant(db, grant.clientId, 30 * DAY_MS);
+    await deleteUnusedOAuthClients(d1(db));
+    expect(consents(db, grant.clientId)).toBe(1);
+
+    db.query('UPDATE "oauthRefreshToken" SET "revoked" = ? WHERE "clientId" = ?').run(ago(DAY_MS + 60_000), grant.clientId);
+    await deleteUnusedOAuthClients(d1(db));
+    expect(consents(db, grant.clientId)).toBe(0);
+    expect(clients(db, grant.clientId)).toBe(0);
+  });
+
+  test("a grant whose refresh token expired a day ago goes", async () => {
+    const { auth, db } = await testAuth();
+    const grant = await issued(auth, db);
+    db.query('UPDATE "oauthRefreshToken" SET "expiresAt" = ? WHERE "clientId" = ?').run(ago(DAY_MS + 60_000), grant.clientId);
+    expect(liveGrants(db, grant.clientId)).toBe(0);
+    ageGrant(db, grant.clientId, 30 * DAY_MS);
+    await deleteUnusedOAuthClients(d1(db));
+    expect(consents(db, grant.clientId)).toBe(0);
+    expect(clients(db, grant.clientId)).toBe(0);
+  });
+
+  test("a grant with a live refresh token is never deleted, however old", async () => {
+    const { auth, db } = await testAuth();
+    const grant = await issued(auth, db);
+    ageGrant(db, grant.clientId, 6 * 365 * DAY_MS);
+    db.query('UPDATE "oauthRefreshToken" SET "createdAt" = ? WHERE "clientId" = ?').run(ago(6 * 365 * DAY_MS), grant.clientId);
+    await deleteUnusedOAuthClients(d1(db));
+    expect(consents(db, grant.clientId)).toBe(1);
+    expect(clients(db, grant.clientId)).toBe(1);
+    const refreshed = await tokenRequest(auth, {
+      grant_type: "refresh_token",
+      refresh_token: grant.refreshToken,
+      client_id: grant.clientId,
+      resource: RESOURCE,
+    });
+    expect(refreshed.status).toBe(200);
+  });
+
+  test("a consent whose code was never exchanged goes 24 hours after it was given", async () => {
+    const { auth, db } = await testAuth();
+    const flow = await authorizeAsMember(auth, db, "owner@corp.test");
+    ageGrant(db, flow.clientId, DAY_MS - 60_000);
+    await deleteUnusedOAuthClients(d1(db));
+    expect(consents(db, flow.clientId)).toBe(1);
+    ageGrant(db, flow.clientId, DAY_MS + 60_000);
+    await deleteUnusedOAuthClients(d1(db));
+    expect(consents(db, flow.clientId)).toBe(0);
+    expect(clients(db, flow.clientId)).toBe(0);
+  });
+
+  /** Live grants for the user in the workspace, as rows: what 49 earlier consents and code exchanges leave. */
+  function seedLiveGrants(db: Database, userId: string, organizationId: string, howMany: number) {
+    const expires = new Date(Date.now() + 30 * DAY_MS).toISOString();
+    const now = new Date().toISOString();
+    for (let i = 0; i < howMany; i++) {
+      const clientId = `seeded-${i}`;
+      db.query('INSERT INTO "oauthClient" ("id", "clientId", "redirectUris", "createdAt", "updatedAt") VALUES (?1, ?1, ?2, ?3, ?3)').run(
+        clientId,
+        JSON.stringify([REDIRECT_URI]),
+        now,
+      );
+      db.query(
+        'INSERT INTO "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "createdAt", "updatedAt") VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?5)',
+      ).run(clientId, userId, organizationId, JSON.stringify(["eccos:view"]), now);
+      db.query(
+        'INSERT INTO "oauthRefreshToken" ("id", "token", "clientId", "userId", "referenceId", "expiresAt", "createdAt", "scopes") VALUES (?1, ?1, ?1, ?2, ?3, ?4, ?5, ?6)',
+      ).run(clientId, userId, organizationId, expires, now, JSON.stringify(["eccos:view"]));
+    }
+  }
+
+  async function consentFor(auth: Auth, clientId: string, cookie: string) {
+    const { location } = await authorizeSignedIn(auth, clientId, cookie);
+    const consentPage = ((await (await continueAfterWorkspace(auth, location, cookie)).json()) as { url: string }).url;
+    return post(auth, "/oauth2/consent", { accept: true, oauth_query: oauthQueryOf(consentPage) }, cookie);
+  }
+
+  test("a person may hold 50 live grants in a workspace; the 51st consent is refused", async () => {
+    const { auth, db } = await testAuth();
+    const grant = await issued(auth, db);
+    const userId = (db.query("SELECT id FROM user WHERE email = ?").get("owner@corp.test") as { id: string }).id;
+    seedLiveGrants(db, userId, grant.organizationId, 48);
+
+    const fiftieth = await registerClient(auth);
+    const accepted = await consentFor(auth, fiftieth, grant.cookie);
+    expect(accepted.status).toBe(200);
+    const callback = new URL(((await accepted.json()) as { url: string }).url);
+    expect(callback.searchParams.has("code")).toBe(true);
+    db.query('INSERT INTO "oauthRefreshToken" ("id", "token", "clientId", "userId", "referenceId", "expiresAt", "createdAt", "scopes") VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)').run(
+      "fiftieth",
+      fiftieth,
+      userId,
+      grant.organizationId,
+      new Date(Date.now() + DAY_MS).toISOString(),
+      new Date().toISOString(),
+      JSON.stringify(["eccos:view"]),
+    );
+
+    const fiftyFirst = await registerClient(auth);
+    const refused = await consentFor(auth, fiftyFirst, grant.cookie);
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as { error: string; error_description: string };
+    expect(body.error).toBe("access_denied");
+    expect(body.error_description).toContain("Settings → Connected agents");
+    expect(consents(db, fiftyFirst)).toBe(0);
+
+    const again = await consentFor(auth, grant.clientId, grant.cookie);
+    expect(again.status).toBe(200);
+  });
+
+  test("consent for a client deleted after the workspace step is an OAuth error, not a 500", async () => {
+    const { auth, db } = await testAuth();
+    const first = await authorizeAsMember(auth, db, "owner@corp.test");
+    const { location } = await authorizeSignedIn(auth, first.clientId, first.cookie);
+    const consentPage = ((await (await continueAfterWorkspace(auth, location, first.cookie)).json()) as { url: string }).url;
+    db.query('DELETE FROM "oauthConsent" WHERE "clientId" = ?').run(first.clientId);
+    db.query('DELETE FROM "oauthClient" WHERE "clientId" = ?').run(first.clientId);
+    for (const accept of [true, false]) {
+      const response = await post(auth, "/oauth2/consent", { accept, oauth_query: oauthQueryOf(consentPage) }, first.cookie);
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBe("invalid_client");
     }
   });
 });
