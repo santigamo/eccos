@@ -57,7 +57,7 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       JWKS and metadata endpoints; the refused client-administration endpoints. Tests: metadata
       contents and issuer, a session JWT is refused, blocked endpoints, CIMD refusals (HTTP,
       private literals, redirects), resuming after sign-in, TOTP and email verification.
-- [ ] 1.3 Workspace step and consent page: pick or create the workspace, bind it to the grant,
+- [x] 1.3 Workspace step and consent page: pick or create the workspace, bind it to the grant,
       show client name, redirect host, workspace and scopes, each scope untickable; English copy,
       following `docs/DASHBOARD-DESIGN.md`. Tests: the claim callback refuses a non-member.
 - [ ] 1.4 Connected agents in Settings: list grants on the workspace, revoke, audit lines.

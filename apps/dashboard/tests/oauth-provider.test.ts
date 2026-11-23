@@ -17,7 +17,7 @@ import {
   isBlockedAuthEndpoint,
 } from "../src/auth/blocked-endpoints";
 import { CIMD_USER_AGENT, cimdFetch, WORKSPACE_CLAIM } from "../src/auth/oauth-provider";
-import { pendingAuthorizationURL } from "../src/auth/pending-authorization";
+import { pendingAuthorizationURL, withPendingAuthorization } from "../src/auth/pending-authorization";
 import { deleteUnusedOAuthClients } from "../src/auth/oauth-client-cleanup";
 import { oauthCrossOriginApi } from "../src/server/oauth-cross-origin";
 import { OAUTH_BODY_LIMIT, oauthRequestWithinLimits } from "../src/server/oauth-request-limits";
@@ -1055,6 +1055,17 @@ describe("resuming the authorization", () => {
     expect(verified.status).toBe(200);
     const next = ((await verified.json()) as { url?: string }).url;
     expect(new URL(next!, BASE_URL).pathname).toBe("/oauth/workspace");
+  });
+});
+
+describe("withPendingAuthorization", () => {
+  test("adds the signed parameters to a page link, keeping its own query", () => {
+    const signed = "?client_id=a&redirect=%2Fx&ba_param=client_id&sig=s";
+    expect(withPendingAuthorization("/signup", signed)).toBe("/signup?client_id=a&ba_param=client_id&sig=s");
+    expect(withPendingAuthorization("/signin?redirect=%2Finvitations", signed)).toBe(
+      "/signin?redirect=%2Finvitations&client_id=a&ba_param=client_id&sig=s",
+    );
+    expect(withPendingAuthorization("/signup", "?redirect=%2Fx")).toBe("/signup");
   });
 });
 

@@ -11,7 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { AUTH_LINK_EXPIRY_LABEL } from "@/auth/mail";
 import { signInHref } from "@/auth/redirect-target";
-import { pendingAuthorizationURL } from "@/auth/pending-authorization";
+import { pendingAuthorizationURL, withPendingAuthorization } from "@/auth/pending-authorization";
 import {
   AddressReadback,
   AUTH_ERROR_BANNER_CLASS,
@@ -38,7 +38,9 @@ export function SignUpView({ redirectTo }: { redirectTo?: string }) {
   // Where the verification link lands: an invitee who signs up must end on the
   // invitation, not on /onboarding, and an agent's pending authorization resumes.
   const callbackURL = () => pendingAuthorizationURL(window.location.search) ?? redirectTo ?? "/";
-  const signIn = signInHref(redirectTo);
+  // Read after mount: the server render has no query of its own to carry.
+  const [search, setSearch] = useState("");
+  const signIn = withPendingAuthorization(signInHref(redirectTo), search);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -52,6 +54,7 @@ export function SignUpView({ redirectTo }: { redirectTo?: string }) {
 
   useEffect(() => {
     document.title = "Create your account · Eccos";
+    setSearch(window.location.search);
   }, []);
 
   // Move focus and announce the swap for assistive tech.

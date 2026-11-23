@@ -10,6 +10,7 @@
  * - anything else that cannot take HTML gets a 406 before it reaches the router.
  */
 
+import { OAUTH_PAGES, withPendingAuthorization } from "./pending-authorization";
 import { PUBLIC_PATHS, SESSION_NEUTRAL_PATHS, signInHref } from "./redirect-target";
 
 const NO_STORE = { "cache-control": "private, no-store" };
@@ -48,12 +49,16 @@ export function acceptsHtml(accept: string | null): boolean {
   return parts.some((part) => part.startsWith("*/*") || part.startsWith("text/html"));
 }
 
+/**
+ * An OAuth step goes back to sign-in the way Better Auth sends it there: with
+ * the signed authorization as the query, which sign-in resumes once signed in.
+ */
 export function signInRedirect(request: Request): Response {
   const url = new URL(request.url);
-  return new Response(null, {
-    status: 302,
-    headers: { location: signInHref(`${url.pathname}${url.search}`), ...NO_STORE },
-  });
+  const location = OAUTH_PAGES.has(url.pathname)
+    ? withPendingAuthorization("/signin", url.search)
+    : signInHref(`${url.pathname}${url.search}`);
+  return new Response(null, { status: 302, headers: { location, ...NO_STORE } });
 }
 
 /**

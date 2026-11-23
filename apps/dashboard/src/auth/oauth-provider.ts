@@ -19,7 +19,8 @@
  * - `cimd()` resolves Client ID Metadata Documents through `cimdFetch` below.
  *
  * A grant is bound to one workspace: the post-login step stores the session's
- * active organization as the consent's reference id, and every access token
+ * active organization as the consent's reference id, only while the user is a
+ * member of it (the workspace page, /oauth/workspace, sets it), and every access token
  * (code exchange and refresh alike) is refused unless the user is STILL a
  * member of it. The token is a pointer, not evidence: the MCP resource
  * re-derives role and account on every request (design §2.2).

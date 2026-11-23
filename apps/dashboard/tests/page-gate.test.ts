@@ -120,6 +120,15 @@ describe("authGate order", () => {
     expect(await authGate(req("/reset-password?token=t"), anonymous)).toBeUndefined();
   });
 
+  test("an anonymous OAuth page load goes to sign-in carrying the signed authorization, and nothing else", async () => {
+    const signed = "?client_id=c&state=s&ba_param=client_id&ba_param=state&sig=x&redirect=%2Fnumbers";
+    const res = await authGate(req(`/oauth/consent${signed}`), anonymous);
+    expect(res?.status).toBe(302);
+    expect(res?.headers.get("location")).toBe("/signin?client_id=c&state=s&ba_param=client_id&ba_param=state&sig=x");
+    expect((await authGate(req("/oauth/workspace"), anonymous))?.headers.get("location")).toBe("/signin");
+    expect(await authGate(req(`/oauth/workspace${signed}`), signedIn)).toBeUndefined();
+  });
+
   test("a signed-in user passes, and is bounced off the auth pages except /reset-password", async () => {
     expect(await authGate(req("/_serverFn/abc", { accept: SERVER_FN_ACCEPT }), signedIn)).toBeUndefined();
     expect(await authGate(req("/numbers"), signedIn)).toBeUndefined();

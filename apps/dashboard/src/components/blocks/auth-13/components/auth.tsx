@@ -67,7 +67,9 @@ export function AuthSplitShell({ children }: { children: ReactNode }) {
 
         {/* Form column — first in DOM order on mobile: the sign-in form is
             the page's protagonist; the brand panel is decoration. */}
-        <section className="order-1 flex min-h-[calc(100svh-2rem)] items-center justify-center px-4 py-8 sm:px-8 lg:order-2 lg:h-full lg:min-h-0 lg:px-12 lg:py-0 xl:px-16 2xl:px-20">
+        {/* Scrolls on its own when the form is taller than the viewport (the
+            consent page is); safe centering keeps its top reachable. */}
+        <section className="order-1 flex min-h-[calc(100svh-2rem)] items-center-safe justify-center px-4 py-8 sm:px-8 lg:order-2 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:px-12 lg:py-8 xl:px-16 2xl:px-20">
           {children}
         </section>
       </div>

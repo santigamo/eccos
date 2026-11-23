@@ -20,6 +20,7 @@ import { getSessionUser } from "../organizations"
 import { useRootRefresh } from "../hooks/use-root-refresh"
 import { watchUnhandledSignIn } from "../lib/follow-sign-in"
 import { PUBLIC_PATHS } from "../auth/redirect-target"
+import { OAUTH_PAGES } from "../auth/pending-authorization"
 import { CONNECT_LINK_PATH } from "../lib/connect-link/api"
 import { type AnalyticsConfig, analyticsFor } from "../lib/analytics"
 import { normalizeSearchWabaId } from "../lib/search"
@@ -210,6 +211,9 @@ export function onboardingWorkspaceCreated(stage: DashboardState["stage"]): bool
  * The root's pathname guards as a pure decision, so they run against a held
  * snapshot as well as a fresh read (tests/root-guard.test.ts).
  *
+ * The OAuth steps (`OAUTH_PAGES`) are never redirected: a person authorizing an
+ * agent may have no workspace yet, and naming the first one is that page's job.
+ *
  * /onboarding is FIRST RUN and stays that way (`onboardingWorkspaceCreated`
  * below). Creating an ADDITIONAL workspace is a different conversation with its
  * own in-shell entry point (/workspaces/new) — see that route for the argument.
@@ -221,7 +225,7 @@ export function onboardingWorkspaceCreated(stage: DashboardState["stage"]): bool
  * the lock and the bounce cannot disagree.
  */
 export function rootRedirect(pathname: string, state: RootState): "/onboarding" | "/" | "/numbers" | undefined {
-  if (!state.ok || pathname === CONNECT_LINK_PATH) return undefined
+  if (!state.ok || pathname === CONNECT_LINK_PATH || OAUTH_PAGES.has(pathname)) return undefined
   const created = onboardingWorkspaceCreated(state.data.stage)
   if (!created && !PRE_WORKSPACE_ROUTES.has(pathname)) return "/onboarding"
   if (created && pathname === "/onboarding") return "/"
@@ -244,7 +248,7 @@ function RootComponent() {
       lanternExempt={LANTERN_EXEMPT_PATHS.has(pathname)}
       analytics={analyticsFor(pathname, state.analytics)}
     >
-      {state.ok && state.data.stage !== "no-organization" && pathname !== CONNECT_LINK_PATH ? (
+      {state.ok && state.data.stage !== "no-organization" && pathname !== CONNECT_LINK_PATH && !OAUTH_PAGES.has(pathname) ? (
         // Authenticated tenant context. The chrome wraps every state that has
         // an organization, including the one with no WABA yet: the user is
         // signed in, so they must be able to see who they are and sign out.
@@ -310,7 +314,7 @@ function RootDocument({
 }
 
 /** Pre-auth brand surfaces — the silk owns the spectacle there. */
-const LANTERN_EXEMPT_PATHS = new Set([...PUBLIC_PATHS, "/invitations"])
+const LANTERN_EXEMPT_PATHS = new Set([...PUBLIC_PATHS, ...OAUTH_PAGES, "/invitations"])
 
 /**
  * The lantern (see #cursor-light in app.css). The trailing lerp is what makes
