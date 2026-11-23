@@ -109,6 +109,14 @@
         "@types/bun": "latest",
       },
     },
+    "packages/console-contract": {
+      "name": "@eccos/console-contract",
+      "version": "0.1.0",
+      "dependencies": {
+        "@eccos/auth-baseline": "workspace:*",
+        "@eccos/gateway-contract": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@eccos/core",
       "version": "0.1.0",
@@ -335,6 +343,8 @@
     "@dotenvx/primitives": ["@dotenvx/primitives@0.8.0", "", {}, "sha512-VYJy0uhFm9zTJ1TxBaW/pA8bjbOM/OttaNMwZ1RHG4JKyRG7DhSdiqD1ipQoAyoD22olUtxbP78W9xY3Wd11bg=="],
 
     "@eccos/auth-baseline": ["@eccos/auth-baseline@workspace:packages/auth-baseline"],
+
+    "@eccos/console-contract": ["@eccos/console-contract@workspace:packages/console-contract"],
 
     "@eccos/core": ["@eccos/core@workspace:packages/core"],
 

@@ -29,7 +29,7 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "typecheck": "tsc --noEmit -p packages/gateway-contract && tsc --noEmit -p packages/core && tsc --noEmit -p packages/auth-baseline && cd apps/gateway && wrangler types --strict-vars=false && tsc --noEmit && cd ../.. && tsc --noEmit -p tsconfig.json && cd apps/dashboard && wrangler types --strict-vars=false && tsc --noEmit",
+    "typecheck": "tsc --noEmit -p packages/gateway-contract && tsc --noEmit -p packages/console-contract && tsc --noEmit -p packages/core && tsc --noEmit -p packages/auth-baseline && cd apps/gateway && wrangler types --strict-vars=false && tsc --noEmit && cd ../.. && tsc --noEmit -p tsconfig.json && cd apps/dashboard && wrangler types --strict-vars=false && tsc --noEmit",
     "test": "bun test packages/*/tests/*.test.ts apps/gateway/tests/*.test.ts",
     "test:workers": "cd apps/gateway && vitest run",
     "test:all": "bun run test && bun run test:workers",
