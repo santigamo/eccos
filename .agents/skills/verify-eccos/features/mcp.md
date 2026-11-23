@@ -24,7 +24,7 @@ Preconditions: a fresh `$V launch` ending in `doctor: healthy.`, and the stub co
 - **Send.** `template_send_test` with two `bodyParams` returns `status: "accepted"` and `messageId` `wamid.FAKE1`; `$V fake-log /555001/messages` shows the send to `34611111111`. With one parameter it is an error `does not match: it takes exactly 2 bodyParams` and no send is logged. To `34600000999` it is an error `Meta refused the send. Meta said: "Message undeliverable"`.
 - **Another workspace's WABA.** `templates_list` with `wabaId` `700800900` is an error `WABA 700800900 is not connected to this workspace. Its WABAs are: 100200300`.
 - **Delete.** `template_delete` of `900100` returns `deleted: true`, and the fake log has a `DELETE /graph/v25.0/100200300/message_templates`.
-- **Two accounts.** In `$E/10-template-two-accounts.json`, the second workspace's agent calls `templates_list` and `template_delete` with WABA `100200300`, and `template_send_test` with phone `555001`. All three are errors naming only its own WABA `700800900`, and the fake log has no Graph request for them.
+- **Two accounts.** In `$E/10-template-two-accounts.json`, the second workspace's agent calls `templates_list` and `template_delete` with WABA `100200300`, and `template_send_test` with phone `555001`. The two WABA calls are errors `WABA 100200300 is not connected to this workspace. Its WABAs are: 700800900`; the send is an error `Phone number id 555001 is not registered in this workspace`. None names the first workspace's ids as its own, and the fake log has no Graph request for them.
 
 ## Gotchas
 
