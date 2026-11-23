@@ -821,6 +821,14 @@ export type RedeemedSecretClaim =
   | { claim: SecretClaim & { kind: "subscriber_secret" }; secret: string };
 
 /**
+ * Why a known token mints nothing.
+ * - `gone`: already claimed or expired (410), or the claim no longer resolves.
+ * - `cancelled`: superseded by a newer secret or a newer claim for the same WABA.
+ * - `write_failed`: nothing changed and the previous secret is still in force; create a new claim.
+ */
+export type SecretClaimRefusal = "gone" | "cancelled" | "write_failed";
+
+/**
  * One WhatsApp Business Account a pasted token can reach, offered to the
  * operator as a choice.
  *
@@ -1371,14 +1379,16 @@ export interface GatewayApi {
   /**
    * Records a one-time claim on an API key or a WABA's subscriber secret,
    * valid for 10 minutes. Mints nothing: the secret is made when the claim is
-   * redeemed. Throws for an unknown account, a bad label or creator, or a WABA
-   * the account does not own.
+   * redeemed. A subscriber claim cancels the WABA's older pending ones.
+   * `too_many_pending` when the account already holds 20 pending claims;
+   * nothing is stored then. Throws for an unknown account, a bad label or
+   * creator, or a WABA the account does not own.
    */
   createSecretClaim(
     accountId: string,
     request: SecretClaimRequest,
     creator: SecretClaimCreator,
-  ): Promise<IssuedSecretClaim>;
+  ): Promise<IssuedSecretClaim | "too_many_pending">;
   /**
    * The pending claim a token opens, or null when it is unknown, spent,
    * expired, its account has no active organization, or its WABA is no longer
@@ -1386,12 +1396,13 @@ export interface GatewayApi {
    */
   resolveSecretClaim(token: string): Promise<SecretClaim | null>;
   /**
-   * Spends the claim and mints its secret, once. Null for a token that opens
-   * no claim; `gone` for a claim that is spent, expired or no longer resolves.
-   * A subscriber secret is stored after the claim is spent: if that write
-   * fails the claim is gone and the previous secret stays in force.
+   * Spends the claim and mints its secret, once. Null for a wrong token, which
+   * counts toward the wrong-token limit; a {@link SecretClaimRefusal} for a
+   * known token that mints nothing. A subscriber secret is stored after the
+   * claim is spent, and only if no other secret was written since the claim
+   * was made.
    */
-  redeemSecretClaim(token: string): Promise<RedeemedSecretClaim | "gone" | null>;
+  redeemSecretClaim(token: string): Promise<RedeemedSecretClaim | SecretClaimRefusal | null>;
   /** The account's pending claims, newest first. */
   listSecretClaims(accountId: string): Promise<SecretClaim[]>;
   /** Start Embedded Signup for one already-resolved account id (the dashboard

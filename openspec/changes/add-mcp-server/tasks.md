@@ -68,8 +68,11 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       only the grant's user with TOTP and a recent sign-in can approve; expiry; one pending
       request per grant; revoke ends it.
 - [x] 1.4b Secret claims in the gateway: the control-plane table, `createSecretClaim` and
-      `redeemSecretClaim` on `GatewayRPC`, mint-on-redeem for API keys and the subscriber secret,
-      pending claims in the key list. Worker tests: single use, expiry leaves nothing, concurrency.
+      `redeemSecretClaim` on `GatewayRPC`, mint-on-redeem for API keys (one control-plane call)
+      and the subscriber secret (a spend, then a write to the WABA's object), pending claims from
+      `listSecretClaims`. Worker tests: single use, expiry leaves nothing, concurrency. The
+      hardening follow-up adds cancellation by a newer secret or claim, a bound of 20 pending
+      claims per account, and `write_failed`.
 - [ ] 1.4c Claim page and `POST /api/claim` in the console: POST-only redemption, token in body
       or fragment, wrong-token limit, creator re-check. Tests: a GET spends nothing.
 - [ ] 1.5 `packages/console-contract`, `ConsoleRPC.authorize` and `requestElevation`. `authorize`
