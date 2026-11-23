@@ -174,6 +174,25 @@ describe("ConversationThread: every message type reads", () => {
     expect(html).toContain("read");
     expect(html).toContain("delivered");
     expect(html).toContain("failed: 131026");
+    expect(html).toContain("Recipient cannot receive messages.");
+  });
+
+  test("a closed window explains itself and points to Templates", () => {
+    const entries = threadEntries([
+      message({ id: "wamid.window", direction: "out", status: "failed", error: "131047", text: "Hola", at: NOW }),
+    ]);
+    const html = renderToStaticMarkup(<ConversationThread {...threadProps({ entries })} />);
+    expect(html).toContain("Outside the 24-hour window.");
+    expect(html).toContain("Open Templates");
+  });
+
+  test("a failure stored as Meta's sentence shows that sentence once", () => {
+    const entries = threadEntries([
+      message({ id: "wamid.text", direction: "out", status: "failed", error: "Something odd", text: "Hola", at: NOW }),
+    ]);
+    const html = renderToStaticMarkup(<ConversationThread {...threadProps({ entries })} />);
+    expect(html.split("Something odd").length - 1).toBe(1);
+    expect(html).not.toContain("Open Templates");
   });
 
   test("a history import is marked as one", () => {
