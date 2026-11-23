@@ -7,7 +7,7 @@
   "workers_dev": false,
   "vars": {
     "MCP_RESOURCE": "http://localhost:8788/mcp",
-    "ISSUER": "http://localhost:3000/api/auth",
+    "ISSUER": "http://localhost:3000",
     // Spike only. A real deployment that seals requestState needs this as a secret.
     "REQUEST_STATE_KEY": "spike-only-request-state-key-not-a-secret"
   },

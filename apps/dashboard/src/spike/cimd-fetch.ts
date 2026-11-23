@@ -18,12 +18,17 @@ export const workersCimdFetch: typeof fetch = async (input, init) => {
   if (url.username || url.password) throw new TypeError("CIMD transport refuses credentials");
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
   const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+  // Finding: chatgpt.com answers 403 to a fetch without a User-Agent (workerd sends none by default).
+  const headers = new Headers(request.headers);
+  if (!headers.has("user-agent") && !(globalThis as { SPIKE_NO_UA?: boolean }).SPIKE_NO_UA) headers.set("user-agent", "Eccos-CIMD/0 (+https://eccos.chat)");
+  console.info("SPIKE_CIMD_HEADERS " + JSON.stringify([...headers.keys()]));
   const response = await fetch(url.href, {
     method: request.method,
-    headers: request.headers,
+    headers,
     redirect: "manual",
     signal,
   });
+  console.info("SPIKE_CIMD_RESPONSE " + JSON.stringify({ url: url.href, status: response.status, server: response.headers.get("server"), cfMitigated: response.headers.get("cf-mitigated"), contentType: response.headers.get("content-type") }));
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (declared > MAX_BYTES) {
     await response.body?.cancel();

@@ -6,7 +6,7 @@
   "protectedResource": {
     "resource": "http://localhost:8788/mcp",
     "authorization_servers": [
-      "http://localhost:3000/api/auth"
+      "http://localhost:3000"
     ],
     "scopes_supported": [
       "eccos:view"
@@ -25,7 +25,7 @@
       "eccos:administer",
       "offline_access"
     ],
-    "issuer": "http://localhost:3000/api/auth",
+    "issuer": "http://localhost:3000",
     "authorization_endpoint": "http://localhost:3000/api/auth/oauth2/authorize",
     "token_endpoint": "http://localhost:3000/api/auth/oauth2/token",
     "jwks_uri": "http://localhost:3000/api/auth/jwks",
@@ -112,9 +112,9 @@
   "registration": {
     "status": 201,
     "client": {
-      "client_id": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS",
+      "client_id": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
       "scope": "eccos:view eccos:operate eccos:send eccos:configure eccos:administer offline_access",
-      "client_id_issued_at": 1795439669,
+      "client_id_issued_at": 1795440618,
       "client_name": "Spike Agent",
       "redirect_uris": [
         "http://127.0.0.1:53682/callback"
@@ -136,8 +136,8 @@
     }
   },
   "workspaces": {
-    "first": "zSjtzYJNOPkADz1UsAaIJSomi3R2Ccrv",
-    "second": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0"
+    "first": "p1KW00gFsmR1dFYeFntyGRAKaLwKfIwu",
+    "second": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh"
   },
   "afterAuthorize": "/spike/workspace",
   "continue": {
@@ -156,7 +156,7 @@
       "state",
       "iss"
     ],
-    "iss": "http://localhost:3000/api/auth"
+    "iss": "http://localhost:3000"
   },
   "token": {
     "status": 200,
@@ -176,17 +176,17 @@
       "kid": "ADhhoxF67ZgPiBq2XYvYtxd2qJTX08Yw"
     },
     "payload": {
-      "https://eccos.chat/workspace": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
-      "sub": "JLgaRQUDHypGLP2NPRuvM3gqtBDB1PWE",
+      "https://eccos.chat/workspace": "8kfH0NPf2rcjcMv1kqNMdn4MNjakXdvh",
+      "sub": "0HBg7hbl6NLgYsr9mZ0zPbdCur58zrQC",
       "aud": "http://localhost:8788/mcp",
-      "client_id": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS",
-      "azp": "hzNNPVzoXJWARquuRnrheNzcvOmDdkrS",
+      "client_id": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
+      "azp": "SmtXXucfCTahLRmbjKOQvBELtJUHadrh",
       "scope": "eccos:view eccos:operate eccos:configure eccos:administer offline_access",
-      "sid": "eaEnXAS3H2B3KJrhWV3zkayFqr5HmTbB",
-      "iss": "http://localhost:3000/api/auth",
-      "iat": 1795439670,
-      "exp": 1795440270,
-      "jti": "1xuknNOx_6v1DbLLIoUh_BZWJDA5IXVW"
+      "sid": "A0TeYcDMJft8a2Uo6UG7KY5DiGt7pQta",
+      "iss": "http://localhost:3000",
+      "iat": 1795440619,
+      "exp": 1795441219,
+      "jti": "C41BgemjgoxvSN6St6DTzZPqwg3eU75n"
     }
   },
   "claimMatchesChosenWorkspace": true,
@@ -229,6 +229,115 @@
               },
               "required": [
                 "label"
+              ]
+            }
+          },
+          {
+            "name": "strict_stepup",
+            "description": "Step-up tool with a success-only outputSchema (spike).",
+            "inputSchema": {
+              "type": "object",
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "properties": {}
+            },
+            "outputSchema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "claim_ready"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "union_stepup",
+            "description": "Step-up tool whose outputSchema includes the approval shape (spike).",
+            "inputSchema": {
+              "type": "object",
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "properties": {}
+            },
+            "outputSchema": {
+              "type": "object",
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "claim_ready"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "approval_required"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "approvalUrl": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "retry": {
+                      "type": "object",
+                      "properties": {
+                        "tool": {
+                          "type": "string"
+                        },
+                        "when": {
+                          "type": "string"
+                        },
+                        "sameArguments": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "tool",
+                        "when",
+                        "sameArguments"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "message",
+                    "approvalUrl",
+                    "expiresAt",
+                    "retry"
+                  ],
+                  "additionalProperties": false
+                }
               ]
             }
           },
@@ -335,6 +444,115 @@
             }
           },
           {
+            "name": "strict_stepup",
+            "description": "Step-up tool with a success-only outputSchema (spike).",
+            "inputSchema": {
+              "type": "object",
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "properties": {}
+            },
+            "outputSchema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "claim_ready"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "union_stepup",
+            "description": "Step-up tool whose outputSchema includes the approval shape (spike).",
+            "inputSchema": {
+              "type": "object",
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "properties": {}
+            },
+            "outputSchema": {
+              "type": "object",
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "claim_ready"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "approval_required"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "approvalUrl": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "retry": {
+                      "type": "object",
+                      "properties": {
+                        "tool": {
+                          "type": "string"
+                        },
+                        "when": {
+                          "type": "string"
+                        },
+                        "sameArguments": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "tool",
+                        "when",
+                        "sameArguments"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "message",
+                    "approvalUrl",
+                    "expiresAt",
+                    "retry"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          {
             "name": "gateway_probe",
             "description": "Calls GatewayRPC over the service binding with the resolved accountId (spike).",
             "inputSchema": {
@@ -382,11 +600,11 @@
     "GET http://localhost:3000/onboarding -> 200",
     "POST http://localhost:3000/spike/create-workspace -> 200",
     "POST http://localhost:3000/spike/create-workspace -> 200",
-    "GET http://localhost:3000/api/auth/oauth2/authorize?response_type=code&client_id=hzNNPVzoXJWARquuRnrheNzcvOmDdkrS&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=kbZ180cHmBFS…&code_challenge_method=S256&state=state-179543…&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access -> 200",
-    "  (JSON redirect) -> /spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179543…&client_id=hzNNPVzoXJWARquuRnrheNzcvOmDdkrS&code_challenge=kbZ180cHmBFS…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795440270&ba_iat=1795439670292&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=CwF2mwLI5hm8…",
+    "GET http://localhost:3000/api/auth/oauth2/authorize?response_type=code&client_id=SmtXXucfCTahLRmbjKOQvBELtJUHadrh&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=eihexoXnOMus…&code_challenge_method=S256&state=state-179544…&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access -> 200",
+    "  (JSON redirect) -> /spike/workspace?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179544…&client_id=SmtXXucfCTahLRmbjKOQvBELtJUHadrh&code_challenge=eihexoXnOMus…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441219&ba_iat=1795440619131&ba_param=ba_iat&ba_param=ba_param&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=BYPgjUikOiAf…",
     "POST http://localhost:3000/api/auth/organization/set-active -> 200",
     "POST http://localhost:3000/api/auth/oauth2/continue -> 200",
-    "GET http://localhost:3000/spike/consent?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179543…&client_id=hzNNPVzoXJWARquuRnrheNzcvOmDdkrS&code_challenge=kbZ180cHmBFS…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795440270&ba_iat=1795439670371&ba_pl=eaEnXAS3H2B3KJrhWV3zkayFqr5HmTbB&ba_param=ba_iat&ba_param=ba_param&ba_param=ba_pl&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=S37fFmthp16D… -> 200",
+    "GET http://localhost:3000/spike/consent?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&scope=eccos%3Aview+eccos%3Aoperate+eccos%3Asend+eccos%3Aconfigure+eccos%3Aadminister+offline_access&state=state-179544…&client_id=SmtXXucfCTahLRmbjKOQvBELtJUHadrh&code_challenge=eihexoXnOMus…&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A8788%2Fmcp&exp=1795441219&ba_iat=1795440619182&ba_pl=A0TeYcDMJft8a2Uo6UG7KY5DiGt7pQta&ba_param=ba_iat&ba_param=ba_param&ba_param=ba_pl&ba_param=client_id&ba_param=code_challenge&ba_param=code_challenge_method&ba_param=exp&ba_param=redirect_uri&ba_param=resource&ba_param=response_type&ba_param=scope&ba_param=state&sig=iaVSTuSFfP8C… -> 200",
     "POST http://localhost:3000/api/auth/oauth2/consent -> 200"
   ]
 }

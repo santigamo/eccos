@@ -1,0 +1,162 @@
+{
+  "claude": {
+    "clientId": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+    "published": {
+      "client_name": "Claude",
+      "redirect_uris": [
+        "https://claude.ai/api/mcp/auth_callback"
+      ],
+      "token_endpoint_auth_method": "none"
+    },
+    "ms": 95,
+    "status": 200,
+    "landedOn": "http://localhost:3000/spike/workspace",
+    "error": null,
+    "errorDescription": null,
+    "body": "",
+    "transportCalls": [
+      "SPIKE_CIMD_FETCH https://claude.ai/oauth/mcp-oauth-client-metadata"
+    ]
+  },
+  "claudeSecondTime_cached": {
+    "clientId": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+    "published": {
+      "client_name": "Claude",
+      "redirect_uris": [
+        "https://claude.ai/api/mcp/auth_callback"
+      ],
+      "token_endpoint_auth_method": "none"
+    },
+    "ms": 80,
+    "status": 200,
+    "landedOn": "http://localhost:3000/spike/workspace",
+    "error": null,
+    "errorDescription": null,
+    "body": "",
+    "transportCalls": [
+      "SPIKE_CIMD_FETCH https://claude.ai/oauth/mcp-oauth-client-metadata"
+    ]
+  },
+  "claudeCode": {
+    "clientId": "https://claude.ai/oauth/claude-code-client-metadata",
+    "published": {
+      "client_name": "Claude Code",
+      "redirect_uris": [
+        "http://localhost/callback",
+        "http://127.0.0.1/callback"
+      ],
+      "token_endpoint_auth_method": "none"
+    },
+    "ms": 98,
+    "status": 200,
+    "landedOn": "http://localhost:3000/spike/workspace",
+    "error": null,
+    "errorDescription": null,
+    "body": "",
+    "transportCalls": [
+      "SPIKE_CIMD_FETCH https://claude.ai/oauth/claude-code-client-metadata"
+    ]
+  },
+  "chatgpt": {
+    "clientId": "https://chatgpt.com/oauth/client.json",
+    "published": {
+      "client_name": "ChatGPT",
+      "redirect_uris": [
+        "https://chatgpt.com/connector_platform_oauth_redirect"
+      ],
+      "token_endpoint_auth_method": "private_key_jwt"
+    },
+    "ms": 49,
+    "status": 400,
+    "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+    "error": null,
+    "errorDescription": null,
+    "body": "{\"error\":\"invalid_client\",\"error_description\":\"Metadata document fetch returned HTTP 403\"}",
+    "transportCalls": [
+      "SPIKE_CIMD_FETCH https://chatgpt.com/oauth/client.json"
+    ]
+  },
+  "claudeLanded": "/spike/workspace",
+  "negative": {
+    "http": {
+      "clientId": "http://example.com/client.json",
+      "ms": 51,
+      "status": 200,
+      "landedOn": "http://localhost:3000/api/auth/error",
+      "error": "invalid_client",
+      "errorDescription": "client not found",
+      "body": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Error</title>\n    <style>\n      * {\n        box-sizing: border-box;\n      }\n      body {\n        font-family: -apple-system, BlinkMacSystemFo",
+      "transportCalls": []
+    },
+    "loopbackLiteral": {
+      "clientId": "https://127.0.0.1/client.json",
+      "ms": 27,
+      "status": 400,
+      "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+      "error": null,
+      "errorDescription": null,
+      "body": "{\"error\":\"invalid_client\",\"error_description\":\"client_id URL must not target a private or reserved address\"}",
+      "transportCalls": []
+    },
+    "privateLiteral": {
+      "clientId": "https://10.0.0.1/client.json",
+      "ms": 26,
+      "status": 429,
+      "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+      "error": null,
+      "errorDescription": null,
+      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "transportCalls": []
+    },
+    "metadataLiteral": {
+      "clientId": "https://169.254.169.254/client.json",
+      "ms": 25,
+      "status": 429,
+      "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+      "error": null,
+      "errorDescription": null,
+      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "transportCalls": []
+    },
+    "nameResolvingToLoopback": {
+      "clientId": "https://localtest.me/client.json",
+      "ms": 26,
+      "status": 429,
+      "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+      "error": null,
+      "errorDescription": null,
+      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "transportCalls": []
+    },
+    "redirecting": {
+      "clientId": "https://www.github.com/client.json",
+      "ms": 26,
+      "status": 429,
+      "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+      "error": null,
+      "errorDescription": null,
+      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "transportCalls": []
+    },
+    "notJson": {
+      "clientId": "https://example.com/client.json",
+      "ms": 26,
+      "status": 429,
+      "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+      "error": null,
+      "errorDescription": null,
+      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "transportCalls": []
+    },
+    "ownConsole": {
+      "clientId": "https://localhost:3000/client.json",
+      "ms": 27,
+      "status": 429,
+      "landedOn": "http://localhost:3000/api/auth/oauth2/authorize",
+      "error": null,
+      "errorDescription": null,
+      "body": "{\"message\":\"Too many requests. Please try again later.\"}",
+      "transportCalls": []
+    }
+  }
+}

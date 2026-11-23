@@ -1,0 +1,43 @@
+[
+  {
+    "label": "valid access token",
+    "internalOk": true,
+    "internalReason": null,
+    "publicApi": {
+      "ok": true,
+      "ms": 8,
+      "sub": "D3fhmBN2yOTZvwnqdS6rfTlgjGCyx8AA",
+      "typ": "at+jwt"
+    }
+  },
+  {
+    "label": "wrong audience",
+    "internalOk": false,
+    "internalReason": "invalid_token",
+    "publicApi": {
+      "ok": false,
+      "ms": 7,
+      "error": "JWTClaimValidationFailed: unexpected \"aud\" claim value"
+    }
+  },
+  {
+    "label": "tampered",
+    "internalOk": false,
+    "internalReason": "invalid_token",
+    "publicApi": {
+      "ok": false,
+      "ms": 8,
+      "error": "JWSSignatureVerificationFailed: signature verification failed"
+    }
+  },
+  {
+    "label": "refresh token",
+    "internalOk": false,
+    "internalReason": "invalid_token",
+    "publicApi": {
+      "ok": false,
+      "ms": 7,
+      "error": "JWSInvalid: Invalid Compact JWS"
+    }
+  }
+]

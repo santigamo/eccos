@@ -72,6 +72,12 @@ export function SignInView({
       setError("Verify your email address first, then sign in again.");
       return;
     }
+    // SPIKE: inside an OAuth authorization, Better Auth answers with the next step's URL.
+    const next = (result.data as { redirect?: boolean; url?: string } | null)?.url;
+    if (next) {
+      window.location.assign(next);
+      return;
+    }
     // Full navigation so the root loader re-resolves the fresh session; a
     // full URL assignment preserves query-string targets like /inbound?wabaId=.
     window.location.assign(redirectTo || "/");

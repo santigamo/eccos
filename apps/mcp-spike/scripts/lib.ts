@@ -10,12 +10,17 @@ export const EVIDENCE = new URL("../evidence/", import.meta.url).pathname;
 
 export class Browser {
   jar = new Map<string, string>();
+  // Each simulated person gets their own address, so the spike's own volume does not trip the per-IP limiter.
+  ip = `203.0.113.${Math.floor(Math.random() * 250) + 1}`;
   trail: string[] = [];
   async fetch(url: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     if (this.jar.size) headers.set("cookie", [...this.jar].map(([k, v]) => `${k}=${v}`).join("; "));
     if (!headers.has("origin") && init.method && init.method !== "GET") headers.set("origin", CONSOLE);
     if (!headers.has("accept")) headers.set("accept", "text/html,application/json");
+    headers.set("cf-connecting-ip", this.ip);
+    // A top-level navigation, as a browser sends it: Better Auth answers it with a 302, a fetch with JSON.
+    if (!init.method || init.method === "GET") headers.set("sec-fetch-mode", "navigate");
     const res = await fetch(url, { ...init, headers, redirect: "manual" });
     for (const c of res.headers.getSetCookie()) {
       const [pair] = c.split(";");
@@ -89,7 +94,7 @@ export const PASSWORD = "spike-password-12345";
 /** Sign up, follow the verification link (auto sign-in), optionally create a workspace. */
 export async function newUser(tag: string, workspace?: string): Promise<{ b: Browser; email: string; organizationId?: string }> {
   const b = new Browser();
-  const email = `${tag}-${Date.now()}@spike.test`;
+  const email = `${tag}-${Date.now()}@spike.test`.toLowerCase();
   const r = await b.post("/api/auth/sign-up/email", { email, password: PASSWORD, name: tag, callbackURL: "/" });
   if (!r.ok) throw new Error("sign-up failed " + r.status + " " + (await r.text()));
   await sleep(500);

@@ -111,6 +111,29 @@ function createServer(env: Env) {
     },
   );
 
+  // Does a success-only outputSchema collide with an isError approval result?
+  server.registerTool(
+    "strict_stepup",
+    {
+      description: "Step-up tool with a success-only outputSchema (spike).",
+      inputSchema: z.object({}),
+      outputSchema: z.object({ status: z.literal("claim_ready"), label: z.string() }),
+    },
+    async () => approvalResult("strict_stepup", "http://localhost:3000/spike/approve?request=demo", Date.now() + 600_000) as never,
+  );
+  server.registerTool(
+    "union_stepup",
+    {
+      description: "Step-up tool whose outputSchema includes the approval shape (spike).",
+      inputSchema: z.object({}),
+      outputSchema: z.union([
+        z.object({ status: z.literal("claim_ready"), label: z.string() }),
+        z.object({ status: z.literal("approval_required"), reason: z.string(), message: z.string(), approvalUrl: z.string(), expiresAt: z.string(), retry: z.object({ tool: z.string(), when: z.string(), sameArguments: z.boolean() }) }),
+      ]) as never,
+    },
+    async () => approvalResult("union_stepup", "http://localhost:3000/spike/approve?request=demo", Date.now() + 600_000) as never,
+  );
+
   server.registerTool(
     "gateway_probe",
     { description: "Calls GatewayRPC over the service binding with the resolved accountId (spike).", inputSchema: z.object({}) },
@@ -161,6 +184,10 @@ const resourceServer = (bindings: Env) => (cached ??= new OAuthResourceServer<En
 } as never));
 
 const app = new Hono<{ Bindings: Env }>();
+app.post("/spike/compare-verify", async (c) => {
+  const { token, resource } = await c.req.json<{ token: string; resource?: string }>();
+  return c.json(await (c.env.CONSOLE as unknown as { compareVerify(r: string, t: string): Promise<unknown> }).compareVerify(resource ?? c.env.MCP_RESOURCE, token));
+});
 app.get("/healthz", async (c) => c.json({ ok: true, console: await c.env.CONSOLE.ping() }));
 app.all("*", (c) => resourceServer(c.env).fetch(c.req.raw, c.env, c.executionCtx as never));
 

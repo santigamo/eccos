@@ -10,6 +10,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
 import { getLocalJwksSource } from "@better-auth/oauth-provider/internal";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
+import { createLocalJWKSet, jwtVerify } from "jose";
 import { createAuth } from "../auth/auth";
 import { authConfigFromEnv } from "../auth/config";
 import { getAuthForRequest } from "../auth/request-auth";
@@ -50,7 +51,7 @@ export async function authorizeToken(env: SpikeEnv, resource: string, token: str
     payload = (await verifyJwsAccessToken(token, {
       ...local,
       verifyOptions: {
-        issuer: ctx.baseURL,
+        issuer: new URL(ctx.baseURL).origin,
         audience: resource,
         typ: "at+jwt",
         requiredClaims: ["azp", "sub", "exp"],
@@ -96,10 +97,34 @@ export async function authorizeToken(env: SpikeEnv, resource: string, token: str
   };
 }
 
+/** Same check through public API only: auth.api.getJwks() in process + jose. */
+export async function verifyWithPublicApi(env: SpikeEnv, resource: string, token: string) {
+  const t0 = Date.now();
+  const auth = createAuth(authConfigFromEnv(env));
+  const ctx = await auth.$context;
+  const jwks = (await (auth.api as unknown as { getJwks(): Promise<{ keys: unknown[] }> }).getJwks()) as never;
+  try {
+    const { payload, protectedHeader } = await jwtVerify(token, createLocalJWKSet(jwks), {
+      issuer: new URL(ctx.baseURL).origin,
+      audience: resource,
+      typ: "at+jwt",
+      requiredClaims: ["azp", "sub", "exp"],
+    });
+    return { ok: true, ms: Date.now() - t0, sub: payload.sub, typ: protectedHeader.typ };
+  } catch (error) {
+    return { ok: false, ms: Date.now() - t0, error: String(error) };
+  }
+}
+
 /** The named entrypoint: does the TanStack Start build keep it? */
 export class ConsoleRPC extends WorkerEntrypoint<SpikeEnv> {
   ping(): string {
     return "console-rpc-ok";
+  }
+  async compareVerify(resource: string, token: string) {
+    const internal = await authorizeToken(this.env, resource, token);
+    const publicApi = await verifyWithPublicApi(this.env, resource, token);
+    return { internalOk: internal.ok, internalReason: internal.ok ? null : internal.reason, publicApi };
   }
   authorize(resource: string, token: string): Promise<AuthorizeResult> {
     return authorizeToken(this.env, resource, token);
@@ -153,7 +178,7 @@ const esc = (s: unknown): string => String(s ?? "").replace(/[&<>"]/g, (c) => ({
 
 /** Before the page gate: public metadata. */
 export function spikePublic(request: Request, pathname: string, env: SpikeEnv): Promise<Response> | undefined {
-  if (pathname === "/.well-known/oauth-authorization-server/api/auth") {
+  if (pathname === "/.well-known/oauth-authorization-server" || pathname === "/.well-known/oauth-authorization-server/api/auth") {
     const auth = getAuthForRequest(request, env);
     return oauthProviderAuthServerMetadata(auth as never)(request);
   }

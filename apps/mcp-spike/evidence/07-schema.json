@@ -1,0 +1,126 @@
+{
+  "2026-07-28": {
+    "tools": [
+      {
+        "name": "strict_stepup",
+        "outputSchemaType": "object"
+      },
+      {
+        "name": "union_stepup",
+        "outputSchemaType": "object"
+      }
+    ],
+    "results": {
+      "strict_stepup": {
+        "_meta": {
+          "io.modelcontextprotocol/serverInfo": {
+            "name": "eccos-mcp-spike",
+            "version": "0.0.0"
+          }
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call strict_stepup again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=demo\",\"expiresAt\":\"2026-11-23T13:33:27.427Z\",\"retry\":{\"tool\":\"strict_stepup\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+          }
+        ],
+        "structuredContent": {
+          "status": "approval_required",
+          "reason": "elevation_required",
+          "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call strict_stepup again with the same arguments.",
+          "approvalUrl": "http://localhost:3000/spike/approve?request=demo",
+          "expiresAt": "2026-11-23T13:33:27.427Z",
+          "retry": {
+            "tool": "strict_stepup",
+            "when": "after_approval",
+            "sameArguments": true
+          }
+        },
+        "isError": true
+      },
+      "union_stepup": {
+        "_meta": {
+          "io.modelcontextprotocol/serverInfo": {
+            "name": "eccos-mcp-spike",
+            "version": "0.0.0"
+          }
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call union_stepup again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=demo\",\"expiresAt\":\"2026-11-23T13:33:27.453Z\",\"retry\":{\"tool\":\"union_stepup\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+          }
+        ],
+        "structuredContent": {
+          "status": "approval_required",
+          "reason": "elevation_required",
+          "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call union_stepup again with the same arguments.",
+          "approvalUrl": "http://localhost:3000/spike/approve?request=demo",
+          "expiresAt": "2026-11-23T13:33:27.453Z",
+          "retry": {
+            "tool": "union_stepup",
+            "when": "after_approval",
+            "sameArguments": true
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  "legacy": {
+    "tools": [
+      {
+        "name": "strict_stepup",
+        "outputSchemaType": "object"
+      },
+      {
+        "name": "union_stepup",
+        "outputSchemaType": "object"
+      }
+    ],
+    "results": {
+      "strict_stepup": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call strict_stepup again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=demo\",\"expiresAt\":\"2026-11-23T13:33:27.596Z\",\"retry\":{\"tool\":\"strict_stepup\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+          }
+        ],
+        "structuredContent": {
+          "status": "approval_required",
+          "reason": "elevation_required",
+          "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call strict_stepup again with the same arguments.",
+          "approvalUrl": "http://localhost:3000/spike/approve?request=demo",
+          "expiresAt": "2026-11-23T13:33:27.596Z",
+          "retry": {
+            "tool": "strict_stepup",
+            "when": "after_approval",
+            "sameArguments": true
+          }
+        },
+        "isError": true
+      },
+      "union_stepup": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call union_stepup again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=demo\",\"expiresAt\":\"2026-11-23T13:33:27.624Z\",\"retry\":{\"tool\":\"union_stepup\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+          }
+        ],
+        "structuredContent": {
+          "status": "approval_required",
+          "reason": "elevation_required",
+          "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call union_stepup again with the same arguments.",
+          "approvalUrl": "http://localhost:3000/spike/approve?request=demo",
+          "expiresAt": "2026-11-23T13:33:27.624Z",
+          "retry": {
+            "tool": "union_stepup",
+            "when": "after_approval",
+            "sameArguments": true
+          }
+        },
+        "isError": true
+      }
+    }
+  }
+}

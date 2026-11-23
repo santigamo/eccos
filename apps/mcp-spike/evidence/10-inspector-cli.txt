@@ -1,0 +1,27 @@
+$ mcp-inspector --cli http://localhost:8788/mcp --transport http --method tools/list --header "Authorization: Bearer <jwt>"
+["whoami","api_key_create","strict_stepup","union_stepup","gateway_probe"]
+$ mcp-inspector --cli ... --method tools/call --tool-name api_key_create --tool-arg label=ci
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"status\":\"approval_required\",\"reason\":\"elevation_required\",\"message\":\"A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.\",\"approvalUrl\":\"http://localhost:3000/spike/approve?request=<id>\",\"expiresAt\":\"2026-11-23T13:38:53.243Z\",\"retry\":{\"tool\":\"api_key_create\",\"when\":\"after_approval\",\"sameArguments\":true}}"
+    }
+  ],
+  "structuredContent": {
+    "status": "approval_required",
+    "reason": "elevation_required",
+    "message": "A person must approve sensitive actions for this agent. Ask them to open the link, then call api_key_create again with the same arguments.",
+    "approvalUrl": "http://localhost:3000/spike/approve?request=<id>",
+    "expiresAt": "2026-11-23T13:38:53.243Z",
+    "retry": {
+      "tool": "api_key_create",
+      "when": "after_approval",
+      "sameArguments": true
+    }
+  },
+  "isError": true
+}
+{"error":{"code":"tool_is_error","message":"Tool 'api_key_create' returned isError:true."}}
+$ mcp-inspector --cli ... (no bearer)
+{"error":{"code":"auth_required","message":"Interactive OAuth requires a TTY on stdin or stderr (or MCP_AUTO_OPEN_ENABLED=true). For CI/non-interactive runs use --stored-auth-only."}}

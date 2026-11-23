@@ -6,7 +6,8 @@
   // src/server.ts by convention; pointing `main` here keeps wrangler in sync.
   "main": "src/server.ts",
   "compatibility_date": "2026-06-12",
-  "compatibility_flags": ["nodejs_compat"],
+  // SPIKE: global_fetch_strictly_public for the CIMD transport (src/spike/cimd-fetch.ts).
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   // Preserve installation-specific vars omitted from this template.
   "keep_vars": true,
   // Run next to the auth D1 primary (FRA): every request makes several

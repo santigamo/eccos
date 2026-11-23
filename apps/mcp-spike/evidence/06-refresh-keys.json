@@ -1,0 +1,62 @@
+{
+  "jwks_rows": [
+    {
+      "id": "ADhhoxF67ZgPiBq2XYvYtxd2qJTX08Yw",
+      "alg": "EdDSA",
+      "crv": "Ed25519",
+      "createdAt": "2026-11-23T13:12:59.693Z",
+      "expiresAt": null,
+      "privateKeyLength": 340,
+      "privateKeyPrefix": "\"cb2b29b596a"
+    }
+  ],
+  "jwks_endpoint": {
+    "keys": [
+      {
+        "alg": "EdDSA",
+        "crv": "Ed25519",
+        "kty": "OKP",
+        "x": "WcF5DA-wFjUaZoP2rKKlHHgheKC-XOJI671sTcZCP9A",
+        "kid": "ADhhoxF67ZgPiBq2XYvYtxd2qJTX08Yw"
+      }
+    ]
+  },
+  "consent_rows_for_client": [
+    {
+      "n": 0
+    }
+  ],
+  "refresh_after_consent_row_deleted": {
+    "status": 200,
+    "workspaceClaim": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0"
+  },
+  "refresh_after_membership_removed": {
+    "status": 403,
+    "body": {
+      "message": "not_a_member"
+    }
+  },
+  "replay_rotated_refresh": {
+    "status": 200,
+    "body": {
+      "access_token": "<jwt>",
+      "expires_in": 585,
+      "expires_at": 1795440762,
+      "token_type": "Bearer",
+      "refresh_token": "oMadto…",
+      "scope": "eccos:view eccos:operate eccos:configure eccos:administer offline_access"
+    }
+  },
+  "refresh_rows": [
+    {
+      "revoked": 1,
+      "referenceId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+      "rotated": 1
+    },
+    {
+      "revoked": 0,
+      "referenceId": "IKJODuoQvgYCCr0Pd32pssK10pKcWqU0",
+      "rotated": 0
+    }
+  ]
+}

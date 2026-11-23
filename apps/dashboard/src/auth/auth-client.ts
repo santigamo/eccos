@@ -9,6 +9,7 @@
 
 import { createAuthClient } from "better-auth/react";
 import { organizationClient, twoFactorClient } from "better-auth/client/plugins";
+import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 
 export const authClient = createAuthClient({
@@ -19,5 +20,7 @@ export const authClient = createAuthClient({
       roles: { owner, admin, operator, viewer },
     }),
     twoFactorClient(),
+    // SPIKE: sends the page's signed oauth_query with sign-in/sign-up, so the authorization continues.
+    oauthProviderClient(),
   ],
 });

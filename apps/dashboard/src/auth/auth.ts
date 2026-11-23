@@ -375,7 +375,9 @@ export function createAuth(config: AuthConfig) {
       // enrollment UI ships with the eccos-0x0.7 dashboard pass.
       twoFactor(),
       // ── SPIKE (task 0.3) ───────────────────────────────────────────────
-      jwt({ disableSettingJwtHeader: true }),
+      // SPIKE finding: Claude documents root discovery only, so the issuer is the bare origin and
+      // the RFC 8414 document lives at the root well-known path (path-inserted == root).
+      jwt({ disableSettingJwtHeader: true, jwt: { issuer: new URL(config.baseURL).origin } }),
       mcp({
         loginPage: "/signin",
         consentPage: "/spike/consent",
