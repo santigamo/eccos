@@ -976,6 +976,12 @@ export class EccosGateway extends DurableObject<Env> {
     if (url !== null) this.ctx.storage.setAlarm(Date.now());
   }
 
+  /** Replaces only the signing secret, for a redeemed secret claim: the target is left as it is. */
+  setSubscriberSecret(secret: string): void {
+    if (!/^[0-9a-f]{64}$/.test(secret)) throw new Error("invalid subscriber secret: expected 32 bytes as hex");
+    this.sql.exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, "SUBSCRIBER_SECRET", secret);
+  }
+
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---
 
   /**

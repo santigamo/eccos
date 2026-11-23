@@ -39,6 +39,11 @@ import type {
   ConnectLinkSummary,
   ConnectStartResult,
   IssuedConnectLink,
+  IssuedSecretClaim,
+  RedeemedSecretClaim,
+  SecretClaim,
+  SecretClaimCreator,
+  SecretClaimRequest,
   ConversationListOpts,
   ConversationOpts,
   ConversationSummary,
@@ -1281,6 +1286,51 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async revokeApiKey(accountId: string, keyId: string): Promise<boolean> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).revokeApiKey(account, keyId);
+  }
+
+  async createSecretClaim(
+    accountId: string,
+    request: SecretClaimRequest,
+    creator: SecretClaimCreator,
+  ): Promise<IssuedSecretClaim> {
+    const account = requireAccountId(accountId, "accountId is required");
+    const issued = await getControlPlaneStub(this.env).createSecretClaim(account, request, creator);
+    const wabaId = request.kind === "subscriber_secret" ? request.wabaId : undefined;
+    console.log(
+      JSON.stringify({ level: "info", area: "rpc", event: "secret_claim_created", accountId: account, claimId: issued.claimId, kind: request.kind, wabaId }),
+    );
+    return issued;
+  }
+
+  async resolveSecretClaim(token: string): Promise<SecretClaim | null> {
+    return getControlPlaneStub(this.env).resolveSecretClaim(token);
+  }
+
+  /** The control plane spends the claim (and issues an API key in that same call); a
+   * subscriber secret is generated and stored only after the claim is spent, so a failed
+   * write leaves the claim gone and the previous secret in force. The target URL is not touched. */
+  async redeemSecretClaim(token: string): Promise<RedeemedSecretClaim | "gone" | null> {
+    const spent = await getControlPlaneStub(this.env).redeemSecretClaim(token);
+    if (spent === null || spent === "gone") return spent;
+    const { claim } = spent;
+    if ("keyId" in spent) {
+      console.log(
+        JSON.stringify({ level: "info", area: "rpc", event: "secret_claim_redeemed", accountId: claim.accountId, claimId: claim.claimId, kind: claim.kind, keyId: spent.keyId }),
+      );
+      return spent;
+    }
+    if (claim.kind !== "subscriber_secret") throw new Error("secret claim spent without a key");
+    const secret = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    await this.stubFor(claim.wabaId).setSubscriberSecret(secret);
+    console.log(
+      JSON.stringify({ level: "info", area: "rpc", event: "secret_claim_redeemed", accountId: claim.accountId, claimId: claim.claimId, kind: claim.kind, wabaId: claim.wabaId }),
+    );
+    return { claim, secret };
+  }
+
+  async listSecretClaims(accountId: string): Promise<SecretClaim[]> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).listSecretClaims(account);
   }
 
   /** Conversation retention for the account: null keeps conversations forever. */
