@@ -33,9 +33,19 @@ Eccos is a **Bun workspace** (`packages/*` + `apps/*`) — a shared pure core + 
 
 ## Running the checks
 
-Every PR must pass these (CI runs the same):
+Every PR must pass one command. CI's test-and-build job runs exactly this script:
 
 ```bash
+bun run check          # lint, typecheck, both test suites, site, docs, dashboard
+```
+
+CI also runs a separate job on the PR title, which must read `type(scope): subject`. Check yours
+locally with `./scripts/check-pr-title.sh "<title>"`.
+
+Its parts run on their own while you work:
+
+```bash
+bun run lint           # Biome
 bun run typecheck      # tsc --noEmit
 bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers integration tests for apps/gateway/
@@ -50,12 +60,10 @@ bun run test:workers   # vitest-pool-workers integration tests for apps/gateway/
 
 ## Conventions
 
-- **Language:** code, identifiers, comments, and user-facing strings are in **English**.
-- **The `WhatsAppCallbackEvent` shape is a public contract.** Changing it is a breaking
-  change for every downstream subscriber. If you touch the parser, add/extend tests in
-  `packages/core/tests/parser.test.ts`.
-- The webhook handler must always return `200` quickly so Meta does not disable the
-  subscription.
+The rules of the codebase live in one place, the **Rules** section of [AGENTS.md](./AGENTS.md):
+language, the `WhatsAppCallbackEvent` contract, what the webhook handler answers, and tenancy.
+They bind people and agents alike. Two more for contributors:
+
 - **Never commit secrets.** `.env`, real tokens, App Secrets, and API keys stay out of the
   repo (`.env` and `data/` are gitignored). Use placeholders in `.env.example`.
 - Match the style of the surrounding code; keep the core readable in one sitting.
@@ -63,7 +71,7 @@ bun run test:workers   # vitest-pool-workers integration tests for apps/gateway/
 ## Pull requests
 
 1. Fork and branch from `main`.
-2. Make your change with tests and a green `typecheck` + both test suites.
+2. Make your change with tests and a green `bun run check`.
 3. Open a PR describing **what** changed and **why**. Link any related issue.
 
 By contributing you agree that your contributions are licensed under the [MIT License](./LICENSE).
