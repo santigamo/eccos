@@ -1,6 +1,6 @@
 import type { ConsoleApi } from "@eccos/console-contract";
 import { AGENT_SCOPES, type AgentAction, type AgentScope, type MemberRole } from "@eccos/console-contract";
-import type { GatewayApi } from "@eccos/gateway-contract";
+import type { AccountResources, GatewayApi } from "@eccos/gateway-contract";
 
 /** The scope that grants each action (design § 3.2). */
 export const SCOPE_OF = Object.fromEntries(Object.entries(AGENT_SCOPES).map(([scope, action]) => [action, scope])) as Record<
@@ -30,7 +30,8 @@ export const LEAST_ROLE = {
  */
 export const GATEWAY_METHODS = {
   listAccountResources: "view",
-  getSubscriberConfig: "view",
+  hasSubscriber: "view",
+  getSubscriberConfig: "operate",
   listTemplates: "view",
   getStatus: "view",
   getConnectLink: "administer",
@@ -54,21 +55,47 @@ export const CONSOLE_METHODS = {
   openBillingPortal: "administer",
 } as const satisfies { [K in keyof ConsoleApi]?: AgentAction };
 
+/**
+ * Fields a method returns that its action may not see, removed before a tool gets the result.
+ * `listAccountResources` is a view read (the console's `getAccountResources`), but its `keys`
+ * belong to the API keys page, which is administer: `listApiKeys` is the way to them.
+ */
+const PROJECTIONS: { [K in keyof typeof GATEWAY_METHODS]?: (result: never) => unknown } = {
+  listAccountResources: ({ keys: _keys, ...rest }: AccountResources): Omit<AccountResources, "keys"> => rest,
+};
+
+type ProjectedGateway = Omit<GatewayApi, "listAccountResources"> & {
+  listAccountResources(accountId: string): Promise<Omit<AccountResources, "keys">>;
+};
+
 type MethodsOf<Table, A extends AgentAction> = { [K in keyof Table]: Table[K] extends A ? K : never }[keyof Table];
 
-/** What `deps.for(action)` hands out: only the methods bound to `action`. */
+/** What `deps.for(action)` hands out: only the methods bound to `action`, as that action may see them. */
 export interface ClientsFor<A extends AgentAction> {
-  gateway: Pick<GatewayApi, MethodsOf<typeof GATEWAY_METHODS, A> & keyof GatewayApi>;
+  gateway: Pick<ProjectedGateway, MethodsOf<typeof GATEWAY_METHODS, A> & keyof ProjectedGateway>;
   console: Pick<ConsoleApi, MethodsOf<typeof CONSOLE_METHODS, A> & keyof ConsoleApi>;
 }
 
-/** An object carrying only `table`'s methods bound to `action`, each calling through `binding`. */
+/** `A` when it is one action; `never` for a union, which would hand out several actions' methods. */
+export type OneAction<A extends AgentAction> = [A] extends [infer One extends AgentAction]
+  ? { [K in One]: [Exclude<One, K>] extends [never] ? K : never }[One]
+  : never;
+
+/**
+ * An object carrying only `table`'s methods bound to `action`, each calling through `binding`
+ * and passing its result through the method's projection, if any.
+ */
 export function methodsFor(binding: object, table: Record<string, AgentAction>, action: AgentAction): Record<string, unknown> {
   const target = binding as Record<string, (...args: unknown[]) => unknown>;
+  const projections = PROJECTIONS as Record<string, ((result: unknown) => unknown) | undefined>;
   return Object.fromEntries(
     Object.entries(table)
       .filter(([, bound]) => bound === action)
-      .map(([method]) => [method, (...args: unknown[]) => target[method]?.(...args)]),
+      .map(([method]) => {
+        const project = projections[method];
+        const call = (...args: unknown[]) => target[method]?.(...args);
+        return [method, project ? async (...args: unknown[]) => project(await call(...args)) : call];
+      }),
   );
 }
 
@@ -81,6 +108,7 @@ const withArticle = (role: MemberRole) => `${role === "viewer" ? "a" : "an"} ${r
  * falls short; otherwise the scope the grant left out.
  */
 export function forbiddenMessage(action: AgentAction, actor: { role: MemberRole }): string {
+  if (!Object.hasOwn(LEAST_ROLE, action)) return `This connection cannot "${String(action)}": Eccos has no such action.`;
   const least = LEAST_ROLE[action];
   if (ROLE_RANK[actor.role] < ROLE_RANK[least]) {
     return `This connection acts for ${withArticle(actor.role)}, and ${action} needs ${withArticle(least)} or above in this workspace. Ask such a person to do this in the Eccos console.`;
