@@ -1,4 +1,5 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
+import { errorReading } from "./logs";
 import type {
   CreateTemplateFailureCode,
   EditTemplateFailureCode,
@@ -427,5 +428,22 @@ const META_ERROR_COPY: Record<string, FailureCopy> = {
 export function metaErrorCopy(code: string | null, message: string | null = null): FailureCopy {
   const known = code ? META_ERROR_COPY[code] : undefined;
   if (known) return known;
-  return { title: "Meta error", detail: message ?? "Meta did not say why." };
+  return { title: "Meta error", detail: message ?? (code ? "The console has no description for this code yet." : "Meta did not say why.") };
+}
+
+/**
+ * The Messages Error cell. A refused send stores Meta's envelope; one that failed
+ * after Meta accepted it has only the trail's code. A stored error without a code
+ * (Meta gave none, or the send never reached Meta) keeps its own words, unlabelled.
+ */
+export function outboundErrorReading(
+  raw: string | null,
+  failedCode: string | null | undefined,
+): { code: string | null; title: string | null; detail: string } | null {
+  if (!raw && failedCode === undefined) return null;
+  const reading = raw ? errorReading(raw) : null;
+  if (reading && !reading.code) return { code: null, title: null, detail: reading.text };
+  const code = reading ? reading.code : (failedCode ?? null);
+  const copy = metaErrorCopy(code, reading?.text ?? null);
+  return { code, title: copy.title, detail: copy.detail };
 }

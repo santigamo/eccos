@@ -76,8 +76,8 @@ export function singleFlight(invalidate: Invalidate, onBusy: (busy: boolean) => 
  * choice is remembered per page in localStorage, read after mount so the
  * server render and hydration agree on "off".
  *
- * `auto` polls too while the operator has made no choice on this page; a
- * stored "off" wins over it.
+ * `auto` polls too while the operator has made no choice on this page, and
+ * the toggle shows it, so one click stops it; a stored "off" wins over it.
  */
 export function useLiveRefresh(page: string, auto = false): LiveRefresh {
   const router = useRouter()
@@ -103,7 +103,7 @@ export function useLiveRefresh(page: string, auto = false): LiveRefresh {
     return pollWhileVisible(refresh, LIVE_INTERVAL_MS, document)
   }, [polling, refresh])
 
-  return { live: choice === true, setLive, refreshing, refresh }
+  return { live: polling, setLive, refreshing, refresh }
 }
 
 /**
@@ -126,10 +126,6 @@ export function readLiveChoice(page: string): boolean | null {
   } catch {
     return null
   }
-}
-
-export function readLive(page: string): boolean {
-  return readLiveChoice(page) === true
 }
 
 export function writeLive(page: string, live: boolean): void {

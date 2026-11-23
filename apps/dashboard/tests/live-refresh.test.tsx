@@ -51,7 +51,6 @@ mock.module("@tanstack/react-router", () => ({
 const {
   pollWhileVisible,
   singleFlight,
-  readLive,
   readLiveChoice,
   writeLive,
   useAlwaysLive,
@@ -191,8 +190,8 @@ describe("useLiveRefresh auto", () => {
     }
   }
 
-  test("polls with no stored choice, without claiming Live is on", async () => {
-    expect(await pollsFor(null, true)).toEqual({ intervals: [LIVE_INTERVAL_MS], live: false });
+  test("polls with no stored choice and shows Live on, so one click stops it", async () => {
+    expect(await pollsFor(null, true)).toEqual({ intervals: [LIVE_INTERVAL_MS], live: true });
   });
 
   test("a stored off wins over auto", async () => {
@@ -265,10 +264,9 @@ describe("live choice", () => {
       () => {
         expect(readLiveChoice("events")).toBeNull();
         writeLive("events", true);
-        expect(readLive("events")).toBe(true);
-        expect(readLive("messages")).toBe(false);
+        expect(readLiveChoice("events")).toBe(true);
+        expect(readLiveChoice("messages")).toBeNull();
         writeLive("events", false);
-        expect(readLive("events")).toBe(false);
         expect(readLiveChoice("events")).toBe(false);
       },
     );
@@ -280,7 +278,7 @@ describe("live choice", () => {
       throw new Error("SecurityError");
     };
     withStorage({ getItem: blocked, setItem: blocked }, () => {
-      expect(readLive("events")).toBe(false);
+      expect(readLiveChoice("events")).toBeNull();
       expect(() => writeLive("events", true)).not.toThrow();
     });
   });

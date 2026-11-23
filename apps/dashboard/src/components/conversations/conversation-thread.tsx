@@ -228,9 +228,9 @@ function MessageBubble({
                 {message.status === "failed" && failedCode(message.error) ? `: ${message.error}` : ""}
               </span>
             ) : null}
-            {outgoing && message.status === "failed" ? <FailureNote error={message.error} wabaId={wabaId} /> : null}
             {edited ? <span>Edited</span> : null}
             {message.origin === "history" ? <span>Imported history</span> : null}
+            {outgoing && message.status === "failed" ? <FailureNote error={message.error} wabaId={wabaId} /> : null}
           </footer>
         </article>
         {canActOn(entry) && (onReply || onReact) ? (

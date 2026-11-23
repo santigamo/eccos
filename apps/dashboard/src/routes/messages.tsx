@@ -15,11 +15,11 @@ import { awaitingMeta } from "../lib/awaiting-meta";
 import { MessageSheet } from "../components/logs/message-sheet";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
-import { loaderFailure, metaErrorCopy } from "../lib/failure";
+import { loaderFailure, outboundErrorReading } from "../lib/failure";
 import { listOutbound } from "../server/gateway";
 import type { OutboundRow, OutboundTrailEvent } from "../server/gateway";
 import { normalizeSearchRowId, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
-import { EMPTY_CELL, errorReading, messageSummary, messageSummaryText } from "../lib/logs";
+import { EMPTY_CELL, messageSummary, messageSummaryText } from "../lib/logs";
 import { COUNT_LINK, Page, StatusCounts, StatusTag, fmtTs } from "../ui";
 import {
   Select,
@@ -209,34 +209,28 @@ function messageColumns(onOpen?: (row: OutboundRow) => void, showPhone = true) {
     columnHelper.accessor("status", {
       id: "status",
       header: "Meta",
-      // Meta accepted the send and the trail later reported `failed`: `sent` is
-      // still true of this hop, so the tag stays and the next hop is named beside it.
-      cell: (info) => (
-        <span className="flex items-center gap-1.5">
-          <StatusTag status={info.getValue()} />
-          {info.getValue() === "sent" && failedEvent(info.row.original) ? (
-            <span className="text-destructive-foreground text-xs">not delivered</span>
-          ) : null}
-        </span>
-      ),
+      cell: (info) => <StatusTag status={info.getValue()} />,
       meta: { cellClassName: "whitespace-nowrap" },
     }),
     trailColumn,
     columnHelper.accessor("error", {
       id: "error",
       header: "Error",
-      // A refused send stores Meta's envelope; one that failed after Meta accepted it has only the trail's code.
       cell: (info) => {
-        const raw = info.getValue();
         const failed = failedEvent(info.row.original);
-        if (!raw && !failed) return EMPTY_CELL;
-        const reading = raw ? errorReading(raw) : null;
-        const code = reading ? reading.code : (failed?.errorCode ?? null);
-        const copy = metaErrorCopy(code, reading?.text ?? null);
+        const error = outboundErrorReading(info.getValue(), failed ? (failed.errorCode ?? null) : undefined);
+        if (!error) return EMPTY_CELL;
+        const line = error.title ? `${error.title}. ${error.detail}` : error.detail;
         return (
-          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={reading?.label ?? copy.detail}>
-            {code ? <span className="font-mono text-xs">{code} · </span> : null}
-            {copy.title}. <span className="text-muted-foreground">{copy.detail}</span>
+          <span className="line-clamp-2 max-w-sm [overflow-wrap:anywhere]" title={line}>
+            {error.code ? <span className="font-mono text-xs">{error.code} · </span> : null}
+            {error.title ? (
+              <>
+                {error.title}. <span className="text-muted-foreground">{error.detail}</span>
+              </>
+            ) : (
+              error.detail
+            )}
           </span>
         );
       },

@@ -185,7 +185,7 @@ export function editApprovedWarning(status: string | undefined): string | null {
 
 /** Said above the submit of an APPROVED template's edit, where the operator decides. */
 export const APPROVED_EDIT_NOTICE =
-  "This template is approved. Submitting sends it back to Meta's review, and messages using it fail until Meta approves it again, which can take up to 24 hours. An approved template can be edited once every 24 hours and up to 10 times in 30 days. If it is in active use, duplicate it as a new template instead.";
+  "This template is approved. Submitting sends it back to Meta's review, and sends with it may fail until Meta approves it again, which can take up to 24 hours. An approved template can be edited once every 24 hours and up to 10 times in 30 days. If it is in active use, duplicate it as a new template instead.";
 
 function initialDraft(mode: TemplateSheetMode): TemplateDraft {
   return mode.kind === "create" ? EMPTY_DRAFT : mode.initial;
