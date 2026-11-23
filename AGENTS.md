@@ -82,7 +82,7 @@ cannot happen.
 | A new test file runs without registering it | `bun run test` globs `packages/*/tests/*.test.ts` and `apps/gateway/tests/*.test.ts` |
 | PR titles read `type(scope): subject` | `scripts/check-pr-title.sh`, run by `.github/workflows/pr-title.yml` |
 | README's event shape matches `WhatsAppCallbackEvent` | `apps/gateway/tests/docs-readme-events.test.ts` |
-| The public docs' event examples and tables match the parser | `apps/gateway/tests/docs-events.test.ts`, `tests/worker/docs-contract.spec.ts` |
+| The public docs' event examples and tables match the parser | `apps/gateway/tests/docs-events.test.ts`, `apps/gateway/tests/worker/docs-contract.spec.ts` |
 | Parser changes come with tests | Prose only (see Rules) |
 | `packages/core` stays free of HTTP and DB code | Prose only (see Rules) |
 | No secrets in the repository | Prose only (see Rules) |
