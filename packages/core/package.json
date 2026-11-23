@@ -10,6 +10,7 @@
     "./send": "./src/send.ts",
     "./signature": "./src/signature.ts",
     "./template-copy": "./src/template-copy.ts",
+    "./template-rules": "./src/template-rules.ts",
     "./templates": "./src/templates.ts",
     "./types": "./src/types.ts"
   },
