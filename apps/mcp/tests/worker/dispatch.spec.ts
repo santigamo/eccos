@@ -120,6 +120,9 @@ describe("effective permissions", () => {
     const viewer = await grantToken(makeActor({ role: "viewer", actions: ["view"] }));
 
     expect(await names(owner)).toEqual([
+      "api_key_create",
+      "api_key_revoke",
+      "api_keys_list",
       "billing_checkout_link",
       "billing_get",
       "connect_link_create",
@@ -135,6 +138,9 @@ describe("effective permissions", () => {
       "template_edit",
       "template_send_test",
       "templates_list",
+      "webhook_get",
+      "webhook_resubscribe",
+      "webhook_set",
       "workspace_get",
     ]);
     expect(await names(viewer)).toEqual(["numbers_list", "status_get", "templates_list", "workspace_get"]);

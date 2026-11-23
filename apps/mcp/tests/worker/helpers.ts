@@ -32,6 +32,7 @@ interface GatewayControls {
   fail(method: string, message: string): Promise<void>;
   calls(): Promise<GatewayCall[]>;
   connectLinkIssues(): Promise<ConnectLinkIssue[]>;
+  claimTokens(): Promise<string[]>;
 }
 
 export const consoleStub = (env as unknown as { CONSOLE: ConsoleControls }).CONSOLE;

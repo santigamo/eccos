@@ -4,6 +4,9 @@ import { connect, grantToken, makeActor, resetStubs } from "./helpers";
 beforeEach(resetStubs);
 
 const SETUP_TOOLS = {
+  api_key_create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  api_key_revoke: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  api_keys_list: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   billing_checkout_link: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   billing_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   connect_link_create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -16,6 +19,9 @@ const SETUP_TOOLS = {
   template_edit: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   template_send_test: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   templates_list: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  webhook_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  webhook_resubscribe: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  webhook_set: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   workspace_get: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
@@ -42,13 +48,13 @@ describe("tool inventory", () => {
     }
   });
 
-  it("puts only connect_link_create behind elevation among the setup tools", async () => {
+  it("puts exactly the design § 3.3 step-up tools behind elevation", async () => {
     const client = await connect(await grantToken(makeActor()));
     const { tools } = await client.listTools();
     await client.close();
 
     const approvalShaped = tools.filter((tool) => JSON.stringify(tool.outputSchema).includes("approval_required")).map((tool) => tool.name);
-    expect(approvalShaped).toEqual(["connect_link_create"]);
+    expect(approvalShaped.sort()).toEqual(["api_key_create", "api_key_revoke", "connect_link_create", "webhook_resubscribe", "webhook_set"]);
   });
 
   it("lists only the view tools for a viewer whose token carries every scope", async () => {

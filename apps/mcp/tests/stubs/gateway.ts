@@ -2,7 +2,9 @@
  * A stand-in for the gateway's `GatewayRPC` entrypoint, for the Worker tests. Only the methods
  * the MCP tools call exist. Every call records the account id it was made for, so a test can
  * prove an actor of one account never reaches another; a WABA the account does not own is
- * refused, as the real ownership check does.
+ * refused, as the real ownership check does. Secret claims follow the control plane's rules
+ * (apps/gateway/src/secret-claims.ts): a token shaped `<selector>.<secret>`, 20 pending per
+ * account, a subscriber claim cancels the WABA's older ones and needs a WABA the account owns.
  */
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
@@ -18,8 +20,15 @@ import type {
   SendTemplateTestResult,
   ConnectLinkSummary,
   GatewayStatus,
+  IssuedApiKey,
   IssuedConnectLink,
+  IssuedSecretClaim,
   ReconcileWabaResult,
+  ResubscribeResult,
+  SecretClaim,
+  SecretClaimCreator,
+  SecretClaimRequest,
+  SetSubscriberConfigInput,
   SubscriberConfig,
   TemplatesResult,
 } from "@eccos/gateway-contract";
@@ -37,7 +46,10 @@ export interface AccountFixture {
   };
   status?: Record<string, GatewayStatus>;
   reconcile?: Record<string, ReconcileWabaResult>;
+  resubscribe?: Record<string, ResubscribeResult>;
   connectLink?: ConnectLinkSummary;
+  /** Pending claims, newest last; a test may seed them to fill the account's quota. */
+  claims?: SecretClaim[];
 }
 
 export interface GatewayCall {
@@ -55,11 +67,15 @@ export interface ConnectLinkIssue {
 
 const EMPTY: AccountResources = { account: null, keys: [], wabas: [], phones: [] };
 const LINK_TTL_MS = 7 * 86_400_000;
+const CLAIM_TTL_MS = 10 * 60_000;
+const MAX_PENDING_CLAIMS = 20;
+const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
 
 let accounts = new Map<string, AccountFixture>();
 let calls: GatewayCall[] = [];
 let failing: { method: string; message: string } | null = null;
 let issues: ConnectLinkIssue[] = [];
+let tokens: string[] = [];
 
 function owned(method: string, accountId: string, wabaId?: string, input?: unknown): AccountFixture {
   calls.push({ method, accountId, ...(input === undefined ? {} : { input }) });
@@ -146,6 +162,82 @@ export class GatewayRPC extends WorkerEntrypoint {
     return fixture.reconcile?.[wabaId] ?? { ok: true, status: "active", error: null };
   }
 
+  /** As the real one: an unowned WABA throws; an omitted secret keeps the stored one, null removes it. */
+  async setSubscriberConfig(input: SetSubscriberConfigInput, wabaId: string, accountId: string): Promise<{ ok: true }> {
+    const fixture = owned("setSubscriberConfig", accountId, wabaId, input);
+    if (input.url !== null && !input.url.startsWith("https://")) throw new Error("invalid subscriber URL: must use https");
+    const current = fixture.subscriber?.[wabaId] ?? { url: null, hasSecret: false, lastForward: null };
+    const hasSecret = input.secret === undefined ? current.hasSecret : input.secret !== null;
+    fixture.subscriber = { ...fixture.subscriber, [wabaId]: { ...current, url: input.url, hasSecret } };
+    if (input.secret !== undefined) {
+      fixture.claims = (fixture.claims ?? []).filter((claim) => !(claim.kind === "subscriber_secret" && claim.wabaId === wabaId));
+    }
+    accounts.set(accountId, fixture);
+    return { ok: true };
+  }
+
+  async resubscribe(wabaId: string, accountId: string): Promise<ResubscribeResult> {
+    const fixture = owned("resubscribe", accountId);
+    if (!fixture.resources.wabas.some((waba) => waba.wabaId === wabaId)) {
+      return { ok: false, error: `WABA "${wabaId}" is not owned by account "${accountId}"` };
+    }
+    return fixture.resubscribe?.[wabaId] ?? { ok: true };
+  }
+
+  async issueApiKey(accountId: string, label?: string): Promise<IssuedApiKey> {
+    const fixture = owned("issueApiKey", accountId, undefined, { label });
+    const keyId = `key_${crypto.randomUUID().replaceAll("-", "")}`;
+    const apiKey = `ek_${base64url(crypto.getRandomValues(new Uint8Array(32)))}`;
+    fixture.resources.keys = [...fixture.resources.keys, { keyId, label: label ?? null, createdAt: Date.now(), revokedAt: null }];
+    accounts.set(accountId, fixture);
+    return { keyId, apiKey };
+  }
+
+  /** As the control plane: false for a key that is not the account's or is already revoked. */
+  async revokeApiKey(accountId: string, keyId: string): Promise<boolean> {
+    const fixture = owned("revokeApiKey", accountId, undefined, { keyId });
+    const key = fixture.resources.keys.find((candidate) => candidate.keyId === keyId && candidate.revokedAt === null);
+    if (!key) return false;
+    key.revokedAt = Date.now();
+    return true;
+  }
+
+  async createSecretClaim(
+    accountId: string,
+    request: SecretClaimRequest,
+    creator: SecretClaimCreator,
+  ): Promise<IssuedSecretClaim | "too_many_pending"> {
+    const wabaId = request.kind === "subscriber_secret" ? request.wabaId : undefined;
+    const fixture = owned("createSecretClaim", accountId, wabaId, { request, creator });
+    const now = Date.now();
+    const pending = (fixture.claims ?? []).filter(
+      (claim) => claim.expiresAt > now && !(claim.kind === "subscriber_secret" && claim.wabaId === wabaId),
+    );
+    if (pending.length >= MAX_PENDING_CLAIMS) return "too_many_pending";
+    const claimId = base64url(crypto.getRandomValues(new Uint8Array(8)));
+    const token = `${claimId}.${base64url(crypto.getRandomValues(new Uint8Array(32)))}`;
+    const base = {
+      claimId,
+      accountId,
+      organizationId: `org-of-${accountId}`,
+      creatorUserId: creator.userId,
+      clientId: creator.clientId,
+      createdAt: now,
+      expiresAt: now + CLAIM_TTL_MS,
+    };
+    const claim: SecretClaim =
+      request.kind === "api_key" ? { ...base, kind: "api_key", label: request.label ?? null } : { ...base, kind: "subscriber_secret", wabaId: request.wabaId };
+    fixture.claims = [...pending, claim];
+    accounts.set(accountId, fixture);
+    tokens.push(token);
+    return { claimId, token, expiresAt: claim.expiresAt };
+  }
+
+  async listSecretClaims(accountId: string): Promise<SecretClaim[]> {
+    const now = Date.now();
+    return (owned("listSecretClaims", accountId).claims ?? []).filter((claim) => claim.expiresAt > now).reverse();
+  }
+
   async getConnectLink(accountId: string): Promise<ConnectLinkSummary | null> {
     return owned("getConnectLink", accountId).connectLink ?? null;
   }
@@ -168,6 +260,7 @@ export class GatewayRPC extends WorkerEntrypoint {
     calls = [];
     failing = null;
     issues = [];
+    tokens = [];
   }
 
   async seed(accountId: string, fixture: AccountFixture): Promise<void> {
@@ -185,6 +278,11 @@ export class GatewayRPC extends WorkerEntrypoint {
 
   async connectLinkIssues(): Promise<ConnectLinkIssue[]> {
     return issues;
+  }
+
+  /** Every claim token handed out, so a test can look for it where it must not be. */
+  async claimTokens(): Promise<string[]> {
+    return tokens;
   }
 }
 

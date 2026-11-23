@@ -4,14 +4,24 @@ import type { GatewayApi } from "@eccos/gateway-contract";
 import { roles } from "@eccos/auth-baseline/permissions";
 import consoleGateway from "../../../dashboard/src/server/gateway.ts?raw";
 import consoleStepUp from "../../../dashboard/src/auth/step-up.ts?raw";
+import contract from "../../../../docs/auth-tenancy-contract.md?raw";
+import design from "../../../../openspec/changes/add-mcp-server/design.md?raw";
 import { describe, expect, it, vi } from "vitest";
-import { CONSOLE_METHODS, GATEWAY_METHODS, LEAST_ROLE, SCOPE_OF, forbiddenMessage } from "../../src/permissions";
+import { CONSOLE_METHODS, GATEWAY_METHODS, LEAST_ROLE, SCOPE_OF, SECRET_CLAIM_KINDS, forbiddenMessage } from "../../src/permissions";
 import { ForbiddenError, ToolError, capabilities } from "../../src/tools/registry";
 
 const listAccountResources = vi.fn(async () => ({ account: null, keys: [], wabas: [], phones: [] }));
 const getBilling = vi.fn(async () => "billing");
+const createSecretClaim = vi.fn(async () => ({ claimId: "c", token: "c.t", expiresAt: 1 }));
 const clients = {
-  gateway: { listAccountResources, issueApiKey: vi.fn(), eraseByPhone: vi.fn() } as unknown as GatewayApi,
+  gateway: {
+    listAccountResources,
+    issueApiKey: vi.fn(),
+    eraseByPhone: vi.fn(),
+    createSecretClaim,
+    resolveSecretClaim: vi.fn(),
+    redeemSecretClaim: vi.fn(),
+  } as unknown as GatewayApi,
   console: { getBilling, requestElevation: vi.fn(), authorize: vi.fn() } as unknown as ConsoleApi,
 };
 
@@ -44,6 +54,8 @@ describe("capabilities", () => {
       // One action at a time; the loop variable's type is the union deps.for refuses.
       const { gateway, console } = deps.for(action as never) as unknown as Record<"gateway" | "console", object>;
       expect("eraseByPhone" in gateway).toBe(false);
+      expect("resolveSecretClaim" in gateway).toBe(false);
+      expect("redeemSecretClaim" in gateway).toBe(false);
       expect("requestElevation" in console).toBe(false);
       expect("authorize" in console).toBe(false);
     }
@@ -74,6 +86,45 @@ describe("capabilities", () => {
       expect(error).toBeInstanceOf(ToolError);
       expect((error as ForbiddenError).action).toBe("send");
     }
+  });
+});
+
+describe("createSecretClaim, gated by what the claim mints", () => {
+  const creator = { userId: "u", clientId: "c" };
+  const deps = () => capabilities({ role: "owner", actions: [...owner.actions] }, clients);
+
+  it("hands it to administer for API keys and to configure for subscriber secrets, and to no other action", async () => {
+    createSecretClaim.mockClear();
+    await deps().for("administer").gateway.createSecretClaim("a", { kind: "api_key", label: "ci" }, creator);
+    await deps().for("configure").gateway.createSecretClaim("a", { kind: "subscriber_secret", wabaId: "w" }, creator);
+
+    expect(createSecretClaim.mock.calls).toEqual([
+      ["a", { kind: "api_key", label: "ci" }, creator],
+      ["a", { kind: "subscriber_secret", wabaId: "w" }, creator],
+    ]);
+    for (const action of ["view", "operate", "send"] as const) {
+      expect("createSecretClaim" in (deps().for(action as never) as unknown as { gateway: object }).gateway).toBe(false);
+    }
+  });
+
+  it("types each action to its own claim kinds", async () => {
+    // @ts-expect-error a subscriber secret claim is configure, not administer.
+    await expect(deps().for("administer").gateway.createSecretClaim("a", { kind: "subscriber_secret", wabaId: "w" }, creator)).rejects.toThrow();
+    // @ts-expect-error an API key claim is administer, not configure.
+    await expect(deps().for("configure").gateway.createSecretClaim("a", { kind: "api_key" }, creator)).rejects.toThrow();
+    // @ts-expect-error view mints no claim.
+    expect(deps().for("view").gateway.createSecretClaim).toBeUndefined();
+  });
+
+  it("refuses the other kind at runtime too, before the gateway is called", async () => {
+    createSecretClaim.mockClear();
+    const administer = deps().for("administer").gateway.createSecretClaim as (...args: unknown[]) => Promise<unknown>;
+    const configure = deps().for("configure").gateway.createSecretClaim as (...args: unknown[]) => Promise<unknown>;
+
+    await expect(administer("a", { kind: "subscriber_secret", wabaId: "w" }, creator)).rejects.toThrow("a subscriber_secret claim is not administer");
+    await expect(configure("a", { kind: "api_key" }, creator)).rejects.toThrow("a api_key claim is not configure");
+    await expect(configure("a", null, creator)).rejects.toThrow("a undefined claim is not configure");
+    expect(createSecretClaim).not.toHaveBeenCalled();
   });
 });
 
@@ -268,10 +319,41 @@ describe("permissions table", () => {
       action: "administer",
       evidence: [[consoleGateway, `const { accountId } = await adminActorAccount(gateway); return { url: await portalUrl(billing, accountId) };`]],
     },
+    /*
+     * The secret-claim methods have no console call site yet: the claim page (task 1.4c) redeems,
+     * and nothing in the console creates or lists claims. Their rows are justified from the design
+     * (§ 3.6, § 4) and the contract's scope table (§ 4) instead, which is what the console's API
+     * keys and subscriber config pages will follow.
+     */
+    listSecretClaims: {
+      action: "administer",
+      evidence: [
+        [design, "Pending claims, at most 20 per account, are listed by `listSecretClaims` next to the key list."],
+        [design, "| `api_keys_list` | Key ids, labels, created and revoked times, and pending claims | administer | `listApiKeys` | Pending claims in the read |"],
+      ],
+    },
+    "createSecretClaim:api_key": {
+      action: "administer",
+      evidence: [
+        [design, "| `api_key_create` | Create a claim for a new key; `delivery: \"inline\"` returns the key instead | administer ⬆ |"],
+        [contract, "| `eccos:administer` | Connection link, API keys, billing state and checkout, export | `administer` | admin |"],
+      ],
+    },
+    "createSecretClaim:subscriber_secret": {
+      action: "configure",
+      evidence: [
+        [design, "| `webhook_set` | Set the subscriber URL; generate, keep, remove or supply the signing secret. A generated secret is delivered by claim | configure ⬆ |"],
+        [contract, "| `eccos:configure` | Templates, subscriber config write, resubscribe, re-check a number, phone settings | `configure` | admin |"],
+      ],
+    },
   };
 
   const flat = (source: string) => source.replace(/\s+/g, " ");
-  const table: Record<string, AgentAction> = { ...GATEWAY_METHODS, ...CONSOLE_METHODS };
+  const table: Record<string, AgentAction> = {
+    ...GATEWAY_METHODS,
+    ...CONSOLE_METHODS,
+    ...Object.fromEntries(Object.entries(SECRET_CLAIM_KINDS).map(([kind, action]) => [`createSecretClaim:${kind}`, action])),
+  };
 
   it("covers exactly the methods whose console gating is quoted", () => {
     expect(Object.keys(table).sort()).toEqual(Object.keys(CONSOLE_GATING).sort());
