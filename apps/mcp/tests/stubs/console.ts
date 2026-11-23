@@ -30,6 +30,8 @@ interface State {
   billing: Map<string, BillingResult>;
   elevationRefusal: ElevationResult | null;
   billingCalls: ActorRef[];
+  billingLinks: Map<string, BillingLink>;
+  billingLinkCalls: { method: string; actor: ActorRef }[];
   authorizeFailure: string | null;
 }
 
@@ -42,6 +44,8 @@ const fresh = (): State => ({
   billing: new Map(),
   elevationRefusal: null,
   billingCalls: [],
+  billingLinks: new Map(),
+  billingLinkCalls: [],
   authorizeFailure: null,
 });
 
@@ -78,12 +82,14 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
     return state.billing.get(actor.accountId) ?? { ok: false, code: "billing_disabled" };
   }
 
-  async startCheckout(): Promise<BillingLink> {
-    return { ok: false, code: "billing_disabled" };
+  async startCheckout(actor: ActorRef): Promise<BillingLink> {
+    state.billingLinkCalls.push({ method: "startCheckout", actor });
+    return state.billingLinks.get(`${actor.accountId}:startCheckout`) ?? { ok: false, code: "billing_disabled" };
   }
 
-  async openBillingPortal(): Promise<BillingLink> {
-    return { ok: false, code: "billing_disabled" };
+  async openBillingPortal(actor: ActorRef): Promise<BillingLink> {
+    state.billingLinkCalls.push({ method: "openBillingPortal", actor });
+    return state.billingLinks.get(`${actor.accountId}:openBillingPortal`) ?? { ok: false, code: "billing_disabled" };
   }
 
   // Test controls. The real ConsoleRPC has none of these.
@@ -109,6 +115,14 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
 
   async setBilling(accountId: string, billing: BillingResult): Promise<void> {
     state.billing.set(accountId, billing);
+  }
+
+  async setBillingLink(accountId: string, method: "startCheckout" | "openBillingPortal", link: BillingLink): Promise<void> {
+    state.billingLinks.set(`${accountId}:${method}`, link);
+  }
+
+  async billingLinkCalls(): Promise<{ method: string; actor: ActorRef }[]> {
+    return state.billingLinkCalls;
   }
 
   async refuseElevation(refusal: ElevationResult | null): Promise<void> {
