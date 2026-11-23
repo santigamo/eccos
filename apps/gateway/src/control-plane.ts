@@ -14,6 +14,7 @@ import type {
   ProvisioningStatus,
   SecretClaim,
   SecretClaimCreator,
+  SecretClaimRefusal,
   SecretClaimRequest,
 } from "@eccos/gateway-contract";
 import {
@@ -27,11 +28,14 @@ import {
   summarizeConnectLink,
 } from "./connect-links";
 import {
+  SECRET_CLAIMS_ADDED_COLUMNS,
   SECRET_CLAIMS_SCHEMA,
   type SecretClaimRow,
+  cancelSubscriberSecretClaims,
   createSecretClaim,
   findSecretClaim,
   isPendingSecretClaim,
+  markSecretClaim,
   pendingSecretClaims,
   spendSecretClaim,
 } from "./secret-claims";
@@ -742,6 +746,12 @@ export class EccosControlPlane extends DurableObject<Env> {
       );`);
       this.sql.exec(CONNECT_LINKS_SCHEMA);
       this.sql.exec(SECRET_CLAIMS_SCHEMA);
+      const secretClaimColumns = this.sql.exec("PRAGMA table_info(secret_claims)").toArray();
+      for (const column of SECRET_CLAIMS_ADDED_COLUMNS) {
+        if (!secretClaimColumns.some((row) => row.name === column)) {
+          this.sql.exec(`ALTER TABLE secret_claims ADD COLUMN ${column} INTEGER`);
+        }
+      }
       // Operator-only bookkeeping (the daily census guard); never read by the console.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
         key   TEXT PRIMARY KEY,
@@ -2301,11 +2311,13 @@ export class EccosControlPlane extends DurableObject<Env> {
     return { ...row, organizationId, connectPolicy: this.connectPolicyOf(row.accountId) };
   }
 
+  /** `secretRevision` is the WABA's subscriber-secret revision, read by the caller for a subscriber claim. */
   async createSecretClaim(
     accountId: string,
     request: SecretClaimRequest,
     creator: SecretClaimCreator,
-  ): Promise<IssuedSecretClaim> {
+    secretRevision?: number,
+  ): Promise<IssuedSecretClaim | "too_many_pending"> {
     const id = this.requireAccount(accountId);
     if (!this.organizationOf(id)) throw new Error(`account "${id}" has no active organization`);
     const { userId, clientId } = creator ?? {};
@@ -2318,12 +2330,34 @@ export class EccosControlPlane extends DurableObject<Env> {
     const intent = { creatorUserId: userId, clientId };
     if (request?.kind === "api_key") {
       const label = validateLabel(request.label ?? null, "label");
-      return createSecretClaim(this.sql, id, { ...intent, kind: "api_key", label, wabaId: null });
+      return createSecretClaim(this.sql, id, { ...intent, kind: "api_key", label, wabaId: null, secretRevision: null });
     }
     if (request?.kind !== "subscriber_secret") throw new Error("invalid secret claim kind");
     const wabaId = validateWabaId(request.wabaId, "wabaId");
     if (!this.ownsWaba(id, wabaId)) throw new Error(`WABA "${wabaId}" is not owned by account "${id}"`);
-    return createSecretClaim(this.sql, id, { ...intent, kind: "subscriber_secret", label: null, wabaId });
+    if (!Number.isSafeInteger(secretRevision)) throw new Error("invalid secretRevision");
+    return createSecretClaim(this.sql, id, {
+      ...intent,
+      kind: "subscriber_secret",
+      label: null,
+      wabaId,
+      secretRevision: secretRevision as number,
+    });
+  }
+
+  /** Cancels the WABA's pending subscriber claims, for a secret written some other way. */
+  cancelSubscriberSecretClaims(accountId: string, wabaId: string): void {
+    cancelSubscriberSecretClaims(this.sql, this.requireAccount(accountId), validateWabaId(wabaId, "wabaId"));
+  }
+
+  /** Cancels a spent subscriber claim whose secret revision went stale before its write. */
+  cancelSecretClaim(claimId: string): void {
+    markSecretClaim(this.sql, claimId, "cancelled_at");
+  }
+
+  /** Records that a spent subscriber claim's secret write failed. */
+  markSecretClaimFailed(claimId: string): void {
+    markSecretClaim(this.sql, claimId, "failed_at");
   }
 
   async resolveSecretClaim(token: string): Promise<SecretClaim | null> {
@@ -2333,14 +2367,14 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   /**
    * Spends a claim, once. An API key is issued in the same transaction; a
-   * subscriber claim comes back spent for the caller to generate and store its
-   * secret. Null for a token that opens no claim, `gone` for one that is spent,
-   * expired or no longer resolves.
+   * subscriber claim comes back spent, with the secret revision it was made
+   * at, for the caller to generate and store its secret. Null for a token that
+   * opens no claim; otherwise a refusal (see `SecretClaimRefusal`).
    */
   async redeemSecretClaim(token: string): Promise<
     | { claim: SecretClaim & { kind: "api_key" }; keyId: string; secret: string }
-    | { claim: SecretClaim & { kind: "subscriber_secret" } }
-    | "gone"
+    | { claim: SecretClaim & { kind: "subscriber_secret" }; secretRevision: number }
+    | SecretClaimRefusal
     | null
   > {
     const found = await findSecretClaim(this.sql, token);
@@ -2351,8 +2385,15 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.ctx.storage.transactionSync(() => {
       const now = Date.now();
       const claim = this.secretClaimOf(found);
-      if (!claim || !spendSecretClaim(this.sql, found.selector as string, keyId, now)) return "gone";
-      if (claim.kind === "subscriber_secret") return { claim };
+      const spent = claim && spendSecretClaim(this.sql, found.selector as string, keyId, now);
+      if (!claim || !spent) {
+        const row = this.sql
+          .exec("SELECT cancelled_at, failed_at FROM secret_claims WHERE selector = ?", found.selector)
+          .toArray()[0];
+        if (row?.failed_at != null) return "write_failed";
+        return row?.cancelled_at != null ? "cancelled" : "gone";
+      }
+      if (claim.kind === "subscriber_secret") return { claim, secretRevision: spent.secret_revision as number };
       if (!apiKey || !keyId) throw new Error("api_key claim spent without a key");
       this.sql.exec(
         "INSERT INTO api_keys (key_id, account_id, label, hash, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL)",

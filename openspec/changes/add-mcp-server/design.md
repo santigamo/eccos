@@ -495,11 +495,15 @@ A tool that mints a secret returns a **claim** instead of the secret. Today that
 
 - **Nothing is minted until it is claimed.** Creating a claim stores only its intent (account,
   kind, label, creating user and client) next to the hash of a random token, in the control
-  plane, the way connection links are stored. The key is issued, or the signing secret generated
-  and stored, in the same Durable Object call that spends the claim. An unclaimed claim therefore
-  leaves nothing live: no key to revoke, no secret in force, no plaintext at rest at any point.
-  For `webhook_set`, the URL change applies at once and the previous secret stays in force until
-  the claim is spent.
+  plane, the way connection links are stored. The API key is issued in the same control-plane
+  call that spends the claim. The signing secret is generated after the spend and written to the
+  WABA's Durable Object with a compare-and-set on the secret's revision, so a newer secret or a
+  newer claim for the same WABA cancels an older claim, which then answers `cancelled`. If that
+  write fails, the previous secret stays in force and the claim answers `write_failed`. An
+  unclaimed claim therefore leaves nothing live: no key to revoke, no secret in force, no
+  plaintext at rest at any point. Pending claims, at most 20 per account, are listed by
+  `listSecretClaims` next to the key list. For `webhook_set`, the URL change applies at once and
+  the previous secret stays in force until the claim is spent.
 - **Single use, 10 minutes.** The first redemption gets the value as `text/plain` with
   `Cache-Control: no-store`. Every later attempt gets `410`. A person or agent who gets `410`
   without having claimed knows someone else did, and revokes the key, which by then is visible in
