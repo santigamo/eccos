@@ -18,7 +18,7 @@ import {
 import { sendTemplateTest } from "../../server/gateway";
 import type { SendTemplateTestResult } from "../../server/gateway";
 import { failureCopy, sendTestFailureCopy } from "../../lib/failure";
-import { previewBody, type TemplateSendability } from "../../lib/template-params";
+import { previewBody, type TemplateSendability } from "@eccos/core/template-rules";
 import type { TemplateView } from "../../lib/template-view";
 import { WhatsAppPreview } from "./whatsapp-preview";
 import type {

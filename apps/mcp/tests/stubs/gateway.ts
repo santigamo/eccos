@@ -65,6 +65,11 @@ export class GatewayRPC extends WorkerEntrypoint {
     return fixture.subscriber?.[wabaId] ?? { url: null, hasSecret: false, lastForward: null };
   }
 
+  async hasSubscriber(wabaId: string, accountId: string): Promise<boolean> {
+    const fixture = owned("hasSubscriber", accountId, wabaId);
+    return (fixture.subscriber?.[wabaId]?.url ?? null) !== null;
+  }
+
   async listTemplates(wabaId: string, _limit: number | undefined, accountId: string): Promise<TemplatesResult> {
     const fixture = owned("listTemplates", accountId, wabaId);
     return fixture.templates?.[wabaId] ?? { ok: true, data: { data: [] } };

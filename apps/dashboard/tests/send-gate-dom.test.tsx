@@ -44,7 +44,7 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { SendTestForm } = await import("../src/components/templates/send-test-sheet");
 const { ConversationComposer } = await import("../src/components/conversations/conversation-composer");
-const { analyzeTemplate } = await import("../src/lib/template-params");
+const { analyzeTemplate } = await import("@eccos/core/template-rules");
 
 const PHONES = [{ phoneNumberId: "PNID1", displayPhoneNumber: "+34600000000" }];
 const SENT = { ok: true, data: { ok: true, messageId: "wamid.sent-1" } };

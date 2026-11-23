@@ -36,7 +36,7 @@ const {
   SendTestAction,
 } = await import("../src/components/templates/send-test-sheet");
 const { runSend } = await import("../src/lib/send-gate");
-const { analyzeTemplate } = await import("../src/lib/template-params");
+const { analyzeTemplate } = await import("@eccos/core/template-rules");
 
 // SPREAD and delegating, as in `send-gate-dom.test.tsx`: the real send is captured
 // before `mock.module` retro-patches the live binding, and only the send is swapped.
