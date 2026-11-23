@@ -22,5 +22,5 @@ export const LEAST_ROLE = {
 
 /** What an agent is told when its connection lacks an action: what it needs and who has it. */
 export function forbiddenMessage(action: AgentAction): string {
-  return `This connection cannot ${action}: that needs the ${SCOPE_OF[action]} scope, granted by a person who is ${LEAST_ROLE[action] === "admin" ? "an admin" : `an ${LEAST_ROLE[action]}`} or above in this workspace. Ask such a person to connect the agent with that scope, or to do this in the Eccos console.`;
+  return `This connection cannot ${action}: that needs the ${SCOPE_OF[action]} scope, granted by a person who is ${LEAST_ROLE[action] === "viewer" ? "a viewer" : `an ${LEAST_ROLE[action]}`} or above in this workspace. Ask such a person to connect the agent with that scope, or to do this in the Eccos console.`;
 }
