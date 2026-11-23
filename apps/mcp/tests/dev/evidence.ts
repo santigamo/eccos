@@ -7,12 +7,18 @@
  *   (cd apps/mcp && wrangler dev -c tests/dev/wrangler.console.jsonc --inspector-port 9241) &
  *   (cd apps/mcp && wrangler dev) &
  *   EVIDENCE_DIR=… bun apps/mcp/tests/dev/evidence.ts
+ *
+ * With ECCOS_ADMIN_API_KEY set, it also attaches the verify-eccos fake's WABA to the workspace and
+ * drives the template tools against it (.agents/skills/verify-eccos/features/mcp.md). CONSOLE_URL
+ * moves the stub console off 8790, which that stack's fake uses.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { Client, StreamableHTTPClientTransport, discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/client";
 
 const MCP = "http://localhost:8788";
-const CONSOLE = "http://localhost:8790";
+const CONSOLE = process.env.CONSOLE_URL ?? "http://localhost:8790";
+const GATEWAY = "http://localhost:8787";
+const ADMIN_KEY = process.env.ECCOS_ADMIN_API_KEY;
 const DIR = process.env.EVIDENCE_DIR ?? "evidence";
 mkdirSync(DIR, { recursive: true });
 
@@ -20,7 +26,9 @@ const control = async (method: string, ...args: unknown[]) =>
   (await fetch(`${CONSOLE}/control/${method}`, { method: "POST", body: JSON.stringify(args) })).json();
 
 const token = `eyJhbGciOiJFZERTQSJ9.${btoa(JSON.stringify({ evidence: Date.now() })).replace(/=+$/, "")}.ZXZpZGVuY2U`;
-const redact = (text: string) => text.replaceAll(token, "<token>");
+const otherToken = token.replace(/ZXZpZGVuY2U$/, "b3RoZXI");
+const redact = (text: string) =>
+  (ADMIN_KEY ? text.replaceAll(ADMIN_KEY, "<admin-key>") : text).replaceAll(token, "<token>").replaceAll(otherToken, "<other-token>");
 const save = (name: string, data: unknown) => {
   writeFileSync(`${DIR}/${name}`, `${redact(JSON.stringify(data, null, 2))}\n`);
   console.log(`wrote ${DIR}/${name}`);
@@ -119,3 +127,76 @@ save("03-console-calls.json", {
   provisionedAccount: { accountId, apiKeyId: keyId },
   authorizeCalls: ((await control("authorizeCalls")) as { resource: string }[]).map(({ resource }) => ({ resource, token: "<token>" })),
 });
+
+if (ADMIN_KEY) {
+  // 4. Template tools against the real gateway, with Meta answered by the verify-eccos fake.
+  const admin = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(`${GATEWAY}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${ADMIN_KEY}`, "content-type": "application/json" },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    return { status: response.status, body: (await response.json()) as { waba?: { status?: string } } };
+  };
+  const register = await admin("POST", `/v1/accounts/${accountId}/wabas`, {
+    wabaId: "100200300",
+    metaAccessToken: "fake-token",
+    callbackUrl: "https://gateway.eccos-verify.example/webhooks/meta",
+    phones: [{ phoneNumberId: "555001", displayPhoneNumber: "+34600000001" }],
+  });
+  const reconcile = await admin("POST", `/v1/accounts/${accountId}/wabas/100200300/reconcile`);
+  save("04-templates-setup.json", {
+    register: { status: register.status, wabaStatus: register.body?.waba?.status },
+    reconcile: { status: reconcile.status, wabaStatus: reconcile.body?.waba?.status },
+  });
+
+  const connectAs = async (bearer: string) => {
+    const client = new Client({ name: "eccos-evidence-templates", version: "0" }, { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${MCP}/mcp`), { authProvider: { token: async () => bearer } } as never));
+    return client;
+  };
+  const client = await connectAs(token);
+  const { tools } = await client.listTools();
+  const call = async (name: string, args: Record<string, unknown>) => ({ name, arguments: args, result: await client.callTool({ name, arguments: args }) });
+  const order = { to: "+34 611 111 111", templateName: "order_update", languageCode: "en_US" };
+  const transcript = [
+    await call("templates_list", {}),
+    await call("template_create", {
+      name: "pickup_ready",
+      language: "en_US",
+      category: "UTILITY",
+      bodyText: "Hi {{1}}, order {{2}} is ready for pickup.",
+      bodyExamples: ["Ana", "A-1042"],
+      buttons: [{ text: "Track", url: "https://shop.example/t/{{1}}", exampleUrl: "https://shop.example/t/A-1042" }],
+    }),
+    await call("template_create", { name: "bad_vars", language: "en_US", category: "UTILITY", bodyText: "Hi {{name}}", bodyExamples: ["Ana"] }),
+    await call("template_edit", { templateId: "900100", name: "order_update", language: "en_US", bodyText: "Hi {{1}}, order {{2}} shipped.", bodyExamples: ["Ana", "A-1"] }),
+    await call("template_send_test", { ...order, bodyParams: ["Ana", "A-1"], idempotencyKey: crypto.randomUUID() }),
+    await call("template_send_test", { ...order, bodyParams: ["Ana"] }),
+    await call("template_send_test", { ...order, to: "34600000999", bodyParams: ["Ana", "A-1"] }),
+    await call("template_delete", { templateId: "900100", name: "order_update" }),
+  ];
+  await client.close();
+  save("05-template-tools.json", {
+    tools: tools.filter((tool) => tool.name.includes("template")).map(({ name, annotations, inputSchema }) => ({ name, annotations, inputSchema })),
+    calls: transcript,
+  });
+
+  // 5. Another workspace's agent naming this workspace's WABA and phone.
+  const other = (await control("provision", "org-evidence-b", "Other Co")) as { accountId: string };
+  await control("grant", otherToken, {
+    ok: true,
+    actor: { ...actor, userId: "user-evidence-b", organizationId: "org-evidence-b", accountId: other.accountId },
+    audience: `${MCP}/mcp`,
+    expiresAt: Math.floor(Date.now() / 1000) + 600,
+    scope: ["eccos:view", "eccos:send", "eccos:configure"],
+  });
+  const intruder = await connectAs(otherToken);
+  const foreign = [
+    await intruder.callTool({ name: "templates_list", arguments: { wabaId: "100200300" } }),
+    await intruder.callTool({ name: "template_delete", arguments: { wabaId: "100200300", templateId: "900100", name: "order_update" } }),
+    await intruder.callTool({ name: "template_send_test", arguments: { phoneNumberId: "555001", ...order, bodyParams: ["Ana", "A-1"] } }),
+  ];
+  await intruder.close();
+  save("06-two-accounts.json", { ownerAccount: accountId, otherAccount: other.accountId, results: foreign });
+}
