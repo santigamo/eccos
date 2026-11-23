@@ -62,7 +62,7 @@ export interface ServerOptions {
 export function createServer(
   actor: McpActor,
   clients: Clients,
-  registry: readonly ToolDefinition[] = TOOLS,
+  registry: readonly ToolDefinition[],
   { requestStateKey, consoleOrigin, toolOf = () => undefined }: ServerOptions,
 ): McpServer {
   const key = usableKey(requestStateKey);
