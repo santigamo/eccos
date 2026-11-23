@@ -11,10 +11,14 @@
  * With VERIFY_ECCOS=1 (the verify-eccos stack, whose gateway talks to its fake Meta), the setup
  * tools also run against a WABA registered through the gateway's admin route: pending, re-checked
  * to active, then an inbound webhook counted by status_get.
- * Then the template tools run against that WABA too (.agents/skills/verify-eccos/features/mcp.md).
+ * Then the template tools run against that WABA too (.agents/skills/verify-eccos/features/mcp.md),
+ * and the secret tools: claims redeemed through the stub console's stand-in for POST /api/claim
+ * (.agents/skills/verify-eccos/features/mcp-secrets.md).
  */
-import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -42,8 +46,13 @@ const token = mint("owner");
 const viewerToken = mint("viewer");
 const refusedToken = mint("refused");
 const otherToken = mint("other");
+/** Secrets this run redeemed; every one is masked wherever it would be written. */
+const secrets: string[] = [];
 const redact = (text: string) =>
-  text
+  secrets
+    .reduce((masked, secret) => masked.replaceAll(secret, "<redeemed-secret>"), text)
+    .replace(/(claim#|token=)[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "$1<claim-token>")
+    .replace(/ek_[A-Za-z0-9_-]+/g, "ek_<omitted>")
     .replaceAll(token, "<token>")
     .replaceAll(viewerToken, "<viewer-token>")
     .replaceAll(refusedToken, "<refused-token>")
@@ -451,6 +460,7 @@ if (VERIFY_ECCOS) {
       bodyText: "Hi {{1}}, order {{2}} shipped.",
       bodyExamples: ["Ana", "A-1"],
     }),
+    await call("templates_list", { name: "order_update" }),
     await call("template_send_test", { ...order, bodyParams: ["Ana", "A-1"], idempotencyKey: crypto.randomUUID() }),
     await call("template_send_test", { ...order, bodyParams: ["Ana"] }),
     await call("template_send_test", { ...order, to: "34600000999", bodyParams: ["Ana", "A-1"] }),
@@ -480,4 +490,111 @@ if (VERIFY_ECCOS) {
   ];
   await intruder.close();
   save("10-template-two-accounts.json", { ownerAccount: accountId, otherAccount: otherAccountId, results: foreign });
+}
+
+// 11. The secret tools (task 1.8): claims, redemption, the key on /v1, the signing secret on a forward.
+if (VERIFY_ECCOS) {
+  const V = ".agents/skills/verify-eccos/scripts/verify-eccos";
+  const agent = await sdk(token);
+  const steps: Record<string, unknown>[] = [];
+  const tool = async (name: string, args: Record<string, unknown> = {}) => {
+    const result = await agent.callTool({ name, arguments: args });
+    steps.push({ tool: name, arguments: args, isError: result.isError === true, result: result.structuredContent ?? result.content });
+    return result.structuredContent as Record<string, string>;
+  };
+  /** Runs a claim's command as an agent would, against the stub console's /api/claim, in a scratch directory; returns what it appended to .env. */
+  const runClaim = (command: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "eccos-claim-"));
+    try {
+      const run = spawnSync("sh", ["-c", command.replaceAll("http://localhost:3000/api/claim", `${CONSOLE}/api/claim`)], { cwd: dir, encoding: "utf8" });
+      let env = "";
+      try {
+        env = readFileSync(join(dir, ".env"), "utf8");
+      } catch {}
+      return { exitCode: run.status, stderr: run.stderr.trim(), env };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const readSecret = (env: string, name: string) => {
+    const value = env.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1] ?? "";
+    if (value) secrets.push(value);
+    return value;
+  };
+  const v1 = async (key: string) =>
+    (await fetch(`${GATEWAY}/v1/wabas/100200300/templates`, { headers: { authorization: `Bearer ${key}` } })).status;
+  const postClaim = async (claimToken: string) => {
+    const response = await fetch(`${CONSOLE}/api/claim`, { method: "POST", body: new URLSearchParams({ token: claimToken }) });
+    return { status: response.status, cacheControl: response.headers.get("cache-control"), body: redact(await response.text()) };
+  };
+  const tokenOf = (claim: Record<string, string>) => claim.claimUrl?.split("#")[1] ?? "";
+
+  // The API key: claim, nothing exists yet, redeem with the command, the key works, a second redemption is gone.
+  await tool("api_keys_list");
+  const keyClaim = await tool("api_key_create", { label: "evidence-claim" });
+  const pending = await tool("api_keys_list");
+  const keyRun = runClaim(keyClaim.command ?? "");
+  const apiKey = readSecret(keyRun.env, "ECCOS_API_KEY");
+  const again = runClaim(keyClaim.command ?? "");
+  const secondPost = await postClaim(tokenOf(keyClaim));
+  const listed = (await tool("api_keys_list")) as unknown as { keys: { keyId: string; label: string | null }[] };
+  const keyId = listed.keys.find((key) => key.label === "evidence-claim")?.keyId ?? "";
+  const v1WithKey = await v1(apiKey);
+
+  // The signing secret: the URL applies at once, the secret exists once claimed, and forwards are signed with it.
+  const hook = "https://subscriber.eccos-verify.example/hook";
+  await tool("webhook_get");
+  const secretClaim = await tool("webhook_set", { url: hook, secret: "generate" });
+  const beforeRedeem = await tool("webhook_get");
+  const secretRun = runClaim(secretClaim.command ?? "");
+  const signingSecret = readSecret(secretRun.env, "ECCOS_WEBHOOK_SECRET");
+  const afterRedeem = await tool("webhook_get");
+  const forwardsBefore = execFileSync(V, ["fake-log", "/subscriber/"]).toString().trim().split("\n").filter(Boolean).length;
+  // A new message id: the inbound fixture's own was already ingested in step 8, and a duplicate is not forwarded again.
+  const fixtureDir = mkdtempSync(join(tmpdir(), "eccos-inbound-"));
+  const fixture = join(fixtureDir, "inbound-signed.json");
+  writeFileSync(fixture, readFileSync(".agents/skills/verify-eccos/fixtures/inbound-text.json", "utf8").replaceAll("wamid.VERIFY1", "wamid.VERIFYSIGNED"));
+  execFileSync(V, ["webhook", fixture]);
+  rmSync(fixtureDir, { recursive: true, force: true });
+  let forward: { headers: Record<string, string>; body: string } | undefined;
+  for (let attempt = 0; attempt < 20 && !forward; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const lines = execFileSync(V, ["fake-log", "/subscriber/"]).toString().trim().split("\n").filter(Boolean);
+    if (lines.length > forwardsBefore) forward = JSON.parse(lines.at(-1) as string);
+  }
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(signingSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(forward?.body ?? "")));
+  const expectedSignature = `sha256=${[...mac].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+  // Revoking the key: /v1 refuses it from then on.
+  await tool("api_key_revoke", { keyId });
+  const v1AfterRevoke = await v1(apiKey);
+  await agent.close();
+
+  save("11-secret-tools.json", {
+    note: "Claims are redeemed through the stub console's POST /api/claim, which calls the gateway's redeemSecretClaim; the console's own claim API is task 1.4c. Every claim token and redeemed secret is masked.",
+    apiKey: {
+      pendingClaimsAfterCreate: (pending as unknown as { pendingClaims: unknown[] }).pendingClaims,
+      keysAfterCreate: (pending as unknown as { keys: unknown[] }).keys,
+      command: { exitCode: keyRun.exitCode, envLines: keyRun.env.split("\n").filter(Boolean).length, wroteKey: apiKey.startsWith("ek_") },
+      secondCommand: { exitCode: again.exitCode, stderr: again.stderr, wroteNothing: again.env === "" },
+      secondPost,
+      keyId,
+      v1WithKey,
+      v1AfterRevoke,
+    },
+    signingSecret: {
+      hasSecretBeforeRedeem: beforeRedeem.hasSecret,
+      hasSecretAfterRedeem: afterRedeem.hasSecret,
+      command: { exitCode: secretRun.exitCode, wroteSecret: signingSecret.length === 64 },
+      forward: forward && { path: (forward as unknown as { path: string }).path, signature: forward.headers["x-eccos-signature"] },
+      signatureFromRedeemedSecret: expectedSignature,
+      signatureValid: forward?.headers["x-eccos-signature"] === expectedSignature,
+    },
+    transcript: steps,
+  });
+  const logLines = execFileSync(V, ["fake-log"]).toString();
+  save("11-secret-tools-leak-check.json", {
+    secretsInFakeLog: secrets.filter((secret) => logLines.includes(secret)).length,
+  });
 }

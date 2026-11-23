@@ -151,11 +151,28 @@ export class ConsoleRPC extends WorkerEntrypoint implements ConsoleApi {
  * `wrangler dev` evidence runs drive the controls over HTTP: `POST /control/<method>` with a JSON
  * array of arguments. With a GATEWAY binding (tests/dev/wrangler.console.jsonc),
  * `POST /control/provision` creates a workspace's account in the local gateway, as the console's
- * onboarding does, and issues one API key.
+ * onboarding does, and issues one API key. `POST /api/claim` stands in for the console's claim API
+ * (task 1.4c, not built yet): it redeems the token in the form body through the gateway's
+ * `redeemSecretClaim` and answers as design § 3.6 says the console will, so a claim's `command`
+ * runs against it with only the origin changed.
  */
 export default {
-  async fetch(request: Request, env: { GATEWAY?: Pick<GatewayApi, "ensureOrganizationAccount" | "issueApiKey"> }, ctx: ExecutionContext): Promise<Response> {
-    const method = new URL(request.url).pathname.replace(/^\/control\//, "");
+  async fetch(
+    request: Request,
+    env: { GATEWAY?: Pick<GatewayApi, "ensureOrganizationAccount" | "issueApiKey" | "redeemSecretClaim"> },
+    ctx: ExecutionContext,
+  ): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    if (path === "/api/claim" && request.method === "POST" && env.GATEWAY) {
+      const token = new URLSearchParams(await request.text()).get("token") ?? "";
+      const redeemed = await env.GATEWAY.redeemSecretClaim(token);
+      const plain = (body: string, status: number) =>
+        new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+      if (redeemed === null) return plain("not_found", 404);
+      if (typeof redeemed === "string") return plain(redeemed, 410);
+      return plain(redeemed.secret, 200);
+    }
+    const method = path.replace(/^\/control\//, "");
     if (method === "provision" && request.method === "POST" && env.GATEWAY) {
       const [organizationId, name] = (await request.json()) as [string, string];
       const { accountId } = await env.GATEWAY.ensureOrganizationAccount(organizationId, name);
