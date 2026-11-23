@@ -7,7 +7,7 @@ import { auditEvent } from "./audit";
 import type { Env } from "./env";
 import { SCOPE_OF, forbiddenMessage } from "./permissions";
 import { TOOLS, createServer } from "./tools";
-import { type McpActor, type ToolDefinition, logFailure } from "./tools/registry";
+import { type McpActor, type ToolDefinition, logFailure, toolActions } from "./tools/registry";
 
 interface Props {
   actor: Actor;
@@ -72,18 +72,20 @@ function refusal(call: Call, text: string): Response {
 }
 
 /**
- * Before the MCP server sees a `tools/call` of a known tool: a scope the token lacks is the
- * scope challenge (403); a scope it carries but a role that does not allow the action is a tool
- * error that says what is missing, audited. The server itself never sees such a tool, since it
- * registers only the actor's actions.
+ * Before the MCP server sees a `tools/call` of a known tool, for its action and its reads: the
+ * scopes the token lacks are the scope challenge (403); scopes it carries but a role that does
+ * not allow an action is a tool error that says what is missing, audited. The server itself
+ * never sees such a tool, since it registers only tools whose every action the actor holds.
  */
 function preDispatch(body: unknown, caller: McpActor, auth: OAuthResourceContext<Props>["auth"], registry: readonly ToolDefinition[]) {
   for (const call of toolCalls(body)) {
     const tool = registry.find((candidate) => candidate.name === call.params?.name);
     if (!tool) continue;
-    const scope = SCOPE_OF[tool.action];
-    if (!caller.scope.includes(scope)) return insufficientScope(auth, [scope]);
-    if (!caller.actions.includes(tool.action)) {
+    const actions = toolActions(tool);
+    const missing = actions.map((action) => SCOPE_OF[action]).filter((scope) => !caller.scope.includes(scope));
+    if (missing.length > 0) return insufficientScope(auth, missing);
+    const lacking = actions.find((action) => !caller.actions.includes(action));
+    if (lacking) {
       auditEvent({
         action: tool.name,
         actorUserId: caller.userId,
@@ -94,7 +96,7 @@ function preDispatch(body: unknown, caller: McpActor, auth: OAuthResourceContext
         outcome: "denied",
         detail: "forbidden",
       });
-      return refusal(call, forbiddenMessage(tool.action, caller));
+      return refusal(call, forbiddenMessage(lacking, caller));
     }
   }
   return null;

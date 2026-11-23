@@ -3,7 +3,7 @@ import { auditEvent } from "../audit";
 import { billingCheckoutLink, billingGet } from "./billing";
 import { connectLinkCreate, connectStatus } from "./connect";
 import { numberRecheck, numbersList, statusGet } from "./numbers";
-import { type Clients, type ElevationState, type McpActor, type ToolDefinition, capabilities, registerTool } from "./registry";
+import { type Clients, type ElevationState, type McpActor, type ToolDefinition, capabilities, registerTool, toolActions } from "./registry";
 import { workspaceGet } from "./workspace-get";
 
 /** Every tool the server ships, one table. */
@@ -95,7 +95,7 @@ export function createServer(
   const deps = { ...capabilities(actor, clients), consoleOrigin };
   const step = { codec, console: clients.console };
   for (const tool of registry) {
-    if (actor.actions.includes(tool.action)) registerTool(server, tool, actor, deps, step);
+    if (toolActions(tool).every((action) => actor.actions.includes(action))) registerTool(server, tool, actor, deps, step);
   }
   return server;
 }

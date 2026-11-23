@@ -13,6 +13,7 @@ const refusal = (code: Exclude<BillingRefusalCode, "billing_disabled">) => (code
 export const billingGet = defineTool({
   name: "billing_get",
   action: "administer",
+  reads: [],
   stepUp: false,
   title: "Get the workspace's billing",
   description: [
@@ -67,6 +68,7 @@ export const billingGet = defineTool({
 export const billingCheckoutLink = defineTool({
   name: "billing_checkout_link",
   action: "administer",
+  reads: [],
   stepUp: false,
   title: "Get a link to subscribe or manage billing",
   description: [

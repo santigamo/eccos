@@ -102,12 +102,23 @@ export interface ToolDefinition<I extends z.ZodObject = z.ZodObject, O extends z
   /** The success shape. A step-up tool advertises its union with the approval shapes. */
   outputSchema: O;
   annotations: ToolAnnotations;
+  /**
+   * Other actions the tool's calls need besides `action`. Defaults to `["view"]`, because
+   * resolving the account's WABAs (`listAccountResources`) is view; a tool that reads nothing at
+   * view says `[]`.
+   */
+  reads?: AgentAction[];
   /** The identifiers a mutating call's audit line carries. Never inputs that are content or secrets. */
   audit?(input: z.output<I>): AuditResource;
   run(input: z.output<I>, actor: McpActor, deps: ToolDeps): Promise<z.input<O>>;
 }
 
 export const defineTool = <I extends z.ZodObject, O extends z.ZodObject>(tool: ToolDefinition<I, O>) => tool;
+
+/** Every action a tool's calls need: its own, then its reads. */
+export const toolActions = (tool: Pick<ToolDefinition, "action" | "reads">): AgentAction[] => [
+  ...new Set([tool.action, ...(tool.reads ?? ["view"])]),
+];
 
 const ELEVATION_INPUT = "elevation";
 

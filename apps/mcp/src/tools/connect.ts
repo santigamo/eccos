@@ -48,6 +48,7 @@ const linkView = (link: ConnectLinkSummary, actor: McpActor, deps: ToolDeps) => 
 export const connectStatus = defineTool({
   name: "connect_status",
   action: "administer",
+  reads: [],
   stepUp: false,
   title: "Get the connection link's status",
   description: [
@@ -87,6 +88,7 @@ export const connectStatus = defineTool({
 export const connectLinkCreate = defineTool({
   name: "connect_link_create",
   action: "administer",
+  reads: [],
   stepUp: true,
   title: "Create the link to connect a WhatsApp number",
   description: [

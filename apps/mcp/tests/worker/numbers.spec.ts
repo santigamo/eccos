@@ -216,14 +216,28 @@ describe("number_recheck", () => {
     expect(await gatewayStub.calls()).toEqual([]);
   });
 
-  it("needs view to read the account's WABAs, and says so to a configure-only connection", async () => {
+  it("needs view too, since it reads the account's WABAs: not listed without it, and challenged for eccos:view", async () => {
     await seedA(wabaIn("pending", "waba-a", "acct-a"));
-    const client = await connect(await grantToken(makeActor({ role: "admin", actions: ["configure"] }), ["eccos:configure"]));
-    const text = errorOf(await call(client, "number_recheck", { wabaId: "waba-a" }));
+    const actor = makeActor({ role: "admin", actions: ["configure"] });
+    const client = await connect(await grantToken(actor, ["eccos:configure"]));
+    expect(await listedTools(client)).not.toContain("number_recheck");
     await client.close();
 
-    expect(text).toBe("This connection was not granted the eccos:view scope that view needs. Ask the person to connect the agent again and grant it.");
+    const response = await postMcp(toolsCall("number_recheck", { wabaId: "waba-a" }), { token: await grantToken(actor, ["eccos:configure"]) });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("www-authenticate")).toBe(
+      `Bearer realm="OAuth", error="insufficient_scope", scope="eccos:view", resource_metadata="${METADATA_URL}"`,
+    );
     expect(await gatewayStub.calls()).toEqual([]);
+  });
+
+  it("names every scope it lacks among configure and view", async () => {
+    const token = await grantToken(makeActor({ actions: ["operate"] }), ["eccos:operate"]);
+    const response = await postMcp(toolsCall("number_recheck", { wabaId: "waba-a" }), { token });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("www-authenticate")).toBe(
+      `Bearer realm="OAuth", error="insufficient_scope", scope="eccos:configure eccos:view", resource_metadata="${METADATA_URL}"`,
+    );
   });
 
   it("refuses a WABA of another account and never calls the gateway for it", async () => {
