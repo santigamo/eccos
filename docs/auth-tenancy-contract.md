@@ -29,6 +29,22 @@ server-side, in this order:
    (same fail-closed rule as today's `resolveScope`); unknown WABAs are rejected.
 6. **GatewayRPC call.** The RPC method is invoked with the resolved `accountId` (§Reconciliation).
 
+**An agent's request enters through a bearer token instead of a session.** `apps/mcp` passes the
+token from each MCP request to `ConsoleRPC.authorize` over a private service binding, and the
+console then does, in order:
+
+1. **Token verification, in process.** Signature against the auth instance's own keys, `iss`
+   equal to the console origin, `aud` equal to the MCP resource, `exp`, `typ: at+jwt`, and a
+   present `azp`. No network call and no key cache.
+2. **Grant check.** The consent row for (user, client, workspace) still exists. Revoking the grant
+   deletes it (§5).
+3. **Steps 3 to 6 above**, with the workspace the grant is bound to in place of the active
+   organization: the user's current membership and role in it, its `organization_accounts` link,
+   and WABA ownership in the gateway.
+
+Every refusal answers the agent with the same `401` challenge; the reason stays inside Eccos. The
+token names a user, a client, and a workspace. It is a pointer to a grant, never evidence of a role.
+
 > **`activeOrganizationId`, organization slugs, organization metadata, and browser-supplied
 > `accountId` / WABA ids are UX input, NEVER authorization evidence.** Every server function
 > re-derives the tenant from session → membership → `organization_accounts` → account and
@@ -41,7 +57,7 @@ Two planes, two stores, one authority per concern:
 
 | Plane | Store | Owns |
 |---|---|---|
-| Identity plane | Better Auth on the dedicated auth D1 (§3) | users, sessions, credential accounts, organizations, members, invitations, verifications |
+| Identity plane | Better Auth on the dedicated auth D1 (§3) | users, sessions, credential accounts, organizations, members, invitations, verifications, OAuth clients, consents (grants), access and refresh tokens, JWT signing keys, elevations |
 | Data plane (authority) | `EccosControlPlane` Durable Object | accounts, WABAs, phones, hashed API keys, connect states, hashed connection links, **`organization_accounts`** |
 
 The identity plane answers *who is signed in and what role they hold in which organization*. The
@@ -66,7 +82,10 @@ Added to the `EccosControlPlane` DO:
 
 Trust boundary stays as in [threat-model.md](./threat-model.md): the dashboard reaches the gateway
 only via the private `GatewayRPC` service binding; the gateway's operator API is never public HTTP;
-account API keys remain the only machine credentials.
+account API keys remain the only *account* credentials. An OAuth grant (§4) is a delegated *user*
+credential: it acts as one user in one workspace, bounded by that user's live role. `apps/mcp`
+is the gateway's second private caller and, like the console, passes only an `accountId` it was
+given by `ConsoleRPC.authorize`, never a bearer value.
 
 ## 3. Better Auth schema & D1 ownership
 
@@ -76,7 +95,7 @@ account API keys remain the only machine credentials.
 - **EU jurisdiction** for the staging and production databases (D1 location hint), matching the
   control-plane residency stance in multi-tenancy.md. Local uses the default local jurisdiction.
 - **No read replicas in v1** (single primary; session reads are per-request and consistent).
-- **Generated migrations are committed** to the repository (core + organization plugin tables).
+- **Generated migrations are committed** to the repository (core, organization, two-factor, OAuth provider, and JWKS tables).
 - **Schema is applied explicitly by deploy** (`wrangler d1 migrations apply` in the deploy step).
   The Worker must never run DDL or migrations at startup; a missing/mismatched schema fails
   closed rather than self-healing at request time.
@@ -126,6 +145,31 @@ comes from the token's row, never from the request; the bearer can add their own
 nothing. A link stops resolving once its creator is no longer an owner or admin of the workspace,
 and its use is audited as `connect_link` under the creator's user id.
 
+**Agents act through an OAuth grant.** A person connects an agent to one workspace through the
+console's OAuth authorization server (§9). The agent acts as that person, so the matrix above still
+decides what it may do, read on every request from the person's current role. The grant's scopes
+narrow it further: an agent may do what both its user's role and its scopes allow. A viewer whose
+grant carries `eccos:administer` can only view.
+
+| Scope | Allows | Console permission behind it | Least role |
+|---|---|---|---|
+| `eccos:view` | Status, numbers, templates, logs, billing state | `view` | viewer |
+| `eccos:operate` | Retry deliveries, cancel broadcasts and scheduled sends, read the subscriber config | `operate` | operator |
+| `eccos:send` | Send messages: test templates, text, broadcasts, scheduled sends | `operate` | operator |
+| `eccos:configure` | Templates, subscriber config write, resubscribe, re-check a number, phone settings | `configure` | admin |
+| `eccos:administer` | Connection link, API keys, checkout, export | `administer` | admin |
+| `offline_access` | A refresh token | — | any |
+
+No scope allows `erase`. No agent path deletes an organization, transfers ownership, or changes a
+role. Sending has its own scope although the console gates it on `operate`, because it spends the
+customer's money with Meta and reaches real people.
+
+For an agent, "**Yes**" in the step-up column means a live **elevation** on the grant. The grant's
+own user, currently an owner or admin, passed the console's step-up (TOTP, §8) at consent or on an
+approval page, and the elevation lasts 24 hours. It is a row in the auth D1, never a claim in the
+token. It ends at its expiry, when the grant is revoked, or when the person ends it under
+Connected agents. A demotion needs no handling: the live role check refuses first.
+
 ## 5. Session & active-organization rules
 
 - Session cookie: **HttpOnly, Secure, SameSite=Lax** (Better Auth cookie configuration; no
@@ -138,8 +182,13 @@ and its use is audited as `connect_link` under the creator's user id.
 - **Organization switch**: the client sets the active organization through the wrapped
   `set-active` endpoint; the server re-validates membership in that organization before accepting.
   The stored active org is then only a UX default — step 3 of §1 re-derives it server-side anyway.
+- **OAuth access tokens carry no authority of their own.** An access token is a JWT that names a
+  user, a client, and a workspace, and lives 10 minutes. Each request re-reads the grant, the
+  membership, the role, and the account link (§1). Revoking a grant under Connected agents deletes
+  its consent row **and** revokes its refresh tokens: deleting the consent row alone does not stop
+  a refresh.
 - **Revocation latency**: a revoked membership, removed invitation, disabled mapping, expired
-  session, or deleted user takes effect on the **next protected request**. No long-lived role
+  session, deleted user, or revoked OAuth grant takes effect on the **next protected request**. No long-lived role
   claims (JWTs or otherwise) are ever trusted across requests.
 
 ## 6. Canonical host / origin policy
@@ -157,6 +206,12 @@ and its use is audited as `connect_link` under the creator's user id.
 - Better Auth `trustedOrigins` is an allowlist of exactly the `BETTER_AUTH_URL` origin (plus
   localhost for development). **No credentials are accepted over cross-origin** requests; unexpected hosts are
   rejected by both the host gate and the auth layer.
+- **One exception, for software rather than browsers.** The OAuth token, dynamic registration,
+  JWKS, and authorization-server metadata endpoints (§9) answer cross-origin requests that carry no
+  cookie, because MCP clients call them from other origins. They never read the session cookie, and
+  they authenticate by what the request carries (the PKCE verifier, the refresh token, the client
+  id). The authorize, sign-in, workspace, and consent pages stay same-origin and cookie-bound. The
+  MCP endpoint lives on its own host (`apps/mcp`), where the browser never sends a console cookie.
 - The staging hostname is an open decision (§12). Until decided, any non-canonical host fails
   closed, so staging cannot silently run on a workers.dev URL.
 
@@ -233,11 +288,45 @@ No endpoint's error text may vary with the state of another tenant — the conso
 creation failures through a closed allowlist of generic copy and logs the provider's own message
 server-side instead (§7/§8 anti-enumeration, applied to the organization plane).
 
+### OAuth authorization server endpoints
+
+The console's Better Auth instance is the OAuth 2.1 authorization server for the MCP resource
+(`apps/mcp`), through the `jwt`, `mcp` (`@better-auth/mcp`), and `cimd` plugins. The issuer
+is the bare `BETTER_AUTH_URL` origin. Paths below are under `/api/auth` unless they start with
+`/.well-known`. A path marked **Not served** gets the same 404 before dispatch as the organization
+endpoints above, so it is indistinguishable from one that was never registered.
+
+| Endpoint | Purpose | Policy |
+|---|---|---|
+| `GET /.well-known/oauth-authorization-server` (root) | RFC 8414 metadata: endpoints, `S256`, `client_id_metadata_document_supported`, `none` among the token endpoint auth methods | Public, no session, cross-origin without cookies (§6). `src/server.ts` serves it before the page gate. It is the only metadata document |
+| `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/.well-known/oauth-protected-resource*` under `/api/auth`, and `/.well-known/openid-configuration` at the root | Copies the plugins mount, OIDC discovery, and resource metadata | **Not served.** The resource metadata belongs to `apps/mcp`, and no OpenID scope is offered |
+| `GET /oauth2/authorize` | Start an authorization: PKCE `S256`, `resource` equal to the MCP resource | Browser navigation. Without a session it goes to sign-in or sign-up, which carry the signed authorization query forward and follow the URL Better Auth returns; sign-up's verification link returns to the pending authorization |
+| `POST /oauth2/continue` | Resume the authorization after the workspace step | Same-origin, session. The workspace must be one the user belongs to; it becomes the consent's reference id |
+| `POST /oauth2/consent` | Accept or deny on the consent page | Same-origin, session. Consent is never skipped, for any client |
+| `GET /oauth2/public-client`, `GET /oauth2/public-client-prelogin` | The client's name and redirect for the sign-in and consent pages | Same-origin. Public client metadata only |
+| `POST /oauth2/token` | Authorization code exchange and refresh | Public, cross-origin without cookies. PKCE required; refresh tokens rotate, and a replay after the reuse window revokes the family. Access tokens are issued only for the MCP resource, last 10 minutes, and carry the workspace. Refused when the user is no longer a member of it |
+| `POST /oauth2/register` | Dynamic client registration (RFC 7591), the fallback to client ID metadata documents | Public, unauthenticated, cross-origin without cookies, rate-limited per address. Unused clients are deleted |
+| `POST /oauth2/revoke` | Token revocation by the client (RFC 7009) | Served. The client sends its id and the token; no session |
+| `GET /jwks` | The public half of the signing keys | Public, cross-origin without cookies |
+| `/token` (the `jwt` plugin's session JWT) | — | **Not registered** (`disabledPaths`), so a session JWT cannot pass as an access token |
+| `oauth2/introspect`, `oauth2/userinfo`, `oauth2/end-session`, `oauth2/end-session/confirm` | Introspection and OpenID Connect | **Not served.** No caller: `ConsoleRPC.authorize` verifies tokens in process, and no OpenID scope is offered |
+| `oauth2/get-consents`, `oauth2/get-consent`, `oauth2/update-consent`, `oauth2/delete-consent` | Consent management | **Not served.** Connected agents in Settings lists and revokes grants through server functions, because a revoke must also revoke the refresh tokens and write an audit line |
+| `oauth2/create-client`, `oauth2/get-client`, `oauth2/get-clients`, `oauth2/update-client`, `oauth2/delete-client`, `oauth2/client/rotate-secret`, `oauth2/client/rotate-keys`, `admin/oauth2/*` | Client administration | **Not served.** No caller in Eccos |
+
+Client ID metadata documents are fetched with HTTPS only, the `global_fetch_strictly_public`
+compatibility flag on the console Worker, `GET` only, no redirects, and a size and time cap.
+Nothing is cached.
+
+Invariants: no OAuth endpoint issues or returns an API key, or creates or modifies
+`organization_accounts`. A token's workspace is chosen by the signed-in user at consent from their
+own memberships, never by the client. A grant never acts beyond its user's live role (§4).
+
 ## 10. Failure behavior
 
 | Condition | Behavior |
 |---|---|
-| Missing / invalid session | Pages redirect to sign-in; server functions return `401`. `/connect` and `/api/connect-link/*` are public: the link token is their credential |
+| Missing / invalid session | Pages redirect to sign-in; server functions return `401`. `/connect` and `/api/connect-link/*` are public: the link token is their credential. `/claim` and `POST /api/claim` are public too: the claim token is their credential, and a `GET` never reveals or spends a claim |
+| Bearer token refused by `ConsoleRPC.authorize` (invalid or expired token, revoked grant, not a member, no `active` account link) | `apps/mcp` answers the same `401` challenge for every reason; no tool runs |
 | Signed in, no organization membership | Organization onboarding screen (create/join an org) |
 | Mapping `pending` or `disabled`, or no `organization_accounts` row | **Fail closed** (`403`); no fallback resolution path |
 | Requested WABA not owned by the resolved account | Fail closed (existing `resolveScope` rule) |
@@ -276,11 +365,13 @@ over; the development deployment is intentionally broken and re-created.
 - shadow mode / dual auth (Access **or** Better Auth, both **or** either)
 - data migration or schema compatibility readers for the discarded model
 - relinking or reusing Access installation/bootstrap records
-- any runtime fallback that authorizes a request without a resolved session + membership +
+- any runtime fallback that authorizes a request without a resolved session (or a live OAuth
+  grant, §1) + membership +
   `organization_accounts` link
 
-**API keys remain the only machine credentials.** Signup, organization creation, and mapping
-provisioning must never issue one; keys are created only through explicit admin key management.
+**API keys remain the only account credentials.** An OAuth grant is a delegated user credential
+(§4), not an API key. Signup, organization creation, mapping provisioning, consent, and token
+issuance must never issue one; keys are created only through explicit admin key management.
 
 ## 12. Unresolved decisions
 
