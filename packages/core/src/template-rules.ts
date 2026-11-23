@@ -479,7 +479,7 @@ export function normalizeTemplateName(raw: string): string {
 /** Meta's template-name charset. */
 export const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 /** `en` / `es` / `en_US` / `pt_BR`. */
-export const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
+const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 /** Graph template ids (`hsm_id`) are numeric. */
 export const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
 const MAX_BODY_PARAM_LENGTH = 1024;
@@ -700,7 +700,7 @@ export function validateTemplateEdit(record: Record<string, unknown>): TemplateE
  * are the send rules', byte for byte: an example travels to Meta as content
  * exactly as a send parameter does.
  */
-export function validateTemplateContent(record: Record<string, unknown>): TemplateContent {
+function validateTemplateContent(record: Record<string, unknown>): TemplateContent {
   if (typeof record.bodyText !== "string") throw new Error("template body is required");
   // Not trimmed: leading and trailing whitespace is part of the message Meta
   // will store, and silently rewriting an operator's body would make the

@@ -2,8 +2,10 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayRPC } from "../../src/rpc";
+import { BUTTON_URL_TOO_LONG } from "../../src/template-requests";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { bootstrapAccount, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { validateTemplateDraft, validateTemplateEdit } from "@eccos/core/template-rules";
 
 /**
  * `createTemplate` / `deleteTemplate` — the console's authoring surface.
@@ -48,6 +50,32 @@ function mockCreateOk(category = "UTILITY") {
     }),
   );
 }
+
+/** The message the console's own core rule throws for this record. */
+function coreMessage(validate: (record: Record<string, unknown>) => unknown, record: Record<string, unknown>): string {
+  try {
+    validate(record);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error(`core accepted ${JSON.stringify(record)}`);
+}
+
+function writes(fetchSpy: { mock: { calls: unknown[][] } }) {
+  return fetchSpy.mock.calls.filter(([, init]) => ((init as RequestInit | undefined)?.method ?? "GET") !== "GET");
+}
+
+/** Input the console refuses, sent straight down the binding. */
+const CONSOLE_REFUSED: Record<string, unknown>[] = [
+  { bodyText: "   ", bodyExamples: [] },
+  { bodyText: "Hi {{name}}", bodyExamples: ["Ada"] },
+  { bodyText: "Hi {{1}} and {{3}}", bodyExamples: ["a", "b"] },
+  { bodyExamples: ["Ada", "Bob"] },
+  { bodyExamples: ["line one\nline two"] },
+  { buttons: [{ text: "Track", url: "https://e.cc/track", exampleUrl: "https://e.cc/track" }] },
+  { buttons: [{ text: "Track", url: "https://e.cc/t/{{1}}", exampleUrl: "ftp://e.cc/t/T-4" }] },
+  { footerText: "x".repeat(61) },
+];
 
 /** A Graph mock that refuses with one of Meta's own error envelopes. */
 function mockGraphError(
@@ -251,6 +279,57 @@ describe("GatewayRPC.createTemplate", () => {
     }
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("refuses what the console refuses, with the console's message, for any caller on the binding", async () => {
+    const fetchSpy = mockCreateOk();
+    for (const bad of CONSOLE_REFUSED) {
+      const request = draft(bad);
+      const expected = coreMessage(validateTemplateDraft, request as unknown as Record<string, unknown>);
+      await expect(makeRpc().createTemplate(request, TEST_ACCOUNT_ID), JSON.stringify(bad)).rejects.toThrow(expected);
+    }
+    expect(writes(fetchSpy)).toHaveLength(0);
+  });
+
+  it("refuses a non-object request the way the console does", async () => {
+    const fetchSpy = mockCreateOk();
+    for (const bad of [null, [], "order_update"]) {
+      await expect(
+        makeRpc().createTemplate(bad as unknown as Parameters<GatewayRPC["createTemplate"]>[0], TEST_ACCOUNT_ID),
+      ).rejects.toThrow();
+    }
+    expect(writes(fetchSpy)).toHaveLength(0);
+  });
+
+  it("sends Meta the normalized values, as the console would", async () => {
+    const fetchSpy = mockCreateOk();
+    await makeRpc().createTemplate(
+      draft({
+        name: " order_update ",
+        language: " en_US ",
+        bodyExamples: [" Ada "],
+        footerText: " Powered by Eccos ",
+        buttons: [{ text: " Track ", url: " https://e.cc/t/{{1}} ", exampleUrl: " https://e.cc/t/T-4 " }],
+      }),
+      TEST_ACCOUNT_ID,
+    );
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.name).toBe("order_update");
+    expect(body.language).toBe("en_US");
+    expect(body.components[0].example).toEqual({ body_text: [["Ada"]] });
+    expect(body.components[1]).toEqual({ type: "FOOTER", text: "Powered by Eccos" });
+    expect(body.components[2].buttons[0]).toMatchObject({ text: "Track", url: "https://e.cc/t/{{1}}", example: ["https://e.cc/t/T-4"] });
+  });
+
+  it("keeps the gateway's own button url bound after the core rule", async () => {
+    const fetchSpy = mockCreateOk();
+    await expect(
+      makeRpc().createTemplate(
+        draft({ buttons: [{ text: "Go", url: `https://e.cc/${"x".repeat(2000)}` }] }),
+        TEST_ACCOUNT_ID,
+      ),
+    ).rejects.toThrow(BUTTON_URL_TOO_LONG);
+    expect(writes(fetchSpy)).toHaveLength(0);
+  });
 });
 
 describe("GatewayRPC.deleteTemplate", () => {
@@ -404,6 +483,39 @@ describe("GatewayRPC.editTemplate", () => {
       code: "invalid",
       detail: "Invalid parameter",
     });
+  });
+
+  it("refuses what the console refuses, with the console's message, before any lookup or edit", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ data: [] }));
+    for (const bad of CONSOLE_REFUSED) {
+      const request = edit(bad);
+      const expected = coreMessage(validateTemplateEdit, request as unknown as Record<string, unknown>);
+      await expect(makeRpc().editTemplate(request, TEST_ACCOUNT_ID), JSON.stringify(bad)).rejects.toThrow(expected);
+    }
+    expect(writes(fetchSpy)).toHaveLength(0);
+  });
+
+  it("looks up and edits with the normalized values", async () => {
+    const fetchSpy = mockLookupThen(
+      [{ id: "555", name: "order_update", language: "en_US" }],
+      Response.json({ success: true }),
+    );
+    const result = await makeRpc().editTemplate(
+      edit({ language: " en_US ", templateId: " 555 ", bodyExamples: [" Ada "] }),
+      TEST_ACCOUNT_ID,
+    );
+    expect(result).toEqual({ ok: true });
+    const [url, init] = fetchSpy.mock.calls[1]!;
+    expect(String(url)).toMatch(/\/555$/);
+    expect(JSON.parse(String(init?.body)).components[0].example).toEqual({ body_text: [["Ada"]] });
+  });
+
+  it("keeps the gateway's own button url bound after the core rule", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ data: [] }));
+    await expect(
+      makeRpc().editTemplate(edit({ buttons: [{ text: "Go", url: `https://e.cc/${"x".repeat(2000)}` }] }), TEST_ACCOUNT_ID),
+    ).rejects.toThrow(BUTTON_URL_TOO_LONG);
+    expect(writes(fetchSpy)).toHaveLength(0);
   });
 
   it("throws on a malformed id or category", async () => {
