@@ -163,6 +163,66 @@ describe("parseMetaWebhook", () => {
     });
   });
 
+  it("forwards Meta's referral on a message from a click-to-WhatsApp ad", () => {
+    const referral = {
+      source_url: "https://fb.me/abc",
+      source_id: "120200000000000001",
+      source_type: "ad",
+      headline: "Resin veneers",
+      body: "Book your evaluation",
+      media_type: "image",
+      image_url: "https://scontent.example/ad.jpg",
+      ctwa_clid: "ARAkLkA8rmlFeiCktEJQ-QTwRiyYHAFDLMNDBH0CD3qpjd0HR4irJ6LEkR7JwFF4XvnO2E4Nx0-eM-GABDLOPaOdRMv-_zfUQ2a",
+    };
+    const [reply, image] = parseMetaWebhook(
+      envelope({
+        messages: [
+          { from: "34600000000", id: "wamid.R", timestamp: TS_SEC, type: "text", text: { body: "Hi" }, referral },
+          {
+            from: "34600000000",
+            id: "wamid.I",
+            timestamp: TS_SEC,
+            type: "image",
+            image: { id: "MEDIA_1" },
+            referral: { source_type: "post", source_id: "POST_1" },
+          },
+        ],
+      }),
+    );
+    expect(reply).toEqual({
+      type: "reply",
+      from: "34600000000",
+      messageId: "wamid.R",
+      text: "Hi",
+      at: TS_MS,
+      referral: {
+        sourceUrl: "https://fb.me/abc",
+        sourceId: "120200000000000001",
+        sourceType: "ad",
+        headline: "Resin veneers",
+        body: "Book your evaluation",
+        mediaType: "image",
+        imageUrl: "https://scontent.example/ad.jpg",
+        ctwaClid: referral.ctwa_clid,
+      },
+    });
+    expect(image).toMatchObject({ type: "message", messageType: "image", referral: { sourceType: "post", sourceId: "POST_1" } });
+  });
+
+  it("omits referral when Meta sends none or an empty one", () => {
+    const events = parseMetaWebhook(
+      envelope({
+        messages: [
+          { from: "34600000000", id: "wamid.A", timestamp: TS_SEC, type: "text", text: { body: "Hi" } },
+          { from: "34600000000", id: "wamid.B", timestamp: TS_SEC, type: "text", text: { body: "Hi" }, referral: {} },
+          { from: "34600000000", id: "wamid.C", timestamp: TS_SEC, type: "text", text: { body: "Hi" }, referral: "ad" },
+        ],
+      }),
+    );
+    expect(events).toHaveLength(3);
+    for (const ev of events) expect("referral" in ev).toBe(false);
+  });
+
   it("serializes reply and echo byte-for-byte as the forwarding contract", () => {
     const [reply] = parseMetaWebhook(
       envelope({
