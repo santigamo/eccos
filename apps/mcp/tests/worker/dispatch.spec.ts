@@ -119,8 +119,25 @@ describe("effective permissions", () => {
     const owner = await grantToken(makeActor());
     const viewer = await grantToken(makeActor({ role: "viewer", actions: ["view"] }));
 
-    expect(await names(owner)).toEqual(["fixture_configure", "fixture_secret_rotate", "fixture_thing_revoke", "workspace_get"]);
-    expect(await names(viewer)).toEqual(["workspace_get"]);
+    expect(await names(owner)).toEqual([
+      "billing_checkout_link",
+      "billing_get",
+      "connect_link_create",
+      "connect_status",
+      "fixture_configure",
+      "fixture_secret_rotate",
+      "fixture_thing_revoke",
+      "number_recheck",
+      "numbers_list",
+      "status_get",
+      "template_create",
+      "template_delete",
+      "template_edit",
+      "template_send_test",
+      "templates_list",
+      "workspace_get",
+    ]);
+    expect(await names(viewer)).toEqual(["numbers_list", "status_get", "templates_list", "workspace_get"]);
   });
 
   it.each<[string, Mode]>([

@@ -88,11 +88,11 @@ Each numbered item is one pull request, sized for review on its own. Tests come 
       is built on the first request, since `OAuthResourceServer` validates its metadata when
       constructed. Worker tests: challenge, metadata, origin
       check, scope challenge, both approval carriers, no authorization caching.
-- [ ] 1.7 Tools: billing (`ConsoleRPC.getBilling`, `startCheckout`, `openBillingPortal`),
+- [x] 1.7 Tools: billing (`ConsoleRPC.getBilling`, `startCheckout`, `openBillingPortal`),
       connection link and status, numbers and status.
 - [ ] 1.8 Tools: webhook and API keys, with claim delivery and the inline opt-in. Ships after
       1.4a to 1.4c.
-- [ ] 1.9 Tools: templates and test send.
+- [x] 1.9 Tools: templates and test send.
 - [ ] 1.10 Two-account negative tests for every tool; the end-to-end scenario on a test
       deployment; deploy script and `docs/deployment.md` section for `apps/mcp`;
       `PRODUCTION-READINESS.md` artifact row.

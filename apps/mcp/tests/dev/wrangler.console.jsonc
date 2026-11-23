@@ -1,11 +1,12 @@
 {
-  // Dev-only: the stub ConsoleRPC (tests/stubs/console.ts) under the console's Worker name, so
-  // `wrangler dev` for apps/mcp reaches it through its CONSOLE binding. Never deployed.
+  // Dev-only: the stub ConsoleRPC (tests/stubs/console.ts), which tests/dev/wrangler.mcp.jsonc binds
+  // as CONSOLE. Its own name and port, so it runs next to the real console and the verify-eccos
+  // fake (8790). Never deployed.
   "$schema": "../../../../node_modules/wrangler/config-schema.json",
-  "name": "eccos-dashboard",
+  "name": "eccos-console-stub",
   "main": "../stubs/console.ts",
   "compatibility_date": "2026-06-12",
   "compatibility_flags": ["nodejs_compat"],
-  "dev": { "port": 8790 },
+  "dev": { "port": 8791 },
   "services": [{ "binding": "GATEWAY", "service": "eccos", "entrypoint": "GatewayRPC" }]
 }

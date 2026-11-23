@@ -558,7 +558,7 @@ which also needs a live elevation (§3.3).
 | `billing_get` | Whether numbers can be added, connected numbers, monthly price. Admin or owner, as in the console, so an agent never sees more than its person | administer | `billing/account.ts` `billingState` | `ConsoleRPC.getBilling` |
 | `billing_checkout_link` | The Creem checkout URL, or the portal when a subscription exists | administer | `billing/account.ts` `checkoutUrl`, `portalUrl` | `ConsoleRPC.startCheckout`, `openBillingPortal` |
 | `connect_link_create` | Mint the Embedded Signup link for a person to open; `replace` to supersede a live one | administer ⬆ | `issueConnectLink` | Nothing. The token exists only in this result, as today |
-| `connect_status` | Link state (pending, opened, connected, unconfirmed, expired) and the number it connected | view | `getConnectLink` | Nothing |
+| `connect_status` | Link state (pending, opened, connected, unconfirmed, expired) and the number it connected. Administer, because the console reads the link only at administer and an agent never sees more than its person | administer | `getConnectLink` | Nothing |
 | `numbers_list` | WABAs and phones with provisioning status and error, coexistence state, token expiry | view | `listAccountResources` | Nothing |
 | `number_recheck` | Re-run provisioning for a WABA stuck in pending or failed | configure | `reconcileWaba` | Nothing |
 | `status_get` | Health and counters for a WABA | view | `getStatus` | Nothing |
