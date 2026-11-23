@@ -1,6 +1,5 @@
 import { isBsuid } from "@eccos/core/bsuid";
 import {
-  LANGUAGE_PATTERN,
   MAX_BODY_PARAMS,
   MAX_BUTTON_TEXT_LENGTH,
   MAX_CREATE_BUTTONS,
@@ -28,7 +27,18 @@ import { ownedPhone, ownedWaba, wabaIdInput } from "./scope";
 
 /** The console's recipient rule (`validateRecipient`): digits in international format, or a BSUID. */
 const RECIPIENT_PATTERN = /^[0-9]{5,15}$/;
+/** The console's idempotency key rule (`idempotencyKey` in apps/dashboard src/server/gateway.ts). */
+const IDEMPOTENCY_KEY_PATTERN = /^[0-9a-f-]{36}$/i;
 const LIST_LIMIT = 100;
+
+/**
+ * The input schemas check types and only the bounds that protect this Worker. Every template rule
+ * (patterns, lengths, trimming) is @eccos/core/template-rules', run in the tool, so an agent is
+ * refused exactly where the console refuses and told what the console says.
+ */
+const MAX_TEXT = 4096;
+const MAX_ITEMS = 100;
+const text = () => z.string().max(MAX_TEXT);
 
 /** Run one of the console's template rules; its first broken rule becomes what the agent fixes. */
 function checked<T>(rule: () => T, tool: string): T {
@@ -49,44 +59,29 @@ const pointTo =
     offer(deps, actor, fact, { tool, call }).detail;
 
 const wabaId = wabaIdInput;
-const templateName = z
-  .string()
-  .regex(TEMPLATE_NAME_PATTERN)
-  .describe(
+const templateName = text().describe(
     'Template name: lowercase letters, digits and underscores, e.g. "order_update". A name is unique per language.',
   );
-const language = z
-  .string()
-  .regex(LANGUAGE_PATTERN)
-  .describe('Language code as Meta writes it, e.g. "en_US", "es", "pt_BR".');
-const templateId = z
-  .string()
-  .regex(TEMPLATE_ID_PATTERN)
-  .describe(
+const language = text().describe('Language code as Meta writes it, e.g. "en_US", "es", "pt_BR".');
+const templateId = text().describe(
     'Meta\'s id of one translation of the template, digits only, e.g. "1234567890123456". templates_list returns it as id.',
   );
-const category = z
-  .enum(["MARKETING", "UTILITY"])
-  .describe(
-    "UTILITY for messages about something the customer already started (an order, a booking, an account); MARKETING for anything promotional. Meta may assign another category; the result says which. Authentication templates cannot be authored here.",
+const category = text().describe(
+    "MARKETING or UTILITY. UTILITY for messages about something the customer already started (an order, a booking, an account); MARKETING for anything promotional. Meta may assign another category; the result says which. Authentication templates cannot be authored here.",
   );
 
 const content = {
-  bodyText: z
-    .string()
-    .describe(
+  bodyText: text().describe(
       'The message body, 1 to 1024 characters. Variables are positional, numbered from {{1}} without gaps, e.g. "Hi {{1}}, your order {{2}} has shipped." Named variables like {{name}} are refused. Starting or ending with a variable is a common reason Meta rejects a template.',
     ),
   bodyExamples: z
-    .array(z.string())
-    .max(MAX_BODY_PARAMS)
+    .array(text())
+    .max(MAX_ITEMS)
     .optional()
     .describe(
       'One realistic example value per variable, in order, e.g. ["Ana", "A-1042"]. Required when the body has variables: Meta\'s reviewers read them. One line each.',
     ),
-  footerText: z
-    .string()
-    .max(MAX_FOOTER_LENGTH)
+  footerText: text()
     .optional()
     .describe(
       `Optional static footer under the body, one line of at most ${MAX_FOOTER_LENGTH} characters without variables, e.g. "Reply STOP to unsubscribe".`,
@@ -94,26 +89,20 @@ const content = {
   buttons: z
     .array(
       z.object({
-        text: z
-          .string()
-          .max(MAX_BUTTON_TEXT_LENGTH)
-          .describe(
+        text: text().describe(
             `Button label, at most ${MAX_BUTTON_TEXT_LENGTH} characters, e.g. "Track order".`,
           ),
-        url: z
-          .string()
-          .describe(
+        url: text().describe(
             'https URL the button opens. One {{1}} at the end makes it dynamic, filled at send time, e.g. "https://shop.example/track/{{1}}".',
           ),
-        exampleUrl: z
-          .string()
+        exampleUrl: text()
           .optional()
           .describe(
             'Required for a dynamic URL and refused for a static one: the URL with an example filled in, e.g. "https://shop.example/track/A-1042".',
           ),
       }),
     )
-    .max(MAX_CREATE_BUTTONS)
+    .max(MAX_ITEMS)
     .optional()
     .describe(
       `Up to ${MAX_CREATE_BUTTONS} link buttons, in order. Quick replies, phone, copy-code and OTP buttons cannot be authored here.`,
@@ -332,7 +321,7 @@ export const templateCreate = defineTool({
     wabaId,
     name: templateName,
     language,
-    category,
+    category: category.optional(),
     ...content,
   }),
   outputSchema: z.object({
@@ -355,13 +344,9 @@ export const templateCreate = defineTool({
     idempotentHint: false,
     openWorldHint: true,
   },
-  audit: (input) => ({
-    wabaId: input.wabaId ?? null,
-    template: input.name,
-    language: input.language,
-    category: input.category,
-  }),
-  run: async (input, actor, deps) => {
+  // Only checked values reach the audit line: the call notes them once core accepted them.
+  audit: (input) => ({ wabaId: input.wabaId ?? null }),
+  run: async (input, actor, deps, trail) => {
     const { gateway } = deps.for("configure");
     const say = pointTo(deps, actor);
     const draft = checked(
@@ -369,6 +354,7 @@ export const templateCreate = defineTool({
       "template_create",
     );
     const waba = await ownedWaba(deps, actor, input.wabaId);
+    trail.note({ wabaId: waba.wabaId, template: draft.name, language: draft.language, category: draft.category });
     const result = await gateway.createTemplate(
       { wabaId: waba.wabaId, ...draft },
       actor.accountId,
@@ -378,9 +364,9 @@ export const templateCreate = defineTool({
         case "name_taken":
           throw new ToolError(
             say(
-              `A template named "${input.name}" already exists in ${input.language} on WABA "${waba.wabaId}", or was deleted less than 30 days ago (Meta locks the name). Pick another name.`,
+              `A template named "${draft.name}" already exists in ${draft.language} on WABA "${waba.wabaId}", or was deleted less than 30 days ago (Meta locks the name). Pick another name.`,
               "templates_list",
-              `To change the existing one, call templates_list with name "${input.name}" and use template_edit.`,
+              `To change the existing one, call templates_list with name "${draft.name}" and use template_edit.`,
             ),
             result.code,
           );
@@ -401,12 +387,12 @@ export const templateCreate = defineTool({
     return {
       wabaId: waba.wabaId,
       templateId: result.id,
-      name: input.name,
-      language: input.language,
+      name: draft.name,
+      language: draft.language,
       status: result.status,
       category: result.category,
-      categoryChanged: result.category !== input.category,
-      next: `${say("Meta is reviewing it.", "templates_list", `Call templates_list with name "${input.name}" until its status is APPROVED.`)}${deps.can("send") ? " Then call template_send_test." : ""}`,
+      categoryChanged: result.category !== draft.category,
+      next: `${say("Meta is reviewing it.", "templates_list", `Call templates_list with name "${draft.name}" until its status is APPROVED.`)}${deps.can("send") ? " Then call template_send_test." : ""}`,
     };
   },
 });
@@ -453,17 +439,13 @@ export const templateEdit = defineTool({
     idempotentHint: false,
     openWorldHint: true,
   },
-  audit: (input) => ({
-    wabaId: input.wabaId ?? null,
-    template: input.name,
-    language: input.language,
-    templateId: input.templateId,
-  }),
-  run: async (input, actor, deps) => {
+  audit: (input) => ({ wabaId: input.wabaId ?? null }),
+  run: async (input, actor, deps, trail) => {
     const { gateway } = deps.for("configure");
     const say = pointTo(deps, actor);
     const edit = checked(() => validateTemplateEdit(input), "template_edit");
     const waba = await ownedWaba(deps, actor, input.wabaId);
+    trail.note({ wabaId: waba.wabaId, template: edit.name, language: edit.language, templateId: edit.templateId });
     const result = await gateway.editTemplate(
       { wabaId: waba.wabaId, ...edit },
       actor.accountId,
@@ -473,7 +455,7 @@ export const templateEdit = defineTool({
         case "not_found":
           throw new ToolError(
             say(
-              `WABA "${waba.wabaId}" has no template with id "${input.templateId}" named "${input.name}" in ${input.language}.`,
+              `WABA "${waba.wabaId}" has no template with id "${edit.templateId}" named "${edit.name}" in ${edit.language}.`,
               "templates_list",
               "Call templates_list and pass the id, name and language of one row.",
             ),
@@ -495,13 +477,13 @@ export const templateEdit = defineTool({
     }
     return {
       wabaId: waba.wabaId,
-      templateId: input.templateId,
-      name: input.name,
-      language: input.language,
+      templateId: edit.templateId,
+      name: edit.name,
+      language: edit.language,
       next: say(
         "Meta reviews the new content.",
         "templates_list",
-        `Call templates_list with name "${input.name}" until its status is APPROVED.`,
+        `Call templates_list with name "${edit.name}" until its status is APPROVED.`,
       ),
     };
   },
@@ -538,23 +520,28 @@ export const templateDelete = defineTool({
     idempotentHint: false,
     openWorldHint: true,
   },
-  audit: (input) => ({
-    wabaId: input.wabaId ?? null,
-    template: input.name,
-    templateId: input.templateId,
-  }),
-  run: async (input, actor, deps) => {
+  audit: (input) => ({ wabaId: input.wabaId ?? null }),
+  run: async (input, actor, deps, trail) => {
     const { gateway } = deps.for("configure");
     const say = pointTo(deps, actor);
+    // The console's validateDeleteTemplateInput: the name first, then the id, each trimmed.
+    const target = checked(() => {
+      const name = input.name.trim();
+      if (!TEMPLATE_NAME_PATTERN.test(name)) throw new Error("invalid template name");
+      const templateId = input.templateId.trim();
+      if (!TEMPLATE_ID_PATTERN.test(templateId)) throw new Error("invalid template id");
+      return { name, templateId };
+    }, "template_delete");
     const waba = await ownedWaba(deps, actor, input.wabaId);
+    trail.note({ wabaId: waba.wabaId, template: target.name, templateId: target.templateId });
     const result = await gateway.deleteTemplate(
-      { wabaId: waba.wabaId, name: input.name, templateId: input.templateId },
+      { wabaId: waba.wabaId, ...target },
       actor.accountId,
     );
     if (!result.ok) {
       throw new ToolError(
         say(
-          `Meta did not delete template "${input.name}" (id "${input.templateId}") on WABA "${waba.wabaId}".${metaSaid(result.detail)}`,
+          `Meta did not delete template "${target.name}" (id "${target.templateId}") on WABA "${waba.wabaId}".${metaSaid(result.detail)}`,
           "templates_list",
           "Call templates_list to check that the id and name belong to the same row.",
         ),
@@ -563,8 +550,8 @@ export const templateDelete = defineTool({
     }
     return {
       wabaId: waba.wabaId,
-      templateId: input.templateId,
-      name: input.name,
+      templateId: target.templateId,
+      name: target.name,
       deleted: true as const,
     };
   },
@@ -578,7 +565,7 @@ function recipient(value: string): string {
   const to = value.replace(/[\s\-().]/g, "").replace(/^\+/, "");
   if (!RECIPIENT_PATTERN.test(to)) {
     throw new ToolError(
-      'to must be a phone number in international format, 5 to 15 digits with the country code, e.g. "+34 600 000 011", or a BSUID such as "US.13491208655302741918".',
+      'Refused before reaching Meta: recipient must be 5 to 15 digits in international format, or a BSUID. Pass to as a number with its country code, e.g. "+34 600 000 011", or a BSUID such as "US.13491208655302741918", and call template_send_test again.',
     );
   }
   return to;
@@ -637,10 +624,7 @@ export const templateSendTest = defineTool({
       .describe(
         'The phone number id the message is sent from, e.g. "106540352242922" (numbers_list lists them). Omit it when the WABA has exactly one.',
       ),
-    to: z
-      .string()
-      .max(160)
-      .describe(
+    to: text().describe(
         'Recipient in international format with the country code, e.g. "+34 600 000 011" (spaces, dashes and + are fine), or a BSUID such as "US.13491208655302741918".',
       ),
     templateName: templateName.describe(
@@ -650,8 +634,8 @@ export const templateSendTest = defineTool({
       'Language of the approved translation, e.g. "en_US".',
     ),
     bodyParams: z
-      .array(z.string())
-      .max(MAX_BODY_PARAMS)
+      .array(text())
+      .max(MAX_ITEMS)
       .optional()
       .describe(
         'Values for {{1}}..{{n}} in the body, in order, one line each, e.g. ["Ana", "A-1042"]. Exactly testSend.bodyParamCount of them.',
@@ -659,27 +643,25 @@ export const templateSendTest = defineTool({
     buttonParams: z
       .array(
         z.object({
-          index: z.number().int(),
-          text: z.string(),
+          index: z.number(),
+          text: text(),
         }),
       )
-      .max(3)
+      .max(MAX_ITEMS)
       .optional()
       .describe(
         'One per dynamic URL button, from testSend.buttonParams: the button\'s index and the text that completes its URL, e.g. [{ "index": 0, "text": "A-1042" }].',
       ),
     headerMedia: z
       .object({
-        format: z.enum(["image", "video", "document"]),
-        link: z.string(),
+        format: text().describe('"image", "video" or "document".'),
+        link: text(),
       })
       .optional()
       .describe(
         'Only for a template whose header is media (testSend.headerMedia): the format and a public https link Meta downloads, e.g. { "format": "image", "link": "https://cdn.example/banner.jpg" }.',
       ),
-    idempotencyKey: z
-      .string()
-      .uuid()
+    idempotencyKey: text()
       .optional()
       .describe(
         "A UUID you generate once per intended message. Retrying with the same key never sends twice; a new message needs a new key.",
@@ -703,13 +685,8 @@ export const templateSendTest = defineTool({
     idempotentHint: false,
     openWorldHint: true,
   },
-  audit: (input) => ({
-    wabaId: input.wabaId ?? null,
-    phoneNumberId: input.phoneNumberId ?? null,
-    template: input.templateName,
-    language: input.languageCode,
-  }),
-  run: async (input, actor, deps) => {
+  audit: (input) => ({ wabaId: input.wabaId ?? null, phoneNumberId: input.phoneNumberId ?? null }),
+  run: async (input, actor, deps, trail) => {
     const { gateway } = deps.for("send");
     const say = pointTo(deps, actor);
     const to = recipient(input.to);
@@ -717,6 +694,14 @@ export const templateSendTest = defineTool({
       () => validateTemplateSend(input),
       "template_send_test",
     );
+    const idempotencyKey = checked(() => {
+      if (input.idempotencyKey !== undefined && !IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey)) {
+        throw new Error("invalid idempotency key");
+      }
+      return input.idempotencyKey;
+    }, "template_send_test");
+    const { templateName, languageCode } = send;
+    trail.note({ template: templateName, language: languageCode });
     const bodyParams = send.bodyParams ?? [];
     const buttonParams = send.buttonParams ?? [];
     const waba = await ownedWaba(deps, actor, input.wabaId, {
@@ -724,6 +709,7 @@ export const templateSendTest = defineTool({
       active: true,
     });
     const phoneNumberId = ownedPhone(deps, actor, waba, input.phoneNumberId);
+    trail.note({ wabaId: waba.wabaId, phoneNumberId });
 
     const listed = await deps
       .for("view")
@@ -732,13 +718,13 @@ export const templateSendTest = defineTool({
       const rows = templateRowsOf(listed.data);
       const row = rows.find(
         (candidate) =>
-          candidate.name === input.templateName &&
-          candidate.language === input.languageCode,
+          candidate.name === templateName &&
+          candidate.language === languageCode,
       );
       if (!row && rows.length < LIST_LIMIT) {
         throw new ToolError(
           say(
-            `WABA "${waba.wabaId}" has no template "${input.templateName}" in ${input.languageCode}. Nothing was sent.`,
+            `WABA "${waba.wabaId}" has no template "${templateName}" in ${languageCode}. Nothing was sent.`,
             "templates_list",
             "Call templates_list to see its templates and languages.",
           ),
@@ -748,7 +734,7 @@ export const templateSendTest = defineTool({
         const ready = testSendOf(row);
         if (!ready.ready)
           throw new ToolError(
-            `Template "${input.templateName}" (${input.languageCode}) cannot be sent from here: ${ready.reason} Nothing was sent.`,
+            `Template "${templateName}" (${languageCode}) cannot be sent from here: ${ready.reason} Nothing was sent.`,
           );
         const wrong = mismatch(
           ready,
@@ -758,7 +744,7 @@ export const templateSendTest = defineTool({
         );
         if (wrong)
           throw new ToolError(
-            `Template "${input.templateName}" (${input.languageCode}) does not match: ${wrong}. Nothing was sent; fix the arguments and call template_send_test again.`,
+            `Template "${templateName}" (${languageCode}) does not match: ${wrong}. Nothing was sent; fix the arguments and call template_send_test again.`,
           );
       }
     }
@@ -769,23 +755,22 @@ export const templateSendTest = defineTool({
         phoneNumberId,
         to,
         ...send,
-        ...(input.idempotencyKey
-          ? { idempotencyKey: input.idempotencyKey }
-          : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {}),
       },
       actor.accountId,
     );
     if (result.ok) {
+      trail.note({ messageId: result.messageId });
       return {
         status: "accepted" as const,
         messageId: result.messageId,
         wabaId: waba.wabaId,
         phoneNumberId,
-        templateName: input.templateName,
-        languageCode: input.languageCode,
+        templateName,
+        languageCode,
       };
     }
-    const retrySafely = input.idempotencyKey
+    const retrySafely = idempotencyKey
       ? "Retry later with the same idempotencyKey, which never sends twice."
       : "Do not send again until the person confirms it did not arrive; next time pass an idempotencyKey so a retry is safe.";
     const message: Record<typeof result.code, string> = {
@@ -799,12 +784,12 @@ export const templateSendTest = defineTool({
       recipient_not_allowlisted:
         "Nothing was sent: Meta refused the recipient because this is a Cloud API test number, which only sends to numbers on its allowed list. Ask the person to add the recipient in Meta's WhatsApp Manager (API Setup) or to use a production number.",
       template_not_found: say(
-        `Nothing was sent: Meta has no approved translation of "${input.templateName}" in ${input.languageCode}.`,
+        `Nothing was sent: Meta has no approved translation of "${templateName}" in ${languageCode}.`,
         "templates_list",
         "Call templates_list to check its status and languages.",
       ),
       parameter_mismatch: say(
-        `Nothing was sent: Meta expected different parameters for "${input.templateName}".`,
+        `Nothing was sent: Meta expected different parameters for "${templateName}".`,
         "templates_list",
         "Call templates_list and pass what its testSend field asks for.",
       ),
