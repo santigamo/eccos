@@ -1,6 +1,6 @@
 import type { ConsoleApi } from "@eccos/console-contract";
 import { AGENT_SCOPES, type AgentAction, type AgentScope, type MemberRole } from "@eccos/console-contract";
-import type { AccountResources, GatewayApi } from "@eccos/gateway-contract";
+import type { AccountResources, GatewayApi, SecretClaimRequest } from "@eccos/gateway-contract";
 
 /** The scope that grants each action (design § 3.2). */
 export const SCOPE_OF = Object.fromEntries(Object.entries(AGENT_SCOPES).map(([scope, action]) => [action, scope])) as Record<
@@ -42,11 +42,25 @@ export const GATEWAY_METHODS = {
   listApiKeys: "administer",
   issueApiKey: "administer",
   revokeApiKey: "administer",
+  // Pending claims sit next to the key list (design § 3.6), which is administer.
+  listSecretClaims: "administer",
   createTemplate: "configure",
   editTemplate: "configure",
   deleteTemplate: "configure",
   sendTemplateTest: "send",
 } as const satisfies { [K in keyof GatewayApi]?: AgentAction };
+
+/**
+ * `createSecretClaim` is gated by what the claim mints, not by the method: an API key claim is
+ * administer like `issueApiKey`, a subscriber secret claim is configure like `setSubscriberConfig`
+ * (design § 4, contract § 4 scopes). Each action gets a wrapper that takes only its own kinds, by
+ * type and at runtime. `resolveSecretClaim` and `redeemSecretClaim` are in no table: redeeming
+ * is the console's (`POST /api/claim`), never an agent's.
+ */
+export const SECRET_CLAIM_KINDS = {
+  api_key: "administer",
+  subscriber_secret: "configure",
+} as const satisfies Record<SecretClaimRequest["kind"], AgentAction>;
 
 /** The same for `ConsoleRPC`. `authorize` and `requestElevation` belong to the server, not a tool. */
 export const CONSOLE_METHODS = {
@@ -70,9 +84,22 @@ type ProjectedGateway = Omit<GatewayApi, "listAccountResources"> & {
 
 type MethodsOf<Table, A extends AgentAction> = { [K in keyof Table]: Table[K] extends A ? K : never }[keyof Table];
 
+type ClaimKindOf<A extends AgentAction> = MethodsOf<typeof SECRET_CLAIM_KINDS, A>;
+
+/** `createSecretClaim` for the claim kinds bound to `A`, and nothing when there are none. */
+type ClaimsFor<A extends AgentAction> = [ClaimKindOf<A>] extends [never]
+  ? unknown
+  : {
+      createSecretClaim(
+        accountId: string,
+        request: Extract<SecretClaimRequest, { kind: ClaimKindOf<A> }>,
+        creator: Parameters<GatewayApi["createSecretClaim"]>[2],
+      ): ReturnType<GatewayApi["createSecretClaim"]>;
+    };
+
 /** What `deps.for(action)` hands out: only the methods bound to `action`, as that action may see them. */
 export interface ClientsFor<A extends AgentAction> {
-  gateway: Pick<ProjectedGateway, MethodsOf<typeof GATEWAY_METHODS, A> & keyof ProjectedGateway>;
+  gateway: Pick<ProjectedGateway, MethodsOf<typeof GATEWAY_METHODS, A> & keyof ProjectedGateway> & ClaimsFor<A>;
   console: Pick<ConsoleApi, MethodsOf<typeof CONSOLE_METHODS, A> & keyof ConsoleApi>;
 }
 
@@ -97,6 +124,22 @@ export function methodsFor(binding: object, table: Record<string, AgentAction>, 
         return [method, project ? async (...args: unknown[]) => project(await call(...args)) : call];
       }),
   );
+}
+
+/** The gateway methods bound to `action`, plus `createSecretClaim` limited to the claim kinds bound to it. */
+export function gatewayFor(binding: GatewayApi, action: AgentAction): Record<string, unknown> {
+  const methods = methodsFor(binding, GATEWAY_METHODS, action);
+  const kinds: string[] = Object.entries(SECRET_CLAIM_KINDS)
+    .filter(([, bound]) => bound === action)
+    .map(([kind]) => kind);
+  if (kinds.length === 0) return methods;
+  const createSecretClaim: GatewayApi["createSecretClaim"] = (accountId, request, creator) => {
+    if (!kinds.includes(request?.kind)) {
+      return Promise.reject(new Error(`a ${String(request?.kind)} claim is not ${action}`));
+    }
+    return binding.createSecretClaim(accountId, request, creator);
+  };
+  return { ...methods, createSecretClaim };
 }
 
 const ROLE_RANK: Record<MemberRole, number> = { viewer: 0, operator: 1, admin: 2, owner: 3 };
