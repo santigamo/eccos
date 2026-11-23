@@ -19,7 +19,7 @@ import {
 import { CIMD_USER_AGENT, cimdFetch, WORKSPACE_CLAIM } from "../src/auth/oauth-provider";
 import { pendingAuthorizationURL, withPendingAuthorization } from "../src/auth/pending-authorization";
 import { deleteUnusedOAuthClients } from "../src/auth/oauth-client-cleanup";
-import { GRANT_IS_LIVE } from "../src/auth/oauth-grants";
+import { GRANT_IS_LIVE, MAX_LIVE_GRANTS, otherLiveGrants } from "../src/auth/oauth-grants";
 import { oauthCrossOriginApi } from "../src/server/oauth-cross-origin";
 import { OAUTH_BODY_LIMIT, oauthRequestWithinLimits } from "../src/server/oauth-request-limits";
 
@@ -1024,6 +1024,11 @@ describe("a consent holds its client only while its grant is live", () => {
   const ageGrant = (db: Database, clientId: string, ms: number) => {
     db.query('UPDATE "oauthClient" SET "createdAt" = ?1, "updatedAt" = ?1 WHERE "clientId" = ?2').run(ago(ms), clientId);
     db.query('UPDATE "oauthConsent" SET "createdAt" = ?1, "updatedAt" = ?1 WHERE "clientId" = ?2').run(ago(ms), clientId);
+    db.query('UPDATE "verification" SET "createdAt" = ?1, "updatedAt" = ?1, "expiresAt" = ?2 WHERE "value" LIKE ?3').run(
+      ago(ms),
+      ago(ms - 10 * 60_000),
+      `%"client_id":"${clientId}"%`,
+    );
   };
   const consents = (db: Database, clientId: string) =>
     count(db, 'SELECT count(*) AS n FROM "oauthConsent" WHERE "clientId" = ?', clientId);
@@ -1162,6 +1167,77 @@ describe("a consent holds its client only while its grant is live", () => {
 
     const again = await consentFor(auth, grant.clientId, grant.cookie);
     expect(again.status).toBe(200);
+  });
+
+  async function consentPageFor(auth: Auth, clientId: string, cookie: string) {
+    const { location, verifier } = await authorizeSignedIn(auth, clientId, cookie);
+    const consentPage = ((await (await continueAfterWorkspace(auth, location, cookie)).json()) as { url: string }).url;
+    return { oauthQuery: oauthQueryOf(consentPage), verifier };
+  }
+
+  const grantsHeld = (db: Database, userId: string, workspace: string) => otherLiveGrants(db, { userId, workspace, clientId: "" });
+
+  test("a consent whose code is not yet exchanged counts toward the cap until the code expires", async () => {
+    const { auth, db } = await testAuth();
+    const grant = await issued(auth, db);
+    const userId = (db.query("SELECT id FROM user WHERE email = ?").get("owner@corp.test") as { id: string }).id;
+    seedLiveGrants(db, userId, grant.organizationId, MAX_LIVE_GRANTS - 2);
+
+    const fiftieth = await registerClient(auth);
+    const pending = await consentPageFor(auth, fiftieth, grant.cookie);
+    const accepted = await post(auth, "/oauth2/consent", { accept: true, oauth_query: pending.oauthQuery }, grant.cookie);
+    expect(accepted.status).toBe(200);
+    expect(await grantsHeld(db, userId, grant.organizationId)).toBe(MAX_LIVE_GRANTS);
+
+    const fiftyFirst = await registerClient(auth);
+    const refused = await consentFor(auth, fiftyFirst, grant.cookie);
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toBe("access_denied");
+
+    const callback = new URL(((await accepted.json()) as { url: string }).url);
+    const exchanged = await exchangeCode(auth, fiftieth, callback, pending.verifier);
+    expect(exchanged.status).toBe(200);
+    expect(await grantsHeld(db, userId, grant.organizationId)).toBe(MAX_LIVE_GRANTS);
+    expect((await consentFor(auth, fiftyFirst, grant.cookie)).status).toBe(400);
+  });
+
+  test("an unexchanged code stops counting once it expires", async () => {
+    const { auth, db } = await testAuth();
+    const grant = await issued(auth, db);
+    const userId = (db.query("SELECT id FROM user WHERE email = ?").get("owner@corp.test") as { id: string }).id;
+    seedLiveGrants(db, userId, grant.organizationId, MAX_LIVE_GRANTS - 2);
+
+    const fiftieth = await registerClient(auth);
+    expect((await consentFor(auth, fiftieth, grant.cookie)).status).toBe(200);
+    const fiftyFirst = await registerClient(auth);
+    expect((await consentFor(auth, fiftyFirst, grant.cookie)).status).toBe(400);
+
+    db.query('UPDATE "verification" SET "expiresAt" = ? WHERE "value" LIKE ?').run(new Date(Date.now() - 1000).toISOString(), `%"client_id":"${fiftieth}"%`);
+    expect(await grantsHeld(db, userId, grant.organizationId)).toBe(MAX_LIVE_GRANTS - 1);
+    expect((await consentFor(auth, fiftyFirst, grant.cookie)).status).toBe(200);
+  });
+
+  test("two consents at the same time at 49 live grants never make 51", async () => {
+    const { auth, db } = await testAuth();
+    const grant = await issued(auth, db);
+    const userId = (db.query("SELECT id FROM user WHERE email = ?").get("owner@corp.test") as { id: string }).id;
+    seedLiveGrants(db, userId, grant.organizationId, MAX_LIVE_GRANTS - 2);
+    const clients = [await registerClient(auth), await registerClient(auth), await registerClient(auth)];
+    const pages = await Promise.all(clients.map((clientId) => consentPageFor(auth, clientId, grant.cookie)));
+
+    const answers = await Promise.all(
+      pages.map((page) => post(auth, "/oauth2/consent", { accept: true, oauth_query: page.oauthQuery }, grant.cookie)),
+    );
+    const accepted = answers.filter((answer) => answer.status === 200);
+    expect(accepted.length).toBeLessThanOrEqual(1);
+    for (const answer of answers.filter((a) => a.status !== 200)) {
+      expect(answer.status).toBe(400);
+      const body = (await answer.json()) as { error: string; url?: string };
+      expect(body.error).toBe("access_denied");
+      expect(body.url).toBeUndefined();
+    }
+    expect(await grantsHeld(db, userId, grant.organizationId)).toBeLessThanOrEqual(MAX_LIVE_GRANTS);
+    expect(await grantsHeld(db, userId, grant.organizationId)).toBe(MAX_LIVE_GRANTS - 1 + accepted.length);
   });
 
   test("consent for a client deleted after the workspace step is an OAuth error, not a 500", async () => {

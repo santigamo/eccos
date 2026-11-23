@@ -42,3 +42,4 @@ Each file has an H1, one paragraph, then four H2 sections in this order: `Sub-fe
 - [Connect and provisioning](./connect-and-provisioning.md) covers attaching a number by token, admin bootstrap, and the provisioning states.
 - [Console onboarding](./console-onboarding.md) covers sign-up, email verification, workspace creation, and the log screens.
 - [Console OAuth authorization server](./console-oauth.md) covers registration and its limits, consent, tokens, the cleanup of unused clients, and why CORS is checked on the built Worker.
+- [Step-up](./step-up.md) covers TOTP setup, the `Confirm it's you` challenge, and the server-side refusals of sensitive actions.

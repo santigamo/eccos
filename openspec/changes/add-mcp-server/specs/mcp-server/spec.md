@@ -9,7 +9,9 @@ acceptance criteria as scenarios. Design rationale is in [../../design.md](../..
 
 `apps/mcp` SHALL serve MCP over Streamable HTTP at a single endpoint, `/mcp`, on its own
 hostname, implementing specification revision 2026-07-28 and accepting 2025-era clients without
-sessions. It SHALL hold no storage binding and no secret.
+sessions. It SHALL hold no storage binding and no credential that grants access. Its one secret,
+`REQUEST_STATE_KEY`, seals the approval state; a leaked key lets an attacker forge an approval
+state, which still cannot run a tool, because elevation is re-read from `authorize` on every request.
 
 #### Scenario: A current client discovers the server
 - **WHEN** a client with a valid token sends `server/discover`

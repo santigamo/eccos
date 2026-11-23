@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+# Seals the step-up guard's URL-elicitation state; at least 32 bytes. Generate one with:
+#   openssl rand -base64 48
+REQUEST_STATE_KEY=replace-with-at-least-32-random-bytes
