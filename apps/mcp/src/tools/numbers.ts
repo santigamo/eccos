@@ -121,7 +121,8 @@ export const numbersList = defineTool({
     nextTool: z.string().nullable(),
   }),
   annotations: { readOnlyHint: true, openWorldHint: false },
-  run: async (_input, actor, { gateway }) => {
+  run: async (_input, actor, deps) => {
+    const { gateway } = deps;
     const { wabas } = await gateway.listAccountResources(actor.accountId);
     if (wabas.length === 0) {
       return {
@@ -182,7 +183,8 @@ export const numberRecheck = defineTool({
   }),
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   audit: (input) => ({ wabaId: input.wabaId ?? null }),
-  run: async (input, actor, { gateway }) => {
+  run: async (input, actor, deps) => {
+    const { gateway } = deps;
     const waba = await ownedWaba(gateway, actor.accountId, input.wabaId);
     // The console offers Re-check only where it can change something (numbers-table.tsx).
     if (waba.status === "active" && waba.phones.length > 0) {
@@ -247,7 +249,8 @@ export const statusGet = defineTool({
     counts: z.object({ inbound: z.number(), inboundByType: counter, outbound: counter, deliveries: counter }),
   }),
   annotations: { readOnlyHint: true, openWorldHint: false },
-  run: async (input, actor, { gateway }) => {
+  run: async (input, actor, deps) => {
+    const { gateway } = deps;
     const waba = await ownedWaba(gateway, actor.accountId, input.wabaId);
     if (waba.status !== "active") {
       throw new ToolError(

@@ -65,7 +65,8 @@ export const connectStatus = defineTool({
     nextTool: z.string().nullable(),
   }),
   annotations: { readOnlyHint: true, openWorldHint: false },
-  run: async (_input, actor, { gateway }) => {
+  run: async (_input, actor, deps) => {
+    const { gateway } = deps;
     const link = await gateway.getConnectLink(actor.accountId);
     if (!link) {
       return {
@@ -113,7 +114,8 @@ export const connectLinkCreate = defineTool({
   audit: (input) => ({ replace: String(input.replace) }),
   // The console's openConnectLink (apps/dashboard src/server/gateway.ts): keep a link that has
   // not expired unless asked to replace it, and let the gateway keep a live one on a race.
-  run: async (input, actor, { gateway, consoleOrigin }) => {
+  run: async (input, actor, deps) => {
+    const { gateway } = deps;
     const exists = (link: ConnectLinkSummary) => ({
       status: "exists" as const,
       url: null,
@@ -131,7 +133,7 @@ export const connectLinkCreate = defineTool({
     return {
       status: "created" as const,
       // In the fragment, so the token reaches no server log and no Referer.
-      url: `${consoleOrigin}${CONNECT_LINK_PATH}#${issued.token}`,
+      url: `${deps.consoleOrigin}${CONNECT_LINK_PATH}#${issued.token}`,
       state: "pending" as const,
       expiresAt: isoTime(issued.expiresAt),
       connectedPhone: null,

@@ -31,7 +31,8 @@ export const billingGet = defineTool({
     nextTool: z.string().nullable(),
   }),
   annotations: { readOnlyHint: true, openWorldHint: false },
-  run: async (_input, actor, { console }) => {
+  run: async (_input, actor, deps) => {
+    const { console } = deps;
     const result = await console.getBilling(actorRef(actor));
     if (!result.ok) {
       if (result.code !== "billing_disabled") throw new ToolError(refusal(result.code));
@@ -88,7 +89,8 @@ export const billingCheckoutLink = defineTool({
   }),
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   audit: (input) => ({ purpose: input.purpose }),
-  run: async (input, actor, { console }) => {
+  run: async (input, actor, deps) => {
+    const { console } = deps;
     const link =
       input.purpose === "manage" ? await console.openBillingPortal(actorRef(actor)) : await console.startCheckout(actorRef(actor));
     if (!link.ok) {
