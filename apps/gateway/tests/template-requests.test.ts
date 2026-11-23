@@ -1,8 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { validateTemplateDraft } from "@eccos/core/template-rules";
 import {
-  BUTTON_URL_TOO_LONG,
-  HEADER_LINK_WHITESPACE,
   templateDraftRequest,
   templateEditRequest,
   templateSendRequest,
@@ -36,18 +34,20 @@ describe("template requests", () => {
     });
   });
 
-  it("runs the core rule before the gateway's own bounds", () => {
+  it("refuses with the core rule's message", () => {
     expect(() => templateDraftRequest({ ...draft, bodyText: "Hi {{name}}" })).toThrow(/Named parameters/);
     const longUrl = { text: "Go", url: `https://e.cc/${"x".repeat(2000)}` };
-    expect(() => templateDraftRequest({ ...draft, buttons: [longUrl] })).toThrow(BUTTON_URL_TOO_LONG);
-    expect(() => templateEditRequest({ ...draft, templateId: "555", buttons: [longUrl] })).toThrow(BUTTON_URL_TOO_LONG);
+    expect(() => templateDraftRequest({ ...draft, buttons: [longUrl] })).toThrow("button url is at most 2000 characters");
+    expect(() => templateEditRequest({ ...draft, templateId: "555", buttons: [longUrl] })).toThrow(
+      "button url is at most 2000 characters",
+    );
     expect(() =>
       templateSendRequest({
         templateName: "hello_world",
         languageCode: "en_US",
         headerMedia: { format: "image", link: "https://cdn.e.cc/a b.png" },
       }),
-    ).toThrow(HEADER_LINK_WHITESPACE);
+    ).toThrow("header media link cannot contain spaces or line breaks");
     expect(() =>
       templateSendRequest({
         templateName: "hello_world",

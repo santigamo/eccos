@@ -21,11 +21,6 @@ const gatewaySide = await import("../../gateway/src/template-requests");
 const CONSOLE_FIELDS = ["wabaId", "phoneNumberId", "to", "idempotencyKey"];
 /** Refusals of those fields, which only the console applies at this step. */
 const CONSOLE_ONLY = new Set(["wabaId is required", "phoneNumberId is required"]);
-/** The two bounds only the gateway applies, on input the console accepts, and when each applies. */
-const GATEWAY_ONLY: Record<string, (accepted: Record<string, any>) => boolean> = {
-  [gatewaySide.BUTTON_URL_TOO_LONG]: (accepted) => accepted.buttons?.some((button: { url: string }) => button.url.length > 2000),
-  [gatewaySide.HEADER_LINK_WHITESPACE]: (accepted) => /\s/.test(accepted.headerMedia?.link ?? ""),
-};
 
 let seed = 0x9e3779b9;
 function rnd(): number {
@@ -278,13 +273,13 @@ function templatePart(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([k]) => !CONSOLE_FIELDS.includes(k)));
 }
 
-type Tally = { inputs: number; accepted: number; refused: number; gatewayOnly: number; disagreements: unknown[] };
+type Tally = { inputs: number; accepted: number; refusals: Set<string>; refused: number; disagreements: unknown[] };
 function compare(
   consoleValidator: (input: unknown) => unknown,
   gatewayRule: (input: unknown) => unknown,
   inputs: Iterable<unknown>,
 ): Tally {
-  const tally: Tally = { inputs: 0, accepted: 0, refused: 0, gatewayOnly: 0, disagreements: [] };
+  const tally: Tally = { inputs: 0, accepted: 0, refusals: new Set(), refused: 0, disagreements: [] };
   const disagree = (input: unknown, atConsole: Outcome, atGateway: Outcome) => {
     if (tally.disagreements.length < 5) tally.disagreements.push({ input, atConsole, atGateway });
   };
@@ -295,6 +290,7 @@ function compare(
     if (!atConsole.ok && CONSOLE_ONLY.has(atConsole.error)) continue;
     if (!atConsole.ok) {
       tally.refused++;
+      tally.refusals.add(atConsole.error);
       if (!Bun.deepEquals(atGateway, atConsole, true)) disagree(input, atConsole, atGateway);
       continue;
     }
@@ -302,24 +298,26 @@ function compare(
     // What the console forwards must fare at the gateway exactly as the raw input does.
     const forwarded = outcome(() => gatewayRule(structuredClone(atConsole.value)));
     if (!Bun.deepEquals(forwarded, atGateway, true)) disagree(atConsole.value, atGateway, forwarded);
-    if (!atGateway.ok && GATEWAY_ONLY[atGateway.error]?.(atConsole.value as Record<string, unknown>)) {
-      tally.gatewayOnly++;
-      continue;
-    }
     if (!Bun.deepEquals(atGateway, { ok: true, value: templatePart(atConsole.value) }, true)) {
       disagree(input, atConsole, atGateway);
     }
   }
   return tally;
 }
-function expectAgreement(tally: Tally) {
+function expectAgreement(tally: Tally, reached: string[]) {
   expect(tally.disagreements).toEqual([]);
   expect(tally.accepted).toBeGreaterThan(1000);
   expect(tally.refused).toBeGreaterThan(1000);
-  expect(tally.gatewayOnly).toBeGreaterThan(0);
+  for (const message of reached) expect(tally.refusals).toContain(message);
 }
 
 const RANDOM_INPUTS = 4000;
+const CONTENT_REFUSALS = [
+  "The body cannot be empty.",
+  "example values cannot contain line breaks",
+  "a static URL button carries no example",
+  "button url is at most 2000 characters",
+];
 
 describe("the console and the gateway agree on template requests", () => {
   test("test send", () => {
@@ -328,6 +326,12 @@ describe("the console and the gateway agree on template requests", () => {
         ...random(sendInput, RANDOM_INPUTS),
         ...sweep(sendBase, sendFields),
       ]),
+      [
+        "header media link cannot contain spaces or line breaks",
+        "header media link must not carry credentials",
+        "header media link must be a full URL",
+        "template parameters cannot contain line breaks",
+      ],
     );
   });
 
@@ -337,6 +341,7 @@ describe("the console and the gateway agree on template requests", () => {
         ...random(createInput, RANDOM_INPUTS),
         ...sweep(createBase, createFields),
       ]),
+      CONTENT_REFUSALS,
     );
   });
 
@@ -346,6 +351,7 @@ describe("the console and the gateway agree on template requests", () => {
         ...random(editInput, RANDOM_INPUTS),
         ...sweep({ ...createBase, templateId: "123" }, { ...createFields, templateId: [...J, ...ids] }),
       ]),
+      [...CONTENT_REFUSALS, "invalid template id"],
     );
   });
 });

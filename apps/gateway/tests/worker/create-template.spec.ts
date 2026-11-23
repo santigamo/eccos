@@ -2,7 +2,6 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayRPC } from "../../src/rpc";
-import { BUTTON_URL_TOO_LONG } from "../../src/template-requests";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { bootstrapAccount, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 import { validateTemplateDraft, validateTemplateEdit } from "@eccos/core/template-rules";
@@ -320,14 +319,14 @@ describe("GatewayRPC.createTemplate", () => {
     expect(body.components[2].buttons[0]).toMatchObject({ text: "Track", url: "https://e.cc/t/{{1}}", example: ["https://e.cc/t/T-4"] });
   });
 
-  it("keeps the gateway's own button url bound after the core rule", async () => {
+  it("refuses a button url over 2000 characters with the core message", async () => {
     const fetchSpy = mockCreateOk();
     await expect(
       makeRpc().createTemplate(
         draft({ buttons: [{ text: "Go", url: `https://e.cc/${"x".repeat(2000)}` }] }),
         TEST_ACCOUNT_ID,
       ),
-    ).rejects.toThrow(BUTTON_URL_TOO_LONG);
+    ).rejects.toThrow("button url is at most 2000 characters");
     expect(writes(fetchSpy)).toHaveLength(0);
   });
 });
@@ -510,11 +509,11 @@ describe("GatewayRPC.editTemplate", () => {
     expect(JSON.parse(String(init?.body)).components[0].example).toEqual({ body_text: [["Ada"]] });
   });
 
-  it("keeps the gateway's own button url bound after the core rule", async () => {
+  it("refuses a button url over 2000 characters with the core message", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ data: [] }));
     await expect(
       makeRpc().editTemplate(edit({ buttons: [{ text: "Go", url: `https://e.cc/${"x".repeat(2000)}` }] }), TEST_ACCOUNT_ID),
-    ).rejects.toThrow(BUTTON_URL_TOO_LONG);
+    ).rejects.toThrow("button url is at most 2000 characters");
     expect(writes(fetchSpy)).toHaveLength(0);
   });
 

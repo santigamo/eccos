@@ -9,7 +9,9 @@ import {
   normalizeTemplateName,
   previewBody,
   templateRowsOf,
+  validateTemplateDraft,
   validateTemplateEdit,
+  validateTemplateSend,
 } from "@eccos/core/template-rules";
 
 /**
@@ -442,5 +444,33 @@ describe("validateTemplateEdit", () => {
   test("the template id is digits only", () => {
     expect(() => validateTemplateEdit({ ...EDIT, templateId: "../555" })).toThrow("invalid template id");
     expect(() => validateTemplateEdit({ ...EDIT, templateId: undefined })).toThrow("invalid template id");
+  });
+});
+
+describe("button url and header link bounds", () => {
+  const draft = { name: "order_update", language: "en_US", category: "UTILITY", bodyText: "Hi there" };
+  const url = (length: number) => `https://e.cc/${"x".repeat(length - "https://e.cc/".length)}`;
+
+  test("a button url is at most 2000 characters, in the form and in the request", () => {
+    expect(analyzeDraftButtons([{ text: "Go", url: url(2000), exampleUrl: "" }])).toMatchObject({ ok: true });
+    expect(analyzeDraftButtons([{ text: "Go", url: url(2001), exampleUrl: "" }])).toEqual({
+      ok: false,
+      reason: "Button 1's URL is over 2000 characters.",
+    });
+    expect(validateTemplateDraft({ ...draft, buttons: [{ text: "Go", url: ` ${url(2000)} ` }] }).buttons).toEqual([
+      { text: "Go", url: url(2000) },
+    ]);
+    expect(() => validateTemplateDraft({ ...draft, buttons: [{ text: "Go", url: url(2001) }] })).toThrow(
+      "button url is at most 2000 characters",
+    );
+  });
+
+  test("a header link carries no spaces or line breaks inside it", () => {
+    const send = (link: string) =>
+      validateTemplateSend({ templateName: "order_update", languageCode: "en_US", headerMedia: { format: "image", link } });
+    expect(send(" https://cdn.e.cc/a.png ").headerMedia).toEqual({ format: "image", link: "https://cdn.e.cc/a.png" });
+    for (const link of ["https://cdn.e.cc/a b.png", "https://cdn.e.cc/a\nb.png", "https://cdn.e.cc/a\tb.png"]) {
+      expect(() => send(link), JSON.stringify(link)).toThrow("header media link cannot contain spaces or line breaks");
+    }
   });
 });

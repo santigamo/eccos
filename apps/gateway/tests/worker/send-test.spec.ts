@@ -5,7 +5,6 @@ import { GatewayRPC } from "../../src/rpc";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { bootstrapAccount, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 import { validateTemplateSend } from "@eccos/core/template-rules";
-import { HEADER_LINK_WHITESPACE } from "../../src/template-requests";
 
 /**
  * `sendTemplateTest` — the console's one send surface (the "Send test" sheet).
@@ -349,14 +348,14 @@ describe("GatewayRPC.sendTemplateTest", () => {
     expect(fetchSpy.mock.calls.filter(([, init]) => (init?.method ?? "GET") !== "GET")).toHaveLength(0);
   });
 
-  it("keeps the gateway's own whitespace bound on a header link after the core rule", async () => {
+  it("refuses a header link with a space with the core message", async () => {
     const fetchSpy = mockSendOk();
     await expect(
       makeRpc().sendTemplateTest(
         input({ headerMedia: { format: "image", link: "https://cdn.e.cc/a b.png" } }),
         TEST_ACCOUNT_ID,
       ),
-    ).rejects.toThrow(HEADER_LINK_WHITESPACE);
+    ).rejects.toThrow("header media link cannot contain spaces or line breaks");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
