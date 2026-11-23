@@ -57,12 +57,10 @@ bun run test:workers   # vitest-pool-workers integration tests for apps/gateway/
 
 ## Conventions
 
-- **Language:** code, identifiers, comments, and user-facing strings are in **English**.
-- **The `WhatsAppCallbackEvent` shape is a public contract.** Changing it is a breaking
-  change for every downstream subscriber. If you touch the parser, add/extend tests in
-  `packages/core/tests/parser.test.ts`.
-- The webhook handler must always return `200` quickly so Meta does not disable the
-  subscription.
+The rules of the codebase live in one place, the **Rules** section of [AGENTS.md](./AGENTS.md):
+language, the `WhatsAppCallbackEvent` contract, what the webhook handler answers, and tenancy.
+They bind people and agents alike. Two more for contributors:
+
 - **Never commit secrets.** `.env`, real tokens, App Secrets, and API keys stay out of the
   repo (`.env` and `data/` are gitignored). Use placeholders in `.env.example`.
 - Match the style of the surrounding code; keep the core readable in one sitting.
