@@ -18,11 +18,15 @@ describe("console contract vocabulary", () => {
   });
 });
 
-// Type-level: illegal states the compiler must reject (checked by `bun run typecheck`).
+// Type-level, checked by `bun run typecheck`: the vocabulary is exactly the intended one, and
+// illegal states are rejected.
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+const rolesExact: Equal<MemberRole, "owner" | "admin" | "operator" | "viewer"> = true;
+const actionsExact: Equal<AgentAction, "view" | "operate" | "send" | "configure" | "administer"> = true;
 // @ts-expect-error erase is never an agent action
 const erase: AgentAction = "erase";
 // @ts-expect-error a refusal carries no actor
 const refusedWithActor: AuthorizeResult = { ok: false, code: "revoked", actor: {} };
 // @ts-expect-error refusals are named by code
 const refusedByReason: AuthorizeResult = { ok: false, reason: "revoked" };
-void [erase, refusedWithActor, refusedByReason];
+void [rolesExact, actionsExact, erase, refusedWithActor, refusedByReason];
