@@ -34,6 +34,10 @@ describe("capabilities", () => {
   it("names an operator as the least role for operate", () => {
     expect(forbiddenMessage("operate")).toContain("the eccos:operate scope, granted by a person who is an operator or above");
   });
+
+  it("names a viewer with the right article", () => {
+    expect(forbiddenMessage("view")).toContain("the eccos:view scope, granted by a person who is a viewer or above");
+  });
 });
 
 describe("permissions table", () => {
