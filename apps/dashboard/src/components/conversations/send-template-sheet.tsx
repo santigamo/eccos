@@ -8,7 +8,7 @@ import {
   canSendTemplate,
   templateRowsOf,
   type TemplateListRow,
-} from "../../lib/template-params";
+} from "@eccos/core/template-rules";
 import { listTemplates } from "../../server/gateway";
 import { SendTestForm, type SendTestPhone } from "../templates/send-test-sheet";
 import { templateView } from "../../lib/template-view";
