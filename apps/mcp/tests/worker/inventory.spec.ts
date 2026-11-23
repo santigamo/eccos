@@ -51,6 +51,6 @@ describe("tool inventory", () => {
     const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
     await client.close();
 
-    expect(names).toEqual(["connect_status", "numbers_list", "status_get", "workspace_get"]);
+    expect(names).toEqual(["numbers_list", "status_get", "workspace_get"]);
   });
 });

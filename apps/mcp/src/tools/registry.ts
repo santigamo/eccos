@@ -18,7 +18,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { type AuditResource, auditEvent } from "../audit";
-import { forbiddenMessage } from "../permissions";
+import { CONSOLE_METHODS, type ClientsFor, GATEWAY_METHODS, forbiddenMessage, methodsFor } from "../permissions";
 
 /** The actor `authorize` returned for this request, plus the scopes the token carries. */
 export type McpActor = Actor & { scope: string[] };
@@ -36,8 +36,11 @@ export interface Clients {
  * no scope.
  */
 export interface ToolDeps {
-  /** The clients for `action`; throws a {@link ForbiddenError} when the actor lacks it. */
-  for(action: AgentAction): Clients;
+  /**
+   * The gateway and console methods bound to `action` (permissions.ts), and nothing else;
+   * throws a {@link ForbiddenError} when the actor lacks it.
+   */
+  for<A extends AgentAction>(action: A): ClientsFor<A>;
   can(action: AgentAction): boolean;
   /** The console's public origin, where the pages a person opens live (`/connect`). Not a client, so not gated. */
   consoleOrigin: string;
@@ -48,21 +51,32 @@ export class ToolError extends Error {}
 
 /** The caller lacks the action a call needs. */
 export class ForbiddenError extends ToolError {
-  constructor(readonly action: AgentAction) {
-    super(forbiddenMessage(action));
+  constructor(
+    readonly action: AgentAction,
+    actor: Pick<Actor, "role">,
+  ) {
+    super(forbiddenMessage(action, actor));
   }
 }
 
-export function capabilities(actor: Pick<Actor, "actions">, clients: Clients, consoleOrigin: string): ToolDeps {
+export function capabilities(actor: Pick<Actor, "actions" | "role">, clients: Clients): Omit<ToolDeps, "consoleOrigin"> {
   const can = (action: AgentAction) => actor.actions.includes(action);
   return {
     can,
-    consoleOrigin,
-    for(action) {
-      if (!can(action)) throw new ForbiddenError(action);
-      return clients;
+    for<A extends AgentAction>(action: A) {
+      if (!can(action)) throw new ForbiddenError(action, actor);
+      return {
+        gateway: methodsFor(clients.gateway, GATEWAY_METHODS, action),
+        console: methodsFor(clients.console, CONSOLE_METHODS, action),
+      } as unknown as ClientsFor<A>;
     },
   };
+}
+
+/** What the step-up guard needs besides the tool's own clients. */
+export interface StepUp {
+  codec: ElevationStateCodec | null;
+  console: Pick<ConsoleApi, "requestElevation">;
 }
 
 /** What the step-up guard seals into `requestState` when it sends a client to the approval page. */
@@ -199,16 +213,17 @@ async function guard(
   actor: McpActor,
   deps: ToolDeps,
   ctx: ServerContext,
-  codec: ElevationStateCodec | null,
+  step: StepUp,
 ): Promise<Outcome | null> {
   if (!tool.stepUp || isElevated(actor)) return null;
-  const clients = deps.for(tool.action);
+  if (!deps.can(tool.action)) throw new ForbiddenError(tool.action, actor);
+  const { codec } = step;
   const answer = inputResponse(ctx.mcpReq.inputResponses, ELEVATION_INPUT);
   const state = codec ? ctx.mcpReq.requestState<ElevationState>() : undefined;
   const retry = codec !== null && (answer.kind !== "missing" || state !== undefined);
   if (retry && state?.tool !== tool.name) return denied(errorText(STALE_STATE(tool.name)), "request_state_mismatch");
 
-  const elevation = await clients.console.requestElevation(actorRef(actor), tool.name);
+  const elevation = await step.console.requestElevation(actorRef(actor), tool.name);
   if (!elevation.ok) return denied(errorText(ELEVATION_REFUSED[elevation.code]), elevation.code);
   const { request } = elevation;
 
@@ -232,7 +247,7 @@ async function guard(
       };
     }
     console.warn(
-      JSON.stringify({ level: "warn", area: "mcp", event: "url_elicitation_unavailable", tool: tool.name, reason: "REQUEST_STATE_KEY is not set" }),
+      JSON.stringify({ level: "warn", area: "mcp", event: "url_elicitation_unavailable", tool: tool.name, reason: "REQUEST_STATE_KEY is unset or shorter than 32 bytes" }),
     );
   }
   return denied(approvalResult(tool.name, request), "elevation_required");
@@ -244,10 +259,10 @@ async function invoke(
   actor: McpActor,
   deps: ToolDeps,
   ctx: ServerContext,
-  codec: ElevationStateCodec | null,
+  step: StepUp,
 ): Promise<Outcome> {
   try {
-    const guarded = await guard(tool, actor, deps, ctx, codec);
+    const guarded = await guard(tool, actor, deps, ctx, step);
     if (guarded) return guarded;
     const value = await tool.run(input, actor, deps);
     return { result: structured(value), audit: { outcome: "success", detail: null } };
@@ -276,7 +291,7 @@ export function registerTool(
   tool: ToolDefinition,
   actor: McpActor,
   deps: ToolDeps,
-  codec: ElevationStateCodec | null,
+  step: StepUp,
 ): void {
   const outputSchema = tool.stepUp ? z.union([tool.outputSchema, approvalRequired, elevationDeclined]) : tool.outputSchema;
   server.registerTool(
@@ -289,7 +304,7 @@ export function registerTool(
       annotations: tool.annotations,
     },
     async (input: Record<string, unknown>, ctx: ServerContext) => {
-      const { result, audit } = await invoke(tool, input, actor, deps, ctx, codec);
+      const { result, audit } = await invoke(tool, input, actor, deps, ctx, step);
       if (audit && tool.annotations.readOnlyHint !== true) {
         auditEvent({
           action: tool.name,

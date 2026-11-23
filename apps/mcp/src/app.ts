@@ -94,7 +94,7 @@ function preDispatch(body: unknown, caller: McpActor, auth: OAuthResourceContext
         outcome: "denied",
         detail: "forbidden",
       });
-      return refusal(call, forbiddenMessage(tool.action));
+      return refusal(call, forbiddenMessage(tool.action, caller));
     }
   }
   return null;
@@ -146,6 +146,7 @@ function resourceServer(env: Env, registry: readonly ToolDefinition[]) {
         }
 
         const caller = { ...actor, scope: ctx.auth.scope };
+        const names = new Map<unknown, string>();
         if (request.method === "POST") {
           const text = await cappedText(request);
           if (text === null) return jsonRpcError(413, -32600, `Request body is larger than ${MAX_BODY_BYTES} bytes.`);
@@ -157,10 +158,15 @@ function resourceServer(env: Env, registry: readonly ToolDefinition[]) {
           }
           const refused = preDispatch(body, caller, ctx.auth, registry);
           if (refused) return refused;
+          for (const call of toolCalls(body)) if (typeof call.params?.name === "string") names.set(call.id, call.params.name);
         }
 
         const clients = { gateway: bindings.GATEWAY, console: bindings.CONSOLE };
-        const mcp = createMcpHandler(() => createServer(caller, clients, new URL(bindings.CONSOLE_ORIGIN).origin, registry, bindings.REQUEST_STATE_KEY), {
+        const mcp = createMcpHandler(() => createServer(caller, clients, registry, {
+            requestStateKey: bindings.REQUEST_STATE_KEY,
+            consoleOrigin,
+            toolOf: (id) => names.get(id),
+          }), {
           route: "/mcp",
           legacy: "stateless",
           allowedHostnames: [new URL(bindings.MCP_RESOURCE).hostname],

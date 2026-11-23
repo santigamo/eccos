@@ -179,17 +179,17 @@ describe("connect_status", () => {
     });
   });
 
-  it("tells a viewer who can make the link instead of naming a tool it cannot call", async () => {
-    const client = await connect(await grantToken(makeActor({ role: "viewer", actions: ["view"] }), ["eccos:view"]));
-    const result = await call(client, "connect_status");
-    await client.close();
+  it("is administer, as in the console: not listed for a viewer or operator, and challenged without eccos:administer", async () => {
+    const operator = await connect(await grantToken(makeActor({ role: "operator", actions: ["view", "operate", "send"] })));
+    expect(await listedTools(operator)).not.toContain("connect_status");
+    await operator.close();
 
-    expect(result.structuredContent).toMatchObject({
-      state: "none",
-      detail:
-        "No connection link was ever made for this workspace. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
-      nextTool: null,
-    });
+    const response = await postMcp(toolsCall("connect_status"), { token: await grantToken(makeActor({ actions: ["view"] }), ["eccos:view"]) });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("www-authenticate")).toBe(
+      `Bearer realm="OAuth", error="insufficient_scope", scope="eccos:administer", resource_metadata="${METADATA_URL}"`,
+    );
+    expect(await gatewayStub.calls()).toEqual([]);
   });
 
   it.each([

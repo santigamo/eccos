@@ -1,8 +1,8 @@
-import type { AccountWabaResource, GatewayApi } from "@eccos/gateway-contract";
+import type { AccountWabaResource } from "@eccos/gateway-contract";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { z } from "zod";
 import { offer } from "./next";
-import { ToolError, type ToolDeps } from "./registry";
+import { type McpActor, ToolError, type ToolDeps } from "./registry";
 
 /** The optional WABA selector every per-WABA tool takes. Never an account or organization id. */
 export const wabaIdInput = z
@@ -22,14 +22,9 @@ export const isoTime = (ms: number | null) => (ms === null ? null : new Date(ms)
  * which ids exist here. Nothing about any other account is ever looked up or named, and a tool
  * is named only when this connection may call it.
  */
-export async function ownedWaba(
-  deps: ToolDeps,
-  gateway: GatewayApi,
-  accountId: string,
-  wabaId: string | undefined,
-): Promise<AccountWabaResource> {
-  const refuse = (fact: string, next: Parameters<typeof offer>[2]) => new ToolError(offer(deps, fact, next).detail);
-  const { wabas } = await gateway.listAccountResources(accountId);
+export async function ownedWaba(deps: ToolDeps, actor: McpActor, wabaId: string | undefined): Promise<AccountWabaResource> {
+  const refuse = (fact: string, next: Parameters<typeof offer>[3]) => new ToolError(offer(deps, actor, fact, next).detail);
+  const { wabas } = await deps.for("view").gateway.listAccountResources(actor.accountId);
   if (wabas.length === 0) {
     throw refuse("No WhatsApp Business account is connected to this workspace yet.", {
       tool: "connect_link_create",
@@ -49,5 +44,5 @@ export async function ownedWaba(
       call: "Call numbers_list to see them.",
     });
   }
-  return selectWaba(accountId, wabas, wabaId ?? ids[0], true, "any");
+  return selectWaba(actor.accountId, wabas, wabaId ?? ids[0], true, "any");
 }

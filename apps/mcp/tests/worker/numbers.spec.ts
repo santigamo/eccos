@@ -64,7 +64,7 @@ describe("numbers_list", () => {
     expect(result.wabas[0]).toMatchObject({
       nextTool: null,
       detail:
-        "Registered, but Eccos has not finished subscribing it to its Meta webhooks. Eccos keeps retrying on its own. This connection cannot do it: it needs the eccos:configure scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+        "Registered, but Eccos has not finished subscribing it to its Meta webhooks. Eccos keeps retrying on its own. This connection acts for a viewer, and configure needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
     });
   });
 
@@ -216,15 +216,14 @@ describe("number_recheck", () => {
     expect(await gatewayStub.calls()).toEqual([]);
   });
 
-  it("names numbers_list in a refusal only when this connection may call it", async () => {
+  it("needs view to read the account's WABAs, and says so to a configure-only connection", async () => {
     await seedA(wabaIn("pending", "waba-a", "acct-a"));
     const client = await connect(await grantToken(makeActor({ role: "admin", actions: ["configure"] }), ["eccos:configure"]));
-    const text = errorOf(await call(client, "number_recheck", { wabaId: "waba-x" }));
+    const text = errorOf(await call(client, "number_recheck", { wabaId: "waba-a" }));
     await client.close();
 
-    expect(text).toBe(
-      "WABA waba-x is not connected to this workspace. Its WABAs are: waba-a. This connection cannot do it: it needs the eccos:view scope, which a viewer or above can grant, or they can do it in the Eccos console.",
-    );
+    expect(text).toBe("This connection was not granted the eccos:view scope that view needs. Ask the person to connect the agent again and grant it.");
+    expect(await gatewayStub.calls()).toEqual([]);
   });
 
   it("refuses a WABA of another account and never calls the gateway for it", async () => {
@@ -274,7 +273,7 @@ describe("status_get", () => {
     await client.close();
 
     expect(text).toBe(
-      "No WhatsApp Business account is connected to this workspace yet. This connection cannot do it: it needs the eccos:administer scope, which an owner or admin can grant, or they can do it in the Eccos console.",
+      "No WhatsApp Business account is connected to this workspace yet. This connection acts for a viewer, and administer needs an admin or above in this workspace. Ask such a person to do this in the Eccos console.",
     );
   });
 

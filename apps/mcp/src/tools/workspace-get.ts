@@ -2,9 +2,9 @@ import type { BillingResult } from "@eccos/console-contract";
 import type { AccountWabaResource, TemplatesResult } from "@eccos/gateway-contract";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { z } from "zod";
-import { SCOPE_OF } from "../permissions";
-import { type NextTool, holders, offer } from "./next";
-import { type ToolDeps, actorRef, defineTool, isElevated } from "./registry";
+import { forbiddenMessage } from "../permissions";
+import { type NextTool, offer } from "./next";
+import { type McpActor, type ToolDeps, actorRef, defineTool, isElevated } from "./registry";
 
 const STEP_IDS = ["subscription", "number", "webhook", "api_key", "template"] as const;
 const step = z.object({
@@ -26,16 +26,16 @@ type Draft = Omit<Step, "detail" | "nextTool"> & { fact: string; next?: { tool: 
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-const toStep = ({ fact, next, ...rest }: Draft, deps: ToolDeps): Step => ({ ...rest, ...offer(deps, fact, next) });
+const toStep = ({ fact, next, ...rest }: Draft, actor: McpActor, deps: ToolDeps): Step => ({ ...rest, ...offer(deps, actor, fact, next) });
 
 /** `null` when this connection may not see billing (contract § 4: billing state is administer). */
-function subscriptionStep(result: BillingResult | null): Draft {
+function subscriptionStep(result: BillingResult | null, actor: McpActor): Draft {
   const base = { id: "subscription", count: null, blockedBy: null } as const;
   if (result === null) {
     return {
       ...base,
       state: "unknown",
-      fact: `Billing needs the ${SCOPE_OF.administer} scope, held by ${holders("administer")}, so it is not shown to this connection.`,
+      fact: `Billing is not shown to this connection. ${forbiddenMessage("administer", actor)}`,
     };
   }
   if (!result.ok) {
@@ -116,7 +116,10 @@ function webhookStep(wabaId: string | null, url: string | null): Draft {
   };
 }
 
-/** A count only, a view fact (design § 4); listing or creating keys is administer. */
+/**
+ * A count only, from the account's resources: a view read, as in the console's dashboard state.
+ * Listing keys (`listApiKeys`) or creating them is administer.
+ */
 function apiKeyStep(active: number): Draft {
   const base = { id: "api_key", count: active, blockedBy: null } as const;
   if (active > 0) return { ...base, state: "done", fact: `${plural(active, "active API key", "active API keys")}.` };
@@ -200,10 +203,9 @@ export const workspaceGet = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   run: async (_input, actor, deps) => {
     const { gateway } = deps.for("view");
-    const [billing, resources, keys] = await Promise.all([
+    const [billing, resources] = await Promise.all([
       deps.can("administer") ? deps.for("administer").console.getBilling(actorRef(actor)) : null,
       gateway.listAccountResources(actor.accountId),
-      gateway.listApiKeys(actor.accountId),
     ]);
     // The forwarding target's existence is a view fact, as in the console's checklist
     // (server/gateway.ts hasForwardingTarget); the URL itself is never returned.
@@ -215,14 +217,14 @@ export const workspaceGet = defineTool({
         ])
       : [null, null];
 
-    const subscription = subscriptionStep(billing);
+    const subscription = subscriptionStep(billing, actor);
     const steps = [
       subscription,
       numberStep(resources.wabas, subscription),
       webhookStep(waba?.wabaId ?? null, subscriber?.url ?? null),
-      apiKeyStep(keys.filter((key) => key.revokedAt === null).length),
+      apiKeyStep(resources.keys.filter((key) => key.revokedAt === null).length),
       templateStep(waba?.wabaId ?? null, templates ? approvedTemplates(templates) : 0),
-    ].map((draft) => toStep(draft, deps));
+    ].map((draft) => toStep(draft, actor, deps));
     return {
       actingAs: { userId: actor.userId, role: actor.role },
       workspace: { organizationId: actor.organizationId },
