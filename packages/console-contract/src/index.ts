@@ -5,16 +5,24 @@
  * The console implements `ConsoleApi` on its `ConsoleRPC` entrypoint; `apps/mcp` calls it
  * through the `CONSOLE` binding. Types plus the scope vocabulary, no implementation.
  *
- * Refusals come back as values, never as thrown errors: an error crossing Workers RPC keeps
- * only its message, and `OAuthResourceServer` must build its challenge in the MCP Worker.
+ * Every refusal comes back as a value with a `code`, never as a thrown error: an error crossing
+ * Workers RPC keeps only its message, and `OAuthResourceServer` must build its challenge in the
+ * MCP Worker. A thrown error means the console failed, not that it refused.
  */
 
+import type { GatewayAction, roles } from "@eccos/auth-baseline/permissions";
 import type { ConnectPolicy } from "@eccos/gateway-contract";
 
 /**
+ * What an agent may do: the role matrix's actions without `erase`, which is never reachable
+ * over MCP, plus `send`, which the matrix grants to operator+ and a token grants only with
+ * `eccos:send`.
+ */
+export type AgentAction = Exclude<GatewayAction, "erase"> | "send";
+
+/**
  * The OAuth scopes the MCP resource advertises, each mapped to the one action it grants
- * (design § 3.2). `offline_access` grants no action and is not listed. There is no scope for
- * erasure.
+ * (design § 3.2). `offline_access` grants no action and is not listed.
  */
 export const AGENT_SCOPES = {
   "eccos:view": "view",
@@ -22,17 +30,12 @@ export const AGENT_SCOPES = {
   "eccos:send": "send",
   "eccos:configure": "configure",
   "eccos:administer": "administer",
-} as const;
+} as const satisfies Record<`eccos:${string}`, AgentAction>;
 
 export type AgentScope = keyof typeof AGENT_SCOPES;
 
-/**
- * What an agent may do. The role matrix's actions minus `erase`, plus `send`, which the
- * matrix grants to operator+ and the token grants only with `eccos:send`.
- */
-export type AgentAction = (typeof AGENT_SCOPES)[AgentScope];
-
-export type MemberRole = "owner" | "admin" | "operator" | "viewer";
+/** The organization roles, named by the auth baseline. */
+export type MemberRole = keyof typeof roles;
 
 /** Who an MCP request acts as, re-derived by `authorize` on that request and never cached. */
 export interface Actor {
@@ -45,7 +48,12 @@ export interface Actor {
   role: MemberRole;
   /** The live role's actions intersected with the token's scopes. */
   actions: AgentAction[];
-  /** Epoch ms until which the grant is elevated, or null. Only step-up tools read it. */
+  /**
+   * Epoch ms until which the grant is elevated, or null. The console returns null unless the
+   * elevation was live when `authorize` ran (now < elevatedUntil); it never returns a lapsed
+   * one. A caller still compares against its own clock before running a step-up tool, because
+   * an elevation can lapse after `authorize` returned.
+   */
   elevatedUntil: number | null;
   clientId: string;
 }
@@ -57,8 +65,14 @@ export interface Actor {
  */
 export type ActorRef = Pick<Actor, "userId" | "organizationId" | "accountId" | "clientId">;
 
-/** Every reason stays inside Eccos: `apps/mcp` answers each with the same `401` challenge. */
-export type AuthorizeRefusal = "invalid_token" | "revoked" | "not_a_member" | "no_account";
+/**
+ * Why a grant no longer stands. `authorize` can answer any of these, and so can every other
+ * method, because the grant can end between `authorize` and the call.
+ */
+export type GrantRefusalCode = "revoked" | "not_a_member" | "no_account";
+
+/** Every code stays inside Eccos: `apps/mcp` answers each with the same `401` challenge. */
+export type AuthorizeRefusalCode = "invalid_token" | GrantRefusalCode;
 
 export type AuthorizeResult =
   | {
@@ -70,9 +84,8 @@ export type AuthorizeResult =
       expiresAt: number;
       /** The token's scopes, as granted at consent. */
       scope: string[];
-      clientId: string;
     }
-  | { ok: false; reason: AuthorizeRefusal };
+  | { ok: false; code: AuthorizeRefusalCode };
 
 /** An open approval request for a grant's elevation (design § 3.3). */
 export interface ElevationRequest {
@@ -83,6 +96,11 @@ export interface ElevationRequest {
   /** Epoch ms. A request lives 10 minutes. */
   expiresAt: number;
 }
+
+/** `forbidden`: the user's live role does not allow it. */
+export type ElevationResult =
+  | { ok: true; request: ElevationRequest }
+  | { ok: false; code: GrantRefusalCode | "forbidden" };
 
 /** The workspace's billing as Settings shows it, read from the control plane only. */
 export interface BillingState {
@@ -96,26 +114,30 @@ export interface BillingState {
 }
 
 /**
+ * Why a billing call was refused. `forbidden`: the user's live role may not see billing, which
+ * in the console takes admin or owner, so an agent never sees more than its person.
+ * `billing_disabled`: this deployment runs without billing.
+ */
+export type BillingRefusalCode = GrantRefusalCode | "forbidden" | "billing_disabled";
+
+export type BillingResult =
+  | { ok: true; billing: BillingState }
+  | { ok: false; code: BillingRefusalCode };
+
+/**
  * A Creem link for a person to open. `checkout` starts a subscription; `portal` manages the
  * existing one, which is what `startCheckout` returns while a subscription still exists.
+ * `no_billing_account`: the portal was asked for before the workspace ever checked out.
  */
 export type BillingLink =
   | { ok: true; kind: "checkout" | "portal"; url: string }
-  | { ok: false; reason: BillingRefusal };
-
-/**
- * `billing_disabled`: this deployment runs without billing. `no_billing_account`: the portal
- * was asked for before the workspace ever checked out. `forbidden`: the user's live role does
- * not allow it.
- */
-export type BillingRefusal = "billing_disabled" | "no_billing_account" | "forbidden";
+  | { ok: false; code: BillingRefusalCode | "no_billing_account" };
 
 export interface ConsoleApi {
   /**
    * Verify the token for this resource and re-derive everything else (design § 2.2): signature,
    * issuer, audience, expiry; the grant still exists; the current membership and role; an
-   * `active` account link; the grant's elevation. Called on every MCP request. Never throws for
-   * a bad token.
+   * `active` account link; the grant's live elevation. Called on every MCP request.
    */
   authorize(resource: string, token: string): Promise<AuthorizeResult>;
 
@@ -124,14 +146,14 @@ export interface ConsoleApi {
    * step-up call made while it is pending carries the same URL. `tool` is the tool that asked,
    * shown to the person on the approval page.
    */
-  requestElevation(actor: ActorRef, tool: string): Promise<ElevationRequest>;
+  requestElevation(actor: ActorRef, tool: string): Promise<ElevationResult>;
 
-  /** The workspace's billing, or null when this deployment runs without billing. */
-  getBilling(actor: ActorRef): Promise<BillingState | null>;
+  /** The workspace's billing. Admin or owner only, as in the console. */
+  getBilling(actor: ActorRef): Promise<BillingResult>;
 
-  /** A checkout for a new subscription, or the portal while one still exists. */
+  /** A checkout for a new subscription, or the portal while one still exists. Admin or owner. */
   startCheckout(actor: ActorRef): Promise<BillingLink>;
 
-  /** The portal for the workspace's existing billing account. */
+  /** The portal for the workspace's existing billing account. Admin or owner. */
   openBillingPortal(actor: ActorRef): Promise<BillingLink>;
 }
