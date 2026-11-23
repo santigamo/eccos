@@ -10,6 +10,8 @@ The repo is a **Bun workspace**: shared `@eccos/core` package + per-target apps.
 ```bash
 bun install            # install dependencies
 bun run dev            # Bun target, watch mode (http://localhost:3000)
+bun run check          # everything CI runs, in CI's order; run it before every push
+bun run lint           # Biome lint (first step of check)
 bun run typecheck      # regenerates the Workers types, then tsc --noEmit
 bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers tests for the Cloudflare Workers target

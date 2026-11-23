@@ -34,6 +34,8 @@
     "test:workers": "cd apps/gateway && vitest run",
     "test:all": "bun run test && bun run test:workers",
     "lint": "biome lint .",
+    "check": "bun run lint && bun run typecheck && bun run test && bun run test:workers && bun run check:site && bun run check:docs && bun run check:dashboard",
+    "check:dashboard": "cd apps/dashboard && bun run typecheck && bun run test && bunx vite build",
     "format": "biome format --write .",
     "deploy": "bun scripts/check-production-config.ts && cd apps/gateway && wrangler deploy -c wrangler.production.jsonc",
     "cf-types": "cd apps/gateway && wrangler types --strict-vars=false",

@@ -33,9 +33,16 @@ Eccos is a **Bun workspace** (`packages/*` + `apps/*`) — a shared pure core + 
 
 ## Running the checks
 
-Every PR must pass these (CI runs the same):
+Every PR must pass one command. CI runs exactly this script and nothing else:
 
 ```bash
+bun run check          # lint, typecheck, both test suites, site, docs, dashboard
+```
+
+Its parts run on their own while you work:
+
+```bash
+bun run lint           # Biome
 bun run typecheck      # tsc --noEmit
 bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers integration tests for apps/gateway/
@@ -63,7 +70,7 @@ bun run test:workers   # vitest-pool-workers integration tests for apps/gateway/
 ## Pull requests
 
 1. Fork and branch from `main`.
-2. Make your change with tests and a green `typecheck` + both test suites.
+2. Make your change with tests and a green `bun run check`.
 3. Open a PR describing **what** changed and **why**. Link any related issue.
 
 By contributing you agree that your contributions are licensed under the [MIT License](./LICENSE).
