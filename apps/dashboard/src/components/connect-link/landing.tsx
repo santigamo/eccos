@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { AUTH_ERROR_BANNER_CLASS, AuthCard } from "../auth/auth-page";
+import { AuthCard } from "../auth/auth-page";
 import { FrameDescription, FrameHeader, FrameTitle } from "../reui/frame";
 import { Button } from "../ui/button";
+import { Callout } from "../ui/callout";
 import { type LinkOutcome, type LinkStart, type LinkView, connectLinkApi } from "../../lib/connect-link/api";
 import type { ConnectLinkCopy } from "../../lib/connect-link/en";
 import { forgetLinkToken, takeLinkToken } from "../../lib/connect-link/token";
@@ -11,7 +12,8 @@ import { type FacebookSdk, captureWindowOpen, currentFacebookSdk, loadFacebookSd
 import { cn } from "@/lib/utils";
 
 type Ready = Extract<LinkView, { status: "ready" }>;
-type Note = { text: string; tone: "error" | "notice" };
+/** `meta`: Meta reported an error before its window closed. */
+type Note = { text: string; tone: "error" | "notice" | "meta" };
 type Screen =
   | { at: "loading" }
   | { at: "message"; text: string }
@@ -193,7 +195,7 @@ export function ConnectLinkLanding({
       const code = response.authResponse?.code;
       if (!code) {
         setBusy(false);
-        setNote({ text: cancelledText(copy, reported.current), tone: "notice" });
+        setNote({ text: cancelledText(copy, reported.current), tone: reported.current ? "meta" : "notice" });
         return;
       }
       // Meta answered inside `login`, before a state was asked for: there is nothing to exchange with.
@@ -262,18 +264,20 @@ export function ConnectLinkLanding({
         </ul>
       </div>
       <p className="m-0 text-sm text-muted-foreground">{copy.meta}</p>
-      <p className="m-0 text-sm text-muted-foreground">{copy.release}</p>
+      {/* Hidden while Meta's own error is on screen: it would say the same thing twice. */}
+      {note?.tone === "meta" ? null : <Callout tone="warning">{copy.release}</Callout>}
       {/* Mounted even while empty, so a filling region is announced. */}
       <output
         className={cn(
           "block",
-          (blocked || note) &&
-            (!blocked && note?.tone === "notice"
-              ? "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground"
-              : AUTH_ERROR_BANNER_CLASS),
+          !blocked && note?.tone === "notice" && "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground",
         )}
       >
-        {blocked ?? note?.text}
+        {blocked || (note && note.tone !== "notice") ? (
+          <Callout tone="error">{blocked ?? note?.text}</Callout>
+        ) : (
+          note?.text
+        )}
       </output>
       {blocked ? null : (
         <Button type="button" onClick={connect} disabled={busy || !sdk}>

@@ -182,6 +182,7 @@ describe("the landing", () => {
     await answer({ authResponse: null });
     expect(host.textContent).toContain(es.signupErrors["3441067"]);
     expect(host.textContent).toContain("Meta indicó error 3441067, sesión f34b51d. Compártelos si pides ayuda.");
+    expect(host.textContent).not.toContain(es.release);
   });
 
   test("an unknown error keeps the cancel note and still shows Meta's references", async () => {

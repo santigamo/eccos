@@ -50,7 +50,7 @@ const PAGE_LINKED =
 /** What happened and what to do, for an error Meta's window reported. */
 export const SIGNUP_ERRORS: Record<SignupErrorCode, string> = {
   "3441067":
-    "This number is on a WhatsApp Business account in a business portfolio you do not manage, often one set up by another WhatsApp provider. Ask that provider or the portfolio's admin to remove the number or give you access, or use a different number.",
+    "This number is on a WhatsApp Business account in a business portfolio you do not manage, often one set up by another WhatsApp provider. Ask that provider or the portfolio's admin to release the number, then start again, or use a different number.",
   "3441069":
     "This number is on the regular WhatsApp app, not the WhatsApp Business app. Move it to the WhatsApp Business app and connect it with the Business app option, or use a different number.",
   "3441070":

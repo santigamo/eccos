@@ -556,6 +556,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(live(host)).toContain("business portfolio you do not manage");
     expect(live(host)).not.toContain("The Meta window was closed");
     expect(live(host)).toContain("Meta reported error 3441067, session f34b51d. Quote both if you contact support.");
+    expect(host.textContent).not.toContain(CONNECT_RELEASE_NOTE);
   });
 
   test("asks to release a number another provider holds, before Meta opens", async () => {

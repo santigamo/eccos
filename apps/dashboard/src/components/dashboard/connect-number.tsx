@@ -37,8 +37,7 @@ import {
   watchPopup,
   watchWindow,
 } from "../../lib/connect-result";
-import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
-import { SUPPORT_TIER } from "./plain-table";
+import { Callout } from "../ui/callout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -167,6 +166,11 @@ export const CONNECT_FORK_DESCRIPTION =
 export const CONNECT_RELEASE_NOTE =
   "Used this number with another WhatsApp API provider or business portfolio? Ask them to release it first.";
 
+/** A cancel Meta gave a reason for is a problem to fix, not a change of mind. */
+function cancelledFeedback(step?: string, error?: { code?: string; sessionId?: string }) {
+  return { text: connectCancelledMessage(step, error), tone: error?.code ? ("meta" as const) : ("notice" as const) };
+}
+
 /**
  * Start Meta Embedded Signup: the fork itself, with no container of its own.
  *
@@ -225,7 +229,7 @@ export function ConnectNumberChoices({
    */
   const [feedback, setFeedback] = useState<{
     text: string;
-    tone: "error" | "notice" | "blocked" | "slow";
+    tone: "error" | "notice" | "meta" | "blocked" | "slow";
   } | null>(null);
   /** Set when the click found something unready and had to wait: Meta opens from a fresh click on "Open Meta". */
   const [awaiting, setAwaiting] = useState<ConnectPath | null>(null);
@@ -286,8 +290,9 @@ export function ConnectNumberChoices({
         else if (parsed.event !== "CANCEL") mine.error = undefined;
         // Meta's CANCEL can land just after the window closed: the notice catches up.
         if (mine.cancelled && mine.attempt === attempt.current) {
-          const text = connectCancelledMessage(mine.step, mine.error);
-          setFeedback((now) => (now?.tone === "notice" ? { text, tone: "notice" } : now));
+          setFeedback((now) =>
+            now?.tone === "notice" || now?.tone === "meta" ? cancelledFeedback(mine.step, mine.error) : now,
+          );
         }
       }
       trackSessionEvent(parsed);
@@ -470,7 +475,7 @@ export function ConnectNumberChoices({
       if (!isCurrent()) return;
       track("connect_outcome", { result: "cancelled" });
       mySession.cancelled = true;
-      setFeedback({ text: connectCancelledMessage(mySession.step, mySession.error), tone: "notice" });
+      setFeedback(cancelledFeedback(mySession.step, mySession.error));
       setStarting(null);
     };
     let popup: Window | null | undefined;
@@ -604,17 +609,18 @@ export function ConnectNumberChoices({
       <output
         className={cn(
           "block",
-          feedback &&
-            (feedback.tone === "notice" || feedback.tone === "slow"
-              ? "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground"
-              : AUTH_ERROR_BANNER_CLASS),
+          (feedback?.tone === "notice" || feedback?.tone === "slow") &&
+            "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground",
         )}
       >
-        {feedback?.text}
+        {feedback?.tone === "notice" || feedback?.tone === "slow" ? feedback.text : null}
         {feedback?.tone === "slow" ? (
           <button type="button" onClick={startAgain} className="ml-2 underline underline-offset-2">
             Start again
           </button>
+        ) : null}
+        {feedback && feedback.tone !== "notice" && feedback.tone !== "slow" ? (
+          <Callout tone="error">{feedback.text}</Callout>
         ) : null}
       </output>
 
@@ -640,7 +646,10 @@ export function ConnectNumberChoices({
             `gap-2`, not `gap-px`: two bordered rows sharing a 1px seam is the
             anatomy of TABLE ROWS, and that is most of why this panel read as a
           grid rather than as two controls at a fork. */}
-      <p className={cn("m-0 max-w-prose text-pretty", SUPPORT_TIER)}>{CONNECT_RELEASE_NOTE}</p>
+      {/* Hidden while Meta's own error is on screen: it would say the same thing twice. */}
+      {feedback?.tone === "meta" ? null : (
+        <Callout tone="warning">{CONNECT_RELEASE_NOTE}</Callout>
+      )}
 
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {CONNECT_PATHS.map(({ path, title, detail, caution, tone, icon }) => (
