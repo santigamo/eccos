@@ -67,11 +67,13 @@ describe("ConnectNumberPanel", () => {
     // job rather than being deleted: 100 words was roughly that content and no
     // prose. The Business app card then gained what a first customer hit
     // unwarned (the QR scan, the history choice, the week of use): 115.
+    // Then one pre-flight line, after a customer met Meta's 3441067 (a number
+    // another provider still held) only inside Meta's window: 130.
     // If this fails, the fix is almost certainly a sentence that crept
-    // back into the description or a card detail, not a seventh piece of copy.
+    // back into the description or a card detail, not another piece of copy.
     const html = render();
     const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    expect(text.split(" ").length).toBeLessThan(115);
+    expect(text.split(" ").length).toBeLessThan(130);
   });
 
   test("panels and buttons stay square", () => {

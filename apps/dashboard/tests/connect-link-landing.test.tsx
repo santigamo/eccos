@@ -165,6 +165,39 @@ describe("the landing", () => {
     expect(button(host)?.disabled).toBe(false);
   });
 
+  const reportError = (code: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: "https://www.facebook.com",
+          data: JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "ERROR", data: { error_code: code, session_id: "f34b51d" } }),
+        }),
+      );
+    });
+
+  test("an error Meta reported explains itself in the page's language, with Meta's references", async () => {
+    const host = await mount(es);
+    await click(host);
+    await reportError("3441067");
+    await answer({ authResponse: null });
+    expect(host.textContent).toContain(es.signupErrors["3441067"]);
+    expect(host.textContent).toContain("Meta indicó error 3441067, sesión f34b51d. Compártelos si pides ayuda.");
+  });
+
+  test("an unknown error keeps the cancel note and still shows Meta's references", async () => {
+    const host = await mount();
+    await click(host);
+    await reportError("524126");
+    await answer({ authResponse: null });
+    expect(host.textContent).toContain(`${en.cancelled} Meta reported error 524126, session f34b51d. Share both if you ask for help.`);
+  });
+
+  test("says to release a number another provider holds, before Meta opens", async () => {
+    expect((await mount(es)).textContent).toContain(es.release);
+    act(() => unmount?.());
+    expect((await mount()).textContent).toContain(en.release);
+  });
+
   test("each refusal reads in its own words and keeps the button", async () => {
     const said: Array<[LinkOutcome, string]> = [
       [{ outcome: "owned" }, en.owned("Rubén")],

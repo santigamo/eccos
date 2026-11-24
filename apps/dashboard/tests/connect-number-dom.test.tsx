@@ -37,7 +37,7 @@ mock.module("../src/server/gateway", () => ({
 
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { ConnectNumberChoices, resetConnectGuards } = await import("../src/components/dashboard/connect-number");
+const { CONNECT_RELEASE_NOTE, ConnectNumberChoices, resetConnectGuards } = await import("../src/components/dashboard/connect-number");
 
 type LoginCallback = (response: { authResponse?: { code?: string } | null }) => void;
 
@@ -547,6 +547,20 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => loginCallback?.({ authResponse: null }));
     expect(live(host)).toContain("Nothing changed");
     expect(live(host)).not.toContain("Meta reported");
+  });
+
+  test("a known Meta error says what happened and what to do, with Meta's references", async () => {
+    const { host, post } = await openObserved();
+    await post("ERROR", { ...REPORTED, error_code: "3441067" });
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("business portfolio you do not manage");
+    expect(live(host)).not.toContain("The Meta window was closed");
+    expect(live(host)).toContain("Meta reported error 3441067, session f34b51d. Quote both if you contact support.");
+  });
+
+  test("asks to release a number another provider holds, before Meta opens", async () => {
+    const host = await mountChoices();
+    expect(host.textContent).toContain(CONNECT_RELEASE_NOTE);
   });
 
   test("a late CANCEL from an older window does not rewrite a newer attempt", async () => {

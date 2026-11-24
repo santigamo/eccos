@@ -3,6 +3,8 @@ import type { ConnectExchangeResult } from "@eccos/gateway-contract";
 import {
   CONNECT_CANCELLED_MESSAGE,
   QR_CODE_STEP,
+  SIGNUP_ERRORS,
+  type SignupErrorCode,
   connectCancelledMessage,
   connectAudit,
   judgeExchange,
@@ -12,6 +14,8 @@ import {
   secondsBucket,
   watchPopup,
 } from "../src/lib/connect-result";
+import { en } from "../src/lib/connect-link/en";
+import { es } from "../src/lib/connect-link/es";
 
 const phone = { waba_id: "100", phone_number_id: "200", display_phone_number: "+1 555 0100" };
 
@@ -129,6 +133,27 @@ describe("connectCancelledMessage", () => {
       "Meta reported session f34b51d. Quote it if you contact support.",
     );
     expect(connectCancelledMessage(undefined, {})).toBe(CONNECT_CANCELLED_MESSAGE);
+  });
+  test("a known Meta code says what happened and what to do, and keeps the references", () => {
+    const m = connectCancelledMessage(QR_CODE_STEP, { code: "3441067", sessionId: "f34b51d" });
+    expect(m).toStartWith(SIGNUP_ERRORS["3441067"]);
+    expect(m).toContain("business portfolio you do not manage");
+    expect(m).toEndWith("Meta reported error 3441067, session f34b51d. Quote both if you contact support.");
+  });
+  test("an unknown code keeps the generic notice and its references", () => {
+    expect(connectCancelledMessage(undefined, { code: "524126" })).toBe(
+      `${CONNECT_CANCELLED_MESSAGE} Meta reported error 524126. Quote it if you contact support.`,
+    );
+    expect(connectCancelledMessage(undefined, { code: "toString" })).toStartWith(CONNECT_CANCELLED_MESSAGE);
+  });
+  test("the phone-setup codes are covered, with no dashes in any language", () => {
+    for (const code of Object.keys(SIGNUP_ERRORS) as SignupErrorCode[]) {
+      expect(SIGNUP_ERRORS[code], code).not.toMatch(/[—–]/);
+      for (const copy of [en, es]) expect(copy.signupErrors[code], `${copy.lang} ${code}`).not.toMatch(/[—–]/);
+    }
+    for (const code of ["3441067", "3441069", "3441070", "2655145", "2655123", "3441093", "2494064"]) {
+      expect(Object.hasOwn(SIGNUP_ERRORS, code), code).toBe(true);
+    }
   });
 });
 

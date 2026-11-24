@@ -38,6 +38,7 @@ import {
   watchWindow,
 } from "../../lib/connect-result";
 import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
+import { SUPPORT_TIER } from "./plain-table";
 import { cn } from "@/lib/utils";
 
 /**
@@ -161,6 +162,10 @@ const SDK_REQUIRED_MESSAGE =
  */
 export const CONNECT_FORK_DESCRIPTION =
   "Is this number on WhatsApp today? You can't switch once Meta's window opens.";
+
+/** Said before Meta's window opens: a number another provider or portfolio holds fails inside it (3441067). */
+export const CONNECT_RELEASE_NOTE =
+  "Used this number with another WhatsApp API provider or business portfolio? Ask them to release it first.";
 
 /**
  * Start Meta Embedded Signup: the fork itself, with no container of its own.
@@ -635,6 +640,8 @@ export function ConnectNumberChoices({
             `gap-2`, not `gap-px`: two bordered rows sharing a 1px seam is the
             anatomy of TABLE ROWS, and that is most of why this panel read as a
           grid rather than as two controls at a fork. */}
+      <p className={cn("m-0 max-w-prose text-pretty", SUPPORT_TIER)}>{CONNECT_RELEASE_NOTE}</p>
+
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {CONNECT_PATHS.map(({ path, title, detail, caution, tone, icon }) => (
             <li key={path}>

@@ -5,7 +5,8 @@ import { Button } from "../ui/button";
 import { type LinkOutcome, type LinkStart, type LinkView, connectLinkApi } from "../../lib/connect-link/api";
 import type { ConnectLinkCopy } from "../../lib/connect-link/en";
 import { forgetLinkToken, takeLinkToken } from "../../lib/connect-link/token";
-import { loginOptions, parseSessionEvent } from "../../lib/embedded-signup";
+import { isSignupErrorCode } from "../../lib/connect-result";
+import { type SessionEvent, loginOptions, parseSessionEvent } from "../../lib/embedded-signup";
 import { type FacebookSdk, captureWindowOpen, currentFacebookSdk, loadFacebookSdk } from "../../lib/facebook-sdk";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +46,8 @@ export function ConnectLinkLanding({
   const token = useRef<string | null>(null);
   /** Which click is current, so a closed window's late callback cannot touch a newer attempt. */
   const attempt = useRef(0);
+  /** The error reported in Meta's window, while nothing but a CANCEL has followed it. */
+  const reported = useRef<SessionEvent | null>(null);
 
   // The first request that carries the token, and the one that marks the link opened: a
   // link preview fetches the page but never runs this.
@@ -87,7 +90,10 @@ export function ConnectLinkLanding({
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       const parsed = parseSessionEvent(event.origin, event.data);
-      if (parsed && token.current) api.event(token.current, parsed);
+      if (!parsed) return;
+      if (parsed.errorCode) reported.current = parsed;
+      else if (parsed.event !== "CANCEL") reported.current = null;
+      if (token.current) api.event(token.current, parsed);
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -177,6 +183,7 @@ export function ConnectLinkLanding({
     const mine = ++attempt.current;
     setBusy(true);
     setNote(null);
+    reported.current = null;
     let refused = false;
     let settled = false;
     let started: Promise<LinkStart | "limited" | "unreachable"> | null = null;
@@ -186,7 +193,7 @@ export function ConnectLinkLanding({
       const code = response.authResponse?.code;
       if (!code) {
         setBusy(false);
-        setNote({ text: copy.cancelled, tone: "notice" });
+        setNote({ text: cancelledText(copy, reported.current), tone: "notice" });
         return;
       }
       // Meta answered inside `login`, before a state was asked for: there is nothing to exchange with.
@@ -255,6 +262,7 @@ export function ConnectLinkLanding({
         </ul>
       </div>
       <p className="m-0 text-sm text-muted-foreground">{copy.meta}</p>
+      <p className="m-0 text-sm text-muted-foreground">{copy.release}</p>
       {/* Mounted even while empty, so a filling region is announced. */}
       <output
         className={cn(
@@ -274,6 +282,13 @@ export function ConnectLinkLanding({
       )}
     </Card>
   );
+}
+
+/** A known error explains itself; any reported error keeps Meta's references. */
+function cancelledText(copy: ConnectLinkCopy, error: SessionEvent | null): string {
+  if (!error) return copy.cancelled;
+  const cause = isSignupErrorCode(error.errorCode) ? copy.signupErrors[error.errorCode] : copy.cancelled;
+  return `${cause} ${copy.reported(error.errorCode, error.sessionId)}`;
 }
 
 function Card({ copy, children }: { copy: ConnectLinkCopy; children: React.ReactNode }) {

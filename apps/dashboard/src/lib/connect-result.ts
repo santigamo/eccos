@@ -29,14 +29,67 @@ export const QR_CODE_STEP = "WHATSAPP_BUSINESS_APP_ONBOARDING_QR_CODE";
 const CANCELLED_AT_QR_MESSAGE =
   "Meta's window was closed at the QR code step. Nothing changed. If Meta said the number lacks activity, use it in the WhatsApp Business app for about a week, then try again.";
 
+/** The Embedded Signup error codes the console explains, from Meta's Embedded Signup error table. */
+export type SignupErrorCode =
+  | "3441067"
+  | "3441069"
+  | "3441070"
+  | "3441072"
+  | "3441090"
+  | "3441071"
+  | "3441075"
+  | "2655145"
+  | "2655123"
+  | "2655082"
+  | "3441093"
+  | "2494064";
+
+const PAGE_LINKED =
+  "This number is linked to a Facebook Page. In Meta Business Suite, open Settings, Accounts, Pages and remove that Page from the portfolio, or use a different number.";
+
+/** What happened and what to do, for an error Meta's window reported. */
+export const SIGNUP_ERRORS: Record<SignupErrorCode, string> = {
+  "3441067":
+    "This number is on a WhatsApp Business account in a business portfolio you do not manage, often one set up by another WhatsApp provider. Ask that provider or the portfolio's admin to remove the number or give you access, or use a different number.",
+  "3441069":
+    "This number is on the regular WhatsApp app, not the WhatsApp Business app. Move it to the WhatsApp Business app and connect it with the Business app option, or use a different number.",
+  "3441070":
+    "This number is in use on WhatsApp and cannot be connected this way. If it is on the WhatsApp Business app, start again and choose the Business app option. Otherwise delete the WhatsApp account on it first, or use a different number.",
+  "3441072":
+    "This number is on the WhatsApp Business app. Start again and choose the Business app option, or use a number that is not on the app.",
+  "3441090":
+    "This number is on another WhatsApp Business account in your own business portfolio. Remove it from that account in WhatsApp Manager, then try again, or use a different number.",
+  "3441071":
+    "The business portfolio that owns this number requires two-factor authentication on your Facebook account. Turn it on in Facebook's security settings, then try again.",
+  "3441075": "This number has two-step verification turned on. Turn it off for this number, then try again.",
+  "2655145":
+    "Your Facebook account is restricted from managing business assets. Review the restriction in Meta's Business Support Home, or ask someone else in your business to connect the number.",
+  "2655123": PAGE_LINKED,
+  "2655082": PAGE_LINKED,
+  "3441093":
+    "This number is still being disconnected from a previous connection, which can take from a few minutes to more than a day. Try again later, or use a different number.",
+  "2494064":
+    "This number is already registered on WhatsApp, the WhatsApp Business app or with another WhatsApp API provider. Release it there first, or use a different number.",
+};
+
+export function isSignupErrorCode(code: string | undefined): code is SignupErrorCode {
+  return code !== undefined && Object.hasOwn(SIGNUP_ERRORS, code);
+}
+
 /**
  * The cancel notice for the screen Meta's window was closed on. When the
- * customer reported an error from inside the flow, Meta's references for it
- * are appended: the session id is what Meta's support asks for.
+ * customer reported an error from inside the flow, a known code explains
+ * itself and Meta's references are appended: the session id is what Meta's
+ * support asks for.
  */
 export function connectCancelledMessage(step?: string, error?: { code?: string; sessionId?: string }): string {
-  const base = step === QR_CODE_STEP ? CANCELLED_AT_QR_MESSAGE : CONNECT_CANCELLED_MESSAGE;
-  const refs = [error?.code && `error ${error.code}`, error?.sessionId && `session ${error.sessionId}`].filter(Boolean);
+  const code = error?.code;
+  const base = isSignupErrorCode(code)
+    ? SIGNUP_ERRORS[code]
+    : step === QR_CODE_STEP
+      ? CANCELLED_AT_QR_MESSAGE
+      : CONNECT_CANCELLED_MESSAGE;
+  const refs = [code && `error ${code}`, error?.sessionId && `session ${error.sessionId}`].filter(Boolean);
   if (refs.length === 0) return base;
   return `${base} Meta reported ${refs.join(", ")}. Quote ${refs.length > 1 ? "both" : "it"} if you contact support.`;
 }
