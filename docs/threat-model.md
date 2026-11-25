@@ -127,13 +127,14 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
 - **Multi-tenant initiation:** `POST /connect/start` authenticates an account key and returns a
   short-lived state URL. The browser opens that URL without headers; `GET /connect` validates the
   state in the control plane and sets the CSRF cookie before redirecting to Meta.
-- **CSRF/state mitigation (`GET /connect`):** `GET /connect` sets a short-lived (30 min),
-  `httpOnly`, `SameSite=Lax` cookie (`eccos_connect_state`) carrying a random OAuth `state`
-  before redirecting to Meta; it also sets `secure` on public HTTPS origins and omits it for
-  localhost HTTP development. On the callback it compares the query `state` against the cookie
-  value with `constantTimeEqual` (`oauthStateIsValid` in `connect.ts`) and fails closed (`400`)
-  on a missing or mismatched value, clearing the cookie either way. This blocks an attacker from
-  tricking a victim's browser into completing an OAuth exchange the victim didn't initiate.
+- **CSRF/state mitigation (`GET /connect`):** `GET /connect` sets a short-lived (2 h, the
+  lifetime of the connect state, which nothing extends), `httpOnly`, `SameSite=Lax` cookie
+  (`eccos_connect_state`) carrying a random OAuth `state` before redirecting to Meta; it also
+  sets `secure` on public HTTPS origins and omits it for localhost HTTP development. On the
+  callback it compares the query `state` against the cookie value with `constantTimeEqual`
+  (`oauthStateIsValid` in `connect.ts`) and fails closed (`400`) on a missing or mismatched
+  value, clearing the cookie either way. This blocks an attacker from tricking a victim's browser
+  into completing an OAuth exchange the victim didn't initiate.
 - **Console return (`return_to`) mitigation:** the callback hands the operator back to the console
   instead of ending on the gateway's own result page (eccos-5z9). The return URL is accepted **only**
   on the RPC entrypoint (`startConnectForAccountId`), never on the public `POST /connect/start`, so

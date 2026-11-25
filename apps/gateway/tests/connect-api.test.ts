@@ -504,7 +504,7 @@ describe("GET /connect OAuth state (F4a CSRF, route-level)", () => {
     expect(setCookie).toContain("Secure");
     expect(setCookie).toContain("SameSite=Lax");
     expect(setCookie).toContain("Path=/connect");
-    expect(setCookie).toContain("Max-Age=1800");
+    expect(setCookie).toContain("Max-Age=7200");
   });
 
   it("omits Secure for a localhost HTTP development origin", async () => {
