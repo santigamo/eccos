@@ -154,16 +154,26 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 |---|---|---|
 | Sign-up / verification | log, continue | **surface** — bounded, membership-neutral message |
 | Password reset | log, continue | **swallow**, log, keep the generic response |
+| Verification resend | log, continue | **swallow**, log, keep the generic response |
 | Invitation | log, continue | **surface** to the inviter |
 | Two-factor setup code | log, continue | **surface**: the setup cannot go on without it |
 | Two-factor change notice | log, continue | log; the change already happened |
 
-- **Sign-up may surface it** because an existing account short-circuits *before*
+- **Sign-up may surface it** (today better-auth logs the throw instead, see the
+  gap below) because an existing account short-circuits *before*
   any send happens, so it discloses the deliverability of a freshly typed
   address, not membership — and the dominant cause is the user's own typo, which
   only they can fix.
 - **Password reset must not**, ever. `sendResetPassword` only runs for accounts
   that exist, so any observable difference there is a membership oracle.
+- **Verification resend must not** either. `POST /send-verification-email` takes any
+  address and only sends for an existing unverified account, so a thrown error
+  there answered 500 for real accounts only, and the console read that 500 as
+  "sent again" anyway (eccos-57r8). Undeliverable outcomes and provider failures
+  (`MailProviderError`, logged as `send-failed`) are both swallowed, so the status
+  code is the same for every address. Response time is not: better-auth's 500 ms
+  floor only pads fast calls. The check-your-inbox screen shows the address and
+  tells the user to check it for a typo.
 - **Invitation may**, because the inviter is authenticated and typed the address.
 - **`recipient_suppressed` gets its own message** ("email to this address is
   currently blocked"), never the typo message: retyping cannot fix a suppression.
@@ -177,11 +187,12 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 > `ctx.context.runInBackgroundOrAwait` (`dist/context/create-context.mjs:215`),
 > which awaits the promise inside a `try/catch` and merely **logs** a rejection.
 > So the sign-up and invitation `undeliverable` messages do not reach the
-> response today; only `POST /send-verification-email` re-throws
-> (`dist/api/routes/email-verification.mjs:117`). Since 1.7.21 better-auth
-> states this for sign-up outright: a thrown `sendVerificationEmail` is logged and the
-> sign-up succeeds. The policy is written to the contract regardless — it is correct
-> where the throw surfaces, and the structured log is the durable record elsewhere. The
+> response today. `POST /send-verification-email` would re-throw
+> (`dist/api/routes/email-verification.mjs:117`), which is why its own policy
+> swallows. Since 1.7.21 better-auth states the sign-up half outright: a thrown
+> `sendVerificationEmail` is logged and the sign-up succeeds. So today no
+> verification `undeliverable` reaches a response at all; the policy is written to
+> the contract regardless, and the structured log is the durable record. The
 > behaviour is pinned by a test in `tests/mail-policy.test.ts` so it fails loudly
 > when it changes. (Incidentally this is *why* the reset flow's "swallow" is
 > belt-and-braces rather than the only thing standing between us and an oracle.)
