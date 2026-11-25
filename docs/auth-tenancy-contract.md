@@ -121,8 +121,8 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Subscriber config write | admin | **Yes** | TOTP (owner/admin) + ≤15 min recent auth |
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |
 | API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
-| Embedded Signup `/connect` start | admin | **Yes** | Issues the account-bound OAuth state |
-| Embedded Signup callback / code exchange | admin | — (by design) | Must present the state the stepped-up start issued. Meta's code is single-use and lives 30 seconds, so a step-up refusal here would lose it and force the whole flow again |
+| Embedded Signup `/connect` start, token attach | admin | — | Issues the account-bound OAuth state. No step-up: Meta's window opens on the click, before the start answers, so a refusal would only show after the customer went through Meta |
+| Embedded Signup callback / code exchange | admin | — (by design) | Must present the state the start issued. Meta's code is single-use and lives 30 seconds, so a step-up refusal here would lose it and force the whole flow again |
 | Connection link: make or replace | admin | **Yes** | One per workspace; see below. Reading its status needs no step-up |
 | Conversation retention write | admin | **Yes** | Shortening it purges history |
 | Export data | admin | **Yes** | |
@@ -235,8 +235,8 @@ Connected agents. A demotion needs no handling: the live role check refuses firs
   reset, invitation, and security-notification email) with the provider chosen and configured in
   eccos-0x0.11. Provider secrets live only in Worker secrets/bindings; the interface ships in
   eccos-0x0.2 so auth flows are testable with a stub sender.
-- **MFA policy**: TOTP is **required for owner/admin roles before sensitive actions** — connect,
-  API keys, export, erasure, membership/role changes, and subscriber config write (§4). Enrollment
+- **MFA policy**: TOTP is **required for owner/admin roles before sensitive actions** — connection
+  links, API keys, export, erasure, membership/role changes, and subscriber config write (§4). Enrollment
   and enforcement are implemented (`eccos-eyel`; docs/auth-hardening.md, "Step-up enforcement");
   this contract fixes the policy. **Setting up TOTP requires a code mailed to the account's
   verified address**, so the password alone never yields a second factor, and every change to

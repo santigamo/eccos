@@ -198,13 +198,13 @@ describe("permissions table", () => {
     },
     getConnectLink: {
       action: "administer",
-      evidence: [[consoleGateway, "`administer` to read, and the `connect` step-up row to * make one"]],
+      evidence: [[consoleGateway, "`administer` to read, and the `connect-link` step-up row to * make one"]],
     },
     issueConnectLink: {
       action: "administer",
       evidence: [
-        [consoleGateway, `await requireActor("connect"); // Without \`replace\` the gateway keeps a live link, so two dialogs opening at once share one. const issued = await gateway.issueConnectLink(`],
-        [consoleStepUp, `connect: "administer",`],
+        [consoleGateway, `await requireActor("connect-link"); // Without \`replace\` the gateway keeps a live link, so two dialogs opening at once share one. const issued = await gateway.issueConnectLink(`],
+        [consoleStepUp, `"connect-link": "administer",`],
       ],
     },
     reconcileWaba: { action: "configure", evidence: [[consoleGateway, `return gateway.reconcileWaba(data.wabaId, account.accountId); }, "configure"),`]] },
