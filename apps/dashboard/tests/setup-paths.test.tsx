@@ -48,6 +48,8 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { SetupWizard } = await import("../src/components/setup-paths/setup-wizard");
 const { exchangeProof } = await import("../src/components/setup-paths/use-latest-exchange");
+const { openAfterHydration } = await import("../src/components/setup-paths/activation-dialog");
+const { SetupPaused } = await import("../src/components/setup-paths/setup-paused");
 
 const START = 1_000_000_000_000;
 const ok = (data: unknown) => async () => ({ ok: true, data });
@@ -181,6 +183,16 @@ describe("path A: reply from Eccos", () => {
     expect(host.textContent).toContain("Hi! We got your message.");
     expect(host.textContent).toContain("Delivered to +34600111222");
   });
+
+  test("a reply the gateway could not send reads in the console's words, never the server's", async () => {
+    stubs.listConversations = page([arrived]);
+    const host = await wizard();
+    await press(host, "Just answer from Eccos");
+    stubs.sendText = async () => ({ ok: false, kind: "unreachable", error: "internal error; reference = 7f3a" });
+    await press(host, "Send reply");
+    expect(host.textContent).toContain("We couldn't send the reply. Try again in a moment.");
+    expect(host.textContent).not.toContain("internal error");
+  });
 });
 
 describe("path B: connect my tool", () => {
@@ -189,7 +201,7 @@ describe("path B: connect my tool", () => {
     expect(heading(host)).toBe("Which tool should get your messages?");
     await press(host, "Make");
     expect(heading(host)).toBe("Get your webhook address from Make");
-    stubs.setSubscriberConfig = ok({ ok: true });
+    stubs.setSubscriberConfig = ok({ ok: true, savedAt: START });
     await type(host.querySelector<HTMLInputElement>('input[type="url"]') as HTMLInputElement, "https://hook.eu2.make.com/abc");
     await press(host, "Save and test");
   }
@@ -239,6 +251,48 @@ describe("path B: connect my tool", () => {
     expectPaywall(host);
     expect(host.textContent).toContain("Second try");
     expect(host.textContent).toContain("Make accepted it at");
+  });
+
+  const unreadable = (overrides: Record<string, unknown>) => ({
+    id: 3,
+    type: "reply",
+    transport_message_id: null,
+    message_id: "wamid.in3",
+    phone_number_id: "200",
+    payload: JSON.stringify({ from: "34600111222", text: "Hello" }),
+    received_at: START + 1_000,
+    delivery_status: "pending",
+    delivery_attempts: 1,
+    delivery_last_error: "internal error; reference = 9c1e",
+    ...overrides,
+  });
+
+  test("an address that cannot be reached says so honestly, with no raw provider text", async () => {
+    const host = await wizard();
+    stubs.listInbound = ok([unreadable({})]);
+    await toTest(host);
+    expect(heading(host)).toBe("We couldn't reach that address");
+    expect(host.textContent).toContain("Check it's correct and your scenario is on.");
+    expect(host.textContent).not.toContain("internal error");
+    expect(host.textContent).not.toContain("answered with an error");
+  });
+
+  test("a message received before the address was saved never decides the test", async () => {
+    const host = await wizard();
+    stubs.listInbound = ok([unreadable({ received_at: START - 1_000, delivery_status: "delivered", delivery_finished_at: START + 1_000 })]);
+    await toTest(host);
+    expect(heading(host)).toBe("Now send a WhatsApp to your number");
+  });
+
+  test("a refused save reads in the console's words", async () => {
+    const host = await wizard();
+    await press(host, "Connect it to my tool");
+    await press(host, "Make");
+    stubs.setSubscriberConfig = async () => ({ ok: false, kind: "forbidden", error: "invalid subscriber url: private host" });
+    await type(host.querySelector<HTMLInputElement>('input[type="url"]') as HTMLInputElement, "https://hook.eu2.make.com/abc");
+    await press(host, "Save and test");
+    expect(host.textContent).toContain("We couldn't save that address. Check it's the full link and try again.");
+    expect(host.textContent).not.toContain("private host");
   });
 
   test("an address that is not https cannot be saved", async () => {
@@ -350,5 +404,28 @@ describe("proof read back for a server-side activation", () => {
 
   test("nothing written, no proof", () => {
     expect(exchangeProof("1", [record("x", "in", 1, null, null)] as never)).toBeNull();
+  });
+});
+
+describe("paused and page-load states", () => {
+  test("a paused workspace is told to subscribe first, with no live test that cannot pass", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(<SetupPaused />));
+    unmount = () => root.unmount();
+    expect(heading(host)).toBe("Subscribe to resume, then test");
+    expect(host.textContent).not.toContain("Waiting for");
+    expect(host.querySelector("button")).toBeNull();
+  });
+
+  test("the activation dialog opens after the page settles, not during hydration", async () => {
+    let opened = 0;
+    openAfterHydration(() => opened++);
+    const cancel = openAfterHydration(() => opened++);
+    cancel();
+    expect(opened).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    expect(opened).toBe(1);
   });
 });

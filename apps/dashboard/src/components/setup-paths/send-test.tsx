@@ -2,7 +2,7 @@ import { useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePoll } from "../../hooks/use-poll";
-import { failureCopy, sendTestFailureCopy } from "../../lib/failure";
+import { friendlyFailure, sendTestFailureCopy } from "../../lib/failure";
 import { sendKeyed, type SendGate } from "../../lib/send-gate";
 import { digitsOf, plusNumber, type SendOutcome, sendToOutcome, shortTime } from "../../lib/setup-test";
 import { listOutbound, sendTemplateTest } from "../../server/gateway";
@@ -75,8 +75,8 @@ export function SendTest({
     try {
       const payload = { wabaId, phoneNumberId, to: digits, ...HELLO_WORLD };
       const res = await sendKeyed(gate.current, payload, (data) => sendTemplateTest({ data }));
-      if (!res.ok) setError(failureCopy(res).detail);
-      else if (!res.data.ok) setError(sendTestFailureCopy(res.data.code, res.data.detail).detail);
+      if (!res.ok) setError(friendlyFailure(res, "We couldn't send the test. Try again in a moment."));
+      else if (!res.data.ok) setError(sendTestFailureCopy(res.data.code, null).detail);
     } finally {
       setBusy(false);
     }
@@ -130,7 +130,7 @@ export function SendTest({
         ]}
       />
       {outcome.state === "failed" ? (
-        <Callout tone="error">Meta did not deliver it{outcome.error ? ` (${outcome.error})` : ""}. Check the number and send again.</Callout>
+        <Callout tone="error">Meta did not deliver it{outcome.reason ? `: ${outcome.reason}` : ""}. Check the number and send again.</Callout>
       ) : valid ? (
         <div className="border-t border-border pt-4">
           <Waiting>

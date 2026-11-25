@@ -120,9 +120,9 @@ export function SetupWizard({
           guide={GUIDES[tool]}
           wabaId={wabaId}
           initialUrl={savedUrl}
-          onSaved={(url) => {
+          onSaved={(url, at) => {
             setSavedUrl(url);
-            setSavedAt(now());
+            setSavedAt(at);
             setView("tool-test");
           }}
           onBack={() => setView("tool-pick")}
@@ -139,7 +139,6 @@ export function SetupWizard({
           onChangeAddress={() => setView("tool-address")}
           onBack={() => setView("tool-address")}
           onSuccess={succeed}
-          now={now}
         />
       );
       break;

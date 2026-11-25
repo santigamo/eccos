@@ -7,8 +7,6 @@ import {
   type Result,
 } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
-import { withStepUp } from "../../lib/step-up";
-import { StepUpSheet } from "./step-up-sheet";
 import { INLINE_LINK, fmtTs, fmtTsShort } from "../../ui";
 import {
   AlertDialog,
@@ -55,7 +53,7 @@ export function ApiKeysPanel({
     setCreating(true);
     setError(null);
     try {
-      const res = await withStepUp(() => issueApiKey({ data: { label } }));
+      const res = await issueApiKey({ data: { label } });
       if (!res.ok) {
         setError(failureCopy(res).detail);
         return;
@@ -263,7 +261,7 @@ function RevokeKeyDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await withStepUp(() => revokeApiKey({ data: { keyId: target.keyId } }));
+      const res = await revokeApiKey({ data: { keyId: target.keyId } });
       if (!res.ok) {
         setError(failureCopy(res).detail);
         return;
@@ -302,8 +300,6 @@ function RevokeKeyDialog({
             {busy ? "Revoking…" : "Revoke key"}
           </AlertDialogAction>
         </AlertDialogFooter>
-        {/* Nested: step-up for the revoke opens inside this dialog. */}
-        <StepUpSheet />
       </AlertDialogContent>
     </AlertDialog>
   );

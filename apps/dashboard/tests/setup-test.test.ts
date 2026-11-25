@@ -70,7 +70,17 @@ describe("path A: reply from Eccos", () => {
     expect(replyOutcome([outbound({ trail: [delivered(START + 5)] })], "wamid.other")).toEqual({ state: "waiting" });
     expect(replyOutcome([outbound({ trail: [delivered(START + 5)] })], "wamid.1")).toEqual({ state: "delivered", at: START + 5 });
     expect(replyOutcome([outbound({ trail: [{ ...delivered(START + 6), type: "read" }] })], "wamid.1").state).toBe("delivered");
-    expect(replyOutcome([outbound({ status: "failed", error: "131047" })], "wamid.1")).toEqual({ state: "failed", error: "131047" });
+    expect(replyOutcome([outbound({ status: "failed", error: "boom" })], "wamid.1")).toEqual({ state: "failed", reason: null });
+  });
+
+  test("a failed reply reads Meta's code in the console's words, never Meta's raw text", () => {
+    const envelope = JSON.stringify({ error: { code: 131047, message: "Re-engagement message (raw)" } });
+    expect(replyOutcome([outbound({ status: "failed", error: envelope })], "wamid.1")).toEqual({
+      state: "failed",
+      reason: "Outside the 24-hour window",
+    });
+    const raw = JSON.stringify({ error: { code: 999999, message: "internal error; reference = abc" } });
+    expect(replyOutcome([outbound({ status: "failed", error: raw })], "wamid.1")).toEqual({ state: "failed", reason: null });
   });
 });
 
@@ -114,10 +124,17 @@ describe("path B: connect my tool", () => {
     if (timeout.state === "refused") expect(timeout.httpStatus).toBeNull();
   });
 
-  test("events held from before the address was saved never count", () => {
-    expect(forwardOutcome([inbound({ received_at: START - CLOCK_SLACK_MS - 1, delivery_status: "delivered" })], START)).toEqual({
-      state: "waiting",
-    });
+  test("events held from before the address was saved never count, however recent", () => {
+    for (const received_at of [START - CLOCK_SLACK_MS - 1, START - 1_000, START]) {
+      expect(forwardOutcome([inbound({ received_at, delivery_status: "delivered", delivery_finished_at: START + 5_000 })], START)).toEqual({
+        state: "waiting",
+      });
+    }
+  });
+
+  test("an address that could not be reached has no status and no raw text", () => {
+    const outcome = forwardOutcome([inbound({ delivery_last_error: "internal error; reference = 7f3a" })], START);
+    expect(outcome).toEqual({ state: "refused", at: START + 1_000, httpStatus: null, message: expect.anything() });
   });
 });
 

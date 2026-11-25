@@ -9,7 +9,7 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 const { SettingsView } = await import("../src/routes/settings");
 const { FirstRunConnect, NumbersView } = await import("../src/routes/numbers");
 const { closedNotice, sendingPausedNotice } = await import("../src/billing/notice");
-const { SendingNotice } = await import("../src/components/dashboard/subscription-notice");
+const { SendingNotice, SubscriptionNotice } = await import("../src/components/dashboard/subscription-notice");
 const { sendingPaused } = await import("../src/routes/__root");
 const { sendTestFailureCopy, sendTextFailureCopy } = await import("../src/lib/failure");
 const { billingStatusLabel, checkoutReturnNote } = await import("../src/components/dashboard/billing-panel");
@@ -135,26 +135,32 @@ describe("billing on", () => {
     ]);
   });
 
-  test("a workspace in setup with its number may not add another, and is told the number keeps working", () => {
+  test("right after connecting, Numbers does not lead with the second-number subscription", () => {
     const html = renderToStaticMarkup(<NumbersView resources={resources("setup")} billing />);
-    expect(html).toContain("Adding a new number needs an active subscription");
-    expect(html).toContain("keep working and can be reconnected");
-    expect(renderToStaticMarkup(<NumbersView resources={resources("past_due")} billing />)).not.toContain("subscription");
+    expect(html).not.toContain("needs an active subscription");
+    expect(html).not.toContain("Start subscription");
+    expect(html).toContain("+ Add number");
   });
 
-  test("Numbers warns while closed and never blocks connecting", () => {
-    // A closed workspace must still be able to reconnect a number it already has.
-    const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />);
-    expect(html).toContain("Adding a new number needs an active subscription: 5 EUR per month + VAT for 1 number. The price follows");
+  test("adding a number says a second one needs a subscription, and the first keeps working", () => {
+    const html = renderToStaticMarkup(<SubscriptionNotice billing numbers={1} reconnect />);
+    expect(html).toContain("Adding a new number needs an active subscription: 5 € per month + VAT for 1 number. The price follows");
+    expect(html).toContain("keep working and can be reconnected");
     expect(html).toContain("new number left out");
     expect(html).toContain("Start subscription");
+  });
+
+  test("a closed workspace still reaches the connect fork, and the pause banner is its one CTA", () => {
+    // A closed workspace must still be able to reconnect a number it already has.
+    const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />);
     expect(html).toContain("+ Add number");
+    expect(html).not.toContain("Start subscription");
     expect(html).not.toMatch(/<button[^>]*\sdisabled=/);
   });
 
   test("first run on a closed workspace offers the subscription instead of Meta's window", () => {
     const html = renderToStaticMarkup(<FirstRunConnect closed billing />);
-    expect(html).toContain("needs an active subscription: 5 EUR per month + VAT for 1 number.");
+    expect(html).toContain("needs an active subscription: 5 € per month + VAT for 1 number.");
     expect(html).toContain("Start subscription");
     expect(html).not.toContain("connect your WhatsApp number");
     const pastDue = renderToStaticMarkup(<FirstRunConnect closed billing subscribed />);
@@ -171,17 +177,17 @@ describe("billing on", () => {
     const views = [
       renderToStaticMarkup(<FirstRunConnect closed billing canManageBilling={false} />),
       renderToStaticMarkup(<FirstRunConnect closed billing subscribed canManageBilling={false} />),
-      renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling={false} />),
-      renderToStaticMarkup(<NumbersView resources={resources("closed")} billing subscribed canManageBilling={false} />),
+      renderToStaticMarkup(<SubscriptionNotice billing numbers={1} reconnect canManage={false} />),
+      renderToStaticMarkup(<SubscriptionNotice billing subscribed numbers={1} reconnect canManage={false} />),
     ];
     for (const html of views) {
       expect(html).toContain(ASK);
       expect(html).not.toContain("Start subscription");
       expect(html).not.toContain("Manage billing");
-      expect(html).not.toContain("EUR");
+      expect(html).not.toContain("€");
     }
     // Reconnecting what the workspace already has stays open to them.
-    expect(views[2]).toContain("+ Add number");
+    expect(renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling={false} />)).toContain("+ Add number");
     const refused = renderToStaticMarkup(
       <NumbersView resources={resources("closed")} billing canManageBilling={false} connectError="subscription_required" />,
     );
@@ -190,33 +196,32 @@ describe("billing on", () => {
 
   test("an owner or admin keeps the price and the button", () => {
     const gate = renderToStaticMarkup(<FirstRunConnect closed billing canManageBilling />);
-    expect(gate).toContain("5 EUR per month + VAT for 1 number.");
+    expect(gate).toContain("5 € per month + VAT for 1 number.");
     expect(gate).toContain("Start subscription");
-    const notice = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing canManageBilling />);
+    const notice = renderToStaticMarkup(<SubscriptionNotice billing numbers={1} reconnect canManage />);
     expect(notice).toContain("Start subscription");
-    expect(closedNotice(true, 3, false)).not.toContain("EUR");
+    expect(closedNotice(true, 3, false)).not.toContain("€");
     expect(closedNotice(false, 3, false)).toBe("This workspace cannot add new numbers.");
   });
 
   test("the notice quotes what a checkout started now charges", () => {
     // `checkoutUrl` prices the numbers connected today, and at least one.
-    expect(closedNotice(true, 0)).toContain("5 EUR per month + VAT for 1 number.");
-    expect(closedNotice(true, 5)).toContain("17 EUR per month + VAT for 5 numbers.");
-    expect(closedNotice(true, 6)).toContain("19 EUR per month + VAT for 6 numbers.");
-    expect(closedNotice(true, 16)).toContain("49 EUR per month + VAT for 16 numbers.");
+    expect(closedNotice(true, 0)).toContain("5 € per month + VAT for 1 number.");
+    expect(closedNotice(true, 5)).toContain("17 € per month + VAT for 5 numbers.");
+    expect(closedNotice(true, 6)).toContain("19 € per month + VAT for 6 numbers.");
+    expect(closedNotice(true, 16)).toContain("49 € per month + VAT for 16 numbers.");
     expect(closedNotice(true, 3)).toContain("The price follows the numbers you connect.");
   });
 
   test("a closed workspace whose subscription still exists is sent to manage it", () => {
-    const html = renderToStaticMarkup(<NumbersView resources={resources("closed")} billing subscribed />);
+    const html = renderToStaticMarkup(<SubscriptionNotice billing subscribed numbers={1} reconnect />);
     expect(html).toContain("Manage billing");
     expect(html).not.toContain("Start subscription");
   });
 
   test("the reconnect sentence follows owning a WABA, not having a number", () => {
-    const awaiting = resources("closed");
-    awaiting.wabas[0]!.phones = [];
-    expect(renderToStaticMarkup(<NumbersView resources={awaiting} billing />)).toContain("can be reconnected");
+    expect(renderToStaticMarkup(<SubscriptionNotice billing numbers={0} reconnect />)).toContain("can be reconnected");
+    expect(renderToStaticMarkup(<SubscriptionNotice billing numbers={0} reconnect={false} />)).not.toContain("reconnected");
   });
 
   test("a workspace opened by the operator with no Creem customer is billed separately and shown no price", () => {
@@ -265,7 +270,9 @@ describe("billing on", () => {
     expect(member).not.toContain("<button");
     expect(sendingPausedNotice(true, true, null)).toContain("Incoming messages are stored safely.");
     expect(sendingPausedNotice(false)).not.toContain("ubscri");
-    expect(renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />)).toContain("they keep receiving but cannot send");
+    expect(renderToStaticMarkup(<SubscriptionNotice billing numbers={1} reconnect canSend={false} />)).toContain(
+      "they keep receiving but cannot send",
+    );
   });
 
   test("after payment Numbers offers to replay what the pause held, with the late-reply warning", () => {

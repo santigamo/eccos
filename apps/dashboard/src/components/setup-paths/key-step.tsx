@@ -1,7 +1,6 @@
 import { type FormEvent, useId, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { failureCopy } from "../../lib/failure";
-import { withStepUp } from "../../lib/step-up";
+import { friendlyFailure } from "../../lib/failure";
 import { issueApiKey } from "../../server/gateway";
 import { Callout } from "../ui/callout";
 import { BackAction, PrimaryAction, Rail, WizardCard, WizardFooter, WizardHeading } from "../connect-wizard/wizard-frame";
@@ -19,9 +18,9 @@ export function KeyStep({ onIssued, onBack }: { onIssued: (apiKey: string) => vo
     setBusy(true);
     setError(null);
     try {
-      const res = await withStepUp(() => issueApiKey({ data: { label: label.trim() || undefined } }));
+      const res = await issueApiKey({ data: { label: label.trim() || undefined } });
       if (res.ok) onIssued(res.data.apiKey);
-      else setError(failureCopy(res).detail);
+      else setError(friendlyFailure(res, "We couldn't create the key. Try again in a moment."));
     } finally {
       setBusy(false);
     }

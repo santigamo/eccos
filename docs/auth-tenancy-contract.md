@@ -118,9 +118,9 @@ defaults; `operator` and `viewer` are configured custom roles):
 | Retry delivery | operator | — | |
 | Cancel broadcast or scheduled send | operator | — | Stops sends not yet attempted; ids-only audit line |
 | Subscriber config read | operator | — | Secret value never returned |
-| Subscriber config write | admin | **Yes** | TOTP (owner/admin) + ≤15 min recent auth |
+| Subscriber config write | admin | — | No step-up: it is the first step of the post-connect setup, and the role check stays |
 | Resubscribe webhook (Meta handshake) | admin | **Yes** | |
-| API key management (issue/revoke) | admin | **Yes** | Keys are machine credentials only |
+| API key management (issue/revoke) | admin | — | Keys are machine credentials only. No step-up, for the same reason as the subscriber config write |
 | Embedded Signup `/connect` start, token attach | admin | — | Issues the account-bound OAuth state. No step-up: Meta's window opens on the click, before the start answers, so a refusal would only show after the customer went through Meta |
 | Embedded Signup callback / code exchange | admin | — (by design) | Must present the state the start issued. Meta's code is single-use and lives 30 seconds, so a step-up refusal here would lose it and force the whole flow again |
 | Connection link: make or replace | admin | **Yes** | One per workspace; see below. Reading its status needs no step-up |
@@ -236,7 +236,7 @@ Connected agents. A demotion needs no handling: the live role check refuses firs
   eccos-0x0.11. Provider secrets live only in Worker secrets/bindings; the interface ships in
   eccos-0x0.2 so auth flows are testable with a stub sender.
 - **MFA policy**: TOTP is **required for owner/admin roles before sensitive actions** — connection
-  links, API keys, export, erasure, membership/role changes, and subscriber config write (§4). Enrollment
+  links, export, erasure, membership/role changes, conversation retention and resubscribe (§4). Enrollment
   and enforcement are implemented (`eccos-eyel`; docs/auth-hardening.md, "Step-up enforcement");
   this contract fixes the policy. **Setting up TOTP requires a code mailed to the account's
   verified address**, so the password alone never yields a second factor, and every change to

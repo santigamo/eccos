@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ClockIcon } from "lucide-react";
+import { useHydrated } from "../../hooks/use-hydrated";
 import { startCheckout } from "../../server/gateway";
 import { earlyAccessEnding, earlyAccessMessage, timeLeft, weekdayTime, windowOpen, windowPhase, type SetupWindow } from "../../lib/setup-window";
 import { Button } from "@/components/ui/button";
@@ -7,11 +8,11 @@ import { cn } from "@/lib/utils";
 import { useBillingRedirect } from "./billing-redirect";
 
 /** What the strip says after the countdown. No extension is offered: the window cannot be made longer. */
-export function stripMessage(pausesAt: number, now: number): string {
+export function stripMessage(pausesAt: number, now: number, local = false): string {
   const phase = windowPhase(pausesAt - now);
   if (phase === "hour") return "Subscribe now to avoid a pause.";
-  if (phase === "day") return `Sending and forwarding pause on ${weekdayTime(pausesAt)}.`;
-  return `Sending and forwarding pause on ${weekdayTime(pausesAt)} unless you subscribe.`;
+  if (phase === "day") return `Sending and forwarding pause on ${weekdayTime(pausesAt, local)}.`;
+  return `Sending and forwarding pause on ${weekdayTime(pausesAt, local)} unless you subscribe.`;
 }
 
 /**
@@ -26,6 +27,7 @@ export function SetupWindowStrip({ window, canManage, now: initial }: { window: 
     return () => clearInterval(timer);
   }, []);
   const { busy, leaveTo } = useBillingRedirect();
+  const local = useHydrated();
   const early = earlyAccessEnding(window, now);
   if (!early && !windowOpen(window, now)) return null;
   const pausesAt = window.pausesAt as number;
@@ -47,7 +49,7 @@ export function SetupWindowStrip({ window, canManage, now: initial }: { window: 
           </span>
         )}
         <span className={cn("text-[13px] leading-4.5", warn ? "text-foreground" : "text-muted-foreground")}>
-          {early ? earlyAccessMessage(pausesAt, now) : stripMessage(pausesAt, now)}
+          {early ? earlyAccessMessage(pausesAt, now) : stripMessage(pausesAt, now, local)}
         </span>
       </p>
       {canManage ? (

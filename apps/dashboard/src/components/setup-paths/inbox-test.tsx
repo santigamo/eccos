@@ -2,7 +2,7 @@ import { type FormEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePoll } from "../../hooks/use-poll";
-import { failureCopy, sendTextFailureCopy } from "../../lib/failure";
+import { friendlyFailure, sendTextFailureCopy } from "../../lib/failure";
 import { sendKeyed, type SendGate } from "../../lib/send-gate";
 import {
   type Arrived,
@@ -128,7 +128,7 @@ export function InboxTest({ wabaId, phoneNumberId, phone, onBack, onSuccess, now
           {sent ? (
             outcome.state === "failed" ? (
               <Callout tone="error">
-                Meta did not deliver the reply{outcome.error ? ` (${outcome.error})` : ""}. Try once more from the inbox.
+                Meta did not deliver the reply{outcome.reason ? `: ${outcome.reason}` : ""}. Try once more from the inbox.
               </Callout>
             ) : (
               <Waiting>Waiting for the phone to confirm it got your reply.</Waiting>
@@ -178,8 +178,8 @@ function ReplyForm({
     setError(null);
     try {
       const res = await sendKeyed(gate.current, { wabaId, phoneNumberId, to, text: body }, (data) => sendText({ data }));
-      if (!res.ok) setError(failureCopy(res).detail);
-      else if (!res.data.ok) setError(sendTextFailureCopy(res.data.code, res.data.detail).detail);
+      if (!res.ok) setError(friendlyFailure(res, "We couldn't send the reply. Try again in a moment."));
+      else if (!res.data.ok) setError(sendTextFailureCopy(res.data.code, null).detail);
       else onSent(res.data.messageId, body);
     } finally {
       setBusy(false);

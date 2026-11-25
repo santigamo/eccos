@@ -32,17 +32,22 @@ export function windowPhase(left: number): WindowPhase {
   return left > HOUR ? "day" : "hour";
 }
 
-/** "2 d 23 h left", "23 h left", "48 min left". */
+/** "2 d 23 h left", "23 h left", "48 min left": every countdown in the console, rounded down. */
 export function timeLeft(left: number): string {
   if (left >= DAY) return `${Math.floor(left / DAY)} d ${Math.floor((left % DAY) / HOUR)} h left`;
   if (left >= HOUR) return `${Math.floor(left / HOUR)} h left`;
-  return `${Math.max(1, Math.ceil(left / MINUTE))} min left`;
+  return `${Math.max(1, Math.floor(left / MINUTE))} min left`;
 }
+
+/** Whole days, rounded down like `timeLeft`, never below one. */
+const wholeDays = (left: number) => {
+  const days = Math.max(1, Math.floor(left / DAY));
+  return `${days} ${days === 1 ? "day" : "days"}`;
+};
 
 /** "9 days left" for the never-activated deadline, read in whole days. */
 export function daysLeft(left: number): string {
-  const days = Math.max(1, Math.ceil(left / DAY));
-  return `${days} ${days === 1 ? "day" : "days"} left`;
+  return `${wholeDays(left)} left`;
 }
 
 /** The setup window is running: activated, unpaid and not yet paused. */
@@ -57,13 +62,15 @@ export function earlyAccessEnding(window: SetupWindow, now: number): window is S
 
 /** "Early access ends in 9 days. Subscribe to keep sending." */
 export function earlyAccessMessage(pausesAt: number, now: number): string {
-  const days = Math.max(1, Math.ceil((pausesAt - now) / DAY));
-  return `Early access ends in ${days} ${days === 1 ? "day" : "days"}. Subscribe to keep sending.`;
+  return `Early access ends in ${wholeDays(pausesAt - now)}. Subscribe to keep sending.`;
 }
 
-// The console renders on the server too, so every date reads in UTC and says so when it shows a time.
-const part = (at: number, options: Intl.DateTimeFormatOptions) =>
-  new Date(at).toLocaleString("en-GB", { ...options, timeZone: "UTC" });
+/**
+ * Dates read in UTC on the server and in the first client render, so hydration
+ * matches; `local` is the viewer's own zone, for after hydration (`useHydrated`).
+ */
+const part = (at: number, options: Intl.DateTimeFormatOptions, local = false) =>
+  new Date(at).toLocaleString("en-GB", local ? options : { ...options, timeZone: "UTC" });
 
 /** "25 Dec 2026" */
 export function longDate(at: number): string {
@@ -71,11 +78,12 @@ export function longDate(at: number): string {
 }
 
 /** "Fri 4 Dec" */
-export function weekdayDate(at: number): string {
-  return part(at, { weekday: "short", day: "numeric", month: "short" }).replace(",", "");
+export function weekdayDate(at: number, local = false): string {
+  return part(at, { weekday: "short", day: "numeric", month: "short" }, local).replace(",", "");
 }
 
-/** "Sat 28 Nov at 10:42 UTC" */
-export function weekdayTime(at: number): string {
-  return `${weekdayDate(at)} at ${part(at, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} UTC`;
+/** "Sat 28 Nov at 10:42" in the viewer's zone once `local`; just "Sat 28 Nov" before, with no time to mismatch. */
+export function weekdayTime(at: number, local = false): string {
+  if (!local) return weekdayDate(at);
+  return `${weekdayDate(at, true)} at ${part(at, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }, true)}`;
 }

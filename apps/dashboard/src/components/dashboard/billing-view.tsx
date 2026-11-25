@@ -4,6 +4,7 @@ import { CheckIcon, ClockIcon, CirclePauseIcon, ExternalLinkIcon, TriangleAlertI
 import { openPortal, startCheckout, type BillingPage } from "../../server/gateway";
 import type { Payment } from "../../billing/creem";
 import { nextNumberNote, numberPriceEuros, tierNote } from "../../billing/plan";
+import { useHydrated } from "../../hooks/use-hydrated";
 import { daysLeft, earlyAccessEnding, earlyAccessMessage, longDate, timeLeft, weekdayDate, weekdayTime, windowOpen } from "../../lib/setup-window";
 import { buttonVariants, Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -163,6 +164,7 @@ const TONES = {
 
 function StatusBlock({ page, stage, now }: { page: BillingPage; stage: BillingStage; now: number }) {
   const { billing, window, charge, canManage } = page;
+  const local = useHydrated();
   const euros = billing.monthlyEuros;
   const ends = charge?.periodEndsAt ? longDate(charge.periodEndsAt) : null;
   let tone: keyof typeof TONES = "neutral";
@@ -191,7 +193,7 @@ function StatusBlock({ page, stage, now }: { page: BillingPage; stage: BillingSt
           Finish the setup and send or receive one message through Eccos.
           {window.pausesAt ? (
             <>
-              {" "}If that has not happened by <span className={STRONG}>{weekdayDate(window.pausesAt)}</span>, the number
+              {" "}If that has not happened by <span className={STRONG}>{weekdayDate(window.pausesAt, local)}</span>, the number
               is paused until you subscribe.
             </>
           ) : null}{" "}
@@ -213,8 +215,8 @@ function StatusBlock({ page, stage, now }: { page: BillingPage; stage: BillingSt
       title = "Your number works. Subscribe to keep it running.";
       body = (
         <>
-          Your first message went through on {weekdayTime(window.activatedAt ?? now)}. The setup window ends on{" "}
-          <span className={STRONG}>{weekdayTime(window.pausesAt ?? now)}</span> and cannot be made longer. After that,
+          Your first message went through on {weekdayTime(window.activatedAt ?? now, local)}. The setup window ends on{" "}
+          <span className={STRONG}>{weekdayTime(window.pausesAt ?? now, local)}</span> and cannot be made longer. After that,
           sending stops and messages are not passed on to your tool until you subscribe. Nothing is deleted.
         </>
       );
@@ -232,7 +234,7 @@ function StatusBlock({ page, stage, now }: { page: BillingPage; stage: BillingSt
       title = earlyAccessMessage(window.pausesAt ?? now, now);
       body = (
         <>
-          On <span className={STRONG}>{weekdayDate(window.pausesAt ?? now)}</span> sending stops and messages are not
+          On <span className={STRONG}>{weekdayDate(window.pausesAt ?? now, local)}</span> sending stops and messages are not
           passed on to your tool until you subscribe. Nothing is deleted.
         </>
       );
@@ -293,7 +295,7 @@ function StatusBlock({ page, stage, now }: { page: BillingPage; stage: BillingSt
       title = stage === "paused" ? "Your number is paused. Nothing was deleted." : "There is no active subscription. Nothing was deleted.";
       body = (
         <>
-          {window.pausesAt && window.pausesAt <= now ? <>The setup window ended on {weekdayTime(window.pausesAt)}.<br /></> : null}
+          {window.pausesAt && window.pausesAt <= now ? <>The setup window ended on {weekdayTime(window.pausesAt, local)}.<br /></> : null}
           <span className={STRONG}>Stopped for now:</span> sending messages, and passing messages on to your tool.
           <br />
           <span className={STRONG}>Still working:</span> new messages are saved, you can read everything here, and your

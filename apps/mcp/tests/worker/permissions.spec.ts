@@ -210,10 +210,7 @@ describe("permissions table", () => {
     reconcileWaba: { action: "configure", evidence: [[consoleGateway, `return gateway.reconcileWaba(data.wabaId, account.accountId); }, "configure"),`]] },
     setSubscriberConfig: {
       action: "configure",
-      evidence: [
-        [consoleGateway, `{ action: "subscriber-config", wabaId: data.wabaId, rejectUnknown: true, scope: "any" }, (gateway, scope) => {`],
-        [consoleStepUp, `"subscriber-config": "configure",`],
-      ],
+      evidence: [[consoleGateway, `{ action: "configure", wabaId: data.wabaId, rejectUnknown: true, scope: "any" }, (gateway, scope) => {`]],
     },
     resubscribe: {
       action: "configure",
@@ -231,14 +228,11 @@ describe("permissions table", () => {
     },
     issueApiKey: {
       action: "administer",
-      evidence: [
-        [consoleGateway, `await adminActorAccount(gateway, "api-keys"); const issued = await gateway.issueApiKey(`],
-        [consoleStepUp, `"api-keys": "administer",`],
-      ],
+      evidence: [[consoleGateway, `await adminActorAccount(gateway); const issued = await gateway.issueApiKey(`]],
     },
     revokeApiKey: {
       action: "administer",
-      evidence: [[consoleGateway, `await adminActorAccount(gateway, "api-keys"); const revoked = await gateway.revokeApiKey(`]],
+      evidence: [[consoleGateway, `await adminActorAccount(gateway); const revoked = await gateway.revokeApiKey(`]],
     },
     createTemplate: {
       action: "configure",

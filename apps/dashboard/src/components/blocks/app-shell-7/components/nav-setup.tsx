@@ -6,6 +6,7 @@ import { Link, useLoaderData, useSearch } from "@tanstack/react-router"
 import { CheckIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { timeLeft } from "@/lib/setup-window"
 import {
   companionBilling,
   companionVisible,
@@ -63,7 +64,7 @@ export function NavSetup({ billing: given }: { billing?: CompanionBilling }) {
     <nav
       aria-label="Setup"
       // Hidden in the collapsed rail: a 48px column has no room for words.
-      className="in-data-[state=collapsed]:hidden flex flex-col gap-3 border-t border-(--line) px-2 py-3"
+      className="in-data-[state=collapsed]:hidden mt-auto flex shrink-0 flex-col gap-3 border-t border-(--line) px-2 py-3"
     >
       <div className="flex items-center justify-between gap-2 text-[11px] leading-[14px] font-medium tracking-wider uppercase">
         <p className="m-0 text-muted-foreground">
@@ -130,7 +131,7 @@ export function NavSetup({ billing: given }: { billing?: CompanionBilling }) {
           className="text-[13px] leading-[18px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
         >
           {billing.stage === "activated"
-            ? `Activated · ${billing.hoursLeft} ${billing.hoursLeft === 1 ? "hour" : "hours"} left to subscribe`
+            ? `Activated · ${timeLeft(billing.left)} to subscribe`
             : "Paused · subscribe to send again"}
         </Link>
       ) : null}

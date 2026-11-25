@@ -14,15 +14,29 @@ function scopeOf(state: DashboardState) {
 }
 
 /**
+ * Runs `open` once the page has settled. A modal marks everything outside it
+ * `aria-hidden`, and a route still hydrating would read that as a server
+ * mismatch, so mounting is not enough: wait for an idle moment.
+ */
+export function openAfterHydration(open: () => void): () => void {
+  let live = true;
+  const run = () => live && open();
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout: 1000 });
+  else window.setTimeout(run, 300);
+  return () => {
+    live = false;
+  };
+}
+
+/**
  * 2.3: activation the server saw while the operator was elsewhere in the
  * console. Asked once per viewer; /setup shows the same paywall in place.
  */
 export function ActivationDialog() {
   const root = useLoaderData({ from: "__root__" });
   const pathname = useLocation({ select: (l) => l.pathname });
-  // Storage is read after paint: the console server-renders.
   const [seen, setSeen] = useState(true);
-  useEffect(() => setSeen(paywallSeen()), []);
+  useEffect(() => openAfterHydration(() => setSeen(paywallSeen())), []);
 
   const state = root.ok ? root.data : null;
   const activation = state ? pendingActivation(state) : null;

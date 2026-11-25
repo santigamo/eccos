@@ -227,7 +227,8 @@ export function NumbersView({
   const [busy, setBusy] = useState(false);
   // A replay waits for the pause to end: the gateway would only hold the backlog again.
   const paused = resources.account ? blocksSends(resources.account.billingStatus) : false;
-  // One instance: it moves into the dialog while that is open.
+  // Said only inside the add-number dialog, when a second number is asked for;
+  // a paused workspace already has the pause banner and its one CTA above the page.
   const notice = (className?: string) =>
     resources.account?.canAddNumber === false ? (
       <SubscriptionNotice
@@ -260,7 +261,6 @@ export function NumbersView({
       }
     >
       {outcome}
-      {adding ? null : notice()}
       {!paused && held && held.events > 0 ? <HeldReplay held={held} canReplay={canConnect} onReplayed={onReplayed} /> : null}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one

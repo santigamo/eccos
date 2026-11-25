@@ -739,11 +739,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     input: SetSubscriberConfigInput,
     wabaId: string,
     accountId: string,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true; savedAt: number }> {
     const { stub } = await this.scoped(wabaId, accountId, { anyStatus: true });
     await stub.setSubscriberConfig(input);
+    const savedAt = Date.now();
     if (input.secret !== undefined) await getControlPlaneStub(this.env).cancelSubscriberSecretClaims(accountId, wabaId);
-    return { ok: true };
+    return { ok: true, savedAt };
   }
 
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a customer,

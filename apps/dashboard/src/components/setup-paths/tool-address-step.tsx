@@ -1,7 +1,6 @@
 import { type FormEvent, useId, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { failureCopy } from "../../lib/failure";
-import { withStepUp } from "../../lib/step-up";
+import { friendlyFailure } from "../../lib/failure";
 import { setSubscriberConfig } from "../../server/gateway";
 import { Callout } from "../ui/callout";
 import { Stepper } from "../connect-wizard/stepper";
@@ -23,7 +22,8 @@ export function ToolAddressStep({
   guide: ToolGuide;
   wabaId: string;
   initialUrl?: string;
-  onSaved: (url: string) => void;
+  /** `savedAt` is the gateway's clock after the write. */
+  onSaved: (url: string, savedAt: number) => void;
   onBack: () => void;
 }) {
   const [url, setUrl] = useState(initialUrl);
@@ -39,9 +39,9 @@ export function ToolAddressStep({
     setError(null);
     try {
       const target = url.trim();
-      const res = await withStepUp(() => setSubscriberConfig({ data: { url: target, wabaId } }));
-      if (res.ok) onSaved(target);
-      else setError(failureCopy(res).detail);
+      const res = await setSubscriberConfig({ data: { url: target, wabaId } });
+      if (res.ok) onSaved(target, res.data.savedAt);
+      else setError(friendlyFailure(res, "We couldn't save that address. Check it's the full link and try again."));
     } finally {
       setBusy(false);
     }

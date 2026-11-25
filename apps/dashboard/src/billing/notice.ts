@@ -11,7 +11,7 @@ export function closedNotice(billing: boolean, numbers: number, canManage = true
     return "Adding a new number needs an active subscription. Ask an owner or admin of this workspace to start it.";
   }
   const billed = Math.max(1, numbers);
-  return `Adding a new number needs an active subscription: ${monthlyPriceEuros(billed)} EUR per month + VAT for ${billed} ${billed === 1 ? "number" : "numbers"}. The price follows the numbers you connect.`;
+  return `Adding a new number needs an active subscription: ${monthlyPriceEuros(billed)} € per month + VAT for ${billed} ${billed === 1 ? "number" : "numbers"}. The price follows the numbers you connect.`;
 }
 
 /**

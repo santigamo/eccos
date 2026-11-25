@@ -1466,7 +1466,7 @@ export const issueApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<IssuedApiKey>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway, "api-keys");
+        const { actor, accountId } = await adminActorAccount(gateway);
         const issued = await gateway.issueApiKey(accountId, data.label);
         auditEvent({
           action: "api_key_issue",
@@ -1486,7 +1486,7 @@ export const revokeApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<boolean>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway, "api-keys");
+        const { actor, accountId } = await adminActorAccount(gateway);
         const revoked = await gateway.revokeApiKey(accountId, data.keyId);
         auditEvent({
           action: "api_key_revoke",
@@ -2135,12 +2135,12 @@ export const getDeployment = createServerFn({ method: "GET" }).handler(async ():
 export const setSubscriberConfig = createServerFn({ method: "POST" })
   .validator(validateSubscriberInput)
   .handler(
-    ({ data }): Promise<Result<{ ok: true }>> =>
+    ({ data }): Promise<Result<{ ok: true; savedAt: number }>> =>
       withScopedGateway(
         // `scope: "any"`, for the same reason as the read: a subscriber URL
         // written in the awaiting-a-phone state survives provisioning, because
         // the saga's own `saveConfig` only ever writes META_*/CONNECTED_AT keys.
-        { action: "subscriber-config", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
+        { action: "configure", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
         (gateway, scope) => {
           const { wabaId: _wabaId, ...input } = data;
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);

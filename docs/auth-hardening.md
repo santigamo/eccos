@@ -143,9 +143,8 @@ the session.
 | Matrix row | Where |
 |---|---|
 | Making a connection link | `STEP_UP_ROWS["connect-link"]`: `openConnectLink` when it makes or replaces a link (reading its status needs none) |
-| API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
 | Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
-| Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
+| Resubscribe (the Meta webhook handshake) | `STEP_UP_ROWS.resubscribe`: `resubscribe` |
 | Invitations and member changes | Every write in `src/members.ts` (invite, resend, cancel, change role, remove) calls `requireStepUp` after its role check and returns the refusal's reason; resend and cancel write the invitation row through the adapter, which no hook sees. Better Auth's `organizationHooks` gate the plugin's own calls again (`stepUpOrganizationHooks`: `beforeCreateInvitation`, before the invitation rate limit spends a strike, `beforeCancelInvitation`, `beforeUpdateMemberRole`, `beforeRemoveMember`) |
 | Changing or revealing a factor | `STEP_UP_ACCOUNT_PATHS`, once the account has a second factor: `change-password`, `change-email`, `two-factor/enable`, `two-factor/disable`, `two-factor/generate-backup-codes`, `two-factor/get-totp-uri`. An account with no TOTP can still change its password, and enroll with the mailed code; `get-totp-uri` is refused for it |
 
@@ -160,6 +159,12 @@ start (`startConnect`), its code exchange (`exchangeConnectCode`) and token
 attach (`connectWithToken`). Meta's window opens on the click, before the start
 answers, so a step-up refusal there was found only after the customer had
 already gone through Meta, and most admins never enrolled a second factor.
+
+Saving or removing the forwarding target (`setSubscriberConfig`) and issuing or
+revoking an API key (`issueApiKey`, `revokeApiKey`) have no step-up either, only
+the role: `configure` for the target, `administer` for keys. Both are the first
+step of the post-connect setup, where a step-up stopped most new customers
+before their first message.
 
 Export and erasure have no console path: they are reachable only with an
 account API key, so there is nothing for a session step-up to gate. A console
@@ -185,7 +190,7 @@ step-up sheet (`src/components/dashboard/step-up-sheet.tsx`) beside the page:
 the code, or enrollment for an account with none. On success the action runs
 again. Nothing navigates and no session changes, so the form the operator was
 filling in is untouched, and closing the sheet only declines. A dialog that
-hosts a sensitive action (make a connection link, revoke a key) mounts its own sheet
+hosts a sensitive action (make a connection link, change a role) mounts its own sheet
 inside itself, so there the prompt opens as that dialog's nested surface
 rather than as a second modal beside it.
 

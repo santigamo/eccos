@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { DashboardState } from "../src/server/gateway";
 import type { CompanionBilling } from "../src/lib/setup-checklist";
 
+const HOUR = 3_600_000;
+
 /**
  * The sidebar setup companion (`nav-setup.tsx`). The derivation is pinned in
  * `tests/setup-checklist.test.ts`; what is pinned here is the rendering: the
@@ -109,12 +111,13 @@ describe("NavSetup companion", () => {
 
   test("billing, once fed, decides: paid hides, activated keeps it up", () => {
     expect(renderFor("ready", false, 0, { stage: "paid" })).toBe("");
-    expect(renderFor("ready", true, 1, { stage: "activated", hoursLeft: 72 })).toContain("Setup");
+    expect(renderFor("ready", true, 1, { stage: "activated", left: 72 * HOUR })).toContain("Setup");
   });
 
   test("shows the hours left once activated, and the pause", () => {
-    expect(renderFor("ready", true, 1, { stage: "activated", hoursLeft: 41 })).toContain("Activated · 41 hours left to subscribe");
-    expect(renderFor("ready", true, 1, { stage: "activated", hoursLeft: 1 })).toContain("1 hour left");
+    // The strip's own formatter, rounded down: 41h59m reads as the strip reads it.
+    expect(renderFor("ready", true, 1, { stage: "activated", left: 42 * HOUR - 60_000 })).toContain("Activated · 1 d 17 h left to subscribe");
+    expect(renderFor("ready", true, 1, { stage: "activated", left: 90 * 60_000 })).toContain("Activated · 1 h left to subscribe");
     expect(renderFor("ready", true, 1, { stage: "paused" })).toContain("Paused · subscribe to send again");
     expect(renderFor("ready", false, 0)).not.toContain("left to subscribe");
   });

@@ -39,12 +39,12 @@ export interface SetupStep {
  * The billing and activation states the companion shows (`companionBilling`).
  * Absent means there is nothing to say, and the companion falls back to the
  * setup facts alone.
- * - `activated`: the first message went through and the 72h window runs.
+ * - `activated`: the first message went through and the 72h window runs; `left` in ms.
  * - `paused`: the window closed without a subscription.
  * - `paid`: an active subscription; the companion has nothing left to say.
  */
 export type CompanionBilling =
-  | { stage: "activated"; hoursLeft: number }
+  | { stage: "activated"; left: number }
   | { stage: "paused" }
   | { stage: "paid" };
 
@@ -61,8 +61,6 @@ function resourcesOf(state: DashboardState) {
   return state.stage === "account-ready" ? state.resources : state.stage === "ready" ? state.scope.resources : undefined;
 }
 
-const HOUR_MS = 60 * 60 * 1000;
-
 /**
  * The account's billing stage, from the gateway's status and funnel clock. A
  * paying status is `paid`; `setup` only says something once it activated and
@@ -76,12 +74,14 @@ export function companionBilling(state: DashboardState, now: number): CompanionB
   if (status === "paused") return { stage: "paused" };
   const funnel = account.funnel;
   if (status !== "setup" || !funnel?.activatedAt || funnel.pausesAt === null) return undefined;
-  return { stage: "activated", hoursLeft: Math.max(0, Math.ceil((funnel.pausesAt - now) / HOUR_MS)) };
+  return { stage: "activated", left: Math.max(0, funnel.pausesAt - now) };
 }
 
 export function setupSteps(state: DashboardState, hasForwardingTarget: boolean): SetupStep[] {
   const resources = resourcesOf(state);
   const hasLiveKey = resources?.keys.some((key) => key.revokedAt === null) ?? false;
+  // Activation proves a way out already works: path A replies from the inbox and needs neither.
+  const activated = Boolean(resources?.account?.funnel?.activatedAt);
   // Counted by kind: `counts.inbound` includes the `delivered` receipt for the
   // operator's own test send, which is not anyone writing in.
   const byType = state.stage === "ready" ? state.status.counts.inboundByType ?? {} : {};
@@ -101,12 +101,12 @@ export function setupSteps(state: DashboardState, hasForwardingTarget: boolean):
       state: state.stage === "ready" ? "done" : (resources?.wabas.length ?? 0) > 0 ? "in-progress" : "todo",
     },
     {
-      // Either way out of Eccos counts: a forwarding target for a tool, or an
-      // API key for software that sends.
+      // Either way out of Eccos counts: a forwarding target for a tool, an API
+      // key for software that sends, or an activation from the inbox.
       id: "setup",
       label: "Webhook or API key",
       href: "/setup",
-      state: hasForwardingTarget || hasLiveKey ? "done" : "todo",
+      state: hasForwardingTarget || hasLiveKey || activated ? "done" : "todo",
     },
     {
       // An incoming message, not a test send: a fresh WABA has no approved

@@ -23,7 +23,8 @@ const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-dig
 
 /**
  * Path B's live test (2.B3), and its failure (2.B4). Success is the first
- * message written since the address was saved being forwarded with a 2xx:
+ * message received after the gateway saved the address (`savedAt`, its clock)
+ * being forwarded with a 2xx:
  * `deliveries.status = delivered` on its batch. A refusal is that batch's
  * `last_error` ("subscriber returned 404").
  */
@@ -35,7 +36,6 @@ export function ToolTest({
   onChangeAddress,
   onBack,
   onSuccess,
-  now = Date.now,
 }: {
   guide: ToolGuide;
   wabaId: string;
@@ -44,7 +44,6 @@ export function ToolTest({
   onChangeAddress: () => void;
   onBack: () => void;
   onSuccess: (proof: Proof) => void;
-  now?: () => number;
 }) {
   const [since, setSince] = useState(savedAt);
   const [outcome, setOutcome] = useState<ForwardOutcome>({ state: "waiting" });
@@ -69,7 +68,7 @@ export function ToolTest({
   }, outcome.state === "waiting" || outcome.state === "arrived");
 
   if (outcome.state === "refused") {
-    const code = outcome.httpStatus === null ? "" : ` (${outcome.httpStatus})`;
+    const unreachable = outcome.httpStatus === null;
     return (
       <WizardCard>
         <Rail tone="warning" className="gap-4">
@@ -78,13 +77,19 @@ export function ToolTest({
               <TriangleAlertIcon aria-hidden="true" className="size-3.5" />
               Not received yet
             </p>
-            <WizardHeading title={`Your message arrived, but ${guide.name} did not accept it`}>
-              {name} answered with an error{code}. Most often the address was copied incompletely, or the {guide.owner} is
-              switched off. Your message is safe in Eccos.
-            </WizardHeading>
+            {unreachable ? (
+              <WizardHeading title="We couldn't reach that address">
+                Check it's correct and your {guide.owner} is on. Your message is safe in Eccos.
+              </WizardHeading>
+            ) : (
+              <WizardHeading title={`Your message arrived, but ${guide.name} did not accept it`}>
+                {name} answered with an error ({outcome.httpStatus}). Most often the address was copied incompletely, or
+                the {guide.owner} is switched off. Your message is safe in Eccos.
+              </WizardHeading>
+            )}
           </div>
           <p className="m-0 font-mono text-xs text-muted-foreground">
-            {outcome.httpStatus === null ? outcome.error : `${name} answered ${outcome.httpStatus}`} · {clock(outcome.at)}
+            {unreachable ? "No answer from the address" : `${name} answered ${outcome.httpStatus}`} · {clock(outcome.at)}
           </p>
         </Rail>
         <div>
@@ -108,7 +113,8 @@ export function ToolTest({
           <PrimaryAction
             icon={null}
             onClick={() => {
-              setSince(now());
+              // The next message, on the gateway's clock like `savedAt`.
+              setSince(outcome.message.at);
               setOutcome({ state: "waiting" });
             }}
           >

@@ -54,6 +54,13 @@ function stateOf(state: DashboardState, hasTarget: boolean): Record<string, stri
 }
 
 describe("setupSteps", () => {
+  test("path A: an activation from the inbox marks the webhook-or-key step done", () => {
+    const activated = ready(1);
+    (activated as { scope: { resources: Record<string, unknown> } }).scope.resources.account = { funnel: { activatedAt: 5 } };
+    expect(stateOf(activated, false).setup).toBe("done");
+    expect(stateOf(ready(1), false).setup).toBe("todo");
+  });
+
   test("four steps, each pointing at the page that produces its fact", () => {
     expect(setupSteps(ready(1), true).map((step) => [step.id, step.label, step.href])).toEqual([
       // A done workspace is not repeatable: no href, or it would open the
@@ -139,7 +146,7 @@ describe("companionVisible", () => {
   test("billing decides once it is fed: paid hides, activated and paused show", () => {
     const done = setupSteps(ready(1), true);
     expect(companionVisible(done, { stage: "paid" })).toBe(false);
-    expect(companionVisible(done, { stage: "activated", hoursLeft: 40 })).toBe(true);
+    expect(companionVisible(done, { stage: "activated", left: 40 * 3_600_000 })).toBe(true);
     expect(companionVisible(done, { stage: "paused" })).toBe(true);
     expect(companionVisible(setupSteps(ready(0), false), { stage: "paid" })).toBe(false);
   });
@@ -161,11 +168,11 @@ describe("companionBilling", () => {
     warningDueAt: null,
   });
 
-  test("an activated setup account counts its hours down, rounded up", () => {
+  test("an activated setup account carries the time left, never below zero", () => {
     const state = withAccount({ billingStatus: "setup", funnel: clock(1, 1 + 72 * HOUR) });
-    expect(companionBilling(state, 1)).toEqual({ stage: "activated", hoursLeft: 72 });
-    expect(companionBilling(state, 1 + 71.5 * HOUR)).toEqual({ stage: "activated", hoursLeft: 1 });
-    expect(companionBilling(state, 1 + 80 * HOUR)).toEqual({ stage: "activated", hoursLeft: 0 });
+    expect(companionBilling(state, 1)).toEqual({ stage: "activated", left: 72 * HOUR });
+    expect(companionBilling(state, 1 + 71.5 * HOUR)).toEqual({ stage: "activated", left: 0.5 * HOUR });
+    expect(companionBilling(state, 1 + 80 * HOUR)).toEqual({ stage: "activated", left: 0 });
   });
 
   test("paused and paying statuses say so; a setup account not yet activated says nothing", () => {

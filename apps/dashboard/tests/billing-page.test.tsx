@@ -93,7 +93,9 @@ describe("/billing states", () => {
     expect(html).toContain("Setup window");
     expect(html).toContain("2 d 23 h left");
     expect(html).toContain("Your number works. Subscribe to keep it running.");
-    expect(html).toContain("Sat 28 Nov at 09:42 UTC");
+    // The server render has no time zone to honour: the date alone, the time after hydration.
+    expect(html).toContain("Sat 28 Nov");
+    expect(html).not.toContain("UTC");
     expect(html).toContain("cannot be made longer");
     expect(html).toContain("Start subscription · 5 €/month");
     expect(html).not.toMatch(/extend/i);

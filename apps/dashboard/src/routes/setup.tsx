@@ -1,6 +1,8 @@
 import { createFileRoute, useLoaderData } from "@tanstack/react-router";
 import { billableCount } from "../billing/account";
 import { FailureView } from "../components/dashboard/failure";
+import { blocksSends } from "@eccos/gateway-contract/billing-status";
+import { SetupPaused } from "../components/setup-paths/setup-paused";
 import { SetupWizard } from "../components/setup-paths/setup-wizard";
 import { pendingActivation } from "../lib/activation";
 import { getGatewayOrigin } from "../server/gateway";
@@ -33,7 +35,9 @@ function SetupPage() {
   return (
     <Page title="Set up WhatsApp" kicker="First run">
       <div className="flex flex-1 items-center justify-center pb-[10vh]">
-        {phone ? (
+        {scope.resources.account && blocksSends(scope.resources.account.billingStatus) ? (
+          <SetupPaused />
+        ) : phone ? (
           <SetupWizard
             wabaId={scope.selectedWabaId}
             phoneNumberId={phone.phoneNumberId}

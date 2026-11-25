@@ -1314,11 +1314,12 @@ export interface GatewayApi {
   /** Whether the WABA has a forwarding target, and nothing else: the view-level
    * fact behind a setup checklist. Same ownership check as getSubscriberConfig. */
   hasSubscriber(wabaId: string, accountId: string): Promise<boolean>;
+  /** `savedAt` is the gateway's clock after the write, comparable with `InboundRow.received_at`. */
   setSubscriberConfig(
     input: SetSubscriberConfigInput,
     wabaId: string,
     accountId: string,
-  ): Promise<{ ok: true }>;
+  ): Promise<{ ok: true; savedAt: number }>;
   resubscribe(wabaId: string, accountId: string): Promise<ResubscribeResult>;
   /**
    * Send one template message from the console ("Send test").
