@@ -40,7 +40,7 @@
   <section>
     <h2>Eccos Cloud</h2>
     <p>
-      Eccos Cloud is the hosted version of the gateway, operated by the provider.
+      Eccos Cloud is the hosted version of the gateway, operated by the provider. It is open to both businesses and consumers; consumer-only rights in these terms apply only to consumers (individuals acting outside a trade, business, or profession).
       Creating an account and a workspace and connecting your first WhatsApp number
       require no subscription and no payment card. Keeping a number in service once it
       works, and connecting more numbers, require a subscription, as set out below. How data is handled is described in the
@@ -62,8 +62,7 @@
       <li><strong>Beyond 50:</strong> €49, plus €1 per number past 50.</li>
     </ul>
     <p>
-      Prices are in euros and do not include VAT or any other applicable tax,
-      which is added at checkout. Eccos never bills messages: they are unlimited on
+      Prices are in euros and exclude VAT or other applicable taxes, which Creem calculates and displays in the final total at checkout before you pay. Eccos never bills messages: they are unlimited on
       every plan. The price follows the numbers you have connected. When you
       connect more numbers, the pro rata difference for the rest of the period is
       charged; when you connect fewer, the lower price applies from the next
@@ -74,19 +73,24 @@
   <section>
     <h2>When payment starts</h2>
     <p>
-      Your first number starts working when a message sent through it is first
-      delivered, or when Eccos Cloud first delivers an event to your software and your
-      software accepts it. From that moment you have <strong>72 hours</strong> to
-      subscribe. Nothing is charged before you subscribe, and the first monthly charge
-      is made when you do. There is no trial period.
+      Your first number starts working when a message sent through Eccos Cloud is
+      first delivered, or when your webhook first answers a forwarded message with an
+      HTTP 2xx response. From that moment you have <strong>72 hours</strong> to
+      subscribe, with no extension. Nothing is charged before you subscribe, and the
+      first monthly charge is made when you do. There is no trial period.
     </p>
     <p>
       If you do not subscribe within those 72 hours, the number is paused: sending
-      through it is refused and events are not forwarded to your software, while
-      incoming messages are still stored. Subscribing resumes it. If the number never
-      starts working, you are never charged; a number that has not started working 14
-      days after it was connected is paused in the same way, after a warning two days
-      before. Connecting a second number requires an active subscription.
+      through it is refused and forwarding to your webhook is held, while incoming
+      messages are still received and stored and nothing is deleted. Held messages keep
+      their content for 30 days under the normal content retention. Subscribing resumes
+      sending and forwarding at once; messages held during the pause, while still within
+      retention, can be replayed from the console. If the number never starts working,
+      you are never charged; a number that has not started working 14 days after it was
+      connected is paused in the same way, after a warning two days before. Connecting a
+      second number requires an active subscription. Accounts from the early access
+      period may be given a date after which the same pause applies if they have not
+      subscribed; the provider announces that date in advance.
     </p>
   </section>
 
@@ -104,12 +108,40 @@
   </section>
 
   <section>
-    <h2>Cancellation</h2>
+    <h2>Cancellation and refunds</h2>
     <p>
-      You can cancel the subscription at any time in Creem's customer portal, which
-      opens from the billing section of the console. Cancellation takes effect at the end of the period you have already
-      paid for, and the subscription stays active until
-      then.
+      You can cancel at any time in Creem's customer portal, opened from the billing
+      section of the console. Cancellation takes effect at the end of the paid period,
+      and the subscription stays active until then; afterwards, numbers are paused as
+      under &ldquo;When payment starts&rdquo; unless you resubscribe or delete your
+      data. Paid periods are non-refundable except as required by law (including the
+      consumer right of withdrawal below) or Creem's terms. Creem processes refunds as
+      merchant of record.
+    </p>
+  </section>
+
+  <section>
+    <h2>Consumer right of withdrawal</h2>
+    <p>
+      Consumers in the EU have 14 calendar days from subscribing to withdraw without
+      giving a reason. Connecting your first number before subscribing creates no
+      payment obligation. Business customers have no statutory withdrawal right.
+    </p>
+    <p>
+      If you expressly asked for the service to start immediately within those 14
+      days, you owe a proportionate amount for the service used until you give notice
+      of withdrawal; the right ends once a paid period has been fully performed with
+      your prior express consent and acknowledgement. Otherwise you receive a full
+      refund.
+    </p>
+    <p>
+      To withdraw within the 14 days, send a clear statement to Santiago García
+      Monsalve, Passeig del Riu, 54, planta 1º, puerta 2ª, 08241 Manresa (Barcelona),
+      Spain, or to <a href="mailto:hello@imsanti.dev">hello@imsanti.dev</a>, or use
+      Creem's customer portal. You may use this model text: &ldquo;I withdraw from my
+      Eccos Cloud subscription ordered on [date]. Account: [email]. Name: [name].
+      Date: [date].&rdquo; Creem refunds any eligible amount to the original payment
+      method within 14 days.
     </p>
   </section>
 
@@ -149,7 +181,7 @@
   <section>
     <h2>No warranties; service levels</h2>
     <p>
-      Eccos Cloud is provided &ldquo;as is&rdquo; and &ldquo;as available&rdquo;.
+      Eccos Cloud is provided &ldquo;as is&rdquo; and &ldquo;as available&rdquo;, without affecting mandatory statutory consumer conformity rights.
       No specific service level, uptime commitment, or support response time is
       guaranteed unless expressly agreed in writing. The service depends on third
       parties (Meta and Cloudflare) whose availability and behaviour are outside the
@@ -169,15 +201,15 @@
     </p>
     <p>
       Nothing in these terms excludes or limits liability that cannot be excluded or
-      limited under Spanish law, including liability arising from wilful misconduct
-      or gross negligence.
+      limited under Spanish law, including wilful misconduct, gross negligence, or mandatory consumer rights.
     </p>
   </section>
 
   <section>
     <h2>Suspension and termination</h2>
     <p>
-      The provider may suspend or terminate access to Eccos Cloud in case of material
+      Besides the pause described under "When payment starts", the provider may
+      suspend or terminate access to Eccos Cloud in case of non-payment, material
       breach of these terms, use that creates a security or legal risk, or where
       necessary to comply with Meta's requirements. You may stop using the service at
       any time. On termination, stored data is deleted as described in the
@@ -198,8 +230,7 @@
   <section>
     <h2>Governing law</h2>
     <p>
-      These terms are governed by Spanish law. Any dispute arising from them will be
-      submitted to the courts that are competent under applicable law.
+      These terms are governed by Spanish law; for EU consumers, this does not remove mandatory protections of their country of residence. Any dispute will be submitted to the courts competent under applicable law.
     </p>
   </section>
 
