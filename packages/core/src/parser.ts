@@ -217,10 +217,11 @@ function party(message: Record<string, unknown>, key: "from" | "to"): { id: stri
   return { id: getString(message[key]) ?? userId, userId };
 }
 
-/** Meta's `referral` (click-to-WhatsApp ad or post), camel-cased; absent when Meta sent none. */
+/** Meta's `referral` (click-to-WhatsApp ad), camel-cased; absent when Meta sent none. */
 function metaReferral(message: Record<string, unknown>): Referral | undefined {
   const raw = asRecord(message.referral);
   if (!raw) return undefined;
+  const welcomeText = getString(asRecord(raw.welcome_message)?.text);
   const referral = compact<Referral>({
     sourceType: getString(raw.source_type),
     sourceId: getString(raw.source_id),
@@ -232,6 +233,7 @@ function metaReferral(message: Record<string, unknown>): Referral | undefined {
     videoUrl: getString(raw.video_url),
     thumbnailUrl: getString(raw.thumbnail_url),
     ctwaClid: getString(raw.ctwa_clid),
+    welcomeMessage: welcomeText ? { text: welcomeText } : undefined,
   });
   return Object.keys(referral).length > 0 ? referral : undefined;
 }

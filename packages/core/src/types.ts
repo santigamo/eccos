@@ -30,24 +30,30 @@ export interface MessageContent {
 }
 
 /**
- * Meta's `referral`, camel-cased: set on the first message a customer sends from a
- * click-to-WhatsApp ad or a post. Only the fields Meta sent are present.
+ * Meta's `referral`, camel-cased: set on a message a customer sends from a
+ * click-to-WhatsApp ad. Only the fields Meta sent are present.
  */
 export interface Referral {
-  /** `ad` or `post`. */
+  /** `ad` (older payloads: `post`). */
   sourceType?: string;
-  /** The id of the ad or post. */
+  /** The id of the ad. */
   sourceId?: string;
   sourceUrl?: string;
   headline?: string;
+  /** The ad's primary text. */
   body?: string;
   /** `image` or `video`. */
   mediaType?: string;
+  /** Meta CDN link that expires; Eccos never fetches it. Image ads only. */
   imageUrl?: string;
+  /** Meta CDN link that expires; Eccos never fetches it. Video ads only. */
   videoUrl?: string;
+  /** Meta CDN link that expires; Eccos never fetches it. Video ads only. */
   thumbnailUrl?: string;
-  /** The ad click id. The Conversions API needs it to attribute the conversation to the ad. */
+  /** The ad click id the Conversions API needs to attribute the conversation to the ad. Absent for ads shown in WhatsApp Status. */
   ctwaClid?: string;
+  /** The ad's greeting, shown to the customer before they wrote. */
+  welcomeMessage?: { text: string };
 }
 
 /** Where Eccos sent the message an event is about: a status's message, or the message `replyTo` names. Absent for messages sent any other way. */
@@ -94,7 +100,7 @@ export type WhatsAppCallbackEvent =
       payload?: string;
       /** The id (wamid) of the message this one replies to: a quoted message, the template or interactive message whose button was tapped, or the Flow message answered. */
       replyTo?: string;
-      /** The ad or post the customer came from, when Meta sends one. */
+      /** The click-to-WhatsApp ad the customer came from, when Meta sends one. */
       referral?: Referral;
     } & EventOrigin)
   | {
@@ -121,7 +127,7 @@ export type WhatsAppCallbackEvent =
       profileName?: string;
       /** The id (wamid) of the message this one replies to: a quoted message, the template or interactive message whose button was tapped, or the Flow message answered. */
       replyTo?: string;
-      /** The ad or post the customer came from, when Meta sends one. */
+      /** The click-to-WhatsApp ad the customer came from, when Meta sends one. */
       referral?: Referral;
     } & MessageContent & EventOrigin)
   | ({

@@ -223,6 +223,89 @@ describe("parseMetaWebhook", () => {
     for (const ev of events) expect("referral" in ev).toBe(false);
   });
 
+  it("forwards Meta's documented click-to-WhatsApp referral, welcome message included, byte for byte", () => {
+    const [reply] = parseMetaWebhook(
+      envelope({
+        messages: [
+          {
+            referral: {
+              source_url: "https://fb.me/3cr4Wqqkv",
+              source_id: "120226305854810726",
+              source_type: "ad",
+              body: "Summer Succulents are here!",
+              headline: "Chat with us",
+              media_type: "image",
+              image_url: "https://scontent.xx.fbcdn.net/v/t45.1...",
+              ctwa_clid: "Aff-n8ZTODiE79d22KtAwQ",
+              welcome_message: { text: "Hi there! Let us know how we can help!" },
+            },
+            from: "16505551234",
+            id: "wamid.CTWA",
+            timestamp: TS_SEC,
+            text: { body: "Can I get more info about this?" },
+            type: "text",
+          },
+        ],
+      }),
+    );
+    expect(JSON.stringify(reply)).toBe(
+      '{"type":"reply","from":"16505551234","messageId":"wamid.CTWA","text":"Can I get more info about this?","at":1700000000000,' +
+        '"referral":{"sourceType":"ad","sourceId":"120226305854810726","sourceUrl":"https://fb.me/3cr4Wqqkv","headline":"Chat with us",' +
+        '"body":"Summer Succulents are here!","mediaType":"image","imageUrl":"https://scontent.xx.fbcdn.net/v/t45.1...",' +
+        '"ctwaClid":"Aff-n8ZTODiE79d22KtAwQ","welcomeMessage":{"text":"Hi there! Let us know how we can help!"}}}',
+    );
+  });
+
+  it("forwards the referral on every message type Meta documents it on", () => {
+    const referral = { source_type: "ad", source_id: "AD_1", ctwa_clid: "CLID_1" };
+    const bodies: Record<string, unknown> = {
+      text: { body: "Hi" },
+      image: { id: "MEDIA_1" },
+      audio: { id: "MEDIA_2" },
+      video: { id: "MEDIA_3" },
+      document: { id: "MEDIA_4" },
+      sticker: { id: "MEDIA_5" },
+      location: { latitude: 40.4, longitude: -3.7 },
+      contacts: [{ name: { formatted_name: "Ana" } }],
+    };
+    const events = parseMetaWebhook(
+      envelope({
+        messages: Object.entries(bodies).map(([type, body], i) => ({
+          from: "34600000000",
+          id: `wamid.${i}`,
+          timestamp: TS_SEC,
+          type,
+          [type]: body,
+          referral,
+        })),
+      }),
+    );
+    expect(events.map((ev) => ev.type)).toEqual(["reply", "message", "message", "message", "message", "message", "message", "message"]);
+    for (const ev of events) expect(ev).toMatchObject({ referral: { sourceType: "ad", sourceId: "AD_1", ctwaClid: "CLID_1" } });
+  });
+
+  it("omits ctwaClid and an empty welcome message, as for an ad shown in WhatsApp Status", () => {
+    const [reply] = parseMetaWebhook(
+      envelope({
+        messages: [
+          {
+            from: "34600000000",
+            id: "wamid.S",
+            timestamp: TS_SEC,
+            type: "text",
+            text: { body: "Hi" },
+            referral: { source_type: "ad", source_id: "AD_2", media_type: "video", video_url: "https://v", thumbnail_url: "https://t", welcome_message: {} },
+          },
+        ],
+      }),
+    );
+    expect(reply).toMatchObject({
+      type: "reply",
+      referral: { sourceType: "ad", sourceId: "AD_2", mediaType: "video", videoUrl: "https://v", thumbnailUrl: "https://t" },
+    });
+    expect(Object.keys((reply as { referral: object }).referral)).toEqual(["sourceType", "sourceId", "mediaType", "videoUrl", "thumbnailUrl"]);
+  });
+
   it("serializes reply and echo byte-for-byte as the forwarding contract", () => {
     const [reply] = parseMetaWebhook(
       envelope({
