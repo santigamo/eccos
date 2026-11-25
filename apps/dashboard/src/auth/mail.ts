@@ -29,7 +29,12 @@ export type MailTemplate =
   | "two-factor-code"
   | "two-factor-changed"
   | "connect-link-connected"
-  | "connect-link-failed";
+  | "connect-link-failed"
+  | "funnel-recovery"
+  | "funnel-activated"
+  | "funnel-window-ending"
+  | "funnel-paused"
+  | "funnel-never-activated";
 
 /**
  * Declared variable sets, ONE CONSTANT PER TEMPLATE.
@@ -68,6 +73,12 @@ export const TWO_FACTOR_CHANGED_VARIABLES = ["change", "name"] as const;
 /** To the admin who made a connection link: the workspace name and a fixed sentence, never a phone number. */
 export const CONNECT_LINK_CONNECTED_VARIABLES = ["workspace", "note", "url"] as const;
 export const CONNECT_LINK_FAILED_VARIABLES = ["workspace", "reason", "url"] as const;
+/** The funnel emails from Santi (src/server/funnel-templates.ts). Every value is a sentence or a date the console writes. */
+export const FUNNEL_RECOVERY_VARIABLES = ["name", "situation", "url"] as const;
+export const FUNNEL_ACTIVATED_VARIABLES = ["name", "first_message", "phone", "window_ends", "url"] as const;
+export const FUNNEL_WINDOW_ENDING_VARIABLES = ["name", "window_ends", "url"] as const;
+export const FUNNEL_PAUSED_VARIABLES = ["name", "opening", "url"] as const;
+export const FUNNEL_NEVER_ACTIVATED_VARIABLES = ["name", "phone", "connected_on", "pauses_on", "url"] as const;
 
 /** The declared set for a template, by name. */
 export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
@@ -78,6 +89,11 @@ export const TEMPLATE_VARIABLES: Record<MailTemplate, readonly string[]> = {
   "two-factor-changed": TWO_FACTOR_CHANGED_VARIABLES,
   "connect-link-connected": CONNECT_LINK_CONNECTED_VARIABLES,
   "connect-link-failed": CONNECT_LINK_FAILED_VARIABLES,
+  "funnel-recovery": FUNNEL_RECOVERY_VARIABLES,
+  "funnel-activated": FUNNEL_ACTIVATED_VARIABLES,
+  "funnel-window-ending": FUNNEL_WINDOW_ENDING_VARIABLES,
+  "funnel-paused": FUNNEL_PAUSED_VARIABLES,
+  "funnel-never-activated": FUNNEL_NEVER_ACTIVATED_VARIABLES,
 };
 
 /**

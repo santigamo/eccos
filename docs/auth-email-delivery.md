@@ -293,6 +293,73 @@ later, because there is no later.
 - Raw invitation/reset tokens and URLs are never logged anywhere in the
   dashboard. Logs carry the recipient domain, the template, and the hashed key.
 
+## Funnel emails (eccos-dbb3.4)
+
+Five emails from Santi to a workspace's **owners and admins with a verified
+address**: `funnel-recovery`, `funnel-activated`, `funnel-window-ending`,
+`funnel-paused`, `funnel-never-activated`. Copy is from Paper "4 · Emails"; the
+provider templates (subject, text and HTML) live in
+`apps/dashboard/src/server/funnel-templates.ts` and their variable sets in
+`src/auth/mail.ts`, like the others.
+
+**Sender.** They go through their own reccado key, whose sending identity is
+`Santi from Eccos` and whose mailbox is Santi's, so a reply reaches him:
+
+```bash
+wrangler secret put FUNNEL_RECCADO_API_KEY
+wrangler secret put FUNNEL_RECCADO_ENDPOINT   # same shape as RECCADO_ENDPOINT
+```
+
+Real mail goes out only when `BETTER_AUTH_URL` is https **and** the key is set.
+Anywhere else (local, tests, a preview without the key) the console sender only
+logs. Before enabling: sync the five templates to the mailbox (operator session,
+`PUT …/transactional/templates`), put them on the key's allowlist, and apply
+`migrations/0007_funnel_mail.sql`.
+
+**Dedupe.** Two layers. The `funnelMail` D1 table holds one row per
+`(accountId, kind)`; a settled row answers `duplicate` and sends nothing. The row
+settles only after every recipient's send returned, so a throw leaves it open for
+the next call, and the provider's Idempotency-Key,
+`sha256("<template>:<to>:<accountId>")`, keeps recipients already mailed from a
+second copy. A `409 idempotency_conflict` (the payload moved, e.g. a renamed user)
+counts as already sent.
+
+**Triggers.**
+
+| Email | Who triggers it | When |
+|---|---|---|
+| `funnel-recovery` | the console cron | `startConnect` writes a row due 2 h after the **first** try; Embedded Signup session events with an error code store it as the cause (3441067, 3441069, 3441075 get a cause sentence). Every cron run sends due rows, or settles them unsent if the account has a number by then. The cron is hourly, so it lands 2 to 3 h after the try. |
+| `funnel-activated` | gateway (dbb3.2) | at activation: first 2xx webhook delivery or first outbound delivered |
+| `funnel-window-ending` | gateway (dbb3.2) | 48 h after activation (24 h left). Skipped unless the account is still `setup` |
+| `funnel-paused` | gateway (dbb3.2) | when it pauses the account: window ended, or day 14 never activated |
+| `funnel-never-activated` | gateway (dbb3.2) | day 12 after the first number connected, never activated. Skipped unless `setup` |
+
+**What dbb3.2 calls.** A service binding from the gateway to the dashboard's
+`FunnelMailRPC` entrypoint (`apps/dashboard/src/server/funnel-rpc.ts`), typed by
+`@eccos/gateway-contract/funnel-mail`:
+
+```jsonc
+// apps/gateway/wrangler*.jsonc
+"services": [{ "binding": "FUNNEL_MAIL", "service": "eccos-dashboard", "entrypoint": "FunnelMailRPC" }]
+```
+
+```ts
+await env.FUNNEL_MAIL.sendFunnelEmail({ kind: "activated", organizationId, accountId, activatedAt, via: "webhook", windowEndsAt });
+await env.FUNNEL_MAIL.sendFunnelEmail({ kind: "window_ending", organizationId, accountId, windowEndsAt });
+await env.FUNNEL_MAIL.sendFunnelEmail({ kind: "paused", organizationId, accountId, pausedAt, reason: "window_ended" | "never_activated" });
+await env.FUNNEL_MAIL.sendFunnelEmail({ kind: "never_activated_warning", organizationId, accountId, connectedAt, pausesAt });
+```
+
+Times are Unix ms; the copy prints them in Europe/Madrid. `organizationId` is
+the account's active organization (the control plane's `organizationOf`); a
+pair that does not match the link is skipped (`not_linked`). Each call is
+idempotent per account and kind, so an alarm may retry it freely, and a throw
+means "retry later". Calling it from an alarm, after the state change it
+announces, is the whole contract.
+
+**Links.** Recovery and the day-12 warning go to `/numbers`; the others to
+`/billing` (eccos-dbb3.7), where the subscription starts.
+
 ## Local testing
 
 No provider is needed locally: without `RECCADO_API_KEY` the dev sender logs

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
+import { funnelLedgerFailed, noteConnectError, scheduleRecovery } from "./funnel-recovery";
 import { billingPage, billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingPage, type BillingState } from "../billing/account";
 import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
@@ -1109,6 +1110,9 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
         accountId: link.accountId,
         outcome: "success",
       });
+      await scheduleRecovery(env.DB, { accountId: link.accountId, organizationId: actor.organizationId }).catch(
+        funnelLedgerFailed,
+      );
       return result;
     }),
 );
@@ -1346,6 +1350,7 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
           },
           outcome: data.errorCode ? "failed" : "success",
         });
+        if (data.errorCode) await noteConnectError(env.DB, accountId, data.errorCode).catch(funnelLedgerFailed);
         return { recorded: true as const };
       }),
   );

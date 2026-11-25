@@ -378,6 +378,11 @@ describe("variable sets are exact in both directions", () => {
     expect(Object.keys(TEMPLATE_VARIABLES).sort()).toEqual([
       "connect-link-connected",
       "connect-link-failed",
+      "funnel-activated",
+      "funnel-never-activated",
+      "funnel-paused",
+      "funnel-recovery",
+      "funnel-window-ending",
       "invite-member",
       "reset-password",
       "two-factor-changed",
