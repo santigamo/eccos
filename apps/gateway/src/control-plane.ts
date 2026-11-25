@@ -2437,32 +2437,6 @@ export class EccosControlPlane extends DurableObject<Env> {
     this.sql.exec("DELETE FROM connect_states WHERE expires_at <= ?", now);
   }
 
-  refreshConnectState(state: string, expiresAt: number): ConnectStateRecord | null {
-    const s = state?.trim() ?? "";
-    if (!s || s.length > STATE_MAX_LENGTH) return null;
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-      throw new Error("invalid expiresAt: must be a future timestamp");
-    }
-    const now = Date.now();
-    let result: ConnectStateRecord | null = null;
-    this.ctx.storage.transactionSync(() => {
-      const row = this.sql
-        .exec(
-          "SELECT account_id, expires_at, redirect_uri, return_to FROM connect_states WHERE state = ?",
-          s,
-        )
-        .toArray()[0];
-      if (!row) return;
-      if ((row.expires_at as number) <= now) {
-        this.sql.exec("DELETE FROM connect_states WHERE state = ?", s);
-        return;
-      }
-      this.sql.exec("UPDATE connect_states SET expires_at = ? WHERE state = ?", expiresAt, s);
-      result = connectStateRecord(row);
-    });
-    return result;
-  }
-
   /** Register a connect state; INSERT OR REPLACE so a retried start wins. */
   startConnectState(
     state: string,

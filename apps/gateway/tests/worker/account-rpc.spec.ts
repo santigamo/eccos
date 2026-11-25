@@ -5,6 +5,7 @@ import type { EccosGateway } from "../../src/gateway";
 import type { EccosControlPlane } from "../../src/control-plane";
 import { GatewayRPC } from "../../src/rpc";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
+import { CONNECT_STATE_TTL_SECONDS } from "../../src/routes/connect";
 import { bootstrapAccount, gatewayStub, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 function cp<T>(fn: (instance: EccosControlPlane) => T | Promise<T>): Promise<T> {
@@ -12,6 +13,8 @@ function cp<T>(fn: (instance: EccosControlPlane) => T | Promise<T>): Promise<T> 
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   await reset();
 });
 
@@ -122,11 +125,6 @@ describe("GatewayRPC organization account bootstrap", () => {
     expect(result.expiresAt).toBeGreaterThan(Date.now());
     await cp(async (instance) => {
       expect(instance.getConnectState(result.state)).toEqual({
-        accountId,
-        redirectUri: "https://gateway.example/connect",
-        returnTo: null,
-      });
-      expect(instance.refreshConnectState(result.state, Date.now() + 60_000)).toEqual({
         accountId,
         redirectUri: "https://gateway.example/connect",
         returnTo: null,
@@ -245,6 +243,34 @@ describe("GatewayRPC.exchangeConnectCodeForAccountId", () => {
     await cp(async (instance) => {
       expect(await instance.getConnectStateAccount("sdk-foreign")).toBe("other-account");
     });
+  });
+
+  it("still exchanges a state from startConnect after a coexistence onboarding that ran 36 minutes", async () => {
+    await bootstrapAccount();
+    mockGraph();
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const { state } = await rpc.startConnectForAccountId(TEST_ACCOUNT_ID);
+
+    // The production incident: issued 14:36:24, Meta finished 15:11:52.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 36 * 60 * 1000);
+
+    const result = await rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "sdk-code", state);
+    expect(result).toMatchObject({ ok: true, waba_id: "WABA_SDK" });
+  });
+
+  it("refuses an abandoned state once its lifetime is over", async () => {
+    await bootstrapAccount();
+    mockGraph();
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const { state, expiresAt } = await rpc.startConnectForAccountId(TEST_ACCOUNT_ID);
+    expect(expiresAt - Date.now()).toBeGreaterThan(CONNECT_STATE_TTL_SECONDS * 1000 - 5_000);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(expiresAt + 1);
+
+    const result = await rpc.exchangeConnectCodeForAccountId(TEST_ACCOUNT_ID, "sdk-code", state);
+    expect(result).toEqual({ ok: false, error: "invalid or expired OAuth state", code: "state" });
   });
 
   it("rejects an empty code or state before touching Meta", async () => {

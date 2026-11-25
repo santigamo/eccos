@@ -1083,7 +1083,7 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
       // Embedded Signup is an admin+ mutation without step-up (contract §4); the
-      // account comes from the organization link. The state it issues lives 30 minutes.
+      // account comes from the organization link. The state it issues lives 2 hours.
       const actor = await requireActor("administer");
       const returnTo = connectReturnTo(getRequest());
       let link = await gateway.getOrganizationAccountLink(actor.organizationId);
