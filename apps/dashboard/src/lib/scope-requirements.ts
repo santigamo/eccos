@@ -49,6 +49,8 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/workspaces/new": "none",
   "/webhooks": "waba",
   "/templates": "waba",
+  "/templates/new": "waba",
+  "/templates/$name": "waba",
   "/settings": "none",
   "/members": "none",
   "/billing": "none",
@@ -67,8 +69,18 @@ export const PRE_WORKSPACE_ROUTES: ReadonlySet<string> = new Set(["/onboarding",
 
 const DEFAULT_REQUIREMENT: ScopeRequirement = "number";
 
+/** The route a pathname belongs to, where a `$param` segment stands for one real path segment. */
+function routeOf(pathname: string): string {
+  if (pathname in SCOPE_REQUIREMENTS) return pathname;
+  return (
+    Object.keys(SCOPE_REQUIREMENTS).find(
+      (route) => route.includes("$") && new RegExp(`^${route.replace(/\$[^/]+/g, "[^/]+")}$`).test(pathname),
+    ) ?? pathname
+  );
+}
+
 export function requirementFor(pathname: string): ScopeRequirement {
-  return SCOPE_REQUIREMENTS[pathname] ?? DEFAULT_REQUIREMENT;
+  return SCOPE_REQUIREMENTS[routeOf(pathname)] ?? DEFAULT_REQUIREMENT;
 }
 
 /** An active WABA with a number behind it: the data plane is readable. */

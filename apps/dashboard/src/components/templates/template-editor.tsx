@@ -1,0 +1,540 @@
+import { useEffect, useState } from "react";
+import { Link, useBlocker, useNavigate, useRouter } from "@tanstack/react-router";
+import { ChevronLeftIcon, PlusIcon } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+import { normalizeTemplateName } from "@eccos/core/template-rules";
+import { COUNT_LINK, Page, StatusTag } from "../../ui";
+import { MACHINE_CLASS, SectionHeading, SECONDARY_TIER, SUPPORT_TIER, IDENTITY_TIER } from "../dashboard/plain-table";
+import { Row, Rows, SectionFrame } from "../dashboard/settings-section";
+import { createTemplate, editTemplate } from "../../server/gateway";
+import { invalidatePage, invalidateRoutes } from "../../lib/invalidate";
+import {
+  blankDraft,
+  CATEGORIES,
+  draftContent,
+  exampleValues,
+  shouldGuardDismissal,
+  type LanguageDraft,
+  type TemplateCategory,
+} from "../../lib/template-draft";
+import {
+  barBlocker,
+  barNote,
+  buildTabs,
+  categoryLock,
+  groupCategory,
+  leaveBlocker,
+  primaryLabel,
+  STATE_INK,
+  submission,
+  tabState,
+  type AuthoringMode,
+  type LanguageTab,
+  type Notice,
+} from "../../lib/template-group";
+import { dropHandoff, peekHandoff, putHandoff } from "../../lib/template-handoff";
+import { languageLabel, mostUsedLanguage, nextFreeLanguage } from "../../lib/template-languages";
+import { afterCreate, createFailure, editFailure, submitSerially } from "../../lib/template-submit";
+import { authoringReading, categoryLabel, type TemplateRecord } from "../../lib/template-view";
+import { DeleteTemplateDialog, type DeleteTarget } from "./delete-template-dialog";
+import { DiscardDraftDialog } from "./discard-draft-dialog";
+import { LanguagePanel } from "./language-panel";
+import { WhatsAppPreview } from "./whatsapp-preview";
+
+/** Everything the page holds beyond what Meta already has. */
+interface AuthoringState {
+  name: string;
+  category: TemplateCategory;
+  drafts: Record<string, LanguageDraft>;
+  added: string[];
+  seeds: Record<string, LanguageDraft>;
+  submitted: Record<string, LanguageDraft>;
+  errors: Record<string, Notice>;
+  /** Languages created by this page or the create that led here, for the bar's account of a partial failure. */
+  created: string[];
+}
+
+export interface TemplateEditorProps {
+  mode: AuthoringMode;
+  wabaId: string;
+  /** The `wabaId` search param, carried on every link. */
+  wabaParam?: string;
+  businessName: string;
+  /** Every template row the list loaded. */
+  rows: TemplateRecord[];
+  /** The template name being edited. */
+  name?: string;
+  /** `?language=`: the selected tab, and on /templates/new the duplicated language. */
+  language?: string;
+  /** `?from=`: the template a new one duplicates. */
+  from?: string;
+  /** `?add=1`: open with a new language draft. */
+  add?: boolean;
+  /** Selects a tab, replacing `?language=` (and dropping `?add`). */
+  onLanguage: (code: string) => void;
+}
+
+function initialState({ mode, rows, name, language, from, add }: TemplateEditorProps): AuthoringState {
+  const empty = { drafts: {}, seeds: {}, submitted: {}, errors: {}, created: [] };
+  if (mode === "create") {
+    const source = from ? (rows.find((row) => row.name === from && row.language === language) ?? rows.find((row) => row.name === from)) : undefined;
+    const reading = source ? authoringReading(source) : null;
+    if (reading?.ok) {
+      const { name: _name, category, ...draft } = reading.draft;
+      return { ...empty, name: "", category, added: [draft.language], drafts: { [draft.language]: draft }, seeds: { [draft.language]: draft } };
+    }
+    const first = language ?? mostUsedLanguage(rows);
+    return { ...empty, name: "", category: "UTILITY", added: [first] };
+  }
+  const group = rows.filter((row) => row.name === name);
+  const handoff = name ? peekHandoff(name) : undefined;
+  if (handoff) {
+    return {
+      ...empty,
+      name: name ?? "",
+      category: handoff.category,
+      added: handoff.pending.map((draft) => draft.language),
+      drafts: Object.fromEntries(handoff.pending.map((draft) => [draft.language, draft])),
+      submitted: handoff.created,
+      errors: { [handoff.error.language]: handoff.error.notice },
+      created: Object.keys(handoff.created),
+    };
+  }
+  const taken = group.flatMap((row) => (row.language ? [row.language] : []));
+  const extra = add ? nextFreeLanguage(taken) : null;
+  return { ...empty, name: name ?? "", category: groupCategory(group), added: extra ? [extra] : [] };
+}
+
+/**
+ * Authoring one template name across its languages: the shared name and
+ * category, one tab per language, the preview of the active one, and a single
+ * primary that sends every language that needs sending, one call at a time.
+ */
+export function TemplateEditor(props: TemplateEditorProps) {
+  const { mode, wabaId, wabaParam, businessName, rows, onLanguage } = props;
+  const router = useRouter();
+  const navigate = useNavigate();
+  const [state, setState] = useState(() => initialState(props));
+  const [initialCategory] = useState(state.category);
+  const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
+  const name = mode === "edit" ? (props.name ?? "") : state.name;
+
+  const group = mode === "edit" ? rows.filter((row) => row.name === name) : [];
+  const base = { ...state, rows: group };
+  const lock = mode === "edit" ? categoryLock(buildTabs(base)) : null;
+  const categoryOpen = mode === "edit" && !lock;
+  const tabs = buildTabs({ ...base, categoryOpen });
+  const active = tabs.find((tab) => tab.language === props.language) ?? tabs[0];
+  const sending = submission(tabs);
+  const blocker = barBlocker(mode, name, sending);
+  const note = blocker ?? barNote(mode, sending, state.created);
+  const dirty =
+    (mode === "create" && (state.name.trim() !== "" || state.category !== initialCategory)) ||
+    tabs.some((tab) => tab.dirty);
+  const leave = useBlocker(leaveBlocker(shouldGuardDismissal({ submitting, dirty })));
+
+  // The URL names the tab an `?add=1` opened; the handoff is read once.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount only; the page is keyed by template name
+  useEffect(() => {
+    if (props.add && mode === "edit" && state.added[0]) onLanguage(state.added[0]);
+    if (name && mode === "edit") dropHandoff(name);
+  }, []);
+
+  const taken = tabs.map((tab) => tab.language);
+  const freeLanguage = nextFreeLanguage(taken);
+
+  function update(patch: (prev: AuthoringState) => Partial<AuthoringState>) {
+    setState((prev) => ({ ...prev, ...patch(prev) }));
+  }
+
+  function addLanguage() {
+    if (!freeLanguage) return;
+    update((prev) => ({ added: [...prev.added, freeLanguage] }));
+    onLanguage(freeLanguage);
+  }
+
+  function renameDraft(from: string, to: string) {
+    update((prev) => {
+      const { [from]: draft, ...drafts } = prev.drafts;
+      const { [from]: _error, ...errors } = prev.errors;
+      return {
+        added: prev.added.map((code) => (code === from ? to : code)),
+        drafts: { ...drafts, [to]: { ...(draft ?? blankDraft(to)), language: to } },
+        errors,
+      };
+    });
+    onLanguage(to);
+  }
+
+  function removeDraft(code: string) {
+    const rest = tabs.filter((tab) => tab.language !== code);
+    update((prev) => {
+      const { [code]: _draft, ...drafts } = prev.drafts;
+      const { [code]: _error, ...errors } = prev.errors;
+      return { added: prev.added.filter((entry) => entry !== code), drafts, errors };
+    });
+    if (rest[0]) onLanguage(rest[0].language);
+  }
+
+  async function send(tab: LanguageTab): Promise<Notice | null> {
+    const content = draftContent(tab.draft);
+    if (tab.status === null) {
+      return createFailure(
+        await createTemplate({ data: { wabaId, name, language: tab.language, category: state.category, ...content } }),
+      );
+    }
+    const moved = categoryOpen && tab.row?.category?.toUpperCase() !== state.category;
+    return editFailure(
+      await editTemplate({
+        data: {
+          wabaId,
+          templateId: tab.row?.id ?? "",
+          name,
+          language: tab.language,
+          ...(moved ? { category: state.category } : {}),
+          ...content,
+        },
+      }),
+    );
+  }
+
+  async function submit() {
+    if (blocker || submitting) return;
+    setSubmitting(true);
+    const outcome = await submitSerially(sending, send).finally(() => setSubmitting(false));
+    const done = outcome.done.map((tab) => tab.language);
+    const failed = outcome.failed;
+
+    if (mode === "create") {
+      const next = afterCreate(name, done, failed?.item.language ?? null);
+      if (next.kind === "list") {
+        await invalidateRoutes(router, "/templates");
+        toast(next.toast.title, { description: next.toast.description });
+        navigate({ to: "/templates", search: { wabaId: wabaParam }, ignoreBlocker: true });
+        return;
+      }
+      if (next.kind === "group" && failed) {
+        const pendingTabs = sending.slice(done.length);
+        putHandoff(name, {
+          category: state.category,
+          created: Object.fromEntries(outcome.done.map((tab) => [tab.language, tab.draft])),
+          pending: pendingTabs.map((tab) => tab.draft),
+          error: { language: failed.item.language, notice: failed.notice },
+        });
+        await invalidateRoutes(router, "/templates");
+        navigate({
+          to: "/templates/$name",
+          params: { name },
+          search: { wabaId: wabaParam, language: failed.item.language },
+          replace: true,
+          ignoreBlocker: true,
+        });
+        return;
+      }
+    }
+
+    update((prev) => {
+      const drafts = { ...prev.drafts };
+      for (const code of done) delete drafts[code];
+      return {
+        drafts,
+        added: prev.added.filter((code) => !done.includes(code)),
+        submitted: { ...prev.submitted, ...Object.fromEntries(outcome.done.map((tab) => [tab.language, tab.draft])) },
+        errors: failed ? { [failed.item.language]: failed.notice } : {},
+        created: [...prev.created, ...outcome.done.filter((tab) => tab.status === null).map((tab) => tab.language)],
+      };
+    });
+    if (failed) onLanguage(failed.item.language);
+    if (done.length > 0) invalidatePage(router);
+  }
+
+  const previewValues = active
+    ? Object.fromEntries(
+        exampleValues(active.draft).flatMap((value, index) => (value.trim() ? [[String(index + 1), value.trim()]] : [])),
+      )
+    : {};
+  const reviewed = tabs.filter((tab) => tab.status !== null || tab.error);
+  const listSearch = { wabaId: wabaParam };
+
+  return (
+    <Page
+      title={mode === "create" ? "New template" : name}
+      kicker="Cloud API"
+      actions={
+        <Link to="/templates" search={listSearch} className={`inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground ${COUNT_LINK}`}>
+          <ChevronLeftIcon aria-hidden="true" className="size-4" />
+          Templates
+        </Link>
+      }
+    >
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,40rem)_minmax(18rem,22.5rem)] lg:items-start">
+        <div className="flex min-w-0 flex-col gap-8">
+          <section aria-labelledby="template-shared-title" className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <SectionHeading id="template-shared-title" title="Template" />
+              <p className={`m-0 ${SUPPORT_TIER}`}>
+                {mode === "create"
+                  ? "Shared by every language. The name can't be changed once Meta has it."
+                  : "Shared by every language."}
+              </p>
+            </div>
+            {mode === "create" ? (
+              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
+                <div>
+                  <label htmlFor="template-name" className={`mb-1 block ${MACHINE_CLASS}`}>
+                    Name
+                  </label>
+                  <Input
+                    id="template-name"
+                    autoComplete="off"
+                    className="font-mono"
+                    value={state.name}
+                    placeholder="order_update"
+                    // Coerced as typed, as WhatsApp Manager does, so it never shows a name Meta would refuse.
+                    onChange={(event) => update(() => ({ name: normalizeTemplateName(event.target.value) }))}
+                  />
+                  <p className="m-0 mt-1 text-xs text-muted-foreground">Lowercase letters, numbers and underscores.</p>
+                </div>
+                <CategoryField value={state.category} onChange={(category) => update(() => ({ category }))} />
+              </div>
+            ) : (
+              <SectionFrame flush>
+                <Rows>
+                  <Row
+                    label="Name"
+                    action={
+                      active?.row ? (
+                        <Link
+                          to="/templates/new"
+                          search={{ wabaId: wabaParam, from: name, language: active.language }}
+                          className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                        >
+                          Duplicate as new name
+                        </Link>
+                      ) : null
+                    }
+                  >
+                    <span className="font-mono text-sm font-normal">{name}</span>
+                  </Row>
+                  <Row label="Category" action={lock ? <span className={SECONDARY_TIER}>{lock}</span> : null}>
+                    {categoryOpen ? (
+                      <CategoryField value={state.category} onChange={(category) => update(() => ({ category }))} bare />
+                    ) : (
+                      categoryLabel(state.category)
+                    )}
+                  </Row>
+                </Rows>
+              </SectionFrame>
+            )}
+          </section>
+
+          <section aria-labelledby="template-content-title" className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <SectionHeading id="template-content-title" title="Content" />
+              <p className={`m-0 ${SUPPORT_TIER}`}>One version per language. Meta reviews each one on its own.</p>
+            </div>
+            {active ? (
+              <SectionFrame flush>
+                <Tabs value={active.language} onValueChange={(value) => onLanguage(String(value))}>
+                  <div className="flex items-stretch border-b border-(--line)">
+                    <TabsList aria-label="Languages" className="overflow-x-auto">
+                      {tabs.map((tab) => (
+                        <LanguageTabLabel key={tab.language} tab={tab} />
+                      ))}
+                    </TabsList>
+                    {freeLanguage ? (
+                      <button
+                        type="button"
+                        onClick={addLanguage}
+                        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 border-l border-(--line) px-4 text-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
+                      >
+                        <PlusIcon aria-hidden="true" className="size-3.5" />
+                        Add language
+                      </button>
+                    ) : null}
+                  </div>
+                  <TabsPanel value={active.language} className="p-5">
+                    <LanguagePanel
+                      key={active.language}
+                      tab={active}
+                      wabaId={wabaId}
+                      takenLanguages={taken.filter((code) => code !== active.language)}
+                      canRemove={tabs.length > 1}
+                      onChange={(draft) => update((prev) => ({ drafts: { ...prev.drafts, [active.language]: draft } }))}
+                      onLanguageChange={(code) => renameDraft(active.language, code)}
+                      onRemove={() => removeDraft(active.language)}
+                      onDelete={
+                        active.row?.id && active.row.status?.toUpperCase() !== "PENDING_DELETION"
+                          ? () =>
+                              setDeleting({
+                                templateId: active.row?.id ?? "",
+                                name,
+                                language: active.language,
+                                status: active.row?.status,
+                              })
+                          : undefined
+                      }
+                    />
+                  </TabsPanel>
+                </Tabs>
+              </SectionFrame>
+            ) : null}
+          </section>
+
+          {active && !active.readOnly ? (
+            <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-4 border-t border-(--line) bg-background py-4">
+              <p className="m-0 min-w-0 flex-1 text-sm text-pretty text-muted-foreground">{note}</p>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-none"
+                  onClick={() => navigate({ to: "/templates", search: listSearch })}
+                >
+                  Cancel
+                </Button>
+                <Button type="button" aria-busy={submitting} disabled={Boolean(blocker) || submitting} onClick={submit}>
+                  {submitting ? "Submitting…" : primaryLabel(mode, sending, active.language)}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <aside className="flex flex-col gap-6 lg:sticky lg:top-4" aria-label="Preview">
+          {active ? (
+            <div className="flex flex-col gap-2">
+              <p className={`m-0 ${MACHINE_CLASS}`}>Preview · {languageLabel(active.language)}</p>
+              <WhatsAppPreview
+                businessName={businessName}
+                header={null}
+                body={active.draft.body}
+                bodyValues={previewValues}
+                footer={active.draft.footer.trim()}
+                buttons={active.draft.buttons.map((button) => ({ kind: "url" as const, text: button.text }))}
+                markValues
+              />
+            </div>
+          ) : null}
+          {mode === "edit" && reviewed.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              <p className={`m-0 ${MACHINE_CLASS}`}>Meta review</p>
+              <ul className="m-0 list-none divide-y divide-(--line) border-y border-(--line) p-0">
+                {reviewed.map((tab) => {
+                  const category = tab.row?.category?.toUpperCase();
+                  return (
+                    <li key={tab.language} className="flex items-center gap-3 py-2.5">
+                      <span className={IDENTITY_TIER}>{languageLabel(tab.language)}</span>
+                      <span className="font-mono text-[11px] text-muted-foreground">{tab.language}</span>
+                      {category && category !== state.category ? (
+                        <span className={SECONDARY_TIER}>{categoryLabel(category)}</span>
+                      ) : null}
+                      <span className="ml-auto">
+                        <StatusTag status={tab.error ? "not created" : (tab.status ?? "draft")} />
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </aside>
+      </div>
+
+      {leave.status === "blocked" ? (
+        <DiscardDraftDialog submitting={submitting} editing={mode === "edit"} onKeep={leave.reset} onDiscard={leave.proceed} />
+      ) : null}
+
+      {deleting ? (
+        <DeleteTemplateDialog
+          wabaId={wabaId}
+          target={deleting}
+          onOpenChange={(open) => {
+            if (!open) setDeleting(null);
+          }}
+          onDeleted={() => {
+            const rest = tabs.filter((tab) => tab.language !== deleting.language);
+            update((prev) => {
+              const { [deleting.language]: _draft, ...drafts } = prev.drafts;
+              return { drafts };
+            });
+            invalidatePage(router);
+            if (rest[0]) onLanguage(rest[0].language);
+            else navigate({ to: "/templates", search: listSearch });
+          }}
+        />
+      ) : null}
+    </Page>
+  );
+}
+
+/** A tab: the language, its code in mono, and its state word, which is also in its accessible name. */
+function LanguageTabLabel({ tab }: { tab: LanguageTab }) {
+  const state = tabState(tab);
+  const label = languageLabel(tab.language);
+  return (
+    <TabsTab value={tab.language} aria-label={`${label}, ${tab.language}${state ? `, ${state.toLowerCase()}` : ""}`}>
+      <span>{label}</span>
+      <span className="font-mono text-[11px] text-muted-foreground">{tab.language}</span>
+      {state ? <span className={cn(MACHINE_CLASS, STATE_INK[state])}>{state}</span> : null}
+    </TabsTab>
+  );
+}
+
+function CategoryField({
+  value,
+  onChange,
+  bare,
+}: {
+  value: TemplateCategory;
+  onChange: (category: TemplateCategory) => void;
+  /** Inside a label/value row, which already names it. */
+  bare?: boolean;
+}) {
+  const select = (
+    <Select value={value} onValueChange={(next) => next && onChange(next as TemplateCategory)}>
+      <SelectTrigger id="template-category" aria-label={bare ? "Category" : undefined} className="w-full max-w-xs rounded-none">
+        <SelectValue>{(current: string) => categoryLabel(current)}</SelectValue>
+      </SelectTrigger>
+      <SelectContent align="start">
+        {CATEGORIES.map((entry) => (
+          <SelectItem key={entry.value} value={entry.value}>
+            {entry.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+  if (bare) return select;
+  return (
+    <div>
+      <label htmlFor="template-category" className={`mb-1 block ${MACHINE_CLASS}`}>
+        Category
+      </label>
+      {select}
+      <p className="m-0 mt-1 text-xs text-muted-foreground">Meta may reassign it on review.</p>
+    </div>
+  );
+}
+
+/** The page's own shape while the template list loads. */
+export function TemplateEditorPending({ title }: { title: string }) {
+  return (
+    <Page title={title} kicker="Cloud API">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,40rem)_minmax(18rem,22.5rem)]" aria-busy="true">
+        <div className="flex flex-col gap-6">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-96" />
+        </div>
+        <Skeleton className="h-72" />
+      </div>
+    </Page>
+  );
+}

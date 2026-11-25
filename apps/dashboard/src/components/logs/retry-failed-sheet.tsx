@@ -50,7 +50,7 @@ export interface RetryFailedFieldsProps {
 }
 
 /**
- * The form itself. Fully controlled, like `CreateTemplateFields`, so every
+ * The form itself. Fully controlled, like `LanguageFields`, so every
  * state (a blocked window, a result, a refusal) renders without a browser.
  */
 export function RetryFailedFields({

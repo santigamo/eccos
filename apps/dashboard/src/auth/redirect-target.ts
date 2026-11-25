@@ -43,6 +43,8 @@ export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/settings",
   "/setup",
   "/templates",
+  "/templates/new",
+  "/templates/$name",
   "/webhooks",
   "/workspaces/new",
 ]);

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 import { MoreHorizontalIcon, SearchIcon } from "lucide-react";
-import { toast } from "sonner";
 import { invalidatePage } from "../lib/invalidate";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
@@ -35,12 +34,6 @@ import {
 import { plainWhatsApp } from "../lib/whatsapp-format";
 import { normalizeSearchGraphId, normalizeSearchQuery, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { SendTestSheet, type SendTestPhone } from "../components/templates/send-test-sheet";
-import {
-  CREATE_MODE,
-  CreateTemplateSheet,
-  editApprovedWarning,
-  type TemplateSheetMode,
-} from "../components/templates/create-template-sheet";
 import { TemplateDetail, TemplatePreviewSheet } from "../components/templates/template-preview-sheet";
 import { DeleteTemplateDialog, type DeleteTarget } from "../components/templates/delete-template-dialog";
 import { CONFIG_STALE_MS } from "../lib/route-stale";
@@ -202,7 +195,6 @@ function TemplatesPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
   const [sending, setSending] = useState<TemplateRecord | null>(null);
-  const [authoring, setAuthoring] = useState<TemplateSheetMode | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   // The box follows the URL (Clear filters, Back) without fighting a trailing space being typed.
   const [searchText, setSearchText] = useState(q ?? "");
@@ -260,17 +252,12 @@ function TemplatesPage() {
     const authoring = authoringReading(row);
     const sendable = canSend && canSendTemplate(row.status) && Boolean(row.name && row.language);
     const editable = authoring.ok && Boolean(row.id) && canEditStatus(row.status);
+    const { name, language } = row;
     return {
       onSend: sendable ? () => setSending(row) : undefined,
-      onEdit:
-        editable && authoring.ok && row.id
-          ? () => {
-              setAuthoring({ kind: "edit", initial: authoring.draft, templateId: row.id ?? "", status: row.status });
-              const warning = editApprovedWarning(row.status);
-              if (warning) toast.warning(warning, { id: "edit-approved", duration: 10_000 });
-            }
-          : undefined,
-      onDuplicate: authoring.ok ? () => setAuthoring({ kind: "duplicate", initial: authoring.draft }) : undefined,
+      onEdit: editable && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, language } }) : undefined,
+      onAddLanguage: authoring.ok && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, add: true } }) : undefined,
+      onDuplicate: authoring.ok && name ? () => navigate({ to: "/templates/new", search: { wabaId, from: name, language } }) : undefined,
       onDelete:
         row.id && row.name && row.language && row.status?.toUpperCase() !== "PENDING_DELETION"
           ? () =>
@@ -291,13 +278,15 @@ function TemplatesPage() {
     cell: (info) => {
       const row = info.row.original;
       const actions = actionsFor(row);
-      if (!actions.onSend && !actions.onEdit && !actions.onDuplicate && !actions.onDelete) {
+      if (!actions.onSend && !actions.onEdit && !actions.onAddLanguage && !actions.onDuplicate && !actions.onDelete) {
         return <span className="text-muted-foreground">—</span>;
       }
       return <TemplateRowActions name={row.name ?? ""} language={row.language} {...actions} />;
     },
     meta: { headerClassName: "text-right", cellClassName: "text-right whitespace-nowrap" },
   });
+
+  const newTemplate = () => navigate({ to: "/templates/new", search: { wabaId } });
 
   const setFilter = (patch: Partial<TemplatesSearch>) =>
     navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
@@ -342,7 +331,7 @@ function TemplatesPage() {
         </SelectContent>
       </Select>
       {selectedWabaId ? (
-        <Button type="button" size="sm" onClick={() => setAuthoring(CREATE_MODE)}>
+        <Button type="button" size="sm" onClick={newTemplate}>
           New template
         </Button>
       ) : null}
@@ -389,7 +378,7 @@ function TemplatesPage() {
                     variant="outline"
                     size="sm"
                     className="rounded-none"
-                    onClick={() => setAuthoring(CREATE_MODE)}
+                    onClick={newTemplate}
                   >
                     New template
                   </Button>
@@ -445,23 +434,6 @@ function TemplatesPage() {
         />
       ) : null}
 
-      {authoring && selectedWabaId ? (
-        <CreateTemplateSheet
-          key={authoring.kind === "edit" ? `edit:${authoring.templateId}` : authoring.kind}
-          open
-          onOpenChange={(open) => {
-            if (!open) {
-              setAuthoring(null);
-              toast.dismiss("edit-approved");
-            }
-          }}
-          wabaId={selectedWabaId}
-          mode={authoring}
-          businessName={businessName}
-          onCreated={() => invalidatePage(router)}
-        />
-      ) : null}
-
       {deleteTarget && selectedWabaId ? (
         <DeleteTemplateDialog
           key={deleteTarget.templateId}
@@ -505,6 +477,7 @@ function TemplateRowActions({
   language,
   onSend,
   onEdit,
+  onAddLanguage,
   onDuplicate,
   onDelete,
 }: {
@@ -512,6 +485,7 @@ function TemplateRowActions({
   language: string | undefined;
   onSend?: () => void;
   onEdit?: () => void;
+  onAddLanguage?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
 }) {
@@ -537,6 +511,7 @@ function TemplateRowActions({
         <DropdownMenuContent align="end" className="min-w-40">
           {onSend ? <DropdownMenuItem onClick={onSend}>Send test</DropdownMenuItem> : null}
           {onEdit ? <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem> : null}
+          {onAddLanguage ? <DropdownMenuItem onClick={onAddLanguage}>Add language</DropdownMenuItem> : null}
           {onDuplicate ? <DropdownMenuItem onClick={onDuplicate}>Duplicate</DropdownMenuItem> : null}
           {onDelete ? (
             <DropdownMenuItem variant="destructive" onClick={onDelete}>

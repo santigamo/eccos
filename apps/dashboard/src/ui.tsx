@@ -72,6 +72,8 @@ const STATUS_TONES: Record<string, StatusTone> = {
   unreachable: "destructive",
   failed: "destructive",
   rejected: "destructive",
+  // A template language Meta refused to create (the authoring page).
+  "not created": "destructive",
   // A broadcast stopped on its own: its cause is stated beside the tag.
   halted: "destructive",
   // Meta may have sent it, and Eccos never retries it: the operator has to look.

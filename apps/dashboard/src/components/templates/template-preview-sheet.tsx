@@ -18,13 +18,15 @@ import { WhatsAppPreview } from "./whatsapp-preview";
  * One template, inspected: how it reads on the customer's phone (with the
  * example values Meta reviewed), Meta's verdict on it, and the acts it allows.
  *
- * Inspection register. The acts below only open their own task sheet (send,
- * edit, duplicate); nothing here writes by itself.
+ * Inspection register. The acts below only hand off: send opens its task
+ * sheet, edit, add language and duplicate open the authoring page; nothing
+ * here writes by itself.
  */
 
 export interface TemplateActions {
   onSend?: () => void;
   onEdit?: () => void;
+  onAddLanguage?: () => void;
   onDuplicate?: () => void;
   /** Why edit and duplicate are not offered, when they are not. */
   authoringBlocked?: string | null;
@@ -73,7 +75,7 @@ export function TemplateDetail({
   const updated = lastUpdated(row);
   const variables = Object.entries(view.bodyExamples);
   const links = view.buttons.filter((button) => button.url);
-  const hasActions = Boolean(actions.onSend || actions.onEdit || actions.onDuplicate);
+  const hasActions = Boolean(actions.onSend || actions.onEdit || actions.onAddLanguage || actions.onDuplicate);
 
   return (
     <div className="grid gap-6 px-4 pb-4 md:grid-cols-[19.5rem_minmax(0,1fr)]">
@@ -106,6 +108,11 @@ export function TemplateDetail({
             {actions.onEdit ? (
               <Button type="button" size="sm" variant="outline" className="rounded-none" onClick={actions.onEdit}>
                 Edit
+              </Button>
+            ) : null}
+            {actions.onAddLanguage ? (
+              <Button type="button" size="sm" variant="outline" className="rounded-none" onClick={actions.onAddLanguage}>
+                Add language
               </Button>
             ) : null}
             {actions.onDuplicate ? (

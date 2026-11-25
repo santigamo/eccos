@@ -1,248 +1,103 @@
 import { describe, expect, test } from "bun:test";
-import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 
 /**
- * Rendering contract for the "New template" sheet's form
- * (`components/templates/create-template-sheet.tsx`).
- *
- * `CreateTemplateFields` is what is rendered here, never `CreateTemplateSheet`:
- * the sheet is a Base UI dialog and a closed dialog renders nothing at all, so
- * a static-markup assertion against it would pass against an empty string. The
- * fields are fully controlled — the same split as `WorkspaceFormFields` — which
- * is what lets every state (blocked draft, warnings, a success notice) be
- * rendered without driving a browser.
- *
- * Importing the component pulls in `src/server/gateway.ts`, which imports
- * `cloudflare:workers` and `@tanstack/react-start` — mocked here BEFORE the
- * import through the shared helper, whose header explains why it must be shared.
+ * Rendering contract for one language's fields on the authoring page
+ * (`components/templates/language-fields.tsx`), and the draft predicates behind
+ * them (`lib/template-draft.ts`). The fields are fully controlled, so every
+ * state renders without a browser.
  *
  * Design contract assertions (docs/DASHBOARD-DESIGN.md): square corners, the
- * Inter-uppercase-11px functional register on labels, the ghost anatomy with
- * its green hover edge, and the live region.
+ * Inter-uppercase-11px functional register on labels, and the ghost anatomy.
  */
 
-installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
-
+const { LanguageFields, LanguageReadOnly } = await import("../src/components/templates/language-fields");
 const {
-  CreateTemplateFields,
-  CreateTemplateSheet,
-  EMPTY_DRAFT,
-  discardDraftCopy,
+  blankDraft,
+  coreButtons,
+  draftContent,
+  exampleUrlFor,
+  exampleValueOf,
   exampleValues,
-  editNoticeFor,
   isDraftDirty,
-  noticeFor,
+  languageBlocker,
   shouldGuardDismissal,
-} = await import("../src/components/templates/create-template-sheet");
+} = await import("../src/lib/template-draft");
+const { discardDraftCopy } = await import("../src/components/templates/discard-draft-dialog");
 
-type Draft = typeof EMPTY_DRAFT;
-type Notice = ReturnType<typeof noticeFor>;
-
+type Draft = ReturnType<typeof blankDraft>;
+const EMPTY = blankDraft("en_US");
 const noop = () => {};
 
-/**
- * Is the SUBMIT button disabled?
- *
- * Read off the button's own attributes, never with a loose /disabled/ match:
- * every control in this form carries `disabled:*` Tailwind variants in its
- * class string, so a substring test passes on markup where nothing is disabled
- * at all.
- */
-function submitDisabled(html: string): boolean {
-  const start = html.indexOf('<button type="submit"');
-  expect(start).toBeGreaterThan(-1);
-  return html.slice(start, html.indexOf(">", start)).includes('disabled=""');
+function render(draft: Partial<Draft> = {}): string {
+  return renderToStaticMarkup(<LanguageFields wabaId="WABA_A" draft={{ ...EMPTY, ...draft }} onChange={noop} />);
 }
 
-function render(draft: Partial<Draft> = {}, notice: Notice | null = null): string {
-  return renderToStaticMarkup(
-    <CreateTemplateFields
-      wabaId="WABA_A"
-      draft={{ ...EMPTY_DRAFT, ...draft }}
-      onDraftChange={noop}
-      submitting={false}
-      notice={notice}
-      onSubmit={noop}
-    />,
-  );
-}
-
-describe("CreateTemplateFields", () => {
-  test("a closed Sheet renders nothing, which is why these tests render the fields", () => {
-    // Pins the reason this file exists, the same way send-test-form.test.tsx
-    // does. If Base UI ever starts emitting the popup's markup while closed,
-    // the assertions below could move up a level.
-    expect(
-      renderToStaticMarkup(
-        <CreateTemplateSheet open={false} onOpenChange={noop} wabaId="WABA_A" />,
-      ),
-    ).toBe("");
+describe("LanguageFields", () => {
+  test("one example input per variable, derived from the body", () => {
+    const two = render({ body: "Hi {{1}}, order {{2}} shipped." });
+    expect(two).toContain('id="template-example-1"');
+    expect(two).toContain('id="template-example-2"');
+    expect(two).not.toContain('id="template-example-3"');
+    expect(render({ body: "Welcome and congratulations!" })).not.toContain("template-example-");
   });
 
-  test("one example input per variable, derived from the body", () => {
-    // The inputs and the placeholders are one thing, not two that must be kept
-    // in sync: the count comes from `analyzeDraftBody` on every render.
-    const two = render({ body: "Hi {{1}}, order {{2}} shipped." });
-    expect(two).toContain('id="create-template-example-1"');
-    expect(two).toContain('id="create-template-example-2"');
-    expect(two).not.toContain('id="create-template-example-3"');
-
-    const zero = render({ body: "Welcome and congratulations!" });
-    expect(zero).not.toContain("create-template-example-");
+  test("the examples hang under the body on a left hairline, with no muted fill", () => {
+    const html = render({ body: "Hi {{1}}" });
+    const examples = html.slice(html.indexOf("Sample values") - 200, html.indexOf("Sample values"));
+    expect(examples).toContain("border-l border-(--line)");
+    expect(examples).not.toContain("bg-muted");
   });
 
   test("shrinking the body keeps the values typed for the variables that remain", () => {
-    // The backing array is only ever grown, so removing {{2}} and typing it
-    // back does not cost the operator what they already wrote.
-    const draft = { body: "Hi {{1}}", examples: ["Ada", "A-1029"] };
-    expect(exampleValues({ ...EMPTY_DRAFT, ...draft })).toEqual(["Ada"]);
-    expect(exampleValues({ ...EMPTY_DRAFT, body: "Hi {{1}} {{2}}", examples: ["Ada", "A-1029"] })).toEqual([
-      "Ada",
-      "A-1029",
-    ]);
+    const draft = { ...EMPTY, body: "Hi {{1}}", examples: ["Ada", "A-1029"] };
+    expect(exampleValues(draft)).toEqual(["Ada"]);
+    expect(exampleValues({ ...draft, body: "Hi {{1}} {{2}}" })).toEqual(["Ada", "A-1029"]);
     const html = render(draft);
     expect(html).toContain('value="Ada"');
     expect(html).not.toContain("A-1029");
   });
 
-  test("the preview substitutes typed examples and keeps an unfilled slot literal", () => {
-    // The preview never pretends a value exists.
-    const html = render({ body: "Hi {{1}}, order {{2}} shipped.", examples: ["Ada"] });
-    const preview = html.slice(html.indexOf(">Preview<"));
-    expect(preview).toContain(">Ada<");
-    expect(preview).toContain(">{{2}}<");
-    expect(preview).toContain(" shipped.");
+  test("the body counts its characters against Meta's ceiling and offers the next variable", () => {
+    const html = render({ body: "Hi {{1}}" });
+    expect(html).toContain("8 / 1024");
+    expect(html).toContain("Insert variable {{2}}");
   });
 
-  test("the preview names the row that is about to exist", () => {
-    // name · language · CATEGORY, in the machine voice: what the table will
-    // show, before it shows it.
-    const html = render({ name: "order_update", body: "Hi", category: "MARKETING" });
-    expect(html).toMatch(/order_update[^<]*·[^<]*en_US[^<]*·[^<]*MARKETING/);
-  });
-
-  test("a blocked draft disables submit AND shows the reason", () => {
-    // No dead buttons and no silent walls: a disabled control is only honest
-    // while the sentence explaining it is on screen next to the field.
+  test("a blocked body says why next to the field", () => {
     const html = render({ body: "Hi {{customer_name}}" });
     expect(html).toContain("Named parameters cannot be created here");
-    expect(submitDisabled(html)).toBe(true);
     expect(html).toContain('aria-invalid="true"');
   });
 
-  test("an acceptable draft leaves submit live", () => {
-    const html = render({ body: "Hi {{1}}, your order is on its way and arrives tomorrow." });
-    expect(submitDisabled(html)).toBe(false);
-  });
-
-  test("review warnings render amber and never disable anything", () => {
-    // Reseller-sourced heuristics warn; only Meta's own rules wall.
+  test("review warnings render amber", () => {
     const html = render({ body: "{{1}} {{2}} {{3}}" });
     expect(html).toContain("text-warning-foreground");
     expect(html).toContain("start or end with a variable");
-    expect(submitDisabled(html)).toBe(false);
   });
 
-  test("the success notice reports PENDING and the id Meta returned", () => {
-    const notice = noticeFor({ ok: true, id: "1234567890", status: "PENDING", category: "UTILITY" }, "UTILITY");
-    const html = render({ name: "order_update" }, notice);
-    expect(html).toContain("Submitted for review");
-    expect(html).toContain("PENDING");
-    expect(html).toContain("1234567890");
-    expect(html).not.toContain("categorized this template");
+  test("each button is one row: label, URL and remove", () => {
+    const html = render({ buttons: [{ text: "Track", url: "https://e.com/track", example: "" }] });
+    expect(html).toContain('aria-label="Button 1 label"');
+    expect(html).toContain('aria-label="Button 1 URL"');
+    expect(html).toContain('aria-label="Remove button 1"');
+    expect(html).toContain("+ Add button");
   });
 
-  test("recategorisation is reported only when Meta's answer differs from the request", () => {
-    // The console reports META'S ANSWER, not the operator's request: Meta
-    // recategorises on its own and the row will show its category, not ours.
-    const moved = noticeFor(
-      { ok: true, id: "1", status: "PENDING", category: "MARKETING" },
-      "UTILITY",
+  test("a dynamic URL asks only for its {{1}} value; a static one asks for nothing", () => {
+    const dynamic = render({ buttons: [{ text: "Status", url: "https://e.com/s/{{1}}", example: "4821" }] });
+    expect(dynamic).toContain("Example {{1}}");
+    expect(dynamic).toContain('value="4821"');
+    expect(dynamic).not.toContain("Example URL");
+    expect(render({ buttons: [{ text: "Track", url: "https://e.com/track", example: "" }] })).not.toContain(
+      "Example {{1}}",
     );
-    expect(render({}, moved)).toContain("Meta categorized this template as MARKETING.");
-  });
-
-  test("a refusal renders the console's copy, with Meta's sentence only as a secondary line", () => {
-    const taken = noticeFor({ ok: false, code: "name_taken", detail: "raw graph text" }, "UTILITY");
-    const html = render({}, taken);
-    expect(html).toContain("Name already in use");
-    // Graph's own wording explains, it never discriminates — and for a code the
-    // console fully explains itself, it is not shown at all.
-    expect(html).not.toContain("raw graph text");
-
-    const unmapped = noticeFor({ ok: false, code: "graph", detail: "raw graph text" }, "UTILITY");
-    expect(render({}, unmapped)).toContain("raw graph text");
-  });
-
-  test("renders the footer field and the button add/remove group", () => {
-    const html = render();
-    expect(html).toContain("Footer");
-    expect(html).toContain('id="create-template-footer"');
-    expect(html).toContain("Add button");
-    expect(html).toContain("Buttons");
-  });
-
-  test("a dynamic URL reveals its example field; a static one does not", () => {
-    // Dynamic = the URL carries a {{n}}: that is exactly when Meta requires the
-    // example URL, so the field exists only then.
-    const dynamic = render({
-      body: "hi",
-      buttons: [{ text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "" }],
-    });
-    expect(dynamic).toContain("Example URL");
-    const staticOne = render({
-      body: "hi",
-      buttons: [{ text: "Track", url: "https://e.com/track", exampleUrl: "" }],
-    });
-    expect(staticOne).not.toContain("Example URL");
-  });
-
-  test("a blocked footer or button disables submit and says why", () => {
-    const footer = render({ body: "hi", footer: "Hi {{1}}!" });
-    expect(footer).toContain("cannot contain variables");
-    expect(submitDisabled(footer)).toBe(true);
-
-    const buttons = render({
-      body: "hi",
-      buttons: [{ text: "x", url: "ftp://e.com", exampleUrl: "" }],
-    });
-    expect(buttons).toContain("https");
-    // A button whose URL is not https is blocked; the same draft with a valid
-    // URL and a filled dynamic example submits.
-    expect(submitDisabled(buttons)).toBe(true);
-    const ok = render({
-      body: "hi",
-      buttons: [{ text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "https://e.com/s?t=T" }],
-    });
-    expect(submitDisabled(ok)).toBe(false);
-    // Four buttons is impossible to author (the add control caps at three).
-    const four = render({
-      body: "hi",
-      buttons: [
-        { text: "a", url: "https://e.com/1", exampleUrl: "" },
-        { text: "b", url: "https://e.com/2", exampleUrl: "" },
-        { text: "c", url: "https://e.com/3", exampleUrl: "" },
-        { text: "d", url: "https://e.com/4", exampleUrl: "" },
-      ],
-    });
-    expect(four).toContain("at most 3");
-    expect(submitDisabled(four)).toBe(true);
   });
 
   test("states the scope wall once, with the way out", () => {
-    // The same honesty pattern as the send sheet's `unsupported` copy: what the
-    // console does NOT do, said plainly, with the tool that does.
     const html = render();
     expect(html).toContain("The console creates text templates");
-    expect(html).toContain("WhatsApp Manager");
     expect(html).toContain("waba_id=WABA_A");
-  });
-
-  test("the live region is mounted before it has anything to say", () => {
-    const html = render();
-    expect(html).toMatch(/<output[^>]*aria-live="polite"/);
-    expect(html).toMatch(/<output[^>]*aria-atomic="true"/);
   });
 
   test("labels wear the functional register (Inter uppercase 11px, tracking-wider)", () => {
@@ -253,180 +108,87 @@ describe("CreateTemplateFields", () => {
   });
 
   test("nothing rounds a corner", () => {
-    // The WhatsApp preview is the one exception: it depicts the phone, not the console.
-    const html = render({ body: "Hi {{1}}" }).replace(/<figure[\s\S]*<\/figure>/, "");
-    const stripped = html
+    const stripped = render({ body: "Hi {{1}}", buttons: [{ text: "a", url: "https://e.com", example: "" }] })
       .replace(/rounded-none/g, "")
       .replace(/rounded-\([^)]*\)/g, "")
       .replace(/rounded-\[[^\]]*\]/g, "");
     expect(stripped).not.toMatch(/rounded-/);
   });
 
-  test("interactive controls keep the ghost anatomy and the green hover edge", () => {
-    // The console's own law: a ghost control rests on --ghost-fill under a
-    // --line-strong edge and turns green under the pointer.
-    const html = render({ body: "Hi {{1}}" });
-    expect(html).toContain("bg-(--ghost-fill)");
-    expect(html).toContain("border-(--line-strong)");
-    expect(html).toContain("hover:border-(--ghost-edge-hover)");
-  });
-
-  test("the preview is the WhatsApp facsimile, in a square frame", () => {
-    const html = render({ body: "Hi {{1}}" });
-    expect(html).toContain('aria-label="Preview as the customer sees it in WhatsApp"');
-    expect(html).toContain("border border-(--line) bg-(--wa-wall)");
-    expect(html).toContain("bg-(--wa-bubble)");
-  });
-
-  test("the draft preview shows a typed footer and each button, in Meta's order", () => {
-    // The panel the operator confirms BEFORE submitting must draw what the
-    // form now authors: footer under the substituted body, then every URL
-    // button. A typed footer or button that never reached this panel would be
-    // the same contradiction class as the collected-but-never-sent params.
-    const html = render({
-      body: "Hi {{1}}",
-      examples: ["Ada"],
-      footer: "Thanks from Eccos",
-      buttons: [
-        { text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "https://e.com/s?t=T" },
-        { text: "Track", url: "https://e.com/track", exampleUrl: "" },
-      ],
-    });
-    expect(html).toContain(">Ada<");
-    expect(html).toContain("Thanks from Eccos");
-    expect(html).toContain("Status");
-    expect(html).toContain("Track");
-    // Meta's order inside the panel: body, then footer, then the buttons. The
-    // slice from the Preview label onwards is needed because the footer and
-    // button LABELS also appear in the input values ABOVE the panel.
-    const previewHtml = html.slice(html.indexOf(">Preview<"));
-    expect(previewHtml.indexOf(">Ada<")).toBeLessThan(previewHtml.indexOf("Thanks from Eccos"));
-    expect(previewHtml.indexOf("Thanks from Eccos")).toBeLessThan(previewHtml.indexOf("Status"));
-    expect(previewHtml.indexOf("Status")).toBeLessThan(previewHtml.indexOf("Track"));
-  });
-
-  test("a dynamic URL keeps its {{n}} literal in the form", () => {
-    // WhatsApp never shows a button's URL, so the preview draws only its label;
-    // the URL as authored stays visible in its field.
-    const html = render({
-      body: "Hi {{1}}",
-      footer: "",
-      buttons: [{ text: "Status", url: "https://e.com/s?t={{1}}", exampleUrl: "https://e.com/s?t=T" }],
-    });
-    expect(html).toContain("https://e.com/s?t={{1}}");
-  });
-
-  test("a draft with no footer and no buttons leaves the preview body-only", () => {
-    // Unchanged from before authoring existed: the panel stays a single muted
-    // body block, never a stack of empty components.
-    const html = render({ body: "Hi {{1}}", examples: ["Ada"], footer: "", buttons: [] });
-    expect(html).toContain(">Ada<");
-    expect(html).not.toContain("border-(--wa-rule)");
+  test("a read-only language shows its content as text, with no inputs", () => {
+    const html = renderToStaticMarkup(
+      <LanguageReadOnly
+        draft={{ ...EMPTY, body: "Hi {{1}}", examples: ["Ada"], footer: "Thanks", buttons: [{ text: "Track", url: "https://e.com/t", example: "" }] }}
+      />,
+    );
+    expect(html).toContain("Hi {{1}}");
+    expect(html).toContain("Ada");
+    expect(html).toContain("Thanks");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<textarea");
   });
 });
 
-/**
- * The dismissal guard: what keeps an unsaved draft alive.
- *
- * Asserted through the pure predicates rather than the markup, deliberately.
- * The sheet is a Base UI portal whose popup a static render cannot open (the
- * first test in this file pins that), and the gestures the guard answers —
- * a backdrop click, Escape, the close button — do not exist without a DOM. The
- * predicates ARE the decision; the sheet only wires them to
- * `disablePointerDismissal` and to `eventDetails.cancel()`.
- */
-describe("the dismissal guard", () => {
-  // `createdDraft` is compared by reference, so the one test about it builds its
-  // draft object by hand instead of going through this helper.
-  const guard = (draft: Partial<Draft>, submitting = false) =>
-    shouldGuardDismissal({
-      draft: { ...EMPTY_DRAFT, ...draft },
-      submitting,
-      createdDraft: null,
-    });
-
-  test("an untouched draft is not dirty, so 'opened it by mistake' stays free", () => {
-    expect(isDraftDirty(EMPTY_DRAFT)).toBe(false);
-    expect(guard({})).toBe(false);
+describe("the dynamic URL example", () => {
+  test("the console builds the example URL from the template and the {{1}} value", () => {
+    expect(exampleUrlFor("https://shop.example.com/orders/{{1}}", "4821")).toBe("https://shop.example.com/orders/4821");
+    expect(exampleUrlFor("https://e.com/s?t={{1}}&x=1", " T ")).toBe("https://e.com/s?t=T&x=1");
+    expect(exampleUrlFor("https://e.com/s/{{1}}", "")).toBe("");
+    expect(exampleUrlFor("https://e.com/static", "x")).toBe("");
   });
 
-  test("anything typed into the document arms the guard", () => {
-    expect(isDraftDirty({ ...EMPTY_DRAFT, name: "order_update" })).toBe(true);
-    expect(isDraftDirty({ ...EMPTY_DRAFT, body: "Hi {{1}}" })).toBe(true);
-    expect(isDraftDirty({ ...EMPTY_DRAFT, footer: "Powered by Eccos" })).toBe(true);
-    expect(guard({ body: "Hi {{1}}" })).toBe(true);
+  test("Meta's stored example reads back as the {{1}} value", () => {
+    expect(exampleValueOf("https://e.com/orders/{{1}}", "https://e.com/orders/4821")).toBe("4821");
+    expect(exampleValueOf("https://e.com/s?t={{1}}&x=1", "https://e.com/s?t=T&x=1")).toBe("T");
+    expect(exampleValueOf("https://e.com/orders/{{1}}", "https://other.com/4821")).toBe("");
   });
 
-  test("whitespace alone is not content", () => {
-    // Otherwise a stray space in the name would cost a confirmation.
-    expect(isDraftDirty({ ...EMPTY_DRAFT, name: "   ", body: "\n ", footer: " " })).toBe(false);
+  test("the request and core's rules carry the built URL", () => {
+    const draft = { ...EMPTY, body: "hi", buttons: [{ text: "Status", url: "https://e.com/s/{{1}}", example: "T" }] };
+    expect(coreButtons(draft)).toEqual([{ text: "Status", url: "https://e.com/s/{{1}}", exampleUrl: "https://e.com/s/T" }]);
+    expect(draftContent(draft).buttons).toEqual([{ text: "Status", url: "https://e.com/s/{{1}}", exampleUrl: "https://e.com/s/T" }]);
+    // Without its value the button blocks, in core's words.
+    const missing = { ...draft, buttons: [{ ...draft.buttons[0]!, example: "" }] };
+    expect(languageBlocker(missing, "created")).toContain("needs an example URL");
+  });
+});
+
+describe("languageBlocker", () => {
+  test("names the language and the first thing missing", () => {
+    expect(languageBlocker({ ...EMPTY, language: "es" }, "created")).toBe("Spanish needs a body before it can be created.");
+    expect(languageBlocker({ ...EMPTY, body: "Hi {{1}}" }, "submitted")).toBe("English (US) needs an example for {{1}}.");
+    expect(languageBlocker({ ...EMPTY, body: "Hi", footer: "Hi {{1}}" }, "created")).toContain("cannot contain variables");
+    expect(languageBlocker({ ...EMPTY, body: "Hi {{1}} there, thanks", examples: ["Ada"] }, "created")).toBeNull();
+  });
+});
+
+describe("the leave guard's predicates", () => {
+  test("an untouched draft is not dirty", () => {
+    expect(isDraftDirty(EMPTY)).toBe(false);
+    expect(shouldGuardDismissal({ submitting: false, dirty: false })).toBe(false);
   });
 
-  test("a language or category moved off its default is a deliberate choice", () => {
-    expect(isDraftDirty({ ...EMPTY_DRAFT, language: "es_ES" })).toBe(true);
-    expect(isDraftDirty({ ...EMPTY_DRAFT, category: "MARKETING" })).toBe(true);
+  test("anything typed arms it; whitespace and a blank button row do not", () => {
+    expect(isDraftDirty({ ...EMPTY, body: "Hi {{1}}" })).toBe(true);
+    expect(isDraftDirty({ ...EMPTY, footer: "Powered by Eccos" })).toBe(true);
+    expect(isDraftDirty({ ...EMPTY, examples: ["Ada"] })).toBe(true);
+    expect(isDraftDirty({ ...EMPTY, body: "\n ", footer: " " })).toBe(false);
+    expect(isDraftDirty({ ...EMPTY, buttons: [{ text: "", url: "", example: "" }] })).toBe(false);
   });
 
-  test("a button row added and left blank is shape, not content", () => {
-    // One click to recreate: guarding it would make "+ Add button" a trap.
-    expect(
-      isDraftDirty({ ...EMPTY_DRAFT, buttons: [{ text: "", url: "", exampleUrl: "" }] }),
-    ).toBe(false);
-    expect(
-      isDraftDirty({
-        ...EMPTY_DRAFT,
-        buttons: [{ text: "Track", url: "", exampleUrl: "" }],
-      }),
-    ).toBe(true);
+  test("a language at Meta is dirty only once it differs from Meta's copy", () => {
+    const initial = { ...EMPTY, body: "Hi" };
+    expect(isDraftDirty({ ...initial }, initial)).toBe(false);
+    expect(isDraftDirty({ ...initial, body: "Hi!" }, initial)).toBe(true);
   });
 
-  test("an example typed for a variable that has left the body still counts", () => {
-    // The examples array is only ever grown, so the value is still on screen
-    // the moment the variable is typed back — losing it would be a real loss.
-    expect(isDraftDirty({ ...EMPTY_DRAFT, examples: ["Ada"] })).toBe(true);
-    expect(isDraftDirty({ ...EMPTY_DRAFT, examples: ["", ""] })).toBe(false);
-  });
-
-  test("a submit in flight guards even a draft that looks empty", () => {
-    // Unmounting under a pending request throws away Meta's answer to a
-    // creation that may already have succeeded.
-    expect(guard({}, true)).toBe(true);
-  });
-
-  test("the draft Meta accepted is a receipt, and stops guarding", () => {
-    const created: Draft = { ...EMPTY_DRAFT, name: "order_update", body: "Hi {{1}}" };
-    expect(shouldGuardDismissal({ draft: created, submitting: false, createdDraft: created })).toBe(
-      false,
-    );
-    // Reference identity on purpose: editing produces a new object, and the
-    // guard re-arms on the very next keystroke.
-    const edited: Draft = { ...created, body: "Hi {{1}}!" };
-    expect(shouldGuardDismissal({ draft: edited, submitting: false, createdDraft: created })).toBe(
-      true,
-    );
+  test("a submit in flight guards even an empty page", () => {
+    expect(shouldGuardDismissal({ submitting: true, dirty: false })).toBe(true);
   });
 
   test("the discard question names what is lost, and says something else mid-submit", () => {
-    // Two costs, two sentences: an unsent draft loses what was typed, an
-    // in-flight one loses Meta's answer.
     expect(discardDraftCopy(false)).toContain("Nothing has been created yet");
-    expect(discardDraftCopy(false)).toContain("buttons");
     expect(discardDraftCopy(true)).toContain("still being submitted");
-    expect(discardDraftCopy(true)).not.toContain("Nothing has been created yet");
-  });
-});
-
-describe("editNoticeFor", () => {
-  test("edit failures read in the console's words, with Meta's sentence when it explains", () => {
-    expect(editNoticeFor({ ok: true })).toEqual({ ok: true, edited: true });
-    expect(editNoticeFor({ ok: false, code: "not_found", detail: null })).toMatchObject({
-      ok: false,
-      title: "Template not found",
-    });
-    expect(editNoticeFor({ ok: false, code: "graph", detail: "Edit limit reached" })).toMatchObject({
-      ok: false,
-      detail: "Edit limit reached",
-      secondary: "Edit limit reached",
-    });
+    expect(discardDraftCopy(false, true)).toContain("Nothing has been changed at Meta yet");
   });
 });
