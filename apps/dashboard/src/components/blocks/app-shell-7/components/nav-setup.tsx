@@ -24,6 +24,8 @@ import {
  *
  * `billing` (activated with hours left, paused, paid) comes from the account's
  * status and funnel clock (`companionBilling`); a test may pass it instead.
+ * Its status line is `NavBillingStatus`, pinned in the sidebar footer so a
+ * short viewport never scrolls the deadline away; Hide does not hide it.
  *
  * "Hide" persists in `localStorage`, per viewer: dismissing it is "I have read
  * this", a fact about a person rather than a workspace, and the console writes
@@ -124,18 +126,27 @@ export function NavSetup({ billing: given }: { billing?: CompanionBilling }) {
           )
         })}
       </ol>
-      {billing && billing.stage !== "paid" ? (
-        <Link
-          to="/billing"
-          search={{ wabaId }}
-          className="text-[13px] leading-[18px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
-        >
-          {billing.stage === "activated"
-            ? `Activated · ${timeLeft(billing.left)} to subscribe`
-            : "Paused · subscribe to send again"}
-        </Link>
-      ) : null}
     </nav>
+  )
+}
+
+/** "Activated · 1 d 17 h left to subscribe" or "Paused · ...", above the user tile. */
+export function NavBillingStatus({ billing: given }: { billing?: CompanionBilling }) {
+  const root = useLoaderData({ from: "__root__" })
+  const { wabaId } = useSearch({ from: "__root__" })
+  if (!root.ok) return null
+  const billing = given ?? companionBilling(root.data, Date.now())
+  if (!billing || billing.stage === "paid") return null
+  return (
+    <Link
+      to="/billing"
+      search={{ wabaId }}
+      className="in-data-[state=collapsed]:hidden px-2 text-[13px] leading-[18px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+    >
+      {billing.stage === "activated"
+        ? `Activated · ${timeLeft(billing.left)} to subscribe`
+        : "Paused · subscribe to send again"}
+    </Link>
   )
 }
 

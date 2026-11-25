@@ -6,7 +6,7 @@ import {
 } from "@/components/ui/sidebar"
 
 import { NavMain } from "./nav-main"
-import { NavSetup } from "./nav-setup"
+import { NavBillingStatus, NavSetup } from "./nav-setup"
 import { NavUser } from "./nav-user"
 import { SidebarRailToggle } from "./sidebar-rail-toggle"
 
@@ -29,11 +29,11 @@ export function AppSidebar() {
         <NavSetup />
       </SidebarContent>
 
-      {/* Identity only. Scope — which workspace, which WABA — lives in the
-          masthead breadcrumb, where the block this shell is derived from puts
-          it; two identity-shaped rows stacked in this footer was the shell
-          answering the same question twice. */}
-      <SidebarFooter className="gap-2 px-2 pb-4">
+      {/* Identity, plus the setup window's deadline while it runs: pinned
+          here, it stays visible however short the viewport. Scope (which
+          workspace, which WABA) lives in the masthead breadcrumb. */}
+      <SidebarFooter className="gap-2 px-2 pb-2">
+        <NavBillingStatus />
         <NavUser />
         <p className="text-muted-foreground font-pixel px-2 text-[11px] tracking-wider uppercase in-data-[state=collapsed]:hidden">
           v0.1.0

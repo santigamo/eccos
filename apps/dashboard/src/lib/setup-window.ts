@@ -39,9 +39,9 @@ export function timeLeft(left: number): string {
   return `${Math.max(1, Math.floor(left / MINUTE))} min left`;
 }
 
-/** Whole days, rounded down like `timeLeft`, never below one. */
+/** Whole days, rounded up: a deadline 5 days out reads "5 days", never below one. */
 const wholeDays = (left: number) => {
-  const days = Math.max(1, Math.floor(left / DAY));
+  const days = Math.max(1, Math.ceil(left / DAY));
   return `${days} ${days === 1 ? "day" : "days"}`;
 };
 

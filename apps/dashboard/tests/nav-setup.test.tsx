@@ -35,7 +35,7 @@ mock.module("@tanstack/react-router", () => ({
   useSearch: () => searchParams,
 }));
 
-const { NavSetup } = await import("../src/components/blocks/app-shell-7/components/nav-setup");
+const { NavBillingStatus, NavSetup } = await import("../src/components/blocks/app-shell-7/components/nav-setup");
 
 function stateFor(stage: DashboardState["stage"], replies = 0): DashboardState {
   const resources = {
@@ -60,11 +60,14 @@ function renderFor(
   hasForwardingTarget: boolean | null = false,
   replies = 0,
   billing?: CompanionBilling,
+  Component = NavSetup,
 ): string {
   loaderData = { ok: true, data: stateFor(stage, replies), hasForwardingTarget };
   searchParams = {};
-  return renderToStaticMarkup(<NavSetup billing={billing} />);
+  return renderToStaticMarkup(<Component billing={billing} />);
 }
+
+const statusFor = (billing?: CompanionBilling) => renderFor("ready", true, 1, billing, NavBillingStatus);
 
 describe("NavSetup companion", () => {
   test("counts what is done and marks the current step", () => {
@@ -114,11 +117,13 @@ describe("NavSetup companion", () => {
     expect(renderFor("ready", true, 1, { stage: "activated", left: 72 * HOUR })).toContain("Setup");
   });
 
-  test("shows the hours left once activated, and the pause", () => {
+  test("the footer status line shows the hours left once activated, and the pause", () => {
     // The strip's own formatter, rounded down: 41h59m reads as the strip reads it.
-    expect(renderFor("ready", true, 1, { stage: "activated", left: 42 * HOUR - 60_000 })).toContain("Activated · 1 d 17 h left to subscribe");
-    expect(renderFor("ready", true, 1, { stage: "activated", left: 90 * 60_000 })).toContain("Activated · 1 h left to subscribe");
-    expect(renderFor("ready", true, 1, { stage: "paused" })).toContain("Paused · subscribe to send again");
-    expect(renderFor("ready", false, 0)).not.toContain("left to subscribe");
+    expect(statusFor({ stage: "activated", left: 42 * HOUR - 60_000 })).toContain("Activated · 1 d 17 h left to subscribe");
+    expect(statusFor({ stage: "activated", left: 90 * 60_000 })).toContain("Activated · 1 h left to subscribe");
+    expect(statusFor({ stage: "paused" })).toContain("Paused · subscribe to send again");
+    expect(statusFor({ stage: "paid" })).toBe("");
+    expect(statusFor()).toBe("");
+    expect(renderFor("ready", true, 1, { stage: "activated", left: HOUR })).not.toContain("left to subscribe");
   });
 });
