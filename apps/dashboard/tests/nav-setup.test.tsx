@@ -2,19 +2,16 @@ import { describe, expect, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DashboardState } from "../src/server/gateway";
+import type { CompanionBilling } from "../src/lib/setup-checklist";
 
 /**
- * The sidebar checklist renderer (`nav-setup.tsx`) and its half of the §2
- * decision in docs/console-gaps-2026-09.md: a DONE step whose action is not
- * repeatable is rendered as plain text, never a link. The derivation half is
- * pinned in `tests/setup-checklist.test.ts` (the null-href contract); what is
- * pinned here is that the renderer honors it — a null-href row must come out as
- * text, so the live UI cannot keep a done row clickable.
+ * The sidebar setup companion (`nav-setup.tsx`). The derivation is pinned in
+ * `tests/setup-checklist.test.ts`; what is pinned here is the rendering: the
+ * href contract, the current step, the hide rule and the billing seam.
  *
  * `NavSetup` reads the root loader and search params through TanStack Router
- * hooks, so both modules are stubbed with `mock.module` before the import (same
- * approach as `tests/gateway.test.ts`), and the checklist state is fed directly.
- * React's `renderToStaticMarkup` needs no DOM.
+ * hooks, so the router module is stubbed before the import and the state is
+ * fed directly. `renderToStaticMarkup` needs no DOM.
  */
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
@@ -22,16 +19,13 @@ installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 let loaderData: { ok: boolean; data: DashboardState; hasForwardingTarget: boolean | null } | undefined;
 let searchParams: { wabaId?: string } = {};
 
-// SPREAD, not replaced. `mock.module` swaps the module for the whole test
-// process and the FIRST stub for a specifier fixes which keys exist, so a
-// partial stub here silently strips exports a later file re-mocks and needs
-// (`createFileRoute` in tests/templates-screen.test.tsx). Only the hooks this
-// file feeds are overridden.
+// SPREAD, not replaced: the first stub for a specifier fixes which keys exist
+// for the whole process, so a partial stub strips exports later files need.
 const routerModule = await import("@tanstack/react-router");
 mock.module("@tanstack/react-router", () => ({
   ...routerModule,
   Link: (props: { to: string; children: React.ReactNode; className?: string }) => (
-    <a href={props.to} className={props.className} data-testid="checklist-link">
+    <a href={props.to} className={props.className}>
       {props.children}
     </a>
   ),
@@ -40,37 +34,22 @@ mock.module("@tanstack/react-router", () => ({
 }));
 
 const { NavSetup } = await import("../src/components/blocks/app-shell-7/components/nav-setup");
-const { setupComplete, setupSteps } = await import("../src/lib/setup-checklist");
-function setupStepsOf(state: DashboardState, hasTarget: boolean) {
-  return setupSteps(state, hasTarget);
-}
 
-/** `replies`, not a flat inbound count: the last step counts the kinds a HUMAN
- * produces, so a workspace full of its own delivery receipts leaves it todo. */
 function stateFor(stage: DashboardState["stage"], replies = 0): DashboardState {
-  const base = {
-    resources: {
-      account: { accountId: "account-a", name: "A", createdAt: 1 },
-      keys: [],
-      wabas: [] as never[],
-    },
+  const resources = {
+    account: { accountId: "account-a", name: "A", createdAt: 1 },
+    keys: [],
+    wabas: [],
+    phones: [],
   };
-  if (stage === "no-organization") {
-    return { stage: "no-organization" } as DashboardState;
-  }
-  if (stage === "account-ready") {
-    return { stage: "account-ready", ...base } as unknown as DashboardState;
-  }
-  // replies 0: with a forwarding target the checklist must NOT be complete
-  // (first message still todo) — a complete checklist hides itself, which is
-  // pinned separately below.
+  if (stage === "no-organization") return { stage: "no-organization" } as DashboardState;
+  if (stage === "account-ready") return { stage: "account-ready", resources } as unknown as DashboardState;
   return {
     stage: "ready",
-    ...base,
     status: {
       counts: { inbound: replies, inboundByType: { reply: replies }, outbound: {}, deliveries: {} },
     },
-    scope: {},
+    scope: { resources },
   } as unknown as DashboardState;
 }
 
@@ -78,25 +57,31 @@ function renderFor(
   stage: DashboardState["stage"],
   hasForwardingTarget: boolean | null = false,
   replies = 0,
+  billing?: CompanionBilling,
 ): string {
   loaderData = { ok: true, data: stateFor(stage, replies), hasForwardingTarget };
   searchParams = {};
-  return renderToStaticMarkup(<NavSetup />);
+  return renderToStaticMarkup(<NavSetup billing={billing} />);
 }
 
-describe("NavSetup rendering of the href contract", () => {
+describe("NavSetup companion", () => {
+  test("counts what is done and marks the current step", () => {
+    const html = renderFor("account-ready");
+    expect(html).toContain("1 of 4");
+    // The current step is the first one not done, announced as such.
+    expect(html).toMatch(/<li aria-current="step"[^>]*>.*Number/);
+    expect(html.match(/aria-current="step"/g)).toHaveLength(1);
+    expect(html).toContain("Webhook or API key");
+    expect(html).toContain("First message");
+  });
+
   test("a done workspace row is plain text, not a link", () => {
-    // §2: the workspace row is always done when the shell renders, and linking
-    // it to /onboarding handed the operator a duplicate-maker. The derivation
-    // nulls the href (setup-checklist.test.ts); the renderer must draw text.
     const html = renderFor("account-ready");
     expect(html).toContain("Workspace");
     expect(html).not.toContain('href="/onboarding"');
   });
 
   test("recurring steps keep their links even when done", () => {
-    // Only the workspace loses its door: numbers, target and message are
-    // recurring actions, so a done row still links to its page.
     const html = renderFor("ready", true);
     expect(html).toContain('href="/numbers"');
     expect(html).toContain('href="/webhooks"');
@@ -105,24 +90,25 @@ describe("NavSetup rendering of the href contract", () => {
   });
 
   test("a todo workspace row (no-organization) links to /onboarding", () => {
-    // The one live workspace link: a no-organization session has no shell pages
-    // to link instead, and the root loader forces every route to /onboarding —
-    // where creating the workspace IS the point of the page.
-    const html = renderFor("no-organization");
-    expect(html).toContain('href="/onboarding"');
+    expect(renderFor("no-organization")).toContain('href="/onboarding"');
   });
 
-  test("the completed checklist hides itself, as before", () => {
-    // Unchanged behavior, pinned so the null-href work cannot regress it: a
-    // fully done checklist renders nothing at all.
-    expect(setupComplete(setupStepsOf(stateFor("ready", 1), true))).toBe(true);
+  test("keeps the Hide action", () => {
+    expect(renderFor("ready")).toContain(">Hide</button>");
+  });
+
+  test("hides itself once every observable step is done", () => {
     expect(renderFor("ready", true, 1)).toBe("");
   });
 
-  test("a target read that failed does not reopen the forwarding step", () => {
-    // `null` is unknown, never "no target": a finished checklist must not come
-    // back because one read failed.
+  test("a target read that failed does not reopen the setup step", () => {
+    // `null` is unknown, never "no target".
     expect(renderFor("ready", null, 1)).toBe("");
-    expect(renderFor("ready", false, 1)).toContain("Forwarding target");
+    expect(renderFor("ready", false, 1)).toContain("Webhook or API key");
+  });
+
+  test("billing, once fed, decides: paid hides, activated keeps it up", () => {
+    expect(renderFor("ready", false, 0, { stage: "paid" })).toBe("");
+    expect(renderFor("ready", true, 1, { stage: "activated", hoursLeft: 72 })).toContain("Setup");
   });
 });

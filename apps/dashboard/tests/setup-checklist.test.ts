@@ -1,60 +1,39 @@
 import { describe, expect, test } from "bun:test";
 import {
-  setupComplete,
+  companionVisible,
+  currentStep,
   setupDone,
   setupSteps,
 } from "../src/lib/setup-checklist";
+import type { AccountKeyResource } from "@eccos/gateway-contract";
 import type { DashboardState } from "../src/server/gateway";
 
 /**
- * The first-run checklist's derivation (`src/lib/setup-checklist.ts`).
- *
- * Pure, and tested here rather than through the sidebar block that renders it:
- * that block is built out of router `Link`s and needs a RouterProvider this
- * suite does not have. What matters is not the markup anyway — it is that every
- * row is a FACT about the account, read fresh on each load, so a step cannot
- * stay ticked after the thing it describes is undone.
+ * The setup companion's derivation (`src/lib/setup-checklist.ts`). Every row is
+ * a FACT about the account, read fresh on each load, so a step cannot stay
+ * ticked after the thing it describes is undone.
  */
 
-function accountReady(wabaCount: number): DashboardState {
+const liveKey: AccountKeyResource = { keyId: "k1", label: null, createdAt: 1, revokedAt: null };
+const revokedKey: AccountKeyResource = { ...liveKey, revokedAt: 2 };
+
+function accountReady(wabaCount: number, keys: AccountKeyResource[] = []): DashboardState {
   return {
     stage: "account-ready",
     resources: {
       account: { accountId: "account-a", name: "A", createdAt: 1 },
-      keys: [],
-      wabas: Array.from({ length: wabaCount }, (_, i) => ({
-        accountId: "account-a",
-        wabaId: `waba-${i}`,
-        callbackUrl: null,
-        createdAt: 1,
-        provisionedAt: null,
-        status: "pending" as const,
-        provisioningError: null,
-        phones: [],
-        coexistence: {
-          onboardingType: "standard" as const,
-          verifiedOnboardingType: null,
-          status: "not_applicable" as const,
-          deadlineAt: null,
-          contactsStartedAt: null,
-          contactsRequestId: null,
-          historyStartedAt: null,
-          historyRequestId: null,
-          error: null,
-        },
-      })),
+      keys,
+      wabas: Array.from({ length: wabaCount }, (_, i) => ({ wabaId: `waba-${i}` })),
       phones: [],
     },
-  };
+  } as unknown as DashboardState;
 }
 
 /**
- * `replies` and not a flat inbound count, which is the whole point of the
- * fixture: `counts.inbound` includes the `delivered` receipts for the
- * operator's OWN sends, so a workspace where nobody has written in still has a
- * non-zero one.
+ * `replies` and not a flat inbound count: `counts.inbound` includes the
+ * `delivered` receipts for the operator's OWN sends.
  */
-function ready(replies: number, statuses = 0): DashboardState {
+function ready(replies: number, statuses = 0, keys: AccountKeyResource[] = []): DashboardState {
   return {
     stage: "ready",
     status: {
@@ -65,7 +44,7 @@ function ready(replies: number, statuses = 0): DashboardState {
         deliveries: {},
       },
     },
-    scope: {},
+    scope: { resources: { keys, wabas: [], phones: [] } },
   } as unknown as DashboardState;
 }
 
@@ -75,42 +54,23 @@ function stateOf(state: DashboardState, hasTarget: boolean): Record<string, stri
 
 describe("setupSteps", () => {
   test("four steps, each pointing at the page that produces its fact", () => {
-    // No step-only routes and no wizard: attaching a number is a recurring
-    // operation, so every row is a link into the console an operator already
-    // has (routes/numbers.tsx, bead eccos-up9).
-    expect(setupSteps(ready(1), true).map((step) => [step.id, step.href])).toEqual([
-          // A done workspace action is not repeatable, so the row carries NO
-          // href - a link would open the page that creates ANOTHER workspace
-          // (docs/console-gaps-2026-09.md §2; contract in lib/setup-checklist.ts).
-          ["workspace", null],
-      ["number", "/numbers"],
-      ["target", "/webhooks"],
-      // THE EVENT LOG, and deliberately not a test send: a fresh WABA has no
-      // approved template for minutes to days, so a send would gate first run
-      // on Meta's review queue. Receiving a message needs nothing but the
-      // number, and it exercises the forwarding target above it too.
-      ["message", "/events"],
+    expect(setupSteps(ready(1), true).map((step) => [step.id, step.label, step.href])).toEqual([
+      // A done workspace is not repeatable: no href, or it would open the
+      // page that creates ANOTHER workspace (docs/console-gaps-2026-09.md §2).
+      ["workspace", "Workspace", null],
+      ["number", "Number", "/numbers"],
+      ["setup", "Webhook or API key", "/webhooks"],
+      ["message", "First message", "/events"],
     ]);
   });
 
-  test("a done workspace row has no href; a todo one links to /onboarding", () => {
-    // The null contract from the ready case above, and its one live link: a
-    // todo workspace exists only for no-organization sessions, where
-    // /onboarding IS the first-run creation page (the root loader forces every
-    // other route there, so there is nowhere else to link a todo row).
-    const readyRow = setupSteps(ready(0), false).find((s) => s.id === "workspace");
-    const todoRow = setupSteps({ stage: "no-organization" }, false).find(
-      (s) => s.id === "workspace",
-    );
-    expect(readyRow?.href).toBeNull();
-    expect(todoRow?.href).toBe("/onboarding");
-  });
-
-  test("a session with no workspace has done nothing yet", () => {
+  test("a todo workspace (no-organization) links to /onboarding", () => {
+    const row = setupSteps({ stage: "no-organization" }, false).find((s) => s.id === "workspace");
+    expect(row?.href).toBe("/onboarding");
     expect(stateOf({ stage: "no-organization" }, false)).toEqual({
       workspace: "todo",
       number: "todo",
-      target: "todo",
+      setup: "todo",
       message: "todo",
     });
   });
@@ -119,23 +79,23 @@ describe("setupSteps", () => {
     expect(stateOf(accountReady(0), false)).toEqual({
       workspace: "done",
       number: "todo",
-      target: "todo",
+      setup: "todo",
       message: "todo",
     });
   });
 
   test("a WABA still waiting on its phone number reads as in progress", () => {
-    // The one state that is neither. Calling it "to do" would tell an operator
-    // to redo work Meta is already holding.
     expect(stateOf(accountReady(1), false).number).toBe("in-progress");
     expect(setupDone(setupSteps(accountReady(1), false))).toBe(1);
   });
 
-  test("the forwarding target is read from the server, not from a stored tick", () => {
-    // Same account, two answers — which is the whole point of deriving it:
-    // an operator who removes their target loses the tick again.
-    expect(stateOf(ready(0), true).target).toBe("done");
-    expect(stateOf(ready(0), false).target).toBe("todo");
+  test("set up is a forwarding target or a live API key", () => {
+    expect(stateOf(ready(0), true).setup).toBe("done");
+    expect(stateOf(ready(0, 0, [liveKey]), false).setup).toBe("done");
+    expect(stateOf(accountReady(0, [liveKey]), false).setup).toBe("done");
+    // Removing the target or revoking the key undoes the tick.
+    expect(stateOf(ready(0), false).setup).toBe("todo");
+    expect(stateOf(ready(0, 0, [revokedKey]), false).setup).toBe("todo");
   });
 
   test("the last step needs a received message, not just a live number", () => {
@@ -144,39 +104,42 @@ describe("setupSteps", () => {
   });
 
   test("a delivery receipt for the operator's own send does not tick it", () => {
-    // THE BUG THIS PINS. `inbound_events` holds every normalised callback, so
-    // sending one template produces a `delivered` row — and the step, read off
-    // the flat total, announced that a first message had arrived from a
-    // customer who had never written. Only the message kinds are a human.
     expect(stateOf(ready(0, 5), true).message).toBe("todo");
   });
 
-  test("an echo counts, because coexistence is still a human writing", () => {
-    const withEcho = {
-      stage: "ready",
-      status: { counts: { inbound: 1, inboundByType: { echo: 1 }, outbound: {}, deliveries: {} } },
-      scope: {},
-    } as unknown as DashboardState;
-    expect(stateOf(withEcho, true).message).toBe("done");
-  });
-
-  test("a non-text message or echo counts too", () => {
-    for (const kind of ["message", "message_echo"]) {
-      const withMessage = {
+  test("echoes and non-text messages count, because a human wrote them", () => {
+    for (const kind of ["echo", "message", "message_echo"]) {
+      const state = {
         stage: "ready",
         status: { counts: { inbound: 1, inboundByType: { [kind]: 1 }, outbound: {}, deliveries: {} } },
-        scope: {},
+        scope: { resources: { keys: [], wabas: [], phones: [] } },
       } as unknown as DashboardState;
-      expect(stateOf(withMessage, true).message).toBe("done");
+      expect(stateOf(state, true).message).toBe("done");
     }
   });
+});
 
-  test("all four facts complete the checklist, which then has nothing to say", () => {
-    const steps = setupSteps(ready(1), true);
-    expect(setupDone(steps)).toBe(4);
-    expect(setupComplete(steps)).toBe(true);
-    // And an unfinished one never claims to be complete, so the block cannot
-    // disappear while a step is outstanding.
-    expect(setupComplete(setupSteps(ready(1), false))).toBe(false);
+describe("currentStep", () => {
+  test("is the first step that is not done", () => {
+    expect(currentStep(setupSteps(accountReady(0), false))?.id).toBe("number");
+    expect(currentStep(setupSteps(accountReady(1), false))?.id).toBe("number");
+    expect(currentStep(setupSteps(ready(0), false))?.id).toBe("setup");
+    expect(currentStep(setupSteps(ready(0), true))?.id).toBe("message");
+    expect(currentStep(setupSteps(ready(1), true))).toBeUndefined();
+  });
+});
+
+describe("companionVisible", () => {
+  test("without billing, it shows until every observable step is done", () => {
+    expect(companionVisible(setupSteps(ready(1), false))).toBe(true);
+    expect(companionVisible(setupSteps(ready(1), true))).toBe(false);
+  });
+
+  test("billing decides once it is fed: paid hides, activated and paused show", () => {
+    const done = setupSteps(ready(1), true);
+    expect(companionVisible(done, { stage: "paid" })).toBe(false);
+    expect(companionVisible(done, { stage: "activated", hoursLeft: 40 })).toBe(true);
+    expect(companionVisible(done, { stage: "paused" })).toBe(true);
+    expect(companionVisible(setupSteps(ready(0), false), { stage: "paid" })).toBe(false);
   });
 });
