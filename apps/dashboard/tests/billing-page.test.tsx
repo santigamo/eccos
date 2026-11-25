@@ -34,7 +34,7 @@ function page(billingStatus: BillingStatus, over: Partial<BillingPage> = {}): Bi
     },
     phones,
     canManage: true,
-    window: { activatedAt: null, pausesAt: null },
+    window: { activatedAt: null, pausesAt: null, pauseReason: null },
     charge: subscribed ? { nextChargeAt: DEC_25, periodEndsAt: DEC_25 } : null,
     payments: subscribed
       ? [{ id: "tran_1", at: Date.UTC(2026, 10, 25), amountCents: 968, currency: "EUR", status: "paid" }]
@@ -79,14 +79,14 @@ describe("/billing states", () => {
   });
 
   test("setup with its day-14 deadline counts the days down", async () => {
-    const window = { activatedAt: null, pausesAt: NOW + 9 * 24 * HOUR };
+    const window = { activatedAt: null, pausesAt: NOW + 9 * 24 * HOUR, pauseReason: "never_activated" as const };
     const html = await render(page("setup", { phones: ["+34 612 345 678"], window }));
     expect(html).toContain("9 days left");
     expect(html).toContain("Fri 4 Dec");
   });
 
   test("activated within the 72h window: the countdown and a subscribe button, no extension", async () => {
-    const window = { activatedAt: NOW, pausesAt: NOW + 71 * HOUR };
+    const window = { activatedAt: NOW, pausesAt: NOW + 71 * HOUR, pauseReason: "window_ended" as const };
     const data = page("setup", { phones: ["+34 612 345 678"], window });
     expect(billingStage(data, NOW)).toBe("window");
     const html = await render(data);
@@ -194,7 +194,7 @@ describe("plan prices", () => {
 });
 
 describe("72h strip", () => {
-  const window = (left: number) => ({ activatedAt: NOW - HOUR, pausesAt: NOW + left });
+  const window = (left: number) => ({ activatedAt: NOW - HOUR, pausesAt: NOW + left, pauseReason: "window_ended" as const });
 
   test("neutral with more than a day left, amber inside the last day, nothing without the timers", async () => {
     const neutral = await renderInRouter(<SetupWindowStrip window={window(71 * HOUR)} canManage now={NOW} />);
@@ -205,7 +205,7 @@ describe("72h strip", () => {
     expect(amber).toContain("23 h left");
     expect(amber).toContain("border-l-warning");
     expect(stripMessage(NOW + 48 * 60_000, NOW)).toBe("Subscribe now to avoid a pause.");
-    expect(await renderInRouter(<SetupWindowStrip window={{ activatedAt: null, pausesAt: null }} canManage now={NOW} />)).toBe("");
+    expect(await renderInRouter(<SetupWindowStrip window={{ activatedAt: null, pausesAt: null, pauseReason: null }} canManage now={NOW} />)).toBe("");
     expect(await renderInRouter(<SetupWindowStrip window={window(-1)} canManage now={NOW} />)).toBe("");
   });
 
@@ -229,9 +229,34 @@ describe("72h strip", () => {
       role: "owner",
       ...(billing ? { billing: { subscribed: false, canManage: true } } : {}),
     });
-    expect(setupWindowFor(state("setup"))).toEqual({ window: { activatedAt: NOW, pausesAt: NOW + HOUR }, canManage: true });
+    expect(setupWindowFor(state("setup"))).toEqual({
+      window: { activatedAt: NOW, pausesAt: NOW + HOUR, pauseReason: "window_ended" },
+      canManage: true,
+    });
     expect(setupWindowFor(state("active"))).toBeNull();
     expect(setupWindowFor(state("setup", false))).toBeNull();
+  });
+});
+
+describe("early access end", () => {
+  const early = { activatedAt: null, pausesAt: NOW + 9 * 24 * HOUR, pauseReason: "early_access_ended" as const };
+
+  test("the strip and /billing count the days down to the scheduled pause", async () => {
+    const strip = await renderInRouter(<SetupWindowStrip window={early} canManage now={NOW} />);
+    expect(strip).toContain("Early access ends in 9 days. Subscribe to keep sending.");
+    expect(strip).toContain("Start subscription");
+    const data = page("open", { phones: ["+34 612 345 678"], window: early });
+    expect(billingStage(data, NOW)).toBe("early-access");
+    const html = await render(data);
+    expect(html).toContain("Early access ends in 9 days. Subscribe to keep sending.");
+    expect(html).toContain("Fri 4 Dec");
+    expect(html).toContain("Start subscription · 5 €/month");
+  });
+
+  test("the root shows the strip for an early-access workspace outside setup", () => {
+    const account = { accountId: "a", name: "A", createdAt: 1, billingStatus: "open" as const, canAddNumber: true, funnel: { connectedAt: null, activatedAt: null, pausesAt: NOW + HOUR, pauseReason: "early_access_ended" as const, warningDueAt: null } };
+    const state = { stage: "account-ready" as const, resources: { account, keys: [], wabas: [], phones: [] }, canAdminister: true, role: "owner", billing: { subscribed: false, canManage: true } };
+    expect(setupWindowFor(state)?.window.pauseReason).toBe("early_access_ended");
   });
 });
 

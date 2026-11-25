@@ -1,4 +1,4 @@
-import type { AccountSummary } from "@eccos/gateway-contract";
+import type { AccountSummary, PauseReason } from "@eccos/gateway-contract";
 
 /**
  * The account's activation timers, from `AccountSummary.funnel`.
@@ -6,15 +6,18 @@ import type { AccountSummary } from "@eccos/gateway-contract";
  *
  * - `activatedAt`: the first message went through (unix ms).
  * - `pausesAt`: when an unpaid account pauses (unix ms): 72 hours after
- *   activation, or day 14 for one that never activated.
+ *   activation, day 14 for one that never activated, or the end of early access
+ *   the operator scheduled (`pauseReason: "early_access_ended"`).
  */
 export interface SetupWindow {
   activatedAt: number | null;
   pausesAt: number | null;
+  pauseReason: PauseReason | null;
 }
 
 export function setupWindowOf(account: AccountSummary | null | undefined): SetupWindow {
-  return { activatedAt: account?.funnel?.activatedAt ?? null, pausesAt: account?.funnel?.pausesAt ?? null };
+  const funnel = account?.funnel;
+  return { activatedAt: funnel?.activatedAt ?? null, pausesAt: funnel?.pausesAt ?? null, pauseReason: funnel?.pauseReason ?? null };
 }
 
 const MINUTE = 60_000;
@@ -43,8 +46,19 @@ export function daysLeft(left: number): string {
 }
 
 /** The setup window is running: activated, unpaid and not yet paused. */
-export function windowOpen(window: SetupWindow, now: number): window is { activatedAt: number; pausesAt: number } {
+export function windowOpen(window: SetupWindow, now: number): window is SetupWindow & { activatedAt: number; pausesAt: number } {
   return window.activatedAt !== null && window.pausesAt !== null && window.pausesAt > now;
+}
+
+/** An early-access workspace heading for its scheduled pause. */
+export function earlyAccessEnding(window: SetupWindow, now: number): window is SetupWindow & { pausesAt: number } {
+  return window.pauseReason === "early_access_ended" && window.pausesAt !== null && window.pausesAt > now;
+}
+
+/** "Early access ends in 9 days. Subscribe to keep sending." */
+export function earlyAccessMessage(pausesAt: number, now: number): string {
+  const days = Math.max(1, Math.ceil((pausesAt - now) / DAY));
+  return `Early access ends in ${days} ${days === 1 ? "day" : "days"}. Subscribe to keep sending.`;
 }
 
 // The console renders on the server too, so every date reads in UTC and says so when it shows a time.

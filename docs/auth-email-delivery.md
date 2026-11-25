@@ -339,9 +339,27 @@ counts as already sent.
 `@eccos/gateway-contract/funnel-mail`:
 
 ```jsonc
-// apps/gateway/wrangler*.jsonc
+// apps/gateway/wrangler.production.jsonc
 "services": [{ "binding": "FUNNEL_MAIL", "service": "eccos-dashboard", "entrypoint": "FunnelMailRPC" }]
 ```
+
+The template `wrangler.jsonc` carries it commented out: the console binds to the
+gateway (`GATEWAY`), and Cloudflare refuses a deploy whose bound Worker does not
+exist, so a fresh install deploys the gateway, then the console, then adds the
+binding and redeploys the gateway. On an existing install, deploy the console
+(which exports `FunnelMailRPC`) **before** the gateway that carries the binding.
+With billing on, `bun run deploy` refuses a production config without it.
+Without the binding (self-host, tests) the gateway sends no funnel email and
+logs nothing.
+
+**Retry.** The control plane queues each email in its `funnel_mail` table, one
+row per `(accountId, kind)`, in the same step as the state change it announces;
+the input is frozen at that moment. `activated` is tried right away from the
+activation report; every cron tick (5 min) tries every unsent row, each call
+bounded to 5 s, after the timers have run. A row is marked `sent_at` once the
+RPC returns (any result) and is never tried again; a throw or a timeout leaves
+it for the next tick. Billing off, nothing is queued or sent. Legacy accounts
+(`connected_at` 0 or null) never get a clock, so never get a row.
 
 ```ts
 await env.FUNNEL_MAIL.sendFunnelEmail({ kind: "activated", organizationId, accountId, activatedAt, via: "webhook", windowEndsAt });

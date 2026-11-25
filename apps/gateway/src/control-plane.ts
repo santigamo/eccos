@@ -41,7 +41,22 @@ import {
 } from "./secret-claims";
 import { blocksSends, isBillingStatus, mayAddNumber, type BillingStatus } from "@eccos/gateway-contract/billing-status";
 import { effectiveBillingStatus, SUBSCRIPTION_REQUIRED, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
-import { type ActivationTrigger, funnelEvent, funnelOf, type FunnelRow, pendingPause, WARNING_AFTER_MS } from "./funnel";
+import type { FunnelMailInput } from "@eccos/gateway-contract/funnel-mail";
+import {
+  ACTIVATION_WINDOW_MS,
+  type ActivationTrigger,
+  FUNNEL_COLUMNS,
+  FUNNEL_MAIL_SCHEMA,
+  funnelEvent,
+  funnelMailer,
+  funnelOf,
+  type FunnelRow,
+  pendingPause,
+  UNACTIVATED_PAUSE_MS,
+  WARNING_AFTER_MS,
+  WINDOW_ENDING_AFTER_MS,
+} from "./funnel";
+import { withTimeout } from "./with-timeout";
 import { sha256Hex, toBase64Url } from "./encoding";
 import {
   coexistenceSyncStatus,
@@ -677,6 +692,14 @@ export function quarantineUnsealedWabas(sql: SqlStorage): number {
     .toArray().length;
 }
 
+/** How long one funnel-email call may take before it is left for the next tick. */
+const FUNNEL_MAIL_TIMEOUT_MS = 5_000;
+
+/** Statuses a scheduled end of early access leaves alone: subscribed, or already paused. */
+const KEEPS_EARLY_ACCESS: ReadonlySet<BillingStatus> = new Set(["active", "past_due", "cancelled", "paused"]);
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 export class EccosControlPlane extends DurableObject<Env> {
   sql: SqlStorage;
 
@@ -749,6 +772,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         return_to  TEXT
       );`);
       this.sql.exec(CONNECT_LINKS_SCHEMA);
+      this.sql.exec(FUNNEL_MAIL_SCHEMA);
       this.sql.exec(SECRET_CLAIMS_SCHEMA);
       const secretClaimColumns = this.sql.exec("PRAGMA table_info(secret_claims)").toArray();
       for (const column of SECRET_CLAIMS_ADDED_COLUMNS) {
@@ -791,7 +815,12 @@ export class EccosControlPlane extends DurableObject<Env> {
              (SELECT w.account_id FROM wabas w JOIN phones p ON p.waba_id = w.waba_id)`,
         );
       }
-      for (const [column, type] of [["activated_at", "INTEGER"], ["warning_due_at", "INTEGER"], ["paused_reason", "TEXT"]]) {
+      for (const [column, type] of [
+        ["activated_at", "INTEGER"],
+        ["warning_due_at", "INTEGER"],
+        ["paused_reason", "TEXT"],
+        ["early_access_ends_at", "INTEGER"],
+      ]) {
         if (!accountColumns.some((row) => row.name === column)) {
           this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} ${type}`);
         }
@@ -1165,7 +1194,8 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   private funnelOf(accountId: string): AccountFunnel {
     const status = this.billingStatusOf(accountId);
-    return funnelOf(this.funnelRow(accountId), this.billingOn() && status === "setup", status === "paused");
+    const on = this.billingOn();
+    return funnelOf(this.funnelRow(accountId), on && status === "setup", status === "paused", on && !KEEPS_EARLY_ACCESS.has(status));
   }
 
   private canAddNumber(accountId: string): boolean {
@@ -1264,7 +1294,7 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   private funnelRow(accountId: string): FunnelRow {
     return this.sql
-      .exec("SELECT connected_at, activated_at, paused_reason, warning_due_at FROM accounts WHERE account_id = ?", accountId)
+      .exec(`SELECT ${FUNNEL_COLUMNS} FROM accounts WHERE account_id = ?`, accountId)
       .one() as unknown as FunnelRow;
   }
 
@@ -1276,9 +1306,10 @@ export class EccosControlPlane extends DurableObject<Env> {
   /**
    * The account behind `wabaId` activated at `at` (funnel.ts): the data plane reports its
    * first 2xx forward or first own send Meta delivered. Only the first report of an account
-   * whose clock runs is kept; a legacy account never activates.
+   * whose clock runs is kept; a legacy account never activates. A timed one gets its
+   * `activated` email right away, or from the next cron tick if that fails.
    */
-  recordActivation(wabaId: string, at: number, trigger: ActivationTrigger): void {
+  async recordActivation(wabaId: string, at: number, trigger: ActivationTrigger): Promise<void> {
     const row = this.sql.exec("SELECT account_id FROM wabas WHERE waba_id = ?", validateWabaId(wabaId, "wabaId")).toArray()[0];
     if (!row) return;
     const accountId = row.account_id as string;
@@ -1287,7 +1318,54 @@ export class EccosControlPlane extends DurableObject<Env> {
       at,
       accountId,
     ).rowsWritten;
-    if (changed > 0) funnelEvent("activated", accountId, this.organizationOf(accountId), { wabaId, trigger });
+    if (changed === 0) return;
+    funnelEvent("activated", accountId, this.organizationOf(accountId), { wabaId, trigger });
+    if (this.billingOn() && this.billingStatusOf(accountId) === "setup") {
+      const via = trigger === "webhook_2xx" ? "webhook" : "outbound";
+      this.queueFunnelMail(accountId, { kind: "activated", activatedAt: at, via, windowEndsAt: at + ACTIVATION_WINDOW_MS });
+      await this.sendFunnelMail(accountId);
+    }
+  }
+
+  /** Queues one funnel email, once per account and kind. An account without an organization has no one to mail. */
+  private queueFunnelMail(accountId: string, mail: DistributiveOmit<FunnelMailInput, "organizationId" | "accountId">): void {
+    const organizationId = this.organizationOf(accountId);
+    if (!organizationId) return;
+    this.sql.exec(
+      "INSERT OR IGNORE INTO funnel_mail (account_id, kind, input, queued_at) VALUES (?, ?, ?, ?)",
+      accountId,
+      mail.kind,
+      JSON.stringify({ ...mail, organizationId, accountId }),
+      Date.now(),
+    );
+  }
+
+  /**
+   * Hands every unsent funnel email (or one account's) to the console and marks the ones it
+   * acknowledged. A throw or a timeout leaves the row for the next cron tick. Billing off or
+   * no `FUNNEL_MAIL` binding, nothing is sent.
+   */
+  async sendFunnelMail(accountId?: string): Promise<{ sent: number; failed: number }> {
+    const done = { sent: 0, failed: 0 };
+    const mailer = funnelMailer(this.env);
+    if (!mailer || !this.billingOn()) return done;
+    const rows = this.sql
+      .exec(
+        `SELECT account_id, kind, input FROM funnel_mail WHERE sent_at IS NULL ${accountId ? "AND account_id = ?" : ""}`,
+        ...(accountId ? [accountId] : []),
+      )
+      .toArray();
+    for (const row of rows) {
+      try {
+        await withTimeout(mailer.sendFunnelEmail(JSON.parse(String(row.input)) as FunnelMailInput), FUNNEL_MAIL_TIMEOUT_MS);
+        this.sql.exec("UPDATE funnel_mail SET sent_at = ? WHERE account_id = ? AND kind = ?", Date.now(), row.account_id, row.kind);
+        done.sent += 1;
+      } catch {
+        console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "mail-failed", accountId: row.account_id, kind: row.kind }));
+        done.failed += 1;
+      }
+    }
+    return done;
   }
 
   /**
@@ -1295,14 +1373,15 @@ export class EccosControlPlane extends DurableObject<Env> {
    * runs pauses 72h after it activated, or 14 days after it connected without activating, and
    * gets its day-12 warning flagged. Billing off, nothing is timed. Every other status, a paid
    * one included, is never touched: the pause is one conditional UPDATE, so a payment written
-   * first wins.
+   * first wins. Each step queues its funnel email; `sendFunnelMail` sends it.
    */
   runFunnelTimers(now = Date.now()): { paused: number; warned: number } {
     const done = { paused: 0, warned: 0 };
     if (!this.billingOn()) return done;
+    done.paused += this.endDueEarlyAccess(now);
     const rows = this.sql
       .exec(
-        `SELECT account_id, connected_at, activated_at, paused_reason, warning_due_at FROM accounts
+        `SELECT account_id, ${FUNNEL_COLUMNS} FROM accounts
           WHERE connected_at > 0 AND (connect_policy IS NULL OR connect_policy = 'setup')`,
       )
       .toArray() as unknown as (FunnelRow & { account_id: string })[];
@@ -1316,14 +1395,61 @@ export class EccosControlPlane extends DurableObject<Env> {
           row.account_id,
         );
         funnelEvent("paused", row.account_id, this.organizationOf(row.account_id), { reason: pause.reason });
+        this.queueFunnelMail(row.account_id, { kind: "paused", pausedAt: now, reason: pause.reason });
         done.paused += 1;
+      } else if (row.activated_at && now >= Number(row.activated_at) + WINDOW_ENDING_AFTER_MS) {
+        this.queueFunnelMail(row.account_id, {
+          kind: "window_ending",
+          windowEndsAt: Number(row.activated_at) + ACTIVATION_WINDOW_MS,
+        });
       } else if (!row.activated_at && row.warning_due_at === null && now >= Number(row.connected_at) + WARNING_AFTER_MS) {
         this.sql.exec("UPDATE accounts SET warning_due_at = ? WHERE account_id = ?", now, row.account_id);
         funnelEvent("warning_due", row.account_id, this.organizationOf(row.account_id));
+        this.queueFunnelMail(row.account_id, {
+          kind: "never_activated_warning",
+          connectedAt: Number(row.connected_at),
+          pausesAt: Number(row.connected_at) + UNACTIVATED_PAUSE_MS,
+        });
         done.warned += 1;
       }
     }
     return done;
+  }
+
+  /**
+   * Pauses each account whose scheduled end of early access has come, unless it subscribed
+   * (or is already paused): a payment written first wins. The schedule is cleared either way.
+   * No email: the operator announces it.
+   */
+  private endDueEarlyAccess(now: number): number {
+    let paused = 0;
+    const due = this.sql
+      .exec("SELECT account_id FROM accounts WHERE early_access_ends_at IS NOT NULL AND early_access_ends_at <= ?", now)
+      .toArray();
+    for (const { account_id } of due) {
+      const accountId = account_id as string;
+      if (!KEEPS_EARLY_ACCESS.has(this.billingStatusOf(accountId))) {
+        this.sql.exec(
+          "UPDATE accounts SET connect_policy = 'paused', paused_reason = 'early_access_ended' WHERE account_id = ?",
+          accountId,
+        );
+        funnelEvent("paused", accountId, this.organizationOf(accountId), { reason: "early_access_ended" });
+        paused += 1;
+      }
+      this.sql.exec("UPDATE accounts SET early_access_ends_at = NULL WHERE account_id = ?", accountId);
+    }
+    return paused;
+  }
+
+  /** Operator-only: schedules (or with null clears) the account's end of early access, in Unix ms. */
+  setEarlyAccessEnd(accountId: string, endsAt: number | null): number | null {
+    const id = this.requireAccount(accountId);
+    if (endsAt !== null && !(Number.isSafeInteger(endsAt) && endsAt > 0)) {
+      throw new Error("invalid endsAt: Unix ms or null");
+    }
+    this.sql.exec("UPDATE accounts SET early_access_ends_at = ? WHERE account_id = ?", endsAt, id);
+    funnelEvent("early_access_scheduled", id, this.organizationOf(id), { endsAt });
+    return endsAt;
   }
 
   setAccountName(accountId: string, name: string): void {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ClockIcon } from "lucide-react";
 import { startCheckout } from "../../server/gateway";
-import { timeLeft, weekdayTime, windowOpen, windowPhase, type SetupWindow } from "../../lib/setup-window";
+import { earlyAccessEnding, earlyAccessMessage, timeLeft, weekdayTime, windowOpen, windowPhase, type SetupWindow } from "../../lib/setup-window";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useBillingRedirect } from "./billing-redirect";
@@ -26,8 +26,10 @@ export function SetupWindowStrip({ window, canManage, now: initial }: { window: 
     return () => clearInterval(timer);
   }, []);
   const { busy, leaveTo } = useBillingRedirect();
-  if (!windowOpen(window, now)) return null;
-  const warn = windowPhase(window.pausesAt - now) !== "neutral";
+  const early = earlyAccessEnding(window, now);
+  if (!early && !windowOpen(window, now)) return null;
+  const pausesAt = window.pausesAt as number;
+  const warn = windowPhase(pausesAt - now) !== "neutral";
   return (
     <div
       role="status"
@@ -38,12 +40,14 @@ export function SetupWindowStrip({ window, canManage, now: initial }: { window: 
     >
       <p className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
         <ClockIcon aria-hidden="true" className={cn("size-3.5 shrink-0", warn ? "text-warning" : "text-muted-foreground")} />
-        <span className="text-[11px] leading-3.5 font-medium tracking-[0.08em] text-muted-foreground uppercase">Setup window</span>
-        <span className={cn("font-mono text-xs font-medium", warn ? "text-warning-foreground" : "text-foreground")}>
-          {timeLeft(window.pausesAt - now)}
-        </span>
+        <span className="text-[11px] leading-3.5 font-medium tracking-[0.08em] text-muted-foreground uppercase">{early ? "Early access" : "Setup window"}</span>
+        {early ? null : (
+          <span className={cn("font-mono text-xs font-medium", warn ? "text-warning-foreground" : "text-foreground")}>
+            {timeLeft(pausesAt - now)}
+          </span>
+        )}
         <span className={cn("text-[13px] leading-4.5", warn ? "text-foreground" : "text-muted-foreground")}>
-          {stripMessage(window.pausesAt, now)}
+          {early ? earlyAccessMessage(pausesAt, now) : stripMessage(pausesAt, now)}
         </span>
       </p>
       {canManage ? (

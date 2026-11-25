@@ -4,7 +4,7 @@ import { CheckIcon, ClockIcon, CirclePauseIcon, ExternalLinkIcon, TriangleAlertI
 import { openPortal, startCheckout, type BillingPage } from "../../server/gateway";
 import type { Payment } from "../../billing/creem";
 import { nextNumberNote, numberPriceEuros, tierNote } from "../../billing/plan";
-import { daysLeft, longDate, timeLeft, weekdayDate, weekdayTime, windowOpen } from "../../lib/setup-window";
+import { daysLeft, earlyAccessEnding, earlyAccessMessage, longDate, timeLeft, weekdayDate, weekdayTime, windowOpen } from "../../lib/setup-window";
 import { buttonVariants, Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { INLINE_LINK } from "../../ui";
@@ -23,6 +23,7 @@ export type BillingStage =
   | "unconnected"
   | "not-activated"
   | "window"
+  | "early-access"
   | "active"
   | "past_due"
   | "cancelled"
@@ -31,6 +32,7 @@ export type BillingStage =
   | "separate";
 
 export function billingStage({ billing, phones, window }: BillingPage, now: number): BillingStage {
+  if (earlyAccessEnding(window, now)) return "early-access";
   switch (billing.billingStatus) {
     case "setup":
       if (phones.length === 0) return "unconnected";
@@ -214,6 +216,24 @@ function StatusBlock({ page, stage, now }: { page: BillingPage; stage: BillingSt
           Your first message went through on {weekdayTime(window.activatedAt ?? now)}. The setup window ends on{" "}
           <span className={STRONG}>{weekdayTime(window.pausesAt ?? now)}</span> and cannot be made longer. After that,
           sending stops and messages are not passed on to your tool until you subscribe. Nothing is deleted.
+        </>
+      );
+      actions = (
+        <>
+          <CheckoutButton euros={euros} />
+          <Note lines={[CARD_NOTE]} />
+        </>
+      );
+      break;
+    case "early-access":
+      icon = <ClockIcon />;
+      label = "Early access";
+      count = daysLeft((window.pausesAt ?? now) - now);
+      title = earlyAccessMessage(window.pausesAt ?? now, now);
+      body = (
+        <>
+          On <span className={STRONG}>{weekdayDate(window.pausesAt ?? now)}</span> sending stops and messages are not
+          passed on to your tool until you subscribe. Nothing is deleted.
         </>
       );
       actions = (

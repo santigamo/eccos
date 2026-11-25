@@ -520,7 +520,8 @@ export interface AccountSummary {
  * Why a `setup` account pauses: `window_ended` once its 72 hours after activation
  * run out, `never_activated` 14 days after it connected without activating.
  */
-export type PauseReason = "window_ended" | "never_activated";
+/** `early_access_ended`: an operator-scheduled end of early access for an account that never had a funnel clock. */
+export type PauseReason = "window_ended" | "never_activated" | "early_access_ended";
 
 /**
  * Where an account stands in the pay-after-first-success funnel. Only an account
@@ -532,7 +533,7 @@ export interface AccountFunnel {
   connectedAt: number | null;
   /** First 2xx forward to its target, or first send of its own Meta delivered. */
   activatedAt: number | null;
-  /** When a `setup` account pauses unless it pays; null when no timer runs. */
+  /** When the account pauses unless it pays (a `setup` timer or a scheduled end of early access); null when none runs. */
   pausesAt: number | null;
   /** Why it pauses at `pausesAt`, or why a timer paused it. */
   pauseReason: PauseReason | null;

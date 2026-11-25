@@ -1283,6 +1283,15 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return getControlPlaneStub(this.env).setAccountBilling(account, billing);
   }
 
+  /**
+   * Operator-only and outside `GatewayApi`: pauses the account at `endsAt` (Unix ms) unless it
+   * has subscribed by then; null clears it. See `docs/operations.md`, "Ending early access".
+   */
+  async setEarlyAccessEnd(accountId: string, endsAt: number | null): Promise<number | null> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).setEarlyAccessEnd(account, endsAt);
+  }
+
   async setAccountName(accountId: string, name: string): Promise<void> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).setAccountName(account, name);

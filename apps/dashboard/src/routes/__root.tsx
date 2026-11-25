@@ -262,8 +262,9 @@ export function setupWindowFor(state: DashboardState): { window: SetupWindow; ca
   if (!("billing" in state) || !state.billing) return null
   const resources =
     state.stage === "ready" ? state.scope.resources : state.stage === "account-ready" ? state.resources : null
-  if (resources?.account?.billingStatus !== "setup") return null
-  return { window: setupWindowOf(resources.account), canManage: state.billing.canManage }
+  const window = setupWindowOf(resources?.account)
+  if (resources?.account?.billingStatus !== "setup" && window.pauseReason !== "early_access_ended") return null
+  return { window, canManage: state.billing.canManage }
 }
 
 function RootComponent() {

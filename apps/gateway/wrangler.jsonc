@@ -65,6 +65,16 @@
     }
   ],
 
+  // Eccos Cloud only (billing on): the funnel emails go through the console's
+  // FunnelMailRPC entrypoint (docs/auth-email-delivery.md, "Funnel emails").
+  // Left commented in this template: the console already binds to this Worker
+  // (GATEWAY), and a deploy fails while a bound Worker does not exist, so a fresh
+  // install deploys the gateway, then the console, then adds this. Without it,
+  // no funnel email is sent and nothing fails.
+  // "services": [
+  //   { "binding": "FUNNEL_MAIL", "service": "eccos-dashboard", "entrypoint": "FunnelMailRPC" }
+  // ],
+
   "migrations": [
     {
       "tag": "v1",

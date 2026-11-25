@@ -301,6 +301,19 @@ An **unverified** number is different: it registers and provisions normally, and
 something tries to send. Eccos does not call `POST /<PHONE_NUMBER_ID>/register` yet, so a number the
 customer never verified surfaces as an error on the outbound message.
 
+## Ending early access
+
+Accounts that connected before the funnel (`connected_at = 0`) have no clock. To end their early
+access on a date, schedule a pause over a remote binding (operator-only, outside `GatewayApi`):
+
+- `GatewayRPC.setEarlyAccessEnd(accountId, endsAt)`: `endsAt` in Unix ms, or `null` to clear it.
+
+From then on the account's `funnel` reads `pausesAt: endsAt, pauseReason: "early_access_ended"`,
+and the console shows "Early access ends in N days" on the strip and `/billing`. The first cron tick
+at or after `endsAt` sets the account to `paused` with that reason, unless it is `active`,
+`past_due`, `cancelled` or already `paused` (a payment before the date wins), and clears the
+schedule either way. Billing off, nothing happens. No funnel email is sent: the operator announces it.
+
 ## Coexistence sync failures (eccos-vss)
 
 A number connected through `/connect` is *recorded as* a **coexistence** onboarding: it is meant to

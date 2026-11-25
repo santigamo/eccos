@@ -1211,6 +1211,9 @@ const worker = {
     await getControlPlane(env)
       .runFunnelTimers()
       .catch(() => console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "timers-error" })));
+    await getControlPlane(env)
+      .sendFunnelMail()
+      .catch(() => console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "mail-error" })));
     await runDailyCensus(env).catch(() => console.warn(JSON.stringify({ level: "warn", area: "ops-census", event: "census-error" })));
   },
 };
