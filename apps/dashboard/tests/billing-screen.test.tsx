@@ -66,11 +66,11 @@ describe("billing off", () => {
     expect(html).not.toContain("Start subscription");
   });
 
-  test("first run on a closed workspace keeps the fork, switched off, with the reason", () => {
+  test("first run on a closed workspace keeps the wizard, with the reason (Open Meta is off: connect-wizard.test)", () => {
     const html = renderToStaticMarkup(<FirstRunConnect closed billing={false} />);
     expect(html).toContain("This workspace cannot add new numbers.");
     expect(html).not.toContain("subscription");
-    expect(html.match(/<button[^>]*\sdisabled=/g)).toHaveLength(2);
+    expect(html).toContain("Let&#x27;s connect your WhatsApp number");
   });
 
   test("Numbers has no banner and the add button works", () => {
@@ -131,12 +131,12 @@ describe("billing on", () => {
     const html = renderToStaticMarkup(<FirstRunConnect closed billing />);
     expect(html).toContain("needs an active subscription: 5 EUR per month + VAT for 1 number.");
     expect(html).toContain("Start subscription");
-    expect(html).not.toContain("WhatsApp Business app");
+    expect(html).not.toContain("connect your WhatsApp number");
     const pastDue = renderToStaticMarkup(<FirstRunConnect closed billing subscribed />);
     expect(pastDue).toContain("Manage billing");
     expect(pastDue).not.toContain("Start subscription");
     const open = renderToStaticMarkup(<FirstRunConnect closed={false} billing />);
-    expect(open).toContain("WhatsApp Business app");
+    expect(open).toContain("connect your WhatsApp number");
     expect(open).not.toContain("subscription");
     expect(open).not.toMatch(/<button[^>]*\sdisabled=/);
   });
