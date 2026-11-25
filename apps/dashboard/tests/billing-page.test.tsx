@@ -217,7 +217,7 @@ describe("72h strip", () => {
 
   test("the root reads the timers only for a workspace in setup with billing on", () => {
     const resources = (billingStatus: BillingStatus) => ({
-      account: { accountId: "a", name: "A", createdAt: 1, billingStatus, canAddNumber: false, activatedAt: NOW, pausesAt: NOW + HOUR },
+      account: { accountId: "a", name: "A", createdAt: 1, billingStatus, canAddNumber: false, funnel: { connectedAt: NOW - HOUR, activatedAt: NOW, pausesAt: NOW + HOUR, pauseReason: "window_ended", warningDueAt: null } },
       keys: [],
       wabas: [],
       phones: [],

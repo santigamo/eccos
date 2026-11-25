@@ -111,6 +111,8 @@ export type SensitiveAction =
   /** The workspace's conversation retention changed. Carries the stored window
    * in days (null = keep forever); no conversation content. */
   | "conversation_retention_set"
+  /** The events held while the workspace was paused, forwarded. Carries the count only. */
+  | "held_replay"
   | "export_data"
   | "erase_by_phone"
   | "member_invited"

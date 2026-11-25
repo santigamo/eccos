@@ -283,6 +283,16 @@ export interface RetryFailedWindow {
   to: number;
 }
 
+/** Events stored while the account was paused, which no one has forwarded (`held` deliveries). */
+export interface HeldEvents {
+  events: number;
+  /** The incoming messages among them. */
+  messages: number;
+}
+
+/** A replay of the held backlog; refused while the account is still paused. */
+export type ReplayHeldResult = { ok: true; replayed: number } | { ok: false; code: "subscription_required" };
+
 export interface RetryFailedResult {
   /** Rows moved back to `pending`, attempts reset. */
   requeued: number;
@@ -1294,6 +1304,10 @@ export interface GatewayApi {
     wabaId: string,
     accountId: string,
   ): Promise<RetryFailedResult>;
+  /** Events held across the account's WABAs while it was paused. */
+  getHeldEvents(accountId: string): Promise<HeldEvents>;
+  /** Queues the held backlog for forwarding, oldest first. The console allows it to owners and admins. */
+  replayHeldEvents(accountId: string): Promise<ReplayHeldResult>;
   listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult>;
   getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig>;
   /** Whether the WABA has a forwarding target, and nothing else: the view-level

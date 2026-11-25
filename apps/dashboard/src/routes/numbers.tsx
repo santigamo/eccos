@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
-import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
+import { invalidatePage, invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
 import { getConnectBlock, type ConnectBlock } from "../server/connect-block";
+import { getHeldEvents } from "../server/gateway";
+import { HeldReplay } from "../components/dashboard/held-replay";
 import { StepUpSheet } from "../components/dashboard/step-up-sheet";
 import { FailureView } from "../components/dashboard/failure";
 import { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices } from "../components/dashboard/connect-number";
@@ -27,7 +29,7 @@ import {
   normalizeConnectSkipped,
   type ConnectOutcomeSearch,
 } from "../components/dashboard/connect-outcome";
-import type { ConnectFailureCode } from "@eccos/gateway-contract";
+import type { ConnectFailureCode, HeldEvents } from "@eccos/gateway-contract";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchWabaId } from "../lib/search";
@@ -41,8 +43,11 @@ export const Route = createFileRoute("/numbers")({
     connectError: normalizeConnectError(search.connectError),
     connectSkipped: normalizeConnectSkipped(search.connectSkipped),
   }),
-  // What the connect fork owes (role, step-up), read with the page, not the shell.
-  loader: () => getConnectBlock(),
+  // What the connect fork owes (role, step-up), and what a pause left held, read with the page, not the shell.
+  loader: async () => {
+    const [blocked, held] = await Promise.all([getConnectBlock(), getHeldEvents().catch(() => null)]);
+    return { blocked, held: held?.ok ? held.data : null };
+  },
   component: NumbersPage,
 });
 
@@ -57,7 +62,7 @@ function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
   const { wabaId, connectError, connectSkipped } = Route.useSearch();
-  const blocked = Route.useLoaderData();
+  const { blocked, held } = Route.useLoaderData();
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
@@ -146,7 +151,9 @@ function NumbersPage() {
       connectError={connectError}
       connectSkipped={connectSkipped}
       blocked={blocked}
+      held={held}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
+      onReplayed={async () => void (await invalidatePage(router))}
     />
   );
 }
@@ -183,10 +190,14 @@ export function NumbersView({
   connectError,
   connectSkipped,
   blocked,
+  held,
   onRefresh,
+  onReplayed,
 }: {
   /** What stops the signed-in user connecting right now, for the add-number fork. */
   blocked?: ConnectBlock | null;
+  /** Events stored while the workspace was paused; null when unread. */
+  held?: HeldEvents | null;
   resources: AccountResources;
   nextWabaId?: string;
   supportEmail?: string | null;
@@ -202,6 +213,8 @@ export function NumbersView({
   connectSkipped?: number;
   /** Re-read the loader after the table's re-check changed something. */
   onRefresh?: () => void | Promise<void>;
+  /** Re-read the page after a replay emptied the held backlog. */
+  onReplayed?: () => void | Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
   /**
@@ -213,6 +226,8 @@ export function NumbersView({
    * it is supposed to be refused.
    */
   const [busy, setBusy] = useState(false);
+  // A replay waits for the pause to end: the gateway would only hold the backlog again.
+  const paused = resources.account ? blocksSends(resources.account.billingStatus) : false;
   // One instance: it moves into the dialog while that is open.
   const notice = (className?: string) =>
     resources.account?.canAddNumber === false ? (
@@ -247,6 +262,7 @@ export function NumbersView({
     >
       {outcome}
       {adding ? null : notice()}
+      {!paused && held && held.events > 0 ? <HeldReplay held={held} canReplay={canConnect} onReplayed={onReplayed} /> : null}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}

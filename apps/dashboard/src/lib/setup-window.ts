@@ -1,8 +1,8 @@
 import type { AccountSummary } from "@eccos/gateway-contract";
 
 /**
- * The account's activation timers, added to `AccountSummary` by eccos-dbb3.2.
- * Until the gateway sends them both read null and nothing counts down.
+ * The account's activation timers, from `AccountSummary.funnel`.
+ * An account with no funnel clock reads null and nothing counts down.
  *
  * - `activatedAt`: the first message went through (unix ms).
  * - `pausesAt`: when an unpaid account pauses (unix ms): 72 hours after
@@ -13,8 +13,8 @@ export interface SetupWindow {
   pausesAt: number | null;
 }
 
-export function setupWindowOf(account: (AccountSummary & Partial<SetupWindow>) | null | undefined): SetupWindow {
-  return { activatedAt: account?.activatedAt ?? null, pausesAt: account?.pausesAt ?? null };
+export function setupWindowOf(account: AccountSummary | null | undefined): SetupWindow {
+  return { activatedAt: account?.funnel?.activatedAt ?? null, pausesAt: account?.funnel?.pausesAt ?? null };
 }
 
 const MINUTE = 60_000;

@@ -14,10 +14,16 @@ export function closedNotice(billing: boolean, numbers: number, canManage = true
   return `Adding a new number needs an active subscription: ${monthlyPriceEuros(billed)} EUR per month + VAT for ${billed} ${billed === 1 ? "number" : "numbers"}. The price follows the numbers you connect.`;
 }
 
-/** Why a workspace whose billing status blocks sends cannot send. Receiving goes on. */
-export function sendingPausedNotice(billing: boolean, canManage = true): string {
-  const still = "Incoming messages are still received.";
-  if (!billing) return `Sending is paused: this workspace cannot send messages. ${still}`;
-  const reopen = canManage ? "" : " Ask an owner or admin of this workspace to reactivate it.";
-  return `Sending is paused: this workspace has no active subscription, so the API and the console cannot send messages. ${still}${reopen}`;
+/**
+ * A workspace whose billing status blocks sends: sending and forwarding are paused,
+ * receiving goes on. `messages` is how many are stored, unknown when the read failed.
+ */
+export function sendingPausedNotice(billing: boolean, canManage = true, messages?: number | null): string {
+  const stored =
+    messages == null
+      ? "Incoming messages are stored safely."
+      : `${messages} incoming ${messages === 1 ? "message is" : "messages are"} stored safely.`;
+  const paused = `Sending and forwarding are paused. ${stored}`;
+  if (!billing) return paused;
+  return `${paused} ${canManage ? "Subscribe to resume." : "Ask an owner or admin of this workspace to subscribe."}`;
 }

@@ -1007,6 +1007,22 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.getMetaAccessTokenForWaba(id);
   }
 
+  /** Whether the WABA's forwarding is held: the rule that blocks sends (`blocksSends`) holds it too. */
+  forwardingHeldForWaba(wabaId: string): boolean {
+    const row = this.sql.exec("SELECT account_id FROM wabas WHERE waba_id = ?", validateWabaId(wabaId, "wabaId")).toArray()[0];
+    return row !== undefined && blocksSends(this.billingStatusOf(row.account_id as string));
+  }
+
+  /** The account's WABAs, and whether its forwarding is still held: what a replay needs. */
+  forwardingScope(accountId: string): { held: boolean; wabaIds: string[] } {
+    const id = this.requireAccount(accountId);
+    const wabaIds = this.sql
+      .exec("SELECT waba_id FROM wabas WHERE account_id = ? ORDER BY waba_id", id)
+      .toArray()
+      .map((row) => row.waba_id as string);
+    return { held: blocksSends(this.billingStatusOf(id)), wabaIds };
+  }
+
   /**
    * Stores what Meta reported about a WABA's token. A valid reading also clears an earlier
    * rejection; an invalid one keeps the stored expiry, and a value Meta did not give keeps the

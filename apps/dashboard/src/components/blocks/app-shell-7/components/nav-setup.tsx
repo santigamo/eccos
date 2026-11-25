@@ -125,7 +125,7 @@ export function NavSetup({ billing: given }: { billing?: CompanionBilling }) {
       </ol>
       {billing && billing.stage !== "paid" ? (
         <Link
-          to="/settings"
+          to="/billing"
           search={{ wabaId }}
           className="text-[13px] leading-[18px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
         >

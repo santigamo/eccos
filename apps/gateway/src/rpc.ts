@@ -38,6 +38,8 @@ import type {
   ConnectLinkClaim,
   ConnectLinkGrant,
   ConnectLinkSettled,
+  HeldEvents,
+  ReplayHeldResult,
   ConnectLinkSettlement,
   ConnectLinkSummary,
   ConnectStartResult,
@@ -566,6 +568,22 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   ): Promise<RetryFailedResult> {
     const { stub } = await this.scoped(wabaId, accountId);
     return stub.retryFailedDeliveries(window.from, window.to);
+  }
+
+  async getHeldEvents(accountId: string): Promise<HeldEvents> {
+    const { wabaIds } = await getControlPlaneStub(this.env).forwardingScope(requireAccountId(accountId, "accountId is required"));
+    const counts = await Promise.all(wabaIds.map((wabaId) => this.stubFor(wabaId).heldEvents()));
+    return counts.reduce((sum, c) => ({ events: sum.events + c.events, messages: sum.messages + c.messages }), { events: 0, messages: 0 });
+  }
+
+  /** Refused while the account is still paused: the drain would only hold the backlog again. */
+  async replayHeldEvents(accountId: string): Promise<ReplayHeldResult> {
+    const { held, wabaIds } = await getControlPlaneStub(this.env).forwardingScope(requireAccountId(accountId, "accountId is required"));
+    if (held) return { ok: false, code: SUBSCRIPTION_REQUIRED };
+    let replayed = 0;
+    for (const wabaId of wabaIds) replayed += await this.stubFor(wabaId).replayHeld();
+    console.log(JSON.stringify({ level: "info", area: "rpc", event: "held_replayed", accountId, replayed }));
+    return { ok: true, replayed };
   }
 
   /** WABA-level read: the Graph call needs only the WABA id and its token, so a

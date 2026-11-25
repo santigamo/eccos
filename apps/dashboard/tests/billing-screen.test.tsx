@@ -237,35 +237,51 @@ describe("billing on", () => {
     expect(normalizeConnectError("subscription_required")).toBe("subscription_required");
   });
 
-  test("a workspace whose sends are blocked is told so, everywhere but Numbers", () => {
+  test("a workspace whose sends are blocked is told so on every page, Numbers included", () => {
     const ready = { stage: "account-ready" as const, canAdminister: true, role: "owner" };
     const flag = { subscribed: true, canManage: true };
-    expect(sendingPaused("/conversations", { ...ready, resources: resources("closed"), billing: flag })).toEqual({
+    expect(sendingPaused({ ...ready, resources: resources("closed"), billing: flag })).toEqual({
       billing: true,
       ...flag,
     });
-    expect(sendingPaused("/conversations", { ...ready, resources: resources("paused"), billing: flag })).not.toBeNull();
-    expect(sendingPaused("/numbers", { ...ready, resources: resources("closed"), billing: flag })).toBeNull();
+    expect(sendingPaused({ ...ready, resources: resources("paused"), billing: flag })).not.toBeNull();
     for (const status of ["setup", "past_due", "cancelled", "active", "open"] as const) {
-      expect(sendingPaused("/conversations", { ...ready, resources: resources(status), billing: flag })).toBeNull();
+      expect(sendingPaused({ ...ready, resources: resources(status), billing: flag })).toBeNull();
     }
-    expect(sendingPaused("/conversations", { ...ready, resources: { ...resources("closed"), wabas: [] } })).toBeNull();
-    expect(sendingPaused("/templates", { ...ready, resources: resources("closed") })).toEqual({
+    expect(sendingPaused({ ...ready, resources: { ...resources("closed"), wabas: [] } })).toBeNull();
+    expect(sendingPaused({ ...ready, resources: resources("closed") })).toEqual({
       billing: false,
       subscribed: false,
       canManage: false,
     });
 
-    const html = renderToStaticMarkup(<SendingNotice billing subscribed />);
-    expect(html).toContain("Sending is paused: this workspace has no active subscription");
-    expect(html).toContain("still received");
+    const html = renderToStaticMarkup(<SendingNotice billing subscribed heldMessages={37} />);
+    expect(html).toContain("Sending and forwarding are paused. 37 incoming messages are stored safely. Subscribe to resume.");
     expect(html).toContain("Manage billing");
     expect(renderToStaticMarkup(<SendingNotice billing />)).toContain("Start subscription");
-    const member = renderToStaticMarkup(<SendingNotice billing canManage={false} />);
+    const member = renderToStaticMarkup(<SendingNotice billing canManage={false} heldMessages={1} />);
+    expect(member).toContain("1 incoming message is stored safely.");
     expect(member).toContain("Ask an owner or admin");
     expect(member).not.toContain("<button");
-    expect(sendingPausedNotice(false)).not.toContain("subscription");
+    expect(sendingPausedNotice(true, true, null)).toContain("Incoming messages are stored safely.");
+    expect(sendingPausedNotice(false)).not.toContain("ubscri");
     expect(renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />)).toContain("they keep receiving but cannot send");
+  });
+
+  test("after payment Numbers offers to replay what the pause held, with the late-reply warning", () => {
+    const held = { events: 37, messages: 30 };
+    const owner = renderToStaticMarkup(<NumbersView resources={resources("active")} billing held={held} />);
+    expect(owner).toContain("37 events are stored and your tool has not seen them");
+    expect(owner).toContain("Replay 37 stored events");
+    expect(owner).toContain("they may get late replies");
+    const member = renderToStaticMarkup(<NumbersView resources={resources("active")} billing canConnect={false} held={held} />);
+    expect(member).not.toContain("Replay 37");
+    expect(member).toContain("Ask an owner or admin of this workspace to replay them.");
+    // Not while still paused, and not with nothing held.
+    expect(renderToStaticMarkup(<NumbersView resources={resources("paused")} billing held={held} />)).not.toContain("Replay");
+    expect(renderToStaticMarkup(<NumbersView resources={resources("active")} billing held={{ events: 0, messages: 0 }} />)).not.toContain(
+      "Replay",
+    );
   });
 
   test("a send refused for the subscription says so in the composer and the test send", () => {
