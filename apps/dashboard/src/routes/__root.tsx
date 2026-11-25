@@ -11,6 +11,8 @@ import {
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
 import { SendingNotice } from "../components/dashboard/subscription-notice"
+import { SetupWindowStrip } from "../components/dashboard/setup-window-strip"
+import { setupWindowOf, type SetupWindow } from "../lib/setup-window"
 import { PageNotice } from "../ui"
 import { blocksSends } from "@eccos/gateway-contract/billing-status"
 import { BackupCodesSheet } from "../components/dashboard/backup-codes-sheet"
@@ -253,10 +255,20 @@ export function sendingPaused(
   return { billing: billing !== undefined, subscribed: billing?.subscribed === true, canManage: billing?.canManage === true }
 }
 
+/** The setup window's timers while billing is on and the workspace has not subscribed; null otherwise. */
+export function setupWindowFor(state: DashboardState): { window: SetupWindow; canManage: boolean } | null {
+  if (!("billing" in state) || !state.billing) return null
+  const resources =
+    state.stage === "ready" ? state.scope.resources : state.stage === "account-ready" ? state.resources : null
+  if (resources?.account?.billingStatus !== "setup") return null
+  return { window: setupWindowOf(resources.account), canManage: state.billing.canManage }
+}
+
 function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
   const paused = state.ok ? sendingPaused(pathname, state.data) : null
+  const setupWindow = state.ok ? setupWindowFor(state.data) : null
   useRootRefresh()
   useEffect(() => watchUnhandledSignIn(window), [])
   return (
@@ -270,7 +282,7 @@ function RootComponent() {
         // signed in, so they must be able to see who they are and sign out.
         <>
           <PageNotice.Provider value={paused ? <SendingNotice {...paused} /> : null}>
-            <AppShell />
+            <AppShell strip={setupWindow ? <SetupWindowStrip {...setupWindow} /> : null} />
           </PageNotice.Provider>
           <StepUpSheet />
           <BackupCodesSheet />

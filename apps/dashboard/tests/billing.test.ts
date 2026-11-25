@@ -14,7 +14,7 @@ const config = billingConfig(ENV);
 if (!config) throw new Error("expected billing on");
 
 function subscription(over: Partial<Subscription> = {}): Subscription {
-  return { id: "sub_1", status: "active", customerId: "cust_1", accountId: "acc_1", itemId: "item_1", units: 5, ...over };
+  return { id: "sub_1", status: "active", customerId: "cust_1", accountId: "acc_1", itemId: "item_1", units: 5, nextChargeAt: null, periodEndsAt: null, ...over };
 }
 
 /** Creem as a table of subscriptions; never the real API. */
@@ -28,6 +28,7 @@ function fakeCreem(subscriptions: Subscription[]) {
       if (!found) throw new Error(`no subscription ${id}`);
       return found;
     },
+    payments: async () => [],
     setNumbers: async (sub, numbers) => {
       updates.push({ id: sub.id, numbers });
       return true;
@@ -410,10 +411,10 @@ describe("checkout", () => {
 describe("checkout return", () => {
   test("returns to the console origin, not to wherever the request came from", () => {
     expect(billingReturnUrl("https://app.eccos.chat", "https://other.test/_serverFn/x")).toBe(
-      "https://app.eccos.chat/settings?billing=success",
+      "https://app.eccos.chat/billing?billing=success",
     );
     expect(billingReturnUrl(undefined, "http://localhost:3000/_serverFn/x")).toBe(
-      "http://localhost:3000/settings?billing=success",
+      "http://localhost:3000/billing?billing=success",
     );
   });
 

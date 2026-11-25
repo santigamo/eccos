@@ -27,6 +27,7 @@ import { Route as DeliveriesRouteImport } from './routes/deliveries'
 import { Route as ConversationsRouteImport } from './routes/conversations'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as BroadcastsRouteImport } from './routes/broadcasts'
+import { Route as BillingRouteImport } from './routes/billing'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
@@ -123,6 +124,11 @@ const BroadcastsRoute = BroadcastsRouteImport.update({
   path: '/broadcasts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BillingRoute = BillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiKeysRoute = ApiKeysRouteImport.update({
   id: '/api-keys',
   path: '/api-keys',
@@ -152,6 +158,7 @@ const BroadcastsBroadcastIdRoute = BroadcastsBroadcastIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api-keys': typeof ApiKeysRoute
+  '/billing': typeof BillingRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -177,6 +184,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api-keys': typeof ApiKeysRoute
+  '/billing': typeof BillingRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -203,6 +211,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api-keys': typeof ApiKeysRoute
+  '/billing': typeof BillingRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -230,6 +239,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api-keys'
+    | '/billing'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -255,6 +265,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api-keys'
+    | '/billing'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -280,6 +291,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api-keys'
+    | '/billing'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -306,6 +318,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiKeysRoute: typeof ApiKeysRoute
+  BillingRoute: typeof BillingRoute
   BroadcastsRoute: typeof BroadcastsRoute
   ConnectRoute: typeof ConnectRoute
   ConversationsRoute: typeof ConversationsRoute
@@ -457,6 +470,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BroadcastsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/billing': {
+      id: '/billing'
+      path: '/billing'
+      fullPath: '/billing'
+      preLoaderRoute: typeof BillingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api-keys': {
       id: '/api-keys'
       path: '/api-keys'
@@ -498,6 +518,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiKeysRoute: ApiKeysRoute,
+  BillingRoute: BillingRoute,
   BroadcastsRoute: BroadcastsRoute,
   ConnectRoute: ConnectRoute,
   ConversationsRoute: ConversationsRoute,

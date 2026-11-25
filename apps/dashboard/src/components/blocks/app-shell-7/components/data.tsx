@@ -4,6 +4,7 @@ import {
   InboxIcon,
   KeyRoundIcon,
   CalendarClockIcon,
+  CreditCardIcon,
   MegaphoneIcon,
   MessagesSquareIcon,
   SendIcon,
@@ -43,6 +44,8 @@ export type NavItem = {
   requires?: "waba" | "number"
   /** Listed only for a role with `administer` (the root's `canAdminister`); the server refuses the rest anyway. */
   adminOnly?: boolean
+  /** Listed only while billing is on for this console (the root's `billing`). */
+  billingOnly?: boolean
 }
 
 /**
@@ -193,6 +196,14 @@ export const NAV_MAIN: NavGroup[] = [
         href: "/members",
         icon: <UsersIcon aria-hidden="true" />,
         adminOnly: true,
+      },
+      {
+        // Every role reads it; a member sees status, plan and next charge only.
+        id: "billing",
+        label: "Billing",
+        href: "/billing",
+        icon: <CreditCardIcon aria-hidden="true" />,
+        billingOnly: true,
       },
       {
         id: "settings",

@@ -27,7 +27,8 @@ export function NavMain() {
   const scope = root.ok ? root.data : null
   const hasNumber = scope !== null && hasNumberScope(scope)
   const hasWaba = scope !== null && hasWabaScope(scope)
-  const canAdminister = rootRole(root)?.canAdminister ?? false
+  const role = rootRole(root)
+  const canAdminister = role?.canAdminister ?? false
   useIdlePrefetch({ hasNumber, hasWaba, canAdminister }, wabaId)
 
   return (
@@ -35,7 +36,7 @@ export function NavMain() {
       {NAV_MAIN.map((group) => (
         <NavGroupSection
           key={group.id}
-          group={{ ...group, items: group.items.filter((item) => canAdminister || !item.adminOnly) }}
+          group={{ ...group, items: navItems(group, { canAdminister, billing: role?.billing ?? false }) }}
           pathname={pathname}
           wabaId={wabaId}
           hasNumber={hasNumber}
@@ -44,6 +45,11 @@ export function NavMain() {
       ))}
     </>
   )
+}
+
+/** The items a role sees: admin-only rows for `administer`, billing rows while billing is on. */
+export function navItems(group: NavGroup, { canAdminister, billing }: { canAdminister: boolean; billing: boolean }) {
+  return group.items.filter((item) => (canAdminister || !item.adminOnly) && (billing || !item.billingOnly))
 }
 
 /**

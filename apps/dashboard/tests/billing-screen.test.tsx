@@ -94,20 +94,14 @@ describe("billing off", () => {
 });
 
 describe("billing on", () => {
-  test("a closed workspace is offered the subscription and told sending stops without one", () => {
+  test("Settings keeps a summary of billing and sends the rest to /billing", () => {
     const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={closed} />);
     expect(html).toContain("Billing");
     expect(html).toContain("No active subscription");
-    expect(html).toContain("8 EUR + VAT");
-    expect(html).toContain("messages cannot be sent; incoming messages still arrive");
-    expect(html).toContain("Start subscription");
-    expect(html).not.toContain("Manage billing");
-  });
-
-  test("a subscribed workspace manages its billing and is not offered a second subscription", () => {
-    const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />);
-    expect(html).toContain("Manage billing");
+    expect(html).toContain('href="/billing"');
+    expect(html).toContain("Open billing");
     expect(html).not.toContain("Start subscription");
+    expect(html).not.toContain("Manage billing");
   });
 
   test("status labels come from the stored status", () => {
@@ -124,22 +118,10 @@ describe("billing on", () => {
     expect(billingStatusLabel({ ...open, hasCustomer: false, explicitStatus: false })).toBe("No subscription needed");
   });
 
-  test("a workspace in setup is told its first number is free and offered the subscription", () => {
-    const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={setup} />);
-    expect(html).toContain("Your first number works without one");
-    expect(html).toContain("Start subscription");
-  });
-
   test("the checkout return says what happened, and waits when the webhook has not landed", () => {
     expect(checkoutReturnNote(trial)).toContain("subscription is active");
     expect(checkoutReturnNote(closed)).toContain("still confirming");
     expect(checkoutReturnNote(setup)).toContain("still confirming");
-    const html = renderToStaticMarkup(
-      <SettingsView accountId="account-a" canAdminister billing={trial} billingReturned={{ status: "active" }} />,
-    );
-    expect(html).toContain("subscription is active");
-    expect(html).not.toContain("trial");
-    expect(renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />)).not.toContain("subscription is active");
   });
 
   test("the first number needs no subscription; a second needs a live one; only paused and closed stop sends", () => {
@@ -243,8 +225,7 @@ describe("billing on", () => {
     );
     expect(free).toContain("Billed separately");
     expect(free).not.toContain("No subscription needed");
-    expect(free).not.toContain("Monthly price");
-    expect(renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />)).toContain("Monthly price");
+    expect(free).not.toContain("EUR");
   });
 
   test("a refused new number says why and links to billing", () => {

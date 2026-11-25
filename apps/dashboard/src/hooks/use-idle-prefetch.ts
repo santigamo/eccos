@@ -3,8 +3,8 @@ import { useEffect } from "react";
 
 import { NAV_MAIN } from "../components/blocks/app-shell-7/components/data";
 
-/** Templates are listed from Meta's API: never spend that quota on a guess. */
-const NEVER_IDLE = new Set(["/templates"]);
+/** Templates are listed from Meta's API and /billing reads Creem's: never spend either on a guess. */
+const NEVER_IDLE = new Set(["/templates", "/billing"]);
 
 export interface IdleEnv {
   /** Calls `run` when the browser is idle; returns the cancel. */

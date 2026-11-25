@@ -9,6 +9,32 @@ export function monthlyPriceEuros(numbers: number): number {
   return 49 + (n - 50);
 }
 
+const ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
+
+/** What one number costs inside the per-number tier (up to five); null once a flat tier prices them together. */
+export function numberPriceEuros(index: number, numbers: number): number | null {
+  if (numbers > 5) return null;
+  return index === 0 ? 5 : 3;
+}
+
+/** "Adding a third number would add 3 €, so 11 € per month." */
+export function nextNumberNote(numbers: number): string {
+  if (numbers === 0) return `Your first number costs ${monthlyPriceEuros(1)} € per month.`;
+  const next = monthlyPriceEuros(numbers + 1);
+  const added = next - monthlyPriceEuros(numbers);
+  const which = ORDINALS[numbers] ? `a ${ORDINALS[numbers]} number` : "another number";
+  if (added === 0) return `Adding ${which} keeps the price at ${next} € per month.`;
+  return `Adding ${which} would add ${added} €, so ${next} € per month.`;
+}
+
+/** Where the price stops growing next; null past the last flat tier. */
+export function tierNote(numbers: number): string | null {
+  if (numbers <= 5) return "From six numbers the price stops growing: 19 € per month for up to fifteen.";
+  if (numbers < 15) return "Up to fifteen numbers stay at 19 € per month; from sixteen it is 49 € for up to fifty.";
+  if (numbers < 50) return "Up to fifty numbers stay at 49 € per month; past fifty each one adds 1 €.";
+  return null;
+}
+
 /** An ended subscription is forgotten; one that still exists is managed in its portal, never paid for twice. */
 export function subscriptionEnded(status: string): boolean {
   return status === "canceled" || status === "expired";

@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
-import { billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
+import { billingPage, billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingPage, type BillingState } from "../billing/account";
 import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
@@ -182,7 +182,7 @@ export interface Failure {
 export type Result<T> = { ok: true; data: T } | Failure;
 
 export type { ForbiddenReason, Membership } from "../auth/tenant";
-export type { BillingState } from "../billing/account";
+export type { BillingPage, BillingState } from "../billing/account";
 
 /**
  * Identity-plane access (contract §1/§5): every server function resolves the
@@ -1964,6 +1964,18 @@ export const getBilling = createServerFn({ method: "GET" }).handler(
       if (!billingEnabled(env)) return null;
       const { accountId } = await adminActorAccount(gateway);
       return billingState(gateway, accountId);
+    }),
+);
+
+/** /billing for every role; a member gets no payments and no way into the portal. Null when billing is off. */
+export const getBillingPage = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<BillingPage | null>> =>
+    withGateway(async (gateway) => {
+      const billing = billingFor(env);
+      if (!billing) return null;
+      const { actor, accountId } = await adminActorAccount(gateway, "view");
+      const role = await memberRole(requestAuth(), getRequest().headers, actor.organizationId);
+      return billingPage(billing, accountId, roleAllows(role, "administer"));
     }),
 );
 

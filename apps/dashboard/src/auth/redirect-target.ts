@@ -27,6 +27,7 @@ export const SESSION_NEUTRAL_PATHS: ReadonlySet<string> = new Set(["/reset-passw
 export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/",
   "/api-keys",
+  "/billing",
   "/broadcasts",
   "/broadcasts/$broadcastId",
   "/scheduled",
