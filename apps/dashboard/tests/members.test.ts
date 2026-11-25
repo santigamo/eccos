@@ -10,6 +10,7 @@ import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { withD1Statements } from "./helpers/d1-statements";
+import { enrollTotp } from "./helpers/step-up";
 
 // Each test builds a real auth instance and signs several users in.
 setDefaultTimeout(30_000);
@@ -67,6 +68,8 @@ async function workspace() {
       }),
     );
     cookies.set(email, signIn.headers.get("set-cookie")!.split(";")[0]!);
+    // Every write here is a step-up row; "step-up" below takes it away again.
+    enrollTotp(db, email);
     return (db.query("SELECT id FROM user WHERE email = ?").get(email) as { id: string }).id;
   }
   const headersOf = (email: string) => new Headers({ cookie: cookies.get(email)! });
@@ -490,6 +493,48 @@ describe("invitation writes are conditional on the status they expect", () => {
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, error: copy.INVITATION_GONE, gone: true }]);
     expect(ws.pending()).toHaveLength(1);
+  });
+});
+
+describe("step-up", () => {
+  test("every write is refused until the caller has stepped up, and nothing lands", async () => {
+    const ws = await workspace();
+    ws.as("owner");
+    await ws.invite("pending@example.test");
+    const invitationId = ws.pending()[0]!.id;
+    const snapshot = () => ({
+      invitations: ws.db.query("SELECT id, status FROM invitation WHERE organizationId = ? ORDER BY id").all(ws.org.id),
+      members: ws.db.query("SELECT id, role FROM member WHERE organizationId = ? ORDER BY id").all(ws.org.id),
+    });
+    const before = snapshot();
+    const writes = [
+      () => ws.invite("new@example.test"),
+      () => resendInvitation({ data: { invitationId } }),
+      () => cancelInvitation({ data: { invitationId } }),
+      () => updateMemberRole({ data: { memberId: ws.memberOf("operator"), role: "viewer" } }),
+      () => removeMember({ data: { memberId: ws.memberOf("viewer") } }),
+    ];
+
+    // Enrolled, but the second factor was proved too long ago (or never, on this session).
+    ws.db.query('UPDATE session SET "stepUpAt" = NULL').run();
+    for (const write of writes) expect(await write()).toMatchObject({ ok: false, reason: "reauth-required" });
+    // Not enrolled at all. The reason is what `withStepUp` acts on.
+    ws.db.query('UPDATE user SET "twoFactorEnabled" = 0').run();
+    for (const write of writes) expect(await write()).toMatchObject({ ok: false, reason: "totp-required" });
+    expect(snapshot()).toEqual(before);
+
+    // Reading the page is not a step-up row.
+    expect((await listWorkspaceMembers()).ok).toBe(true);
+
+    enrollTotp(ws.db, "owner@example.test");
+    for (const write of [writes[0]!, writes[3]!, writes[4]!, writes[1]!]) expect(await write()).toEqual({ ok: true });
+  });
+
+  test("a role that may not manage members is told that, never asked for a second factor", async () => {
+    const ws = await workspace();
+    ws.db.query('UPDATE user SET "twoFactorEnabled" = 0').run();
+    ws.as("operator");
+    expect(await ws.invite("new@example.test")).toEqual({ ok: false, error: copy.ASK_TO_MANAGE_MEMBERS });
   });
 });
 

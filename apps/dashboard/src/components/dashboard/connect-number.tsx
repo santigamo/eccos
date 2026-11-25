@@ -19,6 +19,8 @@ import {
 } from "../../lib/embedded-signup";
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
+import { promptStepUp, STEP_UP_COPY, stepUpReason } from "../../lib/step-up";
+import type { ConnectBlock } from "../../server/connect-block";
 import {
   CONNECT_CLOSE_AND_RETRY,
   CONNECT_NOT_PREPARED,
@@ -141,6 +143,18 @@ const OPEN_META_LABEL: Record<ConnectPath, string> = {
 const SDK_REQUIRED_MESSAGE =
   "Connecting a number that is already on the WhatsApp Business app needs Meta's script, which did not load. Check for a blocker or an extension and try again. Do not use the other option: it would take the number off the app.";
 
+/** A neutral note above the cards: what stands before a connection may start. */
+const NOTICE_CLASS =
+  "m-0 border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground";
+
+/** The same words a refused connect start would get, shown before anything is pressed. */
+const MISSING_PERMISSION_COPY = failureCopy({
+  ok: false,
+  kind: "forbidden",
+  reason: "missing-permission",
+  error: "",
+}).detail;
+
 /**
  * The question that frames the fork, shared by both containers so they cannot
  * drift: the panel's title on first run, the dialog's description on the
@@ -197,6 +211,7 @@ function cancelledFeedback(step?: string, error?: { code?: string; sessionId?: s
 export function ConnectNumberChoices({
   title,
   className,
+  blocked = null,
   closed = false,
   onBusyChange,
   navigate = (path) => window.location.assign(path),
@@ -206,6 +221,8 @@ export function ConnectNumberChoices({
   /** The panel's title, hidden while Meta's error takes its place. The dialog has its own. */
   title?: string;
   className?: string;
+  /** What stops the signed-in user connecting right now: the role, or a step-up owed. */
+  blocked?: ConnectBlock | null;
   /** A closed workspace with nothing to reconnect: the cards are off and the caller says why. */
   closed?: boolean;
   /** Full navigation. A seam for tests. */
@@ -232,6 +249,22 @@ export function ConnectNumberChoices({
   const locked = starting !== null || awaiting !== null;
   const selected = starting ?? awaiting;
   const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
+  /**
+   * What still stands before a connection may start, the role first. Known
+   * when the fork appears (`blocked`, from the route's own read of the
+   * session). A step-up is settled before any card is pressed: Meta's window
+   * only opens on the customer's own click, and a prompt in between would
+   * spend it. A role that may not connect is told so and never asked. A fresh
+   * read is applied once, and never onto a flow that is already open.
+   */
+  const [block, setBlock] = useState(blocked);
+  const applied = useRef(blocked);
+  useEffect(() => {
+    if (starting !== null || applied.current === blocked) return;
+    applied.current = blocked;
+    setBlock(blocked);
+  }, [blocked, starting]);
+  const stepUp = block === "missing-permission" ? null : block;
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
   const attempt = useRef(0);
@@ -503,7 +536,10 @@ export function ConnectNumberChoices({
     started = startConnect().then(
       (handoff) => {
         if (handoff.ok) return handoff;
-        fail(failureCopy(handoff).detail);
+        // Step-up lapsed since the fork appeared: the cards wait for it again.
+        const lapsed = stepUpReason(handoff);
+        if (lapsed && isCurrent()) setBlock(lapsed);
+        fail(lapsed ? STEP_UP_COPY[lapsed].connect : failureCopy(handoff).detail);
         return null;
       },
       (err) => {
@@ -572,7 +608,9 @@ export function ConnectNumberChoices({
         const handoff = await startConnect();
         if (attempt.current !== mine) return;
         if (!handoff.ok) {
-          setError(failureCopy(handoff).detail);
+          const lapsed = stepUpReason(handoff);
+          if (lapsed) setBlock(lapsed);
+          else setError(failureCopy(handoff).detail);
           return;
         }
         leave(handoff.data.url);
@@ -624,6 +662,22 @@ export function ConnectNumberChoices({
         {reported ? <ErrorReport status="Not connected" labels={REPORT_LABELS} {...reported} /> : null}
       </output>
 
+      {block === "missing-permission" ? (
+        <p className={NOTICE_CLASS}>{MISSING_PERMISSION_COPY}</p>
+      ) : stepUp ? (
+        <div className={cn(NOTICE_CLASS, "flex flex-wrap items-center justify-between gap-3")}>
+          <span>{STEP_UP_COPY[stepUp].connect}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void promptStepUp(stepUp).then((ok) => ok && setBlock(null))}
+          >
+            {STEP_UP_COPY[stepUp].title}
+          </Button>
+        </div>
+      ) : null}
+
       {awaiting ? (
         <div className="flex flex-col gap-2">
           <p className="m-0 text-sm text-muted-foreground">Ready. Meta opens in its own window.</p>
@@ -662,7 +716,7 @@ export function ConnectNumberChoices({
               <button
                 type="button"
                 onClick={() => start(path)}
-                disabled={closed || locked || unavailable !== null}
+                disabled={closed || locked || unavailable !== null || block !== null}
                 className={cn(
                   // Interactive anatomy: `--ghost-fill` under a `--line-strong`
                   // edge, the edge going green on hover (docs/DASHBOARD-DESIGN.md).
@@ -716,11 +770,11 @@ export function ConnectNumberChoices({
  * the same fork in a centred dialog, which brings its own title, so the split
  * keeps one fork in two containers instead of a panel inside a panel.
  */
-export function ConnectNumberPanel({ closed }: { closed?: boolean }) {
+export function ConnectNumberPanel({ closed, blocked }: { closed?: boolean; blocked?: ConnectBlock | null }) {
   return (
     <Frame variant="default" spacing="lg" className="max-w-3xl">
       <FramePanel fit>
-        <ConnectNumberChoices title={CONNECT_FORK_DESCRIPTION} closed={closed} />
+        <ConnectNumberChoices title={CONNECT_FORK_DESCRIPTION} closed={closed} blocked={blocked} />
       </FramePanel>
     </Frame>
   );

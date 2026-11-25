@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { unstable_readConfig as readConfig } from "wrangler";
+import { OAUTH_CLIENT_CLEANUP_CRON } from "../apps/dashboard/src/auth/oauth-client-cleanup";
 
 const root = join(import.meta.dir, "..");
 const errors: string[] = [];
@@ -31,6 +32,13 @@ if (gateway) {
 if (dashboard) {
   const authUrl = String(dashboard.vars.BETTER_AUTH_URL ?? "");
   if (!authUrl.startsWith("https://")) errors.push(`dashboard BETTER_AUTH_URL must be an https origin, got "${authUrl}"`);
+  // The audience of every OAuth access token; the console refuses to start without it.
+  const mcpResource = String(dashboard.vars.MCP_RESOURCE ?? "");
+  if (!mcpResource.startsWith("https://")) errors.push(`dashboard MCP_RESOURCE must be an https URL, got "${mcpResource}"`);
+  // Anonymous client registration is bounded by deleting unused clients every hour.
+  if (!(dashboard.triggers.crons ?? []).includes(OAUTH_CLIENT_CLEANUP_CRON)) {
+    errors.push(`dashboard triggers.crons must include "${OAUTH_CLIENT_CLEANUP_CRON}": unused OAuth clients would never be deleted`);
+  }
   const id = dashboard.d1_databases.find((db) => db.binding === "DB")?.database_id ?? "";
   if (!id || /^[0-]+$/.test(id)) errors.push("dashboard DB database_id is missing or the template placeholder");
 }
@@ -54,8 +62,10 @@ if (gateway && dashboard) {
         : "gateway CONNECT_POLICY_DEFAULT is \"closed\" but dashboard CREEM_PRODUCT_ID is not set",
     );
   }
-  if (billing && (dashboard.triggers.crons ?? []).length === 0) {
-    errors.push("dashboard billing is on but triggers.crons is empty: the daily reconcile would never run");
+  if (billing && !(dashboard.triggers.crons ?? []).some((cron) => cron !== OAUTH_CLIENT_CLEANUP_CRON)) {
+    errors.push(
+      `dashboard billing is on but triggers.crons has no trigger besides the hourly "${OAUTH_CLIENT_CLEANUP_CRON}": the daily reconcile would never run`,
+    );
   }
 }
 

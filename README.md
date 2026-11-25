@@ -90,13 +90,13 @@ your app  ◀──forward (HMAC)────   Eccos  ◀──  Meta webhook  
 Normalized event shape (`WhatsAppCallbackEvent`):
 
 ```ts
-| { type: "sent" | "delivered" | "read"; transportMessageId; at; broadcastId?; scheduleKey? }
-| { type: "failed"; transportMessageId; at; errorCode?; errorMessage?; broadcastId?; scheduleKey? }
-| { type: "reply"; from; fromUserId?; messageId; text; at; profileName?; payload?; replyTo?; broadcastId?; scheduleKey? }
-| { type: "echo"; to; toUserId?; messageId; text; at }   // staff reply sent from the WhatsApp app (coexistence)
+| { type: "sent" | "delivered" | "read"; transportMessageId; at; phoneNumberId?; broadcastId?; scheduleKey? }
+| { type: "failed"; transportMessageId; at; errorCode?; errorMessage?; phoneNumberId?; broadcastId?; scheduleKey? }
+| { type: "reply"; from; fromUserId?; messageId; text; at; phoneNumberId?; profileName?; payload?; replyTo?; broadcastId?; scheduleKey? }
+| { type: "echo"; to; toUserId?; messageId; text; at; phoneNumberId? }   // staff reply sent from the WhatsApp app (coexistence)
 // Additive: every other message type, inbound and echoed, instead of being dropped
-| { type: "message"; from; fromUserId?; messageId; at; profileName?; replyTo?; broadcastId?; scheduleKey? } & MessageContent
-| { type: "message_echo"; to; toUserId?; messageId; at; payload? } & MessageContent
+| { type: "message"; from; fromUserId?; messageId; at; phoneNumberId?; profileName?; replyTo?; broadcastId?; scheduleKey? } & MessageContent
+| { type: "message_echo"; to; toUserId?; messageId; at; phoneNumberId?; payload? } & MessageContent
 // Emitted by Eccos, not Meta: a scheduled send that will not go out (reason: "rejected" | "expired" | "unknown")
 | { type: "scheduled_failed"; scheduleKey; to; reason; errorCode?; errorMessage?; at; phoneNumberId? }
 ```

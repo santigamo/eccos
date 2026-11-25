@@ -15,6 +15,7 @@ export interface SessionUser {
   email: string;
   emailVerified: boolean;
   name: string;
+  twoFactorEnabled: boolean;
   sessionId: string;
   /** Active organization from the session row — UX default only, NEVER
    * authorization evidence (contract §1). */
@@ -32,7 +33,13 @@ export class UnauthorizedError extends Error {
 function toSessionUser(session: unknown): SessionUser | null {
   if (!session || typeof session !== "object") return null;
   const s = session as {
-    user?: { id?: unknown; email?: unknown; emailVerified?: unknown; name?: unknown };
+    user?: {
+      id?: unknown;
+      email?: unknown;
+      emailVerified?: unknown;
+      name?: unknown;
+      twoFactorEnabled?: unknown;
+    };
     session?: { id?: unknown; activeOrganizationId?: unknown };
   };
   const user = s.user;
@@ -43,6 +50,7 @@ function toSessionUser(session: unknown): SessionUser | null {
     email: String(user.email ?? ""),
     emailVerified: Boolean(user.emailVerified),
     name: String(user.name ?? ""),
+    twoFactorEnabled: Boolean(user.twoFactorEnabled),
     sessionId: String(sess.id),
     activeOrganizationId:
       sess.activeOrganizationId == null ? null : String(sess.activeOrganizationId),

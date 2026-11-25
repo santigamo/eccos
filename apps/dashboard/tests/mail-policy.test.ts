@@ -28,6 +28,7 @@ import {
 } from "../src/auth/mail";
 import { ReccadoMailSender } from "../src/auth/mail-reccado";
 import { mailUndeliverableMessage } from "../src/components/auth/auth-page";
+import { enrollTotp } from "./helpers/step-up";
 
 const SECRET = "test-secret-32-chars-minimum-length!!";
 const BASE_URL = "http://localhost:3000";
@@ -271,6 +272,7 @@ async function createTestAuth(mail: CaptureMailSender | ReccadoMailSender) {
     secret: SECRET,
     baseURL: BASE_URL,
     trustedOrigins: [BASE_URL],
+    mcpResource: "http://localhost:8788/mcp",
     mail,
   });
   const { runMigrations } = await getMigrations(auth.options);
@@ -335,13 +337,13 @@ describe("no raw token ever leaves in a header", () => {
   });
 });
 
-describe("what better-auth 1.7.2 does with a thrown send (documented gap)", () => {
+describe("what better-auth does with a thrown send (documented gap, re-read at 1.7.27)", () => {
   test("sign-up SWALLOWS the throw, so the undeliverable branch cannot fire there yet", async () => {
     // better-auth wraps the sign-up send in `runInBackgroundOrAwait`
-    // (dist/context/create-context.mjs:214), which awaits inside a try/catch
+    // (dist/context/create-context.mjs:215), which awaits inside a try/catch
     // and only LOGS a rejection. The same is true of create-invitation
-    // (dist/plugins/organization/routes/crud-invites.mjs:226) and
-    // forgot-password (dist/api/routes/password.mjs:83).
+    // (dist/plugins/organization/routes/crud-invites.mjs:230) and
+    // forgot-password (dist/api/routes/password.mjs:82).
     //
     // This test pins that reality so it FAILS LOUDLY the day better-auth
     // propagates instead — at which point the console branch starts working
@@ -421,6 +423,7 @@ describe("the three call sites send the declared variables", () => {
       }),
     );
     const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
+    enrollTotp(db, "owner@example.com");
     const org = (await auth.api.createOrganization({
       body: { name: "Acme", slug: mintSlug() },
       headers: new Headers({ cookie }),

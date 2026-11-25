@@ -25,8 +25,9 @@ The root `bun run deploy` and dashboard `bun run deploy` / `scripts/deploy-dashb
 a gitignored `wrangler.production.jsonc` and first run `scripts/check-production-config.ts`, which
 stops the deploy if either production file is missing, `GATEWAY_PUBLIC_URL` is not an HTTPS
 origin, the dashboard D1 id is still the placeholder, the gateway and dashboard
-`META_GRAPH_VERSION` differ, or the gateway's Durable Object bindings, migrations or R2 buckets
-drift from the template. It only reads local files.
+`META_GRAPH_VERSION` differ, the dashboard lacks the hourly `"0 * * * *"` cron trigger, or the
+gateway's Durable Object bindings, migrations or R2 buckets drift from the template. It only reads
+local files.
 
 Raw `wrangler deploy` and the gateway package's `bun run deploy` skip that check: they still
 deploy the template, for self-hosting and the Deploy to Cloudflare button. The template keeps the
@@ -72,6 +73,13 @@ request gets `403 Forbidden`. If you patched the host allowlist in `src/server.t
 console calls the new `GatewayRPC.setAccountName()`, and against an older gateway the rename
 succeeds in the console while the gateway's account name keeps its old value, with nothing to
 reconcile it later.
+
+The console is also the OAuth authorization server for the MCP resource. **Set `MCP_RESOURCE`
+(see the vars below) and apply the auth D1 migrations before deploying this version**: without the
+var every request fails closed, and without `0006_oauth_provider.sql` the OAuth endpoints fail.
+Add the template's hourly trigger, `"triggers": { "crons": ["0 * * * *"] }`, to your production
+config too (keep `"0 4 * * *"` next to it if billing is on): it deletes dynamically registered
+OAuth clients that have stayed unused for 24 hours, and the preflight refuses a config without it.
 
 Production files are ignored and local to each checkout. Before retiring a worktree, transfer
 its populated files to the checkout used for deployment with `cp -n`, then verify the values
@@ -155,6 +163,7 @@ Admin bootstrap endpoints (`POST /v1/accounts`, `POST /v1/accounts/<id>/keys`,
 | Var | Default | Purpose |
 |---|---|---|
 | `BETTER_AUTH_URL` | unset | The console's public HTTPS origin, e.g. `https://console.example.com`. **Required on a public host:** it is the only hostname the console answers (anything else, `workers.dev` included, gets `403`) and the only origin Better Auth trusts. Unset or non-https means development: localhost only |
+| `MCP_RESOURCE` | unset | The MCP resource the console issues OAuth access tokens for (the MCP Worker's URL, e.g. `https://mcp.example.com/mcp`): every token's audience. **Required on a public host:** with an https `BETTER_AUTH_URL` and no `MCP_RESOURCE` the console fails closed, as it does without `BETTER_AUTH_SECRET`. Unset in development means `http://localhost:8788/mcp` |
 | `META_APP_ID` | `""` | Meta app id, for the Embedded Signup **JavaScript SDK** path. Public by design — Meta's own guide puts it in client-side JS. **Empty disables the SDK path** and the Connect button falls back to the server-side redirect |
 | `META_ES_CONFIG_ID` | `""` | Facebook Login for Business configuration id (the v4 one). Same value as the gateway's secret; public by design. **Empty disables the SDK path** |
 | `META_GRAPH_VERSION` | `v25.0` | Passed to `FB.init`. Keep equal to the gateway's — see [Meta Graph API version](#meta-graph-api-version) |
@@ -194,7 +203,7 @@ numbers, and an account that may not keeps sending, receiving and forwarding.
 | dashboard secret | `CREEM_API_KEY` | Turns billing on. A `creem_test_` key talks to Creem's test API |
 | dashboard secret | `CREEM_WEBHOOK_SECRET` | Verifies `creem-signature` on `POST /api/billing/webhook` |
 | dashboard var | `CREEM_PRODUCT_ID` | The Creem product, e.g. `prod_XXXXXXXXXXXXXXXXXXXXXX`. Set it in the gitignored `wrangler.production.jsonc`, never in the template |
-| dashboard config | `"triggers": { "crons": ["0 4 * * *"] }` | Daily reconcile: prices each subscription for the account's connected numbers |
+| dashboard config | `"triggers": { "crons": ["0 * * * *", "0 4 * * *"] }` | The second, daily trigger runs the reconcile: it prices each subscription for the account's connected numbers. The hourly one only deletes unused OAuth clients (see the production config section) |
 | dashboard var | `RESELLER_USER_IDS` | Comma-separated user ids whose new workspaces open without a subscription, for a reseller invoiced separately. Their settings read "Billed separately". Existing workspaces are opened by the operator |
 
 The Creem product is a monthly subscription at 1 EUR per unit (a subscription's units are its
@@ -202,7 +211,7 @@ monthly price in euros), with the free trial configured on the product and its d
 set to `<console origin>/settings?billing=success`. Creem's customer portal takes no return URL.
 
 The preflight refuses a deploy with only one of `CREEM_PRODUCT_ID` and
-`CONNECT_POLICY_DEFAULT=closed`, or with billing on and no cron trigger.
+`CONNECT_POLICY_DEFAULT=closed`, or with billing on and no trigger besides the hourly one.
 
 ## Deploy
 

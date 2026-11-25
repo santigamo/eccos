@@ -31,8 +31,19 @@ import { timed } from "../server/timing";
 
 /** The raw Better Auth getSession result (shape is version-dependent). */
 export type SessionResult = {
-  user?: { id?: string; email?: string; emailVerified?: boolean; name?: string };
-  session?: { id?: string; activeOrganizationId?: string | null };
+  user?: {
+    id?: string;
+    email?: string;
+    emailVerified?: boolean;
+    name?: string;
+    twoFactorEnabled?: boolean | null;
+  };
+  session?: {
+    id?: string;
+    token?: string;
+    activeOrganizationId?: string | null;
+    stepUpAt?: Date | string | null;
+  };
 } | null;
 
 const sessionsByRequest = new WeakMap<Headers, Promise<SessionResult>>();

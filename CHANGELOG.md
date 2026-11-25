@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Console auth dependency
+
+- `better-auth` 1.7.14 → 1.7.27 (exact pin, `apps/dashboard` and `packages/auth-baseline`). Clears the
+  advisory batch fixed in 1.7.16. Two touch features the console uses: organization invitations with
+  a padded role name (GHSA-c85h-5mrr-mgx4) and invitations accepted by an unverified account
+  (GHSA-fmh4-wcc4-5jm3). **No auth D1 migration is needed**: the shipped
+  `apps/dashboard/migrations` already match the 1.7.27 schema.
+
 ### Self-hosting the console (action required)
 
 - **`BETTER_AUTH_URL` is now required on a public host.** The console no longer hard-codes

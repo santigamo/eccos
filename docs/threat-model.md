@@ -9,6 +9,11 @@ developed v1 surface — Hono app + `EccosGateway` Durable Object) and the **Bun
 kept aside). This document focuses on the Workers target and its companion operator console
 (`apps/dashboard/`), and calls out where the Bun target differs.
 
+The MCP server (`apps/mcp`) and the console's OAuth authorization server are specified in
+[openspec/changes/add-mcp-server](../openspec/changes/add-mcp-server/) and built in its phase 1.
+Where this document covers them (§1, §2, §3.5, §4), a mitigation is a requirement of that change
+until its code lands; §3.5 says which.
+
 ## 1. Assets
 
 What an attacker would want, and where it lives:
@@ -25,6 +30,12 @@ What an attacker would want, and where it lives:
 | Message content | Inbound reply/echo text, delivery/read/failed statuses, phone numbers (`from`/`to`), Meta message ids | DO SQLite (`inbound_events`, `outbound_messages`, `deliveries` in `apps/gateway/src/gateway.ts`) / `bun:sqlite` (Bun target, `src/db/client.ts`) |
 | The Embedded-Signup business token | 60-day token returned by `exchangeCodeForToken` during `/connect` | Stored only in the control-plane WABA row, encrypted with the envelope above and bound to `<accountId>:<wabaId>`, so later account-scoped sends and resubscriptions can use it; never written to the data-plane config or returned |
 | Better Auth session (operator console) | Proves which user is signed in to the dashboard; organization membership decides what they can do | Session cookie resolved server-side on every request against the auth D1 (`apps/dashboard/src/auth/`) |
+| OAuth access token (agents) | A JWT that lets one client act as one user in one workspace, within its scopes, against the MCP resource | The agent, and in transit. Lives 10 minutes, audience-bound to the MCP resource, and useless without a live grant, membership, and account link |
+| OAuth refresh token | Gets new access tokens for a grant | The agent; hashed in the auth D1. Rotates on use; a replay inside the 30-second reuse window gets the same response, a later replay revokes the whole family. Revoked with the grant |
+| JWT signing key | Signs OAuth access tokens (EdDSA) | Auth D1, the private half encrypted with `BETTER_AUTH_SECRET`. The session-JWT route (`/api/auth/token`) is disabled, so a session JWT cannot pass as an access token |
+| Consent rows (grants) | The record that a user let a client act in a workspace; deleting one is the revocation switch | Auth D1; listed and revoked under Connected agents in Settings |
+| Elevation rows and approval requests | A 24-hour permission for one grant to run step-up tools | Auth D1. Written only by the grant's own user, signed in as an owner or admin, who passed step-up. Requests expire in 10 minutes; an elevation ends at expiry, at revoke, or when ended by hand |
+| Secret claim token | A one-time bearer value that redeems a newly minted API key or subscriber secret | The tool result, then the agent's shell or a person's browser; hashed in the control plane. Single use, 10 minutes, `POST` only, and nothing is minted until it is spent |
 
 ## 2. Trust boundaries
 
@@ -40,9 +51,13 @@ your backend / integrations
 Gateway Worker  ◀──(private RPC service binding, GatewayRPC)──  Dashboard Worker  ◀── operator's browser
                                                                        ▲
                                                   host allowlist + Better Auth session
+
+customer's agent ──(POST /mcp, Bearer)──▶ MCP Worker (apps/mcp) ──(ConsoleRPC)──▶ Dashboard Worker
+                                                    │
+                                                    └──(GatewayRPC, resolved accountId)──▶ Gateway Worker
 ```
 
-Four boundaries matter:
+Five boundaries matter:
 
 1. **Meta ↔ gateway** — inbound webhook calls are the only unauthenticated-by-default HTTP the
    gateway accepts from the public Internet; trust is established per-request by HMAC signature,
@@ -56,6 +71,11 @@ Four boundaries matter:
    `GatewayRPC` entrypoint (`apps/gateway/src/rpc.ts`), which cannot be reached over the network —
    only from a bound Worker. The dashboard itself requires a Better Auth session and resolves the
    account from the user's organization, never from browser input.
+5. **agent ↔ `apps/mcp`** — a customer's agent is trusted for one request once
+   `ConsoleRPC.authorize` returns an actor for its bearer token. `apps/mcp` then calls
+   `GatewayRPC` with the `accountId` that actor carries, as the console does, and the gateway's
+   own WABA and phone ownership checks still run on every call. The token stops at `apps/mcp`; the
+   gateway never sees it.
 
 ## 3. Attack surfaces and existing mitigations
 
@@ -202,6 +222,49 @@ CSP with a pinned `script-src`, which is tracked separately.
   but access tokens are stored only in the control plane, encrypted at the application layer, and
   no private value is returned by the operator API.
 
+### 3.5 `apps/mcp` and the console's OAuth authorization server
+
+This surface is specified in [openspec/changes/add-mcp-server](../openspec/changes/add-mcp-server/)
+(design § 2, § 3, § 5) and does not exist in the code yet. Each bullet is a requirement; tasks 1.2
+to 1.10 of that change build them, and this section names the file once a mitigation lands.
+
+- **Surface:** `apps/mcp` serves MCP over Streamable HTTP at `/mcp` on its own host, plus its
+  protected-resource metadata. It holds no storage and no credential that grants access. Its one
+  secret, `REQUEST_STATE_KEY`, seals the approval state; a leaked key can forge an approval state,
+  which still cannot run a tool, because elevation is re-read from `authorize` on every request. It
+  reaches the rest of Eccos only through the `ConsoleRPC` and `GatewayRPC` service bindings. The console gains the OAuth
+  endpoints listed in [auth-tenancy-contract.md](./auth-tenancy-contract.md) §9, the workspace,
+  consent, approval, and claim pages, Connected agents in Settings, and `POST /api/claim`.
+- **Mitigation, the token is a pointer:** `apps/mcp` never verifies or parses a token itself. It
+  passes it to `ConsoleRPC.authorize`, which verifies it in process (signature, issuer, audience
+  equal to the MCP resource, expiry, `typ: at+jwt`, `azp`) and then re-reads the grant, the
+  membership, the current role, and the account link on every request (contract §1). Nothing about
+  authorization is cached in `apps/mcp`. Every refusal is the same `401` challenge. A request
+  with a missing or malformed bearer is refused in `apps/mcp` before any RPC.
+- **Mitigation, one workspace per grant:** the person picks the workspace at consent from their own
+  memberships. No tool takes an organization or account id, so an agent cannot address another
+  tenant; WABA and phone ids are checked against the account by the gateway.
+- **Mitigation, role ∩ scope:** a tool runs only when both the user's live role and the grant's
+  scopes allow it (contract §4). No scope allows erasure.
+- **Mitigation, sensitive tools need elevation:** the tools behind the contract's step-up rows run
+  only while the grant holds an elevation that its own user, as owner or admin, approved with TOTP
+  within the step-up window. A token cannot create one. Step-up tools do not ship before the
+  console enforces step-up itself.
+- **Mitigation, secrets stay out of the model:** a minted API key or subscriber secret is delivered
+  by a single-use claim. The claim stores only its intent, and the secret is minted in the same
+  control-plane call that spends it.
+- **Mitigation, origins:** the console's pages and cookies keep the one-origin rule (contract §6).
+  Only the token, registration, JWKS, and metadata endpoints answer cross-origin, and they read no
+  cookie. `apps/mcp` refuses a browser request whose `Origin` it does not allow.
+- **Mitigation, clients:** client ID metadata documents are fetched over HTTPS only, with
+  `global_fetch_strictly_public`, no redirects, and size and time caps. Dynamic registration is
+  rate-limited per address. Consent is never skipped, and the consent page shows the redirect host
+  next to the client name, because whoever registers a client chooses its name.
+- **Mitigation, audit and abuse:** every mutating tool writes one audit line with ids, the tool,
+  the client id, and the outcome, extended by `via: "mcp"`. `/mcp` has a per-user and
+  per-client rate limit, and sends still pass the gateway's `SEND_RATE_LIMITER` on the same key
+  as `/v1`.
+
 ## 4. Threats mapped to mitigations (and residual risk)
 
 | Threat | Mitigated by | Residual risk |
@@ -218,6 +281,20 @@ CSP with a pinned `script-src`, which is tracked separately.
 | Operator console leaking message content to the wrong person | Better Auth session plus organization membership, re-derived server-side on every request; data is scoped to the organization's account | The dashboard renders raw inbound message text (`apps/dashboard/src/routes/events.tsx` via `eventReading()` in `src/lib/logs.ts`) and, in the event inspection sheet, the whole stored event JSON verbatim, to any member with `view` — so organization membership *is* the access-control boundary for message content, not a separate per-field redaction. |
 | DoS via flooding `/webhooks/meta` with invalid signatures | Cloudflare edge DDoS protection (platform-level, outside this repo) | No application-level rate limiting on the two public unauthenticated routes (`GET`/`POST /webhooks/meta`), unlike `/v1/wabas/<WABA_ID>/messages`. Each invalid POST still costs one HMAC computation before rejection. |
 | Per-WABA Durable Object as an availability/scale boundary | N/A (architectural choice, not a security control) | Each WABA's reads/writes serialize through its own versioned DO; tenant state is not a global singleton, but there is no cross-region replica. |
+| Stolen OAuth access or refresh token | Access tokens live 10 minutes; refresh tokens rotate with replay detection; every request re-checks the grant; Revoke under Connected agents; step-up tools also need a live elevation, which a token cannot create (§3.5) | Until revoked, the thief acts as the user within the granted scopes in one workspace, and can use step-up tools only inside an elevation the person already approved. |
+| Token replayed against another resource, or a session JWT presented as an access token | `aud` must equal the MCP resource; `typ: at+jwt` and `azp` required; the session-JWT route `/api/auth/token` is disabled | None known. Better Auth 1.7 recognises access JWTs by `azp`, and nothing in Eccos signs other JWTs with that key. |
+| Confused deputy: the agent's token forwarded onward | The token stops at `apps/mcp`; `GatewayRPC` receives an account id over a private binding, never a bearer value | None. |
+| Cross-tenant access through an agent | No tool takes a tenant id; the account comes from the grant's workspace, re-resolved on every request; the gateway re-checks WABA and phone ownership | The same as the console's, plus `apps/mcp` as a second place where a bug could pass the wrong account. Each tool gets a negative two-account test. |
+| Stale privilege after a role change or removal | Role and membership are read on every MCP request, and token issuance refuses a non-member | One request. |
+| Malicious or look-alike OAuth client (open registration) | Consent is never skipped; the consent page shows the redirect host; step-up tools need a separate elevation; registration is rate-limited | A person can still approve a client they should not. This is phishing; the grant is visible and revocable under Connected agents. |
+| Prompt injection: a WhatsApp message tells the agent to act | Reading conversations and writing use different scopes; step-up tools need an elevation that a person approved knowing which tool asked; destructive tools carry `destructiveHint`; erasure is not exposed | **Real, and Eccos cannot remove it.** An agent that holds `eccos:view` and `eccos:send` and reads hostile inbound text can be talked into sending, and during an elevation into a step-up tool. Customer docs recommend separate grants for reading conversations and for administration. |
+| Secrets in the model's context | Minted secrets are delivered by a claim, so the value goes from Eccos to its destination | Inline delivery when the caller asks for it; a subscriber secret the caller supplies; the connection link, which is meant to be handed to a person. None is ever logged. |
+| Claim token intercepted (a bearer value for 10 minutes that passes through the model) | Single use; `POST` only, so previews and scanners neither read nor spend it; the token travels in the body or the URL fragment, never a path or query; nothing exists until it is spent; a per-caller limit on wrong tokens; it stops resolving when its creator loses the right | Whoever reads the agent's context inside the window and redeems first gets the secret. The rightful redeemer then gets `410`, which is the signal to revoke the key, by then visible under its label. |
+| Elevation abused: an agent asks for an approval the person did not expect | The approval page names the agent, the workspace, and the tool that asked; it needs the grant's own user, signed in, with TOTP; a request expires in 10 minutes, and one is pending per grant | Sudo semantics: once approved, every step-up tool is open to that agent for 24 hours, not only the one that asked. The person can end it early. |
+| Approval link sent to the wrong person | The link is a pointer; only the grant's user, still an owner or admin, can approve | None. |
+| Spend and abuse through agent sends | `eccos:send` is its own scope; a per-user, per-client rate limit on `/mcp`; `GatewayRPC` sends pass `checkSendRate` on the same `accountId:wabaId` key as `/v1` | The account's send budget is shared by the agent, the console, and `/v1`. |
+| SSRF through client ID metadata document fetches | HTTPS only, `global_fetch_strictly_public`, no redirects, size and time caps | Weaker than the DNS pinning Better Auth's docs ask for; a Worker has no internal network to reach. |
+| Flooding the MCP and OAuth endpoints | Cloudflare edge; the Rate Limiting binding on `/mcp`; Better Auth's rate limiter on the OAuth endpoints | `ConsoleRPC.authorize` costs D1 reads per request. A request without a well-formed bearer never reaches it. |
 | Secrets/content in logs | The Workers target's `logEvent()` (`apps/gateway/src/worker.ts`) emits one structured JSON line per notable route outcome (event name, correlation id from `cf-ray`, HTTP status, and an explicit `LogMeta` allowlist typed as `string \| number \| boolean \| null \| undefined` — no nested objects). Every call site passes only ids, counts, booleans, or enum-like strings (`mode`, `path`, `bodyBytes`, `eventCount`, `messageType`, `messageId`, `limit`/`count`, `configOk`/`missingConfig` key names) — never a recipient number, message body, or secret value; the code carries an explicit "never pass message bodies, full phone numbers, tokens, API keys, or signatures" comment. The Bun target (`src/`) still has only two `console.*` calls total (`src/index.ts` boot message, `src/delivery/forward.ts` delivery-loop error), neither logging a secret or body. | Cloudflare Workers observability is enabled at `head_sampling_rate: 1` (`apps/gateway/wrangler.jsonc`) — captures whatever *is* logged. The `LogMeta` type prevents accidentally passing a whole object/body, but a developer could still pass a string field containing sensitive text at a future call site — this is a strong convention plus a type-level guard, not an automated content scan. See `docs/privacy.md`. |
 
 ## 5. Out of scope / explicitly not modeled

@@ -15,7 +15,12 @@ dist/
 worker-configuration.d.ts
 
 # Local AI agent / editor config (kept local, not published)
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+# ...except the verification skill, which is part of the repo
+!.agents/skills/verify-eccos/
+.verify/
 .commandcode/
 .claude/
 .codex/

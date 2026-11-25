@@ -86,6 +86,8 @@ The `Idempotency-Key` header is **mandatory** and is always a SHA-256 hex digest
 | `verify-email` | `sha256("verify-email:" + to + ":" + <verification token>)` |
 | `reset-password` | `sha256("reset-password:" + to + ":" + <reset token>)` |
 | `invite-member` | `sha256("invite-member:" + to + ":" + invitation.id)` |
+| `two-factor-code` | `sha256("two-factor-code:" + to + ":" + <hash of the code>)` |
+| `two-factor-changed` | `sha256("two-factor-changed:" + to + ":" + <change> + ":" + <random id>)` |
 
 The property that makes this correct: **the key derives from the unique element
 of the payload, so key and payload move together.** A framework retry replays
@@ -111,7 +113,8 @@ the callback (`extractTokenFromUrl`); the URL itself is never hashed.
 
 ### Templates
 
-Five templates: `verify-email`, `reset-password`, `invite-member`, and the two
+Seven templates: `verify-email`, `reset-password`, `invite-member`, the two for
+two-factor authentication (`two-factor-code`, `two-factor-changed`), and the two
 that tell an admin how their connection link went, `connect-link-connected`
 (`workspace`, `note`, `url`) and `connect-link-failed` (`workspace`, `reason`, `url`).
 `note` and `reason` are fixed sentences chosen by the console, never free text.
@@ -120,6 +123,16 @@ Each one's declared variable set is **one explicit constant** in
 connection-link mails are best effort: a send that fails is logged and never
 fails the connection, and they carry the workspace name and the console URL
 only, never a phone number or message content.
+
+| Template | Variables | Sent when |
+|---|---|---|
+| `two-factor-code` | `code`, `name` | Someone signed in asks to set up two-factor authentication. `code` is 8 characters, valid 10 minutes, single use |
+| `two-factor-changed` | `change`, `name` | Two-factor authentication was turned on or off, or backup codes were regenerated. `change` is one sentence saying which |
+
+> **Register `two-factor-code` and `two-factor-changed` with the provider
+> before deploying the code that sends them.** Until `two-factor-code` exists
+> there, the send is refused (`template_not_found`) and nobody can enroll, so
+> every step-up row stays closed to accounts without TOTP.
 
 **Variable validation is exact in both directions**: a missing declared
 placeholder *or* an extra undeclared variable is a hard reject. The adapter
@@ -142,6 +155,8 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 | Sign-up / verification | log, continue | **surface** — bounded, membership-neutral message |
 | Password reset | log, continue | **swallow**, log, keep the generic response |
 | Invitation | log, continue | **surface** to the inviter |
+| Two-factor setup code | log, continue | **surface**: the setup cannot go on without it |
+| Two-factor change notice | log, continue | log; the change already happened |
 
 - **Sign-up may surface it** because an existing account short-circuits *before*
   any send happens, so it discloses the deliverability of a freshly typed
@@ -155,17 +170,18 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
   A recipient-policy refusal (`recipient_rejected_by_policy`) shows the same
   "blocked" message for the same reason; the log keeps the distinct reason.
 
-> **Known gap — better-auth 1.7.2 swallows these throws at two of the three call
-> sites.** Sign-up (`dist/api/routes/sign-up.mjs`), forgot-password
+> **Known gap — better-auth (re-read at 1.7.27) swallows these throws at two of the
+> three call sites.** Sign-up (`dist/api/routes/sign-up.mjs`), forgot-password
 > (`dist/api/routes/password.mjs`) and create-invitation
 > (`dist/plugins/organization/routes/crud-invites.mjs`) all wrap the send in
-> `ctx.context.runInBackgroundOrAwait` (`dist/context/create-context.mjs:214`),
+> `ctx.context.runInBackgroundOrAwait` (`dist/context/create-context.mjs:215`),
 > which awaits the promise inside a `try/catch` and merely **logs** a rejection.
 > So the sign-up and invitation `undeliverable` messages do not reach the
 > response today; only `POST /send-verification-email` re-throws
-> (`dist/api/routes/email-verification.mjs:117`). The policy is written to the
-> contract regardless — it is correct, it starts surfacing the moment better-auth
-> propagates, and the structured log is the durable record meanwhile. The
+> (`dist/api/routes/email-verification.mjs:117`). Since 1.7.21 better-auth
+> states this for sign-up outright: a thrown `sendVerificationEmail` is logged and the
+> sign-up succeeds. The policy is written to the contract regardless — it is correct
+> where the throw surfaces, and the structured log is the durable record elsewhere. The
 > behaviour is pinned by a test in `tests/mail-policy.test.ts` so it fails loudly
 > when it changes. (Incidentally this is *why* the reset flow's "swallow" is
 > belt-and-braces rather than the only thing standing between us and an oracle.)

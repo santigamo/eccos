@@ -400,3 +400,14 @@ export async function subscribeApp(
   const json = await res.json().catch(() => null);
   if (!res.ok) throw graphError("subscribed_apps", res, json);
 }
+
+/** DELETE /<waba_id>/subscribed_apps: removes this app's subscription so the next POST re-creates it. */
+export async function unsubscribeApp(cfg: MetaSubscriptionConfig, wabaId: string, token: string): Promise<void> {
+  const res = await fetch(`${graphBaseUrl(cfg)}/${wabaId}/subscribed_apps`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw graphError("subscribed_apps", res, json);
+}

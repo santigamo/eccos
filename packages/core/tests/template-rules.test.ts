@@ -9,11 +9,14 @@ import {
   normalizeTemplateName,
   previewBody,
   templateRowsOf,
-} from "../src/lib/template-params";
+  validateTemplateDraft,
+  validateTemplateEdit,
+  validateTemplateSend,
+} from "@eccos/core/template-rules";
 
 /**
  * What the "Send test" sheet is allowed to build (see
- * `src/lib/template-params.ts`).
+ * `packages/core/src/template-rules.ts`).
  *
  * The scope is deliberately narrow — positional body parameters only — so the
  * job of these tests is to pin the BOUNDARY: every shape the sheet cannot
@@ -410,5 +413,117 @@ describe("templateRowsOf", () => {
     expect(templateRowsOf({ data: "nope" })).toEqual([]);
     expect(templateRowsOf(null)).toEqual([]);
     expect(templateRowsOf(undefined)).toEqual([]);
+  });
+});
+
+describe("validateTemplateEdit", () => {
+  const EDIT = {
+    templateId: " 555 ",
+    name: " order_update ",
+    language: "en_US",
+    bodyText: "Hi {{1}}",
+    bodyExamples: [" Ada "],
+  };
+
+  test("trims the identifiers and keeps the content rules of create", () => {
+    expect(validateTemplateEdit(EDIT)).toEqual({
+      templateId: "555",
+      name: "order_update",
+      language: "en_US",
+      bodyText: "Hi {{1}}",
+      bodyExamples: ["Ada"],
+    });
+    expect(() => validateTemplateEdit({ ...EDIT, bodyExamples: [] })).toThrow();
+  });
+
+  test("category is optional, and never AUTHENTICATION", () => {
+    expect(validateTemplateEdit({ ...EDIT, category: "MARKETING" }).category).toBe("MARKETING");
+    expect(() => validateTemplateEdit({ ...EDIT, category: "AUTHENTICATION" })).toThrow();
+  });
+
+  test("the template id is digits only", () => {
+    expect(() => validateTemplateEdit({ ...EDIT, templateId: "../555" })).toThrow("invalid template id");
+    expect(() => validateTemplateEdit({ ...EDIT, templateId: undefined })).toThrow("invalid template id");
+  });
+});
+
+describe("button url and header link bounds", () => {
+  const draft = { name: "order_update", language: "en_US", category: "UTILITY", bodyText: "Hi there" };
+  const url = (length: number) => `https://e.cc/${"x".repeat(length - "https://e.cc/".length)}`;
+
+  test("a button url is at most 2000 characters, in the form and in the request", () => {
+    expect(analyzeDraftButtons([{ text: "Go", url: url(2000), exampleUrl: "" }])).toMatchObject({ ok: true });
+    expect(analyzeDraftButtons([{ text: "Go", url: url(2001), exampleUrl: "" }])).toEqual({
+      ok: false,
+      reason: "Button 1's URL is over 2000 characters.",
+    });
+    expect(validateTemplateDraft({ ...draft, buttons: [{ text: "Go", url: ` ${url(2000)} ` }] }).buttons).toEqual([
+      { text: "Go", url: url(2000) },
+    ]);
+    expect(() => validateTemplateDraft({ ...draft, buttons: [{ text: "Go", url: url(2001) }] })).toThrow(
+      "button url is at most 2000 characters",
+    );
+  });
+
+  test("a header link carries no spaces or line breaks inside it", () => {
+    const send = (link: string) =>
+      validateTemplateSend({ templateName: "order_update", languageCode: "en_US", headerMedia: { format: "image", link } });
+    expect(send(" https://cdn.e.cc/a.png ").headerMedia).toEqual({ format: "image", link: "https://cdn.e.cc/a.png" });
+    for (const link of ["https://cdn.e.cc/a b.png", "https://cdn.e.cc/a\nb.png", "https://cdn.e.cc/a\tb.png", "https://cdn.e.cc/a\u00a0b.png"]) {
+      expect(() => send(link), JSON.stringify(link)).toThrow("header media link cannot contain spaces or line breaks");
+    }
+  });
+});
+
+describe("a header link is written https:// exactly", () => {
+  const send = (link: string) => () =>
+    validateTemplateSend({ templateName: "order_update", languageCode: "en_US", headerMedia: { format: "image", link } });
+
+  test("forms the URL parser reads as https but Meta's fetcher may not are refused", () => {
+    for (const link of ["https:ex.com/a.png", "HTTPS://EX.COM/A.PNG", "Https://ex.com/a.png", "https:\\\\ex.com\\a.png", "https:/ex.com/a.png"]) {
+      expect(send(link), link).toThrow("header media link must start with https://");
+    }
+    expect(send("https://ex.com/a.png")).not.toThrow();
+  });
+});
+
+describe("array holes, as a structured-clone caller sends them", () => {
+  const draft = { name: "order_update", language: "en_US", category: "UTILITY" };
+  const send = { templateName: "order_update", languageCode: "en_US" };
+  // biome-ignore lint/suspicious/noSparseArray: the hole is the input under test
+  const hole = [, "Ada"];
+
+  test("a hole is a missing value, never a skipped one", () => {
+    expect(() => validateTemplateSend({ ...send, bodyParams: hole })).toThrow("template parameters must be strings");
+    expect(() => validateTemplateSend({ ...send, bodyParams: new Array(2) })).toThrow("template parameters must be strings");
+    expect(() => validateTemplateSend({ ...send, buttonParams: new Array(1) })).toThrow("button parameters must be objects");
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi {{1}} {{2}}", bodyExamples: hole })).toThrow(
+      "example values must be strings",
+    );
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi", buttons: new Array(1) })).toThrow("buttons must be objects");
+    expect(() => validateTemplateEdit({ ...draft, templateId: "1", bodyText: "Hi {{1}}", bodyExamples: new Array(1) })).toThrow(
+      "example values must be strings",
+    );
+  });
+
+  test("only a real array is a list: array-likes and other iterables are refused", () => {
+    const arrayLike = { 0: "Ada", length: 1 };
+    expect(() => validateTemplateSend({ ...send, bodyParams: arrayLike })).toThrow("bodyParams must be an array");
+    expect(() => validateTemplateSend({ ...send, bodyParams: new Set(["Ada"]) })).toThrow("bodyParams must be an array");
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi {{1}}", bodyExamples: arrayLike })).toThrow(
+      "bodyExamples must be an array",
+    );
+    expect(() => validateTemplateDraft({ ...draft, bodyText: "Hi", buttons: new Map() })).toThrow("buttons must be an array");
+  });
+
+  test("an array subclass is read by index, not through its own iterator or map", () => {
+    class Sneaky extends Array<unknown> {
+      override map<U>(): U[] {
+        return [] as U[];
+      }
+      override *[Symbol.iterator](): ArrayIterator<unknown> {}
+    }
+    const values = Sneaky.from(["Ada", "a\nb"]) as unknown[];
+    expect(() => validateTemplateSend({ ...send, bodyParams: values })).toThrow("template parameters cannot contain line breaks");
   });
 });

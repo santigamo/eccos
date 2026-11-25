@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { AUTH_LINK_EXPIRY_LABEL } from "@/auth/mail";
 import { signInHref } from "@/auth/redirect-target";
+import { pendingAuthorizationURL } from "@/auth/pending-authorization";
 import {
   AddressReadback,
   AUTH_ERROR_BANNER_CLASS,
@@ -35,8 +36,8 @@ import type { FormSubmitEvent } from "./components/login-form";
  */
 export function SignUpView({ redirectTo }: { redirectTo?: string }) {
   // Where the verification link lands: an invitee who signs up must end on the
-  // invitation, not on /onboarding.
-  const callbackURL = redirectTo ?? "/";
+  // invitation, not on /onboarding, and an agent's pending authorization resumes.
+  const callbackURL = () => pendingAuthorizationURL(window.location.search) ?? redirectTo ?? "/";
   const signIn = signInHref(redirectTo);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -69,7 +70,7 @@ export function SignUpView({ redirectTo }: { redirectTo?: string }) {
         name,
         email,
         password,
-        callbackURL,
+        callbackURL: callbackURL(),
       });
     } catch {
       // Thrown client failure (network, non-JSON 5xx): reset pending and show
@@ -79,6 +80,8 @@ export function SignUpView({ redirectTo }: { redirectTo?: string }) {
       return;
     }
     setPending(false);
+    const next = (result.data as { url?: string } | null)?.url;
+    if (next) return window.location.assign(next);
     // Anti-enumeration: duplicate email and success take the SAME path.
     if (
       result.error &&
@@ -121,7 +124,7 @@ export function SignUpView({ redirectTo }: { redirectTo?: string }) {
     try {
       const result = await authClient.$fetch("/send-verification-email", {
         method: "POST",
-        body: { email: sentEmail, callbackURL },
+        body: { email: sentEmail, callbackURL: callbackURL() },
       });
       // better-fetch resolves with { data, error } instead of throwing; an
       // answered request has a status either way, and only a transport failure
