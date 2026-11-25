@@ -303,7 +303,7 @@ describe("billing status closed", () => {
     expect((await sendText()).status).toBe(200);
   });
 
-  it("still receives and forwards", async () => {
+  it("still receives, and holds forwarding (eccos-dbb3.3)", async () => {
     await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
       instance.saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     });
@@ -325,7 +325,10 @@ describe("billing status closed", () => {
     const forwarded = graph.mock.calls.find(
       ([input, init]) => String(input) === SUBSCRIBER_URL && String(init?.body ?? "").includes("wamid.IN"),
     );
-    expect(forwarded).toBeDefined();
+    expect(forwarded).toBeUndefined();
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      expect(instance.getCounts().inbound).toBe(1);
+    });
   });
 });
 

@@ -14,6 +14,7 @@ import type {
   EraseByPhoneResult,
   ErasureCounts,
   GatewayExport,
+  HeldEvents,
   InboundRow,
   MessageDirection,
   MessageOrigin,
@@ -1518,6 +1519,54 @@ export class EccosGateway extends DurableObject<Env> {
     return { requeued, skippedRedacted };
   }
 
+  /** What the drain holds while the account is paused (`held` rows): every event, and the incoming messages among them. */
+  heldEvents(): HeldEvents {
+    const row = this.sql
+      .exec(
+        `SELECT COUNT(*) AS events, COALESCE(SUM(json_extract(e.value, '$.type') IN ('message', 'reply')), 0) AS messages
+         FROM deliveries d, json_each(d.payload, '$.events') e WHERE d.status = 'held'`,
+      )
+      .one();
+    return { events: Number(row.events), messages: Number(row.messages) };
+  }
+
+  /**
+   * Queues the rows held while the account was paused, for the drain to send
+   * oldest first (it takes `pending` rows by id). Never automatic: a late backlog
+   * can fire automated replies to real customers, so only the customer decides.
+   * Returns the events queued; a second call finds nothing left.
+   */
+  replayHeld(): number {
+    const { events } = this.heldEvents();
+    if (events === 0) return 0;
+    const now = Date.now();
+    this.sql.exec(
+      `UPDATE deliveries SET status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = ? WHERE status = 'held'`,
+      now,
+    );
+    this.ctx.storage.setAlarm(now);
+    return events;
+  }
+
+  /**
+   * While the account's billing status holds forwarding (paused or closed, as for
+   * sends), moves every `pending` row to `held`: nothing is attempted and no
+   * retry is spent, and a resume does not release them (`replayHeld` does). A
+   * failed lookup forwards as usual: billing never stops the drain on a guess.
+   */
+  private async holdForBilling(): Promise<boolean> {
+    if (!this.hasPendingDeliveries()) return false;
+    let held: boolean;
+    try {
+      held = await getControlPlaneStub(this.env).forwardingHeldForWaba(this.wabaIdForOps());
+    } catch (error) {
+      this.logWarn("forward", "billing-lookup-failed", error);
+      return false;
+    }
+    if (held) this.sql.exec(`UPDATE deliveries SET status = 'held' WHERE status = 'pending'`);
+    return held;
+  }
+
   /** The broadcast an Idempotency-Key already created, or that it was used for another body. */
   async replayBroadcast(
     accountId: string,
@@ -2300,7 +2349,7 @@ export class EccosGateway extends DurableObject<Env> {
             row.id,
           );
           counts.deliveriesRedacted++;
-        } else if (row.status === "pending") {
+        } else if (row.status === "pending" || row.status === "held") {
           this.sql.exec(`DELETE FROM deliveries WHERE id = ?`, row.id);
           counts.deliveriesDeleted++;
         } else {
@@ -2587,11 +2636,12 @@ export class EccosGateway extends DurableObject<Env> {
      * fixes.
      */
     const hasTarget = Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL"));
+    const billingHeld = await this.holdForBilling();
 
     // alarm() may fire more than once; the drain is idempotent because it only
     // processes status='pending' rows, transitions them by id, and forwardOne()
     // sends x-idempotency-key for subscriber-side dedupe.
-    const rows = hasTarget
+    const rows = hasTarget && !billingHeld
       ? (this.sql
           .exec(
             `SELECT id, payload, attempts, next_attempt_at, phone_number_id, created_at FROM deliveries
@@ -2670,7 +2720,7 @@ export class EccosGateway extends DurableObject<Env> {
       wakes.push(nextSweepAt);
     }
 
-    if (hasHeld(this.sql)) wakes.push(nextSweepAt);
+    if (hasHeld(this.sql) || this.hasBillingHeld()) wakes.push(nextSweepAt);
 
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
@@ -3011,6 +3061,11 @@ export class EccosGateway extends DurableObject<Env> {
     return this.sql.exec(`SELECT 1 FROM deliveries WHERE status='pending' LIMIT 1`).toArray().length > 0;
   }
 
+  /** Rows held for billing still age out: the slow tick keeps retention running over them. */
+  private hasBillingHeld(): boolean {
+    return this.sql.exec(`SELECT 1 FROM deliveries WHERE status='held' LIMIT 1`).toArray().length > 0;
+  }
+
   /**
    * The media half of alarm(). Purges erased objects, then downloads one bounded
    * batch of media that messages reference and that is not yet settled. Nothing
@@ -3288,7 +3343,8 @@ export class EccosGateway extends DurableObject<Env> {
     // promise in docs/privacy.md for exactly the customer the hold was built
     // for. The window is the CONTENT window, deliberately: this is a content
     // deletion, not an audit-trail expiry.
-    this.sql.exec(`DELETE FROM deliveries WHERE status = 'pending' AND created_at < ?`, contentCutoff);
+    // A row held for billing is unsent content too, so it goes the same way.
+    this.sql.exec(`DELETE FROM deliveries WHERE status IN ('pending', 'held') AND created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, deliveryCutoff);

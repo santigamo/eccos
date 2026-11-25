@@ -46,6 +46,8 @@ import { ForbiddenError, memberRole, resolveMemberships } from "../auth/tenant";
 import { roleAllows } from "../auth/identity";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
+  HeldEvents,
+  ReplayHeldResult,
   BroadcastDetail,
   BroadcastRecipientStatus,
   BroadcastSummary,
@@ -137,6 +139,8 @@ export type {
   ThreadView,
   ProvisioningStatus,
   ReconcileWabaResult,
+  HeldEvents,
+  ReplayHeldResult,
   ResubscribeResult,
   RetryFailedResult,
   SendTemplateTestResult,
@@ -1675,6 +1679,34 @@ export const retryFailedDeliveries = createServerFn({ method: "POST" })
           ),
       ),
   );
+
+/** Events stored while the workspace was paused that its forwarding target has not seen. */
+export const getHeldEvents = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<HeldEvents>> =>
+    withGateway(async (gateway) => gateway.getHeldEvents((await resolveOrganizationAccount(gateway)).accountId), "view"),
+);
+
+/**
+ * Forward the events held while the workspace was paused. `administer` (owner
+ * or admin): a late backlog can make the customer's tool answer real people
+ * hours later, which is the account's call, not an operator's.
+ */
+export const replayHeldEvents = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<ReplayHeldResult>> =>
+    withGateway(async (gateway) => {
+      const { actor, accountId } = await adminActorAccount(gateway);
+      const result = await gateway.replayHeldEvents(accountId);
+      auditEvent({
+        action: "held_replay",
+        actorUserId: actor.session.userId,
+        organizationId: actor.organizationId,
+        accountId,
+        resource: result.ok ? { replayed: result.replayed } : { code: result.code },
+        outcome: result.ok ? "success" : "denied",
+      });
+      return result;
+    }),
+);
 
 /**
  * Send one template message from the console ("Send test").

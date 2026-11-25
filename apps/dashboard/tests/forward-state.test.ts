@@ -30,6 +30,11 @@ describe("targetMissing", () => {
 });
 
 describe("forwardReading", () => {
+  test("a batch stored while the workspace was paused reads held even with a target", () => {
+    expect(forwardReading({ status: "held", attempts: 0, hasForwardingTarget: true })).toEqual({ state: "held", label: "held" });
+    expect(deliveryMoment({ status: "held", finished_at: null, next_attempt_at: 1 }, true)).toEqual({ label: "held", at: null });
+  });
+
   test("a forwarded batch never says `delivered` again", () => {
     // THE COLLISION THIS ENDS. `deliveries.status = 'delivered'` means the
     // SUBSCRIBER received the batch; the event log's `delivered` means the

@@ -58,23 +58,28 @@ export function SubscriptionNotice({
 }
 
 /**
- * Above every page but /numbers (which has its own notice) of a workspace whose
- * billing status blocks sends: the gateway refuses them with `subscription_required`.
+ * Above every page of a workspace whose billing status blocks sends: the gateway
+ * refuses sends with `subscription_required` and holds forwarding, storing what arrives.
  */
 export function SendingNotice({
   billing,
   subscribed = false,
   canManage = true,
+  heldMessages,
 }: {
   billing: boolean;
   subscribed?: boolean;
   canManage?: boolean;
+  /** Incoming messages stored since the pause; unknown when the read failed. */
+  heldMessages?: number | null;
 }) {
   const { busy, error, leaveTo } = useBillingRedirect();
   return (
     <div className="mb-4 border-l-2 border-l-warning px-3 py-2" role="status">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="m-0 max-w-prose text-sm text-pretty text-foreground">{sendingPausedNotice(billing, canManage)}</p>
+        <p className="m-0 max-w-prose text-sm text-pretty text-foreground">
+          {sendingPausedNotice(billing, canManage, heldMessages)}
+        </p>
         {billing && canManage ? (
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
             {billingActionLabel(subscribed)}

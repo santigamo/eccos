@@ -18,7 +18,7 @@ import { StepUpSheet } from "../components/dashboard/step-up-sheet"
 import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
-import { type Deployment, type getDashboardState, getDeployment, hasForwardingTarget, type DashboardState } from "../server/gateway"
+import { type Deployment, type getDashboardState, getDeployment, getHeldEvents, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { useRootRefresh } from "../hooks/use-root-refresh"
 import { watchUnhandledSignIn } from "../lib/follow-sign-in"
@@ -104,7 +104,7 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
     // The checklist read is deliberately NOT folded into `getDashboardState`:
     // that shape drives the root redirect and the stage machine, and display
     // data has no business deciding where an operator lands.
-    const [user, forwardingTarget, analytics, deployment] = await Promise.all([
+    const [user, forwardingTarget, analytics, deployment, heldMessages] = await Promise.all([
       getSessionUser(),
       // No WABA yet means no forwarding target, without asking the gateway.
       // `null` is a read that failed: unknown, never "no target".
@@ -113,8 +113,12 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
         : Promise.resolve(false),
       loadAnalyticsConfig(),
       loadDeployment(),
+      // Only a paused workspace's banner counts what is held; null is a read that failed.
+      state.ok && sendingPaused(state.data)
+        ? getHeldEvents().then((held) => (held.ok ? held.data.messages : null), () => null)
+        : Promise.resolve(null),
     ])
-    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics, deployment }
+    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics, deployment, heldMessages }
   },
   head: () => ({
     meta: [
@@ -238,14 +242,12 @@ function redirectFor(pathname: string, state: RootState): void {
 }
 
 /**
- * A workspace whose billing status blocks sends, said above every page but
- * /numbers, whose own notice says it. Null when there is nothing to say.
+ * A workspace whose billing status blocks sends and holds forwarding, said above
+ * every page. Null when there is nothing to say.
  */
 export function sendingPaused(
-  pathname: string,
   state: DashboardState,
 ): { billing: boolean; subscribed: boolean; canManage: boolean } | null {
-  if (pathname === "/numbers") return null
   const resources =
     state.stage === "ready" ? state.scope.resources : state.stage === "account-ready" ? state.resources : null
   if (!resources?.account || !blocksSends(resources.account.billingStatus) || resources.wabas.length === 0) return null
@@ -256,7 +258,7 @@ export function sendingPaused(
 function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
-  const paused = state.ok ? sendingPaused(pathname, state.data) : null
+  const paused = state.ok ? sendingPaused(state.data) : null
   useRootRefresh()
   useEffect(() => watchUnhandledSignIn(window), [])
   return (
@@ -269,7 +271,7 @@ function RootComponent() {
         // an organization, including the one with no WABA yet: the user is
         // signed in, so they must be able to see who they are and sign out.
         <>
-          <PageNotice.Provider value={paused ? <SendingNotice {...paused} /> : null}>
+          <PageNotice.Provider value={paused ? <SendingNotice {...paused} heldMessages={state.heldMessages} /> : null}>
             <AppShell />
           </PageNotice.Provider>
           <StepUpSheet />
