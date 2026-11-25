@@ -23,7 +23,7 @@ import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDr
 import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { runDailyCensus } from "./ops-census";
-import { isSubscriptionRequired } from "./connect-policy";
+import { isSubscriptionRequired, SEND_REFUSED_ERROR, SUBSCRIPTION_REQUIRED } from "./connect-policy";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
 import { EccosGateway as Gateway } from "./gateway";
@@ -84,6 +84,9 @@ async function ownedWaba(
 ): Promise<AccountWaba | null> {
   return getControlPlane(env).getWaba(account.accountId, wabaId);
 }
+
+/** What a send gets, with HTTP 402, while the account's billing status blocks sends. */
+const SEND_REFUSED = { ok: false, error: SEND_REFUSED_ERROR, code: SUBSCRIPTION_REQUIRED } as const;
 
 function mergeBatches(batches: MetaWebhookBatch[]): MetaWebhookBatch[] {
   const merged = new Map<string, MetaWebhookBatch>();
@@ -685,11 +688,10 @@ async function tenantSendTarget(
       recipient: string;
       metaBody: Record<string, unknown>;
     }
-  | { ok: false; status: 400 | 404; error: string }
+  | { ok: false; status: 400 | 402 | 404; error: string; code?: typeof SUBSCRIPTION_REQUIRED }
 > {
-  const account = c.get("account");
-  const wabaId = requestedWabaId(c);
-  const waba = await ownedWaba(c.env, account, wabaId);
+  const waba = await getControlPlane(c.env).getWabaForSend(c.get("account").accountId, requestedWabaId(c));
+  if (waba === SUBSCRIPTION_REQUIRED) return { ...SEND_REFUSED, status: 402 };
   if (!waba) return { ok: false, status: 404, error: "WABA is not configured" };
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body || typeof body !== "object") return { ok: false, status: 400, error: "invalid body" };
@@ -762,10 +764,10 @@ async function sendMessageRoute(c: AppContext) {
   const target = await tenantSendTarget(c);
   if (!target.ok) {
     logEvent("outbound_send", cid, target.status, {
-      reason: "invalid_target",
+      reason: target.code ?? "invalid_target",
       wabaId: requestedWabaId(c),
     });
-    return c.json({ ok: false, error: target.error }, target.status);
+    return c.json({ ok: false, error: target.error, ...(target.code ? { code: target.code } : {}) }, target.status);
   }
   // Per-location and eventually consistent: spike protection, not an exact quota.
   if (!(await checkSendRate(c.env, account.accountId, target.waba.wabaId))) {
@@ -955,7 +957,8 @@ async function createBroadcastRoute(c: AppContext) {
   if (key !== undefined && !isIdempotencyKey(key)) {
     return c.json({ ok: false, error: "Idempotency-Key must be 1-255 printable ASCII characters" }, 400);
   }
-  const waba = await ownedWaba(c.env, account, requestedWabaId(c));
+  const waba = await getControlPlane(c.env).getWabaForSend(account.accountId, requestedWabaId(c));
+  if (waba === SUBSCRIPTION_REQUIRED) return c.json(SEND_REFUSED, 402);
   if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
   if (Number(c.req.header("content-length") ?? 0) > MAX_BROADCAST_BODY_BYTES) {
     return c.json({ ok: false, error: "request body is too large" }, 413);
@@ -1078,7 +1081,8 @@ async function putScheduledRoute(c: AppContext) {
   if (!SCHEDULE_KEY.test(key)) {
     return c.json({ ok: false, error: "key must be 1-128 characters: letters, digits, . _ : -" }, 400);
   }
-  const waba = await ownedWaba(c.env, account, requestedWabaId(c));
+  const waba = await getControlPlane(c.env).getWabaForSend(account.accountId, requestedWabaId(c));
+  if (waba === SUBSCRIPTION_REQUIRED) return c.json(SEND_REFUSED, 402);
   if (!waba) return c.json({ ok: false, error: "WABA is not configured" }, 404);
   if (Number(c.req.header("content-length") ?? 0) > MAX_SCHEDULED_BODY_BYTES) {
     return c.json({ ok: false, error: "request body is too large" }, 413);
@@ -1204,6 +1208,12 @@ const worker = {
   fetch: app.fetch,
   scheduled: async (_controller: ScheduledController, env: Bindings): Promise<void> => {
     await reconcilePendingWabas(env);
+    await getControlPlane(env)
+      .runFunnelTimers()
+      .catch(() => console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "timers-error" })));
+    await getControlPlane(env)
+      .sendFunnelMail()
+      .catch(() => console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "mail-error" })));
     await runDailyCensus(env).catch(() => console.warn(JSON.stringify({ level: "warn", area: "ops-census", event: "census-error" })));
   },
 };

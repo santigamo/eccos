@@ -56,6 +56,16 @@ export function failureCopy(failure: Failure): FailureCopy {
   return { title: "Gateway unreachable", detail: failure.error };
 }
 
+/**
+ * For the customer-facing setup screens: the console's own sentence when it has
+ * one, `fallback` when the only words are the server's (an unreachable gateway,
+ * a refusal with no reason code). Raw provider text never reaches a customer.
+ */
+export function friendlyFailure(failure: Failure, fallback: string): string {
+  const { detail } = failureCopy(failure);
+  return detail === failure.error ? fallback : detail;
+}
+
 function forbiddenCopy(failure: Failure): FailureCopy {
   switch (failure.reason) {
     case "no-organization":
@@ -125,6 +135,11 @@ export function sendTestFailureCopy(
   detail: string | null,
 ): FailureCopy {
   switch (code) {
+    case "subscription_required":
+      return {
+        title: "Sending is paused",
+        detail: "This workspace has no active subscription, so nothing was sent. Reactivate it in Settings, under Billing.",
+      };
     case "rate_limited":
       return {
         title: "Send limit reached",
@@ -429,6 +444,11 @@ const META_ERROR_COPY: Record<string, FailureCopy> = {
     detail: "Meta disabled this template for good after repeated low-quality pauses. Create a new template with different content.",
   },
 };
+
+/** The console's words for a Meta error code it knows; null for any other. */
+export function knownMetaError(code: string | null): FailureCopy | null {
+  return (code && META_ERROR_COPY[code]) || null;
+}
 
 /** The console's reading of a Meta error. `message` is Meta's own sentence, the fallback for a code it has no copy for. */
 export function metaErrorCopy(code: string | null, message: string | null = null): FailureCopy {

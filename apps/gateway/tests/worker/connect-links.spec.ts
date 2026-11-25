@@ -91,7 +91,7 @@ describe("connection links", () => {
       organizationId: "org_agency",
       creatorUserId: "user_ruben",
       state: "active",
-      connectPolicy: "open",
+      canAddNumber: true,
     });
     const flipped = `${selector}.${secret.slice(0, -1)}${secret.endsWith("A") ? "B" : "A"}`;
     expect(await rpc().resolveConnectLink(flipped)).toBeNull();
@@ -141,12 +141,12 @@ describe("connection links", () => {
     expect(await rpc().claimConnectLink(token)).toMatchObject({ claimId: null });
   });
 
-  it("carries the workspace's connect policy", async () => {
+  it("says whether the workspace may add a number", async () => {
     const accountId = await workspace();
     const { token } = await issue(accountId);
-    await rpc().setAccountBilling(accountId, { connectPolicy: "closed" });
+    await rpc().setAccountBilling(accountId, { billingStatus: "closed" });
 
-    expect((await rpc().resolveConnectLink(token))?.connectPolicy).toBe("closed");
+    expect((await rpc().resolveConnectLink(token))?.canAddNumber).toBe(false);
   });
 
   it("is spent by the first registration, into its own account", async () => {
@@ -245,7 +245,7 @@ describe("connection links", () => {
     const accountId = await workspace();
     mockGraph();
     await mintState(accountId, "state-clean");
-    await rpc().setAccountBilling(accountId, { connectPolicy: "closed" });
+    await rpc().setAccountBilling(accountId, { billingStatus: "closed" });
     const refused = await rpc().exchangeConnectCodeForAccountId(accountId, "code", "state-clean");
     expect(refused).toMatchObject({ ok: false, code: "subscription_required" });
     expect((refused as { partial?: true }).partial).toBeUndefined();

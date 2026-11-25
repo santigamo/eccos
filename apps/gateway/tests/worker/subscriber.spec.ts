@@ -44,13 +44,13 @@ describe("subscriber config (feature A)", () => {
     }
     await expect(
       makeRpc().setSubscriberConfig({ url: "https://subscriber.example/hook", secret: "s" }, TEST_WABA_ID, TEST_ACCOUNT_ID),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it("does not misclassify ordinary DNS names that start like IPv6 prefixes", async () => {
     await expect(
       makeRpc().setSubscriberConfig({ url: "https://fc.example/hook" }, TEST_WABA_ID, TEST_ACCOUNT_ID),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it("rejects redirects instead of following a subscriber location", async () => {
@@ -90,7 +90,7 @@ describe("subscriber config (feature A)", () => {
     const rpc = makeRpc();
     const secret = "s3cr3t-rotation-value";
 
-    expect(await rpc.setSubscriberConfig({ url: "https://new.example/hook", secret }, TEST_WABA_ID, TEST_ACCOUNT_ID)).toEqual({
+    expect(await rpc.setSubscriberConfig({ url: "https://new.example/hook", secret }, TEST_WABA_ID, TEST_ACCOUNT_ID)).toMatchObject({
       ok: true,
     });
 
@@ -130,7 +130,11 @@ describe("subscriber config (feature A)", () => {
     const rpc = makeRpc();
     await rpc.setSubscriberConfig({ url: "https://gone.example/hook", secret: "still-mine" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
 
-    expect(await rpc.setSubscriberConfig({ url: null }, TEST_WABA_ID, TEST_ACCOUNT_ID)).toEqual({ ok: true });
+    const before = Date.now();
+    const saved = await rpc.setSubscriberConfig({ url: null }, TEST_WABA_ID, TEST_ACCOUNT_ID);
+    // `savedAt` is the gateway's clock, the one `received_at` is stamped with.
+    expect(saved).toEqual({ ok: true, savedAt: expect.any(Number) });
+    expect(saved.savedAt).toBeGreaterThanOrEqual(before);
 
     expect(await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID)).toMatchObject({
       url: null,

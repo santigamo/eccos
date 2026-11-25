@@ -19,13 +19,13 @@ export interface FaqGroup {
 const [enBan, enCoexistence, enCost, enOfficial, enCompare, enSelfHost, , enMetaApp] = COPY.en.faq;
 const [esBan, esCoexistence, esCost, esOfficial, esCompare, esSelfHost, , esMetaApp] = COPY.es.faq;
 
-const trial = PRICING.trialDays;
+const setupHours = PRICING.setupWindowHours;
 
 export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
   en: [
     {
       id: "pricing",
-      title: "Price and trial",
+      title: "Price and payment",
       items: [
         enCost,
         {
@@ -38,7 +38,7 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "Can I try Eccos before paying?",
-          a: `Yes. Creating an account and a workspace is free and needs no card, so you can look around the console first. To connect a number you subscribe, and the subscription starts with a ${trial}-day free trial that asks for a card. If you cancel before the trial ends, you are not charged; if not, the first monthly charge is made when the trial ends. You can cancel at any time from the billing section of the console.`,
+          a: `Yes. Connect your number first, and pay only once it works. You sign up and connect your first number with no card. It works when its first message is delivered, or when your software receives its first message from Eccos. From that moment you have ${setupHours} hours to finish setting up and subscribe; if you do not, the number is paused until you do, and incoming messages are kept in the meantime. If it never works, you never pay. A second number needs the subscription. You can cancel at any time from the billing section of the console.`,
         },
         enCompare,
       ],
@@ -150,7 +150,7 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
   es: [
     {
       id: "pricing",
-      title: "Precio y prueba",
+      title: "Precio y pago",
       items: [
         esCost,
         {
@@ -163,7 +163,7 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         },
         {
           q: "¿Puedo probar Eccos antes de pagar?",
-          a: `Sí. Crear la cuenta y el espacio de trabajo es gratis y no pide tarjeta, así que puedes ver la consola antes. Para conectar un número te suscribes, y la suscripción empieza con una prueba gratuita de ${trial} días que pide tarjeta. Si cancelas antes de que acabe la prueba, no se te cobra nada; si no, el primer cargo mensual se hace al terminar la prueba. Puedes cancelar cuando quieras desde la sección de facturación de la consola.`,
+          a: `Sí. Conecta tu número primero y paga solo cuando funcione. Te registras y conectas tu primer número sin tarjeta. Funciona cuando se entrega su primer mensaje, o cuando tu software recibe el primero desde Eccos. Desde ese momento tienes ${setupHours} horas para terminar la configuración y suscribirte; si no lo haces, el número queda en pausa hasta que te suscribas, y los mensajes que te lleguen se guardan mientras tanto. Si nunca llega a funcionar, no pagas nada. Un segundo número necesita la suscripción. Puedes cancelar cuando quieras desde la sección de facturación de la consola.`,
         },
         esCompare,
       ],

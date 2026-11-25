@@ -3,9 +3,9 @@ import { installServerFnMocks } from "./helpers/server-fn-mocks";
 import { renderToStaticMarkup } from "react-dom/server";
 
 /**
- * Rendering contract for the connect-a-number panel (see
- * `components/dashboard/connect-number.tsx`), which is both the empty state of
- * /numbers on first run and the "add another" action once numbers exist.
+ * Rendering contract for the add-number fork (see
+ * `components/dashboard/connect-number.tsx`), the "add another" action once
+ * numbers exist. First run is the wizard (`tests/connect-wizard.test.tsx`).
  * React's own `react-dom/server` needs no DOM.
  *
  * Importing it pulls in `src/server/gateway.ts`, which imports
@@ -19,15 +19,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
-const { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices, ConnectNumberPanel } =
-  await import("../src/components/dashboard/connect-number");
+const { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices } = await import("../src/components/dashboard/connect-number");
 const { AddNumberButton, ASK_AN_ADMIN, FirstRunConnect, NumbersView } = await import("../src/routes/numbers");
 
 function render(): string {
-  return renderToStaticMarkup(<ConnectNumberPanel />);
+  return renderToStaticMarkup(<ConnectNumberChoices />);
 }
 
-describe("ConnectNumberPanel", () => {
+describe("the add-number fork", () => {
   test("Embedded Signup is the only way in, and it offers exactly two paths", () => {
     // Decided 2026-08-31: connecting a number goes through Embedded Signup. The
     // token path (Cloud API test numbers, eccos-up9) is a separate, later
@@ -52,10 +51,6 @@ describe("ConnectNumberPanel", () => {
     expect(html).toContain("QR code. The app keeps working.");
   });
 
-  test("the question is the panel's title", () => {
-    expect(render()).toMatch(/<h2[^>]*>Is this number on WhatsApp today\?<\/h2>/);
-  });
-
   test("keeps the panel copy short enough to scan", () => {
     // Reviewed 2026-08-31 at 55 words, when this panel had ONE job and one
     // button. It now presents an irreversible fork, and each path owes the
@@ -69,7 +64,8 @@ describe("ConnectNumberPanel", () => {
     // Reworked 2026-11 to 59 words: the question became the title, the
     // heads-up one line, each card one line, and the footer went. 65 leaves a
     // few words of slack. If this fails, the fix is almost certainly a
-    // sentence that crept back, not a higher limit.
+    // sentence that crept back, not a higher limit. (Since 2026-11 first run
+    // is the wizard and this fork lives only in the add-number dialog.)
     const html = render();
     const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
     expect(text.split(" ").length).toBeLessThan(65);
@@ -183,9 +179,8 @@ describe("AddNumberButton", () => {
 });
 
 describe("ConnectNumberChoices", () => {
-  // The fork with no container of its own — what the dialog renders on the
-  // populated page, and what `ConnectNumberPanel` frames on first run. Pinned
-  // separately so the split cannot quietly become two forks.
+  // The fork with no container of its own: what the dialog renders on the
+  // populated page.
   const bare = () => renderToStaticMarkup(<ConnectNumberChoices />);
 
   test("carries the paths and the consequence, and no frame of its own", () => {
@@ -200,10 +195,8 @@ describe("ConnectNumberChoices", () => {
     expect(html).not.toContain("data-slot=\"frame\"");
   });
 
-  test("the framing question is shared, not duplicated", () => {
-    // The panel passes CONNECT_FORK_DESCRIPTION as the fork's title and the
-    // dialog puts it in `DialogDescription`, so the bare fork must not carry it.
+  test("the framing question belongs to the dialog, not the fork", () => {
+    // The dialog puts CONNECT_FORK_DESCRIPTION in `DialogDescription`, so the bare fork must not carry it.
     expect(bare()).not.toContain(CONNECT_FORK_DESCRIPTION);
-    expect(render()).toContain(CONNECT_FORK_DESCRIPTION);
   });
 });

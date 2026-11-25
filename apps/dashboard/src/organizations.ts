@@ -68,7 +68,7 @@ function withGateway<T>(fn: (gateway: GatewayApi) => Promise<T>): Promise<T> {
 async function openForReseller(userId: string, accountId: string): Promise<void> {
   if (!isReseller(userId, env.RESELLER_USER_IDS)) return;
   try {
-    await withGateway((gateway) => gateway.setAccountBilling(accountId, { connectPolicy: "open" }));
+    await withGateway((gateway) => gateway.setAccountBilling(accountId, { billingStatus: "open" }));
   } catch (err) {
     Sentry.captureException(err, { tags: { area: "billing", event: "reseller-open-failed" }, extra: { accountId } });
   }

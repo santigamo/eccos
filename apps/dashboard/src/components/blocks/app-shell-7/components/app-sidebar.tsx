@@ -6,7 +6,7 @@ import {
 } from "@/components/ui/sidebar"
 
 import { NavMain } from "./nav-main"
-import { NavSetup } from "./nav-setup"
+import { NavBillingStatus, NavSetup } from "./nav-setup"
 import { NavUser } from "./nav-user"
 import { SidebarRailToggle } from "./sidebar-rail-toggle"
 
@@ -23,18 +23,17 @@ export function AppSidebar() {
     >
       <SidebarContent className="gap-2 px-2 pt-2">
         <NavMain />
+        {/* The setup companion, after the navigation and in the same scroll:
+            on a short viewport it scrolls, it never covers a nav link. It
+            removes itself once setup is done, or when the viewer hides it. */}
+        <NavSetup />
       </SidebarContent>
 
-      {/* Identity only. Scope — which workspace, which WABA — lives in the
-          masthead breadcrumb, where the block this shell is derived from puts
-          it; two identity-shaped rows stacked in this footer was the shell
-          answering the same question twice. */}
-      <SidebarFooter className="gap-2 px-2 pb-4">
-        {/* Above the user tile, at the bottom of the column: first run is the
-            only time it exists, and it must not push the navigation down the
-            page for everyone who is past it. It removes itself when the four
-            steps are facts, or when the viewer hides it. */}
-        <NavSetup />
+      {/* Identity, plus the setup window's deadline while it runs: pinned
+          here, it stays visible however short the viewport. Scope (which
+          workspace, which WABA) lives in the masthead breadcrumb. */}
+      <SidebarFooter className="gap-2 px-2 pb-2">
+        <NavBillingStatus />
         <NavUser />
         <p className="text-muted-foreground font-pixel px-2 text-[11px] tracking-wider uppercase in-data-[state=collapsed]:hidden">
           v0.1.0

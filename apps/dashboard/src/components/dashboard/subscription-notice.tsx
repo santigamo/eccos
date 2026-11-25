@@ -1,5 +1,5 @@
 import { startCheckout } from "../../server/gateway";
-import { closedNotice } from "../../billing/notice";
+import { closedNotice, sendingPausedNotice } from "../../billing/notice";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,7 @@ export function SubscriptionNotice({
   canManage = true,
   numbers,
   reconnect,
+  canSend = true,
   className,
 }: {
   billing: boolean;
@@ -31,6 +32,8 @@ export function SubscriptionNotice({
   numbers: number;
   /** The workspace owns a WABA, so the fork can still re-register what it has. */
   reconnect: boolean;
+  /** False while the billing status blocks sends: the numbers here keep receiving only. */
+  canSend?: boolean;
   className?: string;
 }) {
   const { busy, error, leaveTo } = useBillingRedirect();
@@ -40,8 +43,43 @@ export function SubscriptionNotice({
         <p className="m-0 max-w-prose text-sm text-pretty text-foreground">
           {closedNotice(billing, numbers, canManage)}
           {reconnect
-            ? ` ${billing ? "Without one, " : ""}Meta's flow ends with the new number left out. Numbers already connected keep working and can be reconnected.`
+            ? ` ${billing ? "Without one, " : ""}Meta's flow ends with the new number left out. Numbers already connected ${canSend ? "keep working and can be reconnected." : "can be reconnected; they keep receiving but cannot send."}`
             : null}
+        </p>
+        {billing && canManage ? (
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>
+            {billingActionLabel(subscribed)}
+          </Button>
+        ) : null}
+      </div>
+      <BillingError error={error} />
+    </div>
+  );
+}
+
+/**
+ * Above every page of a workspace whose billing status blocks sends: the gateway
+ * refuses sends with `subscription_required` and holds forwarding, storing what arrives.
+ */
+export function SendingNotice({
+  billing,
+  subscribed = false,
+  canManage = true,
+  heldMessages,
+}: {
+  billing: boolean;
+  subscribed?: boolean;
+  canManage?: boolean;
+  /** Incoming messages stored since the pause; unknown when the read failed. */
+  heldMessages?: number | null;
+}) {
+  const { busy, error, leaveTo } = useBillingRedirect();
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a live region holding a paragraph and a button; <output> takes phrasing content only.
+    <div className="mb-4 border-l-2 border-l-warning px-3 py-2" role="status">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 max-w-prose text-sm text-pretty text-foreground">
+          {sendingPausedNotice(billing, canManage, heldMessages)}
         </p>
         {billing && canManage ? (
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void leaveTo(() => startCheckout())}>

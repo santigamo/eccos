@@ -14,6 +14,7 @@ import type {
   EraseByPhoneResult,
   ErasureCounts,
   GatewayExport,
+  HeldEvents,
   InboundRow,
   MessageDirection,
   MessageOrigin,
@@ -93,6 +94,8 @@ import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { watchGraph } from "./token-health";
 import { isPublicConfigKey } from "./private-config-keys";
+import { SUBSCRIPTION_REQUIRED } from "./connect-policy";
+import type { ActivationTrigger } from "./funnel";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
 interface Env extends OpsAlertEnv, SendRateLimitEnv {
@@ -168,6 +171,14 @@ export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
  * same zero rows. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const LAST_SWEEP_KEY = "__last_sweep_at__";
+/**
+ * The first activation seen for this WABA's current connection: `{at, trigger, connectedAt}`,
+ * plus `reported` once the control plane has it. `connectedAt` is the provisioning saga's
+ * CONNECTED_AT, so a reconnect (to a new account, say) starts it over.
+ */
+const ACTIVATION_KEY = "__activation__";
+
+type NotedActivation = { at: number; trigger: ActivationTrigger; connectedAt: string | null; reported?: true };
 /** Bumped on every write of SUBSCRIBER_SECRET, so a secret claim made before it goes stale. */
 const SUBSCRIBER_SECRET_REVISION_KEY = "__SUBSCRIBER_SECRET_REVISION";
 /** How long a send's idempotency key dedupes a retry. */
@@ -682,6 +693,9 @@ export class EccosGateway extends DurableObject<Env> {
         if (row) insertedIds.push(Number(row.id));
         this.writeConversation(ev, now);
       }
+      if (stored.some((ev) => this.deliversOwnSend(ev.type, "transportMessageId" in ev ? ev.transportMessageId : null))) {
+        this.noteActivation("outbound_delivered", now);
+      }
       if (insertedIds.length > 0) {
         const phoneIds = new Set(stored.map((event) => event.phoneNumberId?.trim() || null));
         const phoneNumberId = phoneIds.size === 1 ? [...phoneIds][0] ?? null : null;
@@ -815,9 +829,12 @@ export class EccosGateway extends DurableObject<Env> {
       // A status callback can overtake the send's own response. It was stored
       // with no message to move, so replay it now that the message exists.
       const overtaken = this.sql
-        .exec(`SELECT id, delivery_id, payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
+        .exec(`SELECT id, type, delivery_id, payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
         .toArray();
       for (const row of overtaken) {
+        if (this.deliversOwnSend(String(row.type), transportMessageId) && this.noteActivation("outbound_delivered", now)) {
+          this.wakeNow();
+        }
         this.applyStoredEvent(row.payload as string, now);
         if (origin) {
           const deliveryId = row.delivery_id == null ? null : Number(row.delivery_id);
@@ -1517,6 +1534,54 @@ export class EccosGateway extends DurableObject<Env> {
     return { requeued, skippedRedacted };
   }
 
+  /** What the drain holds while the account is paused (`held` rows): every event, and the incoming messages among them. */
+  heldEvents(): HeldEvents {
+    const row = this.sql
+      .exec(
+        `SELECT COUNT(*) AS events, COALESCE(SUM(json_extract(e.value, '$.type') IN ('message', 'reply')), 0) AS messages
+         FROM deliveries d, json_each(d.payload, '$.events') e WHERE d.status = 'held'`,
+      )
+      .one();
+    return { events: Number(row.events), messages: Number(row.messages) };
+  }
+
+  /**
+   * Queues the rows held while the account was paused, for the drain to send
+   * oldest first (it takes `pending` rows by id). Never automatic: a late backlog
+   * can fire automated replies to real customers, so only the customer decides.
+   * Returns the events queued; a second call finds nothing left.
+   */
+  replayHeld(): number {
+    const { events } = this.heldEvents();
+    if (events === 0) return 0;
+    const now = Date.now();
+    this.sql.exec(
+      `UPDATE deliveries SET status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = ? WHERE status = 'held'`,
+      now,
+    );
+    this.ctx.storage.setAlarm(now);
+    return events;
+  }
+
+  /**
+   * While the account's billing status holds forwarding (paused or closed, as for
+   * sends), moves every `pending` row to `held`: nothing is attempted and no
+   * retry is spent, and a resume does not release them (`replayHeld` does). A
+   * failed lookup forwards as usual: billing never stops the drain on a guess.
+   */
+  private async holdForBilling(): Promise<boolean> {
+    if (!this.hasPendingDeliveries()) return false;
+    let held: boolean;
+    try {
+      held = await getControlPlaneStub(this.env).forwardingHeldForWaba(this.wabaIdForOps());
+    } catch (error) {
+      this.logWarn("forward", "billing-lookup-failed", error);
+      return false;
+    }
+    if (held) this.sql.exec(`UPDATE deliveries SET status = 'held' WHERE status = 'pending'`);
+    return held;
+  }
+
   /** The broadcast an Idempotency-Key already created, or that it was used for another body. */
   async replayBroadcast(
     accountId: string,
@@ -1745,9 +1810,9 @@ export class EccosGateway extends DurableObject<Env> {
     if (!first) return 0;
 
     // The token comes before the claim: a run that dies here leaves no row `sending` with nothing sent.
-    const token = await this.metaToken("scheduled");
-    if (token === "missing" || token === "unavailable") {
-      // Nothing is spent: the rows wait, and expire if the WABA stays disconnected.
+    const token = await this.sendToken("scheduled");
+    if (token === "missing" || token === "unavailable" || token === SUBSCRIPTION_REQUIRED) {
+      // Nothing is spent: the rows wait, and expire if the WABA stays disconnected or sends stay blocked.
       this.sql.exec(
         `UPDATE scheduled_sends SET next_attempt_at = MIN(?, expires_at), updated_at = ?
          WHERE status = 'pending' AND next_attempt_at <= ?`,
@@ -1949,10 +2014,11 @@ export class EccosGateway extends DurableObject<Env> {
         this.finishBroadcastIfDone(id, now);
         continue;
       }
-      token ??= await this.metaToken("broadcast");
-      if (token === "missing" || token === "unavailable") {
+      token ??= await this.sendToken("broadcast");
+      if (token === "missing" || token === "unavailable" || token === SUBSCRIPTION_REQUIRED) {
         this.requeue(id, due.map((row) => Number(row.seq)), Date.now());
         if (token === "missing") this.endBroadcast(id, "halted", "the WhatsApp Business Account is no longer connected", Date.now());
+        // Blocked sends wait too: the broadcast goes on once the account may send again.
         else this.sql.exec(`UPDATE broadcasts SET next_send_at = ? WHERE id = ?`, Date.now() + 30_000, id);
         continue;
       }
@@ -2298,7 +2364,7 @@ export class EccosGateway extends DurableObject<Env> {
             row.id,
           );
           counts.deliveriesRedacted++;
-        } else if (row.status === "pending") {
+        } else if (row.status === "pending" || row.status === "held") {
           this.sql.exec(`DELETE FROM deliveries WHERE id = ?`, row.id);
           counts.deliveriesDeleted++;
         } else {
@@ -2348,6 +2414,46 @@ export class EccosGateway extends DurableObject<Env> {
   private wakeNow(): void {
     this.wakeArrived = true;
     this.ctx.storage.setAlarm(Date.now());
+  }
+
+  /**
+   * A `delivered` or `read` status about a message Eccos sent (API, console, broadcast or
+   * scheduled): `outbound_messages` holds only those, so an app echo or imported
+   * coexistence history (which never reaches ingest) cannot activate.
+   */
+  private deliversOwnSend(type: string, wamid: string | null): boolean {
+    if ((type !== "delivered" && type !== "read") || !wamid || this.notedActivation()) return false;
+    return this.sql
+      .exec(`SELECT 1 FROM outbound_messages WHERE transport_message_id = ? AND status = 'sent' LIMIT 1`, wamid)
+      .toArray().length > 0;
+  }
+
+  /** The activation noted for the current connection; one noted before a reconnect is stale. */
+  private notedActivation(): NotedActivation | null {
+    const stored = this.getConfigValue(ACTIVATION_KEY);
+    // A bare `reported` predates the connection stamp: noted again, and the control plane keeps the first.
+    const noted = stored?.startsWith("{") ? (JSON.parse(stored) as NotedActivation) : null;
+    return noted && noted.connectedAt === this.getConfigValue("CONNECTED_AT") ? noted : null;
+  }
+
+  /** Keeps the first activation for the alarm to report; true when this was it. */
+  private noteActivation(trigger: ActivationTrigger, at: number): boolean {
+    if (this.notedActivation()) return false;
+    const noted: NotedActivation = { at, trigger, connectedAt: this.getConfigValue("CONNECTED_AT") };
+    this.saveConfig({ [ACTIVATION_KEY]: JSON.stringify(noted) });
+    return true;
+  }
+
+  /** Hands a noted activation to the control plane once; a failed report is retried by the next alarm. */
+  private async reportActivation(): Promise<void> {
+    const noted = this.notedActivation();
+    if (!noted || noted.reported) return;
+    try {
+      await getControlPlaneStub(this.env).recordActivation(this.wabaIdForOps(), noted.at, noted.trigger);
+      this.saveConfig({ [ACTIVATION_KEY]: JSON.stringify({ ...noted, reported: true }) });
+    } catch (error) {
+      this.logWarn("funnel", "activation-report-failed", error);
+    }
   }
 
   /** Writes one normalized event into the conversation store. An inbound or echo
@@ -2585,11 +2691,12 @@ export class EccosGateway extends DurableObject<Env> {
      * fixes.
      */
     const hasTarget = Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL"));
+    const billingHeld = await this.holdForBilling();
 
     // alarm() may fire more than once; the drain is idempotent because it only
     // processes status='pending' rows, transitions them by id, and forwardOne()
     // sends x-idempotency-key for subscriber-side dedupe.
-    const rows = hasTarget
+    const rows = hasTarget && !billingHeld
       ? (this.sql
           .exec(
             `SELECT id, payload, attempts, next_attempt_at, phone_number_id, created_at FROM deliveries
@@ -2668,7 +2775,8 @@ export class EccosGateway extends DurableObject<Env> {
       wakes.push(nextSweepAt);
     }
 
-    if (hasHeld(this.sql)) wakes.push(nextSweepAt);
+    if (hasHeld(this.sql) || this.hasBillingHeld()) wakes.push(nextSweepAt);
+    await this.reportActivation();
 
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
@@ -3009,6 +3117,11 @@ export class EccosGateway extends DurableObject<Env> {
     return this.sql.exec(`SELECT 1 FROM deliveries WHERE status='pending' LIMIT 1`).toArray().length > 0;
   }
 
+  /** Rows held for billing still age out: the slow tick keeps retention running over them. */
+  private hasBillingHeld(): boolean {
+    return this.sql.exec(`SELECT 1 FROM deliveries WHERE status='held' LIMIT 1`).toArray().length > 0;
+  }
+
   /**
    * The media half of alarm(). Purges erased objects, then downloads one bounded
    * batch of media that messages reference and that is not yet settled. Nothing
@@ -3071,9 +3184,18 @@ export class EccosGateway extends DurableObject<Env> {
 
   /** The WABA's Meta token. `unavailable` when the lookup failed and `missing` when the control
    * plane does not know the WABA; both are logged under the caller's `area`. */
-  private async metaToken(area: string): Promise<string | "missing" | "unavailable"> {
+  private metaToken(area: string): Promise<string | "missing" | "unavailable"> {
+    return this.readToken(area, () => getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps()));
+  }
+
+  /** As {@link metaToken}, for a send: `subscription_required` while the account's status blocks sends. */
+  private sendToken(area: string): Promise<string | "missing" | "unavailable"> {
+    return this.readToken(area, () => getControlPlaneStub(this.env).getSendTokenForWaba(this.wabaIdForOps()));
+  }
+
+  private async readToken(area: string, read: () => Promise<string | null>): Promise<string | "missing" | "unavailable"> {
     try {
-      const token = await getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps());
+      const token = await read();
       if (token !== null) return token;
       this.logWarn(area, "token-waba-missing");
       return "missing";
@@ -3277,7 +3399,8 @@ export class EccosGateway extends DurableObject<Env> {
     // promise in docs/privacy.md for exactly the customer the hold was built
     // for. The window is the CONTENT window, deliberately: this is a content
     // deletion, not an audit-trail expiry.
-    this.sql.exec(`DELETE FROM deliveries WHERE status = 'pending' AND created_at < ?`, contentCutoff);
+    // A row held for billing is unsent content too, so it goes the same way.
+    this.sql.exec(`DELETE FROM deliveries WHERE status IN ('pending', 'held') AND created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM inbound_events  WHERE received_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM outbound_messages WHERE created_at < ?`, contentCutoff);
     this.sql.exec(`DELETE FROM deliveries WHERE status IN ('delivered','failed') AND created_at < ?`, deliveryCutoff);
@@ -3407,6 +3530,7 @@ export class EccosGateway extends DurableObject<Env> {
       );
     }
     if (ok) {
+      this.noteActivation("webhook_2xx", Date.now());
       console.log(JSON.stringify({ level: "info", event: "delivered", ...attempt }));
       return;
     }

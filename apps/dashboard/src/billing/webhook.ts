@@ -2,7 +2,7 @@ import { constantTimeEqual, signPayload } from "@eccos/core/signature";
 import * as Sentry from "@sentry/cloudflare";
 import { billingFor, type Billing } from "./context";
 import type { Subscription } from "./creem";
-import { policyForStatus, subscriptionEnded } from "./plan";
+import { statusForSubscription, subscriptionEnded } from "./plan";
 
 export const BILLING_WEBHOOK_PATH = "/api/billing/webhook";
 
@@ -59,8 +59,13 @@ export async function syncSubscription(
       return null;
     }
   }
+  const billingStatus = statusForSubscription(subscription.status);
+  if (!billingStatus) {
+    Sentry.captureMessage(`billing: subscription ${subscription.id} has unknown status ${subscription.status}`);
+    return null;
+  }
   await gateway.setAccountBilling(subscription.accountId, {
-    connectPolicy: policyForStatus(subscription.status),
+    billingStatus,
     ...(subscription.customerId ? { customerId: subscription.customerId } : {}),
     subscriptionId: ended ? null : subscription.id,
     ifSubscriptionId: stored.subscriptionId,

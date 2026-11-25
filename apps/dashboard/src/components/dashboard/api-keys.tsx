@@ -7,8 +7,6 @@ import {
   type Result,
 } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
-import { withStepUp } from "../../lib/step-up";
-import { StepUpSheet } from "./step-up-sheet";
 import { INLINE_LINK, fmtTs, fmtTsShort } from "../../ui";
 import {
   AlertDialog,
@@ -55,7 +53,7 @@ export function ApiKeysPanel({
     setCreating(true);
     setError(null);
     try {
-      const res = await withStepUp(() => issueApiKey({ data: { label } }));
+      const res = await issueApiKey({ data: { label } });
       if (!res.ok) {
         setError(failureCopy(res).detail);
         return;
@@ -263,7 +261,7 @@ function RevokeKeyDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await withStepUp(() => revokeApiKey({ data: { keyId: target.keyId } }));
+      const res = await revokeApiKey({ data: { keyId: target.keyId } });
       if (!res.ok) {
         setError(failureCopy(res).detail);
         return;
@@ -302,8 +300,6 @@ function RevokeKeyDialog({
             {busy ? "Revoking…" : "Revoke key"}
           </AlertDialogAction>
         </AlertDialogFooter>
-        {/* Nested: step-up for the revoke opens inside this dialog. */}
-        <StepUpSheet />
       </AlertDialogContent>
     </AlertDialog>
   );
@@ -311,20 +307,19 @@ function RevokeKeyDialog({
 
 const API_GUIDE_URL = "https://docs.eccos.chat/sending-messages";
 
-/** How a key is used: the send endpoint, with this workspace's WABA and a just-issued key when known. */
-export function SendSnippet({
-  wabaId,
-  gatewayOrigin,
-  apiKey,
-}: {
-  wabaId?: string;
-  gatewayOrigin?: string | null;
-  apiKey?: string;
-}) {
-  const snippet = `curl -X POST ${gatewayOrigin ?? "<GATEWAY_URL>"}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
+type SnippetInput = { wabaId?: string; gatewayOrigin?: string | null; apiKey?: string; to?: string };
+
+/** The send request, with this workspace's WABA, a just-issued key and a recipient when known. */
+export function sendSnippet({ wabaId, gatewayOrigin, apiKey, to }: SnippetInput): string {
+  return `curl -X POST ${gatewayOrigin ?? "<GATEWAY_URL>"}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
   -H "Authorization: Bearer ${apiKey ?? "<API_KEY>"}" \\
   -H "Content-Type: application/json" \\
-  -d '{"to": "<PHONE>", "type": "template", "template": {"name": "hello_world", "language": {"code": "en_US"}}}'`;
+  -d '{"to": "${to || "<PHONE>"}", "type": "template", "template": {"name": "hello_world", "language": {"code": "en_US"}}}'`;
+}
+
+/** How a key is used: the send endpoint, with this workspace's WABA and a just-issued key when known. */
+export function SendSnippet(input: SnippetInput) {
+  const snippet = sendSnippet(input);
   return (
     <div>
       <pre className="m-0 overflow-x-auto border border-(--line) p-3 font-mono text-xs text-foreground">

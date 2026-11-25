@@ -56,7 +56,7 @@ function subscriptionStep(result: BillingResult | null, actor: McpActor): Draft 
         };
     }
   }
-  if (result.billing.connectPolicy === "open") return { ...base, state: "done", fact: "Billing is active: numbers can be added." };
+  if (result.billing.canAddNumber) return { ...base, state: "done", fact: "A number can be added." };
   return {
     ...base,
     state: "todo",

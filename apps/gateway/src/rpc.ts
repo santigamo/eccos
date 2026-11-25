@@ -23,6 +23,7 @@ import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
 import { isIdempotencyKey, resolveRetentionDays, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
+import { SUBSCRIPTION_REQUIRED } from "./connect-policy";
 import type {
   AccountKeyResource,
   BroadcastDetail,
@@ -37,6 +38,8 @@ import type {
   ConnectLinkClaim,
   ConnectLinkGrant,
   ConnectLinkSettled,
+  HeldEvents,
+  ReplayHeldResult,
   ConnectLinkSettlement,
   ConnectLinkSummary,
   ConnectStartResult,
@@ -567,6 +570,22 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return stub.retryFailedDeliveries(window.from, window.to);
   }
 
+  async getHeldEvents(accountId: string): Promise<HeldEvents> {
+    const { wabaIds } = await getControlPlaneStub(this.env).forwardingScope(requireAccountId(accountId, "accountId is required"));
+    const counts = await Promise.all(wabaIds.map((wabaId) => this.stubFor(wabaId).heldEvents()));
+    return counts.reduce((sum, c) => ({ events: sum.events + c.events, messages: sum.messages + c.messages }), { events: 0, messages: 0 });
+  }
+
+  /** Refused while the account is still paused: the drain would only hold the backlog again. */
+  async replayHeldEvents(accountId: string): Promise<ReplayHeldResult> {
+    const { held, wabaIds } = await getControlPlaneStub(this.env).forwardingScope(requireAccountId(accountId, "accountId is required"));
+    if (held) return { ok: false, code: SUBSCRIPTION_REQUIRED };
+    let replayed = 0;
+    for (const wabaId of wabaIds) replayed += await this.stubFor(wabaId).replayHeld();
+    console.log(JSON.stringify({ level: "info", area: "rpc", event: "held_replayed", accountId, replayed }));
+    return { ok: true, replayed };
+  }
+
   /** WABA-level read: the Graph call needs only the WABA id and its token, so a
    * connected-but-unprovisioned WABA can list its templates. */
   async listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult> {
@@ -720,11 +739,12 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     input: SetSubscriberConfigInput,
     wabaId: string,
     accountId: string,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true; savedAt: number }> {
     const { stub } = await this.scoped(wabaId, accountId, { anyStatus: true });
     await stub.setSubscriberConfig(input);
+    const savedAt = Date.now();
     if (input.secret !== undefined) await getControlPlaneStub(this.env).cancelSubscriberSecretClaims(accountId, wabaId);
-    return { ok: true };
+    return { ok: true, savedAt };
   }
 
   /** Right-to-erasure (GDPR Art. 17): delete/redact every stored trace of a customer,
@@ -889,7 +909,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     accountId: string,
   ): Promise<SendTemplateTestResult> {
     const account = requireAccountId(accountId, "accountId is required");
-    const waba = await getControlPlaneStub(this.env).getWaba(account, input.wabaId);
+    const waba = await getControlPlaneStub(this.env).getWabaForSend(account, input.wabaId);
+    if (waba === SUBSCRIPTION_REQUIRED) return { ok: false, code: SUBSCRIPTION_REQUIRED, detail: null };
     if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
 
     // A result, not a throw: the account's phones genuinely change between the
@@ -1047,7 +1068,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     metaBody: Record<string, unknown>,
   ): Promise<SendTextResult> {
     const account = requireAccountId(accountId, "accountId is required");
-    const waba = await getControlPlaneStub(this.env).getWaba(account, input.wabaId);
+    const waba = await getControlPlaneStub(this.env).getWabaForSend(account, input.wabaId);
+    if (waba === SUBSCRIPTION_REQUIRED) return { ok: false, code: SUBSCRIPTION_REQUIRED, detail: null };
     if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
 
     if (!waba.phones.some((phone) => phone.phoneNumberId === input.phoneNumberId)) {
@@ -1260,6 +1282,15 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
   async setAccountBilling(accountId: string, billing: AccountBillingInput): Promise<AccountBilling> {
     const account = requireAccountId(accountId, "accountId is required");
     return getControlPlaneStub(this.env).setAccountBilling(account, billing);
+  }
+
+  /**
+   * Operator-only and outside `GatewayApi`: pauses the account at `endsAt` (Unix ms) unless it
+   * has subscribed by then; null clears it. See `docs/operations.md`, "Ending early access".
+   */
+  async setEarlyAccessEnd(accountId: string, endsAt: number | null): Promise<number | null> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return getControlPlaneStub(this.env).setEarlyAccessEnd(account, endsAt);
   }
 
   async setAccountName(accountId: string, name: string): Promise<void> {

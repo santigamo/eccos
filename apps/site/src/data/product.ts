@@ -28,7 +28,8 @@ export const SITE = {
 export const PRICING = {
   currency: "EUR",
   firstNumber: 5,
-  trialDays: 14,
+  /** Hours to finish setting up after the first number starts working, before the subscription is needed. */
+  setupWindowHours: 72,
   tiers: [
     { numbers: "1", monthly: 5 },
     { numbers: "2–5", monthly: 3, per: "number" },
@@ -108,7 +109,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "What does Eccos cost, and what do I pay Meta?",
-        a: `Eccos Cloud is priced per connected number: ${first.monthly} € a month for the first number, +${extra.monthly} € for numbers 2 to 5, ${mid.monthly} € flat for 6 to 15, ${high.monthly} € flat for 16 to 50 and +${beyond.plusPerNumber} € per number past 50, VAT not included. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for the messages it charges for, with that business's own payment method. Creating an account is free; subscribing, which you do before adding a number, starts a ${PRICING.trialDays}-day free trial that asks for a card, and you can cancel at any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of record. Self-hosting is free under the MIT licence.`,
+        a: `Eccos Cloud is priced per connected number: ${first.monthly} € a month for the first number, +${extra.monthly} € for numbers 2 to 5, ${mid.monthly} € flat for 6 to 15, ${high.monthly} € flat for 16 to 50 and +${beyond.plusPerNumber} € per number past 50, VAT not included. Messages are unlimited on every plan and Eccos never meters them; Meta charges each business directly for the messages it charges for, with that business's own payment method. You sign up and connect your first number with no card, and pay only once it works: when its first message is delivered or your software receives its first message. From then you have ${PRICING.setupWindowHours} hours to finish setting up and subscribe. If it never works, you never pay. A second number needs the subscription, and you can cancel at any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of record. Self-hosting is free under the MIT licence.`,
       },
       {
         q: "Is Eccos an official WhatsApp Business API provider?",
@@ -164,7 +165,7 @@ export const COPY: Record<Locale, Copy> = {
       },
       {
         q: "¿Cuánto cuesta Eccos y qué le pago a Meta?",
-        a: `Eccos Cloud se cobra por número conectado: ${first.monthly} € al mes el primero, +${extra.monthly} € los números 2 a 5, ${mid.monthly} € fijos de 6 a 15, ${high.monthly} € fijos de 16 a 50 y +${beyond.plusPerNumber} € por número a partir del 51, IVA no incluido. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente los mensajes que cobra, con el método de pago de esa empresa. Crear la cuenta es gratis; suscribirte, que es el paso previo a añadir un número, inicia una prueba gratuita de ${PRICING.trialDays} días que pide tarjeta, y puedes cancelar cuando quieras, con efecto al final del periodo. El pago y las facturas los gestiona Creem, que actúa como vendedor oficial (merchant of record). Autoalojarlo es gratis bajo licencia MIT.`,
+        a: `Eccos Cloud se cobra por número conectado: ${first.monthly} € al mes el primero, +${extra.monthly} € los números 2 a 5, ${mid.monthly} € fijos de 6 a 15, ${high.monthly} € fijos de 16 a 50 y +${beyond.plusPerNumber} € por número a partir del 51, IVA no incluido. Los mensajes son ilimitados en todos los planes y Eccos no los cuenta nunca; Meta cobra a cada empresa directamente los mensajes que cobra, con el método de pago de esa empresa. Te registras y conectas tu primer número sin tarjeta, y pagas solo cuando funciona: cuando se entrega su primer mensaje o tu software recibe el primero. Desde ese momento tienes ${PRICING.setupWindowHours} horas para terminar la configuración y suscribirte. Si nunca llega a funcionar, no pagas nada. Un segundo número necesita la suscripción, y puedes cancelar cuando quieras, con efecto al final del periodo. El pago y las facturas los gestiona Creem, que actúa como vendedor oficial (merchant of record). Autoalojarlo es gratis bajo licencia MIT.`,
       },
       {
         q: "¿Eccos es un proveedor oficial de la API de WhatsApp Business?",
@@ -219,7 +220,7 @@ export const PAGES: { url: string; title: string; answers: string }[] = [
     url: "https://eccos.chat/en/faq",
     title: "Eccos FAQ (English; Spanish at /faq)",
     answers:
-      "Pre-sales questions: what the price includes, Meta's template fees and verification limits, the free trial, coexistence, sending from your own scripts, webhooks, rate limits, workspaces, GDPR and moving to self-hosted.",
+      "Pre-sales questions: what the price includes, Meta's template fees and verification limits, paying only once your number works, coexistence, sending from your own scripts, webhooks, rate limits, workspaces, GDPR and moving to self-hosted.",
   },
   {
     url: "https://docs.eccos.chat",
@@ -242,7 +243,7 @@ export const PAGES: { url: string; title: string; answers: string }[] = [
   {
     url: "https://eccos.chat/terms",
     title: "Terms of service",
-    answers: `The terms Eccos Cloud is offered under: pricing, the ${PRICING.trialDays}-day trial, payment through Creem, cancellation and the data processing agreement.`,
+    answers: `The terms Eccos Cloud is offered under: pricing, when payment starts, payment through Creem, cancellation and the data processing agreement.`,
   },
   {
     url: "https://eccos.chat/data-deletion",

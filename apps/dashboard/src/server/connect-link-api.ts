@@ -189,7 +189,7 @@ const ACTIONS: Record<string, Action> = {
         status: "ready",
         workspace: people.workspace,
         inviter: people.inviter,
-        closed: grant.connectPolicy === "closed",
+        closed: !grant.canAddNumber,
         signup: deps.signup,
       };
     },
@@ -200,7 +200,7 @@ const ACTIONS: Record<string, Action> = {
       if (grant.state !== "active") return { ok: false, code: "gone" };
       // Before anything is written or audited: a link cannot be made to mint states without end.
       if (await deps.starts.strike(grant.linkId)) throw new TooMany();
-      if (grant.connectPolicy === "closed") {
+      if (!grant.canAddNumber) {
         audit(grant, { step: "start" }, "denied", "subscription_required");
         return { ok: false, code: "subscription_required" };
       }
