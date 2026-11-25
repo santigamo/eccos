@@ -41,6 +41,7 @@ export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/numbers/attach-token",
   "/onboarding",
   "/settings",
+  "/setup",
   "/templates",
   "/webhooks",
   "/workspaces/new",

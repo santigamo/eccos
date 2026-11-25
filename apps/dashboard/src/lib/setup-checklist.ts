@@ -105,7 +105,7 @@ export function setupSteps(state: DashboardState, hasForwardingTarget: boolean):
       // API key for software that sends.
       id: "setup",
       label: "Webhook or API key",
-      href: "/webhooks",
+      href: "/setup",
       state: hasForwardingTarget || hasLiveKey ? "done" : "todo",
     },
     {

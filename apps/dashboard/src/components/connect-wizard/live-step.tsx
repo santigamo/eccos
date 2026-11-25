@@ -100,7 +100,7 @@ export function LiveStep({
   );
 }
 
-/** 1.4b: the number is registered. The seam to setting it up (eccos-dbb3.6) is `onContinue`. */
+/** 1.4b: the number is registered. `onContinue` goes on to setting it up (/setup). */
 export function ConnectedStep({
   live,
   path,

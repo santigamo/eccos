@@ -55,6 +55,7 @@ import type {
   ScheduledCancelResult,
   ScheduledPage,
   ScheduledStatus,
+  AccountFunnel,
   AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
@@ -188,6 +189,7 @@ export type Result<T> = { ok: true; data: T } | Failure;
 
 export type { ForbiddenReason, Membership } from "../auth/tenant";
 export type { BillingPage, BillingState } from "../billing/account";
+import type { Activation } from "../lib/activation";
 
 /**
  * Identity-plane access (contract §1/§5): every server function resolves the
@@ -256,8 +258,9 @@ export type RoleFlag = { canAdminister: boolean; role: string };
  * Present only while billing is on. `subscribed`: a closed account whose
  * subscription still exists, so billing opens its portal. `canManage`: the
  * member's role may start or manage it, the same permission the checkout requires.
+ * `activation`: the first success and the end of its 72h window, from the funnel clock.
  */
-export type BillingFlag = { subscribed: boolean; canManage: boolean };
+export type BillingFlag = { subscribed: boolean; canManage: boolean; activation?: Activation | null };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1030,7 +1033,13 @@ export const getDashboardState = createServerFn({ method: "GET" })
         const role = await memberRole(auth, request.headers, organizationId);
         const canAdminister = roleAllows(role, "administer");
         const billing = billingEnabled(env)
-          ? { billing: { subscribed: await closedSubscription(gateway, state), canManage: canAdminister } }
+          ? {
+              billing: {
+                subscribed: await closedSubscription(gateway, state),
+                canManage: canAdminister,
+                activation: activationOf(state.resources.account?.funnel),
+              },
+            }
           : {};
         if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, role, ...billing };
         return {
@@ -1043,6 +1052,12 @@ export const getDashboardState = createServerFn({ method: "GET" })
         };
       }),
   );
+
+function activationOf(funnel: AccountFunnel | undefined): Activation | null {
+  return funnel?.activatedAt != null && funnel.pausesAt != null
+    ? { activatedAt: funnel.activatedAt, pausesAt: funnel.pausesAt }
+    : null;
+}
 
 /** Read only for an account pointed at billing (no new number, or sends blocked); any other never is. */
 async function closedSubscription(

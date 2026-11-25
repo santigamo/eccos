@@ -24,7 +24,7 @@ const PATHS: { path: ConnectPath; icon: typeof CloudIcon; title: string; detail:
 ];
 
 /** Interactive anatomy: `--ghost-fill` under a `--line-strong` edge that turns on hover. */
-const CHOICE_CARD =
+export const CHOICE_CARD =
   "group flex w-full items-start gap-4 border border-(--line-strong) bg-(--ghost-fill) p-5 text-left transition-colors hover:border-(--ghost-edge-hover) hover:bg-(--ghost-fill-hover) focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none";
 
 /** 1.2: where the number lives today. Fixed once Meta's window opens. */

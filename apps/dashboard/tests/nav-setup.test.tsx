@@ -84,7 +84,7 @@ describe("NavSetup companion", () => {
   test("recurring steps keep their links even when done", () => {
     const html = renderFor("ready", true);
     expect(html).toContain('href="/numbers"');
-    expect(html).toContain('href="/webhooks"');
+    expect(html).toContain('href="/setup"');
     expect(html).toContain('href="/events"');
     expect(html).not.toContain('href="/onboarding"');
   });

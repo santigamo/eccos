@@ -271,13 +271,13 @@ describe("the live connection status", () => {
     expect(host.querySelector('[aria-current="step"]')?.textContent).toContain("Meta hands your number to Eccos");
   });
 
-  test("with no onContinue, connected continues to /numbers", async () => {
+  test("with no onContinue, connected continues to the goal chooser on /setup", async () => {
     const host = await wizard();
     await openMeta(host);
     await act(async () => loginCallback?.({ authResponse: { code: "code-1" } }));
     await settle();
     await press(host, "Continue");
-    expect(navigated).toEqual(["/numbers"]);
+    expect(navigated).toEqual(["/setup"]);
   });
 
   test("anything short of a clean connect still lands on /numbers, where it is explained", async () => {

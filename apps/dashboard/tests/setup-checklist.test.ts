@@ -60,7 +60,7 @@ describe("setupSteps", () => {
       // page that creates ANOTHER workspace (docs/console-gaps-2026-09.md §2).
       ["workspace", "Workspace", null],
       ["number", "Number", "/numbers"],
-      ["setup", "Webhook or API key", "/webhooks"],
+      ["setup", "Webhook or API key", "/setup"],
       ["message", "First message", "/events"],
     ]);
   });
