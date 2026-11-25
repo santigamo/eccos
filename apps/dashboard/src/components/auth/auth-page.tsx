@@ -142,7 +142,7 @@ export function resendVerificationOutcome(status: number | null): ResendOutcome 
   }
   return {
     kind: "sent",
-    message: "Verification email sent again. It can take a minute to arrive.",
+    message: "Verification email sent again. It can take a minute to arrive. If it never does, check the address above for a typo.",
   };
 }
 

@@ -12,9 +12,11 @@ import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import {
   applyInvitationSendPolicy,
+  applyResendVerificationPolicy,
   applyResetSendPolicy,
   applyVerificationSendPolicy,
   createAuth,
+  isVerificationResend,
   type MailPolicyContext,
 } from "../src/auth/auth";
 import {
@@ -23,6 +25,7 @@ import {
   extractTokenFromUrl,
   MAIL_SUPPRESSED_CODE,
   MAIL_UNDELIVERABLE_CODE,
+  MailProviderError,
   MailUndeliverableError,
   type SendOutcome,
 } from "../src/auth/mail";
@@ -353,20 +356,65 @@ describe("what better-auth does with a thrown send (documented gap, re-read at 1
     expect(response.status).toBe(200);
   });
 
-  test("POST /send-verification-email DOES propagate it", async () => {
-    // The resend endpoint re-throws (dist/api/routes/email-verification.mjs:117),
-    // so the policy is not dead code — this is where it surfaces today.
-    const { auth, db } = await createTestAuth(new CaptureMailSender(BOUNCED));
+  test("POST /send-verification-email still sends, and the bounce is logged instead of answered", async () => {
+    // better-auth re-throws here (dist/api/routes/email-verification.mjs:117) and
+    // only sends for an existing unverified account, so the resend policy swallows.
+    const mail = new CaptureMailSender(BOUNCED);
+    const { auth, db } = await createTestAuth(mail);
     await signUp(auth, "resend@example.com");
     db.query('UPDATE user SET "emailVerified" = 0').run();
-    const response = await auth.handler(
-      new Request(`${BASE_URL}/api/auth/send-verification-email`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: BASE_URL },
-        body: JSON.stringify({ email: "resend@example.com", callbackURL: "/" }),
-      }),
-    );
-    expect(response.status).toBeGreaterThanOrEqual(400);
+    warnings = [];
+    const response = await resend(auth, "resend@example.com");
+    expect(response.status).toBe(200);
+    expect(mail.sent.length).toBe(2);
+    expect(parsedWarnings().map((e) => e.event)).toEqual(["send-undeliverable"]);
+  });
+});
+
+function resend(auth: Awaited<ReturnType<typeof createTestAuth>>["auth"], email: string) {
+  return auth.handler(
+    new Request(`${BASE_URL}/api/auth/send-verification-email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: BASE_URL },
+      body: JSON.stringify({ email, callbackURL: "/" }),
+    }),
+  );
+}
+
+describe("a provider failure at verification resend answers like an unknown address", () => {
+  test("logged as send-failed, 200 for the real account and for a stranger alike", async () => {
+    const mail = new CaptureMailSender();
+    const { auth, db } = await createTestAuth(mail);
+    await signUp(auth, "real@example.com");
+    db.query('UPDATE user SET "emailVerified" = 0').run();
+    mail.sendTemplate = async () => {
+      throw new MailProviderError("quota_exceeded", "provider down", { httpStatus: 429 });
+    };
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (line: unknown) => errors.push(String(line));
+    try {
+      expect((await resend(auth, "real@example.com")).status).toBe(200);
+      expect((await resend(auth, "stranger@example.com")).status).toBe(200);
+    } finally {
+      console.error = originalError;
+    }
+    const failed = errors.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((e) => e?.event === "send-failed");
+    expect(failed).toEqual([expect.objectContaining({ kind: "quota_exceeded", toDomain: "example.com", httpStatus: 429 })]);
+  });
+});
+
+describe("undeliverable at verification resend is NEVER surfaced", () => {
+  test("a bounced or suppressed address is swallowed and logged", () => {
+    expect(() => applyResendVerificationPolicy(BOUNCED, CTX)).not.toThrow();
+    expect(() => applyResendVerificationPolicy(SUPPRESSED, CTX)).not.toThrow();
+    expect(parsedWarnings().map((e) => e.event)).toEqual(["send-undeliverable", "send-undeliverable"]);
+  });
+
+  test("only the resend endpoint takes the resend policy", () => {
+    expect(isVerificationResend(new Request(`${BASE_URL}/api/auth/send-verification-email`))).toBe(true);
+    expect(isVerificationResend(new Request(`${BASE_URL}/api/auth/sign-up/email`))).toBe(false);
+    expect(isVerificationResend(undefined)).toBe(false);
   });
 });
 
