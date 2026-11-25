@@ -2,18 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { AuthCard } from "../auth/auth-page";
 import { FrameDescription, FrameHeader, FrameTitle } from "../reui/frame";
 import { Button } from "../ui/button";
-import { Callout } from "../ui/callout";
+import { Callout, ErrorReport } from "../ui/callout";
 import { type LinkOutcome, type LinkStart, type LinkView, connectLinkApi } from "../../lib/connect-link/api";
 import type { ConnectLinkCopy } from "../../lib/connect-link/en";
 import { forgetLinkToken, takeLinkToken } from "../../lib/connect-link/token";
-import { isSignupErrorCode } from "../../lib/connect-result";
+import { type ReportedSignupError, isSignupErrorCode } from "../../lib/connect-result";
 import { type SessionEvent, loginOptions, parseSessionEvent } from "../../lib/embedded-signup";
 import { type FacebookSdk, captureWindowOpen, currentFacebookSdk, loadFacebookSdk } from "../../lib/facebook-sdk";
 import { cn } from "@/lib/utils";
 
 type Ready = Extract<LinkView, { status: "ready" }>;
-/** `meta`: Meta reported an error before its window closed. */
-type Note = { text: string; tone: "error" | "notice" | "meta" };
+type Note =
+  | { text: string; tone: "error" | "notice" }
+  /** Meta reported an error before its window closed. */
+  | { tone: "meta"; error: ReportedSignupError };
 type Screen =
   | { at: "loading" }
   | { at: "message"; text: string }
@@ -195,7 +197,8 @@ export function ConnectLinkLanding({
       const code = response.authResponse?.code;
       if (!code) {
         setBusy(false);
-        setNote({ text: cancelledText(copy, reported.current), tone: reported.current ? "meta" : "notice" });
+        const error = reportedError(copy, reported.current);
+        setNote(error ? { tone: "meta", error } : { text: copy.cancelled, tone: "notice" });
         return;
       }
       // Meta answered inside `login`, before a state was asked for: there is nothing to exchange with.
@@ -249,57 +252,78 @@ export function ConnectLinkLanding({
       : sdk === "failed"
         ? copy.scriptBlocked
         : null;
+  const error = note?.tone === "meta" ? note.error : null;
   return (
     <Card copy={copy}>
-      <FrameHeader className="gap-1.5 p-0">
-        <FrameTitle>{copy.title(view.workspace)}</FrameTitle>
-        <FrameDescription>{copy.intro(view.inviter)}</FrameDescription>
-      </FrameHeader>
-      <div>
-        <p className="m-0 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">{copy.beforeTitle}</p>
-        <ul className="mt-2 mb-0 flex list-disc flex-col gap-1 pl-5 text-sm text-foreground">
-          {copy.before.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      </div>
-      <p className="m-0 text-sm text-muted-foreground">{copy.meta}</p>
-      {/* Hidden while Meta's own error is on screen: it would say the same thing twice. */}
-      {note?.tone === "meta" ? null : <Callout tone="warning">{copy.release}</Callout>}
-      {/* Mounted even while empty, so a filling region is announced. */}
+      {/* Meta's error takes the place of the intro, the list and the heads-up. */}
+      {error ? null : (
+        <>
+          <p className="m-0 text-sm text-muted-foreground">
+            <strong className="font-semibold text-foreground">{view.inviter}</strong>
+            {copy.intro[0]}
+            <strong className="font-semibold text-foreground">{view.workspace}</strong>
+            {copy.intro[1]}
+          </p>
+          <div className="flex flex-col gap-2">
+            <p className="m-0 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">{copy.beforeTitle}</p>
+            <ul className="m-0 flex list-none flex-col gap-2 p-0 text-sm text-foreground">
+              {copy.before.map((item) => (
+                <li key={item} className="flex gap-2.5">
+                  <span aria-hidden="true" className="w-1.5 shrink-0 text-muted-foreground">
+                    ·
+                  </span>
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <Callout tone="warning">
+            <strong className="font-semibold">{copy.release.lead}</strong> {copy.release.rest}
+          </Callout>
+        </>
+      )}
+      {/* Mounted even while empty, so a filling region is announced; out of the flow while empty. */}
       <output
         className={cn(
-          "block",
-          !blocked && note?.tone === "notice" && "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground",
+          "block empty:sr-only",
+          !blocked && note?.tone === "notice" && "border-l-2 border-(--line-strong) py-0.5 pl-4 text-sm text-muted-foreground",
         )}
       >
-        {blocked || (note && note.tone !== "notice") ? (
-          <Callout tone="error">{blocked ?? note?.text}</Callout>
-        ) : (
-          note?.text
-        )}
+        {blocked ? (
+          <Callout tone="error">{blocked}</Callout>
+        ) : note?.tone === "error" ? (
+          <Callout tone="error">{note.text}</Callout>
+        ) : note?.tone === "notice" ? (
+          note.text
+        ) : error ? (
+          <ErrorReport status={copy.notConnected} labels={copy.copyLabels} {...error} />
+        ) : null}
       </output>
       {blocked ? null : (
-        <Button type="button" onClick={connect} disabled={busy || !sdk}>
-          {busy ? copy.connecting : sdk ? copy.button : copy.preparing}
-        </Button>
+        <div className="flex flex-col gap-3">
+          <Button type="button" size="lg" className="h-12 text-[15px] font-semibold" onClick={connect} disabled={busy || !sdk}>
+            {busy ? copy.connecting : sdk ? copy.button : copy.preparing}
+          </Button>
+          {error ? null : <p className="m-0 text-xs text-muted-foreground">{copy.ownership}</p>}
+        </div>
       )}
     </Card>
   );
 }
 
-/** A known error explains itself; any reported error keeps Meta's references. */
-function cancelledText(copy: ConnectLinkCopy, error: SessionEvent | null): string {
-  if (!error) return copy.cancelled;
-  const cause = isSignupErrorCode(error.errorCode) ? copy.signupErrors[error.errorCode] : copy.cancelled;
-  return `${cause} ${copy.reported(error.errorCode, error.sessionId)}`;
+/** A known error explains itself; any reported code keeps Meta's references. */
+function reportedError(copy: ConnectLinkCopy, error: SessionEvent | null): ReportedSignupError | null {
+  const code = error?.errorCode;
+  if (!code) return null;
+  const known = isSignupErrorCode(code) ? copy.signupErrors[code] : { title: copy.unknownError, body: copy.cancelled };
+  return { ...known, refs: copy.reported(code, error.sessionId) };
 }
 
 function Card({ copy, children }: { copy: ConnectLinkCopy; children: React.ReactNode }) {
   return (
     <div lang={copy.lang}>
       <AuthCard title={copy.pageTitle}>
-        <div className="flex flex-col gap-4">{children}</div>
+        <div className="flex flex-col gap-6">{children}</div>
       </AuthCard>
     </div>
   );

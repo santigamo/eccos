@@ -110,7 +110,8 @@ async function mount(copy = en, token: string | null = "tok"): Promise<HTMLEleme
   return host;
 }
 
-const button = (host: HTMLElement) => host.querySelector("button") as HTMLButtonElement | null;
+/** The connect button: the last one, after a Copy that Meta's error may bring. */
+const button = (host: HTMLElement) => ([...host.querySelectorAll("button")].at(-1) ?? null) as HTMLButtonElement | null;
 
 async function click(host: HTMLElement) {
   await act(async () => button(host)?.click());
@@ -130,11 +131,15 @@ describe("the landing", () => {
     expect(calls).toEqual([]);
   });
 
-  test("names the workspace and the inviter, in the page's language", async () => {
+  test("names the inviter and the workspace in the intro, in the page's language", async () => {
     const host = await mount(es);
-    expect(host.textContent).toContain("Conecta tu número de WhatsApp a NACEX 2801");
-    expect(host.textContent).toContain("Rubén te ha pedido");
+    expect(host.textContent).toContain(
+      "Rubén te pide conectar a NACEX 2801 el número de tu app WhatsApp Business. La app seguirá funcionando igual.",
+    );
+    expect(host.querySelectorAll("strong")[0]?.textContent).toBe("Rubén");
+    expect(host.querySelectorAll("li")).toHaveLength(2);
     expect(button(host)?.textContent).toBe("Conectar con Meta");
+    expect(host.textContent).toContain(es.ownership);
     expect(calls).toEqual(["view"]);
   });
 
@@ -161,6 +166,8 @@ describe("the landing", () => {
     await click(host);
     await answer({ authResponse: null });
     expect(host.textContent).toContain(en.cancelled);
+    expect(host.textContent).not.toContain(en.notConnected);
+    expect(host.textContent).toContain(en.release.lead);
     expect(calls).not.toContain("exchange");
     expect(button(host)?.disabled).toBe(false);
   });
@@ -180,23 +187,58 @@ describe("the landing", () => {
     await click(host);
     await reportError("3441067");
     await answer({ authResponse: null });
-    expect(host.textContent).toContain(es.signupErrors["3441067"]);
-    expect(host.textContent).toContain("Meta indicó error 3441067, sesión f34b51d. Compártelos si pides ayuda.");
-    expect(host.textContent).not.toContain(es.release);
+    const said = host.querySelector("output")?.textContent ?? "";
+    expect(said).toContain("No conectado");
+    expect(said).toContain("Otro portfolio comercial tiene este número");
+    expect(said).toContain("Suele ser tu proveedor de WhatsApp anterior. Pide que libere el número y vuelve a este mismo enlace.");
+    expect(said).toContain("Meta error 3441067 · sesión f34b51d");
+    // The error replaces the intro, the list and the heads-up; the button stays.
+    expect(host.textContent).not.toContain(es.release.lead);
+    expect(host.textContent).not.toContain(es.beforeTitle);
+    expect(host.textContent).not.toContain(es.intro[1]);
+    expect(button(host)?.textContent).toBe(es.button);
+    expect(button(host)?.disabled).toBe(false);
   });
 
-  test("an unknown error keeps the cancel note and still shows Meta's references", async () => {
+  test("an unknown error gets the generic title, the cancel note and Meta's references", async () => {
     const host = await mount();
     await click(host);
     await reportError("524126");
     await answer({ authResponse: null });
-    expect(host.textContent).toContain(`${en.cancelled} Meta reported error 524126, session f34b51d. Share both if you ask for help.`);
+    const said = host.querySelector("output")?.textContent ?? "";
+    expect(said).toContain(en.unknownError);
+    expect(said).toContain(en.cancelled);
+    expect(said).toContain("Meta error 524126 · session f34b51d");
+  });
+
+  test("Copy puts Meta's references on the clipboard, in the page's language", async () => {
+    const copied: string[] = [];
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => void copied.push(text) },
+    });
+    try {
+      const host = await mount(es);
+      await click(host);
+      await reportError("3441067");
+      await answer({ authResponse: null });
+      const copy = [...host.querySelectorAll("button")].find((b) => b.textContent === "Copiar");
+      if (!copy) throw new Error("no Copiar button");
+      await act(async () => copy.click());
+      await settle();
+      expect(copied).toEqual(["Meta error 3441067 · sesión f34b51d"]);
+      expect(copy.textContent).toBe("Copiado");
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
   });
 
   test("says to release a number another provider holds, before Meta opens", async () => {
-    expect((await mount(es)).textContent).toContain(es.release);
+    expect((await mount(es)).textContent).toContain(`${es.release.lead} ${es.release.rest}`);
     act(() => unmount?.());
-    expect((await mount()).textContent).toContain(en.release);
+    expect((await mount()).textContent).toContain(`${en.release.lead} ${en.release.rest}`);
   });
 
   test("each refusal reads in its own words and keeps the button", async () => {

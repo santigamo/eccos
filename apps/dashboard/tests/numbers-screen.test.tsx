@@ -23,8 +23,8 @@ const { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices, ConnectNumberPanel } =
   await import("../src/components/dashboard/connect-number");
 const { AddNumberButton, ASK_AN_ADMIN, FirstRunConnect, NumbersView } = await import("../src/routes/numbers");
 
-function render(heading = "Meta Embedded Signup"): string {
-  return renderToStaticMarkup(<ConnectNumberPanel heading={heading} />);
+function render(): string {
+  return renderToStaticMarkup(<ConnectNumberPanel />);
 }
 
 describe("ConnectNumberPanel", () => {
@@ -35,7 +35,6 @@ describe("ConnectNumberPanel", () => {
     // `featureType` rides in FB.login's extras, so which onboarding runs is
     // fixed before the popup opens and has to be the customer's choice.
     const html = render();
-    expect(html).toContain("Meta Embedded Signup");
     expect(html).toContain("I use this number in the WhatsApp Business app");
     expect(html).toContain("A new number, or one not on WhatsApp");
     expect(html).not.toContain("access token");
@@ -48,15 +47,13 @@ describe("ConnectNumberPanel", () => {
     // Meta shows says so. Both consequences are on the cards, not in a doc, and
     // neither may quietly disappear in a copy edit.
     const html = render();
-    expect(html).toContain("A number on WhatsApp today stops working in the app");
-    expect(html).toContain("Up to 20 messages per second");
-    expect(html).toContain("about a week of real use first");
-    expect(html).toContain("QR code");
-    expect(html).toContain("share your chat history");
+    expect(html).toContain("A number on WhatsApp today stops working in the app.");
+    expect(html).toContain("text-warning-foreground");
+    expect(html).toContain("QR code. The app keeps working.");
   });
 
-  test("the heading is the caller's, so first run and add-another differ", () => {
-    expect(render("Add another number")).toContain("Add another number");
+  test("the question is the panel's title", () => {
+    expect(render()).toMatch(/<h2[^>]*>Is this number on WhatsApp today\?<\/h2>/);
   });
 
   test("keeps the panel copy short enough to scan", () => {
@@ -69,11 +66,13 @@ describe("ConnectNumberPanel", () => {
     // unwarned (the QR scan, the history choice, the week of use): 115.
     // Then one pre-flight line, after a customer met Meta's 3441067 (a number
     // another provider still held) only inside Meta's window: 130.
-    // If this fails, the fix is almost certainly a sentence that crept
-    // back into the description or a card detail, not another piece of copy.
+    // Reworked 2026-11 to 59 words: the question became the title, the
+    // heads-up one line, each card one line, and the footer went. 65 leaves a
+    // few words of slack. If this fails, the fix is almost certainly a
+    // sentence that crept back, not a higher limit.
     const html = render();
     const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    expect(text.split(" ").length).toBeLessThan(130);
+    expect(text.split(" ").length).toBeLessThan(65);
   });
 
   test("panels and buttons stay square", () => {
@@ -95,14 +94,6 @@ describe("ConnectNumberPanel", () => {
     expect(visible).not.toContain("—");
   });
 
-  test("panel header and panel body share a left edge", () => {
-    // FrameHeader nested inside FramePanel would otherwise stack both
-    // paddings; the panel zeroes its direct header/footer horizontal padding.
-    // `&` and `>` arrive HTML-escaped inside the class attribute.
-    const html = render();
-    expect(html).toContain("[&amp;&gt;[data-slot=frame-panel-header]]:px-0");
-  });
-
   test("the choices ARE the actions, and there is no footer band", () => {
     // The old panel pinned one button in a full-bleed footer. There is no
     // single action left to pin: picking a path launches that path, because
@@ -110,13 +101,11 @@ describe("ConnectNumberPanel", () => {
     // add a click before Meta's own multi-screen flow, which is where backing
     // out is still free.
     //
-    // The band went with it. A full-width rule plus its -mx chrome for one
-    // 12px sentence was another rectangle in a panel that already read as a
-    // grid; the sentence stayed, the rule did not.
+    // The band went with it, and later its sentence too.
     const html = render();
     expect(html.match(/<button/g)?.length).toBe(2);
     expect(html).not.toContain("<footer");
-    expect(html).toContain("Meta brings you back to this page");
+    expect(html).not.toContain("Meta brings you back to this page");
   });
 
   test("the cards wear interactive anatomy, not structural hairlines", () => {
@@ -204,22 +193,17 @@ describe("ConnectNumberChoices", () => {
     expect(html).toContain("I use this number in the WhatsApp Business app");
     expect(html).toContain("A new number, or one not on WhatsApp");
     expect(html).toContain("A number on WhatsApp today stops working in the app");
-    // No Frame, no heading: the container supplies both. A bordered glass
+    // No Frame, no title: the container supplies both. A bordered glass
     // panel inside a bordered glass dialog is the panel-in-panel this split
     // exists to prevent.
-    expect(html).not.toContain("Meta Embedded Signup");
+    expect(html).not.toContain("<h2");
     expect(html).not.toContain("data-slot=\"frame\"");
   });
 
-  test("the framing sentence is shared, not duplicated", () => {
-    // Both containers render CONNECT_FORK_DESCRIPTION themselves — the panel
-    // in `FrameDescription`, the dialog in `DialogDescription` — so the fork
-    // itself must NOT carry it, or first run would show it twice.
-    // Compared on a fragment, not the whole constant: the apostrophe in
-    // "Meta's" is entity-escaped in the markup.
-    const fragment = "switch once Meta";
-    expect(CONNECT_FORK_DESCRIPTION).toContain(fragment);
-    expect(bare()).not.toContain(fragment);
-    expect(render()).toContain(fragment);
+  test("the framing question is shared, not duplicated", () => {
+    // The panel passes CONNECT_FORK_DESCRIPTION as the fork's title and the
+    // dialog puts it in `DialogDescription`, so the bare fork must not carry it.
+    expect(bare()).not.toContain(CONNECT_FORK_DESCRIPTION);
+    expect(render()).toContain(CONNECT_FORK_DESCRIPTION);
   });
 });

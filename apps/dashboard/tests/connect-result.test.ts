@@ -5,11 +5,13 @@ import {
   QR_CODE_STEP,
   SIGNUP_ERRORS,
   type SignupErrorCode,
+  UNKNOWN_SIGNUP_ERROR_TITLE,
   connectCancelledMessage,
   connectAudit,
   judgeExchange,
   popupBlockedMessage,
   popupHintMessage,
+  reportedSignupError,
   returnPathFor,
   secondsBucket,
   watchPopup,
@@ -74,7 +76,7 @@ describe("judgeExchange", () => {
   });
 
   test("copy has no em dashes and never blames Meta for our own errors", () => {
-    for (const m of [connectCancelledMessage(), connectCancelledMessage(QR_CODE_STEP, { code: "1", sessionId: "s" }), popupBlockedMessage("app.eccos.chat"), popupHintMessage("app.eccos.chat")]) {
+    for (const m of [connectCancelledMessage(), connectCancelledMessage(QR_CODE_STEP), popupBlockedMessage("app.eccos.chat"), popupHintMessage("app.eccos.chat")]) {
       expect(m).not.toContain("—");
     }
     const failed = judgeExchange({ ok: false, error: "x", code: "failed" });
@@ -123,33 +125,42 @@ describe("connectCancelledMessage", () => {
     expect(m).toContain("closed at the QR code step. Nothing changed.");
     expect(m).toContain("use it in the WhatsApp Business app for about a week");
   });
-  test("appends Meta's references for a reported error, on any step", () => {
-    for (const step of [undefined, QR_CODE_STEP]) {
-      expect(connectCancelledMessage(step, { code: "524126", sessionId: "f34b51d" })).toEndWith(
-        "Meta reported error 524126, session f34b51d. Quote both if you contact support.",
-      );
-    }
-    expect(connectCancelledMessage(undefined, { sessionId: "f34b51d" })).toEndWith(
-      "Meta reported session f34b51d. Quote it if you contact support.",
+});
+
+describe("reportedSignupError", () => {
+  test("a plain cancel is not an error", () => {
+    expect(reportedSignupError()).toBeNull();
+    expect(reportedSignupError(QR_CODE_STEP, {})).toBeNull();
+    expect(reportedSignupError(undefined, { sessionId: "f34b51d" })).toBeNull();
+  });
+  test("a known code gives a title, a cause and action, and Meta's references", () => {
+    expect(reportedSignupError(QR_CODE_STEP, { code: "3441067", sessionId: "f34b51d" })).toEqual({
+      title: "Another business portfolio holds this number",
+      body: "Usually your previous WhatsApp provider. Ask them to release the number, then start again.",
+      refs: "Meta error 3441067 · session f34b51d",
+    });
+  });
+  test("an unknown code gets the generic title, the cancel notice for its step, and its references", () => {
+    expect(reportedSignupError(undefined, { code: "524126" })).toEqual({
+      title: UNKNOWN_SIGNUP_ERROR_TITLE,
+      body: CONNECT_CANCELLED_MESSAGE,
+      refs: "Meta error 524126",
+    });
+    expect(reportedSignupError(QR_CODE_STEP, { code: "toString", sessionId: "s" })?.body).toBe(
+      connectCancelledMessage(QR_CODE_STEP),
     );
-    expect(connectCancelledMessage(undefined, {})).toBe(CONNECT_CANCELLED_MESSAGE);
   });
-  test("a known Meta code says what happened and what to do, and keeps the references", () => {
-    const m = connectCancelledMessage(QR_CODE_STEP, { code: "3441067", sessionId: "f34b51d" });
-    expect(m).toStartWith(SIGNUP_ERRORS["3441067"]);
-    expect(m).toContain("business portfolio you do not manage");
-    expect(m).toEndWith("Meta reported error 3441067, session f34b51d. Quote both if you contact support.");
-  });
-  test("an unknown code keeps the generic notice and its references", () => {
-    expect(connectCancelledMessage(undefined, { code: "524126" })).toBe(
-      `${CONNECT_CANCELLED_MESSAGE} Meta reported error 524126. Quote it if you contact support.`,
-    );
-    expect(connectCancelledMessage(undefined, { code: "toString" })).toStartWith(CONNECT_CANCELLED_MESSAGE);
-  });
-  test("the phone-setup codes are covered, with no dashes in any language", () => {
+  test("every code has a short title and a body, with no dashes in any language", () => {
     for (const code of Object.keys(SIGNUP_ERRORS) as SignupErrorCode[]) {
-      expect(SIGNUP_ERRORS[code], code).not.toMatch(/[—–]/);
-      for (const copy of [en, es]) expect(copy.signupErrors[code], `${copy.lang} ${code}`).not.toMatch(/[—–]/);
+      for (const [where, copy] of [
+        ["console", SIGNUP_ERRORS[code]],
+        ["en", en.signupErrors[code]],
+        ["es", es.signupErrors[code]],
+      ] as const) {
+        expect(copy.title.split(" ").length, `${where} ${code}`).toBeLessThanOrEqual(9);
+        expect(copy.body.length, `${where} ${code}`).toBeGreaterThan(10);
+        expect(`${copy.title} ${copy.body}`, `${where} ${code}`).not.toMatch(/[—–]/);
+      }
     }
     for (const code of ["3441067", "3441069", "3441070", "2655145", "2655123", "3441093", "2494064"]) {
       expect(Object.hasOwn(SIGNUP_ERRORS, code), code).toBe(true);
