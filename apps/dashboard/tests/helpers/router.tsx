@@ -18,5 +18,5 @@ mock.module("@tanstack/react-router", () => ({
 
 /** Server-renders `ui` with router `Link`s as plain anchors. */
 export async function renderInRouter(ui: ReactNode): Promise<string> {
-  return renderToStaticMarkup(<>{ui}</>);
+  return renderToStaticMarkup(ui);
 }
