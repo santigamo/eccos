@@ -54,24 +54,24 @@ export function blankDraft(language: string): LanguageDraft {
 export const APPROVED_EDIT_NOTICE =
   "This template is approved. Submitting sends it back to Meta's review, and sends with it may fail until Meta approves it again, which can take up to 24 hours. An approved template can be edited once every 24 hours and up to 10 times in 30 days. If it is in active use, duplicate it as a new template instead.";
 
-const VARIABLE = /\{\{\s*\d+\s*\}\}/;
+/** A URL variable, positional or named: the one pattern that both detects and replaces it. */
+const URL_VARIABLE = /\{\{[^{}]*\}\}/;
 
-/** Core's own test for a dynamic URL, so the two never disagree. */
 export function isDynamicUrl(url: string): boolean {
-  return url.includes("{{");
+  return URL_VARIABLE.test(url);
 }
 
 /** The example URL Meta reviews, built from the URL template and its `{{1}}` value. */
 export function exampleUrlFor(url: string, value: string): string {
   const trimmed = value.trim();
-  return isDynamicUrl(url) && trimmed ? url.trim().replace(VARIABLE, trimmed) : "";
+  return isDynamicUrl(url) && trimmed ? url.trim().replace(URL_VARIABLE, () => trimmed) : "";
 }
 
 /** The `{{1}}` value inside a stored example URL, or "" when it does not fit the template. */
 export function exampleValueOf(url: string, exampleUrl: string): string {
-  const [prefix = "", suffix = ""] = url.split(VARIABLE);
+  const [prefix = "", suffix = ""] = url.trim().split(URL_VARIABLE);
   if (!exampleUrl.startsWith(prefix) || !exampleUrl.endsWith(suffix)) return "";
-  if (exampleUrl.length < prefix.length + suffix.length) return "";
+  if (exampleUrl.length <= prefix.length + suffix.length) return "";
   return exampleUrl.slice(prefix.length, exampleUrl.length - suffix.length);
 }
 
@@ -97,23 +97,19 @@ export function exampleValues(draft: LanguageDraft): string[] {
 /**
  * Does this language hold anything the operator would lose?
  *
- * Against Meta's copy when there is one. A draft not yet at Meta is judged on
+ * Against Meta's copy when there is one, comparing what would be SENT, so an
+ * example kept for a variable since removed is not a change. A draft not yet at Meta is judged on
  * CONTENT, not shape: a button row added and left blank costs one click to
  * recreate, and whitespace alone is not content.
  */
 export function isDraftDirty(draft: LanguageDraft, initial: LanguageDraft | null = null): boolean {
-  if (initial) return JSON.stringify(draft) !== JSON.stringify(initial);
+  if (initial) return JSON.stringify(draftContent(draft)) !== JSON.stringify(draftContent(initial));
   return (
     draft.body.trim() !== "" ||
     draft.footer.trim() !== "" ||
     draft.examples.some((value) => value.trim() !== "") ||
     draft.buttons.some((button) => button.text.trim() !== "" || button.url.trim() !== "" || button.example.trim() !== "")
   );
-}
-
-/** Must leaving the page be confirmed? A submit in flight always guards. */
-export function shouldGuardDismissal(state: { submitting: boolean; dirty: boolean }): boolean {
-  return state.submitting || state.dirty;
 }
 
 /** Why this language cannot be sent yet, or `null`. `verb` is "created" or "submitted". */

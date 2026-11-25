@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useLoaderData } from "@tanstack/react-router";
 import { templateRowsOf } from "@eccos/core/template-rules";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "../reui/frame";
@@ -20,6 +21,8 @@ export function AuthoringScreen({
   ...editor
 }: Omit<TemplateEditorProps, "wabaId" | "businessName" | "rows"> & { result: Result<TemplatesResult>; title: string }) {
   const root = useLoaderData({ from: "__root__" });
+  // Latched: the editor drops the handoff on mount, and the list may not hold the new name yet.
+  const [handedOff] = useState(() => Boolean(editor.name && peekHandoff(editor.name)));
   const ready = root.ok && root.data.stage === "ready" ? root.data.scope : null;
   const wabaId = editor.wabaParam ?? ready?.selectedWabaId;
   const phones = ready?.resources.wabas.find((waba) => waba.wabaId === wabaId)?.phones ?? [];
@@ -51,7 +54,7 @@ export function AuthoringScreen({
 
   const rows = templateRowsOf(result.data.data) as TemplateRecord[];
   const name = editor.name;
-  if (editor.mode === "edit" && name && !rows.some((row) => row.name === name) && !peekHandoff(name)) {
+  if (editor.mode === "edit" && name && !rows.some((row) => row.name === name) && !handedOff) {
     return (
       <Page title={title} kicker="Cloud API">
         <GridEmptyState

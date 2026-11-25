@@ -1,17 +1,15 @@
-import type { LanguageDraft, TemplateCategory } from "./template-draft";
-import type { Notice } from "./template-group";
+import type { TemplateCategory } from "./template-draft";
+import type { LanguageState } from "./template-group";
 
 /**
  * What a partly failed create hands to the template's edit page: the languages
- * Meta took, and the drafts it did not, with the refusal. In memory and keyed by
- * name, because it lives exactly as long as the client-side navigation that
- * carries it; a reload reads the created languages back from Meta.
+ * Meta took (`sent`) and the drafts it did not, with the refusal. In memory and
+ * keyed by name, because it lives exactly as long as the client-side navigation
+ * that carries it; a reload reads the created languages back from Meta.
  */
 export interface CreateHandoff {
   category: TemplateCategory;
-  created: Record<string, LanguageDraft>;
-  pending: LanguageDraft[];
-  error: { language: string; notice: Notice };
+  languages: Record<string, LanguageState>;
 }
 
 const handoffs = new Map<string, CreateHandoff>();

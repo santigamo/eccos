@@ -6,10 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StatusTag } from "../../ui";
 import { MACHINE_CLASS, SECONDARY_TIER, SUPPORT_TIER } from "../dashboard/plain-table";
 import { APPROVED_EDIT_NOTICE, type LanguageDraft } from "../../lib/template-draft";
-import type { LanguageTab } from "../../lib/template-group";
+import { refusalLine, type LanguageTab } from "../../lib/template-group";
 import { languageLabel, languageOptions } from "../../lib/template-languages";
-import { lastUpdated, qualityReading, rejectionReason } from "../../lib/template-view";
+import { authoringReading, lastUpdated, qualityReading, rejectionReason } from "../../lib/template-view";
 import { LanguageFields, LanguageReadOnly } from "./language-fields";
+import { managerUrl } from "./template-preview-sheet";
 
 /** The line beside an existing language's status tag. */
 function metaLine(tab: LanguageTab): string {
@@ -105,7 +106,7 @@ export function LanguagePanel({
 
       {tab.error ? (
         <Callout tone="error">
-          <p className="m-0 font-medium text-foreground">Meta did not create {label}.</p>
+          <p className="m-0 font-medium text-foreground">{refusalLine(tab)}</p>
           <p className={`m-0 mt-1 ${SUPPORT_TIER}`}>
             {tab.error.title}. {tab.error.detail}
           </p>
@@ -131,7 +132,18 @@ export function LanguagePanel({
 
       {tab.readOnly ? (
         <>
-          <p className={`m-0 max-w-prose text-pretty ${SUPPORT_TIER}`}>{tab.readOnly}</p>
+          <p className={`m-0 max-w-prose text-pretty ${SUPPORT_TIER}`}>
+            {tab.readOnly}
+            {tab.row && !authoringReading(tab.row).ok ? (
+              <>
+                {" Edit or duplicate it in "}
+                <a href={managerUrl(wabaId)} target="_blank" rel="noreferrer" className="underline underline-offset-4">
+                  WhatsApp Manager
+                </a>
+                .
+              </>
+            ) : null}
+          </p>
           <LanguageReadOnly draft={tab.draft} />
         </>
       ) : (

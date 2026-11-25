@@ -28,8 +28,8 @@ function row(status: string, extra: Record<string, unknown> = {}) {
 }
 
 function render(status: string, body?: string, extra: Record<string, unknown> = {}): string {
-  const drafts = body ? { en_US: { language: "en_US", body, examples: [], footer: "", buttons: [] } } : {};
-  const [tab] = buildTabs({ rows: [row(status, extra)], drafts, added: [], submitted: {}, errors: {}, category: "UTILITY" });
+  const languages = body ? { en_US: { draft: { language: "en_US", body, examples: [], footer: "", buttons: [] } } } : {};
+  const [tab] = buildTabs({ rows: [row(status, extra)], languages, category: "UTILITY", initialCategory: "UTILITY" });
   return renderToStaticMarkup(
     <LanguagePanel
       tab={tab!}
@@ -73,6 +73,15 @@ describe("a language in review", () => {
     expect(html).not.toContain("<input");
     expect(html).not.toContain("<textarea");
     expect(html).toContain("Hi there");
+  });
+});
+
+describe("a language the console cannot author", () => {
+  test("says why, and where it can be edited or duplicated instead", () => {
+    const html = render("APPROVED", undefined, { components: [{ type: "BODY", text: "Hi" }, { type: "CAROUSEL", cards: [] }] });
+    expect(html).toContain("It has a carousel component, which the console does not author.");
+    expect(html).toContain("Edit or duplicate it in");
+    expect(html).toContain("waba_id=WABA_A");
   });
 });
 

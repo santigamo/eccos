@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useRef } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -222,45 +222,12 @@ export function LanguageFields({
   );
 }
 
-function ReadOnlyRow({ label, children }: { label: string; children: ReactNode }) {
+/** A language the console cannot edit right now: its body as text. The preview draws the rest. */
+export function LanguageReadOnly({ draft }: { draft: LanguageDraft }) {
   return (
     <div>
-      <p className={LABEL}>{label}</p>
-      <div className="text-sm text-pretty whitespace-pre-wrap break-words text-foreground">{children}</div>
-    </div>
-  );
-}
-
-/** A language the console cannot edit right now: its content as text, no inputs. */
-export function LanguageReadOnly({ draft }: { draft: LanguageDraft }) {
-  const values = exampleValues(draft);
-  return (
-    <div className="flex flex-col gap-5">
-      <ReadOnlyRow label="Body">{draft.body || "—"}</ReadOnlyRow>
-      {values.length > 0 ? (
-        <dl className="m-0 grid gap-x-6 gap-y-2 border-l border-(--line) pl-4 sm:grid-cols-[auto_minmax(0,1fr)]">
-          {values.map((value, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
-            <div key={index} className="contents">
-              <dt className={MACHINE_CLASS}>{`Example {{${index + 1}}}`}</dt>
-              <dd className="m-0 text-sm text-foreground">{value || "—"}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-      {draft.footer ? <ReadOnlyRow label="Footer">{draft.footer}</ReadOnlyRow> : null}
-      {draft.buttons.length > 0 ? (
-        <ReadOnlyRow label="Buttons">
-          <ul className="m-0 flex list-none flex-col gap-1 p-0">
-            {draft.buttons.map((button, index) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
-              <li key={index}>
-                {button.text} <span className="font-mono text-xs break-all text-muted-foreground">{button.url}</span>
-              </li>
-            ))}
-          </ul>
-        </ReadOnlyRow>
-      ) : null}
+      <p className={LABEL}>Body</p>
+      <p className="m-0 text-sm text-pretty whitespace-pre-wrap break-words text-foreground">{draft.body || "—"}</p>
     </div>
   );
 }

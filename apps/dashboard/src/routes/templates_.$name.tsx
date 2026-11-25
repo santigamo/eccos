@@ -5,13 +5,6 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchLanguage, normalizeSearchWabaId } from "../lib/search";
 import { listTemplates } from "../server/gateway";
 
-/**
- * ── ONE TEMPLATE ────────────────────────────────────────────────────────────
- * Every language of one template name, one tab each (`?language=`), with
- * `?add=1` opening a new language draft. There is no single-template read at
- * the gateway, so the page finds the name among the templates the list loads.
- */
-
 type TemplateSearch = { wabaId?: string; language?: string; add?: boolean };
 
 export const Route = createFileRoute("/templates_/$name")({
@@ -24,8 +17,12 @@ export const Route = createFileRoute("/templates_/$name")({
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => listTemplates({ data: { wabaId: deps.wabaId } }),
   component: TemplatePage,
-  pendingComponent: () => <TemplateEditorPending title="Template" />,
+  pendingComponent: TemplatePending,
 });
+
+function TemplatePending() {
+  return <TemplateEditorPending title={Route.useParams().name} />;
+}
 
 function TemplatePage() {
   const result = Route.useLoaderData();

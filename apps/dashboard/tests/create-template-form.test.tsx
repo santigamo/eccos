@@ -21,7 +21,6 @@ const {
   exampleValues,
   isDraftDirty,
   languageBlocker,
-  shouldGuardDismissal,
 } = await import("../src/lib/template-draft");
 const { discardDraftCopy } = await import("../src/components/templates/discard-draft-dialog");
 
@@ -115,15 +114,9 @@ describe("LanguageFields", () => {
     expect(stripped).not.toMatch(/rounded-/);
   });
 
-  test("a read-only language shows its content as text, with no inputs", () => {
-    const html = renderToStaticMarkup(
-      <LanguageReadOnly
-        draft={{ ...EMPTY, body: "Hi {{1}}", examples: ["Ada"], footer: "Thanks", buttons: [{ text: "Track", url: "https://e.com/t", example: "" }] }}
-      />,
-    );
+  test("a read-only language shows its body as text, with no inputs", () => {
+    const html = renderToStaticMarkup(<LanguageReadOnly draft={{ ...EMPTY, body: "Hi {{1}}" }} />);
     expect(html).toContain("Hi {{1}}");
-    expect(html).toContain("Ada");
-    expect(html).toContain("Thanks");
     expect(html).not.toContain("<input");
     expect(html).not.toContain("<textarea");
   });
@@ -137,10 +130,20 @@ describe("the dynamic URL example", () => {
     expect(exampleUrlFor("https://e.com/static", "x")).toBe("");
   });
 
+  test("the value is taken literally, and a named variable is replaced too", () => {
+    // A string replacement would read `$&` as "the match" and put {{1}} back in.
+    expect(exampleUrlFor("https://x.com/t/{{1}}", "a$&b")).toBe("https://x.com/t/a$&b");
+    expect(exampleUrlFor("https://x.com/t/{{1}}", "a$`b")).toBe("https://x.com/t/a$`b");
+    expect(exampleUrlFor("https://x.com/{{code}}", "42")).toBe("https://x.com/42");
+    expect(exampleUrlFor("https://x.com/t/{{1}}", "order 42/é")).toBe("https://x.com/t/order 42/é");
+  });
+
   test("Meta's stored example reads back as the {{1}} value", () => {
     expect(exampleValueOf("https://e.com/orders/{{1}}", "https://e.com/orders/4821")).toBe("4821");
     expect(exampleValueOf("https://e.com/s?t={{1}}&x=1", "https://e.com/s?t=T&x=1")).toBe("T");
     expect(exampleValueOf("https://e.com/orders/{{1}}", "https://other.com/4821")).toBe("");
+    expect(exampleValueOf("https://x.com/t/{{1}}", "4821")).toBe("");
+    expect(exampleValueOf(" https://x.com/t/{{1}}", "https://x.com/t/4821")).toBe("4821");
   });
 
   test("the request and core's rules carry the built URL", () => {
@@ -165,7 +168,6 @@ describe("languageBlocker", () => {
 describe("the leave guard's predicates", () => {
   test("an untouched draft is not dirty", () => {
     expect(isDraftDirty(EMPTY)).toBe(false);
-    expect(shouldGuardDismissal({ submitting: false, dirty: false })).toBe(false);
   });
 
   test("anything typed arms it; whitespace and a blank button row do not", () => {
@@ -182,8 +184,10 @@ describe("the leave guard's predicates", () => {
     expect(isDraftDirty({ ...initial, body: "Hi!" }, initial)).toBe(true);
   });
 
-  test("a submit in flight guards even an empty page", () => {
-    expect(shouldGuardDismissal({ submitting: true, dirty: false })).toBe(true);
+  test("adding a variable and removing it again is not a change", () => {
+    // The examples array only grows, so a raw comparison kept the language EDITED and submitted it.
+    const initial = { ...EMPTY, body: "Hi there" };
+    expect(isDraftDirty({ ...initial, examples: ["Ada"] }, initial)).toBe(false);
   });
 
   test("the discard question names what is lost, and says something else mid-submit", () => {

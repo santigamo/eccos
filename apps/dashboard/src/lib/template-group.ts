@@ -1,7 +1,6 @@
 /**
- * A template name as the authoring page reads it: one tab per language, what
- * each tab is (at Meta, in review, a draft), the state word it wears, and what
- * the one primary action sends. Pure, so every branch is asserted without a DOM.
+ * A template name as the authoring page reads it: one tab per language, the
+ * state word each wears, and what the one primary action sends.
  */
 
 import {
@@ -21,7 +20,21 @@ export interface Notice {
   secondary?: string;
 }
 
-export type TabState = "INCOMPLETE" | "EDITED" | "IN REVIEW" | "REJECTED" | "NOT CREATED";
+/** What the page holds for one language beyond what Meta has. */
+export interface LanguageState {
+  /** The operator's copy, once they touched it. */
+  draft?: LanguageDraft;
+  /** Not at Meta when the page opened: a draft to create. */
+  added?: boolean;
+  /** What a duplicate started from, so an untouched copy is not dirty. */
+  seed?: LanguageDraft;
+  /** Sent to Meta by this page: read as in review until the page is left. */
+  sent?: LanguageDraft;
+  /** Meta's refusal of the last send. */
+  error?: Notice;
+}
+
+export type TabState = "INCOMPLETE" | "EDITED" | "IN REVIEW" | "REJECTED" | "NOT CREATED" | "EDIT REFUSED";
 
 export interface LanguageTab {
   language: string;
@@ -29,48 +42,66 @@ export interface LanguageTab {
   /** Meta's copy of this language, or `null` when it is not at Meta. */
   initial: LanguageDraft | null;
   row: TemplateRecord | null;
-  /** Meta's status, or PENDING once this page submitted it. */
+  /** Meta's status, or PENDING once this page sent it; `null` for a draft. */
   status: string | null;
   /** Why the panel is read-only, or `null` when it can be edited. */
   readOnly: string | null;
   error: Notice | null;
   /** Holds something the operator would lose by leaving. */
   dirty: boolean;
+  /** Sending it also moves it to the page's category. */
+  recategorize: boolean;
 }
 
 export interface GroupInput {
   /** This name's rows, as the list loaded them. */
   rows: TemplateRecord[];
-  /** The operator's copy of each language they touched, by code. */
-  drafts: Record<string, LanguageDraft>;
-  /** Languages not at Meta yet, in tab order. */
-  added: string[];
-  /** What an added language started from (a duplicate's source), so an untouched copy is not dirty. */
-  seeds?: Record<string, LanguageDraft>;
-  /** Languages this page sent to Meta, read as in review until the page is left. */
-  submitted: Record<string, LanguageDraft>;
-  errors: Record<string, Notice>;
+  /** By language code, in tab order for the added ones. */
+  languages: Record<string, LanguageState>;
   category: TemplateCategory;
-  /** The category can be changed, so moving it re-submits every editable language. */
-  categoryOpen?: boolean;
+  /** The category the page opened with: only a move away from it re-categorizes. */
+  initialCategory: TemplateCategory;
 }
 
 export function pendingLine(language: string): string {
   return `Meta is reviewing ${languageLabel(language)}, usually for a few minutes. It can be edited again once Meta answers.`;
 }
 
-export function buildTabs(input: GroupInput): LanguageTab[] {
+/** Meta takes a new category on an editable language that is not approved. */
+export function categoryMovable(row: TemplateRecord): boolean {
+  const status = row.status?.toUpperCase();
+  return status !== "APPROVED" && canEditStatus(status) && authoringReading(row).ok;
+}
+
+/** Why no language's category can change, read from Meta's statuses, or `null` when one can. */
+export function categoryLock(rows: TemplateRecord[]): string | null {
+  if (rows.some(categoryMovable)) return null;
+  const statuses = rows.map((row) => row.status?.toUpperCase());
+  if (statuses.includes("APPROVED")) return "Locked while a language is approved";
+  if (statuses.includes("PENDING")) return "Locked while Meta reviews a language";
+  return "Locked while no language can be edited";
+}
+
+/** The category a template name's languages share: the most common one the console authors. */
+export function groupCategory(rows: TemplateRecord[]): TemplateCategory {
+  const marketing = rows.filter((row) => row.category?.toUpperCase() === "MARKETING").length;
+  const utility = rows.filter((row) => row.category?.toUpperCase() === "UTILITY").length;
+  return marketing > utility ? "MARKETING" : "UTILITY";
+}
+
+export function buildTabs({ rows, languages, category, initialCategory }: GroupInput): LanguageTab[] {
   const tabs: LanguageTab[] = [];
   const seen = new Set<string>();
-  for (const row of input.rows) {
+  const moved = category !== initialCategory;
+  for (const row of rows) {
     const language = row.language;
     if (!language || seen.has(language)) continue;
     seen.add(language);
-    const submitted = input.submitted[language];
-    const status = submitted ? "PENDING" : (row.status?.toUpperCase() ?? null);
+    const own = languages[language] ?? {};
+    const status = own.sent ? "PENDING" : (row.status?.toUpperCase() ?? null);
     const reading = authoringReading(row);
     const initial = reading.ok ? withoutShared(reading.draft) : null;
-    const draft = input.drafts[language] ?? submitted ?? initial ?? blankDraft(language);
+    const draft = own.draft ?? own.sent ?? initial ?? blankDraft(language);
     const readOnly =
       status === "PENDING"
         ? pendingLine(language)
@@ -79,7 +110,7 @@ export function buildTabs(input: GroupInput): LanguageTab[] {
           : !canEditStatus(status ?? undefined)
             ? `Meta does not allow editing a template that is ${(status ?? "unknown").toLowerCase()}.`
             : null;
-    const recategorized = Boolean(input.categoryOpen) && row.category?.toUpperCase() !== input.category;
+    const recategorize = !readOnly && moved && categoryMovable(row) && row.category?.toUpperCase() !== category;
     tabs.push({
       language,
       draft,
@@ -87,19 +118,19 @@ export function buildTabs(input: GroupInput): LanguageTab[] {
       row,
       status,
       readOnly,
-      error: input.errors[language] ?? null,
-      dirty: !readOnly && (isDraftDirty(draft, initial) || recategorized),
+      error: own.error ?? null,
+      dirty: !readOnly && (isDraftDirty(draft, initial) || recategorize),
+      recategorize,
     });
   }
-  for (const [language, draft] of Object.entries(input.submitted)) {
-    if (seen.has(language)) continue;
-    seen.add(language);
-    tabs.push({ language, draft, initial: draft, row: null, status: "PENDING", readOnly: pendingLine(language), error: null, dirty: false });
-  }
-  for (const language of input.added) {
-    if (seen.has(language)) continue;
-    seen.add(language);
-    const draft = input.drafts[language] ?? blankDraft(language);
+  for (const [language, own] of Object.entries(languages)) {
+    if (seen.has(language) || !own.added) continue;
+    if (own.sent) {
+      const sent = own.sent;
+      tabs.push({ language, draft: sent, initial: sent, row: null, status: "PENDING", readOnly: pendingLine(language), error: null, dirty: false, recategorize: false });
+      continue;
+    }
+    const draft = own.draft ?? blankDraft(language);
     tabs.push({
       language,
       draft,
@@ -107,8 +138,9 @@ export function buildTabs(input: GroupInput): LanguageTab[] {
       row: null,
       status: null,
       readOnly: null,
-      error: input.errors[language] ?? null,
-      dirty: isDraftDirty(draft, input.seeds?.[language] ?? null),
+      error: own.error ?? null,
+      dirty: isDraftDirty(draft, own.seed ?? null),
+      recategorize: false,
     });
   }
   return tabs;
@@ -125,7 +157,7 @@ export function submission(tabs: LanguageTab[]): LanguageTab[] {
 
 /** The one word a tab wears beside its language. `null` when there is nothing to say. */
 export function tabState(tab: LanguageTab): TabState | null {
-  if (tab.error) return "NOT CREATED";
+  if (tab.error) return tab.row ? "EDIT REFUSED" : "NOT CREATED";
   if (tab.status === "PENDING") return "IN REVIEW";
   const sent = !tab.readOnly && (tab.status === null || tab.dirty);
   if (sent && languageBlocker(tab.draft, "sent")) return "INCOMPLETE";
@@ -134,13 +166,11 @@ export function tabState(tab: LanguageTab): TabState | null {
   return null;
 }
 
-export const STATE_INK: Record<TabState, string> = {
-  INCOMPLETE: "text-warning-foreground",
-  EDITED: "text-warning-foreground",
-  "IN REVIEW": "text-muted-foreground",
-  REJECTED: "text-destructive-foreground",
-  "NOT CREATED": "text-destructive-foreground",
-};
+/** "Meta did not create Spanish." or "Meta refused the changes to Spanish." */
+export function refusalLine(tab: LanguageTab): string {
+  const label = languageLabel(tab.language);
+  return tab.row ? `Meta refused the changes to ${label}.` : `Meta did not create ${label}.`;
+}
 
 /** "A", "A and B", "A, B and C". */
 export function listLanguages(languages: string[]): string {
@@ -173,43 +203,9 @@ export function barBlocker(mode: AuthoringMode, name: string, sending: LanguageT
 export function barNote(mode: AuthoringMode, sending: LanguageTab[], created: string[]): string | null {
   const failed = sending.find((tab) => tab.error);
   if (failed) {
-    const label = languageLabel(failed.language);
-    if (created.length === 0) return `${label} was not created.`;
-    return `${listLanguages(created)} ${created.length > 1 ? "were" : "was"} created. ${label} was not.`;
+    if (failed.row || created.length === 0) return refusalLine(failed);
+    return `${listLanguages(created)} ${created.length > 1 ? "were" : "was"} created. ${languageLabel(failed.language)} was not.`;
   }
   if (mode === "create" || sending.length === 0) return null;
   return `${listLanguages(sending.map((tab) => tab.language))} ${sending.length > 1 ? "have" : "has"} unsent changes.`;
-}
-
-/** The category a template name's languages share: the most common one the console authors. */
-export function groupCategory(rows: TemplateRecord[]): TemplateCategory {
-  const marketing = rows.filter((row) => row.category?.toUpperCase() === "MARKETING").length;
-  const utility = rows.filter((row) => row.category?.toUpperCase() === "UTILITY").length;
-  return marketing > utility ? "MARKETING" : "UTILITY";
-}
-
-/**
- * Why the category cannot change from this page, or `null` when it can. Meta
- * refuses a new category on an approved language, one in review cannot be
- * edited at all, and a category change re-submits every language at Meta.
- */
-export function categoryLock(tabs: LanguageTab[]): string | null {
-  if (tabs.some((tab) => tab.status === "APPROVED")) return "Locked while a language is approved";
-  if (tabs.some((tab) => tab.status === "PENDING")) return "Locked while Meta reviews a language";
-  if (tabs.some((tab) => tab.status !== null && tab.readOnly)) return "Locked while a language cannot be edited";
-  return null;
-}
-
-/**
- * The router blocker for a page holding unsent work: the browser's leave-page
- * warning, and a block on in-app navigation to another path. A change of
- * `?language=` is a tab switch on the same page, never a departure.
- */
-export function leaveBlocker(guarded: boolean) {
-  return {
-    shouldBlockFn: ({ current, next }: { current: { pathname: string }; next: { pathname: string } }) =>
-      guarded && current.pathname !== next.pathname,
-    enableBeforeUnload: guarded,
-    withResolver: true as const,
-  };
 }

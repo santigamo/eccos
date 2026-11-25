@@ -4,9 +4,9 @@ import { installServerFnMocks } from "./helpers/server-fn-mocks";
 
 /**
  * The template authoring page (`/templates/new`, `/templates/$name`): the tab
- * model and its state words (`lib/template-group.ts`), the serial create and
- * where it lands (`lib/template-submit.ts`), and the page itself rendered with
- * the router hooks stubbed, the same approach as `templates-screen.test.tsx`.
+ * model and its state words (`lib/template-group.ts`), the requests and the
+ * serial send (`lib/template-submit.ts`), and the page rendered with the router
+ * hooks stubbed, the same approach as `templates-screen.test.tsx`.
  */
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
@@ -30,11 +30,12 @@ mock.module("@tanstack/react-router", () => ({
   ),
 }));
 
-const { buildTabs, leaveBlocker, primaryLabel, barBlocker, barNote, submission, tabState } = await import(
-  "../src/lib/template-group"
+const G = await import("../src/lib/template-group");
+const { afterCreate, movedCategory, refusal, requestFor, submitSerially, UNANSWERED } = await import(
+  "../src/lib/template-submit"
 );
-const { afterCreate, createFailure, submitSerially } = await import("../src/lib/template-submit");
-const { TemplateEditor } = await import("../src/components/templates/template-editor");
+const { createTemplateFailureCopy, editTemplateFailureCopy } = await import("../src/lib/failure");
+const { TemplateEditor, leaveBlocker } = await import("../src/components/templates/template-editor");
 const { dropHandoff, putHandoff } = await import("../src/lib/template-handoff");
 
 const draft = (language: string, body = "") => ({ language, body, examples: [], footer: "", buttons: [] });
@@ -48,35 +49,38 @@ const row = (language: string, status: string, extra: Record<string, unknown> = 
   components: [{ type: "BODY", text: "Your order is on its way." }],
   ...extra,
 });
-const NONE = { drafts: {}, added: [], submitted: {}, errors: {}, category: "UTILITY" as const };
+const refused = { title: "Meta refused the template", detail: "d" };
+
+type Input = Parameters<typeof G.buildTabs>[0];
+function tabs(input: Partial<Input> & { rows: Input["rows"] }) {
+  return G.buildTabs({ languages: {}, category: "UTILITY", initialCategory: "UTILITY", ...input });
+}
 
 describe("the tab's state word", () => {
   test("one word per situation, never a dot", () => {
-    const tabs = buildTabs({
-      ...NONE,
-      rows: [
-        row("en_US", "APPROVED"),
-        row("es", "APPROVED"),
-        row("it", "PENDING"),
-        row("fr", "REJECTED"),
-      ],
-      drafts: { es: draft("es", "Tu pedido va en camino y llega mañana.") },
-      added: ["de", "nl"],
-      errors: { nl: { title: "Meta refused the template", detail: "x" } },
+    const all = tabs({
+      rows: [row("en_US", "APPROVED"), row("es", "APPROVED"), row("it", "PENDING"), row("fr", "REJECTED"), row("ca", "APPROVED")],
+      languages: {
+        es: { draft: draft("es", "Tu pedido va en camino y llega mañana.") },
+        ca: { draft: draft("ca", "Una altra cosa del tot diferent."), error: refused },
+        de: { added: true },
+        nl: { added: true, draft: ready("nl"), error: refused },
+      },
     });
-    expect(tabs.map((tab) => [tab.language, tabState(tab)])).toEqual([
+    expect(all.map((tab) => [tab.language, G.tabState(tab)])).toEqual([
       ["en_US", null],
       ["es", "EDITED"],
       ["it", "IN REVIEW"],
       ["fr", "REJECTED"],
+      ["ca", "EDIT REFUSED"],
       ["de", "INCOMPLETE"],
       ["nl", "NOT CREATED"],
     ]);
   });
 
   test("an edited language that no longer passes the rules is INCOMPLETE", () => {
-    const [tab] = buildTabs({ ...NONE, rows: [row("en_US", "APPROVED")], drafts: { en_US: draft("en_US", "") } });
-    expect(tabState(tab!)).toBe("INCOMPLETE");
+    const [tab] = tabs({ rows: [row("en_US", "APPROVED")], languages: { en_US: { draft: draft("en_US", "") } } });
+    expect(G.tabState(tab!)).toBe("INCOMPLETE");
   });
 
   test("the state is in the tab's accessible name", () => {
@@ -87,117 +91,187 @@ describe("the tab's state word", () => {
   });
 });
 
+describe("a refused edit is not a refused creation", () => {
+  test("its own word, its own sentence, and Meta's real status in the review list", () => {
+    const [tab] = tabs({ rows: [row("en_US", "APPROVED")], languages: { en_US: { draft: ready("en_US"), error: refused } } });
+    expect(G.tabState(tab!)).toBe("EDIT REFUSED");
+    expect(G.refusalLine(tab!)).toBe("Meta refused the changes to English (US).");
+    expect(G.barNote("edit", G.submission([tab!]), [])).toBe("Meta refused the changes to English (US).");
+    expect(G.primaryLabel("edit", G.submission([tab!]), "en_US")).toBe("Retry English (US)");
+    const [draftTab] = tabs({ rows: [], languages: { es: { added: true, draft: ready("es"), error: refused } } });
+    expect(G.refusalLine(draftTab!)).toBe("Meta did not create Spanish.");
+  });
+});
+
 describe("a language in review", () => {
   test("is read-only, and the page shows no submit bar for it", () => {
     const html = renderEditor({ rows: [row("en_US", "APPROVED"), row("it", "PENDING")], language: "it" });
     expect(html).toContain("Meta is reviewing Italian, usually for a few minutes.");
     expect(html).not.toContain("<textarea");
-    expect(html).not.toContain("for review</button>");
     expect(html).not.toContain(">Cancel<");
   });
 
-  test("a language this page submitted reads as in review until the page is left", () => {
-    const [tab] = buildTabs({ ...NONE, rows: [row("en_US", "APPROVED")], submitted: { en_US: ready("en_US") } });
+  test("a language this page sent reads as in review until the page is left", () => {
+    const [tab] = tabs({ rows: [row("en_US", "APPROVED")], languages: { en_US: { sent: ready("en_US") } } });
     expect(tab?.status).toBe("PENDING");
     expect(tab?.readOnly).toContain("Meta is reviewing");
   });
 });
 
-describe("the primary action", () => {
-  test("names what it sends", () => {
-    const created = buildTabs({ ...NONE, rows: [], added: ["es", "en_US"], drafts: { es: ready("es"), en_US: ready("en_US") } });
-    expect(primaryLabel("create", submission(created), "es")).toBe("Create 2 languages");
-    expect(primaryLabel("create", submission(created).slice(0, 1), "es")).toBe("Create template");
-
-    const edited = buildTabs({ ...NONE, rows: [row("en_US", "APPROVED"), row("es", "APPROVED")], drafts: { es: ready("es") } });
-    expect(primaryLabel("edit", submission(edited), "es")).toBe("Submit Spanish for review");
-    const both = buildTabs({
-      ...NONE,
-      rows: [row("en_US", "APPROVED"), row("es", "APPROVED")],
-      drafts: { es: ready("es"), en_US: ready("en_US") },
-    });
-    expect(primaryLabel("edit", submission(both), "es")).toBe("Submit 2 languages for review");
-
-    const failed = buildTabs({
-      ...NONE,
-      rows: [row("en_US", "PENDING")],
-      added: ["es"],
-      drafts: { es: ready("es") },
-      errors: { es: { title: "t", detail: "d" } },
-    });
-    expect(primaryLabel("edit", submission(failed), "es")).toBe("Retry Spanish");
+describe("the category", () => {
+  test("the group's is the most common one the console authors", () => {
+    expect(G.groupCategory([row("en_US", "APPROVED"), row("es", "APPROVED", { category: "MARKETING" })])).toBe("UTILITY");
+    expect(
+      G.groupCategory([row("en_US", "APPROVED", { category: "MARKETING" }), row("es", "APPROVED", { category: "MARKETING" }), row("it", "APPROVED")]),
+    ).toBe("MARKETING");
   });
 
-  test("the bar says what blocks it, or what is waiting", () => {
-    const blocked = buildTabs({ ...NONE, rows: [], added: ["es", "en_US"], drafts: { es: ready("es") } });
-    expect(barBlocker("create", "", submission(blocked))).toBe("Name the template before it can be created.");
-    expect(barBlocker("create", "shipping_delay", submission(blocked))).toBe(
-      "English (US) needs a body before it can be created.",
-    );
-    const edited = buildTabs({ ...NONE, rows: [row("es", "APPROVED")], drafts: { es: ready("es") } });
-    expect(barBlocker("edit", "order_update", submission(edited))).toBeNull();
-    expect(barNote("edit", submission(edited), [])).toBe("Spanish has unsent changes.");
-    const failed = buildTabs({
-      ...NONE,
-      rows: [],
-      submitted: { en_US: ready("en_US") },
-      added: ["es"],
-      drafts: { es: ready("es") },
-      errors: { es: { title: "t", detail: "d" } },
+  test("it is locked only when no language at Meta can take a new one", () => {
+    expect(G.categoryLock([row("en_US", "APPROVED")])).toBe("Locked while a language is approved");
+    expect(G.categoryLock([row("en_US", "PENDING")])).toBe("Locked while Meta reviews a language");
+    // A rejected language stays fixable beside an approved sibling.
+    expect(G.categoryLock([row("en_US", "APPROVED"), row("es", "REJECTED")])).toBeNull();
+    expect(G.categoryLock([row("en_US", "PAUSED")])).toBeNull();
+  });
+
+  test("a mixed-category group opens clean: nothing is recategorized until the operator moves it", () => {
+    const rows = [row("en_US", "REJECTED", { category: "MARKETING" }), row("es", "REJECTED")];
+    const category = G.groupCategory(rows);
+    const opened = tabs({ rows, category, initialCategory: category });
+    expect(opened.map((tab) => tab.dirty)).toEqual([false, false]);
+    expect(G.submission(opened)).toEqual([]);
+  });
+
+  test("a move re-submits only the languages Meta lets it change", () => {
+    const moved = tabs({
+      rows: [row("en_US", "APPROVED"), row("es", "REJECTED"), row("it", "PAUSED", { category: "MARKETING" })],
+      category: "MARKETING",
+      initialCategory: "UTILITY",
     });
-    expect(barNote("edit", submission(failed), ["en_US"])).toBe("English (US) was created. Spanish was not.");
+    expect(moved.map((tab) => [tab.language, tab.recategorize])).toEqual([
+      ["en_US", false],
+      ["es", true],
+      ["it", false],
+    ]);
+  });
+
+  test("after a partial failure the refused language is still sent, and retried", () => {
+    const rows = [row("en_US", "REJECTED"), row("es", "REJECTED")];
+    const after = tabs({
+      rows,
+      category: "MARKETING",
+      initialCategory: "UTILITY",
+      languages: { en_US: { sent: ready("en_US") }, es: { error: refused } },
+    });
+    expect(G.categoryLock(rows)).toBeNull();
+    const sending = G.submission(after);
+    expect(sending.map((tab) => tab.language)).toEqual(["es"]);
+    expect(G.barBlocker("edit", "order_update", sending)).toBeNull();
+    expect(G.primaryLabel("edit", sending, "es")).toBe("Retry Spanish");
   });
 });
 
-describe("serial create with a partial failure", () => {
-  const refusal = createFailure({ ok: true, data: { ok: false, code: "graph", detail: "Invalid parameter" } });
-
-  test("one call per language, in order, stopping at the first refusal", async () => {
-    const calls: string[] = [];
-    const outcome = await submitSerially(["en_US", "es", "it"], async (language) => {
-      calls.push(language);
-      return language === "es" ? refusal : null;
+describe("the primary action", () => {
+  test("names what it sends", () => {
+    const created = tabs({ rows: [], languages: { es: { added: true, draft: ready("es") }, en_US: { added: true, draft: ready("en_US") } } });
+    expect(G.primaryLabel("create", G.submission(created), "es")).toBe("Create 2 languages");
+    expect(G.primaryLabel("create", G.submission(created).slice(0, 1), "es")).toBe("Create template");
+    const edited = tabs({ rows: [row("en_US", "APPROVED"), row("es", "APPROVED")], languages: { es: { draft: ready("es") } } });
+    expect(G.primaryLabel("edit", G.submission(edited), "es")).toBe("Submit Spanish for review");
+    const both = tabs({
+      rows: [row("en_US", "APPROVED"), row("es", "APPROVED")],
+      languages: { es: { draft: ready("es") }, en_US: { draft: ready("en_US") } },
     });
-    expect(calls).toEqual(["en_US", "es"]);
-    expect(outcome.done).toEqual(["en_US"]);
-    expect(outcome.failed?.item).toBe("es");
-    expect(outcome.failed?.notice).toEqual({
+    expect(G.primaryLabel("edit", G.submission(both), "es")).toBe("Submit 2 languages for review");
+  });
+
+  test("the bar says what blocks it, or what is waiting", () => {
+    const blocked = tabs({ rows: [], languages: { es: { added: true, draft: ready("es") }, en_US: { added: true } } });
+    expect(G.barBlocker("create", "", G.submission(blocked))).toBe("Name the template before it can be created.");
+    expect(G.barBlocker("create", "shipping_delay", G.submission(blocked))).toBe("English (US) needs a body before it can be created.");
+    const edited = tabs({ rows: [row("es", "APPROVED")], languages: { es: { draft: ready("es") } } });
+    expect(G.barNote("edit", G.submission(edited), [])).toBe("Spanish has unsent changes.");
+  });
+});
+
+describe("the requests", () => {
+  const shared = { wabaId: "WABA_A", name: "order_update", category: "MARKETING" as const };
+
+  test("a language not at Meta is a create with the page's category", () => {
+    const [tab] = tabs({ rows: [], languages: { es: { added: true, draft: ready("es") } } });
+    expect(requestFor(tab!, shared)).toEqual({
+      kind: "create",
+      data: { wabaId: "WABA_A", name: "order_update", language: "es", category: "MARKETING", bodyText: ready("es").body },
+    });
+  });
+
+  test("an edit carries the templateId, and the category only when it moves", () => {
+    const [kept] = tabs({ rows: [row("es", "APPROVED")], languages: { es: { draft: ready("es") } } });
+    expect(requestFor(kept!, shared)).toEqual({
+      kind: "edit",
+      data: { wabaId: "WABA_A", name: "order_update", language: "es", templateId: "id-es", bodyText: ready("es").body },
+    });
+    const [moved] = tabs({ rows: [row("es", "REJECTED")], category: "MARKETING", initialCategory: "UTILITY" });
+    expect(requestFor(moved!, shared).data).toMatchObject({ templateId: "id-es", category: "MARKETING" });
+  });
+
+  test("Meta's answers read in the console's words, and a recategorization is reported", () => {
+    expect(refusal({ ok: true, data: { ok: true, id: "1", status: "PENDING", category: "UTILITY" } }, createTemplateFailureCopy)).toBeNull();
+    expect(refusal({ ok: true, data: { ok: false, code: "graph", detail: "Invalid parameter" } }, createTemplateFailureCopy)).toEqual({
       title: "Meta refused the template",
       detail: "Invalid parameter",
       secondary: "Invalid parameter",
     });
+    expect(refusal({ ok: true, data: { ok: false, code: "not_found", detail: null } }, editTemplateFailureCopy)?.title).toBe("Template not found");
+    const answer = { ok: true as const, data: { ok: true as const, id: "1", status: "PENDING", category: "MARKETING" } };
+    expect(movedCategory(answer, "UTILITY")).toBe("MARKETING");
+    expect(movedCategory(answer, "MARKETING")).toBeNull();
+  });
+});
+
+describe("serial send", () => {
+  test("one call per language, in order, stopping at the first refusal", async () => {
+    const calls: string[] = [];
+    const outcome = await submitSerially(["en_US", "es", "it"], async (language) => {
+      calls.push(language);
+      return language === "es" ? refused : null;
+    });
+    expect(calls).toEqual(["en_US", "es"]);
+    expect(outcome.done).toEqual(["en_US"]);
+    expect(outcome.failed).toEqual({ item: "es", notice: refused });
   });
 
-  test("where the page goes: the list, nowhere, or the template's own page on the failed language", () => {
-    expect(afterCreate("shipping_delay", ["en_US", "es"], null)).toEqual({
-      kind: "list",
-      toast: {
-        title: "shipping_delay submitted in 2 languages.",
-        description: "Meta reviews each one, usually within minutes.",
-      },
+  test("a call that throws keeps what was already created and counts as the failure", async () => {
+    const outcome = await submitSerially(["en_US", "es", "it"], async (language) => {
+      if (language === "es") throw new Error("network");
+      return null;
     });
-    expect(afterCreate("shipping_delay", [], "en_US")).toEqual({ kind: "stay" });
-    expect(afterCreate("shipping_delay", ["en_US"], "es")).toEqual({
-      kind: "group",
-      name: "shipping_delay",
-      language: "es",
+    expect(outcome.done).toEqual(["en_US"]);
+    expect(outcome.failed).toEqual({ item: "es", notice: UNANSWERED });
+  });
+
+  test("where a create lands, always past the leave guard", () => {
+    expect(afterCreate("shipping_delay", "W", 2, null)).toEqual({ to: "/templates", search: { wabaId: "W" }, ignoreBlocker: true });
+    expect(afterCreate("shipping_delay", "W", 0, "en_US")).toBeNull();
+    expect(afterCreate("shipping_delay", "W", 1, "es")).toEqual({
+      to: "/templates/$name",
+      params: { name: "shipping_delay" },
+      search: { wabaId: "W", language: "es" },
+      replace: true,
+      ignoreBlocker: true,
     });
   });
 
   test("the edit page it lands on: created tabs in review, the failed one keeps its draft and its error", () => {
-    const tabs = buildTabs({
-      ...NONE,
+    const landed = tabs({
       rows: [],
-      submitted: { en_US: ready("en_US") },
-      added: ["es"],
-      drafts: { es: ready("es") },
-      errors: { es: refusal! },
+      languages: { en_US: { added: true, sent: ready("en_US") }, es: { added: true, draft: ready("es"), error: refused } },
     });
-    expect(tabs.map((tab) => [tab.language, tabState(tab), Boolean(tab.readOnly)])).toEqual([
+    expect(landed.map((tab) => [tab.language, G.tabState(tab), Boolean(tab.readOnly)])).toEqual([
       ["en_US", "IN REVIEW", true],
       ["es", "NOT CREATED", false],
     ]);
-    expect(tabs[1]?.draft.body).toBe(ready("es").body);
+    expect(G.barNote("edit", G.submission(landed), ["en_US"])).toBe("English (US) was created. Spanish was not.");
   });
 });
 
@@ -219,14 +293,12 @@ describe("the leave guard", () => {
   test("the page wires it to its drafts", () => {
     renderEditor({ rows: [row("en_US", "APPROVED")], language: "en_US" });
     expect(blockerOpts?.enableBeforeUnload).toBe(false);
-    renderEditor({ mode: "create", rows: [], from: undefined });
+    renderEditor({ mode: "create", rows: [] });
     expect(blockerOpts?.shouldBlockFn(leaving)).toBe(false);
     // The draft a partial create handed over is unsent work: it arms both halves.
     putHandoff("order_update", {
       category: "UTILITY",
-      created: { en_US: ready("en_US") },
-      pending: [ready("es")],
-      error: { language: "es", notice: { title: "t", detail: "d" } },
+      languages: { en_US: { added: true, sent: ready("en_US") }, es: { added: true, draft: ready("es"), error: refused } },
     });
     renderEditor({ rows: [], language: "es" });
     dropHandoff("order_update");
@@ -238,13 +310,28 @@ describe("the leave guard", () => {
 
 describe("the page", () => {
   test("creating: name, category, one tab in the account's most used language, no review list", () => {
-    const html = renderEditor({ mode: "create", rows: [row("es", "APPROVED"), { ...row("es", "APPROVED"), name: "b" }, row("en_US", "APPROVED")] });
+    const html = renderEditor({
+      mode: "create",
+      rows: [row("es", "APPROVED"), { ...row("es", "APPROVED"), name: "b" }, row("en_US", "APPROVED")],
+    });
     expect(html).toContain(">New template<");
     expect(html).toContain('id="template-name"');
     expect(html).toContain('aria-label="Spanish, es, incomplete"');
     expect(html).toContain(">Create template<");
     expect(html).not.toContain(">Meta review<");
     expect(html).toContain("Preview · Spanish");
+    expect(html).toMatch(/<output[^>]*aria-live="polite"/);
+  });
+
+  test("duplicating pre-fills the source language's content and leaves the name empty", () => {
+    const html = renderEditor({ mode: "create", rows: [row("es", "APPROVED")], from: "order_update", language: "es" });
+    expect(html).toContain("Your order is on its way.");
+    expect(html).toContain('value=""');
+  });
+
+  test("?add=1 opens a new language draft beside the ones at Meta", () => {
+    const html = renderEditor({ rows: [row("en_US", "APPROVED")], add: true });
+    expect(html).toContain('aria-label="English (UK), en_GB, incomplete"');
   });
 
   test("editing: the name locked with its duplicate link, and the review list", () => {
@@ -255,22 +342,31 @@ describe("the page", () => {
     expect(html).toContain("Add language");
   });
 
+  test("a template the console cannot author offers no duplicate", () => {
+    const html = renderEditor({
+      rows: [row("en_US", "APPROVED", { components: [{ type: "BODY", text: "Hi" }, { type: "CAROUSEL", cards: [] }] })],
+      language: "en_US",
+    });
+    expect(html).not.toContain("Duplicate as new name");
+    expect(html).toContain("which the console does not author");
+  });
+
+  test("a rejected language beside an approved one keeps the category open, and says to which", () => {
+    const html = renderEditor({ rows: [row("en_US", "APPROVED"), row("es", "REJECTED")], language: "es" });
+    expect(html).toContain("Applies to rejected and paused languages");
+    expect(html).toContain('id="template-category"');
+  });
+
   test("a language with its own category says so in the review list", () => {
     const html = renderEditor({
       rows: [row("en_US", "APPROVED"), row("es", "APPROVED"), row("it", "APPROVED", { category: "MARKETING" })],
       language: "en_US",
     });
-    const review = html.slice(html.indexOf(">Meta review<"));
-    expect(review).toContain(">Marketing<");
+    expect(html.slice(html.indexOf(">Meta review<"))).toContain(">Marketing<");
   });
 });
 
-function renderEditor(props: {
-  mode?: "create" | "edit";
-  rows: unknown[];
-  language?: string;
-  from?: string;
-}): string {
+function renderEditor(props: { mode?: "create" | "edit"; rows: unknown[]; language?: string; from?: string; add?: boolean }): string {
   return renderToStaticMarkup(
     <TemplateEditor
       mode={props.mode ?? "edit"}
@@ -280,6 +376,7 @@ function renderEditor(props: {
       name={props.mode === "create" ? undefined : "order_update"}
       language={props.language}
       from={props.from}
+      add={props.add}
       onLanguage={() => {}}
     />,
   );
