@@ -15,6 +15,7 @@ import { ConnectLinkButton } from "../components/dashboard/connect-link-dialog";
 import { NumbersTable } from "../components/dashboard/numbers-table";
 import { SubscriptionGate, SubscriptionNotice } from "../components/dashboard/subscription-notice";
 import { billableCount } from "../billing/account";
+import { blocksSends } from "@eccos/gateway-contract/billing-status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -89,7 +90,7 @@ function NumbersPage() {
         canManageBilling={canManageBilling}
       />
     );
-    const closed = resources?.account?.connectPolicy === "closed";
+    const closed = resources?.account?.canAddNumber === false;
     return (
       <Page title="Connect WhatsApp" kicker="First run" actions={closed || !canConnect ? undefined : <ConnectLinkButton />}>
         {/* Centred and LIFTED, the house treatment for a single-purpose frame
@@ -218,13 +219,14 @@ export function NumbersView({
   const [busy, setBusy] = useState(false);
   // One instance: it moves into the dialog while that is open.
   const notice = (className?: string) =>
-    resources.account?.connectPolicy === "closed" ? (
+    resources.account?.canAddNumber === false ? (
       <SubscriptionNotice
         billing={billing}
         subscribed={subscribed}
         canManage={canManageBilling}
         numbers={billableCount(resources.wabas)}
         reconnect={resources.wabas.length > 0}
+        canSend={!blocksSends(resources.account.billingStatus)}
         className={className}
       />
     ) : null;
@@ -242,7 +244,7 @@ export function NumbersView({
       kicker="Connection"
       actions={
         <>
-          {resources.account?.connectPolicy === "closed" || !canConnect ? null : <ConnectLinkButton />}
+          {resources.account?.canAddNumber === false || !canConnect ? null : <ConnectLinkButton />}
           <AddNumberButton expanded={adding} onToggle={setAdding} />
         </>
       }

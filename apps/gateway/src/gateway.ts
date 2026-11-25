@@ -93,6 +93,7 @@ import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { watchGraph } from "./token-health";
 import { isPublicConfigKey } from "./private-config-keys";
+import { SUBSCRIPTION_REQUIRED } from "./connect-policy";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
 interface Env extends OpsAlertEnv, SendRateLimitEnv {
@@ -1745,9 +1746,9 @@ export class EccosGateway extends DurableObject<Env> {
     if (!first) return 0;
 
     // The token comes before the claim: a run that dies here leaves no row `sending` with nothing sent.
-    const token = await this.metaToken("scheduled");
-    if (token === "missing" || token === "unavailable") {
-      // Nothing is spent: the rows wait, and expire if the WABA stays disconnected.
+    const token = await this.sendToken("scheduled");
+    if (token === "missing" || token === "unavailable" || token === SUBSCRIPTION_REQUIRED) {
+      // Nothing is spent: the rows wait, and expire if the WABA stays disconnected or sends stay blocked.
       this.sql.exec(
         `UPDATE scheduled_sends SET next_attempt_at = MIN(?, expires_at), updated_at = ?
          WHERE status = 'pending' AND next_attempt_at <= ?`,
@@ -1949,10 +1950,11 @@ export class EccosGateway extends DurableObject<Env> {
         this.finishBroadcastIfDone(id, now);
         continue;
       }
-      token ??= await this.metaToken("broadcast");
-      if (token === "missing" || token === "unavailable") {
+      token ??= await this.sendToken("broadcast");
+      if (token === "missing" || token === "unavailable" || token === SUBSCRIPTION_REQUIRED) {
         this.requeue(id, due.map((row) => Number(row.seq)), Date.now());
         if (token === "missing") this.endBroadcast(id, "halted", "the WhatsApp Business Account is no longer connected", Date.now());
+        // Blocked sends wait too: the broadcast goes on once the account may send again.
         else this.sql.exec(`UPDATE broadcasts SET next_send_at = ? WHERE id = ?`, Date.now() + 30_000, id);
         continue;
       }
@@ -3071,9 +3073,18 @@ export class EccosGateway extends DurableObject<Env> {
 
   /** The WABA's Meta token. `unavailable` when the lookup failed and `missing` when the control
    * plane does not know the WABA; both are logged under the caller's `area`. */
-  private async metaToken(area: string): Promise<string | "missing" | "unavailable"> {
+  private metaToken(area: string): Promise<string | "missing" | "unavailable"> {
+    return this.readToken(area, () => getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps()));
+  }
+
+  /** As {@link metaToken}, for a send: `subscription_required` while the account's status blocks sends. */
+  private sendToken(area: string): Promise<string | "missing" | "unavailable"> {
+    return this.readToken(area, () => getControlPlaneStub(this.env).getSendTokenForWaba(this.wabaIdForOps()));
+  }
+
+  private async readToken(area: string, read: () => Promise<string | null>): Promise<string | "missing" | "unavailable"> {
     try {
-      const token = await getControlPlaneStub(this.env).getMetaAccessTokenForWaba(this.wabaIdForOps());
+      const token = await read();
       if (token !== null) return token;
       this.logWarn(area, "token-waba-missing");
       return "missing";

@@ -38,7 +38,7 @@ const PROMO = {
 const LOGIN_CODE = { id: "900400", name: "login_code", language: "en_US", status: "APPROVED", category: "AUTHENTICATION", components: [] };
 
 const account = (accountId: string, wabas: AccountWabaResource[]): AccountResources => ({
-  account: { accountId, name: accountId, createdAt: 1, connectPolicy: "open" },
+  account: { accountId, name: accountId, createdAt: 1, billingStatus: "open", canAddNumber: true },
   keys: [],
   wabas,
   phones: [],

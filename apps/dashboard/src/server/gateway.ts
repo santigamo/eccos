@@ -10,6 +10,7 @@ import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
+import { blocksSends } from "@eccos/gateway-contract/billing-status";
 import { linkPeople } from "./connect-link-people";
 import { timedProxy } from "./timing";
 import { classifyFailure } from "./classify-failure";
@@ -1038,12 +1039,13 @@ export const getDashboardState = createServerFn({ method: "GET" })
       }),
   );
 
-/** Read only for a closed account: an open one is never pointed at billing. */
+/** Read only for an account pointed at billing (no new number, or sends blocked); any other never is. */
 async function closedSubscription(
   gateway: GatewayApi,
   state: { accountId: string; resources: AccountResources },
 ): Promise<boolean> {
-  if (state.resources.account?.connectPolicy !== "closed") return false;
+  const account = state.resources.account;
+  if (!account || (account.canAddNumber !== false && !blocksSends(account.billingStatus))) return false;
   const stored = await gateway.getAccountBilling(state.accountId);
   return Boolean(stored?.subscriptionId && stored.customerId);
 }

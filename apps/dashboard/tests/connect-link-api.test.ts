@@ -18,7 +18,7 @@ const GRANT: ConnectLinkGrant = {
   linkId: "link_1",
   creatorUserId: "user_ruben",
   state: "active",
-  connectPolicy: "open",
+  canAddNumber: true,
 };
 const PEOPLE = { workspace: "NACEX 2801", inviter: "Rubén", inviterEmail: "ruben@agency.test" };
 const SIGNUP = { appId: "app", configId: "cfg", graphVersion: "v25.0" };
@@ -148,7 +148,7 @@ describe("view", () => {
   });
 
   test("says a closed workspace is closed before Meta is ever opened", async () => {
-    const h = harness({ grant: { ...GRANT, connectPolicy: "closed" } });
+    const h = harness({ grant: { ...GRANT, canAddNumber: false } });
     expect((await h.call("view")).body).toMatchObject({ status: "ready", closed: true });
   });
 
@@ -187,7 +187,7 @@ describe("start", () => {
   });
 
   test("refuses a closed workspace and a dead link without minting a state", async () => {
-    const closed = harness({ grant: { ...GRANT, connectPolicy: "closed" } });
+    const closed = harness({ grant: { ...GRANT, canAddNumber: false } });
     expect((await closed.call("start")).body).toEqual({ ok: false, code: "subscription_required" });
     const used = harness({ grant: { ...GRANT, state: "used" } });
     expect((await used.call("start")).body).toEqual({ ok: false, code: "gone" });

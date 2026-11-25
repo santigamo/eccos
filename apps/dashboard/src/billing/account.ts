@@ -1,15 +1,17 @@
-import type { AccountResources, ConnectPolicy, GatewayApi } from "@eccos/gateway-contract";
+import type { AccountResources, BillingStatus, GatewayApi } from "@eccos/gateway-contract";
 import type { Billing } from "./context";
 import { monthlyPriceEuros, subscriptionEnded } from "./plan";
 
 export interface BillingState {
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
   /** Numbers on active WABAs: what the subscription is priced for. */
   numbers: number;
   monthlyEuros: number;
   hasCustomer: boolean;
-  /** The operator set this workspace's policy; false while it follows the deployment default. */
-  explicitPolicy: boolean;
+  /** The status is stored on this workspace; false while it follows the deployment default. */
+  explicitStatus: boolean;
+  /** The gateway would register one more number now. */
+  canAddNumber: boolean;
 }
 
 export const BILLING_RETURN_PATH = "/settings?billing=success";
@@ -36,16 +38,18 @@ async function storedBilling(gateway: GatewayApi, accountId: string) {
 
 /** Read from the control plane only: Settings never waits on Creem. */
 export async function billingState(gateway: GatewayApi, accountId: string): Promise<BillingState> {
-  const [billing, numbers] = await Promise.all([
+  const [billing, resources] = await Promise.all([
     storedBilling(gateway, accountId),
-    billableNumbers(gateway, accountId),
+    gateway.listAccountResources(accountId),
   ]);
+  const numbers = billableCount(resources.wabas);
   return {
-    connectPolicy: billing.connectPolicy,
+    billingStatus: billing.billingStatus,
+    canAddNumber: resources.account?.canAddNumber === true,
     numbers,
     monthlyEuros: monthlyPriceEuros(numbers),
     hasCustomer: billing.customerId !== null,
-    explicitPolicy: billing.explicitPolicy === true,
+    explicitStatus: billing.explicitStatus === true,
   };
 }
 

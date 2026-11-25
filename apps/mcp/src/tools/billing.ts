@@ -1,4 +1,5 @@
 import type { BillingRefusalCode } from "@eccos/console-contract";
+import { BILLING_STATUSES, blocksSends } from "@eccos/gateway-contract/billing-status";
 import { z } from "zod";
 import { GRANT_REFUSED, ToolError, actorRef, defineTool } from "./registry";
 
@@ -17,14 +18,16 @@ export const billingGet = defineTool({
   stepUp: false,
   title: "Get the workspace's billing",
   description: [
-    "Returns whether this workspace can add WhatsApp numbers (connectPolicy open) or needs a subscription first (closed), how many numbers are billed",
-    "and the monthly price in euros. Messaging on numbers already connected never depends on it. enabled is false when the deployment runs without billing.",
+    "Returns whether this workspace can add a WhatsApp number now (connectPolicy open) or needs a subscription first (closed), its billing status,",
+    "how many numbers are billed and the monthly price in euros. The first number needs no subscription; a second one does. Sending stops only while",
+    "the status is paused or closed. enabled is false when the deployment runs without billing.",
     "Call it before connect_link_create, and after the person pays to confirm numbers can be added; nextTool says what to call next. It changes nothing.",
   ].join(" "),
   inputSchema: z.object({}),
   outputSchema: z.object({
     enabled: z.boolean(),
     connectPolicy: z.enum(["open", "closed"]).nullable(),
+    status: z.enum(BILLING_STATUSES).nullable(),
     numbers: z.number().int().nullable(),
     monthlyEuros: z.number().nullable(),
     hasBillingAccount: z.boolean().nullable(),
@@ -40,6 +43,7 @@ export const billingGet = defineTool({
       return {
         enabled: false,
         connectPolicy: null,
+        status: null,
         numbers: null,
         monthlyEuros: null,
         hasBillingAccount: null,
@@ -49,16 +53,20 @@ export const billingGet = defineTool({
     }
     const { billing } = result;
     const priced = `${billing.numbers} ${billing.numbers === 1 ? "number is" : "numbers are"} billed, ${billing.monthlyEuros} euros a month.`;
+    const sending = blocksSends(billing.billingStatus)
+      ? "numbers already connected cannot send until it is active"
+      : "numbers already connected keep sending";
     return {
       enabled: true,
-      connectPolicy: billing.connectPolicy,
+      connectPolicy: billing.canAddNumber ? ("open" as const) : ("closed" as const),
+      status: billing.billingStatus,
       numbers: billing.numbers,
       monthlyEuros: billing.monthlyEuros,
       hasBillingAccount: billing.hasCustomer,
-      ...(billing.connectPolicy === "open"
+      ...(billing.canAddNumber
         ? { detail: `Numbers can be added. ${priced}`, nextTool: null }
         : {
-            detail: `A subscription is required before a number can be added; numbers already connected keep sending. ${priced} Call billing_checkout_link and give the person the link.`,
+            detail: `A subscription is required before a number can be added; ${sending}. ${priced} Call billing_checkout_link and give the person the link.`,
             nextTool: "billing_checkout_link",
           }),
     };

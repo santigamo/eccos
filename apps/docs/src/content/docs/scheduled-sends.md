@@ -81,7 +81,8 @@ The template must be `APPROVED` in exactly that language when you schedule: ther
 - **A refusal ends only that send.** Any other Meta error, including account-wide ones, ends this
   send as `failed` with Meta's error. Other scheduled sends are not affected.
 - **Expiry.** Past `expiresAt` the send ends `failed` with reason `expired`, with no call to Meta.
-  If the WhatsApp Business Account is disconnected meanwhile, sends wait and then expire.
+  If the WhatsApp Business Account is disconnected, or the workspace's sending is paused, sends
+  wait and then expire.
 
 ## Follow it
 

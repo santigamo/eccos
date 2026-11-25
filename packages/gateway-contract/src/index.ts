@@ -1,3 +1,5 @@
+import type { BillingStatus } from "./billing-status";
+
 /**
  * Single source of truth for the Eccos gateway operator RPC surface.
  *
@@ -491,27 +493,28 @@ export type EraseByPhoneResult =
 
 // --- Account resources (account-scoped operator surface) --------------------
 
-/** Whether an account may add numbers. Messaging never depends on it. */
-export type ConnectPolicy = "open" | "closed";
+export type { BillingStatus } from "./billing-status";
 
 export interface AccountSummary {
   accountId: string;
   name: string;
   createdAt: number;
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
+  /** The gateway would register one more number now (`mayAddNumber`). */
+  canAddNumber: boolean;
 }
 
 /** Billing state of one account. The ids belong to the billing provider; the gateway only stores them. */
 export interface AccountBilling {
-  connectPolicy: ConnectPolicy;
-  /** The policy is stored on the account, not inherited from CONNECT_POLICY_DEFAULT. */
-  explicitPolicy: boolean;
+  billingStatus: BillingStatus;
+  /** The status is stored on the account, not inherited from CONNECT_POLICY_DEFAULT. */
+  explicitStatus: boolean;
   customerId: string | null;
   subscriptionId: string | null;
 }
 
 export interface AccountBillingInput {
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
   /** Omitted keeps the stored id. */
   customerId?: string;
   /** Omitted keeps the stored id; null clears it. */
@@ -760,7 +763,8 @@ export interface ConnectLinkGrant {
   organizationId: string;
   creatorUserId: string;
   state: "active" | "expired" | "used" | "revoked";
-  connectPolicy: ConnectPolicy;
+  /** The account would register one more number now. */
+  canAddNumber: boolean;
 }
 
 /** A link taken for one exchange. `claimId` is null when the link is not active: nothing was taken. */
@@ -996,6 +1000,8 @@ export interface TemplateHeaderMedia {
  * wrong.
  */
 export type SendTestFailureCode =
+  /** The account's billing status refuses sends (closed or paused); Meta was never called. */
+  | "subscription_required"
   /** Eccos' own limiter refused; Meta was never called. */
   | "rate_limited"
   /** The requested phone is not registered on the WABA. */
@@ -1061,6 +1067,8 @@ export interface SendReactionInput {
 
 /** Closed failure vocabulary for a free-text send. Same design as {@link SendTestFailureCode}. */
 export type SendTextFailureCode =
+  /** The account's billing status refuses sends (closed or paused); Meta was never called. */
+  | "subscription_required"
   /** Eccos' own limiter refused; Meta was never called. */
   | "rate_limited"
   /** The requested phone is not registered on the WABA. */

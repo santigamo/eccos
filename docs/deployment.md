@@ -194,12 +194,25 @@ browser-supplied selector.
 ### Billing
 
 Off by default, and a self-hosted deployment never needs it. Eccos Cloud charges per connected
-number through [Creem](https://creem.io); the gateway only knows whether an account may add
-numbers, and an account that may not keeps sending, receiving and forwarding.
+number through [Creem](https://creem.io). The gateway stores one billing status per account and
+derives two rules from it (`packages/gateway-contract/src/billing-status.ts`):
+
+| Status | Set by | Add a number | Send |
+|---|---|---|---|
+| `setup` | the default with `CONNECT_POLICY_DEFAULT=closed` | only the first | yes |
+| `active` | Creem `active` (or a trial started before trials were dropped) | yes | yes |
+| `past_due` | Creem `past_due` or `unpaid`, while payments are retried | yes | yes |
+| `cancelled` | Creem `scheduled_cancel`, until the period ends | no | yes |
+| `paused` | Creem `paused` | no | no (`subscription_required`, HTTP 402) |
+| `closed` | Creem `canceled` or `expired` | no | no (`subscription_required`, HTTP 402) |
+| `open` | the operator or `RESELLER_USER_IDS`; the default without the var | yes | yes |
+
+Only a stored `paused` or `closed` refuses sends; a default never does. Receiving and forwarding
+never depend on the status. Numbers an account already has can always be reconnected.
 
 | Where | Setting | Purpose |
 |---|---|---|
-| gateway var | `CONNECT_POLICY_DEFAULT` | `closed`: an account without a stored policy cannot add numbers (`subscription_required`). Unset means open |
+| gateway var | `CONNECT_POLICY_DEFAULT` | `closed`: an account without a stored status is in `setup`, so it connects its first number without paying. Unset means `open` |
 | dashboard secret | `CREEM_API_KEY` | Turns billing on. A `creem_test_` key talks to Creem's test API |
 | dashboard secret | `CREEM_WEBHOOK_SECRET` | Verifies `creem-signature` on `POST /api/billing/webhook` |
 | dashboard var | `CREEM_PRODUCT_ID` | The Creem product, e.g. `prod_XXXXXXXXXXXXXXXXXXXXXX`. Set it in the gitignored `wrangler.production.jsonc`, never in the template |
@@ -207,8 +220,9 @@ numbers, and an account that may not keeps sending, receiving and forwarding.
 | dashboard var | `RESELLER_USER_IDS` | Comma-separated user ids whose new workspaces open without a subscription, for a reseller invoiced separately. Their settings read "Billed separately". Existing workspaces are opened by the operator |
 
 The Creem product is a monthly subscription at 1 EUR per unit (a subscription's units are its
-monthly price in euros), with the free trial configured on the product and its default return URL
-set to `<console origin>/settings?billing=success`. Creem's customer portal takes no return URL.
+monthly price in euros), with no free trial: the checkout charges from the first day. Its default
+return URL is `<console origin>/settings?billing=success`, and the customer portal cancels at the
+end of the period, never immediately. Creem's customer portal takes no return URL.
 
 The preflight refuses a deploy with only one of `CREEM_PRODUCT_ID` and
 `CONNECT_POLICY_DEFAULT=closed`, or with billing on and no trigger besides the hourly one.

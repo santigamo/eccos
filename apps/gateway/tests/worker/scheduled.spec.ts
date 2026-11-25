@@ -5,7 +5,8 @@ import { signPayload } from "@eccos/core/signature";
 import eventsMd from "../../../docs/src/content/docs/event-reference.md?raw";
 import type { EccosGateway } from "../../src/gateway";
 import { jsonFences } from "../docs-md";
-import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, SUBSCRIBER_SECRET, SUBSCRIBER_URL, TEST_WABA_ID } from "./helpers";
+import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, SUBSCRIBER_SECRET, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { getControlPlaneStub } from "../../src/control-plane-stub";
 
 let API_KEY = "";
 const BASE = `http://example.com/v1/wabas/${TEST_WABA_ID}/scheduled`;
@@ -469,7 +470,7 @@ describe("sending", () => {
     await sql((s) => s.exec(`UPDATE scheduled_sends SET expires_at = ? WHERE key = 'appt-2'`, soon));
     for (const answer of ["unavailable", "missing"]) {
       await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
-        vi.spyOn(instance as unknown as { metaToken: () => Promise<string> }, "metaToken").mockResolvedValueOnce(answer);
+        vi.spyOn(instance as unknown as { sendToken: () => Promise<string> }, "sendToken").mockResolvedValueOnce(answer);
       });
       const before = Date.now();
       await due();
@@ -478,6 +479,19 @@ describe("sending", () => {
       expect((await row("appt-2")).next_attempt_at).toBe(soon);
     }
     expect(sendBodies(fetchSpy)).toHaveLength(0);
+  });
+
+  it("waits while the billing status blocks sends and sends once it does not", async () => {
+    const fetchSpy = mockMeta();
+    await put("appt-1", sched());
+    await getControlPlaneStub(env).setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed" });
+    await due();
+    expect(sendBodies(fetchSpy)).toHaveLength(0);
+    expect(await row("appt-1")).toMatchObject({ status: "pending", attempts: 0 });
+    await getControlPlaneStub(env).setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "past_due" });
+    await due();
+    expect(sendBodies(fetchSpy)).toHaveLength(1);
+    expect(await row("appt-1")).toMatchObject({ status: "sent" });
   });
 
   it("a refused limiter requeues without sending or spending an attempt, never past the expiry", async () => {

@@ -8,7 +8,6 @@ import type {
   ConnectLinkSettled,
   ConnectLinkSettlement,
   ConnectLinkSummary,
-  ConnectPolicy,
   IssuedConnectLink,
   IssuedSecretClaim,
   ProvisioningStatus,
@@ -39,7 +38,8 @@ import {
   pendingSecretClaims,
   spendSecretClaim,
 } from "./secret-claims";
-import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import { blocksSends, isBillingStatus, mayAddNumber, type BillingStatus } from "@eccos/gateway-contract/billing-status";
+import { effectiveBillingStatus, SUBSCRIPTION_REQUIRED, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
 import { sha256Hex, toBase64Url } from "./encoding";
 import {
   coexistenceSyncStatus,
@@ -112,7 +112,8 @@ export interface AccountRecord {
   accountId: string;
   name: string;
   createdAt: number;
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
+  canAddNumber: boolean;
 }
 
 /** Stored API-key row. `hash` is SHA-256 of the raw key — never the key itself. */
@@ -163,7 +164,7 @@ export interface WabaAccess {
 }
 
 export interface CreateAccountResult {
-  account: Omit<AccountRecord, "connectPolicy">;
+  account: Omit<AccountRecord, "billingStatus" | "canAddNumber">;
   apiKey: string;
   keyId: string;
 }
@@ -772,7 +773,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       if (!accountColumns.some((row) => row.name === "conversation_retention_days")) {
         this.sql.exec("ALTER TABLE accounts ADD COLUMN conversation_retention_days INTEGER");
       }
-      // connect_policy NULL follows CONNECT_POLICY_DEFAULT. The billing ids are stored, never interpreted.
+      // connect_policy holds the BillingStatus; NULL follows CONNECT_POLICY_DEFAULT. The billing ids are stored, never interpreted.
       for (const column of ["connect_policy", "billing_customer_id", "billing_subscription_id"]) {
         if (!accountColumns.some((row) => row.name === column)) {
           this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} TEXT`);
@@ -981,6 +982,14 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.decryptStoredToken(row.account_id as string, id, row.meta_access_token);
   }
 
+  /** As {@link getMetaAccessTokenForWaba}, for a send: a status that blocks sends gets `subscription_required`. */
+  async getSendTokenForWaba(wabaId: string): Promise<string | typeof SUBSCRIPTION_REQUIRED | null> {
+    const id = validateWabaId(wabaId, "wabaId");
+    const row = this.sql.exec("SELECT account_id FROM wabas WHERE waba_id = ?", id).toArray()[0];
+    if (row && blocksSends(this.billingStatusOf(row.account_id as string))) return SUBSCRIPTION_REQUIRED;
+    return this.getMetaAccessTokenForWaba(id);
+  }
+
   /**
    * Stores what Meta reported about a WABA's token. A valid reading also clears an earlier
    * rejection; an invalid one keeps the stored expiry, and a value Meta did not give keeps the
@@ -1107,26 +1116,41 @@ export class EccosControlPlane extends DurableObject<Env> {
     return (row?.days as number | null) ?? null;
   }
 
-  private connectPolicyOf(accountId: string): ConnectPolicy {
+  private billingStatusOf(accountId: string): BillingStatus {
     const row = this.sql.exec("SELECT connect_policy FROM accounts WHERE account_id = ?", accountId).toArray()[0];
-    return effectiveConnectPolicy(row?.connect_policy, this.env.CONNECT_POLICY_DEFAULT);
+    return effectiveBillingStatus(row?.connect_policy, this.env.CONNECT_POLICY_DEFAULT);
+  }
+
+  /** Every number the account has, whatever its WABA's status: what `mayAddNumber` counts. */
+  private numbersOf(accountId: string): number {
+    return Number(
+      this.sql
+        .exec("SELECT COUNT(*) AS n FROM phones p JOIN wabas w ON w.waba_id = p.waba_id WHERE w.account_id = ?", accountId)
+        .one().n,
+    );
+  }
+
+  private canAddNumber(accountId: string): boolean {
+    return mayAddNumber(this.billingStatusOf(accountId), this.numbersOf(accountId));
   }
 
   /**
-   * For an account that may not add numbers: drops every WABA it does not already
-   * own and every phone it does not already have, so what it has can still be
-   * re-registered. Runs inside the registration transaction. Throws when nothing
+   * Keeps every WABA and phone the account already has, so it can be re-registered,
+   * and each new phone only while `mayAddNumber` allows one more (a `setup` account
+   * gets its first). Runs inside the registration transaction. Throws when nothing
    * is left to register.
    */
   private refuseNewNumbers(prepared: PreparedWaba[]): { kept: PreparedWaba[]; refused: Map<string, PhoneRecord[]> } {
     const refused = new Map<string, PhoneRecord[]>();
+    const counts = new Map<string, number>();
     let refusedAny = false;
     const kept = prepared.filter((item) => {
-      if (this.connectPolicyOf(item.accountId) !== "closed") return true;
+      const status = this.billingStatusOf(item.accountId);
+      let count = counts.get(item.accountId) ?? this.numbersOf(item.accountId);
       const owned = this.sql
         .exec("SELECT 1 FROM wabas WHERE waba_id = ? AND account_id = ?", item.wabaId, item.accountId)
         .toArray().length > 0;
-      if (!owned) {
+      if (!owned && !mayAddNumber(status, count)) {
         refusedAny = true;
         return false;
       }
@@ -1138,11 +1162,20 @@ export class EccosControlPlane extends DurableObject<Env> {
             item.accountId,
           )
           .toArray().length > 0;
-      const refusedPhones = item.phones.filter((phone) => !has(phone));
+      const refusedPhones: PhoneRecord[] = [];
+      item.phones = item.phones.filter((phone) => {
+        if (has(phone)) return true;
+        if (!mayAddNumber(status, count)) {
+          refusedPhones.push(phone);
+          return false;
+        }
+        count += 1;
+        return true;
+      });
+      counts.set(item.accountId, count);
       if (refusedPhones.length > 0) {
         refusedAny = true;
         refused.set(item.wabaId, refusedPhones);
-        item.phones = item.phones.filter(has);
       }
       return true;
     });
@@ -1160,8 +1193,8 @@ export class EccosControlPlane extends DurableObject<Env> {
       .toArray()[0];
     if (!row) return null;
     return {
-      connectPolicy: effectiveConnectPolicy(row.connect_policy, this.env.CONNECT_POLICY_DEFAULT),
-      explicitPolicy: isStoredPolicy(row.connect_policy),
+      billingStatus: effectiveBillingStatus(row.connect_policy, this.env.CONNECT_POLICY_DEFAULT),
+      explicitStatus: isBillingStatus(row.connect_policy),
       customerId: (row.billing_customer_id as string | null) ?? null,
       subscriptionId: (row.billing_subscription_id as string | null) ?? null,
     };
@@ -1169,14 +1202,12 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   setAccountBilling(accountId: string, billing: AccountBillingInput): AccountBilling {
     const id = this.requireAccount(accountId);
-    if (billing.connectPolicy !== "open" && billing.connectPolicy !== "closed") {
-      throw new Error('invalid connectPolicy: expected "open" or "closed"');
-    }
+    if (!isBillingStatus(billing.billingStatus)) throw new Error(`invalid billingStatus: ${String(billing.billingStatus)}`);
     const stored = this.getAccountBilling(id) as AccountBilling;
     if (billing.ifSubscriptionId !== undefined && billing.ifSubscriptionId !== stored.subscriptionId) return stored;
     this.sql.exec(
       "UPDATE accounts SET connect_policy = ?, billing_customer_id = ?, billing_subscription_id = ? WHERE account_id = ?",
-      billing.connectPolicy,
+      billing.billingStatus,
       billing.customerId || stored.customerId,
       billing.subscriptionId === undefined ? stored.subscriptionId : billing.subscriptionId || null,
       id,
@@ -1564,6 +1595,13 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.hydrateWaba(row);
   }
 
+  /** As {@link getWaba}, for a send: a status that blocks sends gets `subscription_required`. */
+  async getWabaForSend(accountId: string, wabaId: string): Promise<AccountWaba | typeof SUBSCRIPTION_REQUIRED | null> {
+    const waba = await this.getWaba(accountId, wabaId);
+    if (waba && blocksSends(this.billingStatusOf(waba.accountId))) return SUBSCRIPTION_REQUIRED;
+    return waba;
+  }
+
   /** Whether the account owns the WABA, whatever its status; credentials stay sealed. */
   ownsWaba(accountId: string, wabaId: string): boolean {
     return this.readWabaRow(accountId, wabaId) !== null;
@@ -1790,11 +1828,13 @@ export class EccosControlPlane extends DurableObject<Env> {
         )
         .toArray();
       if (owned.length !== 1) return [];
-      if (this.connectPolicyOf(account) === "closed") return [];
       // Gap-filling only: a WABA that already has numbers is not this method's
       // business.
       if (phonesOf(id, this.sql).length > 0) return [];
+      const status = this.billingStatusOf(account);
+      let count = this.numbersOf(account);
       for (const phone of input.phones) {
+        if (!mayAddNumber(status, count++)) break;
         this.sql.exec(
           "INSERT OR REPLACE INTO phones (waba_id, phone_number_id, display_phone_number) VALUES (?, ?, ?)",
           id,
@@ -2158,7 +2198,8 @@ export class EccosControlPlane extends DurableObject<Env> {
         accountId: id,
         name: account.name as string,
         createdAt: account.created_at as number,
-        connectPolicy: this.connectPolicyOf(id),
+        billingStatus: this.billingStatusOf(id),
+        canAddNumber: this.canAddNumber(id),
       },
       keys,
       wabas,
@@ -2308,7 +2349,7 @@ export class EccosControlPlane extends DurableObject<Env> {
   private connectLinkGrant(row: ConnectLinkRow | null): ConnectLinkGrant | null {
     const organizationId = row && this.organizationOf(row.accountId);
     if (!row || !organizationId) return null;
-    return { ...row, organizationId, connectPolicy: this.connectPolicyOf(row.accountId) };
+    return { ...row, organizationId, canAddNumber: this.canAddNumber(row.accountId) };
   }
 
   /** `secretRevision` is the WABA's subscriber-secret revision, read by the caller for a subscriber claim. */

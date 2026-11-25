@@ -10,6 +10,9 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
+import { SendingNotice } from "../components/dashboard/subscription-notice"
+import { PageNotice } from "../ui"
+import { blocksSends } from "@eccos/gateway-contract/billing-status"
 import { BackupCodesSheet } from "../components/dashboard/backup-codes-sheet"
 import { StepUpSheet } from "../components/dashboard/step-up-sheet"
 import { Toaster } from "../components/ui/sonner"
@@ -234,9 +237,26 @@ function redirectFor(pathname: string, state: RootState): void {
   if (to) throw redirect({ to })
 }
 
+/**
+ * A workspace whose billing status blocks sends, said above every page but
+ * /numbers, whose own notice says it. Null when there is nothing to say.
+ */
+export function sendingPaused(
+  pathname: string,
+  state: DashboardState,
+): { billing: boolean; subscribed: boolean; canManage: boolean } | null {
+  if (pathname === "/numbers") return null
+  const resources =
+    state.stage === "ready" ? state.scope.resources : state.stage === "account-ready" ? state.resources : null
+  if (!resources?.account || !blocksSends(resources.account.billingStatus) || resources.wabas.length === 0) return null
+  const billing = "billing" in state ? state.billing : undefined
+  return { billing: billing !== undefined, subscribed: billing?.subscribed === true, canManage: billing?.canManage === true }
+}
+
 function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
+  const paused = state.ok ? sendingPaused(pathname, state.data) : null
   useRootRefresh()
   useEffect(() => watchUnhandledSignIn(window), [])
   return (
@@ -249,7 +269,9 @@ function RootComponent() {
         // an organization, including the one with no WABA yet: the user is
         // signed in, so they must be able to see who they are and sign out.
         <>
-          <AppShell />
+          <PageNotice.Provider value={paused ? <SendingNotice {...paused} /> : null}>
+            <AppShell />
+          </PageNotice.Provider>
           <StepUpSheet />
           <BackupCodesSheet />
         </>

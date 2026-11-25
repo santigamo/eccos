@@ -5,30 +5,46 @@ import { Row, Rows, SectionFrame, SettingsSection } from "./settings-section";
 
 const NOTE_CLASS = "m-0 block border-l-2 px-3 py-2 text-sm text-foreground";
 
+const STATUS_LABELS: Record<Exclude<BillingState["billingStatus"], "open">, string> = {
+  setup: "No subscription yet",
+  active: "Active",
+  past_due: "Payment failed, retrying",
+  cancelled: "Cancelled, active until the period ends",
+  paused: "Paused",
+  closed: "No active subscription",
+};
+
+/** No subscription is running: the panel offers a checkout. */
+export function needsSubscription({ billingStatus }: BillingState): boolean {
+  return billingStatus === "setup" || billingStatus === "paused" || billingStatus === "closed";
+}
+
 export function billingStatusLabel(billing: BillingState): string {
-  if (billing.connectPolicy === "closed") return "No active subscription";
+  if (billing.billingStatus !== "open") return STATUS_LABELS[billing.billingStatus];
   if (billing.hasCustomer) return "Active";
   // Opened by the operator with no Creem customer: someone else pays, e.g. a reseller.
-  return billing.explicitPolicy ? "Billed separately" : "No subscription needed";
+  return billing.explicitStatus ? "Billed separately" : "No subscription needed";
+}
+
+/** What the description adds for a workspace without a subscription. */
+function unsubscribedNote(billing: BillingState): string {
+  if (billing.billingStatus === "setup") return " Your first number works without one; adding another needs a subscription.";
+  return " Without a subscription, numbers cannot be added and messages cannot be sent; incoming messages still arrive.";
 }
 
 /** What Creem said about the subscription a checkout just returned with; null when it did not say. */
 export type CheckoutReturn = { status: string | null };
 
 /** What the page says on the way back from a Creem checkout, whose webhook may not have landed yet. */
-export function checkoutReturnNote(billing: BillingState, { status }: CheckoutReturn): string {
-  if (billing.connectPolicy === "closed") {
-    return "Creem is still confirming the checkout. Reload this page in a few seconds.";
-  }
-  return status === "trialing"
-    ? "Your trial has started. You can add numbers now."
-    : "Your subscription is active. You can add numbers now.";
+export function checkoutReturnNote(billing: BillingState): string {
+  if (needsSubscription(billing)) return "Creem is still confirming the checkout. Reload this page in a few seconds.";
+  return "Your subscription is active. You can add numbers now.";
 }
 
 /** Billing for the workspace. Rendered only while billing is on. */
 export function BillingPanel({ billing, returned }: { billing: BillingState; returned?: CheckoutReturn | null }) {
   const { busy, error, leaveTo } = useBillingRedirect();
-  const closed = billing.connectPolicy === "closed";
+  const closed = needsSubscription(billing);
   // With no subscription of its own, a price would read as a charge.
   const priced = closed || billing.hasCustomer;
 
@@ -36,13 +52,13 @@ export function BillingPanel({ billing, returned }: { billing: BillingState; ret
     <SettingsSection
       id="billing"
       title="Billing"
-      description={`Eccos Cloud is billed per connected number, never per message.${closed ? " Messaging keeps working without a subscription; adding a number needs one." : ""}`}
+      description={`Eccos Cloud is billed per connected number, never per message.${closed ? unsubscribedNote(billing) : ""}`}
     >
       <SectionFrame flush>
         {returned ? (
           <div className="px-5 pt-4">
             <output className={`${NOTE_CLASS} ${closed ? "border-l-warning" : "border-l-(--mark)"}`}>
-              {checkoutReturnNote(billing, returned)}
+              {checkoutReturnNote(billing)}
             </output>
           </div>
         ) : null}

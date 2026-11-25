@@ -78,6 +78,27 @@ function pendingInput(wabaId: string, phones: string[], token = "tenant-token") 
 
 let apiKey = "";
 
+function v1(method: string, path: string, body: unknown): Promise<Response> {
+  return exports.default.fetch(`http://example.com/v1/wabas/${TEST_WABA_ID}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+const sendText = () => v1("POST", "/messages", { to: "34600000000", type: "text", text: { body: "hi" } });
+
+/** A message, a message on a named phone, a broadcast and a scheduled send. */
+async function everySend(): Promise<Response[]> {
+  const template = { name: "promo", language: { code: "es" } };
+  return [
+    await sendText(),
+    await v1("POST", "/phones/PNID1/messages", { to: "34600000000", type: "text", text: { body: "hi" } }),
+    await v1("POST", "/broadcasts", { template, recipients: [{ to: "34600000000" }] }),
+    await v1("PUT", "/scheduled/appt-1", { to: "34600000000", template, sendAt: Date.now() + 3_600_000 }),
+  ];
+}
+
 beforeEach(async () => {
   apiKey = (await bootstrapAccount()).apiKey;
   await holdAlarms();
@@ -89,7 +110,7 @@ afterEach(async () => {
   await reset();
 });
 
-describe("connect policy off (self-host)", () => {
+describe("billing off (self-host)", () => {
   it("is open with no var and no stored policy, and many numbers connect", async () => {
     await cp(async (i) => {
       await i.beginWabaProvisioningBatch([
@@ -98,23 +119,23 @@ describe("connect policy off (self-host)", () => {
       ]);
       await i.registerWaba({ ...pendingInput("WABA_C", ["PN_C1"]), provisioningStatus: "active" });
       const resources = i.listAccountResources(TEST_ACCOUNT_ID);
-      expect(resources.account?.connectPolicy).toBe("open");
+      expect(resources.account).toMatchObject({ billingStatus: "open", canAddNumber: true });
       expect(resources.phones).toHaveLength(7);
       expect(i.getAccountBilling(TEST_ACCOUNT_ID)).toEqual({
-        connectPolicy: "open",
-        explicitPolicy: false,
+        billingStatus: "open",
+        explicitStatus: false,
         customerId: null,
         subscriptionId: null,
       });
-      expect(i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open" }).explicitPolicy).toBe(true);
+      expect(i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "open" }).explicitStatus).toBe(true);
       expect(i.listBilledAccounts()).toEqual([]);
     });
   });
 });
 
-describe("connect policy closed", () => {
+describe("billing status closed", () => {
   beforeEach(async () => {
-    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed" }));
+    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed" }));
   });
 
   it("the Embedded Signup callback refuses a new number", async () => {
@@ -240,9 +261,9 @@ describe("connect policy closed", () => {
   it("adoption adds nothing", async () => {
     await cp(async (i) => {
       // Connected without a phone while the account could still add numbers.
-      i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open" });
+      i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "open" });
       await i.beginWabaProvisioning(pendingInput(NEW_WABA, []));
-      i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed" });
+      i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed" });
       const claim = await i.claimWabaProvisioning(TEST_ACCOUNT_ID, NEW_WABA);
       if (!claim) throw new Error("expected a provisioning claim");
       const adopted = await i.adoptWabaPhones({
@@ -257,18 +278,36 @@ describe("connect policy closed", () => {
     });
   });
 
-  it("still sends, receives and forwards", async () => {
+  it("refuses every send with subscription_required, and Meta is never called", async () => {
+    const graph = mockGraph();
+    for (const res of await everySend()) {
+      expect(res.status).toBe(402);
+      expect(await res.json()).toMatchObject({ ok: false, code: "subscription_required" });
+    }
+    const target = { wabaId: TEST_WABA_ID, phoneNumberId: "PNID1", to: "34600000000" };
+    const refused = { ok: false, code: "subscription_required", detail: null };
+    expect(await rpc().sendText({ ...target, text: "hi" }, TEST_ACCOUNT_ID)).toEqual(refused);
+    expect(await rpc().sendReaction({ ...target, messageId: "wamid.IN", emoji: "👍" }, TEST_ACCOUNT_ID)).toEqual(refused);
+    expect(
+      await rpc().sendTemplateTest({ ...target, templateName: "promo", languageCode: "es" }, TEST_ACCOUNT_ID),
+    ).toEqual(refused);
+    expect(graph.mock.calls.some(([input]) => String(input).includes("/messages"))).toBe(false);
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      expect(instance.sql.exec("SELECT COUNT(*) AS n FROM outbound_messages").one().n).toBe(0);
+    });
+  });
+
+  it("an account opened again sends", async () => {
+    mockGraph();
+    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "active" }));
+    expect((await sendText()).status).toBe(200);
+  });
+
+  it("still receives and forwards", async () => {
     await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
       instance.saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
     });
     const graph = mockGraph();
-
-    const sent = await exports.default.fetch(`http://example.com/v1/wabas/${TEST_WABA_ID}/messages`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ to: "34600000000", type: "text", text: { body: "hi" } }),
-    });
-    expect(sent.status).toBe(200);
 
     const body = JSON.stringify(
       metaEnvelope({
@@ -290,31 +329,92 @@ describe("connect policy closed", () => {
   });
 });
 
-describe("connect policy default and billing state", () => {
-  it("CONNECT_POLICY_DEFAULT=closed closes accounts without a stored policy, and a stored one wins", async () => {
-    (env as { CONNECT_POLICY_DEFAULT?: string }).CONNECT_POLICY_DEFAULT = "closed";
+describe("billing statuses", () => {
+  it("paused refuses sends and new numbers", async () => {
+    mockGraph();
+    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "paused" }));
+    expect((await sendText()).status).toBe(402);
     await cp(async (i) => {
-      expect(i.listAccountResources(TEST_ACCOUNT_ID).account?.connectPolicy).toBe("closed");
-      await expect(i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_NEW"]))).rejects.toThrow(
-        "subscription required",
-      );
-      i.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open" });
-      const opened = await i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_NEW"]));
-      expect(opened.phones).toHaveLength(1);
+      await expect(i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_NEW"]))).rejects.toThrow("subscription required");
     });
   });
 
+  it.each(["setup", "active", "past_due", "cancelled", "open"] as const)("%s never blocks a send", async (billingStatus) => {
+    mockGraph();
+    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus }));
+    for (const res of await everySend()) expect(res.status).not.toBe(402);
+  });
+
+  it("past_due and active add a second number; cancelled and setup do not", async () => {
+    for (const [billingStatus, adds] of [["past_due", true], ["active", true], ["cancelled", false], ["setup", false]] as const) {
+      await cp(async (i) => {
+        i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus });
+        expect(i.listAccountResources(TEST_ACCOUNT_ID).account?.canAddNumber).toBe(adds);
+        const added = i.beginWabaProvisioning(pendingInput(`WABA_${billingStatus}`, [`PN_${billingStatus}`]));
+        if (adds) expect((await added).phones).toHaveLength(1);
+        else await expect(added).rejects.toThrow("subscription required");
+      });
+    }
+  });
+
+  it("rejects a status it does not know", async () => {
+    await cp((i) => {
+      expect(() => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "trialing" as never })).toThrow("invalid billingStatus");
+    });
+  });
+});
+
+describe("setup, the default with billing on", () => {
+  beforeEach(() => {
+    (env as { CONNECT_POLICY_DEFAULT?: string }).CONNECT_POLICY_DEFAULT = "closed";
+  });
+
+  it("a never-subscribed account that has a number keeps sending but adds no other", async () => {
+    mockGraph();
+    await cp(async (i) => {
+      expect(i.getAccountBilling(TEST_ACCOUNT_ID)).toMatchObject({ billingStatus: "setup", explicitStatus: false });
+      expect(i.listAccountResources(TEST_ACCOUNT_ID).account).toMatchObject({ billingStatus: "setup", canAddNumber: false });
+      await expect(i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_NEW"]))).rejects.toThrow("subscription required");
+    });
+    expect((await sendText()).status).toBe(200);
+    await expectNothingNew();
+  });
+
+  it("an account with no number connects its first, and only the first", async () => {
+    await cp(async (i) => {
+      i.sql.exec("DELETE FROM phones");
+      i.sql.exec("DELETE FROM wabas");
+      expect(i.listAccountResources(TEST_ACCOUNT_ID).account?.canAddNumber).toBe(true);
+      const first = await i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_ONE", "PN_TWO"]));
+      expect(first.phones.map((phone) => phone.phoneNumberId)).toEqual(["PN_ONE"]);
+      expect(first.refusedPhones?.map((phone) => phone.phoneNumberId)).toEqual(["PN_TWO"]);
+      expect(i.listAccountResources(TEST_ACCOUNT_ID).account?.canAddNumber).toBe(false);
+      await expect(i.beginWabaProvisioning(pendingInput("WABA_SECOND", ["PN_THREE"]))).rejects.toThrow(
+        "subscription required",
+      );
+    });
+  });
+
+  it("a stored status wins over the default", async () => {
+    await cp(async (i) => {
+      i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "active" });
+      expect((await i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_NEW"]))).phones).toHaveLength(1);
+    });
+  });
+});
+
+describe("billing ids", () => {
   it("stores the billing ids, keeps them when omitted, and lists billed accounts with their active numbers", async () => {
     const gateway = rpc();
     await gateway.setAccountBilling(TEST_ACCOUNT_ID, {
-      connectPolicy: "open",
+      billingStatus: "active",
       customerId: "cust_1",
       subscriptionId: "sub_1",
     });
     await cp((i) => i.beginWabaProvisioning(pendingInput(NEW_WABA, ["PN_NEW"])));
-    expect(await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed" })).toEqual({
-      connectPolicy: "closed",
-      explicitPolicy: true,
+    expect(await gateway.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed" })).toEqual({
+      billingStatus: "closed",
+      explicitStatus: true,
       customerId: "cust_1",
       subscriptionId: "sub_1",
     });
@@ -325,18 +425,18 @@ describe("connect policy default and billing state", () => {
 
   it("writes only while the stored subscription is the expected one, never stores an empty id, and forgets an ended one", async () => {
     const gateway = rpc();
-    const first = { connectPolicy: "open" as const, customerId: "cust_1", subscriptionId: "sub_1" };
+    const first = { billingStatus: "active" as const, customerId: "cust_1", subscriptionId: "sub_1" };
     await gateway.setAccountBilling(TEST_ACCOUNT_ID, first);
     // A stale writer that read another subscription changes nothing.
     expect(
-      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed", ifSubscriptionId: "sub_0" }),
-    ).toEqual({ ...first, explicitPolicy: true });
+      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed", ifSubscriptionId: "sub_0" }),
+    ).toEqual({ ...first, explicitStatus: true });
     expect(
-      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "open", customerId: "", ifSubscriptionId: "sub_1" }),
-    ).toEqual({ ...first, explicitPolicy: true });
+      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "active", customerId: "", ifSubscriptionId: "sub_1" }),
+    ).toEqual({ ...first, explicitStatus: true });
     expect(
-      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { connectPolicy: "closed", subscriptionId: null }),
-    ).toEqual({ connectPolicy: "closed", explicitPolicy: true, customerId: "cust_1", subscriptionId: null });
+      await gateway.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed", subscriptionId: null }),
+    ).toEqual({ billingStatus: "closed", explicitStatus: true, customerId: "cust_1", subscriptionId: null });
     expect(await gateway.listBilledAccounts()).toEqual([]);
   });
 

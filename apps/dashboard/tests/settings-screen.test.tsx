@@ -20,8 +20,9 @@ const { ConversationRetentionPanel, RETENTION_CHOICES, saveRetentionChoice } = a
 
 const workspace = { id: "org-a", name: "Citta", role: "owner" };
 const billing = {
-  connectPolicy: "open" as const,
-  explicitPolicy: true,
+  billingStatus: "active" as const,
+  canAddNumber: true,
+  explicitStatus: true,
   hasCustomer: true,
   numbers: 1,
   monthlyEuros: 8,

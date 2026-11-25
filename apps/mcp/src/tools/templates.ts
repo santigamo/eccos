@@ -789,6 +789,11 @@ export const templateSendTest = defineTool({
       ? "Retry later with the same idempotencyKey, which never sends twice."
       : "Do not send again until the person confirms it did not arrive; next time pass an idempotencyKey so a retry is safe.";
     const message: Record<typeof result.code, string> = {
+      subscription_required: say(
+        "Nothing was sent: this workspace has no active subscription, so it cannot send messages. Incoming messages are still received.",
+        "billing_checkout_link",
+        "Call billing_checkout_link and give an owner or admin the link.",
+      ),
       rate_limited:
         "Nothing was sent: this WhatsApp Business account reached its Eccos send rate limit, which it shares with the API and the console. Wait a minute before sending again, and do not retry in a loop.",
       no_phone: say(

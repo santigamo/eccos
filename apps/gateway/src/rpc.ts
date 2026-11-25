@@ -23,6 +23,7 @@ import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { getMedia as getStoredMedia } from "./media-store";
 import { isIdempotencyKey, resolveRetentionDays, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
+import { SUBSCRIPTION_REQUIRED } from "./connect-policy";
 import type {
   AccountKeyResource,
   BroadcastDetail,
@@ -889,7 +890,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     accountId: string,
   ): Promise<SendTemplateTestResult> {
     const account = requireAccountId(accountId, "accountId is required");
-    const waba = await getControlPlaneStub(this.env).getWaba(account, input.wabaId);
+    const waba = await getControlPlaneStub(this.env).getWabaForSend(account, input.wabaId);
+    if (waba === SUBSCRIPTION_REQUIRED) return { ok: false, code: SUBSCRIPTION_REQUIRED, detail: null };
     if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
 
     // A result, not a throw: the account's phones genuinely change between the
@@ -1047,7 +1049,8 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     metaBody: Record<string, unknown>,
   ): Promise<SendTextResult> {
     const account = requireAccountId(accountId, "accountId is required");
-    const waba = await getControlPlaneStub(this.env).getWaba(account, input.wabaId);
+    const waba = await getControlPlaneStub(this.env).getWabaForSend(account, input.wabaId);
+    if (waba === SUBSCRIPTION_REQUIRED) return { ok: false, code: SUBSCRIPTION_REQUIRED, detail: null };
     if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
 
     if (!waba.phones.some((phone) => phone.phoneNumberId === input.phoneNumberId)) {

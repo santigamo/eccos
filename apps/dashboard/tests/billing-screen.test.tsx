@@ -1,24 +1,37 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { AccountResources, ConnectPolicy } from "@eccos/gateway-contract";
+import type { AccountResources, BillingStatus } from "@eccos/gateway-contract";
+import { blocksSends, mayAddNumber } from "@eccos/gateway-contract/billing-status";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
 
 const { SettingsView } = await import("../src/routes/settings");
 const { FirstRunConnect, NumbersView } = await import("../src/routes/numbers");
-const { closedNotice } = await import("../src/billing/notice");
+const { closedNotice, sendingPausedNotice } = await import("../src/billing/notice");
+const { SendingNotice } = await import("../src/components/dashboard/subscription-notice");
+const { sendingPaused } = await import("../src/routes/__root");
+const { sendTestFailureCopy, sendTextFailureCopy } = await import("../src/lib/failure");
 const { billingStatusLabel, checkoutReturnNote } = await import("../src/components/dashboard/billing-panel");
 const { normalizeConnectError } = await import("../src/components/dashboard/connect-outcome");
 const { returnPathFor } = await import("../src/lib/connect-result");
 const { validateConfirmCheckoutInput } = await import("../src/server/gateway");
 
-const closed = { connectPolicy: "closed" as const, numbers: 2, monthlyEuros: 8, hasCustomer: false, explicitPolicy: true };
-const trial = { connectPolicy: "open" as const, numbers: 2, monthlyEuros: 8, hasCustomer: true, explicitPolicy: true };
+const base = { numbers: 2, monthlyEuros: 8, explicitStatus: true };
+const closed = { ...base, billingStatus: "closed" as const, canAddNumber: false, hasCustomer: false };
+const setup = { ...closed, billingStatus: "setup" as const, explicitStatus: false };
+const trial = { ...base, billingStatus: "active" as const, canAddNumber: true, hasCustomer: true };
 
-function resources(connectPolicy: ConnectPolicy): AccountResources {
+/** A workspace with one number, as the gateway reports it. */
+function resources(billingStatus: BillingStatus): AccountResources {
   return {
-    account: { accountId: "account-a", name: "Account A", createdAt: 1, connectPolicy },
+    account: {
+      accountId: "account-a",
+      name: "Account A",
+      createdAt: 1,
+      billingStatus,
+      canAddNumber: mayAddNumber(billingStatus, 1),
+    },
     keys: [],
     wabas: [
       {
@@ -81,12 +94,12 @@ describe("billing off", () => {
 });
 
 describe("billing on", () => {
-  test("a closed workspace is offered the subscription and told messaging keeps working", () => {
+  test("a closed workspace is offered the subscription and told sending stops without one", () => {
     const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={closed} />);
     expect(html).toContain("Billing");
     expect(html).toContain("No active subscription");
     expect(html).toContain("8 EUR + VAT");
-    expect(html).toContain("Messaging keeps working");
+    expect(html).toContain("messages cannot be sent; incoming messages still arrive");
     expect(html).toContain("Start subscription");
     expect(html).not.toContain("Manage billing");
   });
@@ -97,24 +110,54 @@ describe("billing on", () => {
     expect(html).not.toContain("Start subscription");
   });
 
-  test("status labels come from the stored policy", () => {
+  test("status labels come from the stored status", () => {
     expect(billingStatusLabel(trial)).toBe("Active");
     expect(billingStatusLabel(closed)).toBe("No active subscription");
+    expect(billingStatusLabel(setup)).toBe("No subscription yet");
+    expect(billingStatusLabel({ ...trial, billingStatus: "past_due" })).toBe("Payment failed, retrying");
+    expect(billingStatusLabel({ ...trial, billingStatus: "cancelled" })).toBe("Cancelled, active until the period ends");
+    const open = { ...trial, billingStatus: "open" as const };
+    expect(billingStatusLabel(open)).toBe("Active");
     // Opened by the operator with no Creem customer: a reseller pays.
-    expect(billingStatusLabel({ ...trial, hasCustomer: false })).toBe("Billed separately");
+    expect(billingStatusLabel({ ...open, hasCustomer: false })).toBe("Billed separately");
     // Open only because the deployment default is open.
-    expect(billingStatusLabel({ ...trial, hasCustomer: false, explicitPolicy: false })).toBe("No subscription needed");
+    expect(billingStatusLabel({ ...open, hasCustomer: false, explicitStatus: false })).toBe("No subscription needed");
+  });
+
+  test("a workspace in setup is told its first number is free and offered the subscription", () => {
+    const html = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={setup} />);
+    expect(html).toContain("Your first number works without one");
+    expect(html).toContain("Start subscription");
   });
 
   test("the checkout return says what happened, and waits when the webhook has not landed", () => {
-    expect(checkoutReturnNote(trial, { status: "trialing" })).toContain("trial has started");
-    expect(checkoutReturnNote(trial, { status: "active" })).toContain("subscription is active");
-    expect(checkoutReturnNote(closed, { status: null })).toContain("still confirming");
+    expect(checkoutReturnNote(trial)).toContain("subscription is active");
+    expect(checkoutReturnNote(closed)).toContain("still confirming");
+    expect(checkoutReturnNote(setup)).toContain("still confirming");
     const html = renderToStaticMarkup(
-      <SettingsView accountId="account-a" canAdminister billing={trial} billingReturned={{ status: "trialing" }} />,
+      <SettingsView accountId="account-a" canAdminister billing={trial} billingReturned={{ status: "active" }} />,
     );
-    expect(html).toContain("trial has started");
-    expect(renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />)).not.toContain("trial has started");
+    expect(html).toContain("subscription is active");
+    expect(html).not.toContain("trial");
+    expect(renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={trial} />)).not.toContain("subscription is active");
+  });
+
+  test("the first number needs no subscription; a second needs a live one; only paused and closed stop sends", () => {
+    expect(mayAddNumber("setup", 0)).toBe(true);
+    expect(mayAddNumber("setup", 1)).toBe(false);
+    for (const status of ["active", "past_due", "open"] as const) expect(mayAddNumber(status, 3)).toBe(true);
+    for (const status of ["cancelled", "paused", "closed"] as const) expect(mayAddNumber(status, 0)).toBe(false);
+    expect(["setup", "active", "past_due", "cancelled", "paused", "closed", "open"].filter((s) => blocksSends(s as BillingStatus))).toEqual([
+      "paused",
+      "closed",
+    ]);
+  });
+
+  test("a workspace in setup with its number may not add another, and is told the number keeps working", () => {
+    const html = renderToStaticMarkup(<NumbersView resources={resources("setup")} billing />);
+    expect(html).toContain("Adding a new number needs an active subscription");
+    expect(html).toContain("keep working and can be reconnected");
+    expect(renderToStaticMarkup(<NumbersView resources={resources("past_due")} billing />)).not.toContain("subscription");
   });
 
   test("Numbers warns while closed and never blocks connecting", () => {
@@ -195,7 +238,9 @@ describe("billing on", () => {
   });
 
   test("a workspace opened by the operator with no Creem customer is billed separately and shown no price", () => {
-    const free = renderToStaticMarkup(<SettingsView accountId="account-a" canAdminister billing={{ ...trial, hasCustomer: false }} />);
+    const free = renderToStaticMarkup(
+      <SettingsView accountId="account-a" canAdminister billing={{ ...trial, billingStatus: "open", hasCustomer: false }} />,
+    );
     expect(free).toContain("Billed separately");
     expect(free).not.toContain("No subscription needed");
     expect(free).not.toContain("Monthly price");
@@ -209,6 +254,42 @@ describe("billing on", () => {
     expect(html).toContain("needs an active subscription, so the new ones were left out");
     expect(html).toContain("Open billing</a>");
     expect(normalizeConnectError("subscription_required")).toBe("subscription_required");
+  });
+
+  test("a workspace whose sends are blocked is told so, everywhere but Numbers", () => {
+    const ready = { stage: "account-ready" as const, canAdminister: true, role: "owner" };
+    const flag = { subscribed: true, canManage: true };
+    expect(sendingPaused("/conversations", { ...ready, resources: resources("closed"), billing: flag })).toEqual({
+      billing: true,
+      ...flag,
+    });
+    expect(sendingPaused("/conversations", { ...ready, resources: resources("paused"), billing: flag })).not.toBeNull();
+    expect(sendingPaused("/numbers", { ...ready, resources: resources("closed"), billing: flag })).toBeNull();
+    for (const status of ["setup", "past_due", "cancelled", "active", "open"] as const) {
+      expect(sendingPaused("/conversations", { ...ready, resources: resources(status), billing: flag })).toBeNull();
+    }
+    expect(sendingPaused("/conversations", { ...ready, resources: { ...resources("closed"), wabas: [] } })).toBeNull();
+    expect(sendingPaused("/templates", { ...ready, resources: resources("closed") })).toEqual({
+      billing: false,
+      subscribed: false,
+      canManage: false,
+    });
+
+    const html = renderToStaticMarkup(<SendingNotice billing subscribed />);
+    expect(html).toContain("Sending is paused: this workspace has no active subscription");
+    expect(html).toContain("still received");
+    expect(html).toContain("Manage billing");
+    expect(renderToStaticMarkup(<SendingNotice billing />)).toContain("Start subscription");
+    const member = renderToStaticMarkup(<SendingNotice billing canManage={false} />);
+    expect(member).toContain("Ask an owner or admin");
+    expect(member).not.toContain("<button");
+    expect(sendingPausedNotice(false)).not.toContain("subscription");
+    expect(renderToStaticMarkup(<NumbersView resources={resources("closed")} billing />)).toContain("they keep receiving but cannot send");
+  });
+
+  test("a send refused for the subscription says so in the composer and the test send", () => {
+    expect(sendTestFailureCopy("subscription_required", null).title).toBe("Sending is paused");
+    expect(sendTextFailureCopy("subscription_required", null).detail).toContain("no active subscription");
   });
 
   test("a connect that left new numbers out lands on Numbers saying so", () => {

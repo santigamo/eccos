@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { createContext, useContext, type ReactNode } from "react"
 import { Link } from "@tanstack/react-router"
 
 import {
@@ -307,6 +307,9 @@ export function Unreachable({ error }: { error: string }) {
   )
 }
 
+/** A workspace-wide warning the root sets, opening every page's content. */
+export const PageNotice = createContext<ReactNode>(null)
+
 /**
  * Page shell — the landing's chapter opening translated to a route:
  * pixel kicker + big light Inter heading on bare background, a hatch band
@@ -327,6 +330,7 @@ export function Page({
   fill?: boolean
   children: ReactNode
 }) {
+  const notice = useContext(PageNotice)
   return (
     <div className={fill ? "flex min-h-0 flex-1 flex-col" : "flex min-h-full flex-col"}>
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-4">
@@ -345,7 +349,10 @@ export function Page({
         ) : null}
       </header>
       <div className="hatch-band" aria-hidden="true" />
-      <div className="flex min-h-0 flex-1 flex-col pt-6">{children}</div>
+      <div className="flex min-h-0 flex-1 flex-col pt-6">
+        {notice}
+        {children}
+      </div>
     </div>
   )
 }

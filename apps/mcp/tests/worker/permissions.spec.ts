@@ -79,7 +79,7 @@ describe("capabilities", () => {
 
 describe("what each action's methods return", () => {
   const resources = {
-    account: { accountId: "a", name: "Acme", createdAt: 1, connectPolicy: "open" },
+    account: { accountId: "a", name: "Acme", createdAt: 1, billingStatus: "open", canAddNumber: true },
     keys: [{ keyId: "k1", label: "ci", createdAt: 1, revokedAt: null }],
     wabas: [],
     phones: [],

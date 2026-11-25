@@ -125,6 +125,11 @@ export function sendTestFailureCopy(
   detail: string | null,
 ): FailureCopy {
   switch (code) {
+    case "subscription_required":
+      return {
+        title: "Sending is paused",
+        detail: "This workspace has no active subscription, so nothing was sent. Reactivate it in Settings, under Billing.",
+      };
     case "rate_limited":
       return {
         title: "Send limit reached",
