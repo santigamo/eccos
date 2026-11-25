@@ -5,8 +5,8 @@ const PAGE_LINKED: SignupErrorCopy = {
   body: "In Meta Business Suite, remove the Page under Settings, Accounts, Pages, then come back to this same link.",
 };
 const NOT_FROM_APP: SignupErrorCopy = {
-  title: "Meta can't connect this number from the app",
-  body: "Tell whoever sent you this link.",
+  title: "This link can't connect your number",
+  body: "You can't fix this yourself. Copy the error below and send it to whoever sent you this link.",
 };
 
 /** What an error reported in Meta's window means, and what to do. */
@@ -31,10 +31,10 @@ const signupErrors: Record<SignupErrorCode, SignupErrorCopy> = {
   },
   "3441075": {
     title: "Two-step verification is on for this number",
-    body: "Turn it off, then come back to this same link.",
+    body: "This is the number's WhatsApp PIN, not your Facebook login. Turn it off, then come back to this same link.",
   },
   "2655145": {
-    title: "Your Facebook account can't manage business assets",
+    title: "Meta has restricted your Facebook account",
     body: "Review the restriction in Meta's Business Support Home, or ask someone else in your business to open this link.",
   },
   "2655123": PAGE_LINKED,
@@ -62,7 +62,7 @@ export const en = {
     string,
   ],
   beforeTitle: "You need",
-  before: ["This computer and the phone at hand, to scan a QR code", "A Facebook account (your own is fine)"],
+  before: ["Open this on a computer, with the phone at hand to scan a QR code", "A Facebook account (your own is fine)"],
   release: {
     lead: "Used this number with another WhatsApp provider?",
     rest: "Ask them to release it first.",

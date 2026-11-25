@@ -5,13 +5,13 @@ const PAGE_LINKED = {
   body: "En Meta Business Suite, quítala en Configuración, Cuentas, Páginas y vuelve a este mismo enlace.",
 };
 const NOT_FROM_APP = {
-  title: "Meta no puede conectar este número desde la app",
-  body: "Díselo a quien te envió el enlace.",
+  title: "Este enlace no puede conectar tu número",
+  body: "No depende de ti. Copia el error de abajo y envíaselo a quien te envió el enlace.",
 };
 
 const signupErrors: ConnectLinkCopy["signupErrors"] = {
   "3441067": {
-    title: "Otro portfolio comercial tiene este número",
+    title: "Otro porfolio empresarial tiene este número",
     body: "Suele ser tu proveedor de WhatsApp anterior. Pide que libere el número y vuelve a este mismo enlace.",
   },
   "3441069": {
@@ -21,19 +21,19 @@ const signupErrors: ConnectLinkCopy["signupErrors"] = {
   "3441070": NOT_FROM_APP,
   "3441072": NOT_FROM_APP,
   "3441090": {
-    title: "Otra cuenta de tu portfolio tiene este número",
+    title: "Otra cuenta de tu porfolio tiene este número",
     body: "Quítalo de esa cuenta en el Administrador de WhatsApp y vuelve a este mismo enlace.",
   },
   "3441071": {
     title: "Tu cuenta de Facebook necesita autenticación en dos pasos",
-    body: "La exige el portfolio de este número. Actívala en la configuración de seguridad de Facebook y vuelve a este mismo enlace.",
+    body: "La exige el porfolio de este número. Actívala en la configuración de seguridad de Facebook y vuelve a este mismo enlace.",
   },
   "3441075": {
     title: "Este número tiene activada la verificación en dos pasos",
-    body: "Desactívala y vuelve a este mismo enlace.",
+    body: "Es el PIN de WhatsApp del número, no el acceso a tu cuenta de Facebook. Desactívalo y vuelve a este mismo enlace.",
   },
   "2655145": {
-    title: "Tu cuenta de Facebook no puede gestionar activos empresariales",
+    title: "Meta ha restringido tu cuenta de Facebook",
     body: "Revisa la restricción en Business Support Home de Meta o pide a otra persona de tu negocio que abra este enlace.",
   },
   "2655123": PAGE_LINKED,
@@ -56,7 +56,7 @@ export const es: ConnectLinkCopy = {
   loading: "Comprobando el enlace…",
   intro: [" te pide conectar a ", " el número de tu app WhatsApp Business. La app seguirá funcionando igual."],
   beforeTitle: "Necesitas",
-  before: ["Este ordenador y el teléfono a mano, para escanear un código QR", "Una cuenta de Facebook (vale la tuya personal)"],
+  before: ["Ábrelo en un ordenador, con el teléfono a mano para escanear un código QR", "Una cuenta de Facebook (vale la tuya personal)"],
   release: {
     lead: "¿Has usado este número con otro proveedor de WhatsApp?",
     rest: "Pide que lo liberen antes.",
@@ -80,7 +80,7 @@ export const es: ConnectLinkCopy = {
   signupErrors,
   unknownError: "Meta no ha conectado el número",
   notConnected: "No conectado",
-  reported: (code, session) => (session ? `Meta error ${code} · sesión ${session}` : `Meta error ${code}`),
+  reported: (code, session) => (session ? `Error de Meta ${code} · sesión ${session}` : `Error de Meta ${code}`),
   copyLabels: { copy: "Copiar", copied: "Copiado", failed: "No se ha copiado" },
   gone: (inviter) => `Este enlace ya no funciona. Pide uno nuevo a ${inviter}.`,
   sender: "quien te lo envió",

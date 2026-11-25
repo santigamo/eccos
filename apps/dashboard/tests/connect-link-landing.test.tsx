@@ -189,9 +189,9 @@ describe("the landing", () => {
     await answer({ authResponse: null });
     const said = host.querySelector("output")?.textContent ?? "";
     expect(said).toContain("No conectado");
-    expect(said).toContain("Otro portfolio comercial tiene este número");
+    expect(said).toContain("Otro porfolio empresarial tiene este número");
     expect(said).toContain("Suele ser tu proveedor de WhatsApp anterior. Pide que libere el número y vuelve a este mismo enlace.");
-    expect(said).toContain("Meta error 3441067 · sesión f34b51d");
+    expect(said).toContain("Error de Meta 3441067 · sesión f34b51d");
     // The error replaces the intro, the list and the heads-up; the button stays.
     expect(host.textContent).not.toContain(es.release.lead);
     expect(host.textContent).not.toContain(es.beforeTitle);
@@ -227,7 +227,7 @@ describe("the landing", () => {
       if (!copy) throw new Error("no Copiar button");
       await act(async () => copy.click());
       await settle();
-      expect(copied).toEqual(["Meta error 3441067 · sesión f34b51d"]);
+      expect(copied).toEqual(["Error de Meta 3441067 · sesión f34b51d"]);
       expect(copy.textContent).toBe("Copiado");
     } finally {
       if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);

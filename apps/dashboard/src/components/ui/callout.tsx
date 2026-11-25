@@ -10,8 +10,8 @@ const TONES = {
     icon: <TriangleAlertIcon aria-hidden="true" className="size-3.5 text-warning-foreground" />,
   },
   error: {
-    frame: "border-l-destructive text-destructive-foreground",
-    icon: <OctagonXIcon aria-hidden="true" className="size-3.5" />,
+    frame: "border-l-destructive text-foreground",
+    icon: <OctagonXIcon aria-hidden="true" className="size-3.5 text-destructive-foreground" />,
   },
 };
 
@@ -53,7 +53,7 @@ export function ErrorReport({
           <OctagonXIcon aria-hidden="true" className="size-3.5 shrink-0" />
           {status}
         </p>
-        <p className="m-0 text-lg leading-6 font-semibold tracking-[-0.01em] text-foreground">{title}</p>
+        <p className="m-0 text-lg leading-6 font-semibold tracking-[-0.01em] text-balance text-foreground">{title}</p>
         <p className="m-0 text-sm text-pretty text-muted-foreground">{body}</p>
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -64,7 +64,7 @@ export function ErrorReport({
           labels={labels}
           icon={<CopyIcon aria-hidden="true" className="size-3" />}
           variant="link"
-          className="h-auto gap-1.5 p-0 text-foreground underline decoration-1 underline-offset-3"
+          className="h-auto gap-1.5 px-0 py-1 text-foreground underline decoration-1 underline-offset-3"
         />
       </div>
     </div>

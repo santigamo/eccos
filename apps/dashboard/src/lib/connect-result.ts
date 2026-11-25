@@ -63,7 +63,7 @@ export const SIGNUP_ERRORS: Record<SignupErrorCode, SignupErrorCopy> = {
   },
   "3441070": {
     title: "This number is in use on WhatsApp",
-    body: "If it is on the Business app, start again with the Business app option. Otherwise delete its WhatsApp account first.",
+    body: "If it is on the Business app, start again with the Business app option. Otherwise use another number, or delete its WhatsApp account first.",
   },
   "3441072": {
     title: "This number is on the WhatsApp Business app",
@@ -79,10 +79,10 @@ export const SIGNUP_ERRORS: Record<SignupErrorCode, SignupErrorCopy> = {
   },
   "3441075": {
     title: "Two-step verification is on for this number",
-    body: "Turn it off for this number, then start again.",
+    body: "This is the number's WhatsApp PIN, not your Facebook login. Turn it off, then start again.",
   },
   "2655145": {
-    title: "Your Facebook account can't manage business assets",
+    title: "Meta has restricted your Facebook account",
     body: "Review the restriction in Meta's Business Support Home, or ask someone else in your business to connect the number.",
   },
   "2655123": PAGE_LINKED,
@@ -93,7 +93,7 @@ export const SIGNUP_ERRORS: Record<SignupErrorCode, SignupErrorCopy> = {
   },
   "2494064": {
     title: "This number is registered elsewhere on WhatsApp",
-    body: "On WhatsApp, the Business app or another API provider. Release it there first, or use another number.",
+    body: "It may be on the WhatsApp app or with another API provider. Remove it there first, or use another number.",
   },
 };
 
