@@ -168,6 +168,7 @@ export const CONNECT_RELEASE_NOTE = {
 };
 
 const REPORT_LABELS = { copy: "Copy", copied: "Copied", failed: "Copy failed" };
+const TROUBLESHOOTING_URL = "https://docs.eccos.chat/connect-troubleshooting";
 
 type Feedback =
   | { tone: "error" | "notice" | "blocked" | "slow"; text: string }
@@ -727,6 +728,13 @@ export function ConnectNumberChoices({
           ))}
         </ul>
       </div>
+
+      <p className="m-0 text-sm text-muted-foreground">
+        Stuck?{" "}
+        <a href={TROUBLESHOOTING_URL} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-4">
+          Troubleshooting guide
+        </a>
+      </p>
     </div>
   );
 }

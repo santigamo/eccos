@@ -76,6 +76,10 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
           a: "Coexistence works in every country where Meta offers it; Eccos adds no restriction of its own. If your number is not eligible, the connection screen will tell you. The app has to be WhatsApp Business (not personal WhatsApp), version 2.24.17 or higher, and Meta disconnects the number if the app goes about 14 days without being opened. Meta's conditions are at https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users",
         },
         {
+          q: "Meta won't let me connect my number. What can I do?",
+          a: "Meta refuses a number that is still tied to another of its products, and it reports one blocker at a time, so fixing one can reveal the next. The usual ones: the number added, unverified, in another WhatsApp Business account (often a developer test app); the Meta AI agent switched on in the app; the number linked to a Facebook Page. Each error, with its code and the steps to fix it, is in the troubleshooting guide at https://docs.eccos.chat/connect-troubleshooting",
+        },
+        {
           q: "Do messages I send from the phone or from WhatsApp Web reach my system?",
           a: "Yes, on a number connected with coexistence. What your team sends from the WhatsApp Business app, or from WhatsApp Web linked to it, reaches your system as an echo event, so your software knows when someone has already answered by hand. Messages sent from WhatsApp for Windows are not mirrored.",
         },
@@ -195,6 +199,10 @@ export const FAQ_PAGE: Record<Locale, FaqGroup[]> = {
         {
           q: "¿La coexistencia funciona en mi país?",
           a: "La coexistencia funciona en todos los países donde Meta la ofrece; Eccos no añade ninguna restricción. Si tu número no es apto, te lo dirá la pantalla de conexión. Tiene que ser la app de WhatsApp Business (no el WhatsApp personal), versión 2.24.17 o superior, y Meta desconecta el número si la app pasa unos 14 días sin abrirse. Las condiciones de Meta están en https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users",
+        },
+        {
+          q: "Meta no me deja conectar mi número. ¿Qué hago?",
+          a: "Meta rechaza un número que sigue ligado a otro de sus productos, y avisa de un bloqueo cada vez, así que al resolver uno puede aparecer el siguiente. Los habituales: el número añadido sin verificar en otra cuenta de WhatsApp Business (a menudo una app de pruebas de desarrollador), el agente de IA de Meta activado en la app o el número vinculado a una Página de Facebook. Cada error, con su código y los pasos para resolverlo, está en la guía (en inglés) https://docs.eccos.chat/connect-troubleshooting",
         },
         {
           q: "¿Los mensajes que envío desde el teléfono o desde WhatsApp Web llegan a mi sistema?",
