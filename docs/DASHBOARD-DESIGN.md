@@ -176,10 +176,10 @@ component" is therefore never the question. The register is.
    is why `Dialog` defaults to `sm:max-w-lg`. Measure before narrowing one.
 3. **Side Sheet — a task done beside the list, or one row inspected without acting on
    it.** Task: a form with its own primary submit whose neighbouring list is genuinely
-   relevant (`create-template-sheet.tsx`, `send-test-sheet.tsx`). Inspection:
+   relevant (`send-test-sheet.tsx`, `retry-failed-sheet.tsx`). Inspection:
    `template-preview-sheet.tsx` (the template as the phone shows it, Meta's review
-   verdict, and buttons that hand off to the send, edit and duplicate task sheets —
-   it closes before the task sheet opens, so one sheet is up at a time), and the two log sheets
+   verdict, and buttons that hand off to the send sheet and to the authoring page —
+   it closes before the next surface opens, so one sheet is up at a time), and the two log sheets
    (`components/logs/message-sheet.tsx`, `event-sheet.tsx`) — one message or one event,
    hop by hop, with the full Meta ids, what the thing actually said, and the provider
    payload behind a disclosure (data rule 10).
@@ -193,6 +193,29 @@ component" is therefore never the question. The register is.
    placed where the operator has just read the evidence for it. Sending them back out to
    the row to press it would be the interruption the register exists to avoid. One act
    the reader arrived wanting is not a second register; a form is.
+
+**When a task outgrows a sheet, it is a page.** Template authoring started as a task
+sheet and moved to its own routes (`/templates/new`, `/templates/$name?language=es`,
+`components/templates/template-editor.tsx`) for three reasons a sheet cannot answer:
+
+- **It is a document with per-language versions.** One template name holds a version
+  per language, each with its own Meta status, so the surface needs tabs, a status per
+  tab and a review list beside the preview. Stacked into a sheet, that is a form inside
+  a form.
+- **It needs a URL.** "Edit the Spanish of `order_update`", a duplicate's source and a
+  create that half succeeded are places an operator has to return to, paste, or be sent
+  to (`/templates/$name?language=es` after a partial create). An overlay has no address
+  of its own.
+- **It needs space.** Fields at `minmax(0,40rem)` beside a sticky `minmax(18rem,22.5rem)`
+  preview, and a sticky action bar under the fields, at 1280px with the 240px sidebar.
+  The list behind it is not consulted while writing, so it does not earn the screen.
+
+A page has no backdrop to protect, so the dismissal rule below becomes a leave guard:
+TanStack Router's `useBlocker` with `enableBeforeUnload`, armed only while a draft is
+dirty or a submit is in flight. Leaving the page in-app asks once (`DiscardDraftDialog`,
+the confirm register); closing the tab gets the browser's own warning. A tab switch
+changes `?language=` and is never a departure. A fully successful create returns to
+the list with a toast and no tinted rows; nothing is stored between visits.
 
 **The two edges that get mis-cut.**
 
@@ -493,9 +516,9 @@ on `--ghost-fill`, the hover edge and lift (`--ghost-edge-hover`), the green foc
 
 **Toasts are not a fourth overlay.** The `sonner` Toaster (`components/ui/sonner.tsx`, mounted
 once in `__root.tsx`) carries transient, non-blocking notices: it asks nothing, traps no
-focus, and dismisses itself — e.g. the amber warning as an APPROVED template's edit sheet
-opens. A toast is never the only place a fact lives; the surface where the operator acts
-states it too. Solid `--popover`, `--line-strong` edge, square; a warning takes the amber
+focus, and dismisses itself — e.g. "order_update submitted in 2 languages" as the
+authoring page returns to the list. A toast is never the only place a fact lives; the
+surface where the operator acts states it too (the new rows read PENDING). Solid `--popover`, `--line-strong` edge, square; a warning takes the amber
 rail and icon.
 
 ## Before shipping a console change
