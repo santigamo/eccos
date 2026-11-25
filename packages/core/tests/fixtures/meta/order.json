@@ -1,0 +1,58 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/order",
+  "updated": "2026-11-04",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "v-whatsapp-user-profile-name",
+                    "username": "v-username"
+                  },
+                  "wa_id": "v-user-phone",
+                  "user_id": "v-bsuid",
+                  "parent_user_id": "v-parent-bsuid",
+                  "identity_key_hash": "v-identity-key-hash"
+                }
+              ],
+              "messages": [
+                {
+                  "from": "v-user-phone",
+                  "from_user_id": "v-bsuid",
+                  "from_parent_user_id": "v-parent-bsuid",
+                  "id": "v-whatsapp-message-id",
+                  "timestamp": "1750001101",
+                  "type": "order",
+                  "order": {
+                    "catalog_id": "v-product-catalog-id",
+                    "text": "v-order-text",
+                    "product_items": [
+                      {
+                        "product_retailer_id": "v-product-id",
+                        "quantity": 2,
+                        "item_price": 7.99,
+                        "currency": "v-currency-code"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

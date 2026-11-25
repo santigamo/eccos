@@ -1,0 +1,68 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/audio",
+  "updated": "2026-11-04",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "v-whatsapp-user-profile-name",
+                    "username": "v-username"
+                  },
+                  "wa_id": "v-user-phone",
+                  "user_id": "v-bsuid",
+                  "parent_user_id": "v-parent-bsuid",
+                  "identity_key_hash": "v-identity-key-hash"
+                }
+              ],
+              "messages": [
+                {
+                  "from": "v-user-phone",
+                  "from_user_id": "v-bsuid",
+                  "from_parent_user_id": "v-parent-bsuid",
+                  "id": "v-whatsapp-message-id",
+                  "timestamp": "1750000201",
+                  "type": "audio",
+                  "audio": {
+                    "mime_type": "audio/ogg; codecs=opus",
+                    "sha256": "v-media-asset-sha256-hash",
+                    "id": "v-media-asset-id",
+                    "url": "v-media-asset-url",
+                    "voice": true
+                  },
+                  "referral": {
+                    "source_url": "v-ad-url",
+                    "source_id": "v-ad-id",
+                    "source_type": "ad",
+                    "body": "v-ad-primary-text",
+                    "headline": "v-ad-headline",
+                    "media_type": "image",
+                    "image_url": "v-ad-image-url",
+                    "video_url": "v-ad-video-url",
+                    "thumbnail_url": "v-ad-video-thumbnail",
+                    "ctwa_clid": "v-ad-click-id",
+                    "welcome_message": {
+                      "text": "v-ad-greeting-text"
+                    }
+                  }
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

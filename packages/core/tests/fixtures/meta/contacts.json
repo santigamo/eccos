@@ -1,0 +1,109 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/contacts",
+  "updated": "2026-11-04",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "v-whatsapp-user-profile-name",
+                    "username": "v-username"
+                  },
+                  "wa_id": "v-user-phone",
+                  "user_id": "v-bsuid",
+                  "parent_user_id": "v-parent-bsuid",
+                  "identity_key_hash": "v-identity-key-hash"
+                }
+              ],
+              "messages": [
+                {
+                  "from": "v-user-phone",
+                  "from_user_id": "v-bsuid",
+                  "from_parent_user_id": "v-parent-bsuid",
+                  "id": "v-whatsapp-message-id",
+                  "timestamp": "1750000701",
+                  "type": "contacts",
+                  "contacts": [
+                    {
+                      "addresses": [
+                        {
+                          "city": "v-contact-city",
+                          "country": "v-contact-country",
+                          "country_code": "v-contact-country-code",
+                          "state": "v-contact-state",
+                          "street": "v-contact-street",
+                          "type": "Home",
+                          "zip": "v-contact-zip"
+                        }
+                      ],
+                      "birthday": "v-contact-birthday",
+                      "emails": [
+                        {
+                          "email": "v-contact-email",
+                          "type": "Personal"
+                        }
+                      ],
+                      "name": {
+                        "formatted_name": "v-contact-formatted-name",
+                        "first_name": "v-contact-first-name",
+                        "last_name": "v-contact-last-name",
+                        "middle_name": "v-contact-middle-name",
+                        "suffix": "v-contact-name-suffix",
+                        "prefix": "v-contact-name-prefix"
+                      },
+                      "org": {
+                        "company": "v-contact-org-company",
+                        "department": "v-contact-org-department",
+                        "title": "v-contact-org-title"
+                      },
+                      "phones": [
+                        {
+                          "phone": "v-contact-phone",
+                          "wa_id": "v-contact-whatsapp-phone-number",
+                          "type": "CELL"
+                        }
+                      ],
+                      "urls": [
+                        {
+                          "url": "v-contact-url",
+                          "type": "Company"
+                        }
+                      ]
+                    }
+                  ],
+                  "referral": {
+                    "source_url": "v-ad-url",
+                    "source_id": "v-ad-id",
+                    "source_type": "ad",
+                    "body": "v-ad-primary-text",
+                    "headline": "v-ad-headline",
+                    "media_type": "image",
+                    "image_url": "v-ad-image-url",
+                    "video_url": "v-ad-video-url",
+                    "thumbnail_url": "v-ad-video-thumbnail",
+                    "ctwa_clid": "v-ad-click-id",
+                    "welcome_message": {
+                      "text": "v-ad-greeting-text"
+                    }
+                  }
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}
