@@ -61,7 +61,7 @@ your phone.
    **Unlink**.
 5. Check that the tab no longer lists your number.
 
-**Retry.** In the Eccos console, open **Numbers**, press **+ Add number**, and choose **"I use this
+**Retry.** In the Eccos console, open **Numbers** (press **+ Add number** if you already have a number connected) and choose **"I use this
 number in the WhatsApp Business app"**. When Meta asks for the number, choose **"Add a new phone
 number"** and type it by hand instead of picking it from the list.
 
@@ -118,12 +118,15 @@ different number for the Page, or a `wa.me` link.
 
 **Fix it:**
 
-1. Open Meta [Business Settings](https://business.facebook.com/settings) for your business
+1. If the number is still linked to the Facebook Page, unlink it first (see
+   [the Facebook Page section](#already-connected-to-a-facebook-page-2655123)). Otherwise Meta
+   blocks step 6 with #2655123.
+2. Open Meta [Business Settings](https://business.facebook.com/settings) for your business
    portfolio.
-2. Go to **Users**, then **Partners**.
-3. Select **Eccos** and remove it as a partner.
-4. Wait about 5 minutes.
-5. In the Eccos console, open **Numbers**, press **+ Add number**, and choose **"I use this number
+3. Go to **Users**, then **Partners**.
+4. Select **Eccos** and remove it as a partner.
+5. Wait about 5 minutes.
+6. In the Eccos console, open **Numbers** (press **+ Add number** if you already have a number connected) and choose **"I use this number
    in the WhatsApp Business app"**. Go through Meta's window to the end.
 
 Reconnect from the Eccos console, not by adding Eccos as a partner again by hand. Until you
@@ -151,7 +154,7 @@ lost.
 
 **Fix it:**
 
-1. Open **Numbers**, press **+ Add number**, and choose the same option as before.
+1. Open **Numbers** (press **+ Add number** if you already have a number connected) and choose the same option as before.
 2. Go through Meta's window in one go, without long pauses. It is usually quick the second time,
    because the blockers are already fixed.
 
