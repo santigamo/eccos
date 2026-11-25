@@ -2366,8 +2366,6 @@ describe("failure classification (authorization vs. transport)", () => {
 
 describe("step-up rows of the capability matrix", () => {
   const steppedUp: Array<[string, () => Promise<{ ok: boolean }>]> = [
-    ["startConnect", () => startConnect()],
-    ["connectWithToken", () => connectWithToken({ data: { token: `EAAG${"x".repeat(60)}` } })],
     ["openConnectLink", () => openConnectLink({ data: { fresh: true } })],
     ["issueApiKey", () => issueApiKey({ data: {} })],
     ["revokeApiKey", () => revokeApiKey({ data: { keyId: "key_a1" } })],
@@ -2412,6 +2410,14 @@ describe("step-up rows of the capability matrix", () => {
       expect(reached).toEqual([]);
     });
   }
+
+  test("connecting a number needs no step-up, only the admin role", async () => {
+    const reached = mutationBinding();
+    fakeStepUpRefusal = "totp-required";
+    await startConnect();
+    await connectWithToken({ data: { token: `EAAG${"x".repeat(60)}` } });
+    expect(reached).toEqual(["startConnect", "connectWithToken"]);
+  });
 
   test("a role without the action is told so, not asked to step up", async () => {
     mutationBinding();

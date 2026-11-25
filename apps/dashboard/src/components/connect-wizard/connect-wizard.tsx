@@ -72,7 +72,7 @@ export function ConnectWizard({
   }
   function open(next: ConnectPath) {
     setPath(next);
-    // A step-up lapsed mid-attempt: settle it on the brief, where its prompt lives.
+    // A role that may not connect is told so on the brief, never sent to Meta.
     if (signup.block) {
       signup.startAgain();
       setLaunched(false);
@@ -168,7 +168,7 @@ export function ConnectWizard({
           onBack={() => go("path")}
           notice={
             <>
-              <ConnectBlockNotice block={signup.block} onCleared={signup.clearBlock} />
+              <ConnectBlockNotice block={signup.block} />
               {preLaunchError ? <Callout tone="error">{preLaunchError}</Callout> : null}
             </>
           }

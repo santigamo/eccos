@@ -142,7 +142,7 @@ the session.
 
 | Matrix row | Where |
 |---|---|
-| Embedded Signup start, token attach, making a connection link | `STEP_UP_ROWS.connect`: `startConnect`, `connectWithToken`, `openConnectLink` when it makes or replaces a link (reading its status needs none) |
+| Making a connection link | `STEP_UP_ROWS["connect-link"]`: `openConnectLink` when it makes or replaces a link (reading its status needs none) |
 | API key issue and revoke | `STEP_UP_ROWS["api-keys"]`: `issueApiKey`, `revokeApiKey` |
 | Conversation retention write (it purges history) | `STEP_UP_ROWS["conversation-retention"]`: `setConversationRetention` |
 | Subscriber config write, resubscribe | `STEP_UP_ROWS["subscriber-config"]`, `.resubscribe` |
@@ -155,10 +155,11 @@ the step-up. The role always comes first, in Better Auth's endpoints too, so a
 role that lacks the action gets a permission error rather than a prompt to
 enroll.
 
-The Embedded Signup code exchange (`exchangeConnectCode`) has no step-up of
-its own: Meta's code is single-use and lives 30 seconds, so a refusal there
-would lose it. The account-bound state it must present was issued by
-`startConnect`, the step-up row, moments earlier.
+Connecting a number has no step-up, only the admin role: Embedded Signup
+start (`startConnect`), its code exchange (`exchangeConnectCode`) and token
+attach (`connectWithToken`). Meta's window opens on the click, before the start
+answers, so a step-up refusal there was found only after the customer had
+already gone through Meta, and most admins never enrolled a second factor.
 
 Export and erasure have no console path: they are reachable only with an
 account API key, so there is nothing for a session step-up to gate. A console
@@ -184,20 +185,14 @@ step-up sheet (`src/components/dashboard/step-up-sheet.tsx`) beside the page:
 the code, or enrollment for an account with none. On success the action runs
 again. Nothing navigates and no session changes, so the form the operator was
 filling in is untouched, and closing the sheet only declines. A dialog that
-hosts a sensitive action (add a number, revoke a key) mounts its own sheet
+hosts a sensitive action (make a connection link, revoke a key) mounts its own sheet
 inside itself, so there the prompt opens as that dialog's nested surface
 rather than as a second modal beside it.
 
-Connecting a number settles what it needs ahead of the click, role first: the
-Numbers route's loader (`src/server/connect-block.ts`) says whether the
-signed-in user may connect at all and what step-up they owe, judged as
-`startConnect` judges it. A role that may not connect sees that, and is never
-asked for a second factor. Otherwise the cards stay disabled until the step-up
-is confirmed, because Meta's window only opens on the customer's own click and
-a prompt in between would spend it. A fresh read of that state is never
-applied onto a flow that is already open. The step-up authorizes the start;
-the state then lives its normal 30 minutes, so the customer has Meta's whole
-window to finish.
+Connecting a number settles the role ahead of the click: the Numbers route's
+loader (`src/server/connect-block.ts`) says whether the signed-in user may
+connect at all, judged as `startConnect` judges it. A role that may not connect
+sees that before any card can be pressed.
 
 One-time backup codes are not shown by the surface that enrolled. They are
 held at the app's root (`src/lib/backup-codes.ts`) and shown by one sheet

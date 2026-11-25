@@ -16,7 +16,7 @@ export function BriefStep({
   path: ConnectPath;
   onOpen: () => void;
   onBack: () => void;
-  /** Something stands before Meta may open: the role, a step-up, a closed workspace. */
+  /** Something stands before Meta may open: the role, a closed workspace. */
   disabled: boolean;
   /** Meta's script finished loading after the first click: the next click opens it. */
   awaiting: boolean;

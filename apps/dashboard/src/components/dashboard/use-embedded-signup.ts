@@ -12,7 +12,6 @@ import { type FacebookSdk, captureWindowOpen, currentFacebookSdk, loadFacebookSd
 import { type ConnectPath, isFinishEvent, loginOptions, parseSessionEvent } from "../../lib/embedded-signup";
 import { track, trackSessionEvent } from "../../lib/analytics";
 import { failureCopy } from "../../lib/failure";
-import { STEP_UP_COPY, stepUpReason } from "../../lib/step-up";
 import type { ConnectBlock } from "../../server/connect-block";
 import {
   CONNECT_CLOSE_AND_RETRY,
@@ -103,7 +102,7 @@ function cancelledFeedback(step?: string, error?: { code?: string; sessionId?: s
 /**
  * Meta Embedded Signup, with no UI of its own: the fork on /numbers and the
  * first-run wizard both render it, so the popup handling, session logging, the
- * code exchange, step-up and the role block exist once.
+ * code exchange and the role block exist once.
  *
  * Preferred is Meta's JavaScript SDK: `FB.login()` opens the flow in a popup and
  * returns an exchangeable code, and a `message` listener captures session
@@ -124,7 +123,7 @@ export function useEmbeddedSignup({
   onBusyChange,
   stayOnConnect = false,
 }: {
-  /** What stops the signed-in user connecting right now: the role, or a step-up owed. */
+  /** What stops the signed-in user connecting right now: a role that may not. */
   blocked?: ConnectBlock | null;
   /** A closed workspace with nothing to reconnect: nothing is prepared. */
   closed?: boolean;
@@ -148,19 +147,8 @@ export function useEmbeddedSignup({
   /** What this page has actually observed of the current attempt. */
   const [live, setLive] = useState<ConnectLive>({});
   const setError = useCallback((text: string) => setFeedback({ text, tone: "error" }), []);
-  /**
-   * What still stands before a connection may start, the role first. A step-up
-   * is settled before Meta is opened: the window only opens on the customer's
-   * own click, and a prompt in between would spend it. A fresh read is applied
-   * once, and never onto a flow that is already open.
-   */
-  const [block, setBlock] = useState(blocked);
-  const applied = useRef(blocked);
-  useEffect(() => {
-    if (starting !== null || applied.current === blocked) return;
-    applied.current = blocked;
-    setBlock(blocked);
-  }, [blocked, starting]);
+  /** A role that may not connect, known when the fork appears: told so before any card is pressed. */
+  const block = blocked ?? null;
   const stopWatch = useRef<(() => void) | null>(null);
   /** Which attempt is current, so a stale window's cancel cannot touch a newer one. */
   const attempt = useRef(0);
@@ -411,9 +399,7 @@ export function useEmbeddedSignup({
     started = startConnect().then(
       (handoff) => {
         if (handoff.ok) return handoff;
-        const lapsed = stepUpReason(handoff);
-        if (lapsed && isCurrent()) setBlock(lapsed);
-        fail(lapsed ? STEP_UP_COPY[lapsed].connect : failureCopy(handoff).detail);
+        fail(failureCopy(handoff).detail);
         return null;
       },
       (err) => {
@@ -475,9 +461,7 @@ export function useEmbeddedSignup({
         const handoff = await startConnect();
         if (attempt.current !== mine) return;
         if (!handoff.ok) {
-          const lapsed = stepUpReason(handoff);
-          if (lapsed) setBlock(lapsed);
-          else setError(failureCopy(handoff).detail);
+          setError(failureCopy(handoff).detail);
           return;
         }
         leave(handoff.data.url);
@@ -511,7 +495,6 @@ export function useEmbeddedSignup({
     feedback,
     live,
     block,
-    clearBlock: () => setBlock(null),
     unavailable,
     start,
     begin,

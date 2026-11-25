@@ -2,7 +2,6 @@ import { Button } from "@/components/ui/button";
 import { ArrowRightIcon, CloudIcon, LoaderCircleIcon, SmartphoneIcon } from "lucide-react";
 import type { ConnectPath } from "../../lib/embedded-signup";
 import { failureCopy } from "../../lib/failure";
-import { promptStepUp, STEP_UP_COPY } from "../../lib/step-up";
 import type { ConnectBlock } from "../../server/connect-block";
 import { Callout, ErrorReport } from "../ui/callout";
 import { cn } from "@/lib/utils";
@@ -80,18 +79,9 @@ export const CONNECT_RELEASE_NOTE = {
 
 const REPORT_LABELS = { copy: "Copy", copied: "Copied", failed: "Copy failed" };
 
-/** What stands before a connection may start: the role, or a step-up to settle before Meta opens. */
-export function ConnectBlockNotice({ block, onCleared }: { block: ConnectBlock | null; onCleared: () => void }) {
-  if (block === "missing-permission") return <p className={NOTICE_CLASS}>{MISSING_PERMISSION_COPY}</p>;
-  if (!block) return null;
-  return (
-    <div className={cn(NOTICE_CLASS, "flex flex-wrap items-center justify-between gap-3")}>
-      <span>{STEP_UP_COPY[block].connect}</span>
-      <Button type="button" variant="outline" size="sm" onClick={() => void promptStepUp(block).then((ok) => ok && onCleared())}>
-        {STEP_UP_COPY[block].title}
-      </Button>
-    </div>
-  );
+/** What stands before a connection may start: a role that may not connect. */
+export function ConnectBlockNotice({ block }: { block: ConnectBlock | null }) {
+  return block === "missing-permission" ? <p className={NOTICE_CLASS}>{MISSING_PERMISSION_COPY}</p> : null;
 }
 
 /**
@@ -110,7 +100,7 @@ export function ConnectNumberChoices({
   abandonDelayMs = 1_500,
 }: {
   className?: string;
-  /** What stops the signed-in user connecting right now: the role, or a step-up owed. */
+  /** What stops the signed-in user connecting right now: a role that may not. */
   blocked?: ConnectBlock | null;
   /** A closed workspace with nothing to reconnect: the cards are off and the caller says why. */
   closed?: boolean;
@@ -125,7 +115,7 @@ export function ConnectNumberChoices({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const signup = useEmbeddedSignup({ blocked, closed, navigate, popupWatchdogMs, abandonDelayMs, onBusyChange });
-  const { starting, awaiting, feedback, block, unavailable, start, begin, startAgain, clearBlock } = signup;
+  const { starting, awaiting, feedback, block, unavailable, start, begin, startAgain } = signup;
   /** A flow is opening, or waiting for the click that opens it. */
   const locked = starting !== null || awaiting !== null;
   const selected = starting ?? awaiting;
@@ -153,7 +143,7 @@ export function ConnectNumberChoices({
         {reported ? <ErrorReport status="Not connected" labels={REPORT_LABELS} {...reported} /> : null}
       </output>
 
-      <ConnectBlockNotice block={block} onCleared={clearBlock} />
+      <ConnectBlockNotice block={block} />
 
       {awaiting ? (
         <div className="flex flex-col gap-2">

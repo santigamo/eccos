@@ -136,7 +136,7 @@ async function mount(node: ReactNode): Promise<HTMLElement> {
   return host;
 }
 
-type Blocked = "reauth-required" | "missing-permission" | null;
+type Blocked = "missing-permission" | null;
 
 const choices = (popupWatchdogMs: number, blocked: Blocked) => (
   <ConnectNumberChoices
@@ -170,72 +170,27 @@ async function runFlow(host: HTMLElement, response: Parameters<LoginCallback>[0]
 const FINISHED = { authResponse: { code: "code-1" } };
 
 describe("what stands before Meta's window", () => {
-  const owed = { ok: false, kind: "forbidden", reason: "reauth-required", error: "x" };
-
-  test("owed step-up is settled before any card can be pressed, so the press opens the window", async () => {
-    const { registerStepUpPrompt, settleStepUp } = await import("../src/lib/step-up");
-    const asked: (string | null)[] = [];
-    const unregister = registerStepUpPrompt((reason) => void asked.push(reason));
-    const host = await mountChoices(3_000, "reauth-required");
-
-    expect(card(host, "A new number").disabled).toBe(true);
-    expect(host.textContent).toContain("needs your two-factor code first");
-    expect(loginCalls).toBe(0);
-
-    await act(async () => card(host, "Confirm it's you").click());
-    expect(asked).toEqual(["reauth-required"]);
-    await act(async () => settleStepUp(true));
-    await settle();
-    expect(card(host, "A new number").disabled).toBe(false);
-    expect(loginCalls).toBe(0);
-
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(loginCalls).toBe(1);
-    unregister();
-  });
-
   // Meta's window opens from the click itself and the state is asked for only
-  // after it, so a lapse is found with the window already open.
-  test("step-up that lapsed by the time of the click says so at once, asks again, and exchanges nothing", async () => {
-    stubs.startConnect = async () => owed;
+  // after it, so a refused start is found with the window already open.
+  test("a start refused after the click says so at once and exchanges nothing", async () => {
+    stubs.startConnect = async () => ({ ok: false, kind: "forbidden", reason: "missing-permission", error: "x" });
     const host = await mountChoices();
     await act(async () => card(host, "A new number").click());
     await settle();
     expect(loginCalls).toBe(1);
-    expect(live(host)).toContain("needs your two-factor code first");
     expect(live(host)).toContain("Close Meta's window");
-    expect(card(host, "A new number").disabled).toBe(true);
-    expect(host.textContent).toContain("Confirm it's you");
 
     // A code from the window that was left open buys nothing: no state was issued.
     await act(async () => loginCallback?.(FINISHED));
     await settle();
     expect(navigated).toEqual([]);
-    expect(card(host, "A new number").disabled).toBe(true);
   });
 
-  test("a role that may not connect is told so, and is never asked for a second factor", async () => {
+  test("a role that may not connect is told so before any card can be pressed", async () => {
     const host = await mountChoices(3_000, "missing-permission");
     expect(card(host, "A new number").disabled).toBe(true);
     expect(host.textContent).toContain("Your role in this workspace does not allow this");
     expect(host.textContent).not.toContain("two-factor");
-    expect(host.textContent).not.toContain("Confirm it's you");
-  });
-
-  test("a fresh read of what is owed waits for an open flow to end", async () => {
-    const host = await mountChoices();
-    await act(async () => card(host, "A new number").click());
-    await settle();
-    expect(loginCalls).toBe(1);
-
-    // The route re-read the session while Meta's window is open.
-    await act(async () => rerender(choices(3_000, "reauth-required")));
-    expect(host.textContent).not.toContain("Confirm it's you");
-
-    await act(async () => loginCallback?.({ authResponse: null }));
-    await settle();
-    expect(host.textContent).toContain("Confirm it's you");
   });
 });
 

@@ -1089,10 +1089,9 @@ function connectReturnTo(request: Request): string {
 export const startConnect = createServerFn({ method: "POST" }).handler(
   (): Promise<Result<ConnectStartResult>> =>
     withGateway(async (gateway) => {
-      // Embedded Signup is an admin+ step-up mutation (contract §4); the
-      // account comes from the organization link. The step-up authorizes the
-      // start: the state it issues then lives its normal 30 minutes.
-      const actor = await requireActor("connect");
+      // Embedded Signup is an admin+ mutation without step-up (contract §4); the
+      // account comes from the organization link. The state it issues lives 30 minutes.
+      const actor = await requireActor("administer");
       const returnTo = connectReturnTo(getRequest());
       let link = await gateway.getOrganizationAccountLink(actor.organizationId);
       if (!link) {
@@ -1291,7 +1290,7 @@ export const connectWithToken = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<ManualConnectResult>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway, "connect");
+        const { actor, accountId } = await adminActorAccount(gateway);
         const result = await gateway.connectWabaWithToken(accountId, data.token, data.wabaId);
         // NO token, and nothing derived from one. `candidates` is counted, not
         // listed, because the count is what makes the line legible; the WABA
@@ -1364,7 +1363,7 @@ export interface ConnectLinkView {
 /**
  * Read the workspace's connection link, making one when there is none to wait
  * for (never made, expired, or dead with its creator's access) or when `fresh`
- * asks to replace it. `administer` to read, and the `connect` step-up row to
+ * asks to replace it. `administer` to read, and the `connect-link` step-up row to
  * make one (contract §4): the link lets its bearer add a number to this account.
  */
 export const openConnectLink = createServerFn({ method: "POST" })
@@ -1380,7 +1379,7 @@ export const openConnectLink = createServerFn({ method: "POST" })
           linkIsLive(current) &&
           !(await linkPeople(env.DB, actor.organizationId, current.creatorUserId));
         if (current && current.state !== "expired" && !dead) return { link: current, url: null };
-        await requireActor("connect");
+        await requireActor("connect-link");
         // Without `replace` the gateway keeps a live link, so two dialogs opening at once share one.
         const issued = await gateway.issueConnectLink(accountId, actor.session.userId, data.fresh || Boolean(dead));
         if (issued === "exists") {
