@@ -1,4 +1,4 @@
-import type { GatewayApi } from "@eccos/gateway-contract";
+import type { BillingStatus, GatewayApi } from "@eccos/gateway-contract";
 import type { FunnelMailInput, FunnelMailResult } from "@eccos/gateway-contract/funnel-mail";
 import { LOCAL_ORIGIN } from "../auth/config";
 import { ConsoleMailSender, deriveIdempotencyKey, MailProviderError, type MailSender, type MailTemplate } from "../auth/mail";
@@ -129,8 +129,12 @@ function compose(input: FunnelMailInput, phone: string, origin: string): Compose
   }
 }
 
-/** The two warnings go stale once the account subscribes; the others are facts that already happened. */
-const ONLY_UNSUBSCRIBED = new Set<FunnelKind>(["window_ending", "never_activated_warning"]);
+/** The status each email is still true in: once the account subscribes it is stale. `activated` already happened. */
+const ONLY_UNSUBSCRIBED: Partial<Record<FunnelKind, BillingStatus>> = {
+  window_ending: "setup",
+  never_activated_warning: "setup",
+  paused: "paused",
+};
 
 /** What the gateway calls (eccos-dbb3.2). Idempotent per account and kind. */
 export async function sendFunnelEmail(deps: FunnelDeps, input: FunnelMailInput): Promise<FunnelMailResult> {
@@ -138,9 +142,10 @@ export async function sendFunnelEmail(deps: FunnelDeps, input: FunnelMailInput):
   if (!link || link.status !== "active" || link.accountId !== input.accountId) {
     return { status: "skipped", reason: "not_linked" };
   }
-  if (ONLY_UNSUBSCRIBED.has(input.kind)) {
+  const stillIn = ONLY_UNSUBSCRIBED[input.kind];
+  if (stillIn) {
     const billing = await deps.gateway.getAccountBilling(input.accountId);
-    if (billing && billing.billingStatus !== "setup") return { status: "skipped", reason: "subscribed" };
+    if (billing && billing.billingStatus !== stillIn) return { status: "skipped", reason: "subscribed" };
   }
   const { phones } = await deps.gateway.listAccountResources(input.accountId);
   const { template, variables } = compose(input, phones[0]?.displayPhoneNumber ?? "your number", deps.origin);

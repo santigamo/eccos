@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signPayload } from "@eccos/core/signature";
 import type { AccountFunnel, BillingStatus } from "@eccos/gateway-contract";
 import type { FunnelMailInput } from "@eccos/gateway-contract/funnel-mail";
-import type { EccosControlPlane } from "../../src/control-plane";
+import { addFunnelClock, type EccosControlPlane } from "../../src/control-plane";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import type { EccosGateway } from "../../src/gateway";
 import worker from "../../src/worker";
@@ -113,6 +113,24 @@ describe("connectedAt", () => {
   });
 });
 
+describe("funnel release migration", () => {
+  it("forgets a closed stored before the release; only a closed written after it blocks", async () => {
+    billingOn();
+    await cp((i) => {
+      i.sql.exec("ALTER TABLE accounts DROP COLUMN connected_at");
+      i.sql.exec("UPDATE accounts SET connect_policy = 'closed'");
+      i.sql.exec("INSERT INTO accounts (account_id, name, created_at, connect_policy) VALUES ('acc-open', 'Reseller', 0, 'open')");
+      addFunnelClock(i.sql);
+    });
+    expect(await funnel()).toMatchObject({ billingStatus: "setup", funnel: { connectedAt: null, pausesAt: null } });
+    expect((await sendText()).status).toBe(200);
+    expect((await cp((i) => i.getAccountBilling("acc-open")))?.billingStatus).toBe("open");
+
+    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed", subscriptionId: null }));
+    expect((await sendText()).status).toBe(402);
+  });
+});
+
 describe("activation", () => {
   it("is the first forward the target answers with a 2xx", async () => {
     await setTarget();
@@ -170,6 +188,22 @@ describe("activation", () => {
     await runAlarm();
     await runAlarm();
     expect((await funnel()).funnel.activatedAt).toBeNull();
+  });
+
+  it("is reported again once the WABA reconnects, here to a funnel account", async () => {
+    await cp((i) => i.sql.exec("UPDATE accounts SET connected_at = 0"));
+    await gatewayStub().saveConfig({ CONNECTED_AT: String(T0) });
+    await setTarget();
+    await inboundMessage();
+    await runAlarm();
+    expect((await funnel()).funnel.activatedAt).toBeNull();
+
+    at(T0 + DAY);
+    await cp((i) => i.sql.exec("UPDATE accounts SET connected_at = ?", T0 + DAY));
+    await gatewayStub().saveConfig({ CONNECTED_AT: String(T0 + DAY) });
+    await inboundMessage();
+    await runAlarm();
+    expect((await funnel()).funnel.activatedAt).toBe(T0 + DAY);
   });
 
   it("is not recorded for a legacy account", async () => {
@@ -337,14 +371,18 @@ describe("funnel emails", () => {
     await cp((i) => i.recordActivation(TEST_WABA_ID, T0, "webhook_2xx"));
     expect((await funnel()).funnel.activatedAt).toBe(T0);
 
+    await tick(T0 + HOUR);
+    mailFails = false;
+    await tick(T0 + 2 * HOUR);
+    expect(kinds()).toEqual(["activated", "activated", "activated"]);
+
+    mailFails = true;
     await tick(T0 + 72 * HOUR);
     expect((await funnel()).billingStatus).toBe("paused");
-    expect(kinds()).toEqual(["activated", "activated", "paused"]);
-
     mailFails = false;
     await tick(T0 + 72 * HOUR + 5 * 60_000);
     await tick(T0 + 72 * HOUR + 10 * 60_000);
-    expect(kinds()).toEqual(["activated", "activated", "paused", "activated", "paused"]);
+    expect(kinds()).toEqual(["activated", "activated", "activated", "paused", "paused"]);
   });
 
   it("sends nothing to a legacy account", async () => {
@@ -363,6 +401,25 @@ describe("funnel emails", () => {
     expect(mail).not.toHaveBeenCalled();
   });
 
+  it("queues nothing without the binding, so one added later sends no backlog", async () => {
+    billingOn();
+    delete (env as { FUNNEL_MAIL?: unknown }).FUNNEL_MAIL;
+    await cp((i) => i.recordActivation(TEST_WABA_ID, T0, "webhook_2xx"));
+    (env as { FUNNEL_MAIL?: unknown }).FUNNEL_MAIL = { sendFunnelEmail: mail };
+    await tick(T0 + HOUR);
+    expect(mail).not.toHaveBeenCalled();
+  });
+
+  it("drops an email still failing once it is too old to be true", async () => {
+    billingOn();
+    mailFails = true;
+    await cp((i) => i.recordActivation(TEST_WABA_ID, T0, "webhook_2xx"));
+    mailFails = false;
+    await tick(T0 + DAY + 1);
+    expect(kinds()).toEqual(["activated"]);
+    expect(await cp((i) => i.sql.exec("SELECT sent_at FROM funnel_mail WHERE kind = 'activated'").one().sent_at)).toBe(0);
+  });
+
   it("sends nothing and fails nothing without the binding", async () => {
     billingOn();
     delete (env as { FUNNEL_MAIL?: unknown }).FUNNEL_MAIL;
@@ -379,16 +436,15 @@ describe("early access end", () => {
   beforeEach(async () => {
     billingOn();
     await cp((i) => i.sql.exec("UPDATE accounts SET connected_at = 0"));
-    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "open" }));
     await cp((i) => i.setEarlyAccessEnd(TEST_ACCOUNT_ID, ENDS));
   });
 
   const schedule = () => cp((i) => i.sql.exec("SELECT early_access_ends_at AS at FROM accounts").one().at);
 
   it("shows the date and pauses the account on it, once", async () => {
-    expect(await funnel()).toMatchObject({ billingStatus: "open", funnel: { pausesAt: ENDS, pauseReason: "early_access_ended" } });
+    expect(await funnel()).toMatchObject({ billingStatus: "setup", funnel: { pausesAt: ENDS, pauseReason: "early_access_ended" } });
     await cp((i) => i.runFunnelTimers(ENDS - 1));
-    expect((await funnel()).billingStatus).toBe("open");
+    expect((await funnel()).billingStatus).toBe("setup");
     expect(await cp((i) => i.runFunnelTimers(ENDS))).toEqual({ paused: 1, warned: 0 });
     expect(await funnel()).toMatchObject({ billingStatus: "paused", funnel: { pausesAt: null, pauseReason: "early_access_ended" } });
     expect(await schedule()).toBeNull();
@@ -407,7 +463,15 @@ describe("early access end", () => {
     expect(await cp((i) => i.setEarlyAccessEnd(TEST_ACCOUNT_ID, null))).toBeNull();
     expect((await funnel()).funnel.pausesAt).toBeNull();
     await cp((i) => i.runFunnelTimers(ENDS + DAY));
+    expect((await funnel()).billingStatus).toBe("setup");
+  });
+
+  it("leaves an operator-open account alone, and refuses to schedule one", async () => {
+    await cp((i) => i.setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "open" }));
+    expect((await funnel()).funnel.pausesAt).toBeNull();
+    await cp((i) => i.runFunnelTimers(ENDS));
     expect((await funnel()).billingStatus).toBe("open");
+    await expect(cp((i) => i.setEarlyAccessEnd(TEST_ACCOUNT_ID, ENDS + DAY))).rejects.toThrow(/operator-open/);
   });
 
   it("sends no funnel email", async () => {

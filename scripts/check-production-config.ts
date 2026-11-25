@@ -65,9 +65,11 @@ if (gateway && dashboard) {
   const funnelMail = gateway.services?.some(
     (service) => service.binding === "FUNNEL_MAIL" && service.service === dashboard.name && service.entrypoint === "FunnelMailRPC",
   );
+  // A warning, not an error: the binding can only come once the console exports FunnelMailRPC
+  // (docs/deployment.md#funnel-release).
   if (billing && !funnelMail) {
-    errors.push(
-      `gateway billing is on but services has no FUNNEL_MAIL binding to "${dashboard.name}" (entrypoint FunnelMailRPC): no funnel email would be sent`,
+    console.warn(
+      `! gateway billing is on but services has no FUNNEL_MAIL binding to "${dashboard.name}" (entrypoint FunnelMailRPC): no funnel email is sent until it is added`,
     );
   }
   if (billing && !(dashboard.triggers.crons ?? []).some((cron) => cron !== OAUTH_CLIENT_CLEANUP_CRON)) {

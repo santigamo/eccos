@@ -171,8 +171,14 @@ export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
  * same zero rows. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const LAST_SWEEP_KEY = "__last_sweep_at__";
-/** The first activation seen here: `{at, trigger}` until the control plane has it, then `reported`. */
+/**
+ * The first activation seen for this WABA's current connection: `{at, trigger, connectedAt}`,
+ * plus `reported` once the control plane has it. `connectedAt` is the provisioning saga's
+ * CONNECTED_AT, so a reconnect (to a new account, say) starts it over.
+ */
 const ACTIVATION_KEY = "__activation__";
+
+type NotedActivation = { at: number; trigger: ActivationTrigger; connectedAt: string | null; reported?: true };
 /** Bumped on every write of SUBSCRIBER_SECRET, so a secret claim made before it goes stale. */
 const SUBSCRIBER_SECRET_REVISION_KEY = "__SUBSCRIBER_SECRET_REVISION";
 /** How long a send's idempotency key dedupes a retry. */
@@ -2416,27 +2422,35 @@ export class EccosGateway extends DurableObject<Env> {
    * coexistence history (which never reaches ingest) cannot activate.
    */
   private deliversOwnSend(type: string, wamid: string | null): boolean {
-    if ((type !== "delivered" && type !== "read") || !wamid || this.getConfigValue(ACTIVATION_KEY)) return false;
+    if ((type !== "delivered" && type !== "read") || !wamid || this.notedActivation()) return false;
     return this.sql
       .exec(`SELECT 1 FROM outbound_messages WHERE transport_message_id = ? AND status = 'sent' LIMIT 1`, wamid)
       .toArray().length > 0;
   }
 
+  /** The activation noted for the current connection; one noted before a reconnect is stale. */
+  private notedActivation(): NotedActivation | null {
+    const stored = this.getConfigValue(ACTIVATION_KEY);
+    // A bare `reported` predates the connection stamp: noted again, and the control plane keeps the first.
+    const noted = stored?.startsWith("{") ? (JSON.parse(stored) as NotedActivation) : null;
+    return noted && noted.connectedAt === this.getConfigValue("CONNECTED_AT") ? noted : null;
+  }
+
   /** Keeps the first activation for the alarm to report; true when this was it. */
   private noteActivation(trigger: ActivationTrigger, at: number): boolean {
-    if (this.getConfigValue(ACTIVATION_KEY)) return false;
-    this.saveConfig({ [ACTIVATION_KEY]: JSON.stringify({ at, trigger }) });
+    if (this.notedActivation()) return false;
+    const noted: NotedActivation = { at, trigger, connectedAt: this.getConfigValue("CONNECTED_AT") };
+    this.saveConfig({ [ACTIVATION_KEY]: JSON.stringify(noted) });
     return true;
   }
 
   /** Hands a noted activation to the control plane once; a failed report is retried by the next alarm. */
   private async reportActivation(): Promise<void> {
-    const noted = this.getConfigValue(ACTIVATION_KEY);
-    if (!noted || noted === "reported") return;
-    const { at, trigger } = JSON.parse(noted) as { at: number; trigger: ActivationTrigger };
+    const noted = this.notedActivation();
+    if (!noted || noted.reported) return;
     try {
-      await getControlPlaneStub(this.env).recordActivation(this.wabaIdForOps(), at, trigger);
-      this.saveConfig({ [ACTIVATION_KEY]: "reported" });
+      await getControlPlaneStub(this.env).recordActivation(this.wabaIdForOps(), noted.at, noted.trigger);
+      this.saveConfig({ [ACTIVATION_KEY]: JSON.stringify({ ...noted, reported: true }) });
     } catch (error) {
       this.logWarn("funnel", "activation-report-failed", error);
     }

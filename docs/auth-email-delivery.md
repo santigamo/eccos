@@ -331,7 +331,7 @@ counts as already sent.
 | `funnel-recovery` | the console cron | `startConnect` writes a row due 2 h after the **first** try; Embedded Signup session events with an error code store it as the cause (3441067, 3441069, 3441075 get a cause sentence). Every cron run sends due rows, or settles them unsent if the account has a number by then. The cron is hourly, so it lands 2 to 3 h after the try. |
 | `funnel-activated` | gateway (dbb3.2) | at activation: first 2xx webhook delivery or first outbound delivered |
 | `funnel-window-ending` | gateway (dbb3.2) | 48 h after activation (24 h left). Skipped unless the account is still `setup` |
-| `funnel-paused` | gateway (dbb3.2) | when it pauses the account: window ended, or day 14 never activated |
+| `funnel-paused` | gateway (dbb3.2) | when it pauses the account: window ended, or day 14 never activated. Skipped unless the account is still `paused` |
 | `funnel-never-activated` | gateway (dbb3.2) | day 12 after the first number connected, never activated. Skipped unless `setup` |
 
 **What dbb3.2 calls.** A service binding from the gateway to the dashboard's
@@ -347,10 +347,11 @@ The template `wrangler.jsonc` carries it commented out: the console binds to the
 gateway (`GATEWAY`), and Cloudflare refuses a deploy whose bound Worker does not
 exist, so a fresh install deploys the gateway, then the console, then adds the
 binding and redeploys the gateway. On an existing install, deploy the console
-(which exports `FunnelMailRPC`) **before** the gateway that carries the binding.
-With billing on, `bun run deploy` refuses a production config without it.
-Without the binding (self-host, tests) the gateway sends no funnel email and
-logs nothing.
+(which exports `FunnelMailRPC`) **before** the gateway that carries the binding
+(docs/deployment.md, "Funnel release"). With billing on, the preflight warns
+about a production config without it. Without the binding (self-host, tests)
+the gateway queues and sends no funnel email and logs nothing, so a binding
+added later sends no backlog.
 
 **Retry.** The control plane queues each email in its `funnel_mail` table, one
 row per `(accountId, kind)`, in the same step as the state change it announces;
@@ -358,7 +359,9 @@ the input is frozen at that moment. `activated` is tried right away from the
 activation report; every cron tick (5 min) tries every unsent row, each call
 bounded to 5 s, after the timers have run. A row is marked `sent_at` once the
 RPC returns (any result) and is never tried again; a throw or a timeout leaves
-it for the next tick. Billing off, nothing is queued or sent. Legacy accounts
+it for the next tick, until it is too old to be true (`FUNNEL_MAIL_MAX_AGE_MS`:
+a day for `activated` and `window_ending`, two for the warning, three for
+`paused`) and is dropped with `sent_at = 0`. Billing off, nothing is queued or sent. Legacy accounts
 (`connected_at` 0 or null) never get a clock, so never get a row.
 
 ```ts

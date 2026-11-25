@@ -46,6 +46,7 @@ import {
   ACTIVATION_WINDOW_MS,
   type ActivationTrigger,
   FUNNEL_COLUMNS,
+  FUNNEL_MAIL_MAX_AGE_MS,
   FUNNEL_MAIL_SCHEMA,
   funnelEvent,
   funnelMailer,
@@ -692,11 +693,27 @@ export function quarantineUnsealedWabas(sql: SqlStorage): number {
     .toArray().length;
 }
 
+/**
+ * The funnel release's one-time migration, run when `connected_at` arrives. An account that
+ * already has a number connected before the funnel: `connected_at = 0` keeps its clock off for
+ * good. A `closed` stored before the funnel only stopped new numbers; it now refuses sends and
+ * holds forwarding, so it is forgotten (NULL, the deployment default) and only a `closed`
+ * written from here on blocks. The daily billing reconcile re-derives any live subscription.
+ */
+export function addFunnelClock(sql: SqlStorage): void {
+  sql.exec("ALTER TABLE accounts ADD COLUMN connected_at INTEGER");
+  sql.exec(
+    `UPDATE accounts SET connected_at = 0 WHERE account_id IN
+       (SELECT w.account_id FROM wabas w JOIN phones p ON p.waba_id = w.waba_id)`,
+  );
+  sql.exec("UPDATE accounts SET connect_policy = NULL WHERE connect_policy = 'closed'");
+}
+
 /** How long one funnel-email call may take before it is left for the next tick. */
 const FUNNEL_MAIL_TIMEOUT_MS = 5_000;
 
-/** Statuses a scheduled end of early access leaves alone: subscribed, or already paused. */
-const KEEPS_EARLY_ACCESS: ReadonlySet<BillingStatus> = new Set(["active", "past_due", "cancelled", "paused"]);
+/** Statuses a scheduled end of early access leaves alone: subscribed, operator-open, or already paused. */
+const KEEPS_EARLY_ACCESS: ReadonlySet<BillingStatus> = new Set(["active", "past_due", "cancelled", "paused", "open"]);
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -806,15 +823,7 @@ export class EccosControlPlane extends DurableObject<Env> {
           this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} TEXT`);
         }
       }
-      // The funnel clock (funnel.ts). An account that already has a number when the column
-      // arrives connected before the funnel: `connected_at = 0` keeps its clock off for good.
-      if (!accountColumns.some((row) => row.name === "connected_at")) {
-        this.sql.exec("ALTER TABLE accounts ADD COLUMN connected_at INTEGER");
-        this.sql.exec(
-          `UPDATE accounts SET connected_at = 0 WHERE account_id IN
-             (SELECT w.account_id FROM wabas w JOIN phones p ON p.waba_id = w.waba_id)`,
-        );
-      }
+      if (!accountColumns.some((row) => row.name === "connected_at")) addFunnelClock(this.sql);
       for (const [column, type] of [
         ["activated_at", "INTEGER"],
         ["warning_due_at", "INTEGER"],
@@ -1327,10 +1336,14 @@ export class EccosControlPlane extends DurableObject<Env> {
     }
   }
 
-  /** Queues one funnel email, once per account and kind. An account without an organization has no one to mail. */
+  /**
+   * Queues one funnel email, once per account and kind. An account without an organization
+   * has no one to mail; without the `FUNNEL_MAIL` binding nothing is queued, so a binding
+   * added later never sends a backlog.
+   */
   private queueFunnelMail(accountId: string, mail: DistributiveOmit<FunnelMailInput, "organizationId" | "accountId">): void {
     const organizationId = this.organizationOf(accountId);
-    if (!organizationId) return;
+    if (!organizationId || !funnelMailer(this.env)) return;
     this.sql.exec(
       "INSERT OR IGNORE INTO funnel_mail (account_id, kind, input, queued_at) VALUES (?, ?, ?, ?)",
       accountId,
@@ -1342,13 +1355,18 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   /**
    * Hands every unsent funnel email (or one account's) to the console and marks the ones it
-   * acknowledged. A throw or a timeout leaves the row for the next cron tick. Billing off or
-   * no `FUNNEL_MAIL` binding, nothing is sent.
+   * acknowledged. A throw or a timeout leaves the row for the next cron tick, until it is
+   * older than its `FUNNEL_MAIL_MAX_AGE_MS` and dropped. Billing off or no `FUNNEL_MAIL`
+   * binding, nothing is sent.
    */
   async sendFunnelMail(accountId?: string): Promise<{ sent: number; failed: number }> {
     const done = { sent: 0, failed: 0 };
     const mailer = funnelMailer(this.env);
     if (!mailer || !this.billingOn()) return done;
+    const now = Date.now();
+    for (const [kind, maxAge] of Object.entries(FUNNEL_MAIL_MAX_AGE_MS)) {
+      this.sql.exec("UPDATE funnel_mail SET sent_at = 0 WHERE sent_at IS NULL AND kind = ? AND queued_at < ?", kind, now - maxAge);
+    }
     const rows = this.sql
       .exec(
         `SELECT account_id, kind, input FROM funnel_mail WHERE sent_at IS NULL ${accountId ? "AND account_id = ?" : ""}`,
@@ -1446,6 +1464,9 @@ export class EccosControlPlane extends DurableObject<Env> {
     const id = this.requireAccount(accountId);
     if (endsAt !== null && !(Number.isSafeInteger(endsAt) && endsAt > 0)) {
       throw new Error("invalid endsAt: Unix ms or null");
+    }
+    if (endsAt !== null && this.billingStatusOf(id) === "open") {
+      throw new Error("account is operator-open: set its billing status to setup before scheduling an end of early access");
     }
     this.sql.exec("UPDATE accounts SET early_access_ends_at = ? WHERE account_id = ?", endsAt, id);
     funnelEvent("early_access_scheduled", id, this.organizationOf(id), { endsAt });

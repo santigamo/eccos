@@ -1,5 +1,5 @@
 import type { AccountFunnel, PauseReason } from "@eccos/gateway-contract";
-import type { FunnelMailApi } from "@eccos/gateway-contract/funnel-mail";
+import type { FunnelMailApi, FunnelMailKind } from "@eccos/gateway-contract/funnel-mail";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -82,7 +82,7 @@ export function funnelEvent(
 /**
  * The funnel-email outbox: one row per account and kind, queued with the state change it
  * announces and marked sent once the console acknowledges it. An unsent row is retried by
- * every cron tick; a sent one never again.
+ * every cron tick; a sent one never again. `sent_at = 0`: dropped unsent, too old to be true.
  */
 export const FUNNEL_MAIL_SCHEMA = `CREATE TABLE IF NOT EXISTS funnel_mail (
   account_id TEXT NOT NULL,
@@ -92,6 +92,17 @@ export const FUNNEL_MAIL_SCHEMA = `CREATE TABLE IF NOT EXISTS funnel_mail (
   sent_at    INTEGER,
   PRIMARY KEY (account_id, kind)
 );`;
+
+/**
+ * How long a queued email stays worth sending. `activated` and `window_ending` name an hour
+ * that is a day away at most; the warning is moot once the day-14 pause comes, two days on.
+ */
+export const FUNNEL_MAIL_MAX_AGE_MS: Record<FunnelMailKind, number> = {
+  activated: DAY_MS,
+  window_ending: DAY_MS,
+  never_activated_warning: 2 * DAY_MS,
+  paused: 3 * DAY_MS,
+};
 
 /** The console's `FUNNEL_MAIL` binding (Eccos Cloud only); absent on self-host and in tests, so no email. */
 export function funnelMailer(env: Env): FunnelMailApi | null {

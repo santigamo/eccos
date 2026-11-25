@@ -111,6 +111,7 @@ describe("templates", () => {
   });
 
   test("the paused opening follows why it paused", async () => {
+    billingStatus = "paused";
     await sendFunnelEmail(deps(), { kind: "paused", organizationId: "org_1", accountId: "acc_1", pausedAt: NOW, reason: "window_ended" });
     expect(mail.sent[0].variables.opening).toBe("Your setup window ended today at 10:42, so +34 612 345 678 is paused.");
   });
@@ -175,6 +176,14 @@ describe("idempotency", () => {
     billingStatus = "active";
     const result = await sendFunnelEmail(deps(), { kind: "window_ending", organizationId: "org_1", accountId: "acc_1", windowEndsAt: NOW });
     expect(result).toEqual({ status: "skipped", reason: "subscribed" });
+  });
+
+  test("the paused email is dropped once the account paid, and sent while it is still paused", async () => {
+    const paused: FunnelMailInput = { kind: "paused", organizationId: "org_1", accountId: "acc_1", pausedAt: NOW, reason: "window_ended" };
+    billingStatus = "active";
+    expect(await sendFunnelEmail(deps(), paused)).toEqual({ status: "skipped", reason: "subscribed" });
+    billingStatus = "paused";
+    expect(await sendFunnelEmail(deps(), paused)).toEqual({ status: "sent", recipients: 2 });
   });
 });
 

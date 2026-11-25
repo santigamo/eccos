@@ -207,8 +207,11 @@ derives two rules from it (`packages/gateway-contract/src/billing-status.ts`):
 | `closed` | Creem `canceled` or `expired` | no | no (`subscription_required`, HTTP 402) |
 | `open` | the operator or `RESELLER_USER_IDS`; the default without the var | yes | yes |
 
-Only a stored `paused` or `closed` refuses sends; a default never does. Receiving and forwarding
-never depend on the status. Numbers an account already has can always be reconnected.
+Only a stored `paused` or `closed` refuses sends; a default never does. The same two hold
+forwarding: inbound events are still received and stored, but not forwarded. Once the account
+pays, new events forward right away; the backlog held meanwhile is forwarded only when someone
+presses **Replay N stored events** on Numbers (`replayHeldEvents`), so it can land after newer
+events. Numbers an account already has can always be reconnected.
 
 | Where | Setting | Purpose |
 |---|---|---|
@@ -221,11 +224,42 @@ never depend on the status. Numbers an account already has can always be reconne
 
 The Creem product is a monthly subscription at 1 EUR per unit (a subscription's units are its
 monthly price in euros), with no free trial: the checkout charges from the first day. Its default
-return URL is `<console origin>/settings?billing=success`, and the customer portal cancels at the
+return URL is `<console origin>/billing` (each checkout also passes its own), and the customer portal cancels at the
 end of the period, never immediately. Creem's customer portal takes no return URL.
 
 The preflight refuses a deploy with only one of `CREEM_PRODUCT_ID` and
-`CONNECT_POLICY_DEFAULT=closed`, or with billing on and no trigger besides the hourly one.
+`CONNECT_POLICY_DEFAULT=closed`, or with billing on and no trigger besides the hourly one. It
+warns, without refusing, when billing is on and the gateway has no `FUNNEL_MAIL` binding.
+
+### Funnel release
+
+The release that brings the pay-after-first-success funnel (eccos-dbb3), on an install with
+billing on. In this order:
+
+1. **D1 migration**, before any console deploy:
+   `cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote -c wrangler.production.jsonc`
+   (adds `0007_funnel_mail.sql`, the funnel-email ledger).
+2. **Gateway, without the `FUNNEL_MAIL` binding**: `bun run deploy`. The preflight warns that
+   the binding is missing; that is expected here. On first start the control plane runs its
+   one-time funnel migration: accounts that already have a number get no funnel clock, and every
+   `closed` stored before this release becomes NULL (the default, `setup`), because `closed` now
+   refuses sends and holds forwarding where it used to only stop new numbers.
+3. **Console, right after**: `cd apps/dashboard && bun run deploy`. The old console writes the
+   old `connectPolicy` field, which the new gateway refuses, so Creem webhooks fail (and Creem
+   retries them) until it is replaced.
+4. **Add the `FUNNEL_MAIL` binding** to `apps/gateway/wrangler.production.jsonc` and run
+   `bun run deploy` again. It can only come now: it binds to the console's `FunnelMailRPC`
+   entrypoint, which the old console did not export. Until then no funnel email is queued, so
+   none goes out late.
+5. **Run the billing reconcile** right away rather than waiting for 04:00 UTC, so each account
+   with a live subscription gets its real status back (`active`, `past_due`, or `closed` for one
+   that has ended). Cloudflare has no button that runs a production cron, but every console
+   trigger other than the hourly one reconciles: add a one-off cron a few minutes ahead (for
+   example `"25 14 * * *"`, in UTC) to `triggers.crons` in `apps/dashboard/wrangler.production.jsonc`,
+   deploy the console, watch `wrangler tail` for `billing:` errors once it fires, then remove it
+   and deploy again.
+6. **Creem, by hand**: on the product, remove the 14-day free trial, and set its default return
+   URL to `<console origin>/billing`; set the customer portal to cancel at the end of the period.
 
 ## Deploy
 
