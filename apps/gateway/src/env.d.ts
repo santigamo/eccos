@@ -9,6 +9,8 @@ interface Env {
   GATEWAY_PUBLIC_URL?: string;
   /** "closed": accounts without a stored policy cannot add numbers. Unset means open. */
   CONNECT_POLICY_DEFAULT?: string;
+  /** "off" stops the funnel timers (no pause, no warning); for a staged release. */
+  FUNNEL_PAUSES?: string;
   /** Bootstrap key for account and WABA provisioning (admin endpoints). */
   ECCOS_ADMIN_API_KEY?: string;
   /**

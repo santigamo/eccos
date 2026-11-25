@@ -19,11 +19,11 @@ beforeEach(resetStubs);
 const admin = () => makeActor({ role: "admin", actions: ["view", "configure", "administer"] });
 const CLOSED = {
   ok: true,
-  billing: { connectPolicy: "closed", numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitPolicy: false },
+  billing: { billingStatus: "setup", canAddNumber: false, numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitStatus: false },
 } as const;
 const OPEN = {
   ok: true,
-  billing: { connectPolicy: "open", numbers: 2, monthlyEuros: 30, hasCustomer: true, explicitPolicy: false },
+  billing: { billingStatus: "active", canAddNumber: true, numbers: 2, monthlyEuros: 30, hasCustomer: true, explicitStatus: false },
 } as const;
 
 describe("billing_get", () => {
@@ -36,6 +36,7 @@ describe("billing_get", () => {
     expect(result.structuredContent).toEqual({
       enabled: true,
       connectPolicy: "closed",
+      status: "setup",
       numbers: 0,
       monthlyEuros: 0,
       hasBillingAccount: false,
@@ -54,6 +55,7 @@ describe("billing_get", () => {
     expect(result.structuredContent).toMatchObject({
       enabled: true,
       connectPolicy: "open",
+      status: "active",
       detail: "Numbers can be added. 2 numbers are billed, 30 euros a month.",
       nextTool: null,
     });
@@ -68,6 +70,7 @@ describe("billing_get", () => {
     expect(result.structuredContent).toEqual({
       enabled: false,
       connectPolicy: null,
+      status: null,
       numbers: null,
       monthlyEuros: null,
       hasBillingAccount: null,

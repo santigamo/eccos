@@ -73,6 +73,9 @@ sent once; `duplicatesSkipped` counts the extra entries.
   its own `components`; when it used the template's, every recipient would fail, so the
   broadcast stops.
 - **Any other Meta error** fails that recipient only, with Meta's error stored on it.
+- **Sending paused, nothing lost.** While the workspace's sending is paused (see the `402` in
+  [errors](/errors-and-rate-limits)), a running broadcast waits with its recipients `queued`, and
+  it goes on once the subscription is active.
 
 Every message is a normal send: it appears in your logs and conversations, and your webhook
 receives its `sent`, `delivered`, `read` and `failed` [status events](/event-reference). Each of

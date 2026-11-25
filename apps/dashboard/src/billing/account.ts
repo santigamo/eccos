@@ -1,18 +1,22 @@
-import type { AccountResources, ConnectPolicy, GatewayApi } from "@eccos/gateway-contract";
+import type { AccountBilling, AccountResources, BillingStatus, GatewayApi } from "@eccos/gateway-contract";
+import { setupWindowOf, type SetupWindow } from "../lib/setup-window";
 import type { Billing } from "./context";
+import type { Payment } from "./creem";
 import { monthlyPriceEuros, subscriptionEnded } from "./plan";
 
 export interface BillingState {
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
   /** Numbers on active WABAs: what the subscription is priced for. */
   numbers: number;
   monthlyEuros: number;
   hasCustomer: boolean;
-  /** The operator set this workspace's policy; false while it follows the deployment default. */
-  explicitPolicy: boolean;
+  /** The status is stored on this workspace; false while it follows the deployment default. */
+  explicitStatus: boolean;
+  /** The gateway would register one more number now. */
+  canAddNumber: boolean;
 }
 
-export const BILLING_RETURN_PATH = "/settings?billing=success";
+export const BILLING_RETURN_PATH = "/billing?billing=success";
 
 /** Where Creem sends the customer back: the console's own origin, never the request's. */
 export function billingReturnUrl(consoleOrigin: string | undefined, requestUrl: string): string {
@@ -34,18 +38,65 @@ async function storedBilling(gateway: GatewayApi, accountId: string) {
   return stored;
 }
 
-/** Read from the control plane only: Settings never waits on Creem. */
-export async function billingState(gateway: GatewayApi, accountId: string): Promise<BillingState> {
-  const [billing, numbers] = await Promise.all([
-    storedBilling(gateway, accountId),
-    billableNumbers(gateway, accountId),
-  ]);
+function stateOf(billing: AccountBilling, resources: AccountResources): BillingState {
+  const numbers = billableCount(resources.wabas);
   return {
-    connectPolicy: billing.connectPolicy,
+    billingStatus: billing.billingStatus,
+    canAddNumber: resources.account?.canAddNumber === true,
     numbers,
     monthlyEuros: monthlyPriceEuros(numbers),
     hasCustomer: billing.customerId !== null,
-    explicitPolicy: billing.explicitPolicy === true,
+    explicitStatus: billing.explicitStatus === true,
+  };
+}
+
+/** Read from the control plane only: Settings never waits on Creem. */
+export async function billingState(gateway: GatewayApi, accountId: string): Promise<BillingState> {
+  const [billing, resources] = await Promise.all([
+    storedBilling(gateway, accountId),
+    gateway.listAccountResources(accountId),
+  ]);
+  return stateOf(billing, resources);
+}
+
+/** What /billing shows. The Creem half is null when there is nothing to read or Creem did not answer. */
+export interface BillingPage {
+  billing: BillingState;
+  /** Display numbers on active WABAs, in the order they are billed. */
+  phones: string[];
+  /** Owner or admin: sees the payments and the ways into the portal. */
+  canManage: boolean;
+  window: SetupWindow;
+  charge: { nextChargeAt: number | null; periodEndsAt: number | null } | null;
+  /** Never read for a member. */
+  payments: Payment[] | null;
+}
+
+export async function billingPage(
+  { creem, gateway }: Billing,
+  accountId: string,
+  canManage: boolean,
+): Promise<BillingPage> {
+  const [stored, resources] = await Promise.all([storedBilling(gateway, accountId), gateway.listAccountResources(accountId)]);
+  const { subscriptionId, customerId } = stored;
+  const [charge, payments] = await Promise.all([
+    subscriptionId
+      ? creem.subscription(subscriptionId).then(
+          ({ nextChargeAt, periodEndsAt }) => ({ nextChargeAt, periodEndsAt }),
+          () => null,
+        )
+      : null,
+    canManage && customerId ? creem.payments(customerId).catch(() => null) : null,
+  ]);
+  return {
+    billing: stateOf(stored, resources),
+    phones: resources.wabas
+      .filter((waba) => waba.status === "active")
+      .flatMap((waba) => waba.phones.map((phone) => phone.displayPhoneNumber)),
+    canManage,
+    window: setupWindowOf(resources.account),
+    charge,
+    payments,
   };
 }
 

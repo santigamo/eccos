@@ -1,3 +1,5 @@
+import type { BillingStatus } from "./billing-status";
+
 /**
  * Single source of truth for the Eccos gateway operator RPC surface.
  *
@@ -281,6 +283,16 @@ export interface RetryFailedWindow {
   to: number;
 }
 
+/** Events stored while the account was paused, which no one has forwarded (`held` deliveries). */
+export interface HeldEvents {
+  events: number;
+  /** The incoming messages among them. */
+  messages: number;
+}
+
+/** A replay of the held backlog; refused while the account is still paused. */
+export type ReplayHeldResult = { ok: true; replayed: number } | { ok: false; code: "subscription_required" };
+
 export interface RetryFailedResult {
   /** Rows moved back to `pending`, attempts reset. */
   requeued: number;
@@ -491,27 +503,55 @@ export type EraseByPhoneResult =
 
 // --- Account resources (account-scoped operator surface) --------------------
 
-/** Whether an account may add numbers. Messaging never depends on it. */
-export type ConnectPolicy = "open" | "closed";
+export type { BillingStatus } from "./billing-status";
 
 export interface AccountSummary {
   accountId: string;
   name: string;
   createdAt: number;
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
+  /** The gateway would register one more number now (`mayAddNumber`). */
+  canAddNumber: boolean;
+  /** Absent from an older gateway. */
+  funnel?: AccountFunnel;
+}
+
+/**
+ * Why a `setup` account pauses: `window_ended` once its 72 hours after activation
+ * run out, `never_activated` 14 days after it connected without activating.
+ */
+/** `early_access_ended`: an operator-scheduled end of early access for an account that never had a funnel clock. */
+export type PauseReason = "window_ended" | "never_activated" | "early_access_ended";
+
+/**
+ * Where an account stands in the pay-after-first-success funnel. Only an account
+ * that connected its first number under the funnel has a clock; every time is
+ * epoch milliseconds.
+ */
+export interface AccountFunnel {
+  /** When it connected its first number; null for one that connected before the funnel. */
+  connectedAt: number | null;
+  /** First 2xx forward to its target, or first send of its own Meta delivered. */
+  activatedAt: number | null;
+  /** When the account pauses unless it pays (a `setup` timer or a scheduled end of early access); null when none runs. */
+  pausesAt: number | null;
+  /** Why it pauses at `pausesAt`, or why a timer paused it. */
+  pauseReason: PauseReason | null;
+  /** When the day-12 never-activated warning fell due; null until then. */
+  warningDueAt: number | null;
 }
 
 /** Billing state of one account. The ids belong to the billing provider; the gateway only stores them. */
 export interface AccountBilling {
-  connectPolicy: ConnectPolicy;
-  /** The policy is stored on the account, not inherited from CONNECT_POLICY_DEFAULT. */
-  explicitPolicy: boolean;
+  billingStatus: BillingStatus;
+  /** The status is stored on the account, not inherited from CONNECT_POLICY_DEFAULT. */
+  explicitStatus: boolean;
   customerId: string | null;
   subscriptionId: string | null;
 }
 
 export interface AccountBillingInput {
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
   /** Omitted keeps the stored id. */
   customerId?: string;
   /** Omitted keeps the stored id; null clears it. */
@@ -760,7 +800,8 @@ export interface ConnectLinkGrant {
   organizationId: string;
   creatorUserId: string;
   state: "active" | "expired" | "used" | "revoked";
-  connectPolicy: ConnectPolicy;
+  /** The account would register one more number now. */
+  canAddNumber: boolean;
 }
 
 /** A link taken for one exchange. `claimId` is null when the link is not active: nothing was taken. */
@@ -996,6 +1037,8 @@ export interface TemplateHeaderMedia {
  * wrong.
  */
 export type SendTestFailureCode =
+  /** The account's billing status refuses sends (closed or paused); Meta was never called. */
+  | "subscription_required"
   /** Eccos' own limiter refused; Meta was never called. */
   | "rate_limited"
   /** The requested phone is not registered on the WABA. */
@@ -1061,6 +1104,8 @@ export interface SendReactionInput {
 
 /** Closed failure vocabulary for a free-text send. Same design as {@link SendTestFailureCode}. */
 export type SendTextFailureCode =
+  /** The account's billing status refuses sends (closed or paused); Meta was never called. */
+  | "subscription_required"
   /** Eccos' own limiter refused; Meta was never called. */
   | "rate_limited"
   /** The requested phone is not registered on the WABA. */
@@ -1260,16 +1305,21 @@ export interface GatewayApi {
     wabaId: string,
     accountId: string,
   ): Promise<RetryFailedResult>;
+  /** Events held across the account's WABAs while it was paused. */
+  getHeldEvents(accountId: string): Promise<HeldEvents>;
+  /** Queues the held backlog for forwarding, oldest first. The console allows it to owners and admins. */
+  replayHeldEvents(accountId: string): Promise<ReplayHeldResult>;
   listTemplates(wabaId: string, limit: number | undefined, accountId: string): Promise<TemplatesResult>;
   getSubscriberConfig(wabaId: string, accountId: string): Promise<SubscriberConfig>;
   /** Whether the WABA has a forwarding target, and nothing else: the view-level
    * fact behind a setup checklist. Same ownership check as getSubscriberConfig. */
   hasSubscriber(wabaId: string, accountId: string): Promise<boolean>;
+  /** `savedAt` is the gateway's clock after the write, comparable with `InboundRow.received_at`. */
   setSubscriberConfig(
     input: SetSubscriberConfigInput,
     wabaId: string,
     accountId: string,
-  ): Promise<{ ok: true }>;
+  ): Promise<{ ok: true; savedAt: number }>;
   resubscribe(wabaId: string, accountId: string): Promise<ResubscribeResult>;
   /**
    * Send one template message from the console ("Send test").

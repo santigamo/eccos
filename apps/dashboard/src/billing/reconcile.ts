@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/cloudflare";
 import type { BilledAccount } from "@eccos/gateway-contract";
 import type { Billing } from "./context";
-import { policyForStatus, subscriptionEnded } from "./plan";
+import { statusForSubscription, subscriptionEnded } from "./plan";
 
 const CONCURRENCY = 5;
 
@@ -11,10 +11,12 @@ type Reconcile = Pick<Billing, "creem"> & {
 
 async function reconcileAccount({ creem, gateway }: Reconcile, account: BilledAccount): Promise<void> {
   const subscription = await creem.subscription(account.subscriptionId);
-  // Creem refuses every change to a subscription that is not active, a trial included.
+  // Creem refuses every change to a subscription that is not active.
   if (subscription.status === "active") await creem.setNumbers(subscription, account.billableNumbers);
+  const billingStatus = statusForSubscription(subscription.status);
+  if (!billingStatus) throw new Error(`subscription ${subscription.id} has unknown status ${subscription.status}`);
   await gateway.setAccountBilling(account.accountId, {
-    connectPolicy: policyForStatus(subscription.status),
+    billingStatus,
     // An ended subscription is forgotten, so it is not read again tomorrow.
     ...(subscriptionEnded(subscription.status) ? { subscriptionId: null } : {}),
     // A webhook that moved the account to another subscription meanwhile wins.
@@ -22,7 +24,7 @@ async function reconcileAccount({ creem, gateway }: Reconcile, account: BilledAc
   });
 }
 
-/** Daily: each active subscription is priced for the numbers its account has, and every policy re-derived. */
+/** Daily: each active subscription is priced for the numbers its account has, and every status re-derived. */
 export async function reconcileBilling(billing: Reconcile): Promise<void> {
   const accounts = await billing.gateway.listBilledAccounts();
   for (let start = 0; start < accounts.length; start += CONCURRENCY) {

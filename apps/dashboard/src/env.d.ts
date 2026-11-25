@@ -19,6 +19,9 @@ declare global {
       CREEM_WEBHOOK_SECRET?: string;
       CREEM_PRODUCT_ID?: string;
       RESELLER_USER_IDS?: string;
+      /** Funnel emails (docs/auth-email-delivery.md); unset only logs. */
+      FUNNEL_RECCADO_API_KEY?: string;
+      FUNNEL_RECCADO_ENDPOINT?: string;
       GATEWAY: Service<GatewayApi & Rpc.WorkerEntrypointBranded>;
     }
   }

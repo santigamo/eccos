@@ -15,6 +15,7 @@ Every error body has `"ok": false` and an `error` field.
 | 400 | URL and body name different numbers | `"phone selector mismatch"` |
 | 400 | Malformed `Idempotency-Key` | `"Idempotency-Key must be 1-255 printable ASCII characters"` |
 | 401 | Missing, unknown or revoked key | `"unauthorized"` |
+| 402 | Workspace whose sending is paused | `"this workspace has no active subscription, so it cannot send messages"`, with `"code": "subscription_required"` |
 | 404 | WABA unknown, malformed, not yours, or not active | `"WABA is not configured"` |
 | 404 | Number not in this WABA | `"phone number is not registered to this WABA"` |
 | 409 | Idempotency key in progress or unknown outcome | see [Idempotency](/idempotency) |
@@ -35,6 +36,11 @@ this; `error` is Meta's body unchanged, hence the doubled `error`
 When the outcome is unknown the body also has `"outcome": "unknown"`, and `error` may be Meta's
 JSON, a string (network error or timeout), or `null` (a non-JSON 5xx). Unknown also covers a
 Meta 2xx that carries no message id.
+
+A `402` answers every send of a workspace whose sending is paused because its subscription ended
+or it was paused: messages, [broadcasts](/bulk-sending) and [scheduled sends](/scheduled-sends).
+Nothing reaches Meta. A failed payment that is still being retried never pauses sending. Incoming
+messages are still received, and sending works again as soon as the subscription is active.
 
 Eccos does not validate the message itself (template name, parameters, media). Meta does, and
 its verdict comes back as a `502`.

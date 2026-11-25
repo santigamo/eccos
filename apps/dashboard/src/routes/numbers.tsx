@@ -1,19 +1,19 @@
 import { useRef, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
-import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
+import { invalidatePage, invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
 import { getConnectBlock, type ConnectBlock } from "../server/connect-block";
+import { getHeldEvents } from "../server/gateway";
+import { HeldReplay } from "../components/dashboard/held-replay";
 import { FailureView } from "../components/dashboard/failure";
-import {
-  CONNECT_FORK_DESCRIPTION,
-  ConnectNumberChoices,
-  ConnectNumberPanel,
-} from "../components/dashboard/connect-number";
+import { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices } from "../components/dashboard/connect-number";
+import { ConnectWizard } from "../components/connect-wizard/connect-wizard";
 import { ConnectLinkButton } from "../components/dashboard/connect-link-dialog";
 import { NumbersTable } from "../components/dashboard/numbers-table";
 import { SubscriptionGate, SubscriptionNotice } from "../components/dashboard/subscription-notice";
 import { billableCount } from "../billing/account";
+import { blocksSends } from "@eccos/gateway-contract/billing-status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,7 +28,7 @@ import {
   normalizeConnectSkipped,
   type ConnectOutcomeSearch,
 } from "../components/dashboard/connect-outcome";
-import type { ConnectFailureCode } from "@eccos/gateway-contract";
+import type { ConnectFailureCode, HeldEvents } from "@eccos/gateway-contract";
 import { selectWaba } from "@eccos/gateway-contract/select-waba";
 import { targetMissing } from "../lib/forwarding";
 import { normalizeSearchWabaId } from "../lib/search";
@@ -42,8 +42,11 @@ export const Route = createFileRoute("/numbers")({
     connectError: normalizeConnectError(search.connectError),
     connectSkipped: normalizeConnectSkipped(search.connectSkipped),
   }),
-  // What the connect fork owes (the role), read with the page, not the shell.
-  loader: () => getConnectBlock(),
+  // What the connect fork owes (the role), and what a pause left held, read with the page, not the shell.
+  loader: async () => {
+    const [blocked, held] = await Promise.all([getConnectBlock(), getHeldEvents().catch(() => null)]);
+    return { blocked, held: held?.ok ? held.data : null };
+  },
   component: NumbersPage,
 });
 
@@ -51,15 +54,14 @@ export const Route = createFileRoute("/numbers")({
  * The account's WhatsApp numbers, and the one place they get connected.
  *
  * This is also the first screen of a new workspace: with no number yet, the
- * page IS the connect flow, inside the normal app chrome. There is no separate
- * first-run route, because "attach a number" is a recurring operation and an
- * onboarding wizard would only exist for the first one.
+ * page IS the connect wizard, inside the normal app chrome. Adding a later
+ * number opens the add-number dialog instead.
  */
 function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
   const { wabaId, connectError, connectSkipped } = Route.useSearch();
-  const blocked = Route.useLoaderData();
+  const { blocked, held } = Route.useLoaderData();
   if (!root.ok) {
     return (
       <Page title="Numbers" kicker="Connection">
@@ -88,7 +90,7 @@ function NumbersPage() {
         canManageBilling={canManageBilling}
       />
     );
-    const closed = resources?.account?.connectPolicy === "closed";
+    const closed = resources?.account?.canAddNumber === false;
     return (
       <Page title="Connect WhatsApp" kicker="First run" actions={closed || !canConnect ? undefined : <ConnectLinkButton />}>
         {/* Centred and LIFTED, the house treatment for a single-purpose frame
@@ -148,7 +150,9 @@ function NumbersPage() {
       connectError={connectError}
       connectSkipped={connectSkipped}
       blocked={blocked}
+      held={held}
       onRefresh={async () => void (await invalidateRoutes(router, rootRouteId))}
+      onReplayed={async () => void (await invalidatePage(router))}
     />
   );
 }
@@ -185,10 +189,14 @@ export function NumbersView({
   connectError,
   connectSkipped,
   blocked,
+  held,
   onRefresh,
+  onReplayed,
 }: {
   /** What stops the signed-in user connecting right now, for the add-number fork. */
   blocked?: ConnectBlock | null;
+  /** Events stored while the workspace was paused; null when unread. */
+  held?: HeldEvents | null;
   resources: AccountResources;
   nextWabaId?: string;
   supportEmail?: string | null;
@@ -204,6 +212,8 @@ export function NumbersView({
   connectSkipped?: number;
   /** Re-read the loader after the table's re-check changed something. */
   onRefresh?: () => void | Promise<void>;
+  /** Re-read the page after a replay emptied the held backlog. */
+  onReplayed?: () => void | Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
   /**
@@ -215,15 +225,19 @@ export function NumbersView({
    * it is supposed to be refused.
    */
   const [busy, setBusy] = useState(false);
-  // One instance: it moves into the dialog while that is open.
+  // A replay waits for the pause to end: the gateway would only hold the backlog again.
+  const paused = resources.account ? blocksSends(resources.account.billingStatus) : false;
+  // Said only inside the add-number dialog, when a second number is asked for;
+  // a paused workspace already has the pause banner and its one CTA above the page.
   const notice = (className?: string) =>
-    resources.account?.connectPolicy === "closed" ? (
+    resources.account?.canAddNumber === false ? (
       <SubscriptionNotice
         billing={billing}
         subscribed={subscribed}
         canManage={canManageBilling}
         numbers={billableCount(resources.wabas)}
         reconnect={resources.wabas.length > 0}
+        canSend={!blocksSends(resources.account.billingStatus)}
         className={className}
       />
     ) : null;
@@ -241,13 +255,13 @@ export function NumbersView({
       kicker="Connection"
       actions={
         <>
-          {resources.account?.connectPolicy === "closed" || !canConnect ? null : <ConnectLinkButton />}
+          {resources.account?.canAddNumber === false || !canConnect ? null : <ConnectLinkButton />}
           <AddNumberButton expanded={adding} onToggle={setAdding} />
         </>
       }
     >
       {outcome}
-      {adding ? null : notice()}
+      {!paused && held && held.events > 0 ? <HeldReplay held={held} canReplay={canConnect} onReplayed={onReplayed} /> : null}
       <div className="flex flex-col gap-6">
         {/* The table owns the re-check action; re-reading the loader after one
             lands is the view's job, since the page owns the data. */}
@@ -308,7 +322,7 @@ export function FirstRunConnect({
   return (
     <>
       {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}
-      <ConnectNumberPanel closed={closed} blocked={blocked} />
+      <ConnectWizard closed={closed} blocked={blocked} />
     </>
   );
 }

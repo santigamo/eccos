@@ -106,6 +106,8 @@ export function forwardReading(input: {
   const attempts = input.attempts ?? 0;
   if (status === "delivered") return { state: "forwarded", label: "forwarded" };
   if (status === "failed") return { state: "failed", label: "failed" };
+  // Stored while the workspace was paused: waits for a replay, whatever the target.
+  if (status === "held") return { state: "held", label: "held" };
   if (status !== "pending") return { state: "unknown", label: status };
   // Held wins over the attempt count on purpose: a target that was removed
   // after a few refusals leaves a row with attempts spent and nothing more
@@ -139,6 +141,7 @@ export function deliveryMoment(
   hasForwardingTarget: boolean,
 ): DeliveryMoment {
   if (record.finished_at !== null) return { label: "finished", at: record.finished_at };
+  if (record.status === "held") return { label: "held", at: null };
   if (record.status !== "pending") return { label: "unknown", at: null };
   if (!hasForwardingTarget) return { label: "held", at: null };
   return { label: "next", at: record.next_attempt_at };

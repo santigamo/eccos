@@ -8,15 +8,15 @@ beforeEach(resetStubs);
 
 const OPEN = {
   ok: true,
-  billing: { connectPolicy: "open", numbers: 1, monthlyEuros: 15, hasCustomer: true, explicitPolicy: false },
+  billing: { billingStatus: "active", canAddNumber: true, numbers: 1, monthlyEuros: 15, hasCustomer: true, explicitStatus: false },
 } as const;
 const CLOSED = {
   ok: true,
-  billing: { connectPolicy: "closed", numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitPolicy: false },
+  billing: { billingStatus: "setup", canAddNumber: false, numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitStatus: false },
 } as const;
 
 const account = (accountId: string, resources: Partial<AccountResources> = {}): AccountResources => ({
-  account: { accountId, name: "Acme", createdAt: 1, connectPolicy: "open" },
+  account: { accountId, name: "Acme", createdAt: 1, billingStatus: "open", canAddNumber: true },
   keys: [],
   wabas: [],
   phones: [],
@@ -125,7 +125,7 @@ describe("workspace_get", () => {
     expect((result.structuredContent as { setup: unknown }).setup).toEqual({
       complete: true,
       steps: [
-        { id: "subscription", state: "done", count: null, detail: "Billing is active: numbers can be added.", nextTool: null, blockedBy: null },
+        { id: "subscription", state: "done", count: null, detail: "A number can be added.", nextTool: null, blockedBy: null },
         { id: "number", state: "done", count: 2, detail: "2 numbers are connected and active.", nextTool: null, blockedBy: null },
         {
           id: "webhook",
@@ -368,6 +368,6 @@ describe("workspace_get billing gate", () => {
     expect((await consoleStub.billingCalls()).map((ref) => ref.accountId)).toEqual(["acct-a"]);
     expect(adminSteps[0]?.state).toBe("todo");
     expect((operatorResult.structuredContent as { setup: { steps: { state: string }[] } }).setup.steps[0]?.state).toBe("unknown");
-    expect(JSON.stringify(operatorResult.structuredContent)).not.toMatch(/monthlyEuros|connectPolicy|Billing is active/);
+    expect(JSON.stringify(operatorResult.structuredContent)).not.toMatch(/monthlyEuros|connectPolicy|A number can be added/);
   });
 });

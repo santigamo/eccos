@@ -10,12 +10,18 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "../components/blocks/app-shell-7/components/app-shell"
 import { RouteProgress } from "../components/dashboard/route-progress"
+import { SendingNotice } from "../components/dashboard/subscription-notice"
+import { SetupWindowStrip } from "../components/dashboard/setup-window-strip"
+import { setupWindowOf, type SetupWindow } from "../lib/setup-window"
+import { PageNotice } from "../ui"
+import { blocksSends } from "@eccos/gateway-contract/billing-status"
 import { BackupCodesSheet } from "../components/dashboard/backup-codes-sheet"
 import { StepUpSheet } from "../components/dashboard/step-up-sheet"
+import { ActivationDialog } from "../components/setup-paths/activation-dialog"
 import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
-import { type Deployment, type getDashboardState, getDeployment, hasForwardingTarget, type DashboardState } from "../server/gateway"
+import { type Deployment, type getDashboardState, getDeployment, getHeldEvents, hasForwardingTarget, type DashboardState } from "../server/gateway"
 import { getSessionUser } from "../organizations"
 import { useRootRefresh } from "../hooks/use-root-refresh"
 import { watchUnhandledSignIn } from "../lib/follow-sign-in"
@@ -101,7 +107,7 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
     // The checklist read is deliberately NOT folded into `getDashboardState`:
     // that shape drives the root redirect and the stage machine, and display
     // data has no business deciding where an operator lands.
-    const [user, forwardingTarget, analytics, deployment] = await Promise.all([
+    const [user, forwardingTarget, analytics, deployment, heldMessages] = await Promise.all([
       getSessionUser(),
       // No WABA yet means no forwarding target, without asking the gateway.
       // `null` is a read that failed: unknown, never "no target".
@@ -110,8 +116,12 @@ export const Route = createRootRouteWithContext<{ bootstrap: Bootstrap<RootState
         : Promise.resolve(false),
       loadAnalyticsConfig(),
       loadDeployment(),
+      // Only a paused workspace's banner counts what is held; null is a read that failed.
+      state.ok && sendingPaused(state.data)
+        ? getHeldEvents().then((held) => (held.ok ? held.data.messages : null), () => null)
+        : Promise.resolve(null),
     ])
-    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics, deployment }
+    return { ...state, user, hasForwardingTarget: forwardingTarget, analytics, deployment, heldMessages }
   },
   head: () => ({
     meta: [
@@ -234,9 +244,35 @@ function redirectFor(pathname: string, state: RootState): void {
   if (to) throw redirect({ to })
 }
 
+/**
+ * A workspace whose billing status blocks sends and holds forwarding, said above
+ * every page. Null when there is nothing to say.
+ */
+export function sendingPaused(
+  state: DashboardState,
+): { billing: boolean; subscribed: boolean; canManage: boolean } | null {
+  const resources =
+    state.stage === "ready" ? state.scope.resources : state.stage === "account-ready" ? state.resources : null
+  if (!resources?.account || !blocksSends(resources.account.billingStatus) || resources.wabas.length === 0) return null
+  const billing = "billing" in state ? state.billing : undefined
+  return { billing: billing !== undefined, subscribed: billing?.subscribed === true, canManage: billing?.canManage === true }
+}
+
+/** The setup window's timers while billing is on and the workspace has not subscribed; null otherwise. */
+export function setupWindowFor(state: DashboardState): { window: SetupWindow; canManage: boolean } | null {
+  if (!("billing" in state) || !state.billing) return null
+  const resources =
+    state.stage === "ready" ? state.scope.resources : state.stage === "account-ready" ? state.resources : null
+  const window = setupWindowOf(resources?.account)
+  if (resources?.account?.billingStatus !== "setup" && window.pauseReason !== "early_access_ended") return null
+  return { window, canManage: state.billing.canManage }
+}
+
 function RootComponent() {
   const state = Route.useLoaderData()
   const pathname = useLocation({ select: (l) => l.pathname })
+  const paused = state.ok ? sendingPaused(state.data) : null
+  const setupWindow = state.ok ? setupWindowFor(state.data) : null
   useRootRefresh()
   useEffect(() => watchUnhandledSignIn(window), [])
   return (
@@ -249,9 +285,12 @@ function RootComponent() {
         // an organization, including the one with no WABA yet: the user is
         // signed in, so they must be able to see who they are and sign out.
         <>
-          <AppShell />
+          <PageNotice.Provider value={paused ? <SendingNotice {...paused} heldMessages={state.heldMessages} /> : null}>
+            <AppShell strip={setupWindow ? <SetupWindowStrip {...setupWindow} /> : null} />
+          </PageNotice.Provider>
           <StepUpSheet />
           <BackupCodesSheet />
+          <ActivationDialog />
         </>
       ) : (
         // Unauthenticated (or gateway-unreachable) root load: bare outlet so

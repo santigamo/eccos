@@ -23,9 +23,7 @@ export const STEP_UP_WINDOW_SECONDS = 60 * 15;
  */
 export const STEP_UP_ROWS = {
   "connect-link": "administer",
-  "api-keys": "administer",
   "conversation-retention": "administer",
-  "subscriber-config": "configure",
   resubscribe: "configure",
 } as const satisfies Record<string, GatewayAction>;
 

@@ -1,59 +1,52 @@
 import type { DashboardState } from "../server/gateway";
 
 /**
- * First-run progress, as four FACTS about the account — never as stored state.
+ * The sidebar setup companion's reading of the account: the funnel stages
+ * Eccos can observe today, each derived from server state on every load.
  *
- * ── WHY THIS IS NOT A WIZARD ────────────────────────────────────────────────
- * `routes/numbers.tsx` and bead eccos-up9 both record the standing decision
- * against one: attaching a number is a recurring operation, so a wizard would
- * exist for the first number and be in the way of every one after it. What a
- * new operator actually lacks is not a guided path — every step already has a
- * page — but the KNOWLEDGE THAT THE STEPS EXIST. So this is a reading of the
- * pages that already exist, rendered beside them. Every row links to the real
- * page rather than a step inside a flow — EXCEPT a completed step whose action
- * is not repeatable, which is no kind of door: linking a DONE row to the page
- * that re-creates the thing the row says is finished would hand the operator
- * a duplicate-maker (docs/console-gaps-2026-09.md §2). That exception lives
- * in `href` below — null means no link — and is enforced by `nav-setup.tsx`
- * when it renders.
+ * Nothing is stored. An operator who removes their forwarding target and
+ * revokes their last key loses that tick again, so the companion describes the
+ * account rather than its history. The only thing a viewer may persist is the
+ * decision to stop looking at it (see `nav-setup.tsx`).
  *
- * ── WHY NOTHING IS STORED ───────────────────────────────────────────────────
- * Each step is derived from server state on every load. Stored progress goes
- * wrong in exactly the way that matters here: an operator who removes their
- * forwarding target would keep a ticked box, and the checklist would be
- * describing history instead of the account. The only thing a viewer may
- * persist is the decision to stop looking at it (see `nav-setup.tsx`).
+ * Every row links to the real page that produces its fact, except a DONE step
+ * whose action is not repeatable: linking a done workspace to /onboarding
+ * would hand the operator a duplicate-maker (docs/console-gaps-2026-09.md §2).
+ * That exception is `href: null`.
  *
  * Type-only import, like `scope-requirements.ts`, so the derivation stays
  * exercisable under plain `bun test`.
  */
 
-export type SetupStepId = "workspace" | "number" | "target" | "message";
+export type SetupStepId = "workspace" | "number" | "setup" | "message";
 
 /**
- * `in-progress` exists for one real state and only one: a WABA that is
- * connected and still waiting on Meta for its phone number. Calling that
- * "to do" would tell an operator to redo work Meta is already holding.
+ * `in-progress` exists for one real state: a WABA that is connected and still
+ * waiting on Meta for its phone number. Calling that "to do" would tell an
+ * operator to redo work Meta is already holding.
  */
 export type SetupStepState = "done" | "in-progress" | "todo";
 
 export interface SetupStep {
   id: SetupStepId;
   label: string;
-  /**
-   * The real page for this step. There is no step-only route.
-   *
-   * `null` when the step is DONE and its action is not repeatable: a link
-   * would point at the page that re-creates the thing the row says is
-   * finished. The renderer (`nav-setup.tsx`) draws a null-href row as plain
-   * text. Only `workspace` loses its action this way — creating a workspace is
-   * not repeatable — while the other three steps are recurring actions (attach
-   * a number, point a forwarding target, read the inbound log) and always
-   * carry theirs.
-   */
+  /** The real page for this step; `null` when done and not repeatable. */
   href: string | null;
   state: SetupStepState;
 }
+
+/**
+ * The billing and activation states the companion shows (`companionBilling`).
+ * Absent means there is nothing to say, and the companion falls back to the
+ * setup facts alone.
+ * - `activated`: the first message went through and the 72h window runs; `left` in ms.
+ * - `paused`: the window closed without a subscription.
+ * - `paid`: an active subscription; the companion has nothing left to say.
+ */
+export type CompanionBilling =
+  | { stage: "activated"; left: number }
+  | { stage: "paused" }
+  | { stage: "paid" };
 
 /**
  * The kinds a human produces: a customer writing in (`reply` for text,
@@ -64,59 +57,65 @@ export function humanMessageCount(byType: Record<string, number>): number {
   return (byType.reply ?? 0) + (byType.message ?? 0) + (byType.echo ?? 0) + (byType.message_echo ?? 0);
 }
 
+function resourcesOf(state: DashboardState) {
+  return state.stage === "account-ready" ? state.resources : state.stage === "ready" ? state.scope.resources : undefined;
+}
+
+/**
+ * The account's billing stage, from the gateway's status and funnel clock. A
+ * paying status is `paid`; `setup` only says something once it activated and
+ * its 72h run. Billing off (`open`) and a legacy account have nothing to say.
+ */
+export function companionBilling(state: DashboardState, now: number): CompanionBilling | undefined {
+  const account = resourcesOf(state)?.account;
+  if (!account) return undefined;
+  const status = account.billingStatus;
+  if (status === "active" || status === "past_due" || status === "cancelled") return { stage: "paid" };
+  if (status === "paused") return { stage: "paused" };
+  const funnel = account.funnel;
+  if (status !== "setup" || !funnel?.activatedAt || funnel.pausesAt === null) return undefined;
+  return { stage: "activated", left: Math.max(0, funnel.pausesAt - now) };
+}
+
 export function setupSteps(state: DashboardState, hasForwardingTarget: boolean): SetupStep[] {
-  const wabas = state.stage === "account-ready" ? state.resources.wabas : [];
-  // COUNTED BY KIND, and that is the fix. `counts.inbound` is every normalised
-  // callback, so a `delivered` receipt for the operator's OWN test send ticked
-  // "First message" — the step then said a customer had written in when nobody
-  // had, which is the same misread the Events log was renamed to end.
-  // Only messages are a human (see `humanMessageCount`); any one proves the
-  // whole pipe, which is what this step is for.
+  const resources = resourcesOf(state);
+  const hasLiveKey = resources?.keys.some((key) => key.revokedAt === null) ?? false;
+  // Activation proves a way out already works: path A replies from the inbox and needs neither.
+  const activated = Boolean(resources?.account?.funnel?.activatedAt);
+  // Counted by kind: `counts.inbound` includes the `delivered` receipt for the
+  // operator's own test send, which is not anyone writing in.
   const byType = state.stage === "ready" ? state.status.counts.inboundByType ?? {} : {};
-  const humanMessages = humanMessageCount(byType);
   return [
     {
       id: "workspace",
       label: "Workspace",
-      // Creating a workspace is not repeatable, so a DONE workspace is the row
-      // as text, never a link: an href on it would open /onboarding, the page
-      // that creates ANOTHER workspace (docs/console-gaps-2026-09.md §1–2).
-      // The todo href stays /onboarding because a todo workspace can exist for
-      // one stage and one stage only — no-organization — where the root loader
-      // forces every other route to /onboarding (the revisit guard is
-      // `onboardingWorkspaceCreated` in __root.tsx) and creating a workspace
-      // IS the point of the page.
+      // A todo workspace exists only for no-organization sessions, where the
+      // root loader forces every route to /onboarding anyway.
       href: state.stage === "no-organization" ? "/onboarding" : null,
-      // Reaching any of this at all means the session resolved a membership,
-      // so the row is done the moment the checklist can be seen. It is listed
-      // anyway: a checklist that starts at step two hides that step one
-      // happened, and an operator counting rows should count what they did.
       state: state.stage === "no-organization" ? "todo" : "done",
     },
     {
       id: "number",
       label: "Number",
       href: "/numbers",
-      state:
-        state.stage === "ready" ? "done" : wabas.length > 0 ? "in-progress" : "todo",
+      state: state.stage === "ready" ? "done" : (resources?.wabas.length ?? 0) > 0 ? "in-progress" : "todo",
     },
     {
-      id: "target",
-      label: "Forwarding target",
-      href: "/webhooks",
-      state: hasForwardingTarget ? "done" : "todo",
+      // Either way out of Eccos counts: a forwarding target for a tool, an API
+      // key for software that sends, or an activation from the inbox.
+      id: "setup",
+      label: "Webhook or API key",
+      href: "/setup",
+      state: hasForwardingTarget || hasLiveKey || activated ? "done" : "todo",
     },
     {
+      // An incoming message, not a test send: a fresh WABA has no approved
+      // template for minutes to days, so a send would gate first run on
+      // Meta's review queue.
       id: "message",
       label: "First message",
       href: "/events",
-      // AN INCOMING MESSAGE, deliberately, and not a test send. A fresh WABA
-      // has no approved template for minutes to days and the console has no
-      // free-text send, so making the last step a send would gate first run on
-      // Meta's review queue. "Message the number from your phone and watch it
-      // land" needs nothing but the number, and it exercises the whole pipe —
-      // including the forwarding target above it.
-      state: humanMessages > 0 ? "done" : "todo",
+      state: humanMessageCount(byType) > 0 ? "done" : "todo",
     },
   ];
 }
@@ -126,8 +125,18 @@ export function setupDone(steps: SetupStep[]): number {
   return steps.filter((step) => step.state === "done").length;
 }
 
-/** Nothing left to say. The block hides itself here rather than parking a
- * permanent 4/4 in the sidebar of an account that finished setting up. */
-export function setupComplete(steps: SetupStep[]): boolean {
-  return setupDone(steps) === steps.length;
+/** The step the operator is on: the first one that is not done. */
+export function currentStep(steps: SetupStep[]): SetupStep | undefined {
+  return steps.find((step) => step.state !== "done");
+}
+
+/**
+ * Whether the companion shows. A paid workspace never needs it. Activated and
+ * paused still have something to say (the countdown, the pause), so they keep
+ * it up once billing feeds them. Without billing, it hides once every
+ * observable step is done.
+ */
+export function companionVisible(steps: SetupStep[], billing?: CompanionBilling): boolean {
+  if (billing) return billing.stage !== "paid";
+  return currentStep(steps) !== undefined;
 }

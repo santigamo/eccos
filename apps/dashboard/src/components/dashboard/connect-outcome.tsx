@@ -88,7 +88,7 @@ export function ConnectOutcome({
       {connectError === "subscription_required" && billing && canManageBilling ? (
         <>
           {" "}
-          <a href="/settings#billing" className="underline underline-offset-2">
+          <a href="/billing" className="underline underline-offset-2">
             Open billing
           </a>
         </>

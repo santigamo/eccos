@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import { bootstrapAccount, gatewayStub, holdAlarms, runAlarm, SUBSCRIBER_URL, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
+import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { signPayload } from "@eccos/core/signature";
 
 let API_KEY = "";
@@ -405,15 +406,28 @@ describe("review cases", () => {
     mockMeta();
     const id = await createdId(broadcast(["34600000001"]));
     await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
-      vi.spyOn(instance as unknown as { metaToken: () => Promise<string> }, "metaToken").mockResolvedValueOnce("unavailable");
+      vi.spyOn(instance as unknown as { sendToken: () => Promise<string> }, "sendToken").mockResolvedValueOnce("unavailable");
     });
     await tick();
     expect(await summary(id)).toMatchObject({ status: "running", counts: { queued: 1 } });
     await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
-      vi.spyOn(instance as unknown as { metaToken: () => Promise<string> }, "metaToken").mockResolvedValueOnce("missing");
+      vi.spyOn(instance as unknown as { sendToken: () => Promise<string> }, "sendToken").mockResolvedValueOnce("missing");
     });
     await tick();
     expect(await summary(id)).toMatchObject({ status: "halted", counts: { cancelled: 1 } });
+  });
+
+  it("waits while the billing status blocks sends and goes on once it does not", async () => {
+    const fetchSpy = mockMeta();
+    const id = await createdId(broadcast(["34600000001"]));
+    await getControlPlaneStub(env).setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "paused" });
+    await tick();
+    expect(sendBodies(fetchSpy)).toHaveLength(0);
+    expect(await summary(id)).toMatchObject({ status: "running", counts: { queued: 1 } });
+    await getControlPlaneStub(env).setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "active" });
+    await tick();
+    expect(sendBodies(fetchSpy)).toHaveLength(1);
+    expect(await summary(id)).toMatchObject({ status: "completed", counts: { sent: 1 } });
   });
 
   it("a failing broadcast step never takes the rest of the alarm down", async () => {

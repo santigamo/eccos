@@ -62,6 +62,16 @@ if (gateway && dashboard) {
         : "gateway CONNECT_POLICY_DEFAULT is \"closed\" but dashboard CREEM_PRODUCT_ID is not set",
     );
   }
+  const funnelMail = gateway.services?.some(
+    (service) => service.binding === "FUNNEL_MAIL" && service.service === dashboard.name && service.entrypoint === "FunnelMailRPC",
+  );
+  // A warning, not an error: the binding can only come once the console exports FunnelMailRPC
+  // (docs/deployment.md#funnel-release).
+  if (billing && !funnelMail) {
+    console.warn(
+      `! gateway billing is on but services has no FUNNEL_MAIL binding to "${dashboard.name}" (entrypoint FunnelMailRPC): no funnel email is sent until it is added`,
+    );
+  }
   if (billing && !(dashboard.triggers.crons ?? []).some((cron) => cron !== OAUTH_CLIENT_CLEANUP_CRON)) {
     errors.push(
       `dashboard billing is on but triggers.crons has no trigger besides the hourly "${OAUTH_CLIENT_CLEANUP_CRON}": the daily reconcile would never run`,

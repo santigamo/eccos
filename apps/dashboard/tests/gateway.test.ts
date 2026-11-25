@@ -2367,10 +2367,7 @@ describe("failure classification (authorization vs. transport)", () => {
 describe("step-up rows of the capability matrix", () => {
   const steppedUp: Array<[string, () => Promise<{ ok: boolean }>]> = [
     ["openConnectLink", () => openConnectLink({ data: { fresh: true } })],
-    ["issueApiKey", () => issueApiKey({ data: {} })],
-    ["revokeApiKey", () => revokeApiKey({ data: { keyId: "key_a1" } })],
     ["setConversationRetention", () => setConversationRetention({ data: { days: 90 } })],
-    ["setSubscriberConfig", () => setSubscriberConfig({ data: { url: "https://new.example.com" } })],
     ["resubscribe", () => resubscribe()],
   ];
 
@@ -2417,6 +2414,27 @@ describe("step-up rows of the capability matrix", () => {
     await startConnect();
     await connectWithToken({ data: { token: `EAAG${"x".repeat(60)}` } });
     expect(reached).toEqual(["startConnect", "connectWithToken"]);
+  });
+
+  test("the forwarding target and API keys need no step-up, only the role", async () => {
+    const reached = mutationBinding();
+    fakeStepUpRefusal = "totp-required";
+    await setSubscriberConfig({ data: { url: "https://new.example.com" } });
+    await issueApiKey({ data: {} });
+    await revokeApiKey({ data: { keyId: "key_a1" } });
+    expect(reached).toEqual(["setSubscriberConfig", "issueApiKey", "revokeApiKey"]);
+  });
+
+  test("the role still gates the forwarding target and API keys", async () => {
+    mutationBinding();
+    fakeDeniedActions = new Set(["configure", "administer"]);
+    for (const call of [
+      () => setSubscriberConfig({ data: { url: "https://new.example.com" } }),
+      () => issueApiKey({ data: {} }),
+      () => revokeApiKey({ data: { keyId: "key_a1" } }),
+    ]) {
+      expect(await call()).toMatchObject({ reason: "missing-permission" });
+    }
   });
 
   test("a role without the action is told so, not asked to step up", async () => {

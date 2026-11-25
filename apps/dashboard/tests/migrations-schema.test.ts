@@ -12,7 +12,8 @@ const MIGRATIONS = new URL("../migrations/", import.meta.url);
 
 function columns(db: Database): string[] {
   const tables = db
-    .query("select name from sqlite_master where type = 'table' and name not like 'sqlite_%'")
+    // funnelMail is the console's own table (0007), not Better Auth's.
+    .query("select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name != 'funnelMail'")
     .all() as { name: string }[];
   return tables.flatMap(({ name }) =>
     (db.query(`pragma table_info("${name}")`).all() as { name: string; notnull: number }[]).map(

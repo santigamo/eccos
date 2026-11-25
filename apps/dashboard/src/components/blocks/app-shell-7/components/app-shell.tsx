@@ -1,10 +1,12 @@
+import type { ReactNode } from "react"
 import { Outlet } from "@tanstack/react-router"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 
 import { AppHeader } from "./app-header"
 import { AppSidebar } from "./app-sidebar"
 
-export function AppShell() {
+/** `strip`: a workspace-wide bar under the masthead, above every page (the setup window). */
+export function AppShell({ strip }: { strip?: ReactNode }) {
   return (
     <SidebarProvider
       className="flex h-svh flex-col"
@@ -25,6 +27,7 @@ export function AppShell() {
         {/* min-w-0: a wide table scrolls inside its own grid; without it the
             flex item grows to the table and the page slides under the sidebar. */}
         <SidebarInset id="main-content" className="min-h-0 min-w-0 bg-transparent">
+          {strip}
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 md:p-6">
             <Outlet />
           </div>

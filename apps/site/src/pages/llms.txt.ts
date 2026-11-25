@@ -49,8 +49,11 @@ its own conversations, with that business's own payment method.
 ${tariff()}
 - Messages: unlimited, on every plan
 
-Prices exclude VAT. Creating an account is free; subscribing, which comes before
-adding a number, starts a ${PRICING.trialDays}-day free trial that asks for a card. Cancel at
+Prices exclude VAT. Connect your number first, pay only once it works. Signing up
+and connecting the first number need no card. You subscribe once that number works,
+meaning its first message is delivered or your software receives its first message,
+and from then you have ${PRICING.setupWindowHours} hours to finish setting up. If it never
+works, you never pay. A second number needs the subscription. Cancel at
 any time, effective at the end of the period. Payment and invoices are handled by Creem, the merchant of
 record. Self-hosting is free under the ${SITE.license} licence.
 

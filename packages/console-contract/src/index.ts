@@ -11,7 +11,7 @@
  */
 
 import type { GatewayAction, roles } from "@eccos/auth-baseline/permissions";
-import type { ConnectPolicy } from "@eccos/gateway-contract";
+import type { BillingStatus } from "@eccos/gateway-contract";
 
 /**
  * What an agent may do: the role matrix's actions without `erase`, which is never reachable
@@ -104,13 +104,15 @@ export type ElevationResult =
 
 /** The workspace's billing as Settings shows it, read from the control plane only. */
 export interface BillingState {
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
   /** Numbers on active WABAs: what the subscription is priced for. */
   numbers: number;
   monthlyEuros: number;
   hasCustomer: boolean;
-  /** The operator set this workspace's policy; false while it follows the deployment default. */
-  explicitPolicy: boolean;
+  /** The status is stored on this workspace; false while it follows the deployment default. */
+  explicitStatus: boolean;
+  /** The gateway would register one more number now. */
+  canAddNumber: boolean;
 }
 
 /**

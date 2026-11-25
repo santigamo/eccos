@@ -205,7 +205,7 @@ export function activeWaba(wabaId: string, accountId: string, phoneNumberIds: st
 
 export function accountResources(accountId: string, wabas: AccountWabaResource[] = []): AccountResources {
   return {
-    account: { accountId, name: "Acme", createdAt: 1, connectPolicy: "open" },
+    account: { accountId, name: "Acme", createdAt: 1, billingStatus: "open", canAddNumber: true },
     keys: [],
     wabas,
     phones: wabas.flatMap((waba) => waba.phones.map((phone) => ({ ...phone, wabaId: waba.wabaId }))),

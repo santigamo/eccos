@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
+  AccountFunnel,
   AccountBilling,
   AccountBillingInput,
   BilledAccount,
@@ -8,7 +9,6 @@ import type {
   ConnectLinkSettled,
   ConnectLinkSettlement,
   ConnectLinkSummary,
-  ConnectPolicy,
   IssuedConnectLink,
   IssuedSecretClaim,
   ProvisioningStatus,
@@ -39,7 +39,25 @@ import {
   pendingSecretClaims,
   spendSecretClaim,
 } from "./secret-claims";
-import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import { blocksSends, isBillingStatus, mayAddNumber, type BillingStatus } from "@eccos/gateway-contract/billing-status";
+import { effectiveBillingStatus, SUBSCRIPTION_REQUIRED, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import type { FunnelMailInput } from "@eccos/gateway-contract/funnel-mail";
+import {
+  ACTIVATION_WINDOW_MS,
+  type ActivationTrigger,
+  FUNNEL_COLUMNS,
+  FUNNEL_MAIL_MAX_AGE_MS,
+  FUNNEL_MAIL_SCHEMA,
+  funnelEvent,
+  funnelMailer,
+  funnelOf,
+  type FunnelRow,
+  pendingPause,
+  UNACTIVATED_PAUSE_MS,
+  WARNING_AFTER_MS,
+  WINDOW_ENDING_AFTER_MS,
+} from "./funnel";
+import { withTimeout } from "./with-timeout";
 import { sha256Hex, toBase64Url } from "./encoding";
 import {
   coexistenceSyncStatus,
@@ -112,7 +130,9 @@ export interface AccountRecord {
   accountId: string;
   name: string;
   createdAt: number;
-  connectPolicy: ConnectPolicy;
+  billingStatus: BillingStatus;
+  canAddNumber: boolean;
+  funnel: AccountFunnel;
 }
 
 /** Stored API-key row. `hash` is SHA-256 of the raw key — never the key itself. */
@@ -163,7 +183,7 @@ export interface WabaAccess {
 }
 
 export interface CreateAccountResult {
-  account: Omit<AccountRecord, "connectPolicy">;
+  account: Omit<AccountRecord, "billingStatus" | "canAddNumber" | "funnel">;
   apiKey: string;
   keyId: string;
 }
@@ -673,6 +693,30 @@ export function quarantineUnsealedWabas(sql: SqlStorage): number {
     .toArray().length;
 }
 
+/**
+ * The funnel release's one-time migration, run when `connected_at` arrives. An account that
+ * already has a number connected before the funnel: `connected_at = 0` keeps its clock off for
+ * good. A `closed` stored before the funnel only stopped new numbers; it now refuses sends and
+ * holds forwarding, so it is forgotten (NULL, the deployment default) and only a `closed`
+ * written from here on blocks. The daily billing reconcile re-derives any live subscription.
+ */
+export function addFunnelClock(sql: SqlStorage): void {
+  sql.exec("ALTER TABLE accounts ADD COLUMN connected_at INTEGER");
+  sql.exec(
+    `UPDATE accounts SET connected_at = 0 WHERE account_id IN
+       (SELECT w.account_id FROM wabas w JOIN phones p ON p.waba_id = w.waba_id)`,
+  );
+  sql.exec("UPDATE accounts SET connect_policy = NULL WHERE connect_policy = 'closed'");
+}
+
+/** How long one funnel-email call may take before it is left for the next tick. */
+const FUNNEL_MAIL_TIMEOUT_MS = 5_000;
+
+/** Statuses a scheduled end of early access leaves alone: subscribed, operator-open, or already paused. */
+const KEEPS_EARLY_ACCESS: ReadonlySet<BillingStatus> = new Set(["active", "past_due", "cancelled", "paused", "open"]);
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 export class EccosControlPlane extends DurableObject<Env> {
   sql: SqlStorage;
 
@@ -745,6 +789,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         return_to  TEXT
       );`);
       this.sql.exec(CONNECT_LINKS_SCHEMA);
+      this.sql.exec(FUNNEL_MAIL_SCHEMA);
       this.sql.exec(SECRET_CLAIMS_SCHEMA);
       const secretClaimColumns = this.sql.exec("PRAGMA table_info(secret_claims)").toArray();
       for (const column of SECRET_CLAIMS_ADDED_COLUMNS) {
@@ -772,10 +817,21 @@ export class EccosControlPlane extends DurableObject<Env> {
       if (!accountColumns.some((row) => row.name === "conversation_retention_days")) {
         this.sql.exec("ALTER TABLE accounts ADD COLUMN conversation_retention_days INTEGER");
       }
-      // connect_policy NULL follows CONNECT_POLICY_DEFAULT. The billing ids are stored, never interpreted.
+      // connect_policy holds the BillingStatus; NULL follows CONNECT_POLICY_DEFAULT. The billing ids are stored, never interpreted.
       for (const column of ["connect_policy", "billing_customer_id", "billing_subscription_id"]) {
         if (!accountColumns.some((row) => row.name === column)) {
           this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} TEXT`);
+        }
+      }
+      if (!accountColumns.some((row) => row.name === "connected_at")) addFunnelClock(this.sql);
+      for (const [column, type] of [
+        ["activated_at", "INTEGER"],
+        ["warning_due_at", "INTEGER"],
+        ["paused_reason", "TEXT"],
+        ["early_access_ends_at", "INTEGER"],
+      ]) {
+        if (!accountColumns.some((row) => row.name === column)) {
+          this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} ${type}`);
         }
       }
       const wabaColumns = this.sql.exec("PRAGMA table_info(wabas)").toArray();
@@ -981,6 +1037,30 @@ export class EccosControlPlane extends DurableObject<Env> {
     return this.decryptStoredToken(row.account_id as string, id, row.meta_access_token);
   }
 
+  /** As {@link getMetaAccessTokenForWaba}, for a send: a status that blocks sends gets `subscription_required`. */
+  async getSendTokenForWaba(wabaId: string): Promise<string | typeof SUBSCRIPTION_REQUIRED | null> {
+    const id = validateWabaId(wabaId, "wabaId");
+    const row = this.sql.exec("SELECT account_id FROM wabas WHERE waba_id = ?", id).toArray()[0];
+    if (row && blocksSends(this.billingStatusOf(row.account_id as string))) return SUBSCRIPTION_REQUIRED;
+    return this.getMetaAccessTokenForWaba(id);
+  }
+
+  /** Whether the WABA's forwarding is held: the rule that blocks sends (`blocksSends`) holds it too. */
+  forwardingHeldForWaba(wabaId: string): boolean {
+    const row = this.sql.exec("SELECT account_id FROM wabas WHERE waba_id = ?", validateWabaId(wabaId, "wabaId")).toArray()[0];
+    return row !== undefined && blocksSends(this.billingStatusOf(row.account_id as string));
+  }
+
+  /** The account's WABAs, and whether its forwarding is still held: what a replay needs. */
+  forwardingScope(accountId: string): { held: boolean; wabaIds: string[] } {
+    const id = this.requireAccount(accountId);
+    const wabaIds = this.sql
+      .exec("SELECT waba_id FROM wabas WHERE account_id = ? ORDER BY waba_id", id)
+      .toArray()
+      .map((row) => row.waba_id as string);
+    return { held: blocksSends(this.billingStatusOf(id)), wabaIds };
+  }
+
   /**
    * Stores what Meta reported about a WABA's token. A valid reading also clears an earlier
    * rejection; an invalid one keeps the stored expiry, and a value Meta did not give keeps the
@@ -1107,26 +1187,47 @@ export class EccosControlPlane extends DurableObject<Env> {
     return (row?.days as number | null) ?? null;
   }
 
-  private connectPolicyOf(accountId: string): ConnectPolicy {
+  private billingStatusOf(accountId: string): BillingStatus {
     const row = this.sql.exec("SELECT connect_policy FROM accounts WHERE account_id = ?", accountId).toArray()[0];
-    return effectiveConnectPolicy(row?.connect_policy, this.env.CONNECT_POLICY_DEFAULT);
+    return effectiveBillingStatus(row?.connect_policy, this.env.CONNECT_POLICY_DEFAULT);
+  }
+
+  /** Every number the account has, whatever its WABA's status: what `mayAddNumber` counts. */
+  private numbersOf(accountId: string): number {
+    return Number(
+      this.sql
+        .exec("SELECT COUNT(*) AS n FROM phones p JOIN wabas w ON w.waba_id = p.waba_id WHERE w.account_id = ?", accountId)
+        .one().n,
+    );
+  }
+
+  private funnelOf(accountId: string): AccountFunnel {
+    const status = this.billingStatusOf(accountId);
+    const on = this.billingOn();
+    return funnelOf(this.funnelRow(accountId), on && status === "setup", status === "paused", on && !KEEPS_EARLY_ACCESS.has(status));
+  }
+
+  private canAddNumber(accountId: string): boolean {
+    return mayAddNumber(this.billingStatusOf(accountId), this.numbersOf(accountId));
   }
 
   /**
-   * For an account that may not add numbers: drops every WABA it does not already
-   * own and every phone it does not already have, so what it has can still be
-   * re-registered. Runs inside the registration transaction. Throws when nothing
+   * Keeps every WABA and phone the account already has, so it can be re-registered,
+   * and each new phone only while `mayAddNumber` allows one more (a `setup` account
+   * gets its first). Runs inside the registration transaction. Throws when nothing
    * is left to register.
    */
   private refuseNewNumbers(prepared: PreparedWaba[]): { kept: PreparedWaba[]; refused: Map<string, PhoneRecord[]> } {
     const refused = new Map<string, PhoneRecord[]>();
+    const counts = new Map<string, number>();
     let refusedAny = false;
     const kept = prepared.filter((item) => {
-      if (this.connectPolicyOf(item.accountId) !== "closed") return true;
+      const status = this.billingStatusOf(item.accountId);
+      let count = counts.get(item.accountId) ?? this.numbersOf(item.accountId);
       const owned = this.sql
         .exec("SELECT 1 FROM wabas WHERE waba_id = ? AND account_id = ?", item.wabaId, item.accountId)
         .toArray().length > 0;
-      if (!owned) {
+      if (!owned && !mayAddNumber(status, count)) {
         refusedAny = true;
         return false;
       }
@@ -1138,11 +1239,20 @@ export class EccosControlPlane extends DurableObject<Env> {
             item.accountId,
           )
           .toArray().length > 0;
-      const refusedPhones = item.phones.filter((phone) => !has(phone));
+      const refusedPhones: PhoneRecord[] = [];
+      item.phones = item.phones.filter((phone) => {
+        if (has(phone)) return true;
+        if (!mayAddNumber(status, count)) {
+          refusedPhones.push(phone);
+          return false;
+        }
+        count += 1;
+        return true;
+      });
+      counts.set(item.accountId, count);
       if (refusedPhones.length > 0) {
         refusedAny = true;
         refused.set(item.wabaId, refusedPhones);
-        item.phones = item.phones.filter(has);
       }
       return true;
     });
@@ -1160,8 +1270,8 @@ export class EccosControlPlane extends DurableObject<Env> {
       .toArray()[0];
     if (!row) return null;
     return {
-      connectPolicy: effectiveConnectPolicy(row.connect_policy, this.env.CONNECT_POLICY_DEFAULT),
-      explicitPolicy: isStoredPolicy(row.connect_policy),
+      billingStatus: effectiveBillingStatus(row.connect_policy, this.env.CONNECT_POLICY_DEFAULT),
+      explicitStatus: isBillingStatus(row.connect_policy),
       customerId: (row.billing_customer_id as string | null) ?? null,
       subscriptionId: (row.billing_subscription_id as string | null) ?? null,
     };
@@ -1169,19 +1279,199 @@ export class EccosControlPlane extends DurableObject<Env> {
 
   setAccountBilling(accountId: string, billing: AccountBillingInput): AccountBilling {
     const id = this.requireAccount(accountId);
-    if (billing.connectPolicy !== "open" && billing.connectPolicy !== "closed") {
-      throw new Error('invalid connectPolicy: expected "open" or "closed"');
-    }
+    if (!isBillingStatus(billing.billingStatus)) throw new Error(`invalid billingStatus: ${String(billing.billingStatus)}`);
     const stored = this.getAccountBilling(id) as AccountBilling;
     if (billing.ifSubscriptionId !== undefined && billing.ifSubscriptionId !== stored.subscriptionId) return stored;
     this.sql.exec(
       "UPDATE accounts SET connect_policy = ?, billing_customer_id = ?, billing_subscription_id = ? WHERE account_id = ?",
-      billing.connectPolicy,
+      billing.billingStatus,
       billing.customerId || stored.customerId,
       billing.subscriptionId === undefined ? stored.subscriptionId : billing.subscriptionId || null,
       id,
     );
+    // A funnel account's first payment; a legacy account moving to `active` is not one.
+    const paid = billing.billingStatus === "active" && !["active", "past_due", "cancelled"].includes(stored.billingStatus);
+    if (paid && this.funnelRow(id).connected_at) {
+      funnelEvent("paid", id, this.organizationOf(id), { from: stored.billingStatus });
+    }
     return this.getAccountBilling(id) as AccountBilling;
+  }
+
+  private billingOn(): boolean {
+    return this.env.CONNECT_POLICY_DEFAULT === "closed";
+  }
+
+  private funnelRow(accountId: string): FunnelRow {
+    return this.sql
+      .exec(`SELECT ${FUNNEL_COLUMNS} FROM accounts WHERE account_id = ?`, accountId)
+      .one() as unknown as FunnelRow;
+  }
+
+  /** Starts the funnel clock of an account that just got its first number. Inside the caller's transaction. */
+  private markConnected(accountId: string, at: number): void {
+    this.sql.exec("UPDATE accounts SET connected_at = ? WHERE account_id = ? AND connected_at IS NULL", at, accountId);
+  }
+
+  /**
+   * The account behind `wabaId` activated at `at` (funnel.ts): the data plane reports its
+   * first 2xx forward or first own send Meta delivered. Only the first report of an account
+   * whose clock runs is kept; a legacy account never activates. A timed one gets its
+   * `activated` email right away, or from the next cron tick if that fails.
+   */
+  async recordActivation(wabaId: string, at: number, trigger: ActivationTrigger): Promise<void> {
+    const row = this.sql.exec("SELECT account_id FROM wabas WHERE waba_id = ?", validateWabaId(wabaId, "wabaId")).toArray()[0];
+    if (!row) return;
+    const accountId = row.account_id as string;
+    const changed = this.sql.exec(
+      "UPDATE accounts SET activated_at = ? WHERE account_id = ? AND activated_at IS NULL AND connected_at > 0",
+      at,
+      accountId,
+    ).rowsWritten;
+    if (changed === 0) return;
+    funnelEvent("activated", accountId, this.organizationOf(accountId), { wabaId, trigger });
+    if (this.billingOn() && this.billingStatusOf(accountId) === "setup") {
+      const via = trigger === "webhook_2xx" ? "webhook" : "outbound";
+      this.queueFunnelMail(accountId, { kind: "activated", activatedAt: at, via, windowEndsAt: at + ACTIVATION_WINDOW_MS });
+      await this.sendFunnelMail(accountId);
+    }
+  }
+
+  /**
+   * Queues one funnel email, once per account and kind. An account without an organization
+   * has no one to mail; without the `FUNNEL_MAIL` binding nothing is queued, so a binding
+   * added later never sends a backlog.
+   */
+  private queueFunnelMail(accountId: string, mail: DistributiveOmit<FunnelMailInput, "organizationId" | "accountId">): void {
+    const organizationId = this.organizationOf(accountId);
+    if (!organizationId || !funnelMailer(this.env)) return;
+    this.sql.exec(
+      "INSERT OR IGNORE INTO funnel_mail (account_id, kind, input, queued_at) VALUES (?, ?, ?, ?)",
+      accountId,
+      mail.kind,
+      JSON.stringify({ ...mail, organizationId, accountId }),
+      Date.now(),
+    );
+  }
+
+  /**
+   * Hands every unsent funnel email (or one account's) to the console and marks the ones it
+   * acknowledged. A throw or a timeout leaves the row for the next cron tick, until it is
+   * older than its `FUNNEL_MAIL_MAX_AGE_MS` and dropped. Billing off or no `FUNNEL_MAIL`
+   * binding, nothing is sent.
+   */
+  async sendFunnelMail(accountId?: string): Promise<{ sent: number; failed: number }> {
+    const done = { sent: 0, failed: 0 };
+    const mailer = funnelMailer(this.env);
+    if (!mailer || !this.billingOn()) return done;
+    const now = Date.now();
+    for (const [kind, maxAge] of Object.entries(FUNNEL_MAIL_MAX_AGE_MS)) {
+      this.sql.exec("UPDATE funnel_mail SET sent_at = 0 WHERE sent_at IS NULL AND kind = ? AND queued_at < ?", kind, now - maxAge);
+    }
+    const rows = this.sql
+      .exec(
+        `SELECT account_id, kind, input FROM funnel_mail WHERE sent_at IS NULL ${accountId ? "AND account_id = ?" : ""}`,
+        ...(accountId ? [accountId] : []),
+      )
+      .toArray();
+    for (const row of rows) {
+      try {
+        await withTimeout(mailer.sendFunnelEmail(JSON.parse(String(row.input)) as FunnelMailInput), FUNNEL_MAIL_TIMEOUT_MS);
+        this.sql.exec("UPDATE funnel_mail SET sent_at = ? WHERE account_id = ? AND kind = ?", Date.now(), row.account_id, row.kind);
+        done.sent += 1;
+      } catch {
+        console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "mail-failed", accountId: row.account_id, kind: row.kind }));
+        done.failed += 1;
+      }
+    }
+    return done;
+  }
+
+  /**
+   * The funnel timers, from the cron: an account in `setup` (stored or by default) whose clock
+   * runs pauses 72h after it activated, or 14 days after it connected without activating, and
+   * gets its day-12 warning flagged. Billing off, nothing is timed. Every other status, a paid
+   * one included, is never touched: the pause is one conditional UPDATE, so a payment written
+   * first wins. Each step queues its funnel email; `sendFunnelMail` sends it.
+   */
+  runFunnelTimers(now = Date.now()): { paused: number; warned: number } {
+    const done = { paused: 0, warned: 0 };
+    // FUNNEL_PAUSES=off is the release switch: activation is still recorded, nothing is paused or warned.
+    if (!this.billingOn() || this.env.FUNNEL_PAUSES === "off") return done;
+    done.paused += this.endDueEarlyAccess(now);
+    const rows = this.sql
+      .exec(
+        `SELECT account_id, ${FUNNEL_COLUMNS} FROM accounts
+          WHERE connected_at > 0 AND (connect_policy IS NULL OR connect_policy = 'setup')`,
+      )
+      .toArray() as unknown as (FunnelRow & { account_id: string })[];
+    for (const row of rows) {
+      const pause = pendingPause(row);
+      if (pause && now >= pause.at) {
+        this.sql.exec(
+          `UPDATE accounts SET connect_policy = 'paused', paused_reason = ?
+            WHERE account_id = ? AND (connect_policy IS NULL OR connect_policy = 'setup')`,
+          pause.reason,
+          row.account_id,
+        );
+        funnelEvent("paused", row.account_id, this.organizationOf(row.account_id), { reason: pause.reason });
+        this.queueFunnelMail(row.account_id, { kind: "paused", pausedAt: now, reason: pause.reason });
+        done.paused += 1;
+      } else if (row.activated_at && now >= Number(row.activated_at) + WINDOW_ENDING_AFTER_MS) {
+        this.queueFunnelMail(row.account_id, {
+          kind: "window_ending",
+          windowEndsAt: Number(row.activated_at) + ACTIVATION_WINDOW_MS,
+        });
+      } else if (!row.activated_at && row.warning_due_at === null && now >= Number(row.connected_at) + WARNING_AFTER_MS) {
+        this.sql.exec("UPDATE accounts SET warning_due_at = ? WHERE account_id = ?", now, row.account_id);
+        funnelEvent("warning_due", row.account_id, this.organizationOf(row.account_id));
+        this.queueFunnelMail(row.account_id, {
+          kind: "never_activated_warning",
+          connectedAt: Number(row.connected_at),
+          pausesAt: Number(row.connected_at) + UNACTIVATED_PAUSE_MS,
+        });
+        done.warned += 1;
+      }
+    }
+    return done;
+  }
+
+  /**
+   * Pauses each account whose scheduled end of early access has come, unless it subscribed
+   * (or is already paused): a payment written first wins. The schedule is cleared either way.
+   * No email: the operator announces it.
+   */
+  private endDueEarlyAccess(now: number): number {
+    let paused = 0;
+    const due = this.sql
+      .exec("SELECT account_id FROM accounts WHERE early_access_ends_at IS NOT NULL AND early_access_ends_at <= ?", now)
+      .toArray();
+    for (const { account_id } of due) {
+      const accountId = account_id as string;
+      if (!KEEPS_EARLY_ACCESS.has(this.billingStatusOf(accountId))) {
+        this.sql.exec(
+          "UPDATE accounts SET connect_policy = 'paused', paused_reason = 'early_access_ended' WHERE account_id = ?",
+          accountId,
+        );
+        funnelEvent("paused", accountId, this.organizationOf(accountId), { reason: "early_access_ended" });
+        paused += 1;
+      }
+      this.sql.exec("UPDATE accounts SET early_access_ends_at = NULL WHERE account_id = ?", accountId);
+    }
+    return paused;
+  }
+
+  /** Operator-only: schedules (or with null clears) the account's end of early access, in Unix ms. */
+  setEarlyAccessEnd(accountId: string, endsAt: number | null): number | null {
+    const id = this.requireAccount(accountId);
+    if (endsAt !== null && !(Number.isSafeInteger(endsAt) && endsAt > 0)) {
+      throw new Error("invalid endsAt: Unix ms or null");
+    }
+    if (endsAt !== null && this.billingStatusOf(id) === "open") {
+      throw new Error("account is operator-open: set its billing status to setup before scheduling an end of early access");
+    }
+    this.sql.exec("UPDATE accounts SET early_access_ends_at = ? WHERE account_id = ?", endsAt, id);
+    funnelEvent("early_access_scheduled", id, this.organizationOf(id), { endsAt });
+    return endsAt;
   }
 
   setAccountName(accountId: string, name: string): void {
@@ -1413,6 +1703,7 @@ export class EccosControlPlane extends DurableObject<Env> {
             phone.displayPhoneNumber,
           );
         }
+        if (item.phones.length > 0) this.markConnected(item.accountId, registeredAt);
       }
       return outcome;
     });
@@ -1544,6 +1835,7 @@ export class EccosControlPlane extends DurableObject<Env> {
             phone.displayPhoneNumber,
           );
         }
+        if (item.phones.length > 0) this.markConnected(item.accountId, now);
       }
       return outcome;
     });
@@ -1562,6 +1854,13 @@ export class EccosControlPlane extends DurableObject<Env> {
     const row = this.readWabaRow(accountId, wabaId);
     if (!row || ((row.status as ProvisioningStatus) ?? "active") !== "active") return null;
     return this.hydrateWaba(row);
+  }
+
+  /** As {@link getWaba}, for a send: a status that blocks sends gets `subscription_required`. */
+  async getWabaForSend(accountId: string, wabaId: string): Promise<AccountWaba | typeof SUBSCRIPTION_REQUIRED | null> {
+    const waba = await this.getWaba(accountId, wabaId);
+    if (waba && blocksSends(this.billingStatusOf(waba.accountId))) return SUBSCRIPTION_REQUIRED;
+    return waba;
   }
 
   /** Whether the account owns the WABA, whatever its status; credentials stay sealed. */
@@ -1790,11 +2089,13 @@ export class EccosControlPlane extends DurableObject<Env> {
         )
         .toArray();
       if (owned.length !== 1) return [];
-      if (this.connectPolicyOf(account) === "closed") return [];
       // Gap-filling only: a WABA that already has numbers is not this method's
       // business.
       if (phonesOf(id, this.sql).length > 0) return [];
+      const status = this.billingStatusOf(account);
+      let count = this.numbersOf(account);
       for (const phone of input.phones) {
+        if (!mayAddNumber(status, count++)) break;
         this.sql.exec(
           "INSERT OR REPLACE INTO phones (waba_id, phone_number_id, display_phone_number) VALUES (?, ?, ?)",
           id,
@@ -1802,7 +2103,9 @@ export class EccosControlPlane extends DurableObject<Env> {
           phone.displayPhoneNumber,
         );
       }
-      return phonesOf(id, this.sql);
+      const phones = phonesOf(id, this.sql);
+      if (phones.length > 0) this.markConnected(account, Date.now());
+      return phones;
     });
   }
 
@@ -2158,7 +2461,9 @@ export class EccosControlPlane extends DurableObject<Env> {
         accountId: id,
         name: account.name as string,
         createdAt: account.created_at as number,
-        connectPolicy: this.connectPolicyOf(id),
+        billingStatus: this.billingStatusOf(id),
+        canAddNumber: this.canAddNumber(id),
+        funnel: this.funnelOf(id),
       },
       keys,
       wabas,
@@ -2308,7 +2613,7 @@ export class EccosControlPlane extends DurableObject<Env> {
   private connectLinkGrant(row: ConnectLinkRow | null): ConnectLinkGrant | null {
     const organizationId = row && this.organizationOf(row.accountId);
     if (!row || !organizationId) return null;
-    return { ...row, organizationId, connectPolicy: this.connectPolicyOf(row.accountId) };
+    return { ...row, organizationId, canAddNumber: this.canAddNumber(row.accountId) };
   }
 
   /** `secretRevision` is the WABA's subscriber-secret revision, read by the caller for a subscriber claim. */

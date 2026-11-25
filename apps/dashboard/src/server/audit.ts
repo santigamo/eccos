@@ -111,6 +111,8 @@ export type SensitiveAction =
   /** The workspace's conversation retention changed. Carries the stored window
    * in days (null = keep forever); no conversation content. */
   | "conversation_retention_set"
+  /** The events held while the workspace was paused, forwarded. Carries the count only. */
+  | "held_replay"
   | "export_data"
   | "erase_by_phone"
   | "member_invited"
@@ -118,7 +120,13 @@ export type SensitiveAction =
   | "invitation_resent"
   | "invitation_canceled"
   | "member_role_changed"
-  | "member_removed";
+  | "member_removed"
+  /**
+   * A checkout (or the portal, while a subscription exists) opened from the console. The
+   * other funnel steps (`funnel_activated`, `funnel_paid`, `funnel_paused`) are logged
+   * by the gateway in this same shape.
+   */
+  | "funnel_checkout_started";
 
 export interface AuditEvent {
   action: SensitiveAction;

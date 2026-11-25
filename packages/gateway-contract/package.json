@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./select-waba": "./src/select-waba.ts"
+    "./select-waba": "./src/select-waba.ts",
+    "./billing-status": "./src/billing-status.ts",
+    "./funnel-mail": "./src/funnel-mail.ts"
   }
 }

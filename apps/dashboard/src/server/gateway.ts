@@ -5,11 +5,13 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth";
 import { getAuthForRequest } from "../auth/request-auth";
 import { auditEvent } from "./audit";
-import { billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingState } from "../billing/account";
+import { funnelLedgerFailed, noteConnectError, scheduleRecovery } from "./funnel-recovery";
+import { billingPage, billingReturnUrl, billingState, checkoutUrl, portalUrl, type BillingPage, type BillingState } from "../billing/account";
 import { syncSubscription } from "../billing/webhook";
 import { billingEnabled } from "../billing/config";
 import { billingFor, type Billing } from "../billing/context";
 import { selectWaba, type ScopeMode } from "@eccos/gateway-contract/select-waba";
+import { blocksSends } from "@eccos/gateway-contract/billing-status";
 import { linkPeople } from "./connect-link-people";
 import { timedProxy } from "./timing";
 import { classifyFailure } from "./classify-failure";
@@ -45,12 +47,15 @@ import { ForbiddenError, memberRole, resolveMemberships } from "../auth/tenant";
 import { roleAllows } from "../auth/identity";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
 import type {
+  HeldEvents,
+  ReplayHeldResult,
   BroadcastDetail,
   BroadcastRecipientStatus,
   BroadcastSummary,
   ScheduledCancelResult,
   ScheduledPage,
   ScheduledStatus,
+  AccountFunnel,
   AccountKeyResource,
   AccountResources,
   ConnectExchangeResult,
@@ -136,6 +141,8 @@ export type {
   ThreadView,
   ProvisioningStatus,
   ReconcileWabaResult,
+  HeldEvents,
+  ReplayHeldResult,
   ResubscribeResult,
   RetryFailedResult,
   SendTemplateTestResult,
@@ -181,7 +188,8 @@ export interface Failure {
 export type Result<T> = { ok: true; data: T } | Failure;
 
 export type { ForbiddenReason, Membership } from "../auth/tenant";
-export type { BillingState } from "../billing/account";
+export type { BillingPage, BillingState } from "../billing/account";
+import type { Activation } from "../lib/activation";
 
 /**
  * Identity-plane access (contract §1/§5): every server function resolves the
@@ -250,8 +258,9 @@ export type RoleFlag = { canAdminister: boolean; role: string };
  * Present only while billing is on. `subscribed`: a closed account whose
  * subscription still exists, so billing opens its portal. `canManage`: the
  * member's role may start or manage it, the same permission the checkout requires.
+ * `activation`: the first success and the end of its 72h window, from the funnel clock.
  */
-export type BillingFlag = { subscribed: boolean; canManage: boolean };
+export type BillingFlag = { subscribed: boolean; canManage: boolean; activation?: Activation | null };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 
@@ -1024,7 +1033,13 @@ export const getDashboardState = createServerFn({ method: "GET" })
         const role = await memberRole(auth, request.headers, organizationId);
         const canAdminister = roleAllows(role, "administer");
         const billing = billingEnabled(env)
-          ? { billing: { subscribed: await closedSubscription(gateway, state), canManage: canAdminister } }
+          ? {
+              billing: {
+                subscribed: await closedSubscription(gateway, state),
+                canManage: canAdminister,
+                activation: activationOf(state.resources.account?.funnel),
+              },
+            }
           : {};
         if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, role, ...billing };
         return {
@@ -1038,12 +1053,19 @@ export const getDashboardState = createServerFn({ method: "GET" })
       }),
   );
 
-/** Read only for a closed account: an open one is never pointed at billing. */
+function activationOf(funnel: AccountFunnel | undefined): Activation | null {
+  return funnel?.activatedAt != null && funnel.pausesAt != null
+    ? { activatedAt: funnel.activatedAt, pausesAt: funnel.pausesAt }
+    : null;
+}
+
+/** Read only for an account pointed at billing (no new number, or sends blocked); any other never is. */
 async function closedSubscription(
   gateway: GatewayApi,
   state: { accountId: string; resources: AccountResources },
 ): Promise<boolean> {
-  if (state.resources.account?.connectPolicy !== "closed") return false;
+  const account = state.resources.account;
+  if (!account || (account.canAddNumber !== false && !blocksSends(account.billingStatus))) return false;
   const stored = await gateway.getAccountBilling(state.accountId);
   return Boolean(stored?.subscriptionId && stored.customerId);
 }
@@ -1102,6 +1124,9 @@ export const startConnect = createServerFn({ method: "POST" }).handler(
         accountId: link.accountId,
         outcome: "success",
       });
+      await scheduleRecovery(env.DB, { accountId: link.accountId, organizationId: actor.organizationId }).catch(
+        funnelLedgerFailed,
+      );
       return result;
     }),
 );
@@ -1339,6 +1364,7 @@ export const recordConnectSessionEvent = createServerFn({ method: "POST" })
           },
           outcome: data.errorCode ? "failed" : "success",
         });
+        if (data.errorCode) await noteConnectError(env.DB, accountId, data.errorCode).catch(funnelLedgerFailed);
         return { recorded: true as const };
       }),
   );
@@ -1440,7 +1466,7 @@ export const issueApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<IssuedApiKey>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway, "api-keys");
+        const { actor, accountId } = await adminActorAccount(gateway);
         const issued = await gateway.issueApiKey(accountId, data.label);
         auditEvent({
           action: "api_key_issue",
@@ -1460,7 +1486,7 @@ export const revokeApiKey = createServerFn({ method: "POST" })
   .handler(
     ({ data }): Promise<Result<boolean>> =>
       withGateway(async (gateway) => {
-        const { actor, accountId } = await adminActorAccount(gateway, "api-keys");
+        const { actor, accountId } = await adminActorAccount(gateway);
         const revoked = await gateway.revokeApiKey(accountId, data.keyId);
         auditEvent({
           action: "api_key_revoke",
@@ -1672,6 +1698,34 @@ export const retryFailedDeliveries = createServerFn({ method: "POST" })
           ),
       ),
   );
+
+/** Events stored while the workspace was paused that its forwarding target has not seen. */
+export const getHeldEvents = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<HeldEvents>> =>
+    withGateway(async (gateway) => gateway.getHeldEvents((await resolveOrganizationAccount(gateway)).accountId), "view"),
+);
+
+/**
+ * Forward the events held while the workspace was paused. `administer` (owner
+ * or admin): a late backlog can make the customer's tool answer real people
+ * hours later, which is the account's call, not an operator's.
+ */
+export const replayHeldEvents = createServerFn({ method: "POST" }).handler(
+  (): Promise<Result<ReplayHeldResult>> =>
+    withGateway(async (gateway) => {
+      const { actor, accountId } = await adminActorAccount(gateway);
+      const result = await gateway.replayHeldEvents(accountId);
+      auditEvent({
+        action: "held_replay",
+        actorUserId: actor.session.userId,
+        organizationId: actor.organizationId,
+        accountId,
+        resource: result.ok ? { replayed: result.replayed } : { code: result.code },
+        outcome: result.ok ? "success" : "denied",
+      });
+      return result;
+    }),
+);
 
 /**
  * Send one template message from the console ("Send test").
@@ -1964,6 +2018,18 @@ export const getBilling = createServerFn({ method: "GET" }).handler(
     }),
 );
 
+/** /billing for every role; a member gets no payments and no way into the portal. Null when billing is off. */
+export const getBillingPage = createServerFn({ method: "GET" }).handler(
+  (): Promise<Result<BillingPage | null>> =>
+    withGateway(async (gateway) => {
+      const billing = billingFor(env);
+      if (!billing) return null;
+      const { actor, accountId } = await adminActorAccount(gateway, "view");
+      const role = await memberRole(requestAuth(), getRequest().headers, actor.organizationId);
+      return billingPage(billing, accountId, roleAllows(role, "administer"));
+    }),
+);
+
 export function validateConfirmCheckoutInput(input: unknown): { subscriptionId: string } {
   const subscriptionId = inputRecord(input).subscriptionId;
   if (typeof subscriptionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(subscriptionId)) {
@@ -1993,7 +2059,15 @@ export const startCheckout = createServerFn({ method: "POST" }).handler(
       const billing = requireBilling();
       const { actor, accountId } = await adminActorAccount(gateway);
       const successUrl = billingReturnUrl(env.BETTER_AUTH_URL, getRequest().url);
-      return { url: await checkoutUrl(billing, { accountId, email: actor.session.email, successUrl }) };
+      const url = await checkoutUrl(billing, { accountId, email: actor.session.email, successUrl });
+      auditEvent({
+        action: "funnel_checkout_started",
+        actorUserId: actor.session.userId,
+        organizationId: actor.organizationId,
+        accountId,
+        outcome: "success",
+      });
+      return { url };
     }),
 );
 
@@ -2061,12 +2135,12 @@ export const getDeployment = createServerFn({ method: "GET" }).handler(async ():
 export const setSubscriberConfig = createServerFn({ method: "POST" })
   .validator(validateSubscriberInput)
   .handler(
-    ({ data }): Promise<Result<{ ok: true }>> =>
+    ({ data }): Promise<Result<{ ok: true; savedAt: number }>> =>
       withScopedGateway(
         // `scope: "any"`, for the same reason as the read: a subscriber URL
         // written in the awaiting-a-phone state survives provisioning, because
         // the saga's own `saveConfig` only ever writes META_*/CONNECTED_AT keys.
-        { action: "subscriber-config", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
+        { action: "configure", wabaId: data.wabaId, rejectUnknown: true, scope: "any" },
         (gateway, scope) => {
           const { wabaId: _wabaId, ...input } = data;
           return gateway.setSubscriberConfig(input, scope.wabaId, scope.accountId);

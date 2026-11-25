@@ -13,6 +13,7 @@ import { Route as WebhooksRouteImport } from './routes/webhooks'
 import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SigninRouteImport } from './routes/signin'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScheduledRouteImport } from './routes/scheduled'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
@@ -27,6 +28,7 @@ import { Route as DeliveriesRouteImport } from './routes/deliveries'
 import { Route as ConversationsRouteImport } from './routes/conversations'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as BroadcastsRouteImport } from './routes/broadcasts'
+import { Route as BillingRouteImport } from './routes/billing'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
@@ -51,6 +53,11 @@ const SignupRoute = SignupRouteImport.update({
 const SigninRoute = SigninRouteImport.update({
   id: '/signin',
   path: '/signin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -123,6 +130,11 @@ const BroadcastsRoute = BroadcastsRouteImport.update({
   path: '/broadcasts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BillingRoute = BillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiKeysRoute = ApiKeysRouteImport.update({
   id: '/api-keys',
   path: '/api-keys',
@@ -152,6 +164,7 @@ const BroadcastsBroadcastIdRoute = BroadcastsBroadcastIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api-keys': typeof ApiKeysRoute
+  '/billing': typeof BillingRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -166,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/templates': typeof TemplatesRoute
@@ -177,6 +191,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api-keys': typeof ApiKeysRoute
+  '/billing': typeof BillingRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -191,6 +206,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/templates': typeof TemplatesRoute
@@ -203,6 +219,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api-keys': typeof ApiKeysRoute
+  '/billing': typeof BillingRoute
   '/broadcasts': typeof BroadcastsRoute
   '/connect': typeof ConnectRoute
   '/conversations': typeof ConversationsRoute
@@ -217,6 +234,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/scheduled': typeof ScheduledRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/templates': typeof TemplatesRoute
@@ -230,6 +248,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api-keys'
+    | '/billing'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -244,6 +263,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/scheduled'
     | '/settings'
+    | '/setup'
     | '/signin'
     | '/signup'
     | '/templates'
@@ -255,6 +275,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api-keys'
+    | '/billing'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -269,6 +290,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/scheduled'
     | '/settings'
+    | '/setup'
     | '/signin'
     | '/signup'
     | '/templates'
@@ -280,6 +302,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api-keys'
+    | '/billing'
     | '/broadcasts'
     | '/connect'
     | '/conversations'
@@ -294,6 +317,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/scheduled'
     | '/settings'
+    | '/setup'
     | '/signin'
     | '/signup'
     | '/templates'
@@ -306,6 +330,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiKeysRoute: typeof ApiKeysRoute
+  BillingRoute: typeof BillingRoute
   BroadcastsRoute: typeof BroadcastsRoute
   ConnectRoute: typeof ConnectRoute
   ConversationsRoute: typeof ConversationsRoute
@@ -320,6 +345,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   ScheduledRoute: typeof ScheduledRoute
   SettingsRoute: typeof SettingsRoute
+  SetupRoute: typeof SetupRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
   TemplatesRoute: typeof TemplatesRoute
@@ -357,6 +383,13 @@ declare module '@tanstack/react-router' {
       path: '/signin'
       fullPath: '/signin'
       preLoaderRoute: typeof SigninRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -457,6 +490,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BroadcastsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/billing': {
+      id: '/billing'
+      path: '/billing'
+      fullPath: '/billing'
+      preLoaderRoute: typeof BillingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api-keys': {
       id: '/api-keys'
       path: '/api-keys'
@@ -498,6 +538,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiKeysRoute: ApiKeysRoute,
+  BillingRoute: BillingRoute,
   BroadcastsRoute: BroadcastsRoute,
   ConnectRoute: ConnectRoute,
   ConversationsRoute: ConversationsRoute,
@@ -512,6 +553,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ScheduledRoute: ScheduledRoute,
   SettingsRoute: SettingsRoute,
+  SetupRoute: SetupRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
   TemplatesRoute: TemplatesRoute,

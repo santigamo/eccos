@@ -387,7 +387,7 @@ await run("connect_link_create", { replace: true });
 await run("billing_get");
 await control("setBilling", accountId, {
   ok: true,
-  billing: { connectPolicy: "closed", numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitPolicy: false },
+  billing: { billingStatus: "setup", canAddNumber: false, numbers: 0, monthlyEuros: 0, hasCustomer: false, explicitStatus: false },
 });
 await control("setBillingLink", accountId, "startCheckout", { ok: true, kind: "checkout", url: "https://creem.example/checkout/stub" });
 await run("billing_get");

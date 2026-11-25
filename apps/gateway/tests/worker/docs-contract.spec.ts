@@ -210,6 +210,10 @@ describe("errors-and-rate-limits.md error table", () => {
       send(text(), { "idempotency-key": "a b" }),
     "Missing, unknown or revoked key": () =>
       send(text(), { authorization: undefined }),
+    "Workspace whose sending is paused": async () => {
+      await getControlPlaneStub(env).setAccountBilling(TEST_ACCOUNT_ID, { billingStatus: "closed" });
+      return send();
+    },
     "WABA unknown, malformed, not yours, or not active": () =>
       send(text(), undefined, "/v1/wabas/WABA_NOPE/messages"),
     "Number not in this WABA": () =>
@@ -259,6 +263,7 @@ describe("errors-and-rate-limits.md error table", () => {
           ),
         );
       if (status === 502) expect(body).toEqual(metaError);
+      if (status === 402) expect(body).toMatchObject({ code: "subscription_required" });
     });
   }
 

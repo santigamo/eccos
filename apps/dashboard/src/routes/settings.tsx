@@ -1,9 +1,7 @@
-import { useEffect, useState } from "react";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { invalidatePage, invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import { Page } from "../ui";
 import {
-  confirmCheckout,
   getBilling,
   getConversationRetention,
   type BillingState,
@@ -15,7 +13,7 @@ import { SectionsSkeleton } from "../components/dashboard/settings-section";
 import { activeWorkspace } from "../lib/workspaces";
 import { adminOnlyCopy } from "../lib/failure";
 import { rootRole } from "../lib/root-role";
-import { BillingPanel, type CheckoutReturn } from "../components/dashboard/billing-panel";
+import { BillingPanel } from "../components/dashboard/billing-panel";
 import { ConversationRetentionPanel } from "../components/dashboard/conversation-retention";
 import { TwoFactorPanel } from "../components/dashboard/two-factor";
 import { WorkspacePanel, type WorkspaceView } from "../components/dashboard/workspace-panel";
@@ -30,11 +28,6 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
  */
 export const Route = createFileRoute("/settings")({
   staleTime: CONFIG_STALE_MS,
-  // Creem returns the customer here with the subscription it created.
-  validateSearch: (search: Record<string, unknown>): { billing?: "success"; subscription_id?: string } => ({
-    billing: search.billing === "success" ? "success" : undefined,
-    subscription_id: typeof search.subscription_id === "string" ? search.subscription_id : undefined,
-  }),
   // Not gated on the role: the root may still be loading or stale. A role the
   // page refuses gets cheap refusals here, and the view does not render them.
   loader: () => Promise.all([getConversationRetention(), getBilling()]),
@@ -50,27 +43,6 @@ function SettingsPage() {
   const root = useLoaderData({ from: "__root__" });
   const [retention, billing] = Route.useLoaderData();
   const router = useRouter();
-  const search = Route.useSearch();
-  const navigate = Route.useNavigate();
-  const [returned, setReturned] = useState<CheckoutReturn | null>(null);
-  // The webhook may land after Creem's redirect, so the return asks Creem itself.
-  // Once: the parameters then leave the URL, and a reload does not ask again.
-  useEffect(() => {
-    if (search.billing !== "success") return;
-    let current = true;
-    void (async () => {
-      const confirmed = search.subscription_id
-        ? await confirmCheckout({ data: { subscriptionId: search.subscription_id } }).catch(() => null)
-        : null;
-      if (!current) return;
-      setReturned({ status: confirmed?.ok ? confirmed.data : null });
-      await navigate({ search: {}, replace: true });
-      await invalidatePage(router);
-    })();
-    return () => {
-      current = false;
-    };
-  }, [search.billing, search.subscription_id, navigate, router]);
   const state = root.ok ? root.data : null;
   const accountId =
     state?.stage === "ready"
@@ -90,7 +62,6 @@ function SettingsPage() {
       retention={retention}
       twoFactorEnabled={root.user?.twoFactorEnabled}
       billing={billing.ok ? billing.data : null}
-      billingReturned={returned}
       onChanged={() => void invalidatePage(router)}
       // The root holds the name the workspace switcher shows.
       onRenamed={() => void invalidateRoutes(router, rootRouteId)}
@@ -108,7 +79,6 @@ export function SettingsView({
   retention,
   twoFactorEnabled,
   billing,
-  billingReturned,
   onChanged,
   onRenamed,
 }: {
@@ -124,7 +94,6 @@ export function SettingsView({
   twoFactorEnabled?: boolean;
   /** Null while billing is off, and for a role that may not administer it. */
   billing?: BillingState | null;
-  billingReturned?: CheckoutReturn | null;
   onChanged?: () => void;
   onRenamed?: () => void;
 }) {
@@ -139,7 +108,7 @@ export function SettingsView({
               <WorkspacePanel accountId={accountId} workspace={workspace} canRename={canAdminister} onRenamed={onRenamed} />
               {canAdminister ? (
                 <>
-                  {billing ? <BillingPanel billing={billing} returned={billingReturned} /> : null}
+                  {billing ? <BillingPanel billing={billing} /> : null}
                   {retention ? <ConversationRetentionPanel retention={retention} onChanged={onChanged} /> : null}
                 </>
               ) : (

@@ -26,6 +26,8 @@ import { billingWebhook } from "./billing/webhook";
 import { connectLinkApi } from "./server/connect-link-api";
 import { oauthCrossOriginApi } from "./server/oauth-cross-origin";
 import { oauthRequestWithinLimits } from "./server/oauth-request-limits";
+import { funnelDeps } from "./server/funnel-mail";
+import { runDueRecoveries } from "./server/funnel-recovery";
 
 /**
  * Custom TanStack Start server entry (picked up by convention at `src/server.ts`,
@@ -119,11 +121,17 @@ const handleFetch: ServerEntry["fetch"] = async (incoming, opts) => {
   return response;
 };
 
-/** Every trigger deletes unused OAuth clients; any trigger but the hourly one also reconciles billing. */
+/** Every trigger deletes unused OAuth clients and sends due recovery emails; any trigger but the hourly one also reconciles billing. */
 async function scheduled(controller: ScheduledController): Promise<void> {
   const billing = controller.cron === OAUTH_CLIENT_CLEANUP_CRON ? null : billingFor(env);
-  await Promise.all([deleteUnusedOAuthClients(env.DB), billing && reconcileBilling(billing)]);
+  await Promise.all([
+    deleteUnusedOAuthClients(env.DB),
+    billing && reconcileBilling(billing),
+    runDueRecoveries(funnelDeps(env)),
+  ]);
 }
+
+export { FunnelMailRPC } from "./server/funnel-rpc";
 
 export default Sentry.withSentry(() => sentryOptions, {
   ...createServerEntry({ fetch: handleFetch }),
