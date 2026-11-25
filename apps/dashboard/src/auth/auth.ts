@@ -19,6 +19,7 @@ import {
   AUTH_LINK_EXPIRY_SECONDS,
   deriveIdempotencyKey,
   extractTokenFromUrl,
+  MailProviderError,
   MailUndeliverableError,
   recipientDomain,
   type MailSender,
@@ -66,8 +67,9 @@ export function buildInvitationAcceptLink(baseURL: string, invitationId: string)
  * `ctx.context.runInBackgroundOrAwait` (dist/context/create-context.mjs:215),
  * which awaits the promise inside a try/catch and merely LOGS a rejection. So
  * a throw from this layer does NOT currently reach the sign-up or invitation
- * response — only `POST /send-verification-email` re-throws it
- * (dist/api/routes/email-verification.mjs:117). Since 1.7.21 this is
+ * response. `POST /send-verification-email` would re-throw it
+ * (dist/api/routes/email-verification.mjs:117), which is why the resend path
+ * swallows instead (`applyResendVerificationPolicy`). Since 1.7.21 this is
  * better-auth's stated behavior for sign-up, not an accident: a thrown
  * `sendVerificationEmail` is logged and the sign-up succeeds. The policy is
  * written to the contract anyway: it is correct where the throw does surface,
@@ -170,13 +172,32 @@ export function applyResetSendPolicy(
 }
 
 /**
- * Verification resend. Same rule as reset, for the same reason: POST
- * /send-verification-email takes any address and only sends for an existing
- * unverified account (dist/api/routes/email-verification.mjs), so a thrown
- * error there would say "this address has an account". The check-your-inbox
- * screen shows the address, so a typo stays visible to its owner.
+ * Verification resend. Same rule as reset: POST /send-verification-email takes
+ * any address and only sends for an existing unverified account
+ * (dist/api/routes/email-verification.mjs), so a thrown error there answers 500
+ * for real accounts and 200 for unknown ones. Undeliverable is swallowed here,
+ * and a provider failure in `sendVerificationEmail` below. That makes the
+ * status code neutral; response time is not (better-auth's 500 ms floor only
+ * pads fast calls). The check-your-inbox screen shows the address, so a typo
+ * stays visible to its owner.
  */
 export const applyResendVerificationPolicy = applyResetSendPolicy;
+
+/** A provider failure on resend: logged as an error, never thrown (see above). */
+function logResendProviderFailure(ctx: MailPolicyContext, error: MailProviderError): void {
+  console.error(
+    JSON.stringify({
+      level: "error",
+      area: "auth-mail",
+      event: "send-failed",
+      template: ctx.template,
+      toDomain: recipientDomain(ctx.to),
+      idempotencyKey: ctx.idempotencyKey,
+      kind: error.kind,
+      ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}),
+    }),
+  );
+}
 
 /** True when better-auth is sending the verification mail for the resend endpoint, not for sign-up or sign-in. */
 export function isVerificationResend(request: Request | undefined): boolean {
@@ -413,18 +434,22 @@ export function createAuth(config: AuthConfig) {
           user.email,
           verificationToken,
         );
-        const outcome = await config.mail.sendTemplate({
-          template: "verify-email",
-          to: user.email,
-          variables: { name: user.name, url },
-          idempotencyKey,
-        });
-        const policy = isVerificationResend(request) ? applyResendVerificationPolicy : applyVerificationSendPolicy;
-        policy(outcome, {
-          template: "verify-email",
-          to: user.email,
-          idempotencyKey,
-        });
+        const resend = isVerificationResend(request);
+        const ctx: MailPolicyContext = { template: "verify-email", to: user.email, idempotencyKey };
+        let outcome: SendOutcome;
+        try {
+          outcome = await config.mail.sendTemplate({
+            template: "verify-email",
+            to: user.email,
+            variables: { name: user.name, url },
+            idempotencyKey,
+          });
+        } catch (error) {
+          if (!resend || !(error instanceof MailProviderError)) throw error;
+          logResendProviderFailure(ctx, error);
+          return;
+        }
+        (resend ? applyResendVerificationPolicy : applyVerificationSendPolicy)(outcome, ctx);
       },
     },
     plugins: [
