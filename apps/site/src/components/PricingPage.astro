@@ -210,21 +210,25 @@ const description = es
     </section>
 
     <section>
-      <h2>{es ? "Prueba, pago y cancelación" : "Trial, payment and cancellation"}</h2>
+      <h2>{es ? "Cuándo pagas y cómo cancelar" : "When you pay, and cancelling"}</h2>
       {
         es ? (
           <p>
-            Crear la cuenta es gratis y no pide tarjeta. Para añadir un número te suscribes antes, y la suscripción
-            empieza con una prueba gratuita de {PRICING.trialDays} días que pide tarjeta; después no hay plan gratuito.
-            Puedes cancelar cuando quieras, con efecto al final del periodo pagado. El pago y las facturas los gestiona
+            Conecta tu número primero y paga solo cuando funcione. Te registras y conectas tu primer número sin
+            tarjeta. Funciona cuando se entrega su primer mensaje o tu software recibe el primero desde Eccos, y desde
+            ese momento tienes {PRICING.setupWindowHours} horas para terminar la configuración y suscribirte; si no, el
+            número queda en pausa hasta que te suscribas. Si nunca llega a funcionar, no pagas nada. Un segundo número
+            necesita la suscripción. Puedes cancelar cuando quieras, con efecto al final del periodo pagado. El pago y las facturas los gestiona
             Creem como vendedor oficial (merchant of record). Las condiciones completas están en los{" "}
             <a href="/terms">términos</a>.
           </p>
         ) : (
           <p>
-            Creating an account is free and needs no card. To add a number you subscribe first, and the subscription
-            starts with a {PRICING.trialDays}-day free trial that asks for a card; there is no free tier after it. You can
-            cancel at any time, effective at the end of the paid period. Payment and invoices are handled by Creem as
+            Connect your number first, and pay only once it works. You sign up and connect your first number with no
+            card. It works when its first message is delivered or your software receives its first message from Eccos,
+            and from then you have {PRICING.setupWindowHours} hours to finish setting up and subscribe; if you do not,
+            the number is paused until you do. If it never works, you never pay. A second number needs the
+            subscription. You can cancel at any time, effective at the end of the paid period. Payment and invoices are handled by Creem as
             merchant of record. The full conditions are in the <a href="/terms">terms</a>.
           </p>
         )
