@@ -599,6 +599,7 @@ async function registerWabaRoute(c: AppContext) {
           ...(subscriberUrl ? { SUBSCRIBER_WEBHOOK_URL: subscriberUrl } : {}),
           ...(subscriberSecret ? { SUBSCRIBER_SECRET: subscriberSecret } : {}),
         });
+        if (subscriberSecret) await getControlPlane(c.env).cancelSubscriberSecretClaims(accountId, result.waba.wabaId);
       } catch (error) {
         warnings.push(`subscriber configuration sync failed (${errorMessage(error)})`);
       }

@@ -42,6 +42,21 @@
  * live in the console's server functions (`src/members.ts`), which call them in
  * process. Served over HTTP, any admin session could invite or grant `owner`
  * or Better Auth's default `member` role, and the act would leave no audit line.
+ *
+ * The OAuth provider (`oauth-provider.ts`) mounts more than the authorization
+ * server needs, and contract §9 serves only that. Refused, with no caller in
+ * Eccos: the `jwt` plugin's session-JWT route (already in `disabledPaths`, whose
+ * own 404 carries a body that tells it apart), introspection (`ConsoleRPC.authorize` verifies tokens in process),
+ * the OpenID Connect endpoints (no `openid` scope is offered), the consent
+ * endpoints (Connected agents revokes through server functions, because a
+ * revoke must also revoke the refresh tokens and write an audit line), and
+ * every client and resource administration endpoint, including all of
+ * `admin/oauth2/*`. The discovery documents the plugins mount under
+ * `/api/auth/.well-known/` are refused too: the one metadata document is the
+ * root `/.well-known/oauth-authorization-server` (`server/oauth-cross-origin.ts`),
+ * the resource metadata belongs to the MCP Worker, and the root
+ * `/.well-known/openid-configuration` would otherwise fall through to the
+ * page gate and redirect to sign-in, which says "something is here".
  */
 
 /** Exact paths (Better Auth is mounted at `/api/auth`) that never dispatch. */
@@ -53,20 +68,42 @@ export const BLOCKED_AUTH_ENDPOINTS: ReadonlySet<string> = new Set([
   "/api/auth/organization/cancel-invitation",
   "/api/auth/organization/remove-member",
   "/api/auth/organization/update-member-role",
+  "/api/auth/token",
+  "/api/auth/oauth2/introspect",
+  "/api/auth/oauth2/userinfo",
+  "/api/auth/oauth2/end-session",
+  "/api/auth/oauth2/end-session/confirm",
+  "/api/auth/oauth2/get-consents",
+  "/api/auth/oauth2/get-consent",
+  "/api/auth/oauth2/update-consent",
+  "/api/auth/oauth2/delete-consent",
+  "/api/auth/oauth2/create-client",
+  "/api/auth/oauth2/get-client",
+  "/api/auth/oauth2/get-clients",
+  "/api/auth/oauth2/update-client",
+  "/api/auth/oauth2/delete-client",
+  "/api/auth/oauth2/client/rotate-secret",
+  "/api/auth/oauth2/client/rotate-keys",
+  "/.well-known/openid-configuration",
 ]);
+
+/** Whole subtrees that never dispatch: every path below each prefix. */
+export const BLOCKED_AUTH_PREFIXES: readonly string[] = [
+  "/api/auth/admin/oauth2/",
+  "/api/auth/.well-known/",
+];
 
 /**
  * Whether this request path is one of the refused endpoints.
  *
- * All of them are POST-only in Better Auth, so any other method already 404s;
- * matching on the path alone therefore changes nothing today and stays correct
- * if a future version adds a verb. The trailing-slash and case normalisation is
- * belt-and-braces for the same reason — better-call's router rejects both
+ * Matched on the path alone, whatever the method: a refused endpoint is refused
+ * for every verb, and stays so if a future version adds one. The trailing-slash
+ * and case normalisation is belt-and-braces for the same reason — better-call's router rejects both
  * variants itself in 1.4.0, and this does not depend on it continuing to.
  */
 export function isBlockedAuthEndpoint(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, "").toLowerCase();
-  return BLOCKED_AUTH_ENDPOINTS.has(path);
+  return BLOCKED_AUTH_ENDPOINTS.has(path) || BLOCKED_AUTH_PREFIXES.some((prefix) => `${path}/`.startsWith(prefix));
 }
 
 /** The refusal itself: better-call's own "no such route" response. */

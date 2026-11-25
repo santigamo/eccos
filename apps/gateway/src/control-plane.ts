@@ -10,7 +10,12 @@ import type {
   ConnectLinkSummary,
   ConnectPolicy,
   IssuedConnectLink,
+  IssuedSecretClaim,
   ProvisioningStatus,
+  SecretClaim,
+  SecretClaimCreator,
+  SecretClaimRefusal,
+  SecretClaimRequest,
 } from "@eccos/gateway-contract";
 import {
   CONNECT_LINKS_SCHEMA,
@@ -22,6 +27,18 @@ import {
   settleConnectLink,
   summarizeConnectLink,
 } from "./connect-links";
+import {
+  SECRET_CLAIMS_ADDED_COLUMNS,
+  SECRET_CLAIMS_SCHEMA,
+  type SecretClaimRow,
+  cancelSubscriberSecretClaims,
+  createSecretClaim,
+  findSecretClaim,
+  isPendingSecretClaim,
+  markSecretClaim,
+  pendingSecretClaims,
+  spendSecretClaim,
+} from "./secret-claims";
 import { effectiveConnectPolicy, isStoredPolicy, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
 import { sha256Hex, toBase64Url } from "./encoding";
 import {
@@ -87,6 +104,8 @@ const PROVISIONING_RETRY_BASE_MS = 5_000;
 const PROVISIONING_RETRY_MAX_MS = 3_600_000;
 const ORGANIZATION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const ORGANIZATION_ID_MAX_LENGTH = 128;
+/** An OAuth client id or a client metadata URL: printable, no spaces. */
+const CLIENT_ID_PATTERN = /^[\x21-\x7E]{1,256}$/;
 
 /** Public shape of an account; never carries credentials. */
 export interface AccountRecord {
@@ -726,6 +745,13 @@ export class EccosControlPlane extends DurableObject<Env> {
         return_to  TEXT
       );`);
       this.sql.exec(CONNECT_LINKS_SCHEMA);
+      this.sql.exec(SECRET_CLAIMS_SCHEMA);
+      const secretClaimColumns = this.sql.exec("PRAGMA table_info(secret_claims)").toArray();
+      for (const column of SECRET_CLAIMS_ADDED_COLUMNS) {
+        if (!secretClaimColumns.some((row) => row.name === column)) {
+          this.sql.exec(`ALTER TABLE secret_claims ADD COLUMN ${column} INTEGER`);
+        }
+      }
       // Operator-only bookkeeping (the daily census guard); never read by the console.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
         key   TEXT PRIMARY KEY,
@@ -2283,6 +2309,127 @@ export class EccosControlPlane extends DurableObject<Env> {
     const organizationId = row && this.organizationOf(row.accountId);
     if (!row || !organizationId) return null;
     return { ...row, organizationId, connectPolicy: this.connectPolicyOf(row.accountId) };
+  }
+
+  /** `secretRevision` is the WABA's subscriber-secret revision, read by the caller for a subscriber claim. */
+  async createSecretClaim(
+    accountId: string,
+    request: SecretClaimRequest,
+    creator: SecretClaimCreator,
+    secretRevision?: number,
+  ): Promise<IssuedSecretClaim | "too_many_pending"> {
+    const id = this.requireAccount(accountId);
+    if (!this.organizationOf(id)) throw new Error(`account "${id}" has no active organization`);
+    const { userId, clientId } = creator ?? {};
+    if (typeof userId !== "string" || !ORGANIZATION_ID_PATTERN.test(userId) || userId.length > ORGANIZATION_ID_MAX_LENGTH) {
+      throw new Error("invalid creatorUserId");
+    }
+    if (typeof clientId !== "string" || !CLIENT_ID_PATTERN.test(clientId)) {
+      throw new Error("invalid clientId: expected 1-256 printable characters without spaces");
+    }
+    const intent = { creatorUserId: userId, clientId };
+    if (request?.kind === "api_key") {
+      const label = validateLabel(request.label ?? null, "label");
+      return createSecretClaim(this.sql, id, { ...intent, kind: "api_key", label, wabaId: null, secretRevision: null });
+    }
+    if (request?.kind !== "subscriber_secret") throw new Error("invalid secret claim kind");
+    const wabaId = validateWabaId(request.wabaId, "wabaId");
+    if (!this.ownsWaba(id, wabaId)) throw new Error(`WABA "${wabaId}" is not owned by account "${id}"`);
+    if (!Number.isSafeInteger(secretRevision)) throw new Error("invalid secretRevision");
+    return createSecretClaim(this.sql, id, {
+      ...intent,
+      kind: "subscriber_secret",
+      label: null,
+      wabaId,
+      secretRevision: secretRevision as number,
+    });
+  }
+
+  /** Cancels the WABA's pending subscriber claims, for a secret written some other way. */
+  cancelSubscriberSecretClaims(accountId: string, wabaId: string): void {
+    cancelSubscriberSecretClaims(this.sql, this.requireAccount(accountId), validateWabaId(wabaId, "wabaId"));
+  }
+
+  /** Cancels a spent subscriber claim whose secret revision went stale before its write. */
+  cancelSecretClaim(claimId: string): void {
+    markSecretClaim(this.sql, claimId, "cancelled_at");
+  }
+
+  /** Records that a spent subscriber claim's secret write failed. */
+  markSecretClaimFailed(claimId: string): void {
+    markSecretClaim(this.sql, claimId, "failed_at");
+  }
+
+  async resolveSecretClaim(token: string): Promise<SecretClaim | null> {
+    const row = await findSecretClaim(this.sql, token);
+    return row && isPendingSecretClaim(row) ? this.secretClaimOf(row) : null;
+  }
+
+  /**
+   * Spends a claim, once. An API key is issued in the same transaction; a
+   * subscriber claim comes back spent, with the secret revision it was made
+   * at, for the caller to generate and store its secret. Null for a token that
+   * opens no claim; otherwise a refusal (see `SecretClaimRefusal`).
+   */
+  async redeemSecretClaim(token: string): Promise<
+    | { claim: SecretClaim & { kind: "api_key" }; keyId: string; secret: string }
+    | { claim: SecretClaim & { kind: "subscriber_secret" }; secretRevision: number }
+    | SecretClaimRefusal
+    | null
+  > {
+    const found = await findSecretClaim(this.sql, token);
+    if (!found) return null;
+    const apiKey = found.kind === "api_key" ? newApiKey() : null;
+    const keyId = apiKey && newId("key");
+    const hash = apiKey && (await sha256Hex(apiKey));
+    return this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      const claim = this.secretClaimOf(found);
+      const spent = claim && spendSecretClaim(this.sql, found.selector as string, keyId, now);
+      if (!claim || !spent) {
+        const row = this.sql
+          .exec("SELECT cancelled_at, failed_at FROM secret_claims WHERE selector = ?", found.selector)
+          .toArray()[0];
+        if (row?.failed_at != null) return "write_failed";
+        return row?.cancelled_at != null ? "cancelled" : "gone";
+      }
+      if (claim.kind === "subscriber_secret") return { claim, secretRevision: spent.secret_revision as number };
+      if (!apiKey || !keyId) throw new Error("api_key claim spent without a key");
+      this.sql.exec(
+        "INSERT INTO api_keys (key_id, account_id, label, hash, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL)",
+        keyId,
+        claim.accountId,
+        claim.label,
+        hash,
+        now,
+      );
+      return { claim, keyId, secret: apiKey };
+    });
+  }
+
+  listSecretClaims(accountId: string): SecretClaim[] {
+    return pendingSecretClaims(this.sql, this.requireAccount(accountId))
+      .map((row) => this.secretClaimOf(row))
+      .filter((claim) => claim !== null);
+  }
+
+  /** Fails closed unless the claim's account still has an active organization and, for a subscriber secret, its WABA. */
+  private secretClaimOf(row: SecretClaimRow): SecretClaim | null {
+    const accountId = row.account_id as string;
+    const organizationId = this.organizationOf(accountId);
+    if (!organizationId) return null;
+    const base = {
+      claimId: row.selector as string,
+      accountId,
+      organizationId,
+      creatorUserId: row.creator_user_id as string,
+      clientId: row.client_id as string,
+      createdAt: row.created_at as number,
+      expiresAt: row.expires_at as number,
+    };
+    if (row.kind === "api_key") return { ...base, kind: "api_key", label: (row.label as string | null) ?? null };
+    const wabaId = row.waba_id as string;
+    return this.ownsWaba(accountId, wabaId) ? { ...base, kind: "subscriber_secret", wabaId } : null;
   }
 
   purgeExpiredConnectStates(now = Date.now()): void {

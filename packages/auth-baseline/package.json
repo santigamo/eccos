@@ -8,10 +8,11 @@
     ".": "./src/index.ts",
     "./permissions": "./src/permissions.ts",
     "./rate-limit": "./src/rate-limit.ts",
+    "./step-up": "./src/step-up.ts",
     "./tenant": "./src/tenant.ts"
   },
   "dependencies": {
-    "better-auth": "1.7.14"
+    "better-auth": "1.7.27"
   },
   "devDependencies": {
     "@types/bun": "latest"

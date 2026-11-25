@@ -25,8 +25,12 @@ import {
   type MailTemplate,
   type SendOutcome,
 } from "./mail";
+import { enrollmentProof, type TwoFactorChange, type TwoFactorMail } from "./enrollment-proof";
+import { oauthAuthorizationServer } from "./oauth-provider";
 import { ac, owner, admin, operator, viewer } from "./permissions";
 import { signupOrphanGuard } from "./signup-orphans";
+import { STEP_UP_WINDOW_SECONDS } from "./step-up";
+import { stepUpGuard, stepUpOrganizationHooks } from "./step-up-guard";
 import type { AttemptLimiter } from "../server/attempt-limit";
 import { INVITATION_RATE_LIMITED } from "../lib/members-copy";
 import { INVITATION_LIFETIME_DAYS } from "../lib/invitation-expiry";
@@ -57,16 +61,18 @@ export function buildInvitationAcceptLink(baseURL: string, invitationId: string)
  * because the reasoning below is the actual deliverable, not the four lines of
  * code under it.
  *
- * A NOTE ON WHERE THESE THROWS SURFACE (better-auth 1.7.2): sign-up, forgot
- * password, and create-invitation all wrap the send in
- * `ctx.context.runInBackgroundOrAwait` (dist/context/create-context.mjs:214),
+ * A NOTE ON WHERE THESE THROWS SURFACE (re-read at better-auth 1.7.27): sign-up,
+ * forgot password, and create-invitation all wrap the send in
+ * `ctx.context.runInBackgroundOrAwait` (dist/context/create-context.mjs:215),
  * which awaits the promise inside a try/catch and merely LOGS a rejection. So
  * a throw from this layer does NOT currently reach the sign-up or invitation
  * response — only `POST /send-verification-email` re-throws it
- * (dist/api/routes/email-verification.mjs:117). The policy is written to the
- * contract anyway: it is correct, it is what surfaces the moment better-auth
- * propagates, and the structured log below is the durable record in the
- * meantime. See docs/auth-email-delivery.md.
+ * (dist/api/routes/email-verification.mjs:117). Since 1.7.21 this is
+ * better-auth's stated behavior for sign-up, not an accident: a thrown
+ * `sendVerificationEmail` is logged and the sign-up succeeds. The policy is
+ * written to the contract anyway: it is correct where the throw does surface,
+ * and the structured log below is the durable record everywhere else. See
+ * docs/auth-email-delivery.md.
  */
 
 /** What a policy needs in order to log without ever touching a token. */
@@ -223,6 +229,8 @@ export interface AuthConfig {
   trustedOrigins: string[];
   /** Application-owned email adapter (contract §8). */
   mail: MailSender;
+  /** The MCP resource (MCP_RESOURCE): the audience of every access token this server issues. */
+  mcpResource: string;
   /** Caps invitation sends per inviter. `authConfigFromEnv` always sets it; hand-built test configs may not. */
   invitationLimiter?: AttemptLimiter;
 }
@@ -234,12 +242,55 @@ function assertValidConfig(config: AuthConfig): void {
   if (!config.baseURL) {
     throw new Error("Auth baseURL is required");
   }
+  if (!config.mcpResource) {
+    throw new Error("The MCP resource is required");
+  }
+}
+
+/** What the notification mail says happened, one sentence each. */
+const TWO_FACTOR_CHANGES: Record<TwoFactorChange, string> = {
+  enabled: "Two-factor authentication was turned on.",
+  disabled: "Two-factor authentication was turned off.",
+  "backup-codes": "New backup codes were generated, and the old ones no longer work.",
+};
+
+/**
+ * Both go to the account's own verified address. A code that cannot arrive is
+ * surfaced, as a verification mail's is: the setup cannot go on without it. A
+ * notification follows a change that already happened, so it is only logged.
+ * The key never carries the code itself.
+ */
+function twoFactorMail(mail: MailSender): TwoFactorMail {
+  const send = async (
+    template: "two-factor-code" | "two-factor-changed",
+    to: string,
+    variables: Record<string, string>,
+    unique: string,
+    policy: typeof applyVerificationSendPolicy,
+  ) => {
+    const idempotencyKey = await deriveIdempotencyKey(template, to, unique);
+    const outcome = await mail.sendTemplate({ template, to, variables, idempotencyKey });
+    policy(outcome, { template, to, idempotencyKey });
+  };
+  return {
+    code: (user, code, unique) =>
+      send("two-factor-code", user.email, { name: user.name, code }, unique, applyVerificationSendPolicy),
+    changed: (user, change) =>
+      send(
+        "two-factor-changed",
+        user.email,
+        { name: user.name, change: TWO_FACTOR_CHANGES[change] },
+        `${change}:${crypto.randomUUID()}`,
+        applyResetSendPolicy,
+      ),
+  };
 }
 
 export function createAuth(config: AuthConfig) {
   assertValidConfig(config);
 
   const secureCookies = config.baseURL.startsWith("https://");
+  const authorizationServer = oauthAuthorizationServer(config);
 
   // NOTE: no explicit `BetterAuthOptions` annotation — the return-type
   // inference of `betterAuth` (and the plugin endpoints exposed on `auth.api`,
@@ -253,6 +304,7 @@ export function createAuth(config: AuthConfig) {
     secret: config.secret,
     baseURL: config.baseURL,
     trustedOrigins: config.trustedOrigins,
+    disabledPaths: authorizationServer.disabledPaths,
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
@@ -299,7 +351,7 @@ export function createAuth(config: AuthConfig) {
     session: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
-      freshAge: 60 * 15,
+      freshAge: STEP_UP_WINDOW_SECONDS,
     },
     // Distributed rate limiting (contract §8), shared with
     // @eccos/auth-baseline. Counters key on caller IP + path, never on the
@@ -322,8 +374,8 @@ export function createAuth(config: AuthConfig) {
       // for the full hour however many times it is replayed. What makes the
       // link one-shot is not the token but the ORDER of the handler — the
       // `user.emailVerified` branch returns before the auto-sign-in block ever
-      // runs (better-auth 1.7.2, api/routes/email-verification.mjs, the check
-      // at :287 vs. the session mint at :297). So the link mints exactly one
+      // runs (re-read at better-auth 1.7.27, api/routes/email-verification.mjs,
+      // the check at :279 vs. the session mint at :289). So the link mints exactly one
       // session, and only while the account is still unverified. If a future
       // upgrade reorders those two, this option silently becomes a replayable
       // magic link — that is the thing to re-read on a better-auth bump.
@@ -333,7 +385,8 @@ export function createAuth(config: AuthConfig) {
       // lets a top-level click out of a mail client set it at all — Strict
       // would not survive the redirect; and sign-up passes `callbackURL: "/"`,
       // where the root loader sends a session with no organization on to
-      // /onboarding, or the page it was sent from (an invitation link).
+      // /onboarding, or the page it was sent from (an invitation link), or the
+      // agent authorization it was opened for (pending-authorization.ts).
       //
       // The failure mode worth naming is a corporate link scanner that fetches
       // the URL before the human does. It degrades gracefully rather than
@@ -344,11 +397,10 @@ export function createAuth(config: AuthConfig) {
       //
       // NOT to be extended to `emailAndPassword.autoSignIn` (a session BEFORE
       // verification), which contradicts `requireEmailVerification` above and
-      // contract §7. And a caveat for when TOTP enrollment ships: this path
-      // calls `internalAdapter.createSession` directly, so it does not pass
-      // through the twoFactor plugin's sign-in hook. Harmless today — the
-      // account is seconds old and cannot have a second factor — but a
-      // re-verification flow on an enrolled account would step around it.
+      // contract §7. This path calls `internalAdapter.createSession` directly,
+      // so it never passes through the twoFactor sign-in hook: the session it
+      // mints carries no `stepUpAt` and therefore never passes step-up
+      // (`step-up.ts`), whatever the account's enrollment.
       autoSignInAfterVerification: true,
       sendVerificationEmail: async (data: MailCallbackData, request?: Request) => {
         const { user, url, token } = data;
@@ -377,9 +429,12 @@ export function createAuth(config: AuthConfig) {
     },
     plugins: [
       signupOrphanGuard(),
-      // TOTP for owner/admin step-up before sensitive actions (contract §8);
-      // enrollment UI ships with the eccos-0x0.7 dashboard pass.
-      twoFactor(),
+      // TOTP for owner/admin step-up before sensitive actions (contract §8).
+      // The issuer is the account name an authenticator app shows.
+      twoFactor({ issuer: "Eccos" }),
+      stepUpGuard(),
+      // After the guard: an enrolled caller is asked for step-up first.
+      enrollmentProof(twoFactorMail(config.mail)),
       organization({
         ac,
         roles: { owner, admin, operator, viewer },
@@ -391,11 +446,16 @@ export function createAuth(config: AuthConfig) {
         // Long enough for a small business to open the mail after a weekend.
         invitationExpiresIn: INVITATION_LIFETIME_DAYS * 24 * 60 * 60,
         organizationHooks: {
+          // Step-up on invitations and member changes (contract §4), after
+          // Better Auth's own organization and role checks.
+          ...stepUpOrganizationHooks,
           // Every invitation comes through here: the console's server functions
           // call the plugin in process, and its HTTP route is blocked
           // (blocked-endpoints.ts). The cap lives in the plugin so it holds
-          // for any future caller too.
+          // for any future caller too. Step-up first: a refused invitation
+          // spends none of the inviter's allowance.
           beforeCreateInvitation: async ({ inviter }) => {
+            await stepUpOrganizationHooks.beforeCreateInvitation();
             if (await config.invitationLimiter?.strike(inviter.id)) {
               throw new APIError("TOO_MANY_REQUESTS", {
                 code: INVITATION_RATE_LIMITED,
@@ -448,13 +508,17 @@ export function createAuth(config: AuthConfig) {
           });
         },
       }),
+      // The OAuth authorization server for the MCP resource (contract §9).
+      ...authorizationServer.plugins,
     ],
     advanced: {
       // Native joins: one statement for session+user and for member+organization
       // instead of fallback queries (each D1 round trip is ~55 ms).
       // validateSchema: createAuth() runs per request and 1.7.3+ introspects the
       // schema on every new instance (D1 falls back to ~2 PRAGMAs per table, and
-      // each auth call awaits it). Schema drift is guarded by migrations + tests.
+      // each auth call awaits it). 1.7.22 moved the check to first use, but it
+      // is still once per instance, so it stays off here (re-read at 1.7.27).
+      // Schema drift is guarded by migrations + tests.
       database: { joins: true, validateSchema: false },
       // Explicit production posture: origin validation MUST run regardless of
       // NODE_ENV (Better Auth otherwise skips it in test environments).

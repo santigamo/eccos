@@ -351,6 +351,9 @@ binding (each call, including a refused reset, is logged with its ids):
   WABA it marks the whole sync unavailable even if another phone accepted. Afterwards tell the
   customer that their contacts or history will not arrive.
 - `GatewayRPC.diagnoseWaba(wabaId, accountId)` returns Meta's read-only view of the token, WABA and number.
+- `GatewayRPC.resetWabaSubscription(wabaId, accountId)` deletes and re-creates the app's `subscribed_apps`
+  entry. Use it when `diagnoseWaba` lists the subscription but the app's `health_status` says it is "not
+  subscribed to the message webhook" and no webhooks arrive; the console's Re-subscribe only POSTs.
 
 While a WABA is `failed`, Meta's webhooks for it are held (up to 5000 events, 3 days), not dropped. They
 are ingested and forwarded when the WABA becomes `active`, after a `reconcileWaba` or a new Embedded

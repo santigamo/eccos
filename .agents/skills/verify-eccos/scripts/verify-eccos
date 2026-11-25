@@ -1,0 +1,495 @@
+#!/usr/bin/env bash
+# Launches, checks, drives and tears down a local Eccos stack for verification.
+# See ../SKILL.md. All state lives under $VERIFY_HOME (default: <repo>/.verify).
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$SKILL_DIR/../../.." && pwd)"
+VERIFY_HOME="${VERIFY_HOME:-$REPO/.verify}"
+RUN="$VERIFY_HOME/run"
+GATEWAY_PORT=8787
+DASHBOARD_PORT=3000
+FAKE_PORT=8790
+GATEWAY="http://localhost:$GATEWAY_PORT"
+DASHBOARD="http://localhost:$DASHBOARD_PORT"
+FAKE="http://127.0.0.1:$FAKE_PORT"
+
+# Fixed, fake, verification-only values. Never real credentials.
+APP_SECRET="verify-app-secret"
+VERIFY_TOKEN="verify-token"
+ADMIN_KEY="verify-admin-key"
+
+usage() {
+  cat <<EOF
+usage: verify-eccos <command>
+  launch              start the fake, the gateway and the dashboard; wait until usable
+  doctor              read-only check that the running stack is ours and healthy
+  stop                stop what launch started and delete run state (evidence is kept)
+  webhook <file|->    sign a Meta webhook body and POST it (add --bad-signature to break it);
+                      __NOW__ in the body becomes the current Unix time
+  admin <method> <path> [json]   call a gateway admin route with the bootstrap key
+  fake-log [filter]   print the fake's request log (JSONL), optionally only lines containing <filter>
+  mail-link <email>   print the newest link mailed to <email>
+  follow-mail-link <email>   open that link with curl, for harnesses that mask tokens in tool output
+  session <email>     sign in over HTTP and keep the cookie for serverfn; answers the TOTP
+                      prompt itself once enroll-totp ran for that email
+  enroll-totp <email> turn on TOTP for a signed-in user: mailed code from the fake, secret
+                      kept in the run directory; leaves the session stepped up for 15 min
+  step-up <email>     confirm it's you again with a fresh TOTP code (confirmStepUpCode)
+  totp <email|secret> print the current TOTP code for a user enrolled by enroll-totp, or for
+                      the key the console's setup sheet shows, to type into the console
+  mail-code <email>   print the newest two-factor setup code mailed to <email>
+  age-step-up <email> make <email>'s step-up 16 minutes old, so the console asks again
+  stepup-actions [--check]
+                      list the console server functions that need step-up, from the source;
+                      --check fails when features/step-up.md lacks a row for one
+  stepup-matrix <email> <organization id> before|aged|after
+                      call every server function in step-up.md's table. before (no TOTP):
+                      each answers totp-required; aged (after age-step-up): each answers
+                      reauth-required; after (fresh step-up): none answers a step-up refusal
+  serverfn <email> <src file> <export> [json]
+                      call a console server function as that user, without the UI; the
+                      file is relative to apps/dashboard, such as src/server/gateway.ts
+  evidence <feature>  create and print a fresh evidence directory for <feature>
+  env                 print the URLs and fake values the stack runs with
+EOF
+}
+
+# Every curl here talks to loopback; a developer's proxy settings must not apply.
+curl() { command curl --noproxy '*' "$@"; }
+
+# The stack starts with only these variables from your shell, so nothing you exported
+# (a real mail key, a real Meta token) reaches it. Wrangler's usage metrics stay off.
+CLEAN_ENV=(env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" TERM=dumb WRANGLER_SEND_METRICS=false)
+clean_env() { "${CLEAN_ENV[@]}" "$@"; }
+
+port_free() { # vite binds IPv6 loopback only, so probe both
+  ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && ! (exec 3<>"/dev/tcp/::1/$1") 2>/dev/null
+}
+
+BOOT_ID="$(cat /proc/sys/kernel/random/boot_id)"
+
+# What each process's command line contains, so a reused PID is never taken for ours.
+signature() {
+  case "$1" in
+    fake) echo 'fake-meta[.]ts' ;;
+    gateway) echo 'gateway-entry[.]ts' ;;
+    dashboard) echo 'run/dashboard/vite[.]config[.]ts' ;;
+  esac
+}
+
+# True when <name>'s PID file was written in this boot, so the PID can still be ours.
+this_boot() { [[ -f "$RUN/$1.pid" && "$(cat "$RUN/boot_id" 2>/dev/null)" == "$BOOT_ID" ]]; }
+
+# True while a process of <name>'s group is left that runs what this skill started, even
+# when its leader exited. A PID file from an earlier boot or a reused PID never matches.
+group_alive() { this_boot "$1" && runs_harness "$1" "$(signature "$1")"; }
+
+wait_for() { # <label> <url> <grep pattern>
+  for _ in $(seq 1 90); do
+    if curl -s --max-time 2 "$2" 2>/dev/null | grep -q "$3"; then return 0; fi
+    sleep 1
+  done
+  echo "launch: $1 did not become ready; see $RUN/$1.log" >&2
+  return 1
+}
+
+start() { # <name> <dir> [VAR=value...] <command...>, in the same clean environment as clean_env
+  local name="$1" dir="$2"
+  shift 2
+  (cd "$dir" && exec setsid "${CLEAN_ENV[@]}" "$@" >"$RUN/$name.log" 2>&1 </dev/null) &
+  echo $! >"$RUN/$name.pid"
+}
+
+# The console's config, under the run directory: a copy of apps/dashboard/wrangler.jsonc
+# with absolute paths, harness/dashboard.vite.config.ts, and a link to its node_modules.
+# Wrangler reads .dev.vars and .env beside the config it is given, so the console never
+# sees the developer's files in apps/dashboard.
+dashboard_config() {
+  mkdir -p "$RUN/dashboard"
+  (cd "$REPO" && bun -e '
+    const ts = require("typescript");
+    const [src, out] = process.argv.slice(1);
+    const dir = require("node:path").dirname(src);
+    const { config, error } = ts.parseConfigFileTextToJson(src, require("node:fs").readFileSync(src, "utf8"));
+    if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+    delete config.$schema;
+    config.main = dir + "/" + config.main;
+    for (const db of config.d1_databases ?? []) db.migrations_dir = dir + "/" + db.migrations_dir;
+    require("node:fs").writeFileSync(out, JSON.stringify(config, null, 2));
+  ' "$REPO/apps/dashboard/wrangler.jsonc" "$RUN/dashboard/wrangler.json")
+  cp "$SKILL_DIR/harness/dashboard.vite.config.ts" "$RUN/dashboard/vite.config.ts"
+  ln -s "$REPO/apps/dashboard/node_modules" "$RUN/dashboard/node_modules"
+}
+
+cmd_launch() {
+  if [[ -d "$RUN" ]]; then
+    echo "launch: $RUN exists; run 'verify-eccos doctor' or 'verify-eccos stop' first" >&2
+    exit 1
+  fi
+  for port in $GATEWAY_PORT $DASHBOARD_PORT $FAKE_PORT; do
+    if ! port_free "$port"; then
+      echo "launch: port $port is in use by something this skill did not start; refusing" >&2
+      exit 1
+    fi
+  done
+  [[ -d "$REPO/node_modules" ]] || (cd "$REPO" && bun install)
+  mkdir -p "$RUN"
+  : >"$RUN/fake.jsonl"
+  echo "$BOOT_ID" >"$RUN/boot_id"
+  : >"$RUN/empty.env"
+  dashboard_config
+
+  start fake "$SKILL_DIR" bun harness/fake-meta.ts "$FAKE_PORT" "$RUN/fake.jsonl"
+  wait_for fake "$FAKE/__health" eccos-verify-fake
+
+  start gateway "$REPO/apps/gateway" bunx wrangler dev "$SKILL_DIR/harness/gateway-entry.ts" \
+    -c "$REPO/apps/gateway/wrangler.jsonc" --env-file "$RUN/empty.env" \
+    --port "$GATEWAY_PORT" --persist-to "$RUN/gateway-state" \
+    --define "__VERIFY_FAKE_ORIGIN__:\"$FAKE\"" \
+    --var DO_JURISDICTION: --var GATEWAY_PUBLIC_URL:https://gateway.eccos-verify.example \
+    --var "META_APP_SECRET:$APP_SECRET" --var "META_WEBHOOK_VERIFY_TOKEN:$VERIFY_TOKEN" \
+    --var META_APP_ID:verify-app-id --var META_ES_CONFIG_ID:verify-config-id \
+    --var "ECCOS_ADMIN_API_KEY:$ADMIN_KEY" \
+    --var ECCOS_TOKEN_ENCRYPTION_KEY:verify-token-encryption-key-not-a-real-secret
+  wait_for gateway "$GATEWAY/ready" '"ok":true'
+
+  (cd "$REPO/apps/dashboard" && clean_env bunx wrangler d1 migrations apply eccos-auth --local >"$RUN/migrate.log" 2>&1)
+  # The console's auth database outlives stop, and so do its rate-limit counters: every
+  # doctor and recipe signs up, so back-to-back launches would hit the sign-up limit.
+  (cd "$REPO/apps/dashboard" && clean_env bunx wrangler d1 execute eccos-auth --local \
+    --command 'delete from "rateLimit"' >>"$RUN/migrate.log" 2>&1)
+  start dashboard "$REPO/apps/dashboard" \
+    BETTER_AUTH_SECRET=verify-only-better-auth-secret-32-chars \
+    BETTER_AUTH_URL="$DASHBOARD" \
+    RECCADO_API_KEY=verify-mail-key \
+    RECCADO_ENDPOINT="$FAKE/mail/v1/mailboxes/verify/transactional/messages" \
+    CLOUDFLARE_INCLUDE_PROCESS_ENV=true \
+    VERIFY_RUN_DIR="$RUN" VERIFY_DASHBOARD_DIR="$REPO/apps/dashboard" \
+    bunx vite dev --config "$RUN/dashboard/vite.config.ts" --port "$DASHBOARD_PORT" --strictPort
+  wait_for dashboard "$DASHBOARD/signin" "<html"
+
+  cmd_doctor
+}
+
+# True when a process of <name>'s process group listens on <port>.
+owns_port() {
+  local pgid listener
+  pgid="$(cat "$RUN/$1.pid")"
+  for listener in $(ss -ltnpH "sport = :$2" | grep -oE 'pid=[0-9]+' | cut -d= -f2); do
+    [[ "$(ps -o pgid= -p "$listener" | tr -d ' ')" == "$pgid" ]] && return 0
+  done
+  return 1
+}
+
+# True when a process of <name>'s group has a command line matching every pattern.
+runs_harness() {
+  local name="$1" pid
+  shift
+  for pid in $(pgrep -g "$(cat "$RUN/$name.pid")"); do
+    local cmdline ok=0 pattern
+    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)" || continue
+    for pattern in "$@"; do grep -qE "$pattern" <<<"$cmdline" || ok=1; done
+    [[ $ok -eq 0 ]] && return 0
+  done
+  return 1
+}
+
+# Wrangler logs where it took secrets from; only the run's empty file and process.env are ours.
+no_local_env_file() {
+  ! grep -hE 'Using (secrets|vars) defined in' "$RUN/gateway.log" "$RUN/dashboard.log" | grep -vE 'empty[.]env$|process[.]env$' | grep -q .
+}
+
+# Signs up a throwaway user and expects the verification mail in the fake's log.
+mail_reaches_fake() {
+  local email
+  email="doctor+$(date -u +%Y%m%dT%H%M%S%N)@eccos-verify.example"
+  curl -s -o /dev/null --max-time 20 -X POST "$DASHBOARD/api/auth/sign-up/email" \
+    -H "content-type: application/json" -H "origin: $DASHBOARD" \
+    --data "{\"name\":\"Doctor\",\"email\":\"$email\",\"password\":\"Verify-Passw0rd-2026!\"}" || return 1
+  for _ in $(seq 1 10); do
+    grep -F '"path":"/mail/' "$RUN/fake.jsonl" | grep -qiF "$email" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+cmd_doctor() {
+  local ok=0
+  check() { # <label> <command...>
+    local label="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then echo "ok    $label"; else echo "FAIL  $label"; ok=1; fi
+  }
+  check "fake process started by this run" group_alive fake
+  check "gateway process started by this run" group_alive gateway
+  check "dashboard process started by this run" group_alive dashboard
+  check "port $FAKE_PORT belongs to this run's fake" owns_port fake "$FAKE_PORT"
+  check "port $GATEWAY_PORT belongs to this run's gateway" owns_port gateway "$GATEWAY_PORT"
+  check "port $DASHBOARD_PORT belongs to this run's dashboard" owns_port dashboard "$DASHBOARD_PORT"
+  check "fake answers at $FAKE" bash -c "curl --noproxy '*' -sf --max-time 3 $FAKE/__health | grep -q eccos-verify-fake"
+  check "gateway ready at $GATEWAY (secrets + control plane)" bash -c "curl --noproxy '*' -sf --max-time 5 $GATEWAY/ready | grep -q '\"ok\":true'"
+  check "gateway runs the rerouting entry, with no local env file" runs_harness gateway 'gateway-entry[.]ts' 'empty[.]env'
+  check "dashboard runs the harness config" runs_harness dashboard 'run/dashboard/vite[.]config[.]ts'
+  check "neither worker loaded a .dev.vars or .env" no_local_env_file
+  check "dashboard serves the sign-in page at $DASHBOARD" bash -c "curl --noproxy '*' -sf --max-time 10 $DASHBOARD/signin | grep -q '<html'"
+  check "a sign-up mails the fake, not a real provider" mail_reaches_fake
+  if [[ $ok -ne 0 ]]; then
+    echo "doctor: not worth driving; logs in $RUN/*.log" >&2
+    exit 1
+  fi
+  echo "doctor: healthy. gateway $GATEWAY, dashboard $DASHBOARD, fake log $RUN/fake.jsonl"
+}
+
+cmd_stop() {
+  [[ -d "$RUN" ]] || { echo "stop: nothing to stop"; return 0; }
+  if [[ "$(cat "$RUN/boot_id" 2>/dev/null)" != "$BOOT_ID" ]]; then
+    echo "stop: $RUN is from an earlier boot or an older launch; signalling nothing" >&2
+  fi
+  for name in dashboard gateway fake; do
+    if group_alive "$name"; then
+      local pid
+      pid="$(cat "$RUN/$name.pid")"
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+  sleep 2
+  for name in dashboard gateway fake; do
+    if group_alive "$name"; then kill -KILL -- "-$(cat "$RUN/$name.pid")" 2>/dev/null || true; fi
+  done
+  rm -rf "$RUN"
+  echo "stop: stopped; evidence kept in $VERIFY_HOME/evidence"
+}
+
+cmd_webhook() {
+  local source="${1:-}" bad="${2:-}"
+  [[ -n "$source" ]] || { usage; exit 2; }
+  require_stack
+  local body
+  if [[ "$source" == "-" ]]; then body="$(cat)"; else body="$(cat "$source")"; fi
+  body="${body//__NOW__/$(date +%s)}"
+  local sig
+  sig="sha256=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$APP_SECRET" -hex | sed 's/^.* //')"
+  [[ "$bad" == "--bad-signature" ]] && sig="sha256=deadbeef"
+  curl -s -w '\nHTTP %{http_code}\n' -X POST "$GATEWAY/webhooks/meta" \
+    -H "content-type: application/json" -H "x-hub-signature-256: $sig" --data "$body"
+}
+
+cmd_admin() {
+  local method="${1:-}" path="${2:-}" body="${3:-}"
+  [[ -n "$method" && -n "$path" ]] || { usage; exit 2; }
+  require_stack
+  if [[ -n "$body" ]]; then
+    curl -s -w '\nHTTP %{http_code}\n' -X "$method" "$GATEWAY$path" \
+      -H "authorization: Bearer $ADMIN_KEY" -H "content-type: application/json" --data "$body"
+  else
+    curl -s -w '\nHTTP %{http_code}\n' -X "$method" "$GATEWAY$path" -H "authorization: Bearer $ADMIN_KEY"
+  fi
+}
+
+cmd_fake_log() {
+  [[ -f "$RUN/fake.jsonl" ]] || { echo "fake-log: no running stack" >&2; exit 1; }
+  if [[ -n "${1:-}" ]]; then grep -F "\"path\":\"" "$RUN/fake.jsonl" | grep -F "$1" || true; else cat "$RUN/fake.jsonl"; fi
+}
+
+cmd_mail_link() {
+  local email="${1:-}"
+  [[ -n "$email" ]] || { usage; exit 2; }
+  grep -F '"path":"/mail/' "$RUN/fake.jsonl" | grep -iF "$email" | tail -1 \
+    | bun -e 'const l = (await Bun.stdin.text()).trim(); if (l) console.log(JSON.parse(JSON.parse(l).body).variables.url)'
+}
+
+cmd_follow_mail_link() {
+  local link
+  require_stack
+  link="$(cmd_mail_link "$@")"
+  [[ -n "$link" ]] || { echo "follow-mail-link: no mail captured for $1" >&2; exit 1; }
+  curl -s -o /dev/null -w 'HTTP %{http_code} -> %{redirect_url}\n' "$link"
+}
+
+PASSWORD="Verify-Passw0rd-2026!"
+
+auth_post() { # <email> <path> <json>: POST to Better Auth with that user's cookie jar
+  local cookies
+  cookies="$(jar "$1")"
+  (umask 077 && curl -s -b "$cookies" -c "$cookies" -X POST "$DASHBOARD/api/auth/$2" \
+    -H "content-type: application/json" -H "origin: $DASHBOARD" --data "$3")
+}
+
+# Every command that sends a request to the stack first proves that the stack answering is
+# the one launch started: this boot, each process group running the harness, each port
+# owned by its group. Otherwise it sends nothing and writes nothing.
+require_stack() {
+  local name port
+  [[ -d "$RUN" ]] || { echo "verify-eccos: no stack launched; run 'verify-eccos launch' first" >&2; exit 1; }
+  for name in fake gateway dashboard; do
+    case "$name" in fake) port=$FAKE_PORT ;; gateway) port=$GATEWAY_PORT ;; dashboard) port=$DASHBOARD_PORT ;; esac
+    if ! group_alive "$name" || ! owns_port "$name" "$port"; then
+      echo "verify-eccos: port $port is not answered by the $name this skill launched; refusing. Run 'verify-eccos doctor'" >&2
+      exit 1
+    fi
+  done
+}
+
+jar() { (umask 077 && mkdir -p "$RUN/sessions") && echo "$RUN/sessions/$1.cookies"; }
+
+# The current TOTP code for <email>. A code is accepted once, so when this window's code
+# was already handed out, wait for the next 30-second window.
+totp_code() {
+  local last="$RUN/sessions/$1.window" now
+  now=$(($(date +%s) / 30))
+  if [[ "$(cat "$last" 2>/dev/null)" == "$now" ]]; then
+    sleep $((30 - $(date +%s) % 30 + 1))
+    now=$(($(date +%s) / 30))
+  fi
+  echo "$now" >"$last"
+  bun "$SKILL_DIR/harness/totp.ts" "$(cat "$RUN/sessions/$1.totp")"
+}
+
+cmd_session() {
+  local email="${1:-}" password="${2:-$PASSWORD}" answer
+  [[ -n "$email" ]] || { usage; exit 2; }
+  require_stack
+  rm -f "$(jar "$email")"
+  answer="$(auth_post "$email" sign-in/email "{\"email\":\"$email\",\"password\":\"$password\"}")"
+  if grep -q '"twoFactorRedirect":true' <<<"$answer"; then
+    [[ -f "$RUN/sessions/$email.totp" ]] || { echo "session: $email has TOTP that this run did not enroll" >&2; exit 1; }
+    answer="$(auth_post "$email" two-factor/verify-totp "{\"code\":\"$(totp_code "$email")\"}")"
+  fi
+  grep -q '"token"' <<<"$answer" || { echo "session: sign-in failed: $answer" >&2; exit 1; }
+  echo "session: signed in as $email"
+}
+
+cmd_enroll_totp() {
+  local email="${1:-}" password="${2:-$PASSWORD}" before code answer uri
+  [[ -n "$email" ]] || { usage; exit 2; }
+  require_stack
+  [[ -f "$RUN/sessions/$email.cookies" ]] || { echo "enroll-totp: run 'verify-eccos session $email' first" >&2; exit 1; }
+  before="$(grep -cF "$email" "$RUN/fake.jsonl" || true)"
+  auth_post "$email" two-factor/send-enable-code "{\"password\":\"$password\"}" | grep -q '"status":true' \
+    || { echo "enroll-totp: the enable code was not sent" >&2; exit 1; }
+  for _ in $(seq 1 10); do
+    [[ "$(grep -cF "$email" "$RUN/fake.jsonl")" -gt "$before" ]] && break
+    sleep 1
+  done
+  code="$(cmd_mail_code "$email")"
+  [[ -n "$code" ]] || { echo "enroll-totp: no two-factor-code mail for $email in the fake's log" >&2; exit 1; }
+  answer="$(auth_post "$email" two-factor/enable "{\"password\":\"$password\",\"emailCode\":\"$code\"}")"
+  uri="$(bun -e 'const j = JSON.parse(process.argv[1]); if (j.totpURI) console.log(j.totpURI)' "$answer")"
+  [[ -n "$uri" ]] || { echo "enroll-totp: two-factor/enable refused: $answer" >&2; exit 1; }
+  echo "$uri" >"$RUN/sessions/$email.totp"
+  auth_post "$email" two-factor/verify-totp "{\"code\":\"$(totp_code "$email")\"}" | grep -q '"token"' \
+    || { echo "enroll-totp: the first TOTP code was refused" >&2; exit 1; }
+  echo "enroll-totp: TOTP on for $email; this session is stepped up for 15 minutes"
+}
+
+cmd_step_up() {
+  local email="${1:-}"
+  require_stack
+  [[ -f "$RUN/sessions/$email.totp" ]] || { echo "step-up: run 'verify-eccos enroll-totp $email' first" >&2; exit 1; }
+  cmd_serverfn "$email" src/server/step-up.ts confirmStepUpCode "{\"code\":\"$(totp_code "$email")\"}"
+}
+
+cmd_totp() {
+  local who="${1:-}"
+  [[ -n "$who" ]] || { usage; exit 2; }
+  if [[ "$who" != *@* ]]; then bun "$SKILL_DIR/harness/totp.ts" "${who// /}"; return; fi
+  [[ -f "$RUN/sessions/$who.totp" ]] || { echo "totp: run 'verify-eccos enroll-totp $who' first" >&2; exit 1; }
+  totp_code "$who"
+}
+
+cmd_mail_code() {
+  local email="${1:-}"
+  [[ -n "$email" ]] || { usage; exit 2; }
+  grep -F '"path":"/mail/' "$RUN/fake.jsonl" | grep -iF "$email" | grep -F 'two-factor-code' | tail -1 \
+    | bun -e 'const l = (await Bun.stdin.text()).trim(); if (l) console.log(JSON.parse(JSON.parse(l).body).variables.code)'
+}
+
+cmd_serverfn() {
+  local email="${1:-}" file="${2:-}" name="${3:-}"
+  [[ -n "$email" && -n "$file" && -n "$name" ]] || { usage; exit 2; }
+  require_stack
+  [[ -f "$RUN/sessions/$email.cookies" ]] || { echo "serverfn: run 'verify-eccos session $email' first" >&2; exit 1; }
+  shift 3
+  bun "$SKILL_DIR/harness/serverfn.ts" "$DASHBOARD" "$(jar "$email")" "$file" "$name" "$@"
+}
+
+cmd_age_step_up() {
+  local email="${1:-}"
+  [[ "$email" =~ ^[A-Za-z0-9.+_-]+@[A-Za-z0-9.-]+$ ]] || { usage; exit 2; }
+  require_stack
+  (cd "$REPO/apps/dashboard" && clean_env bunx wrangler d1 execute eccos-auth --local --command \
+    "update session set stepUpAt = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-16 minutes') where stepUpAt is not null and userId = (select id from user where email = lower('$email'))" \
+    >"$RUN/age-step-up.log" 2>&1) || { echo "age-step-up: the update failed; see $RUN/age-step-up.log" >&2; exit 1; }
+  echo "age-step-up: $email's step-up is now 16 minutes old"
+}
+
+cmd_stepup_actions() { bun "$SKILL_DIR/harness/stepup-actions.ts" "$@"; }
+
+cmd_stepup_matrix() {
+  local email="${1:-}" org="${2:-}" phase="${3:-}" failed=0 file name input out
+  [[ -n "$email" && -n "$org" && "$phase" =~ ^(before|aged|after)$ ]] || { usage; exit 2; }
+  require_stack
+  while IFS='|' read -r _ file name input _; do
+    file="$(sed -E 's/^ *`|` *$//g' <<<"$file")"
+    name="$(sed -E 's/^ *`|` *$//g' <<<"$name")"
+    input="$(sed -E "s/^ *\`|\` *$//g; s/<org>/$org/g" <<<"$input")"
+    [[ "$input" == "none" ]] && input=""
+    out="$(cmd_serverfn "$email" "$file" "$name" "$input" 2>&1 | tr -d '\n')"
+    if [[ "$phase" == before ]] && grep -q 'totp-required' <<<"$out"; then echo "ok    $name refused: totp-required"
+    elif [[ "$phase" == aged ]] && grep -q 'reauth-required' <<<"$out"; then echo "ok    $name refused: reauth-required"
+    elif [[ "$phase" == after ]] && grep -q '^HTTP 200' <<<"$out" && ! grep -qE 'totp-required|reauth-required' <<<"$out"; then
+      echo "ok    $name passed step-up: $(cut -c9-130 <<<"$out")"
+    else echo "FAIL  $name: $(cut -c1-200 <<<"$out")"; failed=1; fi
+  done < <(grep -E '^\| `src/' "$SKILL_DIR/features/step-up.md")
+  return $failed
+}
+
+cmd_evidence() {
+  local feature="${1:-}"
+  [[ "$feature" =~ ^[a-z0-9-]+$ ]] || { echo "evidence: the feature id is lowercase letters, digits and dashes" >&2; exit 2; }
+  mkdir -p "$VERIFY_HOME/evidence"
+  local dir n=1
+  dir="$VERIFY_HOME/evidence/$(date -u +%Y%m%dT%H%M%SZ)-$feature"
+  local base="$dir"
+  until mkdir "$dir" 2>/dev/null; do n=$((n + 1)); dir="$base-$n"; done
+  echo "$dir"
+}
+
+cmd_env() {
+  cat <<EOF
+GATEWAY=$GATEWAY
+DASHBOARD=$DASHBOARD
+FAKE=$FAKE
+META_APP_SECRET=$APP_SECRET
+META_WEBHOOK_VERIFY_TOKEN=$VERIFY_TOKEN
+ECCOS_ADMIN_API_KEY=$ADMIN_KEY
+FAKE_WABA_ID=100200300
+FAKE_PHONE_NUMBER_ID=555001
+RUN_DIR=$RUN
+EVIDENCE_DIR=$VERIFY_HOME/evidence
+EOF
+}
+
+case "${1:-}" in
+  launch) cmd_launch ;;
+  doctor) cmd_doctor ;;
+  stop) cmd_stop ;;
+  webhook) shift; cmd_webhook "$@" ;;
+  admin) shift; cmd_admin "$@" ;;
+  fake-log) shift; cmd_fake_log "$@" ;;
+  mail-link) shift; cmd_mail_link "$@" ;;
+  follow-mail-link) shift; cmd_follow_mail_link "$@" ;;
+  session) shift; cmd_session "$@" ;;
+  enroll-totp) shift; cmd_enroll_totp "$@" ;;
+  step-up) shift; cmd_step_up "$@" ;;
+  totp) shift; cmd_totp "$@" ;;
+  mail-code) shift; cmd_mail_code "$@" ;;
+  age-step-up) shift; cmd_age_step_up "$@" ;;
+  stepup-actions) shift; cmd_stepup_actions "$@" ;;
+  stepup-matrix) shift; cmd_stepup_matrix "$@" ;;
+  serverfn) shift; cmd_serverfn "$@" ;;
+  evidence) shift; cmd_evidence "$@" ;;
+  env) cmd_env ;;
+  *) usage; exit 2 ;;
+esac

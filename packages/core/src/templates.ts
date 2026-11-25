@@ -146,10 +146,10 @@ export async function createTemplate(
   return { ok: true, data: json };
 }
 
-export type TemplateContent = Pick<CreateTemplateBody, "bodyText" | "examples" | "footerText" | "buttons">;
+export type TemplateComponentsInput = Pick<CreateTemplateBody, "bodyText" | "examples" | "footerText" | "buttons">;
 
 /** The Graph `components[]` for a console-authored template, shared by create and edit. */
-export function templateComponents(input: TemplateContent): Record<string, unknown>[] {
+export function templateComponents(input: TemplateComponentsInput): Record<string, unknown>[] {
   const examples = input.examples ?? [];
   const components: Record<string, unknown>[] = [
     {
@@ -191,7 +191,7 @@ export function templateComponents(input: TemplateContent): Record<string, unkno
 export async function editTemplate(
   cfg: MetaAppConfig,
   templateId: string,
-  input: TemplateContent & { category?: string },
+  input: TemplateComponentsInput & { category?: string },
 ): Promise<TemplatesResult> {
   const body = {
     ...(input.category ? { category: input.category } : {}),

@@ -20,6 +20,7 @@ async function setup() {
     secret: "test-secret-32-chars-minimum-length!!",
     baseURL: BASE_URL,
     trustedOrigins: [BASE_URL],
+    mcpResource: "http://localhost:8788/mcp",
     mail: new CaptureMailSender(),
   });
   await (await getMigrations(auth.options)).runMigrations();

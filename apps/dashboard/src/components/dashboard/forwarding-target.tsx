@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { setSubscriberConfig, type SubscriberConfig } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { withStepUp } from "../../lib/step-up";
 import {
   Frame,
   FramePanel,
@@ -91,7 +92,7 @@ export function ForwardingTargetPanel({
     setSaving(true);
     setNotice(null);
     try {
-      const res = await setSubscriberConfig({ data: { ...input, wabaId } });
+      const res = await withStepUp(() => setSubscriberConfig({ data: { ...input, wabaId } }));
       if (res.ok) {
         // The field empties on success and stays empty: what is stored is not
         // readable, so keeping the typed value on screen would be the console

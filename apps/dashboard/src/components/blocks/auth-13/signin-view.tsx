@@ -3,9 +3,12 @@ import { authClient } from "@/auth/auth-client";
 import { signUpHref } from "@/auth/redirect-target";
 import { AuthSplitShell } from "./components/auth";
 import { LoginForm, type FormSubmitEvent } from "./components/login-form";
+import { TwoFactorForm } from "./components/two-factor-form";
 import { authErrorMessage } from "@/components/auth/auth-page";
 import { validateEmail } from "./components/validation";
 import { track } from "@/lib/analytics";
+import { signInHref } from "@/auth/redirect-target";
+import { pendingAuthorizationURL } from "@/auth/pending-authorization";
 
 /**
  * Sign-in view on the reui auth-13 split-screen skeleton, adapted to the
@@ -23,6 +26,7 @@ export function SignInView({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(searchError);
   const [pending, setPending] = useState(false);
+  const [challenged, setChallenged] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
@@ -68,13 +72,32 @@ export function SignInView({
       setError(authErrorMessage(result.error, "Could not sign in"));
       return;
     }
+    if ((result.data as { twoFactorRedirect?: boolean } | null)?.twoFactorRedirect) {
+      setChallenged(true);
+      return;
+    }
     if ((result.data as { token?: string | null } | null)?.token === null) {
       setError("Verify your email address first, then sign in again.");
       return;
     }
-    // Full navigation so the root loader re-resolves the fresh session; a
-    // full URL assignment preserves query-string targets like /inbound?wabaId=.
-    window.location.assign(redirectTo || "/");
+    // Inside an OAuth authorization, Better Auth answers with the next step.
+    const next = (result.data as { url?: string } | null)?.url;
+    if (next) return window.location.assign(next);
+    enter();
+  }
+
+  // Full navigation so the root loader re-resolves the fresh session; a full
+  // URL assignment preserves query-string targets like /inbound?wabaId=.
+  function enter() {
+    window.location.assign(pendingAuthorizationURL(window.location.search) ?? (redirectTo || "/"));
+  }
+
+  if (challenged) {
+    return (
+      <AuthSplitShell>
+        <TwoFactorForm onVerified={enter} restartHref={signInHref(redirectTo)} />
+      </AuthSplitShell>
+    );
   }
 
   return (

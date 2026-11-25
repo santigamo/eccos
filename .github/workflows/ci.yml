@@ -29,27 +29,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Unit tests (Bun)
-        run: bun run test
-
-      - name: Worker tests (vitest-pool-workers)
-        run: bun run test:workers
-
-      - name: Site (check, build, links)
-        run: bun run check:site
-
-      - name: Docs (check, build, links)
-        run: bun run check:docs
-
-      - name: Dashboard (typecheck, test, build)
-        run: |
-          cd apps/dashboard
-          bun run typecheck
-          bun run test
-          bunx vite build
-
-      - name: Lint (Biome)
-        run: bun run lint
+      # The whole gate is one script, so a local run and CI cannot differ:
+      # lint, typecheck, both test suites, site, docs, dashboard.
+      - name: Check
+        run: bun run check
