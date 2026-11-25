@@ -31,7 +31,12 @@ const STATE_COOKIE = "eccos_connect_state";
  * read, so it can never widen the redirect target.
  */
 const RETURN_COOKIE = "eccos_connect_return";
-const STATE_COOKIE_MAX_AGE_SECONDS = 30 * 60;
+/**
+ * Lifetime of a connect state and its cookies. A coexistence onboarding can keep
+ * Meta's window open well past half an hour, so this covers the longest flow we
+ * expect while an abandoned state still dies on its own.
+ */
+export const CONNECT_STATE_TTL_SECONDS = 2 * 60 * 60;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
@@ -59,7 +64,7 @@ function setOAuthStateCookie(c: ConnectContext, state: string): void {
     secure: !LOCAL_HOSTNAMES.has(new URL(c.req.url).hostname.toLowerCase()),
     sameSite: "Lax",
     path: "/connect",
-    maxAge: STATE_COOKIE_MAX_AGE_SECONDS,
+    maxAge: CONNECT_STATE_TTL_SECONDS,
   });
 }
 
@@ -73,7 +78,7 @@ function setReturnCookie(c: ConnectContext, returnTo: string | null): void {
     secure: !LOCAL_HOSTNAMES.has(new URL(c.req.url).hostname.toLowerCase()),
     sameSite: "Lax",
     path: "/connect",
-    maxAge: STATE_COOKIE_MAX_AGE_SECONDS,
+    maxAge: CONNECT_STATE_TTL_SECONDS,
   });
 }
 
@@ -215,7 +220,7 @@ follows it for you.</p>
 account API key and open the <code>url</code> it returns in this browser:</p>
 <pre>curl -X POST ${escapeHtml(startUrl)} \\
   -H "authorization: Bearer $ECCOS_ACCOUNT_API_KEY"</pre>
-<p>The link is single-use and expires in 30 minutes.</p>`,
+<p>The link is single-use and expires in 2 hours.</p>`,
   );
 }
 
@@ -292,7 +297,7 @@ export async function startConnectForAccount(
   const origin = validatePublicOrigin(publicOrigin);
   const redirectUri = new URL("/connect", origin).href;
   const state = crypto.randomUUID();
-  const expiresAt = Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000;
+  const expiresAt = Date.now() + CONNECT_STATE_TTL_SECONDS * 1000;
   await getControlPlaneStub(env).startConnectState(state, accountId, expiresAt, redirectUri, returnTo);
   const url = new URL(redirectUri);
   url.searchParams.set("state", state);
@@ -687,10 +692,9 @@ export function connectRoutes() {
     let state = handoffState?.trim() || "";
     let returnTo: string | null = null;
     if (state) {
-      const stateRecord = await getControlPlaneStub(c.env).refreshConnectState(
-        state,
-        Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000,
-      );
+      // Read, never extended: a state dies a fixed time after it was issued,
+      // however often its handoff URL is opened.
+      const stateRecord = await getControlPlaneStub(c.env).getConnectState(state);
       if (!stateRecord) {
         return finish(
           returnCookie,
@@ -714,7 +718,7 @@ export function connectRoutes() {
       await getControlPlaneStub(c.env).startConnectState(
         state,
         account.accountId,
-        Date.now() + STATE_COOKIE_MAX_AGE_SECONDS * 1000,
+        Date.now() + CONNECT_STATE_TTL_SECONDS * 1000,
         redirectUri,
       );
     }
@@ -742,7 +746,7 @@ export function connectRoutes() {
     // What the interstitial did buy, and this does not, is a user interaction on
     // the gateway's own origin: both hops are now pure redirects, which is what
     // browser bounce-tracking mitigations look for. Harmless as long as nothing
-    // here needs to outlive the flow — these cookies are 30-minute, single-use,
+    // here needs to outlive the flow — these cookies are 2-hour, single-use,
     // and the callback deletes them — so do not start storing anything durable
     // on this origin without rechecking that.
     return c.redirect(oauthUrl(cfg, redirectUri, state), 302);

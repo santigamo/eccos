@@ -86,6 +86,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await reset();
 });
@@ -125,7 +126,7 @@ describe("Embedded Signup hands off to Meta in one navigation", () => {
       // navigation, and Strict would withhold the cookie on exactly that hop.
       expect(cookie).toContain("SameSite=Lax");
       expect(cookie).toContain("Path=/connect");
-      expect(cookie).toContain("Max-Age=1800");
+      expect(cookie).toContain("Max-Age=7200");
     }
     // A cached redirect would replay a spent state at Meta.
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -157,6 +158,32 @@ describe("Embedded Signup returns the operator to the console", () => {
     await cp(async (i) => {
       expect(await i.getWabaRecord(accountId, "WABA_RETURN")).toMatchObject({ accountId });
     });
+  });
+
+  it("completes a redirect flow that sat on Meta's dialog for 36 minutes", async () => {
+    mockGraph();
+    const { state, cookies } = await startFromConsole(CONSOLE_RETURN);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 36 * 60 * 1000);
+    const res = await callback(`code=oauth-code&state=${encodeURIComponent(state)}`, cookies);
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(CONSOLE_RETURN);
+  });
+
+  it("does not extend a state when its handoff URL is opened again", async () => {
+    const rpc = new GatewayRPC(createExecutionContext(), env);
+    const { url, state, expiresAt } = await rpc.startConnectForAccountId(accountId, CONSOLE_RETURN);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(expiresAt - 60_000);
+    expect((await exports.default.fetch(url, { redirect: "manual" })).status).toBe(302);
+
+    vi.setSystemTime(expiresAt + 1);
+    const reopened = await exports.default.fetch(url, { redirect: "manual" });
+    expect(reopened.status).toBe(400);
+    expect(await cp((i) => i.getConnectState(state))).toBeNull();
   });
 
   it("carries a failure code instead of a Graph error message", async () => {
@@ -225,7 +252,7 @@ describe("Embedded Signup returns the operator to the console", () => {
 
   it("finds the way home on the mirror cookie alone when the state cookie expired", async () => {
     // The expiry case, isolated: the operator sat on Meta's dialog past the
-    // 30-minute state cookie, so only the return cookie survives to the
+    // 2-hour state cookie, so only the return cookie survives to the
     // callback. Nothing else in the request can say where the console is.
     mockGraph();
     const { state, handoff } = await startFromConsole(CONSOLE_RETURN);
