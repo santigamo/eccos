@@ -97,7 +97,8 @@ describe("workspace_get", () => {
   });
 
   it("reports a fully set-up workspace", async () => {
-    const until = Date.UTC(2026, 10, 24, 12, 0, 0);
+    // In the future, or the console reads the elevation as expired and reports null.
+    const until = Date.now() + 60 * 60 * 1000;
     const actor = makeActor({ elevatedUntil: until });
     await gatewayStub.seed("acct-a", {
       resources: account("acct-a", {
@@ -120,7 +121,7 @@ describe("workspace_get", () => {
     const result = await workspaceGet(client);
     await client.close();
 
-    expect(result.structuredContent).toMatchObject({ elevatedUntil: "2026-11-24T12:00:00.000Z" });
+    expect(result.structuredContent).toMatchObject({ elevatedUntil: new Date(until).toISOString() });
     expect((result.structuredContent as { setup: unknown }).setup).toEqual({
       complete: true,
       steps: [
