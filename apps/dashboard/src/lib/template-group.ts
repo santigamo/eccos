@@ -118,7 +118,8 @@ export function buildTabs({ rows, languages, category, initialCategory }: GroupI
       row,
       status,
       readOnly,
-      error: own.error ?? null,
+      // In review at Meta, whatever the last send heard: a send that threw may still have landed.
+      error: status === "PENDING" ? null : (own.error ?? null),
       dirty: !readOnly && (isDraftDirty(draft, initial) || recategorize),
       recategorize,
     });
@@ -144,6 +145,22 @@ export function buildTabs({ rows, languages, category, initialCategory }: GroupI
     });
   }
   return tabs;
+}
+
+/**
+ * The languages after a send, patched onto the latest map so nothing touched
+ * meanwhile is lost: each sent language reads in review, the refused one keeps
+ * its draft and the refusal.
+ */
+export function applySend(
+  languages: Record<string, LanguageState>,
+  sent: LanguageDraft[],
+  failed: { language: string; notice: Notice } | null,
+): Record<string, LanguageState> {
+  const next = { ...languages };
+  for (const draft of sent) next[draft.language] = { ...next[draft.language], sent: draft, error: undefined };
+  if (failed) next[failed.language] = { ...next[failed.language], error: failed.notice };
+  return next;
 }
 
 function withoutShared({ language, body, examples, footer, buttons }: LanguageDraft): LanguageDraft {

@@ -8,11 +8,12 @@ import {
   analyzeDraftButtons,
   analyzeDraftFooter,
   draftWarnings,
+  isDynamicUrl,
   MAX_BODY_LENGTH,
   MAX_CREATE_BUTTONS,
 } from "@eccos/core/template-rules";
 import { MACHINE_CLASS } from "../dashboard/plain-table";
-import { coreButtons, exampleValues, isDynamicUrl, type ButtonDraft, type LanguageDraft } from "../../lib/template-draft";
+import { coreButtons, exampleValues, type ButtonDraft, type LanguageDraft } from "../../lib/template-draft";
 import { managerUrl } from "./template-preview-sheet";
 
 const LABEL = `mb-1 block ${MACHINE_CLASS}`;

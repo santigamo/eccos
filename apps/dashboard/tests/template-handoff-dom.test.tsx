@@ -43,6 +43,7 @@ test("the handoff page survives the next render after the handoff is dropped", a
       en_US: { added: true, sent: draft("en_US", "Your order is running a couple of days late.") },
       es: { added: true, draft: draft("es", "Tu pedido llega con un par de días de retraso."), error: { title: "t", detail: "d" } },
     },
+    receipt: "",
   });
   const host = document.createElement("div");
   document.body.append(host);

@@ -91,6 +91,29 @@ describe("the tab's state word", () => {
   });
 });
 
+describe("a send in flight", () => {
+  test("its outcome is patched onto the latest languages, so nothing touched meanwhile is lost", () => {
+    const latest = {
+      es: { added: true, draft: ready("es") },
+      it: { added: true, draft: draft("it", "Typed while the send was running.") },
+    };
+    const after = G.applySend(latest, [ready("es")], { language: "fr", notice: refused });
+    expect(after.es).toEqual({ added: true, draft: ready("es"), sent: ready("es"), error: undefined });
+    expect(after.it).toEqual(latest.it);
+    expect(after.fr).toEqual({ error: refused });
+  });
+
+  test("the fields are disabled while it runs", async () => {
+    const source = await Bun.file(new URL("../src/components/templates/template-editor.tsx", import.meta.url)).text();
+    expect(source).toContain("<fieldset disabled={submitting}");
+  });
+
+  test("a send that threw but reached Meta reads as in review once Meta lists it", () => {
+    const [tab] = tabs({ rows: [row("es", "PENDING")], languages: { es: { added: true, draft: ready("es"), error: UNANSWERED } } });
+    expect(G.tabState(tab!)).toBe("IN REVIEW");
+  });
+});
+
 describe("a refused edit is not a refused creation", () => {
   test("its own word, its own sentence, and Meta's real status in the review list", () => {
     const [tab] = tabs({ rows: [row("en_US", "APPROVED")], languages: { en_US: { draft: ready("en_US"), error: refused } } });
@@ -299,8 +322,11 @@ describe("the leave guard", () => {
     putHandoff("order_update", {
       category: "UTILITY",
       languages: { en_US: { added: true, sent: ready("en_US") }, es: { added: true, draft: ready("es"), error: refused } },
+      receipt: "English (US) sent to Meta for review. Meta categorized English (US) as MARKETING.",
     });
-    renderEditor({ rows: [], language: "es" });
+    const html = renderEditor({ rows: [], language: "es" });
+    // What Meta said about the languages it took travels with the handoff.
+    expect(html).toContain("Meta categorized English (US) as MARKETING.");
     dropHandoff("order_update");
     expect(blockerOpts?.enableBeforeUnload).toBe(true);
     expect(blockerOpts?.shouldBlockFn(leaving)).toBe(true);

@@ -9,6 +9,8 @@ import {
   analyzeDraftBody,
   analyzeDraftButtons,
   analyzeDraftFooter,
+  isDynamicUrl,
+  URL_VARIABLE,
   type DraftButton,
 } from "@eccos/core/template-rules";
 import { languageLabel } from "./template-languages";
@@ -53,13 +55,6 @@ export function blankDraft(language: string): LanguageDraft {
 /** Said above an APPROVED language once it is edited, where the operator decides. */
 export const APPROVED_EDIT_NOTICE =
   "This template is approved. Submitting sends it back to Meta's review, and sends with it may fail until Meta approves it again, which can take up to 24 hours. An approved template can be edited once every 24 hours and up to 10 times in 30 days. If it is in active use, duplicate it as a new template instead.";
-
-/** A URL variable, positional or named: the one pattern that both detects and replaces it. */
-const URL_VARIABLE = /\{\{[^{}]*\}\}/;
-
-export function isDynamicUrl(url: string): boolean {
-  return URL_VARIABLE.test(url);
-}
 
 /** The example URL Meta reviews, built from the URL template and its `{{1}}` value. */
 export function exampleUrlFor(url: string, value: string): string {

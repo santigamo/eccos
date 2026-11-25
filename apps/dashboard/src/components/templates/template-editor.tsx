@@ -18,6 +18,7 @@ import { invalidatePage, invalidateRoutes } from "../../lib/invalidate";
 import { blankDraft, CATEGORIES, exampleValues, type LanguageDraft, type TemplateCategory } from "../../lib/template-draft";
 import {
   barBlocker,
+  applySend,
   barNote,
   buildTabs,
   categoryLock,
@@ -130,7 +131,7 @@ export function TemplateEditor(props: TemplateEditorProps) {
   const navigate = useNavigate();
   const [state, setState] = useState(() => initialState(props));
   const [submitting, setSubmitting] = useState(false);
-  const [receipt, setReceipt] = useState("");
+  const [receipt, setReceipt] = useState(() => (props.name && peekHandoff(props.name)?.receipt) || "");
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
   const name = state.name;
 
@@ -202,16 +203,17 @@ export function TemplateEditor(props: TemplateEditorProps) {
     const moved: string[] = [];
     const outcome = await submitSerially(sending, (tab) => send(tab, moved)).finally(() => setSubmitting(false));
     const done = outcome.done;
-    const failed = outcome.failed;
-    const sent = Object.fromEntries(done.map((tab) => [tab.language, { ...state.languages[tab.language], sent: tab.draft, error: undefined }]));
-    const languages = {
-      ...state.languages,
-      ...sent,
-      ...(failed ? { [failed.item.language]: { ...state.languages[failed.item.language], error: failed.notice } } : {}),
-    };
+    const failed = outcome.failed ? { language: outcome.failed.item.language, notice: outcome.failed.notice } : null;
+    const receipt = [
+      done.length > 0 ? `${listLanguages(done.map((tab) => tab.language))} sent to Meta for review.` : null,
+      ...moved,
+      outcome.failed ? refusalLine({ ...outcome.failed.item, error: outcome.failed.notice }) : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
 
     if (mode === "create") {
-      const next = afterCreate(name, wabaParam, done.length, failed?.item.language ?? null);
+      const next = afterCreate(name, wabaParam, done.length, failed?.language ?? null);
       if (next) {
         if (next.to === "/templates") {
           toast(`${name} submitted in ${done.length} ${done.length === 1 ? "language" : "languages"}.`, {
@@ -219,7 +221,8 @@ export function TemplateEditor(props: TemplateEditorProps) {
           });
         } else {
           // Created languages are `added` and `sent`; the rest keep their drafts and the refusal.
-          putHandoff(name, { category: state.category, languages });
+          const languages = applySend(state.languages, done.map((tab) => tab.draft), failed);
+          putHandoff(name, { category: state.category, languages, receipt });
         }
         await invalidateRoutes(router, "/templates");
         navigate(next);
@@ -227,17 +230,9 @@ export function TemplateEditor(props: TemplateEditorProps) {
       }
     }
 
-    setState((prev) => ({ ...prev, languages }));
-    setReceipt(
-      [
-        done.length > 0 ? `${listLanguages(done.map((tab) => tab.language))} sent to Meta for review.` : null,
-        ...moved,
-        failed ? refusalLine({ ...failed.item, error: failed.notice }) : null,
-      ]
-        .filter(Boolean)
-        .join(" "),
-    );
-    if (failed) onLanguage(failed.item.language);
+    setState((prev) => ({ ...prev, languages: applySend(prev.languages, done.map((tab) => tab.draft), failed) }));
+    setReceipt(receipt);
+    if (failed) onLanguage(failed.language);
     if (done.length > 0) invalidatePage(router);
   }
 
@@ -268,125 +263,128 @@ export function TemplateEditor(props: TemplateEditorProps) {
     >
       <div className="grid gap-8 lg:grid-cols-[minmax(0,40rem)_minmax(18rem,22.5rem)] lg:items-start">
         <div className="flex min-w-0 flex-col gap-8">
-          <section aria-labelledby="template-shared-title" className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <SectionHeading id="template-shared-title" title="Template" />
-              <p className={`m-0 ${SUPPORT_TIER}`}>
-                {mode === "create"
-                  ? "Shared by every language. The name can't be changed once Meta has it."
-                  : "Shared by every language."}
-              </p>
-            </div>
-            {mode === "create" ? (
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
-                <div>
-                  <label htmlFor="template-name" className={`mb-1 block ${MACHINE_CLASS}`}>
-                    Name
-                  </label>
-                  <Input
-                    id="template-name"
-                    autoComplete="off"
-                    className="font-mono"
-                    value={state.name}
-                    placeholder="order_update"
-                    // Coerced as typed, as WhatsApp Manager does, so it never shows a name Meta would refuse.
-                    onChange={(event) => setState((prev) => ({ ...prev, name: normalizeTemplateName(event.target.value) }))}
-                  />
-                  <p className="m-0 mt-1 text-xs text-muted-foreground">Lowercase letters, numbers and underscores.</p>
-                </div>
-                <CategoryField value={state.category} onChange={(category) => setState((prev) => ({ ...prev, category }))} />
+          {/* Nothing changes under a send in flight: the fields are what is being sent. */}
+          <fieldset disabled={submitting} className="m-0 flex min-w-0 flex-col gap-8 border-0 p-0">
+            <section aria-labelledby="template-shared-title" className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <SectionHeading id="template-shared-title" title="Template" />
+                <p className={`m-0 ${SUPPORT_TIER}`}>
+                  {mode === "create"
+                    ? "Shared by every language. The name can't be changed once Meta has it."
+                    : "Shared by every language."}
+                </p>
               </div>
-            ) : (
-              <SectionFrame flush>
-                <Rows>
-                  <Row
-                    label="Name"
-                    action={
-                      duplicable && active ? (
-                        <Link
-                          to="/templates/new"
-                          search={{ wabaId: wabaParam, from: name, language: active.language }}
-                          className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                        >
-                          Duplicate as new name
-                        </Link>
-                      ) : null
-                    }
-                  >
-                    <span className="font-mono text-sm font-normal">{name}</span>
-                  </Row>
-                  <Row label="Category" action={categoryNote ? <span className={SECONDARY_TIER}>{categoryNote}</span> : null}>
-                    {lock ? (
-                      categoryLabel(state.category)
-                    ) : (
-                      <CategoryField value={state.category} onChange={(category) => setState((prev) => ({ ...prev, category }))} bare />
-                    )}
-                  </Row>
-                </Rows>
-              </SectionFrame>
-            )}
-          </section>
-
-          <section aria-labelledby="template-content-title" className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <SectionHeading id="template-content-title" title="Content" />
-              <p className={`m-0 ${SUPPORT_TIER}`}>One version per language. Meta reviews each one on its own.</p>
-            </div>
-            {active ? (
-              <SectionFrame flush>
-                <Tabs value={active.language} onValueChange={(value) => onLanguage(String(value))}>
-                  <div className="flex items-stretch border-b border-(--line)">
-                    <TabsList aria-label="Languages" className="overflow-x-auto">
-                      {tabs.map((tab) => (
-                        <LanguageTabLabel key={tab.language} tab={tab} />
-                      ))}
-                    </TabsList>
-                    {freeLanguage ? (
-                      <button
-                        type="button"
-                        onClick={addLanguage}
-                        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 border-l border-(--line) px-4 text-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
-                      >
-                        <PlusIcon aria-hidden="true" className="size-3.5" />
-                        Add language
-                      </button>
-                    ) : null}
-                  </div>
-                  <TabsPanel value={active.language} className="p-5">
-                    <LanguagePanel
-                      key={active.language}
-                      tab={active}
-                      wabaId={wabaId}
-                      takenLanguages={taken.filter((code) => code !== active.language)}
-                      canRemove={tabs.length > 1}
-                      onChange={(draft: LanguageDraft) => patchLanguage(active.language, { draft })}
-                      onLanguageChange={(code) => renameDraft(active.language, code)}
-                      onRemove={() => {
-                        forget(active.language);
-                        const rest = tabs.find((tab) => tab.language !== active.language);
-                        if (rest) onLanguage(rest.language);
-                      }}
-                      onDelete={
-                        active.row?.id && active.row.status?.toUpperCase() !== "PENDING_DELETION"
-                          ? () =>
-                              setDeleting({
-                                templateId: active.row?.id ?? "",
-                                name,
-                                language: active.language,
-                                status: active.row?.status,
-                              })
-                          : undefined
-                      }
+              {mode === "create" ? (
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
+                  <div>
+                    <label htmlFor="template-name" className={`mb-1 block ${MACHINE_CLASS}`}>
+                      Name
+                    </label>
+                    <Input
+                      id="template-name"
+                      autoComplete="off"
+                      className="font-mono"
+                      value={state.name}
+                      placeholder="order_update"
+                      // Coerced as typed, as WhatsApp Manager does, so it never shows a name Meta would refuse.
+                      onChange={(event) => setState((prev) => ({ ...prev, name: normalizeTemplateName(event.target.value) }))}
                     />
-                  </TabsPanel>
-                </Tabs>
-              </SectionFrame>
-            ) : null}
-            {/* Mounted even when empty: a live region that appears with its message is not reliably announced. */}
-            <output aria-live="polite" aria-atomic="true" className={receipt ? `block ${SUPPORT_TIER}` : undefined}>
-              {receipt}
-            </output>
-          </section>
+                    <p className="m-0 mt-1 text-xs text-muted-foreground">Lowercase letters, numbers and underscores.</p>
+                  </div>
+                  <CategoryField value={state.category} onChange={(category) => setState((prev) => ({ ...prev, category }))} />
+                </div>
+              ) : (
+                <SectionFrame flush>
+                  <Rows>
+                    <Row
+                      label="Name"
+                      action={
+                        duplicable && active ? (
+                          <Link
+                            to="/templates/new"
+                            search={{ wabaId: wabaParam, from: name, language: active.language }}
+                            className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                          >
+                            Duplicate as new name
+                          </Link>
+                        ) : null
+                      }
+                    >
+                      <span className="font-mono text-sm font-normal">{name}</span>
+                    </Row>
+                    <Row label="Category" action={categoryNote ? <span className={SECONDARY_TIER}>{categoryNote}</span> : null}>
+                      {lock ? (
+                        categoryLabel(state.category)
+                      ) : (
+                        <CategoryField value={state.category} onChange={(category) => setState((prev) => ({ ...prev, category }))} bare />
+                      )}
+                    </Row>
+                  </Rows>
+                </SectionFrame>
+              )}
+            </section>
+
+            <section aria-labelledby="template-content-title" className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <SectionHeading id="template-content-title" title="Content" />
+                <p className={`m-0 ${SUPPORT_TIER}`}>One version per language. Meta reviews each one on its own.</p>
+              </div>
+              {active ? (
+                <SectionFrame flush>
+                  <Tabs value={active.language} onValueChange={(value) => onLanguage(String(value))}>
+                    <div className="flex items-stretch border-b border-(--line)">
+                      <TabsList aria-label="Languages" className="overflow-x-auto">
+                        {tabs.map((tab) => (
+                          <LanguageTabLabel key={tab.language} tab={tab} />
+                        ))}
+                      </TabsList>
+                      {freeLanguage ? (
+                        <button
+                          type="button"
+                          onClick={addLanguage}
+                          className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 border-l border-(--line) px-4 text-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
+                        >
+                          <PlusIcon aria-hidden="true" className="size-3.5" />
+                          Add language
+                        </button>
+                      ) : null}
+                    </div>
+                    <TabsPanel value={active.language} className="p-5">
+                      <LanguagePanel
+                        key={active.language}
+                        tab={active}
+                        wabaId={wabaId}
+                        takenLanguages={taken.filter((code) => code !== active.language)}
+                        canRemove={tabs.length > 1}
+                        onChange={(draft: LanguageDraft) => patchLanguage(active.language, { draft })}
+                        onLanguageChange={(code) => renameDraft(active.language, code)}
+                        onRemove={() => {
+                          forget(active.language);
+                          const rest = tabs.find((tab) => tab.language !== active.language);
+                          if (rest) onLanguage(rest.language);
+                        }}
+                        onDelete={
+                          active.row?.id && active.row.status?.toUpperCase() !== "PENDING_DELETION"
+                            ? () =>
+                                setDeleting({
+                                  templateId: active.row?.id ?? "",
+                                  name,
+                                  language: active.language,
+                                  status: active.row?.status,
+                                })
+                            : undefined
+                        }
+                      />
+                    </TabsPanel>
+                  </Tabs>
+                </SectionFrame>
+              ) : null}
+              {/* Mounted even when empty: a live region that appears with its message is not reliably announced. */}
+              <output aria-live="polite" aria-atomic="true" className={receipt ? `block ${SUPPORT_TIER}` : undefined}>
+                {receipt}
+              </output>
+            </section>
+          </fieldset>
 
           {active && !active.readOnly ? (
             <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-4 border-t border-(--line) bg-background py-4">

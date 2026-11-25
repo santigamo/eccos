@@ -348,6 +348,18 @@ export const MAX_BUTTON_TEXT_LENGTH = 25;
 /** A sanity bound on a button URL; Meta's own ceiling is not documented. */
 const MAX_BUTTON_URL_LENGTH = 2000;
 
+/** A URL variable, `{{1}}` or `{{name}}`: the one rule for what makes a URL dynamic. */
+export const URL_VARIABLE = /\{\{[^{}]*\}\}/;
+
+export function isDynamicUrl(url: string): boolean {
+  return URL_VARIABLE.test(url);
+}
+
+/** A `{{` that never closes: neither a static URL nor a variable. */
+function unclosedVariable(url: string): boolean {
+  return url.includes("{{") && !isDynamicUrl(url);
+}
+
 /** One URL button as the create sheet collects it. A dynamic URL (a `{{n}}`
  * placeholder) REQUIRES `exampleUrl`; a static URL carries none. */
 export interface DraftButton {
@@ -414,7 +426,10 @@ export function analyzeDraftButtons(buttons: DraftButton[]): DraftAnalysis {
     if (url.length > MAX_BUTTON_URL_LENGTH) {
       return { ok: false, reason: `Button ${index + 1}'s URL is over ${MAX_BUTTON_URL_LENGTH} characters.` };
     }
-    const dynamic = url.includes("{{");
+    if (unclosedVariable(url)) {
+      return { ok: false, reason: `Button ${index + 1}'s URL has a {{ that is not closed.` };
+    }
+    const dynamic = isDynamicUrl(url);
     if (dynamic && !button.exampleUrl.trim()) {
       return {
         ok: false,
@@ -775,7 +790,8 @@ function validateTemplateContent(record: Record<string, unknown>): TemplateConte
     if (/[\n\t]/.test(text) || /[\n\t]/.test(url)) {
       throw new Error("buttons cannot contain line breaks");
     }
-    const dynamic = url.includes("{{");
+    if (unclosedVariable(url)) throw new Error("button url has an unclosed variable");
+    const dynamic = isDynamicUrl(url);
     if (dynamic) {
       if (typeof button.exampleUrl !== "string") {
         throw new Error("a dynamic URL button needs an example url");

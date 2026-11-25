@@ -10,6 +10,8 @@ import type { LanguageState } from "./template-group";
 export interface CreateHandoff {
   category: TemplateCategory;
   languages: Record<string, LanguageState>;
+  /** What Meta said beyond yes or no, such as a recategorization. */
+  receipt: string;
 }
 
 const handoffs = new Map<string, CreateHandoff>();

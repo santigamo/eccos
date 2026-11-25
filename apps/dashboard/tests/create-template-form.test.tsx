@@ -93,6 +93,12 @@ describe("LanguageFields", () => {
     );
   });
 
+  test("an unclosed {{ is neither dynamic nor static: no example field, and core says why", () => {
+    const draft = { ...EMPTY, body: "Hi there", buttons: [{ text: "Track", url: "https://x.com/{{1", example: "" }] };
+    expect(render(draft)).not.toContain("Example {{1}}");
+    expect(languageBlocker(draft, "created")).toBe("English (US): Button 1's URL has a {{ that is not closed.");
+  });
+
   test("states the scope wall once, with the way out", () => {
     const html = render();
     expect(html).toContain("The console creates text templates");
