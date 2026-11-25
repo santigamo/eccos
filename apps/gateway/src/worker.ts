@@ -1208,6 +1208,9 @@ const worker = {
   fetch: app.fetch,
   scheduled: async (_controller: ScheduledController, env: Bindings): Promise<void> => {
     await reconcilePendingWabas(env);
+    await getControlPlane(env)
+      .runFunnelTimers()
+      .catch(() => console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "timers-error" })));
     await runDailyCensus(env).catch(() => console.warn(JSON.stringify({ level: "warn", area: "ops-census", event: "census-error" })));
   },
 };

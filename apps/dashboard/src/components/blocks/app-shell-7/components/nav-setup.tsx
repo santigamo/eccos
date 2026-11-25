@@ -7,6 +7,7 @@ import { CheckIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import {
+  companionBilling,
   companionVisible,
   currentStep,
   setupDone,
@@ -20,8 +21,8 @@ import {
  * funnel stages (`lib/setup-checklist.ts`), each a link to the page that
  * produces its fact, as one vertical rail of done, current and next.
  *
- * `billing` is the seam for eccos-dbb3.1/.2 (activated with 72h left, paused,
- * paid). Today nothing passes it and only the setup facts decide.
+ * `billing` (activated with hours left, paused, paid) comes from the account's
+ * status and funnel clock (`companionBilling`); a test may pass it instead.
  *
  * "Hide" persists in `localStorage`, per viewer: dismissing it is "I have read
  * this", a fact about a person rather than a workspace, and the console writes
@@ -30,7 +31,7 @@ import {
  */
 const DISMISSED_KEY = "eccos:setup-checklist-dismissed"
 
-export function NavSetup({ billing }: { billing?: CompanionBilling }) {
+export function NavSetup({ billing: given }: { billing?: CompanionBilling }) {
   const root = useLoaderData({ from: "__root__" })
   const { wabaId } = useSearch({ from: "__root__" })
   const [dismissed, setDismissed] = useState(false)
@@ -45,6 +46,7 @@ export function NavSetup({ billing }: { billing?: CompanionBilling }) {
 
   if (!root.ok) return null
   const steps = setupSteps(root.data, !targetMissing(root.hasForwardingTarget))
+  const billing = given ?? companionBilling(root.data, Date.now())
   if (dismissed || !companionVisible(steps, billing)) return null
   const current = currentStep(steps)
 
@@ -121,6 +123,17 @@ export function NavSetup({ billing }: { billing?: CompanionBilling }) {
           )
         })}
       </ol>
+      {billing && billing.stage !== "paid" ? (
+        <Link
+          to="/settings"
+          search={{ wabaId }}
+          className="text-[13px] leading-[18px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+        >
+          {billing.stage === "activated"
+            ? `Activated · ${billing.hoursLeft} ${billing.hoursLeft === 1 ? "hour" : "hours"} left to subscribe`
+            : "Paused · subscribe to send again"}
+        </Link>
+      ) : null}
     </nav>
   )
 }

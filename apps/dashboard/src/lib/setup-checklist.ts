@@ -36,9 +36,9 @@ export interface SetupStep {
 }
 
 /**
- * The billing and activation states that eccos-dbb3.1 and eccos-dbb3.2 will
- * feed the companion. Nothing produces them yet; absent means unknown, and the
- * companion falls back to the setup facts alone.
+ * The billing and activation states the companion shows (`companionBilling`).
+ * Absent means there is nothing to say, and the companion falls back to the
+ * setup facts alone.
  * - `activated`: the first message went through and the 72h window runs.
  * - `paused`: the window closed without a subscription.
  * - `paid`: an active subscription; the companion has nothing left to say.
@@ -57,9 +57,30 @@ export function humanMessageCount(byType: Record<string, number>): number {
   return (byType.reply ?? 0) + (byType.message ?? 0) + (byType.echo ?? 0) + (byType.message_echo ?? 0);
 }
 
+function resourcesOf(state: DashboardState) {
+  return state.stage === "account-ready" ? state.resources : state.stage === "ready" ? state.scope.resources : undefined;
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * The account's billing stage, from the gateway's status and funnel clock. A
+ * paying status is `paid`; `setup` only says something once it activated and
+ * its 72h run. Billing off (`open`) and a legacy account have nothing to say.
+ */
+export function companionBilling(state: DashboardState, now: number): CompanionBilling | undefined {
+  const account = resourcesOf(state)?.account;
+  if (!account) return undefined;
+  const status = account.billingStatus;
+  if (status === "active" || status === "past_due" || status === "cancelled") return { stage: "paid" };
+  if (status === "paused") return { stage: "paused" };
+  const funnel = account.funnel;
+  if (status !== "setup" || !funnel?.activatedAt || funnel.pausesAt === null) return undefined;
+  return { stage: "activated", hoursLeft: Math.max(0, Math.ceil((funnel.pausesAt - now) / HOUR_MS)) };
+}
+
 export function setupSteps(state: DashboardState, hasForwardingTarget: boolean): SetupStep[] {
-  const resources =
-    state.stage === "account-ready" ? state.resources : state.stage === "ready" ? state.scope.resources : undefined;
+  const resources = resourcesOf(state);
   const hasLiveKey = resources?.keys.some((key) => key.revokedAt === null) ?? false;
   // Counted by kind: `counts.inbound` includes the `delivered` receipt for the
   // operator's own test send, which is not anyone writing in.
