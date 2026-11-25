@@ -22,7 +22,7 @@ export const STEP_UP_WINDOW_SECONDS = 60 * 15;
  * also needs. A server function names its row; nothing else decides step-up.
  */
 export const STEP_UP_ROWS = {
-  connect: "administer",
+  "connect-link": "administer",
   "api-keys": "administer",
   "conversation-retention": "administer",
   "subscriber-config": "configure",

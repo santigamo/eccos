@@ -157,7 +157,7 @@ describe("backup codes held at the app's root", () => {
 });
 
 describe("copy", () => {
-  test("one set of words per step-up, shared by the refusal, the sheet and the connect fork", () => {
+  test("one set of words per step-up, shared by the refusal and the sheet", () => {
     for (const reason of ["totp-required", "reauth-required"] as const) {
       const copy = failureCopy(refusal(reason));
       expect(copy).toEqual({ title: STEP_UP_COPY[reason].title, detail: STEP_UP_COPY[reason].refused });

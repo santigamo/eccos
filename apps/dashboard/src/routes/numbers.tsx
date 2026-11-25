@@ -4,7 +4,6 @@ import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { AccountResources, DashboardState } from "../server/gateway";
 import { Page } from "../ui";
 import { getConnectBlock, type ConnectBlock } from "../server/connect-block";
-import { StepUpSheet } from "../components/dashboard/step-up-sheet";
 import { FailureView } from "../components/dashboard/failure";
 import {
   CONNECT_FORK_DESCRIPTION,
@@ -43,7 +42,7 @@ export const Route = createFileRoute("/numbers")({
     connectError: normalizeConnectError(search.connectError),
     connectSkipped: normalizeConnectSkipped(search.connectSkipped),
   }),
-  // What the connect fork owes (role, step-up), read with the page, not the shell.
+  // What the connect fork owes (the role), read with the page, not the shell.
   loader: () => getConnectBlock(),
   component: NumbersPage,
 });
@@ -301,7 +300,7 @@ export function FirstRunConnect({
   subscribed?: boolean;
   canManageBilling?: boolean;
   canConnect?: boolean;
-  /** What stops the signed-in user connecting right now (role, step-up owed). */
+  /** What stops the signed-in user connecting right now: a role that may not. */
   blocked?: ConnectBlock | null;
 }) {
   if (closed && billing) return <SubscriptionGate subscribed={subscribed} canManage={canManageBilling} />;
@@ -377,9 +376,6 @@ function AddNumberDialog({
           <>
             {notice}
             <ConnectNumberChoices onBusyChange={onBusyChange} blocked={blocked} />
-            {/* Nested: step-up from the fork opens inside this dialog. The notice
-                that opened it is gone once it passes, so focus returns here. */}
-            <StepUpSheet finalFocus={description} />
           </>
         ) : null}
       </DialogContent>
