@@ -30,11 +30,12 @@ export default defineConfig({
         starlightLlmsTxt({
           projectName: "Eccos Cloud API",
           description:
-            "Eccos is an open-source WhatsApp gateway on the official Meta Cloud API. These docs cover the hosted Eccos Cloud HTTP API: authentication, sending messages, idempotency, errors and rate limits, bulk sending, webhooks and the event reference.",
+            "Eccos is an open-source WhatsApp gateway on the official Meta Cloud API. These docs cover the hosted Eccos Cloud HTTP API: authentication, sending messages, idempotency, errors and rate limits, bulk sending, webhooks and the event reference, plus troubleshooting for the Meta errors shown when connecting a WhatsApp Business app number (coexistence).",
         }),
       ],
       sidebar: [
         { label: "Overview", slug: "" },
+        { slug: "connect-troubleshooting" },
         { slug: "authentication" },
         { slug: "sending-messages" },
         { slug: "idempotency" },
