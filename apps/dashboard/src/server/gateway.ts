@@ -1996,7 +1996,15 @@ export const startCheckout = createServerFn({ method: "POST" }).handler(
       const billing = requireBilling();
       const { actor, accountId } = await adminActorAccount(gateway);
       const successUrl = billingReturnUrl(env.BETTER_AUTH_URL, getRequest().url);
-      return { url: await checkoutUrl(billing, { accountId, email: actor.session.email, successUrl }) };
+      const url = await checkoutUrl(billing, { accountId, email: actor.session.email, successUrl });
+      auditEvent({
+        action: "funnel_checkout_started",
+        actorUserId: actor.session.userId,
+        organizationId: actor.organizationId,
+        accountId,
+        outcome: "success",
+      });
+      return { url };
     }),
 );
 

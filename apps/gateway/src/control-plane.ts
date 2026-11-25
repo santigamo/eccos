@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
+  AccountFunnel,
   AccountBilling,
   AccountBillingInput,
   BilledAccount,
@@ -40,6 +41,7 @@ import {
 } from "./secret-claims";
 import { blocksSends, isBillingStatus, mayAddNumber, type BillingStatus } from "@eccos/gateway-contract/billing-status";
 import { effectiveBillingStatus, SUBSCRIPTION_REQUIRED, SUBSCRIPTION_REQUIRED_ERROR } from "./connect-policy";
+import { type ActivationTrigger, funnelEvent, funnelOf, type FunnelRow, pendingPause, WARNING_AFTER_MS } from "./funnel";
 import { sha256Hex, toBase64Url } from "./encoding";
 import {
   coexistenceSyncStatus,
@@ -114,6 +116,7 @@ export interface AccountRecord {
   createdAt: number;
   billingStatus: BillingStatus;
   canAddNumber: boolean;
+  funnel: AccountFunnel;
 }
 
 /** Stored API-key row. `hash` is SHA-256 of the raw key — never the key itself. */
@@ -164,7 +167,7 @@ export interface WabaAccess {
 }
 
 export interface CreateAccountResult {
-  account: Omit<AccountRecord, "billingStatus" | "canAddNumber">;
+  account: Omit<AccountRecord, "billingStatus" | "canAddNumber" | "funnel">;
   apiKey: string;
   keyId: string;
 }
@@ -779,6 +782,20 @@ export class EccosControlPlane extends DurableObject<Env> {
           this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} TEXT`);
         }
       }
+      // The funnel clock (funnel.ts). An account that already has a number when the column
+      // arrives connected before the funnel: `connected_at = 0` keeps its clock off for good.
+      if (!accountColumns.some((row) => row.name === "connected_at")) {
+        this.sql.exec("ALTER TABLE accounts ADD COLUMN connected_at INTEGER");
+        this.sql.exec(
+          `UPDATE accounts SET connected_at = 0 WHERE account_id IN
+             (SELECT w.account_id FROM wabas w JOIN phones p ON p.waba_id = w.waba_id)`,
+        );
+      }
+      for (const [column, type] of [["activated_at", "INTEGER"], ["warning_due_at", "INTEGER"], ["paused_reason", "TEXT"]]) {
+        if (!accountColumns.some((row) => row.name === column)) {
+          this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${column} ${type}`);
+        }
+      }
       const wabaColumns = this.sql.exec("PRAGMA table_info(wabas)").toArray();
       if (!wabaColumns.some((row) => row.name === "status")) {
         this.sql.exec("ALTER TABLE wabas ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
@@ -1130,6 +1147,11 @@ export class EccosControlPlane extends DurableObject<Env> {
     );
   }
 
+  private funnelOf(accountId: string): AccountFunnel {
+    const status = this.billingStatusOf(accountId);
+    return funnelOf(this.funnelRow(accountId), this.billingOn() && status === "setup", status === "paused");
+  }
+
   private canAddNumber(accountId: string): boolean {
     return mayAddNumber(this.billingStatusOf(accountId), this.numbersOf(accountId));
   }
@@ -1212,7 +1234,80 @@ export class EccosControlPlane extends DurableObject<Env> {
       billing.subscriptionId === undefined ? stored.subscriptionId : billing.subscriptionId || null,
       id,
     );
+    // A funnel account's first payment; a legacy account moving to `active` is not one.
+    const paid = billing.billingStatus === "active" && !["active", "past_due", "cancelled"].includes(stored.billingStatus);
+    if (paid && this.funnelRow(id).connected_at) {
+      funnelEvent("paid", id, this.organizationOf(id), { from: stored.billingStatus });
+    }
     return this.getAccountBilling(id) as AccountBilling;
+  }
+
+  private billingOn(): boolean {
+    return this.env.CONNECT_POLICY_DEFAULT === "closed";
+  }
+
+  private funnelRow(accountId: string): FunnelRow {
+    return this.sql
+      .exec("SELECT connected_at, activated_at, paused_reason, warning_due_at FROM accounts WHERE account_id = ?", accountId)
+      .one() as unknown as FunnelRow;
+  }
+
+  /** Starts the funnel clock of an account that just got its first number. Inside the caller's transaction. */
+  private markConnected(accountId: string, at: number): void {
+    this.sql.exec("UPDATE accounts SET connected_at = ? WHERE account_id = ? AND connected_at IS NULL", at, accountId);
+  }
+
+  /**
+   * The account behind `wabaId` activated at `at` (funnel.ts): the data plane reports its
+   * first 2xx forward or first own send Meta delivered. Only the first report of an account
+   * whose clock runs is kept; a legacy account never activates.
+   */
+  recordActivation(wabaId: string, at: number, trigger: ActivationTrigger): void {
+    const row = this.sql.exec("SELECT account_id FROM wabas WHERE waba_id = ?", validateWabaId(wabaId, "wabaId")).toArray()[0];
+    if (!row) return;
+    const accountId = row.account_id as string;
+    const changed = this.sql.exec(
+      "UPDATE accounts SET activated_at = ? WHERE account_id = ? AND activated_at IS NULL AND connected_at > 0",
+      at,
+      accountId,
+    ).rowsWritten;
+    if (changed > 0) funnelEvent("activated", accountId, this.organizationOf(accountId), { wabaId, trigger });
+  }
+
+  /**
+   * The funnel timers, from the cron: an account in `setup` (stored or by default) whose clock
+   * runs pauses 72h after it activated, or 14 days after it connected without activating, and
+   * gets its day-12 warning flagged. Billing off, nothing is timed. Every other status, a paid
+   * one included, is never touched: the pause is one conditional UPDATE, so a payment written
+   * first wins.
+   */
+  runFunnelTimers(now = Date.now()): { paused: number; warned: number } {
+    const done = { paused: 0, warned: 0 };
+    if (!this.billingOn()) return done;
+    const rows = this.sql
+      .exec(
+        `SELECT account_id, connected_at, activated_at, paused_reason, warning_due_at FROM accounts
+          WHERE connected_at > 0 AND (connect_policy IS NULL OR connect_policy = 'setup')`,
+      )
+      .toArray() as unknown as (FunnelRow & { account_id: string })[];
+    for (const row of rows) {
+      const pause = pendingPause(row);
+      if (pause && now >= pause.at) {
+        this.sql.exec(
+          `UPDATE accounts SET connect_policy = 'paused', paused_reason = ?
+            WHERE account_id = ? AND (connect_policy IS NULL OR connect_policy = 'setup')`,
+          pause.reason,
+          row.account_id,
+        );
+        funnelEvent("paused", row.account_id, this.organizationOf(row.account_id), { reason: pause.reason });
+        done.paused += 1;
+      } else if (!row.activated_at && row.warning_due_at === null && now >= Number(row.connected_at) + WARNING_AFTER_MS) {
+        this.sql.exec("UPDATE accounts SET warning_due_at = ? WHERE account_id = ?", now, row.account_id);
+        funnelEvent("warning_due", row.account_id, this.organizationOf(row.account_id));
+        done.warned += 1;
+      }
+    }
+    return done;
   }
 
   setAccountName(accountId: string, name: string): void {
@@ -1444,6 +1539,7 @@ export class EccosControlPlane extends DurableObject<Env> {
             phone.displayPhoneNumber,
           );
         }
+        if (item.phones.length > 0) this.markConnected(item.accountId, registeredAt);
       }
       return outcome;
     });
@@ -1575,6 +1671,7 @@ export class EccosControlPlane extends DurableObject<Env> {
             phone.displayPhoneNumber,
           );
         }
+        if (item.phones.length > 0) this.markConnected(item.accountId, now);
       }
       return outcome;
     });
@@ -1842,7 +1939,9 @@ export class EccosControlPlane extends DurableObject<Env> {
           phone.displayPhoneNumber,
         );
       }
-      return phonesOf(id, this.sql);
+      const phones = phonesOf(id, this.sql);
+      if (phones.length > 0) this.markConnected(account, Date.now());
+      return phones;
     });
   }
 
@@ -2200,6 +2299,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         createdAt: account.created_at as number,
         billingStatus: this.billingStatusOf(id),
         canAddNumber: this.canAddNumber(id),
+        funnel: this.funnelOf(id),
       },
       keys,
       wabas,

@@ -502,6 +502,32 @@ export interface AccountSummary {
   billingStatus: BillingStatus;
   /** The gateway would register one more number now (`mayAddNumber`). */
   canAddNumber: boolean;
+  /** Absent from an older gateway. */
+  funnel?: AccountFunnel;
+}
+
+/**
+ * Why a `setup` account pauses: `window_ended` once its 72 hours after activation
+ * run out, `never_activated` 14 days after it connected without activating.
+ */
+export type PauseReason = "window_ended" | "never_activated";
+
+/**
+ * Where an account stands in the pay-after-first-success funnel. Only an account
+ * that connected its first number under the funnel has a clock; every time is
+ * epoch milliseconds.
+ */
+export interface AccountFunnel {
+  /** When it connected its first number; null for one that connected before the funnel. */
+  connectedAt: number | null;
+  /** First 2xx forward to its target, or first send of its own Meta delivered. */
+  activatedAt: number | null;
+  /** When a `setup` account pauses unless it pays; null when no timer runs. */
+  pausesAt: number | null;
+  /** Why it pauses at `pausesAt`, or why a timer paused it. */
+  pauseReason: PauseReason | null;
+  /** When the day-12 never-activated warning fell due; null until then. */
+  warningDueAt: number | null;
 }
 
 /** Billing state of one account. The ids belong to the billing provider; the gateway only stores them. */

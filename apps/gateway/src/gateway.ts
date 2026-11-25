@@ -94,6 +94,7 @@ import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { watchGraph } from "./token-health";
 import { isPublicConfigKey } from "./private-config-keys";
 import { SUBSCRIPTION_REQUIRED } from "./connect-policy";
+import type { ActivationTrigger } from "./funnel";
 
 /** OpsAlertEnv: the three optional Telegram HQ secrets (src/ops-alert.ts). */
 interface Env extends OpsAlertEnv, SendRateLimitEnv {
@@ -169,6 +170,8 @@ export const OPS_ALERT_INTERVAL_MS = 60 * 60 * 1000;
  * same zero rows. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const LAST_SWEEP_KEY = "__last_sweep_at__";
+/** The first activation seen here: `{at, trigger}` until the control plane has it, then `reported`. */
+const ACTIVATION_KEY = "__activation__";
 /** Bumped on every write of SUBSCRIBER_SECRET, so a secret claim made before it goes stale. */
 const SUBSCRIBER_SECRET_REVISION_KEY = "__SUBSCRIBER_SECRET_REVISION";
 /** How long a send's idempotency key dedupes a retry. */
@@ -683,6 +686,9 @@ export class EccosGateway extends DurableObject<Env> {
         if (row) insertedIds.push(Number(row.id));
         this.writeConversation(ev, now);
       }
+      if (stored.some((ev) => this.deliversOwnSend(ev.type, "transportMessageId" in ev ? ev.transportMessageId : null))) {
+        this.noteActivation("outbound_delivered", now);
+      }
       if (insertedIds.length > 0) {
         const phoneIds = new Set(stored.map((event) => event.phoneNumberId?.trim() || null));
         const phoneNumberId = phoneIds.size === 1 ? [...phoneIds][0] ?? null : null;
@@ -816,9 +822,12 @@ export class EccosGateway extends DurableObject<Env> {
       // A status callback can overtake the send's own response. It was stored
       // with no message to move, so replay it now that the message exists.
       const overtaken = this.sql
-        .exec(`SELECT id, delivery_id, payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
+        .exec(`SELECT id, type, delivery_id, payload FROM inbound_events WHERE transport_message_id = ? ORDER BY id`, transportMessageId)
         .toArray();
       for (const row of overtaken) {
+        if (this.deliversOwnSend(String(row.type), transportMessageId) && this.noteActivation("outbound_delivered", now)) {
+          this.wakeNow();
+        }
         this.applyStoredEvent(row.payload as string, now);
         if (origin) {
           const deliveryId = row.delivery_id == null ? null : Number(row.delivery_id);
@@ -2352,6 +2361,38 @@ export class EccosGateway extends DurableObject<Env> {
     this.ctx.storage.setAlarm(Date.now());
   }
 
+  /**
+   * A `delivered` or `read` status about a message Eccos sent (API, console, broadcast or
+   * scheduled): `outbound_messages` holds only those, so an app echo or imported
+   * coexistence history (which never reaches ingest) cannot activate.
+   */
+  private deliversOwnSend(type: string, wamid: string | null): boolean {
+    if ((type !== "delivered" && type !== "read") || !wamid || this.getConfigValue(ACTIVATION_KEY)) return false;
+    return this.sql
+      .exec(`SELECT 1 FROM outbound_messages WHERE transport_message_id = ? AND status = 'sent' LIMIT 1`, wamid)
+      .toArray().length > 0;
+  }
+
+  /** Keeps the first activation for the alarm to report; true when this was it. */
+  private noteActivation(trigger: ActivationTrigger, at: number): boolean {
+    if (this.getConfigValue(ACTIVATION_KEY)) return false;
+    this.saveConfig({ [ACTIVATION_KEY]: JSON.stringify({ at, trigger }) });
+    return true;
+  }
+
+  /** Hands a noted activation to the control plane once; a failed report is retried by the next alarm. */
+  private async reportActivation(): Promise<void> {
+    const noted = this.getConfigValue(ACTIVATION_KEY);
+    if (!noted || noted === "reported") return;
+    const { at, trigger } = JSON.parse(noted) as { at: number; trigger: ActivationTrigger };
+    try {
+      await getControlPlaneStub(this.env).recordActivation(this.wabaIdForOps(), at, trigger);
+      this.saveConfig({ [ACTIVATION_KEY]: "reported" });
+    } catch (error) {
+      this.logWarn("funnel", "activation-report-failed", error);
+    }
+  }
+
   /** Writes one normalized event into the conversation store. An inbound or echo
    * event adds a message; a status moves the message it names. Runs inside the
    * caller's transaction. */
@@ -2671,6 +2712,7 @@ export class EccosGateway extends DurableObject<Env> {
     }
 
     if (hasHeld(this.sql)) wakes.push(nextSweepAt);
+    await this.reportActivation();
 
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
@@ -3418,6 +3460,7 @@ export class EccosGateway extends DurableObject<Env> {
       );
     }
     if (ok) {
+      this.noteActivation("webhook_2xx", Date.now());
       console.log(JSON.stringify({ level: "info", event: "delivered", ...attempt }));
       return;
     }

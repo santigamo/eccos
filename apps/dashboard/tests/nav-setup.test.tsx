@@ -111,4 +111,11 @@ describe("NavSetup companion", () => {
     expect(renderFor("ready", false, 0, { stage: "paid" })).toBe("");
     expect(renderFor("ready", true, 1, { stage: "activated", hoursLeft: 72 })).toContain("Setup");
   });
+
+  test("shows the hours left once activated, and the pause", () => {
+    expect(renderFor("ready", true, 1, { stage: "activated", hoursLeft: 41 })).toContain("Activated · 41 hours left to subscribe");
+    expect(renderFor("ready", true, 1, { stage: "activated", hoursLeft: 1 })).toContain("1 hour left");
+    expect(renderFor("ready", true, 1, { stage: "paused" })).toContain("Paused · subscribe to send again");
+    expect(renderFor("ready", false, 0)).not.toContain("left to subscribe");
+  });
 });

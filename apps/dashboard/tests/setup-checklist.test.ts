@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  companionBilling,
   companionVisible,
   currentStep,
   setupDone,
@@ -141,5 +142,43 @@ describe("companionVisible", () => {
     expect(companionVisible(done, { stage: "activated", hoursLeft: 40 })).toBe(true);
     expect(companionVisible(done, { stage: "paused" })).toBe(true);
     expect(companionVisible(setupSteps(ready(0), false), { stage: "paid" })).toBe(false);
+  });
+});
+
+describe("companionBilling", () => {
+  const HOUR = 60 * 60 * 1000;
+  function withAccount(account: Record<string, unknown>): DashboardState {
+    return {
+      stage: "account-ready",
+      resources: { account: { accountId: "a", name: "A", createdAt: 1, canAddNumber: false, ...account }, keys: [], wabas: [], phones: [] },
+    } as unknown as DashboardState;
+  }
+  const clock = (activatedAt: number | null, pausesAt: number | null) => ({
+    connectedAt: 0,
+    activatedAt,
+    pausesAt,
+    pauseReason: activatedAt ? "window_ended" : "never_activated",
+    warningDueAt: null,
+  });
+
+  test("an activated setup account counts its hours down, rounded up", () => {
+    const state = withAccount({ billingStatus: "setup", funnel: clock(1, 1 + 72 * HOUR) });
+    expect(companionBilling(state, 1)).toEqual({ stage: "activated", hoursLeft: 72 });
+    expect(companionBilling(state, 1 + 71.5 * HOUR)).toEqual({ stage: "activated", hoursLeft: 1 });
+    expect(companionBilling(state, 1 + 80 * HOUR)).toEqual({ stage: "activated", hoursLeft: 0 });
+  });
+
+  test("paused and paying statuses say so; a setup account not yet activated says nothing", () => {
+    expect(companionBilling(withAccount({ billingStatus: "paused" }), 0)).toEqual({ stage: "paused" });
+    for (const billingStatus of ["active", "past_due", "cancelled"]) {
+      expect(companionBilling(withAccount({ billingStatus }), 0)).toEqual({ stage: "paid" });
+    }
+    expect(companionBilling(withAccount({ billingStatus: "setup", funnel: clock(null, 14 * 24 * HOUR) }), 0)).toBeUndefined();
+  });
+
+  test("billing off, a legacy account and an older gateway say nothing", () => {
+    expect(companionBilling(withAccount({ billingStatus: "open", funnel: clock(1, null) }), 0)).toBeUndefined();
+    expect(companionBilling(withAccount({ billingStatus: "setup", funnel: clock(null, null) }), 0)).toBeUndefined();
+    expect(companionBilling(withAccount({ billingStatus: "setup" }), 0)).toBeUndefined();
   });
 });
