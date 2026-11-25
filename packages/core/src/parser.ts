@@ -1,4 +1,4 @@
-import type { MediaRef, MessageContent, WhatsAppCallbackEvent } from "./types";
+import type { MediaRef, MessageContent, Referral, WhatsAppCallbackEvent } from "./types";
 
 export interface MetaWebhookBatch {
   wabaId: string;
@@ -217,6 +217,27 @@ function party(message: Record<string, unknown>, key: "from" | "to"): { id: stri
   return { id: getString(message[key]) ?? userId, userId };
 }
 
+/** Meta's `referral` (click-to-WhatsApp ad), camel-cased; absent when Meta sent none. */
+function metaReferral(message: Record<string, unknown>): Referral | undefined {
+  const raw = asRecord(message.referral);
+  if (!raw) return undefined;
+  const welcomeText = getString(asRecord(raw.welcome_message)?.text);
+  const referral = compact<Referral>({
+    sourceType: getString(raw.source_type),
+    sourceId: getString(raw.source_id),
+    sourceUrl: getString(raw.source_url),
+    headline: getString(raw.headline),
+    body: getString(raw.body),
+    mediaType: getString(raw.media_type),
+    imageUrl: getString(raw.image_url),
+    videoUrl: getString(raw.video_url),
+    thumbnailUrl: getString(raw.thumbnail_url),
+    ctwaClid: getString(raw.ctwa_clid),
+    welcomeMessage: welcomeText ? { text: welcomeText } : undefined,
+  });
+  return Object.keys(referral).length > 0 ? referral : undefined;
+}
+
 function parseMetaMessage(message: Record<string, unknown>, names: Map<string, string>): WhatsAppCallbackEvent | null {
   const { id: from, userId: fromUserId } = party(message, "from");
   const messageId = getString(message.id);
@@ -225,15 +246,16 @@ function parseMetaMessage(message: Record<string, unknown>, names: Map<string, s
 
   const profileName = names.get(from) ?? (fromUserId ? names.get(fromUserId) : undefined);
   const replyTo = getString(asRecord(message.context)?.id);
+  const referral = metaReferral(message);
   const text = metaMessageBody(message);
   if (text) {
     const payload = metaReplyPayload(message);
-    return compact<WhatsAppCallbackEvent>({ type: "reply", from, fromUserId, messageId, text, at, profileName, payload, replyTo });
+    return compact<WhatsAppCallbackEvent>({ type: "reply", from, fromUserId, messageId, text, at, profileName, payload, replyTo, referral });
   }
   const content = messageContent(message);
   return isEmptyReply(content)
     ? null
-    : compact<WhatsAppCallbackEvent>({ type: "message", from, fromUserId, messageId, at, profileName, replyTo, ...content });
+    : compact<WhatsAppCallbackEvent>({ type: "message", from, fromUserId, messageId, at, profileName, replyTo, referral, ...content });
 }
 
 function parseChangeValue(value: Record<string, unknown>): WhatsAppCallbackEvent[] {

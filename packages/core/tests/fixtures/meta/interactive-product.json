@@ -1,0 +1,62 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/interactive",
+  "updated": "2026-11-04",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "v-whatsapp-user-profile-name",
+                    "username": "v-username"
+                  },
+                  "wa_id": "v-user-phone",
+                  "user_id": "v-bsuid",
+                  "parent_user_id": "v-parent-bsuid",
+                  "identity_key_hash": "v-identity-key-hash"
+                }
+              ],
+              "messages": [
+                {
+                  "context": {
+                    "from": "v-business-display-phone-number-2",
+                    "id": "v-contextual-whatsapp-message-id"
+                  },
+                  "from": "v-user-phone",
+                  "from_user_id": "v-bsuid",
+                  "from_parent_user_id": "v-parent-bsuid",
+                  "id": "v-whatsapp-message-id",
+                  "timestamp": "1750000801",
+                  "type": "interactive",
+                  "interactive": {
+                    "type": "product",
+                    "product": {
+                      "retailer_id": "v-product-retailer-id",
+                      "title": "v-product-title",
+                      "description": "v-product-description",
+                      "currency_code": "v-product-currency-code",
+                      "price_amount": 1000,
+                      "sale_price_amount": 800,
+                      "url": "v-product-url"
+                    }
+                  }
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

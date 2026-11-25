@@ -72,8 +72,14 @@ const metaPayloadFor: Record<string, (ev: Record<string, any>) => unknown[]> = {
     ),
   reply: (ev) =>
     inbound(ev, {
-      type: "button",
-      button: { text: ev.text, payload: ev.payload },
+      ...(ev.payload
+        ? { type: "button", button: { text: ev.text, payload: ev.payload } }
+        : { type: "text", text: { body: ev.text } }),
+      ...(ev.referral && {
+        referral: Object.fromEntries(
+          Object.entries(ev.referral).map(([key, value]) => [key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), value]),
+        ),
+      }),
     }),
   message: (ev) =>
     inbound(ev, {
@@ -109,13 +115,14 @@ describe("event-reference.md JSON examples", () => {
       "delivered",
       "failed",
       "reply",
+      "reply",
       "message",
       "echo",
     ]);
   });
 
   for (const example of examples) {
-    it(`the parser produces the documented ${example.type} event`, () => {
+    it(`the parser produces the documented ${example.type} event${example.referral ? " with referral" : ""}`, () => {
       const [event, ...rest] = metaPayloadFor[example.type]!(example);
       expect(rest).toHaveLength(0);
       expect(event).toEqual(example);

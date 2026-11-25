@@ -1,0 +1,35 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/errors",
+  "updated": "2026-06-17",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "errors": [
+                {
+                  "code": 130429,
+                  "title": "v-error-title",
+                  "message": "v-error-message",
+                  "error_data": {
+                    "details": "v-error-details"
+                  },
+                  "href": "v-error-codes-url"
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

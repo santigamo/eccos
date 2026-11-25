@@ -51,6 +51,31 @@ carries the BSUID whenever Meta sends one. `profileName` is the WhatsApp profile
 message whose button they tapped, the message they quoted, or the product message they asked about. It is absent otherwise. When `replyTo` is a message a
 [broadcast](/bulk-sending) sent, `broadcastId` or `scheduleKey` names that broadcast or scheduled send.
 
+`referral` is present when the customer wrote from a click-to-WhatsApp ad: Meta's `referral`
+object, camel-cased, with only the fields Meta sent.
+
+| Field | Meaning |
+|---|---|
+| `sourceType` | `ad` (older payloads: `post`) |
+| `sourceId` | The ad's id |
+| `sourceUrl` | The ad's URL |
+| `headline`, `body` | The ad's headline and primary text |
+| `mediaType` | `image` or `video` |
+| `imageUrl` | Image ads only |
+| `videoUrl`, `thumbnailUrl` | Video ads only |
+| `ctwaClid` | The ad click id the Conversions API needs to attribute the conversation to the ad. Absent for ads shown in WhatsApp Status |
+| `welcomeMessage.text` | The ad's greeting, shown to the customer before they wrote |
+
+`imageUrl`, `videoUrl` and `thumbnailUrl` are Meta CDN links that expire. Eccos never fetches
+them, so copy the media soon if you need it.
+
+```json
+{ "type": "reply", "from": "34600000000", "messageId": "wamid.HBgM...", "text": "Hi, I'd like to know more",
+  "referral": { "sourceType": "ad", "sourceId": "120200000000000001", "sourceUrl": "https://fb.me/abc",
+    "headline": "Spring sale", "ctwaClid": "ARAkLkA8rmlFeiCk...", "welcomeMessage": { "text": "Hi! How can we help?" } },
+  "profileName": "Ana", "at": 1767225600000, "phoneNumberId": "1098765432" }
+```
+
 ## `message`: any other incoming content
 
 Everything that is not text or a button/list reply. `messageType` is Meta's message type; the
@@ -79,7 +104,7 @@ extra fields depend on it. Unknown future types are forwarded with `messageType`
 the same way.
 
 `message` carries `replyTo` too when the customer quoted a message (for example an image
-sent as a reply) or answered a Flow, and `broadcastId` or `scheduleKey` the same way as on `reply`.
+sent as a reply) or answered a Flow, and `broadcastId`, `scheduleKey` and `referral` the same way as on `reply`.
 
 ## `echo` and `message_echo`: messages sent from the WhatsApp Business app
 
