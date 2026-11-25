@@ -141,6 +141,7 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 |---|---|---|
 | Sign-up / verification | log, continue | **surface** — bounded, membership-neutral message |
 | Password reset | log, continue | **swallow**, log, keep the generic response |
+| Verification resend | log, continue | **swallow**, log, keep the generic response |
 | Invitation | log, continue | **surface** to the inviter |
 
 - **Sign-up may surface it** because an existing account short-circuits *before*
@@ -149,6 +150,11 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
   only they can fix.
 - **Password reset must not**, ever. `sendResetPassword` only runs for accounts
   that exist, so any observable difference there is a membership oracle.
+- **Verification resend must not** either. `POST /send-verification-email` takes any
+  address and only sends for an existing unverified account, so a thrown error
+  there was a membership oracle — and the console read the resulting 500 as
+  "sent again" anyway (eccos-57r8). The check-your-inbox screen shows the
+  address and tells the user to check it for a typo.
 - **Invitation may**, because the inviter is authenticated and typed the address.
 - **`recipient_suppressed` gets its own message** ("email to this address is
   currently blocked"), never the typo message: retyping cannot fix a suppression.
@@ -162,8 +168,9 @@ at the call sites (`applyVerificationSendPolicy`, `applyResetSendPolicy`,
 > `ctx.context.runInBackgroundOrAwait` (`dist/context/create-context.mjs:214`),
 > which awaits the promise inside a `try/catch` and merely **logs** a rejection.
 > So the sign-up and invitation `undeliverable` messages do not reach the
-> response today; only `POST /send-verification-email` re-throws
-> (`dist/api/routes/email-verification.mjs:117`). The policy is written to the
+> response today. `POST /send-verification-email` would re-throw
+> (`dist/api/routes/email-verification.mjs:117`), which is why its own policy
+> swallows. The policy is written to the
 > contract regardless — it is correct, it starts surfacing the moment better-auth
 > propagates, and the structured log is the durable record meanwhile. The
 > behaviour is pinned by a test in `tests/mail-policy.test.ts` so it fails loudly

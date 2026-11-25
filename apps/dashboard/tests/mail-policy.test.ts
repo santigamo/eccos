@@ -12,9 +12,11 @@ import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import {
   applyInvitationSendPolicy,
+  applyResendVerificationPolicy,
   applyResetSendPolicy,
   applyVerificationSendPolicy,
   createAuth,
+  isVerificationResend,
   type MailPolicyContext,
 } from "../src/auth/auth";
 import {
@@ -351,9 +353,9 @@ describe("what better-auth 1.7.2 does with a thrown send (documented gap)", () =
     expect(response.status).toBe(200);
   });
 
-  test("POST /send-verification-email DOES propagate it", async () => {
-    // The resend endpoint re-throws (dist/api/routes/email-verification.mjs:117),
-    // so the policy is not dead code — this is where it surfaces today.
+  test("POST /send-verification-email answers as if sent, so it is no membership oracle", async () => {
+    // better-auth re-throws here (dist/api/routes/email-verification.mjs:117) and
+    // only sends for an existing unverified account, so the resend policy swallows.
     const { auth, db } = await createTestAuth(new CaptureMailSender(BOUNCED));
     await signUp(auth, "resend@example.com");
     db.query('UPDATE user SET "emailVerified" = 0').run();
@@ -364,7 +366,21 @@ describe("what better-auth 1.7.2 does with a thrown send (documented gap)", () =
         body: JSON.stringify({ email: "resend@example.com", callbackURL: "/" }),
       }),
     );
-    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBe(200);
+  });
+});
+
+describe("undeliverable at verification resend is NEVER surfaced", () => {
+  test("a bounced or suppressed address is swallowed and logged", () => {
+    expect(() => applyResendVerificationPolicy(BOUNCED, CTX)).not.toThrow();
+    expect(() => applyResendVerificationPolicy(SUPPRESSED, CTX)).not.toThrow();
+    expect(parsedWarnings().map((e) => e.event)).toEqual(["send-undeliverable", "send-undeliverable"]);
+  });
+
+  test("only the resend endpoint takes the resend policy", () => {
+    expect(isVerificationResend(new Request(`${BASE_URL}/api/auth/send-verification-email`))).toBe(true);
+    expect(isVerificationResend(new Request(`${BASE_URL}/api/auth/sign-up/email`))).toBe(false);
+    expect(isVerificationResend(undefined)).toBe(false);
   });
 });
 

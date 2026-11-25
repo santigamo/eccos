@@ -164,6 +164,20 @@ export function applyResetSendPolicy(
 }
 
 /**
+ * Verification resend. Same rule as reset, for the same reason: POST
+ * /send-verification-email takes any address and only sends for an existing
+ * unverified account (dist/api/routes/email-verification.mjs), so a thrown
+ * error there would say "this address has an account". The check-your-inbox
+ * screen shows the address, so a typo stays visible to its owner.
+ */
+export const applyResendVerificationPolicy = applyResetSendPolicy;
+
+/** True when better-auth is sending the verification mail for the resend endpoint, not for sign-up or sign-in. */
+export function isVerificationResend(request: Request | undefined): boolean {
+  return request ? new URL(request.url).pathname.endsWith("/send-verification-email") : false;
+}
+
+/**
  * Invitation. An undeliverable address is SURFACED to the inviter.
  *
  * No enumeration concern: the inviter is authenticated, typed the address
@@ -336,7 +350,7 @@ export function createAuth(config: AuthConfig) {
       // account is seconds old and cannot have a second factor — but a
       // re-verification flow on an enrolled account would step around it.
       autoSignInAfterVerification: true,
-      sendVerificationEmail: async (data: MailCallbackData) => {
+      sendVerificationEmail: async (data: MailCallbackData, request?: Request) => {
         const { user, url, token } = data;
         // Same rule as the reset flow: the key derives from the real token in
         // the message, so a framework retry replays and dedupes, while a
@@ -353,7 +367,8 @@ export function createAuth(config: AuthConfig) {
           variables: { name: user.name, url },
           idempotencyKey,
         });
-        applyVerificationSendPolicy(outcome, {
+        const policy = isVerificationResend(request) ? applyResendVerificationPolicy : applyVerificationSendPolicy;
+        policy(outcome, {
           template: "verify-email",
           to: user.email,
           idempotencyKey,
