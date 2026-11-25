@@ -52,6 +52,8 @@ export function ConnectLinkLanding({
   const attempt = useRef(0);
   /** The error reported in Meta's window, while nothing but a CANCEL has followed it. */
   const reported = useRef<SessionEvent | null>(null);
+  /** The attempt whose window closed with no code and no error yet: Meta's error can land just after. */
+  const cancelledAt = useRef(0);
 
   // The first request that carries the token, and the one that marks the link opened: a
   // link preview fetches the page but never runs this.
@@ -98,10 +100,14 @@ export function ConnectLinkLanding({
       if (parsed.errorCode) reported.current = parsed;
       else if (parsed.event !== "CANCEL") reported.current = null;
       if (token.current) api.event(token.current, parsed);
+      if (parsed.errorCode && cancelledAt.current === attempt.current) {
+        const error = reportedError(copy, parsed);
+        if (error) setNote((now) => (now?.tone === "notice" ? { tone: "meta", error } : now));
+      }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [api]);
+  }, [api, copy]);
 
   if (screen.at === "loading" || screen.at === "message") {
     return (
@@ -188,6 +194,7 @@ export function ConnectLinkLanding({
     setBusy(true);
     setNote(null);
     reported.current = null;
+    cancelledAt.current = 0;
     let refused = false;
     let settled = false;
     let started: Promise<LinkStart | "limited" | "unreachable"> | null = null;
@@ -198,6 +205,7 @@ export function ConnectLinkLanding({
       if (!code) {
         setBusy(false);
         const error = reportedError(copy, reported.current);
+        if (!error) cancelledAt.current = mine;
         setNote(error ? { tone: "meta", error } : { text: copy.cancelled, tone: "notice" });
         return;
       }

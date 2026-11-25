@@ -182,6 +182,17 @@ describe("the landing", () => {
       );
     });
 
+  test("an error Meta reports just after its window closed still replaces the cancel note", async () => {
+    const host = await mount(es);
+    await click(host);
+    await answer({ authResponse: null });
+    expect(host.querySelector("output")?.textContent).toContain(es.cancelled);
+    await reportError("3441067");
+    const said = host.querySelector("output")?.textContent ?? "";
+    expect(said).toContain("Otro porfolio empresarial tiene este número");
+    expect(said).toContain("Error de Meta 3441067 · sesión f34b51d");
+  });
+
   test("an error Meta reported explains itself in the page's language, with Meta's references", async () => {
     const host = await mount(es);
     await click(host);
