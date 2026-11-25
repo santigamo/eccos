@@ -15,6 +15,7 @@ import { PageNotice } from "../ui"
 import { blocksSends } from "@eccos/gateway-contract/billing-status"
 import { BackupCodesSheet } from "../components/dashboard/backup-codes-sheet"
 import { StepUpSheet } from "../components/dashboard/step-up-sheet"
+import { ActivationDialog } from "../components/setup-paths/activation-dialog"
 import { Toaster } from "../components/ui/sonner"
 import { AnalyticsIdentify, AnalyticsScripts } from "../components/analytics"
 import { getAnalyticsConfig } from "../server/analytics"
@@ -274,6 +275,7 @@ function RootComponent() {
           </PageNotice.Provider>
           <StepUpSheet />
           <BackupCodesSheet />
+          <ActivationDialog />
         </>
       ) : (
         // Unauthenticated (or gateway-unreachable) root load: bare outlet so

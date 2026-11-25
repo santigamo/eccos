@@ -189,6 +189,8 @@
   --wa-muted: #8696a0;
   --wa-link: #53bdeb;
   --wa-rule: rgba(233, 237, 239, 0.08);
+  --wa-out: #005c4b;
+  --wa-out-muted: #a7c5be;
   /* Light-theme tokens. Dark values are what the console always rendered; the
      light blocks below declare the same set (tests/theme-tokens.test.ts). */
   --ink: #25d366;
@@ -278,6 +280,8 @@
     --wa-muted: #54656f;
     --wa-link: #027eb5;
     --wa-rule: rgba(11, 20, 26, 0.08);
+    --wa-out: #d9fdd3;
+    --wa-out-muted: #667781;
     --ink: #0b7a4b;
     --row-hover: rgba(11, 20, 26, 0.05);
     --selection-bg: #25d366;
@@ -361,6 +365,8 @@
   --wa-muted: #54656f;
   --wa-link: #027eb5;
   --wa-rule: rgba(11, 20, 26, 0.08);
+  --wa-out: #d9fdd3;
+  --wa-out-muted: #667781;
   --ink: #0b7a4b;
   --row-hover: rgba(11, 20, 26, 0.05);
   --selection-bg: #25d366;

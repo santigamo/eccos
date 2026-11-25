@@ -183,6 +183,7 @@ export type Result<T> = { ok: true; data: T } | Failure;
 
 export type { ForbiddenReason, Membership } from "../auth/tenant";
 export type { BillingState } from "../billing/account";
+import type { Activation } from "../lib/activation";
 
 /**
  * Identity-plane access (contract §1/§5): every server function resolves the
@@ -251,8 +252,9 @@ export type RoleFlag = { canAdminister: boolean; role: string };
  * Present only while billing is on. `subscribed`: a closed account whose
  * subscription still exists, so billing opens its portal. `canManage`: the
  * member's role may start or manage it, the same permission the checkout requires.
+ * `activation`: the first success and the end of its 72h window (eccos-dbb3.2).
  */
-export type BillingFlag = { subscribed: boolean; canManage: boolean };
+export type BillingFlag = { subscribed: boolean; canManage: boolean; activation?: Activation | null };
 export type DashboardStateResult = Result<DashboardState>;
 export type DashboardScopeInput = { wabaId?: string };
 

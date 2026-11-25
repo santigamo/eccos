@@ -1,5 +1,4 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { CONNECT_RETURN_PATH } from "../../server/gateway";
 import type { ConnectPath } from "../../lib/embedded-signup";
 import type { ConnectBlock } from "../../server/connect-block";
 import { helpContext, troubleFor } from "../../lib/connect-trouble";
@@ -15,6 +14,8 @@ import { TroubleStep } from "./trouble-step";
 import { FounderNote, WIZARD_STEPS, WizardProgress } from "./wizard-frame";
 import { WriteStep } from "./write-step";
 
+export const SETUP_PATH = "/setup";
+
 type Step = "ready" | "path" | "icon" | "brief";
 const STEP_NUMBER: Record<Step, number> = { ready: 1, path: 2, icon: 2, brief: 3 };
 
@@ -23,8 +24,8 @@ const STEP_NUMBER: Record<Step, number> = { ready: 1, path: 2, icon: 2, brief: 3
  * check), read what Meta will show, then connect with a live status that moves
  * only on what this page observes. A second number keeps the add-number dialog.
  *
- * It ends at "connected": `onContinue` is the seam to setting the number up
- * (eccos-dbb3.6). Until then it reloads /numbers, where the new number shows.
+ * It ends at "connected": Continue loads /setup (eccos-dbb3.6), the goal
+ * chooser and live tests. A full load, so the root reads the new number.
  */
 export function ConnectWizard({
   blocked = null,
@@ -103,7 +104,7 @@ export function ConnectWizard({
       );
       break;
     case "connected":
-      screen = <ConnectedStep live={live} path={chosen} onContinue={onContinue ?? (() => navigate(CONNECT_RETURN_PATH))} />;
+      screen = <ConnectedStep live={live} path={chosen} onContinue={onContinue ?? (() => navigate(SETUP_PATH))} />;
       break;
     case "trouble":
       screen = feedback && trouble ? (

@@ -72,7 +72,7 @@ export function Stepper({ steps, className }: { steps: StepperStep[]; className?
                   {step.text}
                 </span>
                 {step.note ? <span className="text-[13px] leading-4.5 text-muted-foreground">{step.note}</span> : null}
-                {step.extra ? <div className="pt-2">{step.extra}</div> : null}
+                {step.extra ? <div className="w-full pt-2">{step.extra}</div> : null}
               </div>
               {step.aside ? (
                 <span className="w-12 shrink-0 text-right font-mono text-xs leading-5 text-muted-foreground">{step.aside}</span>

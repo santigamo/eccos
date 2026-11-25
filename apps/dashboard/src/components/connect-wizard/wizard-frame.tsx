@@ -6,14 +6,14 @@ import { cn } from "@/lib/utils";
 export const WIZARD_STEPS = ["Get ready", "Your number", "What Meta shows", "Connect", "Set up", "Test"] as const;
 
 /** "Step n of 6 · name", over six segments. The segments repeat the label, so they are hidden from readers. */
-export function WizardProgress({ step }: { step: number }) {
+export function WizardProgress({ step, label = WIZARD_STEPS[step - 1] }: { step: number; label?: string }) {
   return (
     <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
       <p className="m-0 text-[11px] leading-3.5 font-medium tracking-wider text-muted-foreground uppercase">
         <span className="text-foreground">
           Step {step} of {WIZARD_STEPS.length}
         </span>{" "}
-        · {WIZARD_STEPS[step - 1]}
+        · {label}
       </p>
       <div aria-hidden="true" className="flex items-center gap-1">
         {WIZARD_STEPS.map((name, i) => (
