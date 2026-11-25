@@ -8,7 +8,7 @@ import {
   registerWabasForToken,
   startConnectForAccount,
 } from "./routes/connect";
-import { inspectToken, probeWabaWithToken, wabaMatchesForTargetIds } from "./meta/connect-api";
+import { inspectToken, probeWabaWithToken, unsubscribeApp, wabaMatchesForTargetIds } from "./meta/connect-api";
 import { diagnoseWaba } from "./meta/waba-diagnostics";
 import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { type TokenHealth, watchGraph } from "./token-health";
@@ -856,6 +856,21 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       waba.phones[0]?.phoneNumberId ?? null,
       waba.metaAccessToken,
     );
+  }
+
+  /**
+   * Operator-only and outside `GatewayApi`: DELETE then POST `subscribed_apps`. For a WABA whose
+   * subscription Meta still lists but no longer delivers (health_status: "not subscribed to the
+   * message webhook"), where the console's POST-only Re-subscribe changes nothing.
+   */
+  async resetWabaSubscription(wabaId: string, accountId: string) {
+    const account = requireAccountId(accountId, "accountId is required");
+    const waba = await getControlPlaneStub(this.env).getWaba(account, wabaId);
+    if (!waba) throw new Error(`WABA "${wabaId}" is not owned by account "${account}" or not active`);
+    await unsubscribeApp(getAppConfig(this.env), waba.wabaId, waba.metaAccessToken);
+    const { attempted, error } = await resubscribeWaba(this.env, account, wabaId);
+    console.log(JSON.stringify({ event: "waba_subscription_reset", accountId: account, wabaId, attempted, error }));
+    return { attempted, error };
   }
 
   /**
