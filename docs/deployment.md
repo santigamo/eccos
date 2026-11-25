@@ -239,7 +239,11 @@ billing on. In this order:
 1. **D1 migration**, before any console deploy:
    `cd apps/dashboard && wrangler d1 migrations apply eccos-auth --remote -c wrangler.production.jsonc`
    (adds `0007_funnel_mail.sql`, the funnel-email ledger).
-2. **Gateway, without the `FUNNEL_MAIL` binding**: `bun run deploy`. The preflight warns that
+2. **Gateway, without the `FUNNEL_MAIL` binding and with `FUNNEL_PAUSES=off`** (a `vars` entry in
+   `wrangler.production.jsonc`): `bun run deploy`. The switch keeps the funnel timers from pausing or
+   warning anyone while the release settles; activation is still recorded. Remove it, and add the
+   binding (step 4), once the release has run cleanly for a day or two. An account whose deadline
+   passed meanwhile pauses on the first cron after. The preflight warns that
    the binding is missing; that is expected here. On first start the control plane runs its
    one-time funnel migration: accounts that already have a number get no funnel clock, and every
    `closed` stored before this release becomes NULL (the default, `setup`), because `closed` now

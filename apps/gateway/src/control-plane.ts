@@ -1395,7 +1395,8 @@ export class EccosControlPlane extends DurableObject<Env> {
    */
   runFunnelTimers(now = Date.now()): { paused: number; warned: number } {
     const done = { paused: 0, warned: 0 };
-    if (!this.billingOn()) return done;
+    // FUNNEL_PAUSES=off is the release switch: activation is still recorded, nothing is paused or warned.
+    if (!this.billingOn() || this.env.FUNNEL_PAUSES === "off") return done;
     done.paused += this.endDueEarlyAccess(now);
     const rows = this.sql
       .exec(

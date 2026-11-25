@@ -288,6 +288,20 @@ describe("timers", () => {
   });
 });
 
+describe("release switch", () => {
+  beforeEach(billingOn);
+  afterEach(() => {
+    delete (env as { FUNNEL_PAUSES?: string }).FUNNEL_PAUSES;
+  });
+
+  it("FUNNEL_PAUSES=off records activation but never pauses or warns", async () => {
+    (env as { FUNNEL_PAUSES?: string }).FUNNEL_PAUSES = "off";
+    await cp((i) => i.recordActivation(TEST_WABA_ID, T0, "webhook_2xx"));
+    expect(await cp((i) => i.runFunnelTimers(T0 + 60 * DAY))).toEqual({ paused: 0, warned: 0 });
+    expect(await funnel()).toMatchObject({ billingStatus: "setup", funnel: { activatedAt: T0, warningDueAt: null } });
+  });
+});
+
 describe("billing off", () => {
   it("no timer ever pauses", async () => {
     await cp((i) => i.recordActivation(TEST_WABA_ID, T0, "webhook_2xx"));
