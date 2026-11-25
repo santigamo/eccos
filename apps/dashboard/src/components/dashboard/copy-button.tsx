@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 
 type CopyState = "idle" | "copied" | "failed";
@@ -6,9 +6,17 @@ type CopyState = "idle" | "copied" | "failed";
 /** Copies `value`, says so for a moment, and says so when the browser refuses. */
 export function CopyButton({
   value,
-  label = "Copy",
+  label,
+  labels = { copy: "Copy", copied: "Copied", failed: "Copy failed" },
+  icon,
   ...props
-}: { value: string; label?: string } & Omit<ComponentProps<typeof Button>, "onClick" | "children" | "value">) {
+}: {
+  value: string;
+  label?: string;
+  /** For a page that is not in English. */
+  labels?: { copy: string; copied: string; failed: string };
+  icon?: ReactNode;
+} & Omit<ComponentProps<typeof Button>, "onClick" | "children" | "value">) {
   const [state, setState] = useState<CopyState>("idle");
   useEffect(() => {
     if (state === "idle") return;
@@ -28,7 +36,8 @@ export function CopyButton({
 
   return (
     <Button type="button" {...props} onClick={() => void copy()}>
-      {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : label}
+      {icon}
+      {state === "copied" ? labels.copied : state === "failed" ? labels.failed : (label ?? labels.copy)}
     </Button>
   );
 }

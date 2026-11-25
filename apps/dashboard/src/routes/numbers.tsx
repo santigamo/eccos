@@ -309,7 +309,7 @@ export function FirstRunConnect({
   return (
     <>
       {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}
-      <ConnectNumberPanel heading="Meta Embedded Signup" closed={closed} blocked={blocked} />
+      <ConnectNumberPanel closed={closed} blocked={blocked} />
     </>
   );
 }

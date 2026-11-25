@@ -37,7 +37,7 @@ mock.module("../src/server/gateway", () => ({
 
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { ConnectNumberChoices, resetConnectGuards } = await import("../src/components/dashboard/connect-number");
+const { CONNECT_RELEASE_NOTE, ConnectNumberChoices, resetConnectGuards } = await import("../src/components/dashboard/connect-number");
 
 type LoginCallback = (response: { authResponse?: { code?: string } | null }) => void;
 
@@ -138,8 +138,9 @@ async function mount(node: ReactNode): Promise<HTMLElement> {
 
 type Blocked = "reauth-required" | "missing-permission" | null;
 
-const choices = (popupWatchdogMs: number, blocked: Blocked) => (
+const choices = (popupWatchdogMs: number, blocked: Blocked, title?: string) => (
   <ConnectNumberChoices
+    title={title}
     navigate={(path) => navigated.push(path)}
     popupWatchdogMs={popupWatchdogMs}
     abandonDelayMs={10}
@@ -147,8 +148,8 @@ const choices = (popupWatchdogMs: number, blocked: Blocked) => (
   />
 );
 
-const mountChoices = (popupWatchdogMs = 3_000, blocked: Blocked = null) =>
-  mount(choices(popupWatchdogMs, blocked));
+const mountChoices = (popupWatchdogMs = 3_000, blocked: Blocked = null, title?: string) =>
+  mount(choices(popupWatchdogMs, blocked, title));
 
 function card(host: HTMLElement, title: string): HTMLButtonElement {
   const found = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(title));
@@ -299,7 +300,8 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await runFlow(host, { authResponse: null });
     expect(navigated).toEqual([]);
     expect(live(host)).toContain("Nothing changed");
-    expect(host.querySelector("output")?.className).not.toContain("e03131");
+    expect(live(host)).not.toContain("Not connected");
+    expect(host.querySelector("output")?.innerHTML).not.toContain("border-l-destructive");
     expect(card(host, "A new number").disabled).toBe(false);
   });
 
@@ -570,7 +572,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
   /** Open an observable Meta window from the Business app card; returns the window and a way to post as it. */
-  async function openObserved(popupWatchdogMs?: number) {
+  async function openObserved(popupWatchdogMs?: number, title?: string) {
     const popup = { closed: false };
     const original = window.open;
     window.open = (() => popup) as unknown as typeof window.open;
@@ -579,7 +581,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
       loginCallback = cb;
       window.open("https://www.facebook.com/", "_blank");
     };
-    const host = await mountChoices(popupWatchdogMs);
+    const host = await mountChoices(popupWatchdogMs, null, title);
     await act(async () => card(host, "WhatsApp Business app").click());
     window.open = original;
     const post = (event: string, data: Record<string, unknown>) =>
@@ -603,7 +605,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await act(async () => loginCallback?.({ authResponse: null }));
     expect(live(host)).toContain("closed at the QR code step. Nothing changed.");
     expect(live(host)).toContain("for about a week");
-    expect(live(host)).not.toContain("Meta reported error");
+    expect(live(host)).not.toContain("Meta error");
   });
 
   const REPORTED = { error_message: "x", error_code: "524126", session_id: "f34b51d", timestamp: "1" };
@@ -612,10 +614,11 @@ describe("ConnectNumberChoices in a real DOM", () => {
     const { host, post } = await openObserved();
     await post("ERROR", REPORTED);
     await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("Meta didn't connect the number");
     expect(live(host)).toContain("The Meta window was closed before a number was connected");
     await post("CANCEL", QR);
     expect(live(host)).toContain("closed at the QR code step");
-    expect(live(host)).toContain("Meta reported error 524126, session f34b51d. Quote both if you contact support.");
+    expect(live(host)).toContain("Meta error 524126 · session f34b51d");
   });
 
   test("an error the customer got past is not quoted on a later cancel", async () => {
@@ -624,7 +627,63 @@ describe("ConnectNumberChoices in a real DOM", () => {
     await post("FINISH_ONLY_WABA", { waba_id: "100" });
     await act(async () => loginCallback?.({ authResponse: null }));
     expect(live(host)).toContain("Nothing changed");
-    expect(live(host)).not.toContain("Meta reported");
+    expect(live(host)).not.toContain("Meta error");
+    expect(live(host)).not.toContain("Not connected");
+  });
+
+  test("a known Meta error says what happened and what to do, with Meta's references", async () => {
+    const { host, post } = await openObserved();
+    await post("ERROR", { ...REPORTED, error_code: "3441067" });
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("Not connected");
+    expect(live(host)).toContain("Another business portfolio holds this number");
+    expect(live(host)).toContain("Usually your previous WhatsApp provider. Ask them to release the number, then start again.");
+    expect(live(host)).toContain("Meta error 3441067 · session f34b51d");
+    expect(live(host)).not.toContain("The Meta window was closed");
+    // The heads-up gives way to the error, and the cards come back under "Start again".
+    expect(host.textContent).not.toContain(CONNECT_RELEASE_NOTE.lead);
+    expect(host.textContent).toContain("Start again");
+    expect(card(host, "A new number").disabled).toBe(false);
+  });
+
+  test("the panel title gives way to Meta's error", async () => {
+    const { host, post } = await openObserved(undefined, "Is this number on WhatsApp today?");
+    expect(host.querySelector("h2")?.textContent).toBe("Is this number on WhatsApp today?");
+    await post("ERROR", { ...REPORTED, error_code: "3441067" });
+    await act(async () => loginCallback?.({ authResponse: null }));
+    expect(live(host)).toContain("Another business portfolio holds this number");
+    expect(host.querySelector("h2")).toBeNull();
+  });
+
+  test("Copy puts Meta's references on the clipboard, from the keyboard too", async () => {
+    const copied: string[] = [];
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => void copied.push(text) },
+    });
+    try {
+      const { host, post } = await openObserved();
+      await post("ERROR", { ...REPORTED, error_code: "3441067" });
+      await act(async () => loginCallback?.({ authResponse: null }));
+      const copy = [...host.querySelectorAll("button")].find((b) => b.textContent === "Copy");
+      if (!copy) throw new Error("no Copy button");
+      // A native button: focusable, and Enter or Space activates it.
+      expect(copy.tagName).toBe("BUTTON");
+      expect(copy.getAttribute("type")).toBe("button");
+      await act(async () => copy.click());
+      await settle();
+      expect(copied).toEqual(["Meta error 3441067 · session f34b51d"]);
+      expect(copy.textContent).toBe("Copied");
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  test("asks to release a number another provider holds, before Meta opens", async () => {
+    const host = await mountChoices();
+    expect(host.textContent).toContain(`${CONNECT_RELEASE_NOTE.lead} ${CONNECT_RELEASE_NOTE.rest}`);
   });
 
   test("a late CANCEL from an older window does not rewrite a newer attempt", async () => {

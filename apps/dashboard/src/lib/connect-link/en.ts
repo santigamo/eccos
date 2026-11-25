@@ -1,3 +1,54 @@
+import type { SignupErrorCode, SignupErrorCopy } from "../connect-result";
+
+const PAGE_LINKED: SignupErrorCopy = {
+  title: "A Facebook Page is linked to this number",
+  body: "In Meta Business Suite, remove the Page under Settings, Accounts, Pages, then come back to this same link.",
+};
+const NOT_FROM_APP: SignupErrorCopy = {
+  title: "This link can't connect your number",
+  body: "You can't fix this yourself. Copy the error below and send it to whoever sent you this link.",
+};
+
+/** What an error reported in Meta's window means, and what to do. */
+const signupErrors: Record<SignupErrorCode, SignupErrorCopy> = {
+  "3441067": {
+    title: "Another business portfolio holds this number",
+    body: "Usually your previous WhatsApp provider. Ask them to release the number, then come back to this same link.",
+  },
+  "3441069": {
+    title: "This number is on the regular WhatsApp app",
+    body: "Move it to the WhatsApp Business app, then come back to this same link.",
+  },
+  "3441070": NOT_FROM_APP,
+  "3441072": NOT_FROM_APP,
+  "3441090": {
+    title: "Another account in your portfolio holds this number",
+    body: "Remove it from that account in WhatsApp Manager, then come back to this same link.",
+  },
+  "3441071": {
+    title: "Your Facebook account needs two-factor authentication",
+    body: "The portfolio that owns this number requires it. Turn it on in Facebook's security settings, then come back to this same link.",
+  },
+  "3441075": {
+    title: "Two-step verification is on for this number",
+    body: "This is the number's WhatsApp PIN, not your Facebook login. Turn it off, then come back to this same link.",
+  },
+  "2655145": {
+    title: "Meta has restricted your Facebook account",
+    body: "Review the restriction in Meta's Business Support Home, or ask someone else in your business to open this link.",
+  },
+  "2655123": PAGE_LINKED,
+  "2655082": PAGE_LINKED,
+  "3441093": {
+    title: "This number is still being disconnected",
+    body: "That can take from a few minutes to more than a day. Come back to this same link later.",
+  },
+  "2494064": {
+    title: "This number is registered with another WhatsApp service",
+    body: "Usually another WhatsApp provider. Ask them to release it, then come back to this same link.",
+  },
+};
+
 /** The connection-link landing page, in English. `es.ts` must carry the same keys. */
 export const en = {
   lang: "en",
@@ -5,13 +56,19 @@ export const en = {
   /** What a link preview shows. */
   summary: "Connect the number your business uses in the WhatsApp Business app. It takes about 5 minutes.",
   loading: "Checking the link…",
-  title: (workspace: string) => `Connect your WhatsApp number to ${workspace}`,
-  intro: (inviter: string) =>
-    `${inviter} asked you to connect the number your business uses in the WhatsApp Business app. You keep using the app on your phone as usual.`,
-  beforeTitle: "Before you start",
-  before: ["This computer and the phone, both at hand", "A Facebook account (your own is fine)", "About 5 minutes"],
-  meta: "Meta will open a window, ask you to sign in, and show a QR code to scan from the phone. Your number and your Meta business account stay yours.",
+  /** Read as: inviter, [0], workspace, [1]. */
+  intro: [" asks you to connect your WhatsApp Business app number to ", ". The app keeps working as usual."] as [
+    string,
+    string,
+  ],
+  beforeTitle: "You need",
+  before: ["Open this on a computer, with the phone at hand to scan a QR code", "A Facebook account (your own is fine)"],
+  release: {
+    lead: "Used this number with another WhatsApp provider?",
+    rest: "Ask them to release it first.",
+  },
   button: "Connect with Meta",
+  ownership: "Your number and your Meta account stay yours.",
   preparing: "Preparing…",
   connecting: "Connecting…",
   connectedTitle: "Connected.",
@@ -25,6 +82,12 @@ export const en = {
   busy: "A connection with this link is already in progress. Wait a minute, then start again.",
   notPrepared: "The connection could not be prepared. Close Meta's window and start again.",
   cancelled: "Nothing was connected. You can start again with the same link.",
+  signupErrors,
+  unknownError: "Meta didn't connect the number",
+  notConnected: "Not connected",
+  /** Meta's references for a reported error, for whoever helps. */
+  reported: (code: string, session?: string) => (session ? `Meta error ${code} · session ${session}` : `Meta error ${code}`),
+  copyLabels: { copy: "Copy", copied: "Copied", failed: "Copy failed" },
   gone: (inviter: string) => `This link no longer works. Ask ${inviter} for a new one.`,
   sender: "whoever sent it to you",
   owned: (inviter: string) => `This number's Meta account is already connected elsewhere. Tell ${inviter}.`,

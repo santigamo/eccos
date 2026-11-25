@@ -29,16 +29,103 @@ export const QR_CODE_STEP = "WHATSAPP_BUSINESS_APP_ONBOARDING_QR_CODE";
 const CANCELLED_AT_QR_MESSAGE =
   "Meta's window was closed at the QR code step. Nothing changed. If Meta said the number lacks activity, use it in the WhatsApp Business app for about a week, then try again.";
 
-/**
- * The cancel notice for the screen Meta's window was closed on. When the
- * customer reported an error from inside the flow, Meta's references for it
- * are appended: the session id is what Meta's support asks for.
- */
-export function connectCancelledMessage(step?: string, error?: { code?: string; sessionId?: string }): string {
-  const base = step === QR_CODE_STEP ? CANCELLED_AT_QR_MESSAGE : CONNECT_CANCELLED_MESSAGE;
-  const refs = [error?.code && `error ${error.code}`, error?.sessionId && `session ${error.sessionId}`].filter(Boolean);
-  if (refs.length === 0) return base;
-  return `${base} Meta reported ${refs.join(", ")}. Quote ${refs.length > 1 ? "both" : "it"} if you contact support.`;
+/** The Embedded Signup error codes the console explains, from Meta's Embedded Signup error table. */
+export type SignupErrorCode =
+  | "3441067"
+  | "3441069"
+  | "3441070"
+  | "3441072"
+  | "3441090"
+  | "3441071"
+  | "3441075"
+  | "2655145"
+  | "2655123"
+  | "2655082"
+  | "3441093"
+  | "2494064";
+
+/** A Meta signup error as the customer reads it: what happened, then what to do. */
+export type SignupErrorCopy = { title: string; body: string };
+
+const PAGE_LINKED: SignupErrorCopy = {
+  title: "A Facebook Page is linked to this number",
+  body: "In Meta Business Suite, remove the Page under Settings, Accounts, Pages, or use another number.",
+};
+
+export const SIGNUP_ERRORS: Record<SignupErrorCode, SignupErrorCopy> = {
+  "3441067": {
+    title: "Another business portfolio holds this number",
+    body: "Usually your previous WhatsApp provider. Ask them to release the number, then start again.",
+  },
+  "3441069": {
+    title: "This number is on the regular WhatsApp app",
+    body: "Move it to the WhatsApp Business app and choose the Business app option, or use another number.",
+  },
+  "3441070": {
+    title: "This number is in use on WhatsApp",
+    body: "If it is on the Business app, start again with the Business app option. Otherwise use another number, or delete its WhatsApp account first.",
+  },
+  "3441072": {
+    title: "This number is on the WhatsApp Business app",
+    body: "Start again and choose the Business app option, or use a number that is not on the app.",
+  },
+  "3441090": {
+    title: "Another account in your portfolio holds this number",
+    body: "Remove it from that WhatsApp Business account in WhatsApp Manager, then start again.",
+  },
+  "3441071": {
+    title: "Your Facebook account needs two-factor authentication",
+    body: "The portfolio that owns this number requires it. Turn it on in Facebook's security settings, then start again.",
+  },
+  "3441075": {
+    title: "Two-step verification is on for this number",
+    body: "This is the number's WhatsApp PIN, not your Facebook login. Turn it off, then start again.",
+  },
+  "2655145": {
+    title: "Meta has restricted your Facebook account",
+    body: "Review the restriction in Meta's Business Support Home, or ask someone else in your business to connect the number.",
+  },
+  "2655123": PAGE_LINKED,
+  "2655082": PAGE_LINKED,
+  "3441093": {
+    title: "This number is still being disconnected",
+    body: "That can take from a few minutes to more than a day. Try again later, or use another number.",
+  },
+  "2494064": {
+    title: "This number is registered elsewhere on WhatsApp",
+    body: "It may be on the WhatsApp app or with another API provider. Remove it there first, or use another number.",
+  },
+};
+
+export const UNKNOWN_SIGNUP_ERROR_TITLE = "Meta didn't connect the number";
+
+export function isSignupErrorCode(code: string | undefined): code is SignupErrorCode {
+  return code !== undefined && Object.hasOwn(SIGNUP_ERRORS, code);
+}
+
+/** The neutral notice for a window closed with no error, worded for the screen it was closed on. */
+export function connectCancelledMessage(step?: string): string {
+  return step === QR_CODE_STEP ? CANCELLED_AT_QR_MESSAGE : CONNECT_CANCELLED_MESSAGE;
+}
+
+/** An error Meta's window reported, with its references: the session id is what Meta's support asks for. */
+export type ReportedSignupError = SignupErrorCopy & { refs: string };
+
+export function signupErrorRefs(code: string, sessionId?: string): string {
+  return sessionId ? `Meta error ${code} · session ${sessionId}` : `Meta error ${code}`;
+}
+
+/** Null when Meta reported no code: that close is a plain cancel. */
+export function reportedSignupError(
+  step?: string,
+  error?: { code?: string; sessionId?: string },
+): ReportedSignupError | null {
+  const code = error?.code;
+  if (!code) return null;
+  const copy = isSignupErrorCode(code)
+    ? SIGNUP_ERRORS[code]
+    : { title: UNKNOWN_SIGNUP_ERROR_TITLE, body: connectCancelledMessage(step) };
+  return { ...copy, refs: signupErrorRefs(code, error.sessionId) };
 }
 
 /**

@@ -1,14 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { followSignIn } from "../../lib/follow-sign-in";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CloudIcon, LoaderCircleIcon, SmartphoneIcon } from "lucide-react";
-import {
-  Frame,
-  FrameDescription,
-  FrameHeader,
-  FramePanel,
-  FrameTitle,
-} from "../reui/frame";
+import { ArrowRightIcon, CloudIcon, LoaderCircleIcon, SmartphoneIcon } from "lucide-react";
+import { Frame, FramePanel } from "../reui/frame";
 import {
   CONNECT_RETURN_PATH,
   exchangeConnectCode,
@@ -30,16 +24,18 @@ import type { ConnectBlock } from "../../server/connect-block";
 import {
   CONNECT_CLOSE_AND_RETRY,
   CONNECT_NOT_PREPARED,
+  type ReportedSignupError,
   connectCancelledMessage,
   judgeExchange,
   popupBlockedMessage,
   popupHintMessage,
+  reportedSignupError,
   returnPathFor,
   secondsBucket,
   watchPopup,
   watchWindow,
 } from "../../lib/connect-result";
-import { AUTH_ERROR_BANNER_CLASS } from "../auth/auth-page";
+import { Callout, ErrorReport } from "../ui/callout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -55,37 +51,29 @@ import { cn } from "@/lib/utils";
  * `new-number` with a number that is currently live on the WhatsApp Business
  * app TAKES IT OFF THE APP. That is destructive to a working setup and it is
  * not obvious from anything Meta shows, which is why the consequence is on the
- * card rather than in a doc.
- *
- * `caution` is the register the design contract gives this (Inter, 11px,
- * uppercase, tracking-wider — docs/DASHBOARD-DESIGN.md), and it says what the
- * path costs, never how reliable we think it is.
+ * card (in amber) rather than in a doc.
  */
 const CONNECT_PATHS: ReadonlyArray<{
   path: ConnectPath;
   title: string;
   detail: string;
-  caution: string;
-  /** `warning` is reserved for a path that destroys existing setup. */
-  tone: "warning" | "muted";
+  /** The detail is a cost that destroys existing setup. */
+  warn: boolean;
   icon: React.ReactNode;
 }> = [
   {
     path: "business-app",
-    icon: <SmartphoneIcon aria-hidden="true" className="size-4" />,
-    tone: "muted",
+    icon: <SmartphoneIcon aria-hidden="true" className="size-4.5" />,
+    warn: false,
     title: "I use this number in the WhatsApp Business app",
-    detail:
-      "Keep using the app on your phone, and have it in hand: Meta shows a QR code to scan and asks during setup whether to share your chat history.",
-    caution: "Meta usually asks for about a week of real use first · Up to 20 messages per second",
+    detail: "Keep the phone at hand to scan Meta's QR code. The app keeps working.",
   },
   {
     path: "new-number",
-    icon: <CloudIcon aria-hidden="true" className="size-4" />,
-    tone: "warning",
+    icon: <CloudIcon aria-hidden="true" className="size-4.5" />,
+    warn: true,
     title: "A new number, or one not on WhatsApp",
-    detail: "Meta confirms the number with a code by SMS or call.",
-    caution: "A number on WhatsApp today stops working in the app",
+    detail: "A number on WhatsApp today stops working in the app.",
   },
 ];
 
@@ -168,13 +156,29 @@ const MISSING_PERMISSION_COPY = failureCopy({
 }).detail;
 
 /**
- * The sentence that frames the fork, shared by both containers so they cannot
- * drift: the panel puts it in `FrameDescription` on first run, the dialog in
- * `DialogDescription` on the populated page. Both readings need it BEFORE the
- * cards, because "the choice locks" is the reason the fork is a screen at all.
+ * The question that frames the fork, shared by both containers so they cannot
+ * drift: the panel's title on first run, the dialog's description on the
+ * populated page.
  */
-export const CONNECT_FORK_DESCRIPTION =
-  "Is this number on WhatsApp today? You can't switch once Meta's window opens.";
+export const CONNECT_FORK_DESCRIPTION = "Is this number on WhatsApp today?";
+
+/** Said before Meta's window opens: a number another provider holds fails inside it (3441067). */
+export const CONNECT_RELEASE_NOTE = {
+  lead: "Coming from another WhatsApp provider?",
+  rest: "Ask them to release the number first.",
+};
+
+const REPORT_LABELS = { copy: "Copy", copied: "Copied", failed: "Copy failed" };
+
+type Feedback =
+  | { tone: "error" | "notice" | "blocked" | "slow"; text: string }
+  /** Meta reported an error before its window closed: a problem to fix, not a change of mind. */
+  | { tone: "meta"; error: ReportedSignupError };
+
+function cancelledFeedback(step?: string, error?: { code?: string; sessionId?: string }): Feedback {
+  const reported = reportedSignupError(step, error);
+  return reported ? { tone: "meta", error: reported } : { tone: "notice", text: connectCancelledMessage(step) };
+}
 
 /**
  * Start Meta Embedded Signup: the fork itself, with no container of its own.
@@ -205,6 +209,7 @@ export const CONNECT_FORK_DESCRIPTION =
  * the private gateway binding. No account API key exists on this page.
  */
 export function ConnectNumberChoices({
+  title,
   className,
   blocked = null,
   closed = false,
@@ -213,6 +218,8 @@ export function ConnectNumberChoices({
   popupWatchdogMs = 4_000,
   abandonDelayMs = 1_500,
 }: {
+  /** The panel's title, hidden while Meta's error takes its place. The dialog has its own. */
+  title?: string;
   className?: string;
   /** What stops the signed-in user connecting right now: the role, or a step-up owed. */
   blocked?: ConnectBlock | null;
@@ -235,10 +242,7 @@ export function ConnectNumberChoices({
    * Meta's window, or a blocked popup (red, with the one way out). One live
    * region carries all of them, always mounted.
    */
-  const [feedback, setFeedback] = useState<{
-    text: string;
-    tone: "error" | "notice" | "blocked" | "slow";
-  } | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   /** Set when the click found something unready and had to wait: Meta opens from a fresh click on "Open Meta". */
   const [awaiting, setAwaiting] = useState<ConnectPath | null>(null);
   /** A flow is opening, or waiting for the click that opens it. */
@@ -314,8 +318,9 @@ export function ConnectNumberChoices({
         else if (parsed.event !== "CANCEL") mine.error = undefined;
         // Meta's CANCEL can land just after the window closed: the notice catches up.
         if (mine.cancelled && mine.attempt === attempt.current) {
-          const text = connectCancelledMessage(mine.step, mine.error);
-          setFeedback((now) => (now?.tone === "notice" ? { text, tone: "notice" } : now));
+          setFeedback((now) =>
+            now?.tone === "notice" || now?.tone === "meta" ? cancelledFeedback(mine.step, mine.error) : now,
+          );
         }
       }
       trackSessionEvent(parsed);
@@ -498,7 +503,7 @@ export function ConnectNumberChoices({
       if (!isCurrent()) return;
       track("connect_outcome", { result: "cancelled" });
       mySession.cancelled = true;
-      setFeedback({ text: connectCancelledMessage(mySession.step, mySession.error), tone: "notice" });
+      setFeedback(cancelledFeedback(mySession.step, mySession.error));
       setStarting(null);
     };
     let popup: Window | null | undefined;
@@ -631,24 +636,30 @@ export function ConnectNumberChoices({
     setStarting(null);
   }
 
+  const reported = feedback?.tone === "meta" ? feedback.error : null;
   return (
-    <div className={cn("flex flex-col gap-4", className)}>
-      {/* Mounted even while empty, so a filling region is announced. */}
+    <div className={cn("flex flex-col gap-6", className)}>
+      {title && !reported ? (
+        <h2 className="m-0 text-lg leading-6 font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
+      ) : null}
+      {/* Mounted even while empty, so a filling region is announced; out of the flow while empty. */}
       <output
         className={cn(
-          "block",
-          feedback &&
-            (feedback.tone === "notice" || feedback.tone === "slow"
-              ? "border-l-2 border-(--line-strong) px-3 py-2 text-sm text-muted-foreground"
-              : AUTH_ERROR_BANNER_CLASS),
+          "block empty:sr-only",
+          (feedback?.tone === "notice" || feedback?.tone === "slow") &&
+            "border-l-2 border-(--line-strong) py-0.5 pl-4 text-sm text-muted-foreground",
         )}
       >
-        {feedback?.text}
+        {feedback?.tone === "notice" || feedback?.tone === "slow" ? feedback.text : null}
         {feedback?.tone === "slow" ? (
           <button type="button" onClick={startAgain} className="ml-2 underline underline-offset-2">
             Start again
           </button>
         ) : null}
+        {feedback?.tone === "error" || feedback?.tone === "blocked" ? (
+          <Callout tone="error">{feedback.text}</Callout>
+        ) : null}
+        {reported ? <ErrorReport status="Not connected" labels={REPORT_LABELS} {...reported} /> : null}
       </output>
 
       {block === "missing-permission" ? (
@@ -681,32 +692,35 @@ export function ConnectNumberChoices({
         </div>
       ) : null}
 
-      {/* Each choice IS the action: there is nothing to configure between
+      {/* Hidden while Meta's own error is on screen: it would say the same thing twice. */}
+      {reported ? null : (
+        <Callout tone="warning">
+          <strong className="font-semibold">{CONNECT_RELEASE_NOTE.lead}</strong> {CONNECT_RELEASE_NOTE.rest}
+        </Callout>
+      )}
+
+      <div className="flex flex-col gap-2">
+        {reported ? (
+          <p className="m-0 border-t border-border pt-6 pb-1 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+            Start again
+          </p>
+        ) : null}
+        {/* Each choice IS the action: there is nothing to configure between
             picking and launching, and a confirm step here would only add a
             click before Meta's own multi-screen flow, which is where backing
-            out is still free.
-
-            `gap-2`, not `gap-px`: two bordered rows sharing a 1px seam is the
-            anatomy of TABLE ROWS, and that is most of why this panel read as a
-          grid rather than as two controls at a fork. */}
-      <ul className="m-0 flex list-none flex-col gap-2 p-0">
-          {CONNECT_PATHS.map(({ path, title, detail, caution, tone, icon }) => (
+            out is still free. `gap-2`, not `gap-px`: two bordered rows sharing
+            a seam read as table rows, not as two controls at a fork. */}
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {CONNECT_PATHS.map(({ path, title: pathTitle, detail, warn, icon }) => (
             <li key={path}>
               <button
                 type="button"
                 onClick={() => start(path)}
                 disabled={closed || locked || unavailable !== null || block !== null}
                 className={cn(
-                  // INTERACTIVE anatomy, not structural. These rested on
-                  // `--line` (7%, "structural hairlines") with no fill, which
-                  // is the ink of dividers — so the two biggest actions in the
-                  // product were drawn like the rules between them, and the
-                  // affordance existed only on hover. The contract's rule for a
-                  // ghost control is `--ghost-fill` under a `--line-strong`
-                  // (35%) edge, which is also what the landing's `.btn-ghost`
-                  // does. Rest -> hover then reads as fill-raise plus the edge
-                  // going green, instead of a hairline appearing from nothing.
-                  "group flex w-full items-start gap-4 rounded-none border border-(--line-strong) bg-(--ghost-fill) p-4 text-left transition-colors",
+                  // Interactive anatomy: `--ghost-fill` under a `--line-strong`
+                  // edge, the edge going green on hover (docs/DASHBOARD-DESIGN.md).
+                  "group flex w-full items-start gap-4 rounded-none border border-(--line-strong) bg-(--ghost-fill) p-5 text-left transition-colors",
                   "hover:border-(--ghost-edge-hover) hover:bg-(--ghost-fill-hover)",
                   "focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none",
                   // Dim only the path NOT being opened. Dimming the one just
@@ -718,114 +732,49 @@ export function ConnectNumberChoices({
                 )}
               >
                 {/* The masthead's monogram idiom: a square with a
-                    `--line-strong` edge, never a circle, never rounded.
-                    
-                    THE GLYPH CARRIES BRAND GREEN AT REST, at 70%. That is a
-                    deliberate departure from the strict reading of the
-                    interaction law, which reserves resting green for STATE (the
-                    live sidebar item, a success tag, the primary CTA) on the
-                    grounds that spending it elsewhere dilutes "green marks the
-                    live thing". The departure is bounded so that argument still
-                    holds: only the glyph is tinted, never the slot's fill or
-                    edge, so this stays a mark and never becomes the filled,
-                    railed, full-ink block the sidebar uses for "active" — and
-                    at 70% it is visibly quieter than any real state on screen.
-                    
-                    Hover then takes it to 100%, which is also the rule the
-                    contract states outright: vivid green never dims, it
-                    brightens. So rest -> hover keeps a distinct step, and the
-                    edge going green stays the interactivity signal it was. */}
+                    `--line-strong` edge. The glyph carries brand green at 70%
+                    at rest, a mark rather than a state, and brightens on hover. */}
                 <span
                   aria-hidden="true"
-                  className="flex size-9 shrink-0 items-center justify-center border border-(--line-strong) text-ink/70 transition-colors group-hover:border-(--ghost-edge-hover) group-hover:text-ink"
+                  className="flex size-10 shrink-0 items-center justify-center border border-(--line-strong) text-ink/70 transition-colors group-hover:border-(--ghost-edge-hover) group-hover:text-ink"
                 >
-                  {starting === path ? (
-                    <LoaderCircleIcon className="size-4 animate-spin" />
-                  ) : (
-                    icon
-                  )}
+                  {starting === path ? <LoaderCircleIcon className="size-4.5 animate-spin" /> : icon}
                 </span>
-                <span className="flex min-w-0 flex-col gap-1.5">
-                  {/* The title does NOT become "Opening…". Swapping it jumps
-                      the layout and erases which path is opening at the one
-                      moment that matters; the spinner in the slot says it
-                      without moving anything. */}
-                  <span className="text-sm font-medium text-foreground">{title}</span>
-                  <span className="max-w-prose text-pretty text-sm text-muted-foreground">
-                    {detail}
-                  </span>
-                  {/* The consequence, in the functional register the contract
-                      reserves for it. Amber is spent here and nowhere else on
-                      this screen: it is the one meaningful state, and it is the
-                      mistake the fork exists to prevent. Red would be wrong —
-                      that is the error register, and this path is the CORRECT
-                      choice for a fresh number. No icon and no chip: the words
-                      carry the meaning, a warning triangle would push it to
-                      alarm, and tag anatomy would misdeclare a cost as status. */}
+                {/* The title does NOT become "Opening…": the spinner in the slot
+                    says it without moving anything. */}
+                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="text-[15px] leading-5 font-semibold text-foreground">{pathTitle}</span>
                   <span
                     className={cn(
-                      "pt-1 text-[11px] font-medium uppercase tracking-wider",
-                      tone === "warning" ? "text-warning-foreground" : "text-muted-foreground",
+                      "text-sm text-pretty",
+                      warn ? "font-medium text-warning-foreground" : "text-muted-foreground",
                     )}
                   >
-                    {caution}
+                    {detail}
                   </span>
+                </span>
+                <span aria-hidden="true" className="flex h-10 w-5 shrink-0 items-center justify-center text-foreground">
+                  <ArrowRightIcon className="size-4.5" />
                 </span>
               </button>
             </li>
           ))}
         </ul>
-
-      {/* No footer band. A full-bleed rule and its chrome for one 12px
-          sentence was another rectangle in a panel that already had too
-          many; the sentence earns its place (it sets the return expectation,
-          which matters most on the full-navigation fallback) and the rule
-          did not. */}
-      <p className="m-0 text-xs text-muted-foreground">
-        Meta brings you back to this page when it is done.
-      </p>
+      </div>
     </div>
   );
 }
 
 /**
- * The framed panel around the fork — FIRST RUN ONLY.
- *
- * With no number yet, /numbers IS this screen: the panel is the whole point,
- * so it keeps its own `Frame`, its own heading in the MACHINE VOICE (Inter,
- * 11px, uppercase, tracking-wider — what the design contract gives panel
- * titles and empty-state labels; it was stock shadcn card-title, a register
- * this console does not have), and its designed `max-w-3xl`.
- *
- * The populated page does NOT use this. There the same fork opens in a centred
- * dialog, which supplies its own title and description slots, so wrapping
- * `ConnectNumberChoices` in a second bordered, glass-filled surface would be a
- * panel inside a panel. That is why the split exists: one fork, two containers,
- * and the container is the only thing that differs.
+ * The framed panel around the fork, FIRST RUN ONLY. The populated page opens
+ * the same fork in a centred dialog, which brings its own title, so the split
+ * keeps one fork in two containers instead of a panel inside a panel.
  */
-export function ConnectNumberPanel({
-  heading,
-  closed,
-  blocked,
-}: {
-  heading: string;
-  closed?: boolean;
-  blocked?: ConnectBlock | null;
-}) {
+export function ConnectNumberPanel({ closed, blocked }: { closed?: boolean; blocked?: ConnectBlock | null }) {
   return (
     <Frame variant="default" spacing="lg" className="max-w-3xl">
       <FramePanel fit>
-        {/* The header sits level with the body: FramePanel zeroes the nested
-            header's horizontal padding so the two do not stack (see frame.tsx). */}
-        <FrameHeader className="gap-1.5 pt-0">
-          <FrameTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            {heading}
-          </FrameTitle>
-          <FrameDescription className="max-w-prose text-pretty">
-            {CONNECT_FORK_DESCRIPTION}
-          </FrameDescription>
-        </FrameHeader>
-        <ConnectNumberChoices className="pt-5" closed={closed} blocked={blocked} />
+        <ConnectNumberChoices title={CONNECT_FORK_DESCRIPTION} closed={closed} blocked={blocked} />
       </FramePanel>
     </Frame>
   );
