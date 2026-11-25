@@ -138,9 +138,8 @@ async function mount(node: ReactNode): Promise<HTMLElement> {
 
 type Blocked = "reauth-required" | "missing-permission" | null;
 
-const choices = (popupWatchdogMs: number, blocked: Blocked, title?: string) => (
+const choices = (popupWatchdogMs: number, blocked: Blocked) => (
   <ConnectNumberChoices
-    title={title}
     navigate={(path) => navigated.push(path)}
     popupWatchdogMs={popupWatchdogMs}
     abandonDelayMs={10}
@@ -148,8 +147,8 @@ const choices = (popupWatchdogMs: number, blocked: Blocked, title?: string) => (
   />
 );
 
-const mountChoices = (popupWatchdogMs = 3_000, blocked: Blocked = null, title?: string) =>
-  mount(choices(popupWatchdogMs, blocked, title));
+const mountChoices = (popupWatchdogMs = 3_000, blocked: Blocked = null) =>
+  mount(choices(popupWatchdogMs, blocked));
 
 function card(host: HTMLElement, title: string): HTMLButtonElement {
   const found = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(title));
@@ -572,7 +571,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
   const wait = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
   /** Open an observable Meta window from the Business app card; returns the window and a way to post as it. */
-  async function openObserved(popupWatchdogMs?: number, title?: string) {
+  async function openObserved(popupWatchdogMs?: number) {
     const popup = { closed: false };
     const original = window.open;
     window.open = (() => popup) as unknown as typeof window.open;
@@ -581,7 +580,7 @@ describe("ConnectNumberChoices in a real DOM", () => {
       loginCallback = cb;
       window.open("https://www.facebook.com/", "_blank");
     };
-    const host = await mountChoices(popupWatchdogMs, null, title);
+    const host = await mountChoices(popupWatchdogMs, null);
     await act(async () => card(host, "WhatsApp Business app").click());
     window.open = original;
     const post = (event: string, data: Record<string, unknown>) =>
@@ -644,15 +643,6 @@ describe("ConnectNumberChoices in a real DOM", () => {
     expect(host.textContent).not.toContain(CONNECT_RELEASE_NOTE.lead);
     expect(host.textContent).toContain("Start again");
     expect(card(host, "A new number").disabled).toBe(false);
-  });
-
-  test("the panel title gives way to Meta's error", async () => {
-    const { host, post } = await openObserved(undefined, "Is this number on WhatsApp today?");
-    expect(host.querySelector("h2")?.textContent).toBe("Is this number on WhatsApp today?");
-    await post("ERROR", { ...REPORTED, error_code: "3441067" });
-    await act(async () => loginCallback?.({ authResponse: null }));
-    expect(live(host)).toContain("Another business portfolio holds this number");
-    expect(host.querySelector("h2")).toBeNull();
   });
 
   test("Copy puts Meta's references on the clipboard, from the keyboard too", async () => {

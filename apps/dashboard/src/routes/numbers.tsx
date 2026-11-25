@@ -6,11 +6,8 @@ import { Page } from "../ui";
 import { getConnectBlock, type ConnectBlock } from "../server/connect-block";
 import { StepUpSheet } from "../components/dashboard/step-up-sheet";
 import { FailureView } from "../components/dashboard/failure";
-import {
-  CONNECT_FORK_DESCRIPTION,
-  ConnectNumberChoices,
-  ConnectNumberPanel,
-} from "../components/dashboard/connect-number";
+import { CONNECT_FORK_DESCRIPTION, ConnectNumberChoices } from "../components/dashboard/connect-number";
+import { ConnectWizard } from "../components/connect-wizard/connect-wizard";
 import { ConnectLinkButton } from "../components/dashboard/connect-link-dialog";
 import { NumbersTable } from "../components/dashboard/numbers-table";
 import { SubscriptionGate, SubscriptionNotice } from "../components/dashboard/subscription-notice";
@@ -53,9 +50,8 @@ export const Route = createFileRoute("/numbers")({
  * The account's WhatsApp numbers, and the one place they get connected.
  *
  * This is also the first screen of a new workspace: with no number yet, the
- * page IS the connect flow, inside the normal app chrome. There is no separate
- * first-run route, because "attach a number" is a recurring operation and an
- * onboarding wizard would only exist for the first one.
+ * page IS the connect wizard, inside the normal app chrome. Adding a later
+ * number opens the add-number dialog instead.
  */
 function NumbersPage() {
   const root = useLoaderData({ from: "__root__" });
@@ -311,7 +307,7 @@ export function FirstRunConnect({
   return (
     <>
       {closed ? <SubscriptionNotice billing={false} numbers={0} reconnect={false} className="mb-0" /> : null}
-      <ConnectNumberPanel closed={closed} blocked={blocked} />
+      <ConnectWizard closed={closed} blocked={blocked} />
     </>
   );
 }
