@@ -1,4 +1,5 @@
 import type { DashboardState } from "../server/gateway";
+import { matchesRoute } from "./route-pattern";
 
 /**
  * What a route needs from the tenant's scope before it is a destination.
@@ -69,18 +70,10 @@ export const PRE_WORKSPACE_ROUTES: ReadonlySet<string> = new Set(["/onboarding",
 
 const DEFAULT_REQUIREMENT: ScopeRequirement = "number";
 
-/** The route a pathname belongs to, where a `$param` segment stands for one real path segment. */
-function routeOf(pathname: string): string {
-  if (pathname in SCOPE_REQUIREMENTS) return pathname;
-  return (
-    Object.keys(SCOPE_REQUIREMENTS).find(
-      (route) => route.includes("$") && new RegExp(`^${route.replace(/\$[^/]+/g, "[^/]+")}$`).test(pathname),
-    ) ?? pathname
-  );
-}
-
 export function requirementFor(pathname: string): ScopeRequirement {
-  return SCOPE_REQUIREMENTS[routeOf(pathname)] ?? DEFAULT_REQUIREMENT;
+  const route =
+    pathname in SCOPE_REQUIREMENTS ? pathname : Object.keys(SCOPE_REQUIREMENTS).find((key) => matchesRoute(key, pathname));
+  return (route && SCOPE_REQUIREMENTS[route]) || DEFAULT_REQUIREMENT;
 }
 
 /** An active WABA with a number behind it: the data plane is readable. */

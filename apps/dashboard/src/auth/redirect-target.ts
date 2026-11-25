@@ -7,6 +7,8 @@
  * dropped and the caller falls back to "/".
  */
 
+import { matchesRoute } from "../lib/route-pattern";
+
 /** Pages reachable without a session (contract §10). */
 export const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/signin",
@@ -49,12 +51,8 @@ export const REDIRECTABLE_PAGES: ReadonlySet<string> = new Set([
   "/workspaces/new",
 ]);
 
-/** A page of the set, where a `$param` segment stands for one real path segment. */
 function isRedirectablePath(pathname: string): boolean {
-  if (REDIRECTABLE_PAGES.has(pathname)) return true;
-  return [...REDIRECTABLE_PAGES].some(
-    (page) => page.includes("$") && new RegExp(`^${page.replace(/\$[^/]+/g, "[^/]+")}$`).test(pathname),
-  );
+  return REDIRECTABLE_PAGES.has(pathname) || [...REDIRECTABLE_PAGES].some((page) => matchesRoute(page, pathname));
 }
 
 export function safeRedirectTarget(value: string | undefined): string | undefined {
