@@ -1,14 +1,22 @@
+import { mock } from "bun:test";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 
-/** Server-renders `ui` inside a throwaway router, so the router `Link`s in it render as anchors. */
+// Other test files replace @tanstack/react-router process-wide (mock.module cannot be undone),
+// so a real RouterProvider here breaks depending on file order. Render without one instead:
+// Link is an anchor and useRouter a stub, the same shape the other files use.
+const routerModule = await import("@tanstack/react-router");
+mock.module("@tanstack/react-router", () => ({
+  ...routerModule,
+  Link: (props: { to: string; children: ReactNode; className?: string }) => (
+    <a href={props.to} className={props.className}>
+      {props.children}
+    </a>
+  ),
+  useRouter: () => ({ invalidate: async () => {}, navigate: async () => {} }),
+}));
+
+/** Server-renders `ui` with router `Link`s as plain anchors. */
 export async function renderInRouter(ui: ReactNode): Promise<string> {
-  const router = createRouter({
-    routeTree: createRootRoute({ component: () => ui }),
-    history: createMemoryHistory({ initialEntries: ["/"] }),
-    isServer: true,
-  });
-  await router.load();
-  return renderToStaticMarkup(<RouterProvider router={router} />);
+  return renderToStaticMarkup(<>{ui}</>);
 }
