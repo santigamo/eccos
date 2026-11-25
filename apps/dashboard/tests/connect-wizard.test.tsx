@@ -231,7 +231,9 @@ describe("the clarifying question", () => {
 describe("the live connection status", () => {
   test("moves only on the window, Meta's answer and the exchange, then stops at connected", async () => {
     let finishExchange: (v: unknown) => void = () => {};
-    stubs.exchangeConnectCode = () => new Promise((resolve) => (finishExchange = resolve));
+    stubs.exchangeConnectCode = () => new Promise((resolve) => {
+      finishExchange = resolve;
+    });
     const onContinue = mock(() => {});
     const host = await wizard({ onContinue });
     await openMeta(host);
@@ -257,7 +259,7 @@ describe("the live connection status", () => {
     expect(host.textContent).toContain("+34 612 345 678");
     expect(host.textContent).toContain("Nothing changed on your phone");
     expect(current()).toContain("Your first message goes through");
-    expect(host.querySelector('[role="status"]')?.textContent).toBe("Meta handed your number to Eccos.");
+    expect(host.querySelector("output.sr-only")?.textContent).toBe("Meta handed your number to Eccos.");
     expect(navigated).toEqual([]);
 
     await press(host, "Continue");

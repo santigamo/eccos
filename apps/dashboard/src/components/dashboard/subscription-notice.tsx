@@ -75,6 +75,7 @@ export function SendingNotice({
 }) {
   const { busy, error, leaveTo } = useBillingRedirect();
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a live region holding a paragraph and a button; <output> takes phrasing content only.
     <div className="mb-4 border-l-2 border-l-warning px-3 py-2" role="status">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 max-w-prose text-sm text-pretty text-foreground">

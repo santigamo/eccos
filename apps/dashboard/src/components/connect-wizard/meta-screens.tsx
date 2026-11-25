@@ -30,7 +30,7 @@ function Thumb({ sketch }: { sketch: Sketch }) {
       );
     case "qr":
       return (
-        <svg viewBox="0 0 44 44" className="size-11 fill-none stroke-foreground">
+        <svg aria-hidden="true" viewBox="0 0 44 44" className="size-11 fill-none stroke-foreground">
           <rect x="2" y="2" width="12" height="12" strokeWidth="3" />
           <rect x="30" y="2" width="12" height="12" strokeWidth="3" />
           <rect x="2" y="30" width="12" height="12" strokeWidth="3" />

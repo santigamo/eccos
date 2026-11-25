@@ -24,9 +24,7 @@ function LiveList({ live, path }: { live: ConnectLive; path: ConnectPath }) {
           aside: row.at === undefined ? undefined : clockTime(row.at),
         }))}
       />
-      <p role="status" className="sr-only">
-        {latest ? `${latest.label}.` : ""}
-      </p>
+      <output className="sr-only">{latest ? `${latest.label}.` : ""}</output>
     </div>
   );
 }

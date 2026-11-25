@@ -42,7 +42,7 @@ function idOf(value: unknown): string | null {
 }
 
 function dateOf(value: unknown): number | null {
-  const at = typeof value === "string" ? Date.parse(value) : NaN;
+  const at = typeof value === "string" ? Date.parse(value) : Number.NaN;
   return Number.isNaN(at) ? null : at;
 }
 

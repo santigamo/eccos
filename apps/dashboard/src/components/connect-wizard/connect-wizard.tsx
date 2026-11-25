@@ -58,6 +58,7 @@ export function ConnectWizard({
   // Each new screen moves focus to its heading, so a reader hears where they are. Not on first paint.
   const root = useRef<HTMLDivElement>(null);
   const painted = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs on each new screen to move focus; reads only refs.
   useEffect(() => {
     if (!painted.current) {
       painted.current = true;

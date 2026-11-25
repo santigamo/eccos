@@ -33,6 +33,7 @@ export function SetupWindowStrip({ window, canManage, now: initial }: { window: 
   const pausesAt = window.pausesAt as number;
   const warn = windowPhase(pausesAt - now) !== "neutral";
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a live region holding a paragraph and a button; <output> takes phrasing content only.
     <div
       role="status"
       className={cn(
