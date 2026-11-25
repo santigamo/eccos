@@ -269,7 +269,7 @@ export function previewBody(bodyText: string, values: string[]): string {
 // asserted as a property in tests/template-rules.test.ts.
 
 /** Meta's ceiling for a template BODY component. */
-const MAX_BODY_LENGTH = 1024;
+export const MAX_BODY_LENGTH = 1024;
 /** Parity with the send validator's cap on positional parameters. */
 export const MAX_BODY_PARAMS = 30;
 
