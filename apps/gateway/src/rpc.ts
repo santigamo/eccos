@@ -865,6 +865,29 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return changed;
   }
 
+  /**
+   * Operator-only and outside `GatewayApi`, like the reset above: removes a WABA and its
+   * phones from the account's registry. See `docs/operations.md`, "Removing a WABA".
+   */
+  async removeWaba(
+    wabaId: string,
+    accountId: string,
+    options: { confirmActiveWabaId?: string } = {},
+  ): Promise<boolean> {
+    const account = requireAccountId(accountId, "accountId is required");
+    const id = String(wabaId).trim();
+    try {
+      const phones = await getControlPlaneStub(this.env).removeWaba(account, id, options);
+      const phoneNumberIds = phones?.map((phone) => phone.phoneNumberId) ?? [];
+      console.log(JSON.stringify({ event: "waba_removed", accountId: account, wabaId: id, changed: phones !== null, phoneNumberIds }));
+      return phones !== null;
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      console.log(JSON.stringify({ event: "waba_remove_refused", accountId: account, wabaId: id, changed: false, error }));
+      throw err;
+    }
+  }
+
   /** Operator-only and outside `GatewayApi`, like the reset above: read-only Graph view of a WABA. */
   async diagnoseWaba(wabaId: string, accountId: string) {
     const account = requireAccountId(accountId, "accountId is required");
