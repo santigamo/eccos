@@ -1,0 +1,61 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/edit",
+  "updated": "2026-11-04",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "v-whatsapp-user-profile-name",
+                    "username": "v-username"
+                  },
+                  "wa_id": "v-user-phone",
+                  "user_id": "v-bsuid",
+                  "parent_user_id": "v-parent-bsuid"
+                }
+              ],
+              "messages": [
+                {
+                  "from": "v-user-phone",
+                  "from_user_id": "v-bsuid",
+                  "from_parent_user_id": "v-parent-bsuid",
+                  "id": "v-whatsapp-message-id",
+                  "timestamp": "1750001301",
+                  "type": "edit",
+                  "edit": {
+                    "original_message_id": "v-original-whatsapp-message-id",
+                    "message": {
+                      "context": {
+                        "id": "v-context-id"
+                      },
+                      "type": "image",
+                      "image": {
+                        "caption": "v-media-asset-caption",
+                        "mime_type": "v-media-asset-mime-type",
+                        "sha256": "v-media-asset-sha256-hash",
+                        "id": "v-media-asset-id",
+                        "url": "v-media-asset-url"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

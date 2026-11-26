@@ -1,0 +1,41 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/system",
+  "updated": "2026-08-11",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "messages": [
+                {
+                  "from": "v-user-phone",
+                  "id": "v-whatsapp-message-id",
+                  "timestamp": "1750001201",
+                  "type": "system",
+                  "system": {
+                    "body": "User v-whatsapp-user-profile-name changed from v-user-phone to v-new-whatsapp-user-phone-number",
+                    "wa_id": "v-new-whatsapp-user-id",
+                    "type": "user_changed_number",
+                    "user_id": "v-new-bsuid",
+                    "parent_user_id": "v-new-parent-bsuid",
+                    "previous_user_id": "v-previous-bsuid",
+                    "previous_parent_user_id": "v-previous-parent-bsuid"
+                  }
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

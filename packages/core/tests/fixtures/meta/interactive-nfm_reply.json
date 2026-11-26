@@ -1,0 +1,45 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/flows/guides/flowswebhooks",
+  "updated": "2026-11-04",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "messages": [
+                {
+                  "context": {
+                    "from": "16315558151",
+                    "id": "gBGGEiRVVgBPAgm7FUgc73noXjo"
+                  },
+                  "from": "v-user-phone",
+                  "from_user_id": "v-bsuid",
+                  "id": "v-message-id",
+                  "type": "interactive",
+                  "interactive": {
+                    "type": "nfm_reply",
+                    "nfm_reply": {
+                      "name": "flow",
+                      "body": "Sent",
+                      "response_json": "{\"flow_token\": \"v-flow-token\", \"optional_param1\": \"v-value1\", \"optional_param2\": \"v-value2\"}"
+                    }
+                  },
+                  "timestamp": "1770000001"
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

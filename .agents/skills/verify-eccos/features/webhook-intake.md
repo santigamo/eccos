@@ -10,6 +10,7 @@ Meta calls `/webhooks/meta`. Eccos answers Meta's verification challenge, reject
 - `intake-forward` posts the event to the forwarding target with `x-eccos-signature`.
 - `intake-unknown` answers 200 and stores nothing for a WABA nobody registered.
 - `intake-dedup` stores a repeated Meta delivery once.
+- `intake-referral` stores and forwards the click-to-WhatsApp ad `referral` of an inbound message, camel-cased.
 
 ## How to get to it (user POV)
 
@@ -33,6 +34,7 @@ Preconditions:
 - **Forwarded.** Run `$V fake-log /subscriber/`. One line has `"path":"/subscriber/hook"`, a header `x-eccos-signature` starting `sha256=`, and a body whose `events[0]` has `"type":"reply"`, `"messageId":"wamid.VERIFY1"`, `"text":"hola"`. The Events row's forward state reads `forwarded` (drawn in capitals as `FORWARDED`).
 - **Unknown WABA.** Run `$V webhook .agents/skills/verify-eccos/fixtures/unknown-waba.json`. The output is `{"ok":true,"received":0}` and `HTTP 200`. `grep webhook_ignored .verify/run/gateway.log | tail -1` shows `"reason":"unknown_waba"`.
 - **Dedup.** Run the ingest command a second time. The Events page still reads `1 event`, `$V fake-log /subscriber/ | grep -c wamid.VERIFY1` still prints `1`, and `/export` still has one entry under `data.inbound` and one under `data.deliveries`.
+- **Ad referral.** Run `$V webhook .agents/skills/verify-eccos/fixtures/inbound-ad-referral.json`, Meta's documented click-to-WhatsApp example. The output is `{"ok":true,"received":1}` and `HTTP 200`. `$V fake-log wamid.VERIFYAD1` shows one `/subscriber/hook` line whose `events[0]` has `"type":"reply"` and a `referral` with `"sourceType":"ad"`, `"sourceId":"120226305854810726"`, a `ctwaClid` starting `Aff-n8ZT` and `"welcomeMessage":{"text":"Hi there! Let us know how we can help!"}`. In `/export`, the `data.inbound` entry for `wamid.VERIFYAD1` carries the same `referral`. The `wamid.VERIFY1` event from `Ingest` has no `referral` key, in the forward and in `/export`.
 
 ## Gotchas
 
