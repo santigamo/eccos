@@ -389,4 +389,6 @@ export interface MailEnv {
    * `apps/dashboard/wrangler.jsonc` is in a public repo.
    */
   RECCADO_ENDPOINT?: string;
+  /** Var: the support address, sent as Reply-To on auth mail when set. */
+  SUPPORT_EMAIL?: string;
 }

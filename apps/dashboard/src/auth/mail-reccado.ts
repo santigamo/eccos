@@ -10,7 +10,7 @@
  *   Authorization: Bearer <key>
  *   Idempotency-Key: <caller-chosen, MANDATORY — 400 without it>
  *   Content-Type: application/json          # 415 otherwise; 100 KB body cap
- *   {"template":"…","to":"…","variables":{…}}
+ *   {"template":"…","to":"…","variables":{…},"replyTo"?:"…"}
  *
  *   200 {"status":"sent"|"duplicate", "requestId", "providerMessageId"}
  *   202 {"status":"accepted"}
@@ -57,6 +57,8 @@ export interface ReccadoMailEnv {
    * `apps/dashboard/wrangler.jsonc` lives in a public repo.
    */
   RECCADO_ENDPOINT?: string;
+  /** Sent as Reply-To when set, so a reply to a no-reply sender reaches support. */
+  SUPPORT_EMAIL?: string;
 }
 
 /**
@@ -92,6 +94,7 @@ function providerCode(body: ProviderBody): string | undefined {
 export class ReccadoMailSender implements MailSender {
   private readonly apiKey: string;
   private readonly endpoint: string;
+  private readonly replyTo: string | undefined;
 
   constructor(env: ReccadoMailEnv) {
     const apiKey = env.RECCADO_API_KEY?.trim();
@@ -113,6 +116,7 @@ export class ReccadoMailSender implements MailSender {
     // a broken deployment, and it should refuse to boot rather than wait for a
     // user-visible email to fail.
     this.endpoint = validateEndpoint(endpoint);
+    this.replyTo = env.SUPPORT_EMAIL?.trim() || undefined;
   }
 
   async sendTemplate(msg: MailTemplateMessage): Promise<SendOutcome> {
@@ -122,6 +126,7 @@ export class ReccadoMailSender implements MailSender {
       template: msg.template,
       to: msg.to,
       variables: msg.variables,
+      ...(this.replyTo ? { replyTo: this.replyTo } : {}),
     });
     const size = new TextEncoder().encode(body).byteLength;
     if (size > MAX_BODY_BYTES) {

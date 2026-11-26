@@ -293,6 +293,10 @@ later, because there is no later.
 - Raw invitation/reset tokens and URLs are never logged anywhere in the
   dashboard. Logs carry the recipient domain, the template, and the hashed key.
 
+### Reply-To
+
+When the deployment sets `SUPPORT_EMAIL`, auth mail carries it as reccado's `replyTo`, so a reply to the no-reply sender reaches support. Unset, the field is omitted. Funnel emails don't send it: their key's sender is already Santi's mailbox.
+
 ## Funnel emails (eccos-dbb3.4)
 
 Five emails from Santi to a workspace's **owners and admins with a verified
