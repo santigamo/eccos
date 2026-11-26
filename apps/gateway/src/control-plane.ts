@@ -1012,8 +1012,8 @@ export class EccosControlPlane extends DurableObject<Env> {
   }
 
   /** The retention of the account that owns a WABA, asked by the WABA's gateway on
-   * its retention tick. Throws for an unknown WABA, so the caller deletes nothing. */
-  getConversationRetentionDaysForWaba(wabaId: string): number | null {
+   * its retention tick. Null for an unknown WABA, so the caller deletes nothing. */
+  getConversationRetentionDaysForWaba(wabaId: string): { days: number | null } | null {
     const id = validateWabaId(wabaId, "wabaId");
     const row = this.sql
       .exec(
@@ -1021,8 +1021,7 @@ export class EccosControlPlane extends DurableObject<Env> {
         id,
       )
       .toArray()[0];
-    if (!row) throw new Error(`WABA ${id} does not exist`);
-    return (row.days as number | null) ?? null;
+    return row ? { days: (row.days as number | null) ?? null } : null;
   }
 
   /** The plaintext Meta token of a WABA, for its gateway's media downloads on the alarm.
@@ -2175,6 +2174,40 @@ export class EccosControlPlane extends DurableObject<Env> {
       )
       .toArray();
     return updated.length === 1;
+  }
+
+  /**
+   * Operator recovery: forget a WABA and its phones, so routing, `mayAddNumber`,
+   * billing and the phone ownership check no longer see it. The data plane's
+   * history stays. An `active` WABA with phones is refused unless `confirmActiveWabaId`
+   * repeats its id, and a WABA mid-provisioning is refused: a re-registration would restart
+   * its revision at 1, which the in-flight claim would match.
+   * Returns the removed phones, or null when the account does not own the WABA.
+   */
+  async removeWaba(
+    accountId: string,
+    wabaId: string,
+    options: { confirmActiveWabaId?: string } = {},
+  ): Promise<PhoneRecord[] | null> {
+    const account = this.requireAccount(accountId);
+    const id = validateWabaId(wabaId, "wabaId");
+    return this.ctx.storage.transactionSync(() => {
+      const row = this.sql
+        .exec("SELECT status, provisioning_lease_until FROM wabas WHERE account_id = ? AND waba_id = ?", account, id)
+        .toArray()[0];
+      if (!row) return null;
+      if (row.status === "pending" && Number(row.provisioning_lease_until ?? 0) > Date.now()) {
+        throw new Error(`WABA "${id}" is being provisioned; retry once the attempt finishes (at most a minute)`);
+      }
+      const phones = phonesOf(id, this.sql);
+      if (row.status === "active" && phones.length > 0 && options?.confirmActiveWabaId !== id) {
+        throw new Error(`WABA "${id}" is active with ${phones.length} phone(s); pass confirmActiveWabaId to remove it`);
+      }
+      this.sql.exec("DELETE FROM phones WHERE waba_id = ?", id);
+      this.sql.exec("DELETE FROM wabas WHERE account_id = ? AND waba_id = ?", account, id);
+      cancelSubscriberSecretClaims(this.sql, account, id);
+      return phones;
+    });
   }
 
   /**

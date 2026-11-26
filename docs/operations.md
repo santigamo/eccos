@@ -369,6 +369,8 @@ binding (each call, including a refused reset, is logged with its ids):
 - `GatewayRPC.resetWabaSubscription(wabaId, accountId)` deletes and re-creates the app's `subscribed_apps`
   entry. Use it when `diagnoseWaba` lists the subscription but the app's `health_status` says it is "not
   subscribed to the message webhook" and no webhooks arrive; the console's Re-subscribe only POSTs.
+- `GatewayRPC.removeWaba(wabaId, accountId, options)` removes a WABA and its phones from the account;
+  see [Removing a WABA](#removing-a-waba).
 
 While a WABA is `failed`, Meta's webhooks for it are held (up to 5000 events, 3 days), not dropped. They
 are ingested and forwarded when the WABA becomes `active`, after a `reconcileWaba` or a new Embedded
@@ -399,6 +401,41 @@ Request Type "Coexistence Data Synchronization APIs and Webhooks").
 Note that a 200 on the history sync means Meta *accepted* the request, not that history will
 arrive: a business that turned history sharing off surfaces later as `2593109` on the `history`
 webhook.
+
+## Removing a WABA
+
+When a customer has to onboard the same number into a new WABA (for example, the old one is stuck
+with a previous provider's credit line, Meta `#10` / `2593184`), the old WABA blocks it: it still
+counts toward `mayAddNumber`, so a `setup` account cannot add the number, and the phone ownership
+check refuses a `phone_number_id` registered to another WABA. Such a WABA usually provisioned
+`active` (receiving works, sends fail), so confirm the id in the error, then call
+`GatewayRPC.removeWaba(wabaId, accountId, { confirmActiveWabaId: wabaId })` remotely.
+
+Remove it **right before** the customer runs Embedded Signup again: from the removal on, Meta's
+webhooks for the old WABA are dropped (answered 200 and ignored), not held. Check its scheduled sends
+and broadcasts first: they stay in the old WABA's Durable Object, are not moved to the new one, and
+keep retrying until they expire.
+
+- **Removed:** the control plane's `wabas` row and its `phones` rows. The console stops listing the
+  WABA, `mayAddNumber`, billing and the ops census stop counting its numbers, and the `/v1/wabas/<id>`
+  routes and console RPCs answer as for a WABA the account does not own (export and erasure
+  included). Pending subscriber-secret claims for it are cancelled.
+- **Kept:** the WABA's Durable Object (history, contacts, deliveries, held webhooks, forwarding URL
+  and secret) and its R2 media under `waba/<wabaId>/media/`. Its alarm goes quiet: nothing in it
+  retries on a timer once the control plane no longer knows the WABA. Deleting the data is a
+  data-lifecycle decision (`docs/data-lifecycle.md`). The Durable Object is named by the WABA id
+  alone, so if the **same WABA id** is ever registered again, to this account or another, it comes
+  back with that data and forwarding config: erase or reset it before registering it elsewhere.
+- **Not touched:** the app's subscription on Meta (remove it in WhatsApp Manager if needed), the
+  account's connect links, and the funnel clock (`connected_at`, `activated_at`). On a `setup`
+  account, read `listAccountResources(accountId).account.funnel` afterwards: inbound traffic on the
+  stuck WABA may have started the activation window while sends never worked, and that is settled
+  with the billing tooling, not by removing WABAs.
+- **Guards:** a WABA the account does not own returns `false` and changes nothing. An `active` WABA
+  with phones is refused (it throws) unless `confirmActiveWabaId` repeats its id, so a typo or an
+  edited command cannot cut off a live number. A `pending` WABA whose provisioning attempt still
+  holds its lease is refused; retry after a minute. Every call is logged as `waba_removed` (with the
+  removed `phoneNumberIds`) or `waba_remove_refused` (with the error).
 
 ## Follow-ups
 
