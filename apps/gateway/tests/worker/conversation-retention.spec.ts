@@ -79,15 +79,13 @@ describe("account conversation retention", () => {
     expect(await rpc().setConversationRetention("acct-a", 3650)).toBe(3650);
   });
 
-  it("answers a WABA's retention from its account, and refuses an unknown WABA", async () => {
+  it("answers a WABA's retention from its account, and null for an unknown WABA", async () => {
     await bootstrapAccount("acct-b", "WABA_B", [{ phoneNumberId: "PNID_B" }]);
     await rpc().setConversationRetention("acct-a", 90);
 
-    expect(await cp((i) => i.getConversationRetentionDaysForWaba("WABA_A"))).toBe(90);
-    expect(await cp((i) => i.getConversationRetentionDaysForWaba("WABA_B"))).toBeNull();
-    await expect(cp((i) => i.getConversationRetentionDaysForWaba("WABA_MISSING"))).rejects.toThrow(
-      /does not exist/,
-    );
+    expect(await cp((i) => i.getConversationRetentionDaysForWaba("WABA_A"))).toEqual({ days: 90 });
+    expect(await cp((i) => i.getConversationRetentionDaysForWaba("WABA_B"))).toEqual({ days: null });
+    expect(await cp((i) => i.getConversationRetentionDaysForWaba("WABA_MISSING"))).toBeNull();
   });
 
   it("keeps each account's setting out of every other account's reach", async () => {
@@ -152,7 +150,7 @@ describe("conversation retention sweep", () => {
     });
   });
 
-  it("deletes nothing and logs when the window lookup fails", async () => {
+  it("deletes nothing, without a warning, for a WABA the control plane does not know", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const orphanStub = getGatewayStubForWaba(env, "WABA_UNREGISTERED");
     await runInDurableObject(orphanStub, async (i: EccosGateway) => {
@@ -163,6 +161,6 @@ describe("conversation retention sweep", () => {
       expect(countOf(i, "messages")).toBe(1);
       expect(countOf(i, "contacts")).toBe(1);
     });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"event":"lookup-failed"'));
+    expect(warn).not.toHaveBeenCalled();
   });
 });

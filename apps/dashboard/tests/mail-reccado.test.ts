@@ -39,7 +39,7 @@ interface Captured {
   url: string;
   method?: string;
   headers: Record<string, string>;
-  body: { template?: string; to?: string; variables?: Record<string, string> };
+  body: { template?: string; to?: string; variables?: Record<string, string>; replyTo?: string };
 }
 
 const captured: Captured[] = [];
@@ -182,6 +182,18 @@ describe("request shape", () => {
     expect(request.headers["content-type"]).toBe("application/json");
     expect(request.body.template).toBe("verify-email");
     expect(request.body.to).toBe("user@example.com");
+    expect("replyTo" in request.body).toBe(false);
+  });
+
+  test("SUPPORT_EMAIL is sent as replyTo", async () => {
+    mockProvider(200, { status: "sent" });
+    await new ReccadoMailSender({ ...ENV, SUPPORT_EMAIL: " help@example.com " }).sendTemplate({
+      template: "verify-email",
+      to: "user@example.com",
+      variables: { name: "Ada", url: "https://app.eccos.chat/verify-email?token=t" },
+      idempotencyKey: "d".repeat(64),
+    });
+    expect(captured[0]!.body.replyTo).toBe("help@example.com");
   });
 
   test("a trailing slash on the endpoint is normalised away", async () => {

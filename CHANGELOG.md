@@ -38,6 +38,10 @@
 
 ### Forwarded events
 
+- `reply` and inbound `message` now carry `referral` when the customer wrote from a
+  click-to-WhatsApp ad: Meta's `referral` camel-cased, including `ctwaClid` (absent for WhatsApp
+  Status ads) and `welcomeMessage`. Additive: events without one are unchanged. Thanks to
+  @ericviniciusrota-ui (#97, #108).
 - `message_echo` now carries `payload` when a quick-reply or interactive button is tapped in the
   WhatsApp Business app (coexistence). Additive: the field was dropped before.
 - `GET /v1/wabas/{wabaId}/templates` now asks Meta for `id`, `name`, `language`, `status`,

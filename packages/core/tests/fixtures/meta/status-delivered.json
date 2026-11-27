@@ -1,0 +1,62 @@
+{
+  "source": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/status",
+  "updated": "2026-11-18",
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "v-whatsapp-business-account-id",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "v-business-display-phone-number",
+                "phone_number_id": "v-business-phone-number-id"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "v-whatsapp-user-profile-name",
+                    "username": "v-username"
+                  },
+                  "wa_id": "v-user-phone",
+                  "user_id": "v-bsuid",
+                  "parent_user_id": "v-parent-bsuid"
+                }
+              ],
+              "statuses": [
+                {
+                  "id": "v-whatsapp-message-id",
+                  "status": "delivered",
+                  "timestamp": "1760000101",
+                  "recipient_id": "v-user-phone-number-or-group-id",
+                  "recipient_user_id": "v-bsuid",
+                  "recipient_parent_user_id": "v-parent-bsuid",
+                  "recipient_type": "group",
+                  "recipient_participant_id": "v-group-participant-user-phone-number",
+                  "recipient_identity_key_hash": "v-identity-key-hash",
+                  "biz_opaque_callback_data": "v-business-opaque-data",
+                  "conversation": {
+                    "id": "v-conversation-id",
+                    "origin": {
+                      "type": "service"
+                    }
+                  },
+                  "pricing": {
+                    "billable": true,
+                    "pricing_model": "PMP",
+                    "type": "regular",
+                    "category": "service",
+                    "subtype": "paid_exempt"
+                  }
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

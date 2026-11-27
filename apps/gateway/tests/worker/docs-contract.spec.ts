@@ -680,6 +680,8 @@ describe("webhooks.md", () => {
     const headers = new Headers(init.headers);
     expect([...headers.keys()].sort()).toEqual([...documentedHeaders].sort());
     expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("accept")).toBe("*/*");
+    expect(headers.get("user-agent")).toBe("Eccos-Webhooks/1.0 (+https://eccos.chat)");
     expect(headers.get("x-eccos-signature")).toMatch(/^sha256=[0-9a-f]{64}$/);
     expect(headers.get("x-webhook-event")).toBe(
       JSON.parse(body).events[0].type,

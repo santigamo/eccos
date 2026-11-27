@@ -92,10 +92,10 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 ```ts
 | { type: "sent" | "delivered" | "read"; transportMessageId; at; phoneNumberId?; broadcastId?; scheduleKey? }
 | { type: "failed"; transportMessageId; at; errorCode?; errorMessage?; phoneNumberId?; broadcastId?; scheduleKey? }
-| { type: "reply"; from; fromUserId?; messageId; text; at; phoneNumberId?; profileName?; payload?; replyTo?; broadcastId?; scheduleKey? }
+| { type: "reply"; from; fromUserId?; messageId; text; at; phoneNumberId?; profileName?; payload?; replyTo?; referral?; broadcastId?; scheduleKey? }
 | { type: "echo"; to; toUserId?; messageId; text; at; phoneNumberId? }   // staff reply sent from the WhatsApp app (coexistence)
 // Additive: every other message type, inbound and echoed, instead of being dropped
-| { type: "message"; from; fromUserId?; messageId; at; phoneNumberId?; profileName?; replyTo?; broadcastId?; scheduleKey? } & MessageContent
+| { type: "message"; from; fromUserId?; messageId; at; phoneNumberId?; profileName?; replyTo?; referral?; broadcastId?; scheduleKey? } & MessageContent
 | { type: "message_echo"; to; toUserId?; messageId; at; phoneNumberId?; payload? } & MessageContent
 // Emitted by Eccos, not Meta: a scheduled send that will not go out (reason: "rejected" | "expired" | "unknown")
 | { type: "scheduled_failed"; scheduleKey; to; reason; errorCode?; errorMessage?; at; phoneNumberId? }
@@ -104,6 +104,7 @@ Normalized event shape (`WhatsAppCallbackEvent`):
 `reply` / `echo` still carry text, button and interactive replies; `payload` (on `reply`, and on `message_echo` for a button tapped in the Business app) is the quick-reply button `payload` or the interactive `button_reply` / `list_reply` `id`, absent when there is none. `profileName` is
 the sender's WhatsApp profile name, present only when Meta sends one (`reply` and inbound `message` only).
 `replyTo` (`reply` and inbound `message`) is the id of the message the customer replied to: a quoted message, or the template or interactive message whose button they tapped. Absent otherwise. `broadcastId` (statuses, and `reply`/`message` whose `replyTo` is such a message) names the broadcast that sent the message, and `scheduleKey` the scheduled send.
+`referral` (`reply` and inbound `message`) is Meta's click-to-WhatsApp ad referral, camel-cased: the ad's id, URL, headline, media and greeting (`welcomeMessage`), and the `ctwaClid` the Conversions API needs (absent for ads shown in WhatsApp Status). Absent when the customer did not come from an ad.
 `fromUserId` / `toUserId` is the customer's business-scoped user id (BSUID, e.g. `US.13491208655302741918`)
 when Meta sends one. For a username user whose phone number Meta withholds, `from` / `to` carries that BSUID
 instead of a number; otherwise `from` / `to` is the phone number as before. A subscriber that

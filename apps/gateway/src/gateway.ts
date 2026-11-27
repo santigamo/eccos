@@ -131,6 +131,7 @@ interface DeliveryRow {
 type ForwardOutcome = { ok: true; httpStatus: number } | { ok: false; reason: string; httpStatus?: number };
 
 const FORWARD_FETCH_TIMEOUT_MS = 5_000;
+const FORWARD_USER_AGENT = "Eccos-Webhooks/1.0 (+https://eccos.chat)";
 /** Sync items (history messages, contacts) applied per alarm wake. Bounds the CPU and
  * memory one invocation spends on a huge history; a backlog keeps the alarm running. */
 const SYNC_BATCH_UNITS = 200;
@@ -2825,8 +2826,11 @@ export class EccosGateway extends DurableObject<Env> {
     if (!refused && !this.hasPendingSyncPayloads()) return null;
     // Every await comes before the reads below: an erase or reprocess can run during it.
     if (refused && !(await this.recordHistorySharingOff(waba))) return SYNC_RETRY_MS;
-    const days = await this.conversationRetentionDays();
-    if (days === undefined) return SYNC_RETRY_MS;
+    const retention = await this.conversationRetention();
+    // A WABA the control plane no longer knows waits for the next webhook, not a timer.
+    if (retention === "missing") return null;
+    if (retention === "unavailable") return SYNC_RETRY_MS;
+    const { days } = retention;
     const cutoff = days === null ? null : now - days * DAY_MS;
     const erased = new Set(
       this.sql.exec(`SELECT digits FROM erased_numbers`).toArray().map((row) => row.digits as string),
@@ -2908,16 +2912,17 @@ export class EccosGateway extends DurableObject<Env> {
     return items;
   }
 
-  /** The workspace's retention window in days (null keeps everything). Undefined when the
-   * control plane cannot say, which is logged: an unknown window is never guessed. */
-  private async conversationRetentionDays(): Promise<number | null | undefined> {
+  /** The workspace's retention window in days (null keeps everything). "missing" when the
+   * control plane does not know the WABA; "unavailable" when it cannot say, which is logged:
+   * an unknown window is never guessed. */
+  private async conversationRetention(): Promise<{ days: number | null } | "missing" | "unavailable"> {
     try {
-      return await getControlPlaneStub(this.env).getConversationRetentionDaysForWaba(this.wabaIdForOps());
+      return (await getControlPlaneStub(this.env).getConversationRetentionDaysForWaba(this.wabaIdForOps())) ?? "missing";
     } catch (error) {
       console.warn(
         JSON.stringify({ level: "warn", area: "retention", event: "lookup-failed", wabaId: this.wabaIdForOps(), error: String(error).slice(0, 200) }),
       );
-      return undefined;
+      return "unavailable";
     }
   }
 
@@ -3155,7 +3160,8 @@ export class EccosGateway extends DurableObject<Env> {
     if (!(await this.purgeErasedMedia())) wakes.push(now + MEDIA_RETRY_MS);
 
     const next = this.sql
-      .exec(`SELECT MIN(next_attempt_at) AS next FROM media WHERE state = 'failed'`)
+      // Only future retries: a due row the token check skipped must not schedule a past alarm.
+      .exec(`SELECT MIN(next_attempt_at) AS next FROM media WHERE state = 'failed' AND next_attempt_at > ?`, now)
       .toArray()[0]?.next;
     if (next != null) wakes.push(Number(next));
     return wakes.length > 0 ? Math.min(...wakes) : null;
@@ -3284,9 +3290,9 @@ export class EccosGateway extends DurableObject<Env> {
    * address book, not a conversation, so it stays with or without messages.
    */
   async pruneConversations(now: number): Promise<void> {
-    const days = await this.conversationRetentionDays();
-    if (days == null) return;
-    const cutoff = now - days * DAY_MS;
+    const retention = await this.conversationRetention();
+    if (typeof retention === "string" || retention.days === null) return;
+    const cutoff = now - retention.days * DAY_MS;
     this.ctx.storage.transactionSync(() => {
       const mediaIds = this.mediaIdsOf(`at < ?`, cutoff);
       this.sql.exec(`DELETE FROM messages WHERE at < ?`, cutoff);
@@ -3441,7 +3447,12 @@ export class EccosGateway extends DurableObject<Env> {
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
-    const headers: Record<string, string> = { "content-type": "application/json" };
+    // Firewalls such as ModSecurity's core rules refuse a request without them (403/406).
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "*/*",
+      "user-agent": FORWARD_USER_AGENT,
+    };
     if (secret) {
       headers["x-eccos-signature"] = await signPayload(payload, secret);
     }

@@ -257,8 +257,10 @@ only code that touches them.
   503 and can be repeated.
 - **Serving.** Read only through the `getMedia` RPC, scoped to the owning account, and streamed by
   the dashboard's `/media/<wabaId>/<mediaId>` route to a signed-in member of the workspace.
-- **Not yet wired.** `deleteMediaForWaba` purges a whole WABA's prefix, but no WABA-deletion path
-  calls it yet, because the gateway has none. A future WABA removal must call it.
+- **Not yet wired.** `deleteMediaForWaba` purges a whole WABA's prefix, but nothing calls it yet.
+  The operator's `removeWaba` (`docs/operations.md`, "Removing a WABA") only unlinks the WABA from
+  the control plane and leaves its Durable Object and R2 media in place on purpose; a path that
+  deletes a WABA's data must call it.
 
 ## Right to erasure (`eraseByPhone`)
 
