@@ -15,40 +15,67 @@ jobs:
   static:
     name: lint & typecheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      # tsc --incremental state from the last run: tsc re-checks only what changed since.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            *.tsbuildinfo
+            apps/*/*.tsbuildinfo
+            packages/*/*.tsbuildinfo
+          key: tsc-${{ github.job }}-${{ github.sha }}
+          restore-keys: tsc-${{ github.job }}-
       - run: bun run lint
       - run: bun run typecheck
 
+  # The Workers suite split by recorded duration (apps/gateway/tests/shards.ts).
   gateway:
-    name: gateway tests
+    name: gateway tests (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: bun run test:workers:gateway --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+  mcp:
+    name: unit & mcp tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - run: bun run test
-      - run: bun run test:workers:gateway
-
-  mcp:
-    name: mcp tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
       - run: bun run test:workers:mcp
 
   dashboard:
     name: dashboard
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      # tsc --incremental state from the last run: tsc re-checks only what changed since.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            *.tsbuildinfo
+            apps/*/*.tsbuildinfo
+            packages/*/*.tsbuildinfo
+          key: tsc-${{ github.job }}-${{ github.sha }}
+          restore-keys: tsc-${{ github.job }}-
       - run: bun run check:dashboard
 
   sites:
     name: site & docs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup

@@ -13,7 +13,7 @@ bun run dev            # Bun target, watch mode (http://localhost:3000)
 bun run check          # every step of CI's parallel jobs; run it before every push
 ./scripts/check-pr-title.sh "<title>"   # CI's separate PR title job: type(scope): subject
 bun run lint           # Biome lint (first step of check)
-bun run typecheck      # regenerates the Workers types, then tsc --noEmit
+bun run typecheck      # regenerates the gateway's Workers types, then tsc --noEmit (the dashboard's is in check:dashboard)
 bun run test           # Bun unit tests (parser, signature, connect, config)
 bun run test:workers   # vitest-pool-workers tests for the Cloudflare Workers target
 bun run deploy         # preflight, then deploy the gateway with apps/gateway/wrangler.production.jsonc
@@ -79,13 +79,14 @@ cannot happen.
 | Rule | Enforced by |
 | --- | --- |
 | Run CI's steps before you push | `bun run check` runs exactly the steps of `.github/workflows/ci.yml`'s jobs: `apps/gateway/tests/ci-check.test.ts` |
+| CI's gateway Workers shards together run every spec file once | `apps/gateway/tests/shards.test.ts` |
 | Lint is clean on every commit | `bun run lint`, first step of `bun run check` |
 | A new test file runs without registering it | `bun run test` globs `packages/*/tests/*.test.ts` and `apps/gateway/tests/*.test.ts` |
 | PR titles read `type(scope): subject` | `scripts/check-pr-title.sh`, run by `.github/workflows/pr-title.yml` |
 | README's event shape matches `WhatsAppCallbackEvent` | `apps/gateway/tests/docs-readme-events.test.ts` |
 | The public docs' event examples and tables match the parser | `apps/gateway/tests/docs-events.test.ts`, `apps/gateway/tests/worker/docs-contract.spec.ts` |
 | The gateway enforces the core template rules for every GatewayRPC caller, with the console's messages | `apps/dashboard/tests/template-rules-agreement.test.ts`, `apps/gateway/tests/worker/create-template.spec.ts`, `apps/gateway/tests/worker/send-test.spec.ts` |
-| Template restated types match `packages/gateway-contract`, optional fields included | `apps/dashboard/src/lib/template-contract-drift.ts`, run by `bun run typecheck` |
+| Template restated types match `packages/gateway-contract`, optional fields included | `apps/dashboard/src/lib/template-contract-drift.ts`, run by `bun run check:dashboard` |
 | Every field Meta documents on the messages webhook reaches the event, or is ignored on purpose with a reason and severity | `packages/core/tests/meta-coverage.test.ts` over `packages/core/tests/fixtures/meta/` (one fixture per Meta reference page) |
 | `packages/core` stays free of HTTP and DB code | Prose only (see Rules) |
 | No secrets in the repository | Prose only (see Rules) |
