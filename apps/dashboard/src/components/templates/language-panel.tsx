@@ -34,6 +34,7 @@ export function LanguagePanel({
   onLanguageChange,
   onRemove,
   onSend,
+  onSendList,
   onDelete,
 }: {
   tab: LanguageTab;
@@ -45,6 +46,7 @@ export function LanguagePanel({
   onLanguageChange: (code: string) => void;
   onRemove: () => void;
   onSend?: () => void;
+  onSendList?: () => void;
   onDelete?: () => void;
 }) {
   const label = languageLabel(tab.language);
@@ -86,7 +88,7 @@ export function LanguagePanel({
         <div className="flex items-center gap-3">
           {tab.status ? <StatusTag status={tab.status} /> : null}
           <span className={`min-w-0 flex-1 ${SECONDARY_TIER}`}>{metaLine(tab)}</span>
-          {onSend || onDelete ? (
+          {onSend || onSendList || onDelete ? (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -97,6 +99,7 @@ export function LanguagePanel({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-40">
                 {onSend ? <DropdownMenuItem onClick={onSend}>Send test</DropdownMenuItem> : null}
+                {onSendList ? <DropdownMenuItem onClick={onSendList}>Send to a list</DropdownMenuItem> : null}
                 {onDelete ? (
                   <DropdownMenuItem variant="destructive" onClick={onDelete}>
                     Delete

@@ -40,6 +40,7 @@ import {
   RECIPIENT_STATUSES,
   type RecipientStatus,
 } from "./broadcasts";
+import { startBroadcast, type BroadcastStart } from "./broadcast-start";
 import {
   MAX_SCHEDULED_BODY_BYTES,
   parseScheduledRequest,
@@ -980,41 +981,51 @@ async function createBroadcastRoute(c: AppContext) {
   const phone = resolvePhone(c, waba, body ?? {});
   if (!phone.ok) return c.json({ ok: false, error: phone.error }, phone.status);
   const { request } = parsed;
-  const stub = getGatewayStubForWaba(c.env, waba.wabaId);
-  const bodyHash = await sendBodyHash(phone.phoneNumberId, request);
-  // A retry answers with the broadcast it created, even if the template changed since.
-  if (key !== undefined) {
-    const replay = await stub.replayBroadcast(account.accountId, key, bodyHash);
-    if (replay.state === "existing") return c.json({ ok: true, broadcast: replay.broadcast }, 202);
-    if (replay.state === "reused") return c.json({ ok: false, error: "idempotency_key_reused" }, 422);
-  }
-
-  // Checked once here rather than failing every recipient at Meta.
-  const refusal = await templateRefusal(c, cid, "broadcast_create", waba, phone.phoneNumberId, request.templateName, request.language);
-  if (refusal) return refusal;
-
-  const created = await stub.createBroadcast({
+  const started = await startBroadcast({
+    stub: getGatewayStubForWaba(c.env, waba.wabaId),
+    cfg: tenantConfig(getAppConfig(c.env), {
+      wabaId: waba.wabaId,
+      phoneNumberId: phone.phoneNumberId,
+      metaAccessToken: waba.metaAccessToken,
+      fetch: watched(c, waba.wabaId),
+    }),
     accountId: account.accountId,
     phoneNumberId: phone.phoneNumberId,
-    request,
-    duplicates: parsed.duplicates,
     ratePerMinute: sendRatePerMinute(c.env, account.accountId),
-    ...(key !== undefined ? { idempotencyKey: key } : {}),
-    bodyHash,
+    templateName: request.templateName,
+    language: request.language,
+    ...(key !== undefined ? { key } : {}),
+    bodyHash: await sendBodyHash(phone.phoneNumberId, request),
+    build: () => parsed,
   });
-  if (created.state === "reused") {
-    return c.json({ ok: false, error: "idempotency_key_reused" }, 422);
-  }
-  if (created.state === "busy") {
-    return c.json({ ok: false, error: "too many running broadcasts on this WABA; wait for one to finish or cancel one" }, 409);
+  if (!started.ok) {
+    const refused = broadcastRefusal(c, started);
+    logEvent("broadcast_create", cid, refused.status, { wabaId: waba.wabaId, reason: started.code });
+    return refused;
   }
   logEvent("broadcast_create", cid, 202, {
     wabaId: waba.wabaId,
-    broadcastId: created.broadcast?.id,
+    broadcastId: started.broadcast.id,
     recipients: request.recipients.length,
-    replayed: created.state === "existing",
+    replayed: started.replayed,
   });
-  return c.json({ ok: true, broadcast: created.broadcast }, 202);
+  return c.json({ ok: true, broadcast: started.broadcast }, 202);
+}
+
+/** The HTTP answer for a broadcast the shared path refused. */
+function broadcastRefusal(c: AppContext, started: Extract<BroadcastStart, { ok: false }>): Response {
+  switch (started.code) {
+    case "key_reused":
+      return c.json({ ok: false, error: "idempotency_key_reused" }, 422);
+    case "too_many_running":
+      return c.json({ ok: false, error: "too many running broadcasts on this WABA; wait for one to finish or cancel one" }, 409);
+    case "templates_unreachable":
+      return c.json({ ok: false, error: started.upstream }, 502);
+    case "template_not_approved":
+      return c.json({ ok: false, error: started.code, templateStatus: started.templateStatus }, 422);
+    default:
+      return c.json({ ok: false, error: started.code }, 422);
+  }
 }
 
 /** The account's WABA stub, or the response that ends the request. */

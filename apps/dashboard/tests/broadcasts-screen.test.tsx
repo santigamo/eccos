@@ -44,6 +44,7 @@ const summary = (over: Record<string, unknown> = {}) => ({
   status: "running",
   phoneNumberId: "phone-a",
   template: { name: "promo_autumn", language: "es" },
+  label: null,
   total: 12,
   duplicatesSkipped: 2,
   ratePerMinute: 60,
@@ -106,6 +107,23 @@ describe("/broadcasts", () => {
     expect(html).toContain(">2,431<");
     expect(html).toContain(">1,102<");
     expect(html).toContain(">640<");
+  });
+
+  test("a label is the row's identity, with the template beneath it", () => {
+    const html = renderList([summary({ label: "Friday pickups" })]);
+    expect(html).toContain("Friday pickups");
+    expect(html).toContain("promo_autumn · es");
+  });
+
+  test("New broadcast is offered to a role that may operate, and to no one else", () => {
+    const operator = { ...readyState, canAdminister: true, canOperate: true, role: "owner" };
+    expect(renderList([summary()], { root: operator })).toContain("New broadcast");
+    expect(renderList([summary()], { root: { ...readyState, canAdminister: false, canOperate: false, role: "viewer" } })).not.toContain(
+      "New broadcast",
+    );
+    const firstRun = renderList([], { root: { ...operator, canAdminister: false, role: "operator" } });
+    expect(firstRun).toContain('href="/broadcasts/new"');
+    expect(firstRun).toContain("You need a template Meta has approved.");
   });
 
   test("a running broadcast reads paused with its queue while the workspace's sending is paused", () => {

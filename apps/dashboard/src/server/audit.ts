@@ -64,6 +64,12 @@ export type SensitiveAction =
    */
   | "broadcast_cancel"
   /**
+   * A broadcast started from the console. Ids and counts only (wabaId, phoneNumberId,
+   * template, language, the recipient count, broadcastId): never a recipient or a value,
+   * same rule as `template_test_send`.
+   */
+  | "broadcast_create"
+  /**
    * A pending scheduled send stopped from the console. Ids only (wabaId, key): never
    * the recipient, same rule as `broadcast_cancel`.
    */

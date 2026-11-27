@@ -24,8 +24,12 @@ import { getMedia as getStoredMedia } from "./media-store";
 import { isIdempotencyKey, resolveRetentionDays, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
 import { SUBSCRIPTION_REQUIRED } from "./connect-policy";
+import { broadcastPreflight, createConsoleBroadcast } from "./broadcast-rpc";
 import type {
   AccountKeyResource,
+  BroadcastPreflight,
+  CreateBroadcastInput,
+  CreateBroadcastResult,
   BroadcastDetail,
   BroadcastListOpts,
   BroadcastOpts,
@@ -447,6 +451,16 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     // Ownership only, whatever the WABA's status: stopping sends is always safe.
     const stub = await this.ownedStub(input.wabaId, accountId);
     return stub.cancelBroadcast(accountId, input.broadcastId);
+  }
+
+  async createBroadcast(input: CreateBroadcastInput, accountId: string): Promise<CreateBroadcastResult> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return createConsoleBroadcast(this.env, (wabaId) => this.watchedFetch(wabaId), input, account);
+  }
+
+  async readBroadcastPreflight(org: ScopedOrg): Promise<ScopedRead<BroadcastPreflight>> {
+    const { scope } = await this.selected(org);
+    return { scope, data: await broadcastPreflight(this.env, scope.wabaId, scope.accountId) };
   }
 
   async readScheduled(org: ScopedOrg, opts: ScheduledListOpts): Promise<ScopedRead<ScheduledPage>> {

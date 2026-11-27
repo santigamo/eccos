@@ -38,6 +38,7 @@
     "better-auth": "1.7.27",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "libphonenumber-js": "^1.13.17",
     "lucide-react": "^1.34.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

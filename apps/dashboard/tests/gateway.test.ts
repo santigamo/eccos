@@ -287,6 +287,7 @@ const {
   listBroadcasts,
   getBroadcast,
   cancelBroadcast,
+  createBroadcast,
   listScheduled,
   cancelScheduled,
   scheduleSend,
@@ -1330,6 +1331,105 @@ describe("broadcasts", () => {
     expect(audit).toContain('"action":"broadcast_cancel"');
     expect(audit).toContain(BC);
     expect(audit).not.toMatch(/\d{9,}/);
+  });
+
+  const BROADCAST = {
+    wabaId: "waba-a",
+    phoneNumberId: "phone-a",
+    templateName: "order_ready",
+    languageCode: "es",
+    label: "Friday pickups",
+    columns: [{ kind: "body", key: "1" }],
+    recipients: [
+      { to: "34600111222", values: ["Ana Lovelace"] },
+      { to: "34600333444", values: ["Luis"] },
+    ],
+    idempotencyKey: "0f8fad5b-d9cb-469f-a165-70867728950e",
+  };
+
+  async function auditOf(run: () => Promise<unknown>): Promise<string | undefined> {
+    const emitted: string[] = [];
+    const original = console.info;
+    console.info = (line: string) => {
+      emitted.push(String(line));
+    };
+    try {
+      await run();
+    } finally {
+      console.info = original;
+    }
+    return emitted.find((line) => line.includes('"area":"audit"'));
+  }
+
+  test("createBroadcast: an operator starts one with the session's account, and the audit line holds ids and counts only", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      createBroadcast: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true, replayed: false, broadcast: { id: BC, total: 2 } };
+      },
+    });
+    let res: Awaited<ReturnType<typeof createBroadcast>> | undefined;
+    const audit = await auditOf(async () => {
+      res = await createBroadcast({ data: BROADCAST });
+    });
+    expect(res).toMatchObject({ ok: true, data: { ok: true, broadcast: { id: BC } } });
+    expect(calls).toEqual([[{ ...BROADCAST, wabaId: "waba-a" }, "account-a"]]);
+    expect(audit).toContain('"action":"broadcast_create"');
+    expect(audit).toContain('"recipients":2');
+    expect(audit).toContain(BC);
+    expect(audit).not.toContain("34600");
+    expect(audit).not.toContain("Ana Lovelace");
+    expect(audit).not.toContain("Friday pickups");
+  });
+
+  test("createBroadcast: a viewer is refused typed forbidden and the gateway is untouched", async () => {
+    let called = false;
+    withResources({
+      createBroadcast: async () => {
+        called = true;
+        return { ok: false, code: "no_phone", detail: null };
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    const res = await createBroadcast({ data: BROADCAST });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("createBroadcast: a WABA the account does not own is refused before the gateway", async () => {
+    let called = false;
+    withResources({
+      createBroadcast: async () => {
+        called = true;
+        return { ok: false, code: "no_phone", detail: null };
+      },
+    });
+    const res = await createBroadcast({ data: { ...BROADCAST, wabaId: "waba-foreign" } });
+    expect(res).toMatchObject({ ok: false, kind: "unreachable" });
+    expect(called).toBe(false);
+  });
+
+  test("createBroadcast: a workspace in its unpaid setup window is refused, audited denied, the gateway untouched", async () => {
+    let called = false;
+    withResources({
+      createBroadcast: async () => {
+        called = true;
+        return { ok: false, code: "no_phone", detail: null };
+      },
+      listAccountResources: async () => {
+        const resources = resourcesFor("account-a");
+        return { ...resources, account: { ...resources.account, billingStatus: "setup" } };
+      },
+    });
+    let res: Awaited<ReturnType<typeof createBroadcast>> | undefined;
+    const audit = await auditOf(async () => {
+      res = await createBroadcast({ data: BROADCAST });
+    });
+    expect(res).toEqual({ ok: true, data: { ok: false, code: "setup_window", detail: null } });
+    expect(called).toBe(false);
+    expect(audit).toContain('"outcome":"denied"');
+    expect(audit).toContain('"detail":"setup_window"');
   });
 
   test("cancelBroadcast: one that had already finished is audited failed (ended), not success", async () => {

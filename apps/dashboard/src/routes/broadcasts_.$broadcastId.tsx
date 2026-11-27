@@ -229,7 +229,7 @@ function BroadcastPage() {
 
   return (
     <Page
-      title={`${broadcast.template.name} · ${broadcast.template.language}`}
+      title={broadcast.label ?? `${broadcast.template.name} · ${broadcast.template.language}`}
       kicker="Sending"
       actions={
         <>
@@ -251,6 +251,11 @@ function BroadcastPage() {
     >
       <div className="mb-3 flex items-center gap-2">
         <StatusTag status={state.label} />
+        {broadcast.label ? (
+          <span className="font-mono text-xs text-muted-foreground">
+            {broadcast.template.name} · {broadcast.template.language}
+          </span>
+        ) : null}
         {state.label === "paused" ? (
           <span className="text-xs text-muted-foreground">{state.reason}</span>
         ) : null}

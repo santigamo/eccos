@@ -19,10 +19,11 @@ import { loaderFailure } from "../lib/failure";
 import { rootRole } from "../lib/root-role";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchWabaId } from "../lib/search";
-import { rootSendsPaused } from "../lib/sends-paused";
+import { broadcastBlock, rootSendsPaused } from "../lib/sends-paused";
 import { gatewayOriginOrNull, listBroadcasts } from "../server/gateway";
 import type { BroadcastSummary } from "../server/gateway";
 import { COUNT_LINK, Page, StatusTag, fmtCount, fmtTs } from "../ui";
+import { buttonVariants } from "@/components/ui/button";
 
 /**
  * ── BROADCASTS ──────────────────────────────────────────────────────────────
@@ -82,8 +83,19 @@ function broadcastColumns({ wabaId, showPhone = false, paused }: { wabaId?: stri
             onClick={(event) => event.stopPropagation()}
             className={`text-foreground ${COUNT_LINK} hover:text-ink`}
           >
-            {row.template.name}
-            <span className="text-muted-foreground"> · {row.template.language}</span>
+            {row.label ? (
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">{row.label}</span>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {row.template.name} · {row.template.language}
+                </span>
+              </span>
+            ) : (
+              <>
+                {row.template.name}
+                <span className="text-muted-foreground"> · {row.template.language}</span>
+              </>
+            )}
           </Link>
         );
       },
@@ -186,6 +198,13 @@ function BroadcastsPage() {
   const navigate = Route.useNavigate();
   const liveRefresh = useLiveRefresh("broadcasts");
   const refreshControls = <RefreshControls {...liveRefresh} />;
+  const canOperate = rootRole(root)?.canOperate ?? false;
+  const newSearch = wabaId ? { wabaId } : {};
+  const newBroadcast = canOperate ? (
+    <Link to="/broadcasts/new" search={newSearch} className={buttonVariants()}>
+      New broadcast
+    </Link>
+  ) : null;
   const rows = useMemo(() => (result.ok ? result.data.items : []), [result]);
 
   if (!result.ok) {
@@ -216,6 +235,16 @@ function BroadcastsPage() {
             guide: GUIDE,
             canCreateKey: rootRole(root)?.canAdminister ?? false,
           }}
+          action={
+            newBroadcast ? (
+              <>
+                {newBroadcast}
+                <span className="text-sm text-muted-foreground">
+                  {broadcastBlock(root) ?? "Paste a list or upload a CSV. You need a template Meta has approved."}
+                </span>
+              </>
+            ) : undefined
+          }
           fullRequestLabel="The full request · one recipient shown"
           example={<BroadcastExample />}
           footnote="A broadcast starts as soon as Eccos accepts the request. You can cancel it here while it runs; messages already sent cannot be recalled."
@@ -228,7 +257,12 @@ function BroadcastsPage() {
     <Page
       title="Broadcasts"
       kicker="Sending"
-      actions={refreshControls}
+      actions={
+        <>
+          {refreshControls}
+          {newBroadcast}
+        </>
+      }
       intro={
         <>
           One approved template to up to 10,000 people. Eccos paces the sends and reports every recipient here.{" "}

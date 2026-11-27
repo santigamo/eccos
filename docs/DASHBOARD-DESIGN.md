@@ -227,6 +227,15 @@ the confirm register); closing the tab gets the browser's own warning. A tab swi
 changes `?language=` and is never a departure. A fully successful create returns to
 the list with a toast and no tinted rows; nothing is stored between visits.
 
+**A review is a page state, not a dialog.** When what the operator confirms is a set of numbers the
+console derived rather than something they composed by hand (a pasted list of thousands becoming a
+broadcast), the confirmation needs room: a facts strip, the message, each caveat beside the fact it
+qualifies. `/broadcasts/new` holds Compose and Review on one route (`?step=review`): entering Review
+freezes one payload and mints its idempotency key, `← Edit` returns with everything kept, and the
+leave guard covers both because a step change never changes the path (`lib/leave-blocker.ts`). The
+estimated end time on that review is the one localised time outside `/scheduled`: it is a plan read
+before committing hours of sending, not evidence.
+
 **The two edges that get mis-cut.**
 
 - **An irreversible side effect does not by itself pull a surface into the confirm

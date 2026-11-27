@@ -92,6 +92,10 @@ const STATUS_TONES: Record<string, StatusTone> = {
   halted: "destructive",
   // Meta may have sent it, and Eccos never retries it: the operator has to look.
   unknown: "warning",
+  // A recipient list's skipped rows (/broadcasts/new). A duplicate is harmless and stays neutral.
+  "invalid number": "destructive",
+  "missing value": "warning",
+  "too long": "destructive",
 }
 
 const TONE_CLASSES: Record<StatusTone, string> = {

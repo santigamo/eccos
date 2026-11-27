@@ -30,11 +30,14 @@ export function DiscardDraftDialog({
   editing,
   onKeep,
   onDiscard,
+  copy,
 }: {
   submitting: boolean;
   editing: boolean;
   onKeep: () => void;
   onDiscard: () => void;
+  /** Another draft's own words (a broadcast's list, not a template's fields). */
+  copy?: { title: string; description: string };
 }) {
   return (
     <AlertDialog
@@ -45,8 +48,8 @@ export function DiscardDraftDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{editing ? "Discard these changes?" : "Discard this draft?"}</AlertDialogTitle>
-          <AlertDialogDescription>{discardDraftCopy(submitting, editing)}</AlertDialogDescription>
+          <AlertDialogTitle>{copy?.title ?? (editing ? "Discard these changes?" : "Discard this draft?")}</AlertDialogTitle>
+          <AlertDialogDescription>{copy?.description ?? discardDraftCopy(submitting, editing)}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Keep editing</AlertDialogCancel>
