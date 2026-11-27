@@ -42,7 +42,8 @@ export interface ScheduledRequest {
   expiresAt: number;
 }
 
-export type ParsedScheduled = { ok: true; request: ScheduledRequest } | { ok: false; error: string };
+/** `time` marks a refusal of sendAt or expiresAt, as opposed to the recipient or the template. */
+export type ParsedScheduled = { ok: true; request: ScheduledRequest } | { ok: false; error: string; time?: true };
 
 type Row = Record<string, SqlStorageValue>;
 
@@ -65,22 +66,22 @@ export function parseScheduledRequest(body: unknown, now: number): ParsedSchedul
   if (!template.ok) return template;
   const sendAt = parseInstant(record.sendAt);
   if (sendAt === null) {
-    return { ok: false, error: "sendAt must be epoch milliseconds or an ISO 8601 time with a timezone" };
+    return { ok: false, error: "sendAt must be epoch milliseconds or an ISO 8601 time with a timezone", time: true };
   }
-  if (sendAt > now + MAX_SCHEDULE_AHEAD_MS) return { ok: false, error: "sendAt can be at most 90 days ahead" };
+  if (sendAt > now + MAX_SCHEDULE_AHEAD_MS) return { ok: false, error: "sendAt can be at most 90 days ahead", time: true };
   let expiresAt = sendAt + DEFAULT_EXPIRY_MS;
   if (record.expiresAt !== undefined) {
     const parsed = parseInstant(record.expiresAt);
     if (parsed === null) {
-      return { ok: false, error: "expiresAt must be epoch milliseconds or an ISO 8601 time with a timezone" };
+      return { ok: false, error: "expiresAt must be epoch milliseconds or an ISO 8601 time with a timezone", time: true };
     }
     expiresAt = parsed;
   }
-  if (expiresAt <= sendAt) return { ok: false, error: "expiresAt must be after sendAt" };
+  if (expiresAt <= sendAt) return { ok: false, error: "expiresAt must be after sendAt", time: true };
   if (expiresAt > sendAt + MAX_EXPIRY_AFTER_SEND_MS) {
-    return { ok: false, error: "expiresAt can be at most 7 days after sendAt" };
+    return { ok: false, error: "expiresAt can be at most 7 days after sendAt", time: true };
   }
-  if (expiresAt <= now) return { ok: false, error: "expiresAt is in the past" };
+  if (expiresAt <= now) return { ok: false, error: "expiresAt is in the past", time: true };
   return {
     ok: true,
     request: {

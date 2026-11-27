@@ -497,7 +497,7 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
       },
       Date.now(),
     );
-    if (!parsed.ok) return { ok: false, code: "invalid_time", detail: parsed.error };
+    if (!parsed.ok) return { ok: false, code: parsed.time ? "invalid_time" : "invalid_request", detail: parsed.error };
 
     const cfg = tenantConfig(getAppConfig(this.env), {
       wabaId: waba.wabaId,

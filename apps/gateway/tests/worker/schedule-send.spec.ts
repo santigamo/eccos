@@ -119,6 +119,25 @@ describe("GatewayRPC.scheduleSend", () => {
     }
   });
 
+  it("calls a refusal that is not about the time invalid_request, with the gateway's reason", async () => {
+    const bodyParams = Array.from({ length: 30 }, () => "x".repeat(1000));
+    const result = await rpc().scheduleSend(input({ bodyValues: undefined, bodyParams }), TEST_ACCOUNT_ID);
+    expect(result).toEqual({ ok: false, code: "invalid_request", detail: "template.components are too large" });
+  });
+
+  it("creates once when two requests race for the same key", async () => {
+    const results = await Promise.all([
+      rpc().scheduleSend(input({ key: "race" }), TEST_ACCOUNT_ID),
+      rpc().scheduleSend(input({ key: "race", to: "34600999888" }), TEST_ACCOUNT_ID),
+    ]);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok && result.code === "key_exists")).toHaveLength(1);
+    const stored = await runInDurableObject(gatewayStub(), (instance: EccosGateway) =>
+      instance.sql.exec("SELECT COUNT(*) AS n FROM scheduled_sends WHERE key = 'race'").one().n,
+    );
+    expect(stored).toBe(1);
+  });
+
   it("refuses a template Meta does not list as approved, or cannot be asked about", async () => {
     templateStatus = "PAUSED";
     expect(await rpc().scheduleSend(input(), TEST_ACCOUNT_ID)).toMatchObject({

@@ -289,6 +289,8 @@ export type ScheduleSendFailureCode =
   | "too_many_pending"
   /** `detail` names the broken time rule. */
   | "invalid_time"
+  /** Any other refusal of the request (the recipient, the template's size); `detail` says which. */
+  | "invalid_request"
   | "template_not_found"
   /** `templateStatus` is Meta's status for it. */
   | "template_not_approved"
