@@ -1,6 +1,6 @@
 /** App-level platform config + bootstrap secrets, shared by every tenant. */
 interface Env {
-  /** Telegram HQ ops alerts and the daily census (src/ops-alert.ts); all three or none. */
+  /** Telegram HQ ops alerts (src/ops-alert.ts); all three or none. */
   OPS_TELEGRAM_BOT_TOKEN?: string;
   OPS_TELEGRAM_CHAT_ID?: string;
   OPS_TELEGRAM_THREAD_ID?: string;

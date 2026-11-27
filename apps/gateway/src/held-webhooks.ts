@@ -24,7 +24,7 @@ export interface HeldBatch {
   events: WhatsAppCallbackEvent[];
 }
 
-export function heldEventCount(sql: SqlStorage): number {
+function heldEventCount(sql: SqlStorage): number {
   return Number(sql.exec("SELECT COALESCE(SUM(event_count), 0) AS n FROM held_webhooks").one().n);
 }
 
