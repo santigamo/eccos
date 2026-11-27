@@ -171,7 +171,7 @@ held in `held_webhooks` until it is active, then ingested like any other webhook
 capped at 5000 events per WABA (beyond it a batch is ignored as `hold_full`); a batch Meta
 redelivers is held again and counts toward the cap, though the release ingests it once. A held
 batch is deleted after 3 days by the retention sweep (e.g. a provisioning that stayed `failed`),
-which also raises a rate-limited operator alert. Release is not ordered against live traffic:
+which logs `held_expired`; the daily census lists the events still held. Release is not ordered against live traffic:
 events ingested between activation and the release can reach the subscriber before older held
 ones. Erasure and export reach held events whatever the WABA's status: they check only that the
 account owns the WABA, so content held for a `pending` or `failed` provisioning can still be

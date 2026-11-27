@@ -63,10 +63,10 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 | `delivered` | `forward` | `wabaId`, `phoneNumberId`, `deliveryId`, `attempt`, `httpStatus`, `durationMs` (subscriber response time), `lagMs` (time since the webhook was stored) |
 | `attempt-failed` / `delivery-failed` | `forward` | Same as `delivered`, plus `error`. `delivery-failed` means it exhausted every retry |
 | `drain_yielded` | `forward` | `wabaId`, `reason`, `sent`, `left`: the alarm stopped starting forwards, after its 8 s budget (`reason: "budget"`) or because the circuit opened (`"circuit"`); the rows left go out on the next wakes |
-| `circuit_open` | `forward` | `wabaId`, `failures` (timeouts, network errors, 5xx or 429 in a row), `openUntil` (epoch ms): forwarding paused until then, then one probe delivery. Also raises the "Forwarding paused" alert |
+| `circuit_open` | `forward` | `wabaId`, `failures` (timeouts, network errors, 5xx or 429 in a row), `openUntil` (epoch ms): forwarding paused until then, then one probe delivery |
 | `circuit_closed` | `forward` | `wabaId`, `failures`, `openUntil` (of the pause it ends), `reason`: `answered` (the subscriber answered anything but 5xx or 429), `config` (webhook settings saved) or `retry` (manual retry) |
 | `held_released` | `ingest` | `wabaId`, `released`, `discarded` (events of a phone the active WABA does not register). Runs when provisioning activates the WABA (from `pending`, or from `failed` through a retry or re-check), or on its next webhook if activation raced a hold |
-| `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
+| `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep |
 | `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
 | `outbound_send` | `rpc` | A console send: `source` (`send_test` for a template test, `send_text` for the composer), then the same fields as the worker's `outbound_send` (no `invalid_target`) |
 | `alarm_step_slow` | `alarm` | `wabaId`, `step`, `ms`: one alarm step took 3 s or more. Logged as the step ends, so an alarm the runtime cancels still leaves the slow steps it completed (not the one still running). Steps: `billingHold`, `drain`, `sweep`, `activation`, `sync`, `scheduled`, `broadcast`, `media`, `rearm` |
@@ -80,19 +80,16 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 
 ### Alerts (Telegram HQ, "Eccos ops")
 
-Each alert kind fires at most once per hour per WABA. Occurrences in between are counted and
-reported in the next alert.
+Alerts are for platform problems, not one customer's own systems. A customer's failing or
+paused endpoint (`delivery-failed`, `circuit_open`) and held webhooks that expired
+(`held_expired`) raise no alert: they appear only in the daily census below and in the logs.
 
-- **Deliveries are failing:** a delivery exhausted its retries. Matching logs: `delivery-failed`.
-- **Forwarding paused, the subscriber keeps failing:** the circuit breaker opened (or a probe
-  failed and it reopened with a longer pause). Queued events wait; nothing is dropped. Matching
-  logs: `circuit_open`, then `circuit_closed` when it recovers.
 - **Inbound messages are being dropped:** an active WABA's messages lack a field the parser needs,
-  so Meta changed a shape and that customer's messages are neither stored nor forwarded. Matching
-  logs: `webhook_dropped`.
-- **Held webhooks expired:** events held for a WABA that never became active (e.g. a provisioning
-  that stayed `failed`) were deleted after 3 days, never forwarded. It keeps recurring (at most hourly)
-  while a WABA Meta still sends webhooks for stays `failed`. Matching logs: `held_expired`.
+  so Meta changed a shape and that customer's messages are neither stored nor forwarded. Fires at
+  most once per hour per WABA; drops in between are counted and reported in the next alert.
+  Matching logs: `webhook_dropped`.
+- **WhatsApp token rejected:** Meta answered a Graph call with error 190, so it revoked our access
+  to that WABA (see [operations.md](operations.md#meta-token-expiry)).
 
 ### Daily census (Telegram HQ, "Eccos ops")
 
