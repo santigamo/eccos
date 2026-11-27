@@ -120,9 +120,21 @@ describe("LanguageFields", () => {
     expect(stripped).not.toMatch(/rounded-/);
   });
 
-  test("a read-only language shows its body as text, with no inputs", () => {
-    const html = renderToStaticMarkup(<LanguageReadOnly draft={{ ...EMPTY, body: "Hi {{1}}" }} />);
-    expect(html).toContain("Hi {{1}}");
+  test("a read-only language shows every part as the form would, with no inputs", () => {
+    const html = renderToStaticMarkup(
+      <LanguageReadOnly
+        content={{
+          header: null,
+          body: "Hi {{1}}",
+          examples: [["{{1}}", "Laura"]],
+          footer: "Paper Studio",
+          buttons: [{ text: "Track", target: "https://e.com/o/{{1}}", example: "4821" }],
+        }}
+      />,
+    );
+    for (const part of ["Hi {{1}}", "Example {{1}}", "Laura", "Paper Studio", "Track", "https://e.com/o/{{1}}", "4821"]) {
+      expect(html).toContain(part);
+    }
     expect(html).not.toContain("<input");
     expect(html).not.toContain("<textarea");
   });
@@ -164,7 +176,7 @@ describe("the dynamic URL example", () => {
 
 describe("languageBlocker", () => {
   test("names the language and the first thing missing", () => {
-    expect(languageBlocker({ ...EMPTY, language: "es" }, "created")).toBe("Spanish needs a body before it can be created.");
+    expect(languageBlocker({ ...EMPTY, language: "es" }, "created")).toBe("Español needs a body before it can be created.");
     expect(languageBlocker({ ...EMPTY, body: "Hi {{1}}" }, "submitted")).toBe("English (US) needs an example for {{1}}.");
     expect(languageBlocker({ ...EMPTY, body: "Hi", footer: "Hi {{1}}" }, "created")).toContain("cannot contain variables");
     expect(languageBlocker({ ...EMPTY, body: "Hi {{1}} there, thanks", examples: ["Ada"] }, "created")).toBeNull();

@@ -61,7 +61,7 @@ test("the handoff page survives the next render after the handoff is dropped", a
   );
   await act(async () => root.render(screen("es")));
   expect(peekHandoff("shipping_delay")).toBeUndefined();
-  expect(host.textContent).toContain("Retry Spanish");
+  expect(host.textContent).toContain("Retry Español");
 
   // A tab click: the same screen, another `?language=`.
   await act(async () => root.render(screen("en_US")));

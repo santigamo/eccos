@@ -33,6 +33,7 @@ import {
   type LanguageState,
   type LanguageTab,
   type Notice,
+  storedView,
   type TabState,
 } from "../../lib/template-group";
 import { dropHandoff, peekHandoff, putHandoff } from "../../lib/template-handoff";
@@ -241,6 +242,7 @@ export function TemplateEditor(props: TemplateEditorProps) {
         exampleValues(active.draft).flatMap((value, index) => (value.trim() ? [[String(index + 1), value.trim()]] : [])),
       )
     : {};
+  const stored = active ? storedView(active) : null;
   const reviewed = tabs.filter((tab) => tab.status !== null || tab.error);
   const listSearch = { wabaId: wabaParam };
   const duplicable = active?.row ? authoringReading(active.row).ok : false;
@@ -410,15 +412,28 @@ export function TemplateEditor(props: TemplateEditorProps) {
           {active ? (
             <div className="flex flex-col gap-2">
               <p className={`m-0 ${MACHINE_CLASS}`}>Preview · {languageLabel(active.language)}</p>
-              <WhatsAppPreview
-                businessName={businessName}
-                header={null}
-                body={active.draft.body}
-                bodyValues={previewValues}
-                footer={active.draft.footer.trim()}
-                buttons={active.draft.buttons.map((button) => ({ kind: "url" as const, text: button.text }))}
-                markValues
-              />
+              {stored ? (
+                <WhatsAppPreview
+                  businessName={businessName}
+                  header={stored.header}
+                  headerValues={stored.headerExamples}
+                  body={stored.body}
+                  bodyValues={stored.bodyExamples}
+                  footer={stored.footer}
+                  buttons={stored.buttons}
+                  markValues
+                />
+              ) : (
+                <WhatsAppPreview
+                  businessName={businessName}
+                  header={null}
+                  body={active.draft.body}
+                  bodyValues={previewValues}
+                  footer={active.draft.footer.trim()}
+                  buttons={active.draft.buttons.map((button) => ({ kind: "url" as const, text: button.text }))}
+                  markValues
+                />
+              )}
             </div>
           ) : null}
           {mode === "edit" && reviewed.length > 0 ? (

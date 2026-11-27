@@ -10,20 +10,20 @@ export const LANGUAGES: { code: string; label: string }[] = [
   { code: "en_US", label: "English (US)" },
   { code: "en_GB", label: "English (UK)" },
   { code: "en", label: "English" },
-  { code: "es", label: "Spanish" },
-  { code: "es_ES", label: "Spanish (Spain)" },
-  { code: "es_MX", label: "Spanish (Mexico)" },
-  { code: "pt_BR", label: "Portuguese (Brazil)" },
-  { code: "fr", label: "French" },
-  { code: "de", label: "German" },
-  { code: "it", label: "Italian" },
-  { code: "nl", label: "Dutch" },
-  { code: "ca", label: "Catalan" },
+  { code: "es", label: "Español" },
+  { code: "es_ES", label: "Español (España)" },
+  { code: "es_MX", label: "Español (México)" },
+  { code: "pt_BR", label: "Português (Brasil)" },
+  { code: "fr", label: "Français" },
+  { code: "de", label: "Deutsch" },
+  { code: "it", label: "Italiano" },
+  { code: "nl", label: "Nederlands" },
+  { code: "ca", label: "Català" },
 ];
 
 export const FALLBACK_LANGUAGE = "en_US";
 
-/** "Spanish (Spain)", or the code itself for a language off the curated list. */
+/** "Español (España)", or the code itself for a language off the curated list. */
 export function languageLabel(code: string): string {
   return LANGUAGES.find((entry) => entry.code === code)?.label ?? code;
 }
