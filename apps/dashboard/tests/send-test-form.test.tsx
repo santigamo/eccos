@@ -106,6 +106,26 @@ describe("SendTestForm", () => {
     expect(zero).not.toContain("send-test-param-");
   });
 
+  test("a named template gets one input per variable, labelled as written and prefilled with Meta's example", () => {
+    const html = render(
+      analyzeTemplate({
+        parameter_format: "NAMED",
+        components: [
+          {
+            type: "BODY",
+            text: "Hi {{customer_name}}, order {{order_id}}",
+            example: { body_text_named_params: [{ param_name: "customer_name", example: "Ana" }] },
+          },
+          { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Stop promotions" }] },
+        ],
+      }),
+    );
+    expect(html).toContain("{{customer_name}}");
+    expect(html).toMatch(/id="send-test-param-customer_name"[^>]*value="Ana"/);
+    expect(html).toContain('id="send-test-param-order_id"');
+    expect(html).toContain("Send test message");
+  });
+
   test("an unsupported template gets the reason and NO send button", () => {
     // Data rule 5: no dead buttons. The row still opens the sheet, because
     // "why can I not send this one?" is the operator's actual question — but
@@ -271,9 +291,24 @@ describe("assembleSendTestPayload", () => {
     recipient: "34600000000",
     templateName: "cita_encontrada",
     languageCode: "es",
+    format: "positional" as const,
     headerMedia: null,
     headerLink: "",
   };
+
+  test("a named template sends its values by name; a positional one in order", () => {
+    const named = assembleSendTestPayload({
+      ...BASE,
+      format: "named",
+      params: { customer_name: "Ana", order_id: "A-1" },
+      buttonParams: [],
+    });
+    expect(named.bodyValues).toEqual({ customer_name: "Ana", order_id: "A-1" });
+    expect("bodyParams" in named).toBe(false);
+    const positional = assembleSendTestPayload({ ...BASE, params: { "2": "A-1", "1": "Ana" }, buttonParams: [] });
+    expect(positional.bodyParams).toEqual(["Ana", "A-1"]);
+    expect("bodyValues" in positional).toBe(false);
+  });
 
   test("TRIPWIRE: collected button params actually ride the request", () => {
     // The regression this pins: the sheet once rendered required "Button links"
@@ -283,7 +318,7 @@ describe("assembleSendTestPayload", () => {
     // submit a form, so the payload assembly is exported and pinned here.
     const payload = assembleSendTestPayload({
       ...BASE,
-      params: [],
+      params: {},
       buttonParams: [{ index: 0, text: "T-4" }],
     });
     expect(payload.buttonParams).toEqual([{ index: 0, text: "T-4" }]);
@@ -295,18 +330,19 @@ describe("assembleSendTestPayload", () => {
     // template must not grow a button component at all.
     const empty = assembleSendTestPayload({
       ...BASE,
-      params: [],
+      params: {},
       buttonParams: [
         { index: 0, text: "" },
         { index: 1, text: "  " },
       ],
     });
     expect("buttonParams" in empty).toBe(false);
-    const bodyOnly = assembleSendTestPayload({ ...BASE, params: ["Ada"], buttonParams: [] });
+    const bodyOnly = assembleSendTestPayload({ ...BASE, params: { "1": "Ada" }, buttonParams: [] });
     const {
       recipient: _recipient,
       headerMedia: _headerMedia,
       headerLink: _headerLink,
+      format: _format,
       ...baseTo
     } = BASE;
     expect(bodyOnly).toEqual({ ...baseTo, to: BASE.recipient, bodyParams: ["Ada"] });
@@ -321,7 +357,7 @@ describe("assembleSendTestPayload", () => {
     // broken while the form looks complete.
     const payload = assembleSendTestPayload({
       ...BASE,
-      params: [],
+      params: {},
       buttonParams: [],
       headerMedia: "image",
       headerLink: "  https://cdn.example.com/a.png  ",
@@ -341,7 +377,7 @@ describe("assembleSendTestPayload", () => {
     // the missing parameter.
     const noHeader = assembleSendTestPayload({
       ...BASE,
-      params: [],
+      params: {},
       buttonParams: [],
       headerMedia: null,
       headerLink: "https://cdn.example.com/stale.png",
@@ -349,7 +385,7 @@ describe("assembleSendTestPayload", () => {
     expect("headerMedia" in noHeader).toBe(false);
     const emptyLink = assembleSendTestPayload({
       ...BASE,
-      params: [],
+      params: {},
       buttonParams: [],
       headerMedia: "video",
       headerLink: "   ",
@@ -360,7 +396,7 @@ describe("assembleSendTestPayload", () => {
   test("a mixed send carries both positional groups", () => {
     const payload = assembleSendTestPayload({
       ...BASE,
-      params: ["2026-09-05"],
+      params: { "1": "2026-09-05" },
       buttonParams: [{ index: 0, text: "T-4" }],
     });
     expect(payload.bodyParams).toEqual(["2026-09-05"]);

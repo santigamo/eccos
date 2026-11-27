@@ -1,16 +1,15 @@
 /**
- * What the console's "Send test" sheet can actually build from one Meta
- * message-template row.
+ * What the console can send from one Meta message-template row, and the
+ * send-side `components` that fill it.
  *
- * Scope decided deliberately: **positional `{{1}}..{{n}}` body parameters, the
- * fill for any dynamic URL button, and one link for a media header.** That is
- * the shape `hello_world` (zero parameters, the App Review screencast
- * template), most real templates, and — with §7's create surface — every
- * template this console authors. Everything else — named parameters need a
- * different request shape, authentication/OTP templates, quick-reply, copy-code
- * and flow buttons, carousels, location headers — is its own project. A
- * template this cannot build gets an honest sentence and no send button rather
- * than a button that fails at Meta.
+ * Scope decided deliberately: **body variables, positional `{{1}}..{{n}}` or
+ * named `{{customer_name}}`, the fill for any dynamic URL button, one link for
+ * a media header, and static quick-reply buttons** (they need nothing at send
+ * time; a tap arrives as an ordinary reply). Authentication/OTP templates,
+ * copy-code and flow buttons, carousels, limited-time offers, location headers
+ * and text headers with a variable are their own project. A template this
+ * cannot build gets an honest sentence and no send button rather than a button
+ * that fails at Meta.
  *
  * A MEDIA HEADER IS A LINK, NOT AN UPLOAD. Meta accepts either a media id or a
  * public `https://` URL it fetches itself; the console asks for the URL, so
@@ -18,8 +17,8 @@
  * decision, or a fetcher of its own.
  *
  * Lives in `@eccos/core` so every surface that authors or sends a template
- * (the console, the MCP server) applies one set of rules. Pure: no HTTP, no
- * storage, no framework types.
+ * (the console, the MCP server, the gateway) applies one set of rules. Pure: no
+ * HTTP, no storage, no framework types.
  */
 
 /** The header formats the console can fill from a link. LOCATION is not one of
@@ -32,20 +31,24 @@ export interface TemplateHeaderMedia {
   link: string;
 }
 
+/** What a send of one template must fill. */
+export interface TemplateVariables {
+  /** Meta's `parameter_format`: NAMED parameters travel with their `parameter_name`. */
+  format: "positional" | "named";
+  /** Body variables in order: `"1"`, `"2"`… or the parameter names. `example` is
+   * the value Meta stored with the template, when it has one. */
+  body: { key: string; example: string | null }[];
+  /** The dynamic URL button slots, in BUTTONS order. `index` is the 0-based
+   * slot of that URL button in the template's BUTTONS component; `urlPrefix` is
+   * the URL up to its placeholder, for the input's hint. */
+  buttons: { index: number; urlPrefix: string }[];
+  /** Set when the template's HEADER carries an asset, so the send asks for one
+   * link. `null` for a text header or no header at all. */
+  headerMedia: TemplateHeaderMediaFormat | null;
+}
+
 export type TemplateSendability =
-  | {
-      kind: "ready";
-      paramCount: number;
-      bodyText: string | null;
-      /** The dynamic URL button slots the sheet must fill, in BUTTONS order.
-       * `index` is the 0-based slot of that URL button in the template's
-       * BUTTONS component; `urlPrefix` is the URL up to its `{{n}}`
-       * placeholder, for the input's label/hint. */
-      buttons: { index: number; urlPrefix: string }[];
-      /** Set when the template's HEADER carries an asset, so the sheet asks
-       * for one link. `null` for a text header or no header at all. */
-      headerMedia: TemplateHeaderMediaFormat | null;
-    }
+  | ({ kind: "ready"; bodyText: string | null } & TemplateVariables)
   /** `reason` is operator-facing copy: it is rendered verbatim in the sheet. */
   | { kind: "unsupported"; reason: string };
 
@@ -76,12 +79,16 @@ interface Component {
   format?: string;
   text?: string;
   buttons?: unknown;
+  example?: { body_text?: unknown; body_text_named_params?: unknown };
 }
 
 /** Positional placeholder: `{{1}}`, `{{ 2 }}`. */
 const POSITIONAL = /\{\{\s*(\d+)\s*\}\}/g;
 /** Any placeholder at all, positional or named. */
 const ANY_PLACEHOLDER = /\{\{\s*([^}]+?)\s*\}\}/g;
+/** A named parameter as Meta writes it. Shared with the send validator, so a key
+ * this analysis offers is a key the gateway accepts. */
+const NAMED_KEY = /^[a-z0-9_]+$/i;
 
 const SEND_THROUGH_API = "Send it through the API instead.";
 
@@ -105,36 +112,37 @@ function text(component: Component): string {
   return typeof component.text === "string" ? component.text : "";
 }
 
-/** Does this text carry a placeholder that is not a bare positional index? */
-function hasNamedPlaceholder(value: string): boolean {
-  for (const match of value.matchAll(ANY_PLACEHOLDER)) {
-    if (!/^\d+$/.test(match[1] ?? "")) return true;
+/** Meta's stored body examples by key: `body_text[0]` positionally, or `body_text_named_params`. */
+function bodyExamples(body: Component | undefined): Map<string, string> {
+  const examples = new Map<string, string>();
+  const sets = body?.example?.body_text;
+  const first = Array.isArray(sets) && Array.isArray(sets[0]) ? (sets[0] as unknown[]) : [];
+  first.forEach((value, index) => {
+    if (typeof value === "string") examples.set(String(index + 1), value);
+  });
+  const named = body?.example?.body_text_named_params;
+  for (const entry of Array.isArray(named) ? (named as { param_name?: unknown; example?: unknown }[]) : []) {
+    if (typeof entry?.param_name === "string" && typeof entry.example === "string") {
+      examples.set(entry.param_name, entry.example);
+    }
   }
-  return false;
+  return examples;
 }
 
-function unsupported(reason: string): TemplateSendability {
-  return { kind: "unsupported", reason };
-}
+const unsupported = (reason: string) => ({ unsupported: `${reason} ${SEND_THROUGH_API}` });
 
 /**
- * Decide whether the sheet can send this template, and with how many inputs.
+ * What a send of this template must fill, or why the console cannot build it.
  *
  * The order of the checks is the order of the excuses an operator would want to
  * hear: what the template *is* first, then its header, then its buttons, then
- * its body parameters.
+ * its body variables.
  */
-export function analyzeTemplate(row: TemplateRow): TemplateSendability {
+export function templateVariables(row: TemplateRow): TemplateVariables | { unsupported: string } {
   if (upper(row.category) === "AUTHENTICATION") {
-    return unsupported(
-      `Authentication templates carry a one-time code the console cannot mint. ${SEND_THROUGH_API}`,
-    );
+    return unsupported("Authentication templates carry a one-time code the console cannot mint.");
   }
-  if (upper(row.parameter_format) === "NAMED") {
-    return unsupported(
-      `This template uses named parameters, which the console cannot fill in yet. ${SEND_THROUGH_API}`,
-    );
-  }
+  const declaredNamed = upper(row.parameter_format) === "NAMED";
 
   const parts = components(row);
   if (parts === null) {
@@ -143,44 +151,32 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
     // parameters it answers 132000, which maps to a legible
     // "parameter_mismatch" line. A documented gamble — the alternative is
     // refusing to send `hello_world` on a response shape we cannot control.
-    return { kind: "ready", paramCount: 0, bodyText: null, buttons: [], headerMedia: null };
+    return { format: declaredNamed ? "named" : "positional", body: [], buttons: [], headerMedia: null };
   }
 
-  // Dynamic URL buttons the sheet must fill, in BUTTONS order. Filled while
-  // walking the parts; a template with none stays `[]`.
   const buttonSlots: { index: number; urlPrefix: string }[] = [];
-  // Set if the walk finds a media HEADER; the sheet then asks for one link.
   let headerMedia: TemplateHeaderMediaFormat | null = null;
 
   for (const part of parts) {
     const type = upper(part.type);
     if (type === "CAROUSEL" || type === "LIMITED_TIME_OFFER") {
       return unsupported(
-        `This template has a ${type === "CAROUSEL" ? "carousel" : "limited-time offer"}, which the console cannot build. ${SEND_THROUGH_API}`,
+        `This template has a ${type === "CAROUSEL" ? "carousel" : "limited-time offer"}, which the console cannot build.`,
       );
     }
     if (type === "HEADER") {
       const format = upper(part.format);
       if (format !== "TEXT") {
         const media = MEDIA_HEADER_FORMATS[format];
+        // LOCATION, and anything Meta adds later: not an asset one link can fill.
         if (!media) {
-          // LOCATION, and anything Meta adds later. A location header carries
-          // latitude/longitude/name/address, not an asset, so the one link the
-          // sheet asks for would be the wrong question.
-          return unsupported(
-            `This template's header is a ${format.toLowerCase() || "kind"} the console cannot build. ${SEND_THROUGH_API}`,
-          );
+          return unsupported(`This template's header is a ${format.toLowerCase() || "kind"} the console cannot build.`);
         }
         headerMedia = media;
         continue;
       }
       if (text(part).includes("{{")) {
-        // One parameter group only in v1: a header placeholder would need its
-        // own component in the request, and mixing the two is where positional
-        // numbering starts lying to the operator.
-        return unsupported(
-          `This template's header takes a parameter, which the console cannot fill in yet. ${SEND_THROUGH_API}`,
-        );
+        return unsupported("This template's header takes a parameter, which the console cannot fill in yet.");
       }
     }
     if (type === "BUTTONS") {
@@ -189,21 +185,10 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
         const button = buttons[index] ?? {};
         const buttonType = upper(button.type);
         if (buttonType === "COPY_CODE" || buttonType === "OTP" || buttonType === "FLOW") {
-          return unsupported(
-            `This template has a ${buttonType.toLowerCase()} button, which the console cannot build. ${SEND_THROUGH_API}`,
-          );
-        }
-        if (buttonType === "QUICK_REPLY") {
-          // A quick reply is a reply this console does not handle (no inbound
-          // button-payload handling), so a template offering one is a promise
-          // the operator would have to keep elsewhere.
-          return unsupported(
-            `This template has a quick-reply button, which the console cannot build. ${SEND_THROUGH_API}`,
-          );
+          return unsupported(`This template has a ${buttonType.toLowerCase()} button, which the console cannot build.`);
         }
         const url = (button as { url?: unknown }).url;
         if (typeof url === "string" && url.includes("{{")) {
-          // §5.1: the console fills a dynamic URL's placeholder at send time.
           buttonSlots.push({ index, urlPrefix: url.slice(0, url.indexOf("{{")) });
         }
       }
@@ -212,37 +197,80 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
 
   const body = parts.find((part) => upper(part.type) === "BODY");
   const bodyText = body ? text(body) : "";
-  if (hasNamedPlaceholder(bodyText)) {
-    return unsupported(
-      `This template uses named parameters, which the console cannot fill in yet. ${SEND_THROUGH_API}`,
-    );
+  const examples = bodyExamples(body);
+  const keys = [...new Set(Array.from(bodyText.matchAll(ANY_PLACEHOLDER), (match) => match[1] ?? ""))];
+  const named = keys.filter((key) => !/^\d+$/.test(key));
+  const variables = (format: TemplateVariables["format"], bodyKeys: string[]): TemplateVariables => ({
+    format,
+    body: bodyKeys.map((key) => ({ key, example: examples.get(key) ?? null })),
+    buttons: buttonSlots,
+    headerMedia,
+  });
+
+  if (declaredNamed || named.length > 0) {
+    if (named.length !== keys.length || !named.every((key) => NAMED_KEY.test(key))) {
+      return unsupported("This template's variables cannot be lined up with inputs.");
+    }
+    return variables("named", named);
   }
 
-  const indices = new Set<number>();
-  for (const match of bodyText.matchAll(POSITIONAL)) {
-    indices.add(Number(match[1]));
-  }
-  if (indices.size === 0) {
-    return {
-      kind: "ready",
-      paramCount: 0,
-      bodyText: body ? bodyText : null,
-      buttons: buttonSlots,
-      headerMedia,
-    };
-  }
-  const max = Math.max(...indices);
+  const indices = new Set(Array.from(bodyText.matchAll(POSITIONAL), (match) => Number(match[1])));
+  const max = Math.max(0, ...indices);
   // Meta numbers positional parameters 1..n with no gaps. A row that breaks
-  // that would make the sheet's inputs silently misalign with the message, so
-  // it is refused rather than guessed at.
+  // that would make the inputs silently misalign with the message, so it is
+  // refused rather than guessed at.
   for (let i = 1; i <= max; i++) {
     if (!indices.has(i)) {
-      return unsupported(
-        `This template numbers its parameters with a gap, so the console cannot line them up. ${SEND_THROUGH_API}`,
-      );
+      return unsupported("This template numbers its parameters with a gap, so the console cannot line them up.");
     }
   }
-  return { kind: "ready", paramCount: max, bodyText, buttons: buttonSlots, headerMedia };
+  return variables("positional", Array.from({ length: max }, (_, i) => String(i + 1)));
+}
+
+/** `templateVariables` for the send sheet: ready with the body text for its preview, or unsupported. */
+export function analyzeTemplate(row: TemplateRow): TemplateSendability {
+  const variables = templateVariables(row);
+  if ("unsupported" in variables) return { kind: "unsupported", reason: variables.unsupported };
+  const body = components(row)?.find((part) => upper(part.type) === "BODY");
+  return { kind: "ready", bodyText: body ? text(body) : null, ...variables };
+}
+
+/** What fills one send: body values (positional in order, or NAMED by parameter
+ * name), dynamic URL button values, and a media header link. */
+export interface TemplateValues {
+  body?: string[] | Record<string, string>;
+  buttons?: { index: number; text: string }[];
+  headerMedia?: TemplateHeaderMedia;
+}
+
+/**
+ * Meta's send-side `components` for these values, in Meta's documented order:
+ * header, body, buttons. Lowercase types: UPPER is the CREATE-side Graph shape,
+ * this is the SEND-side one. A body given by name carries each `parameter_name`,
+ * which is what a NAMED template requires.
+ */
+export function buildSendComponents(values: TemplateValues): Record<string, unknown>[] {
+  const { headerMedia, body, buttons = [] } = values;
+  const result: Record<string, unknown>[] = [];
+  if (headerMedia) {
+    result.push({
+      type: "header",
+      parameters: [{ type: headerMedia.format, [headerMedia.format]: { link: headerMedia.link } }],
+    });
+  }
+  const parameters = Array.isArray(body)
+    ? body.map((text) => ({ type: "text", text }))
+    : Object.entries(body ?? {}).map(([name, text]) => ({ type: "text", parameter_name: name, text }));
+  if (parameters.length > 0) result.push({ type: "body", parameters });
+  for (const button of buttons) {
+    result.push({
+      type: "button",
+      sub_type: "url",
+      index: String(button.index),
+      parameters: [{ type: "text", text: button.text }],
+    });
+  }
+  return result;
 }
 
 /** Only an approved template can be sent; everything else is a Meta review state. */
@@ -251,12 +279,12 @@ export function canSendTemplate(status: string | undefined): boolean {
 }
 
 /**
- * Fill a template body's placeholders with what the operator typed, for the
- * sheet's preview. An unfilled slot keeps its `{{n}}` so the preview never
- * pretends a value exists.
+ * Fill a template body's placeholders with what the operator typed, by key
+ * (`"1"` or a parameter name), for the sheet's preview. An unfilled slot keeps
+ * its placeholder so the preview never pretends a value exists.
  */
-export function previewBody(bodyText: string, values: string[]): string {
-  return bodyText.replace(POSITIONAL, (match, index) => values[Number(index) - 1]?.trim() || match);
+export function previewBody(bodyText: string, values: Record<string, string>): string {
+  return bodyText.replace(ANY_PLACEHOLDER, (match, key: string) => values[key]?.trim() || match);
 }
 
 // --- Authoring: the inverse of `analyzeTemplate` -----------------------------
@@ -298,8 +326,7 @@ export function analyzeDraftBody(text: string): DraftAnalysis {
   }
   for (const match of text.matchAll(ANY_PLACEHOLDER)) {
     if (!/^\d+$/.test(match[1] ?? "")) {
-      // The send sheet refuses named parameters outright, so authoring one here
-      // would create a template the console itself could not send.
+      // Authoring stays positional: the create form numbers its examples.
       return {
         ok: false,
         reason: "Named parameters cannot be created here — use {{1}}, {{2}}… instead.",
@@ -395,8 +422,7 @@ export function analyzeDraftFooter(text: string): DraftAnalysis {
  *
  * The mirror of what `analyzeTemplate` admits on the send side: at most three
  * URL buttons (Meta's own ceiling), an https URL, and an example URL required
- * exactly when the URL is dynamic. A quick-reply, OTP or copy-code button is
- * refused here precisely because `analyzeTemplate` refuses it there.
+ * exactly when the URL is dynamic. The console authors link buttons only.
  */
 export function analyzeDraftButtons(buttons: DraftButton[]): DraftAnalysis {
   if (buttons.length > MAX_CREATE_BUTTONS) {
@@ -546,13 +572,15 @@ export interface TemplateSendRequest {
   templateName: string;
   languageCode: string;
   bodyParams?: string[];
+  bodyValues?: Record<string, string>;
   buttonParams?: { index: number; text: string }[];
   headerMedia?: TemplateHeaderMedia;
 }
 
 /**
- * The send rules: the template's name and language, then its positional body
- * values, its dynamic URL button values and its media header link.
+ * The send rules: the template's name and language, then its body values
+ * (positional `bodyParams`, or NAMED `bodyValues` by parameter name, never
+ * both), its dynamic URL button values and its media header link.
  *
  * `buttonParams` gets the same treatment as `bodyParams`: at most three
  * entries, an integer 0-based slot index within bounds, and a text value
@@ -570,16 +598,9 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
   if (raw !== undefined && !Array.isArray(raw)) throw new Error("bodyParams must be an array");
   const bodyParams = (raw ?? []) as unknown[];
   if (bodyParams.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
-  const values = elements(bodyParams).map((value) => {
-    if (typeof value !== "string") throw new Error("template parameters must be strings");
-    const text = value.trim();
-    if (!text) throw new Error("every template parameter needs a value");
-    if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("template parameter is too long");
-    // Meta rejects newlines and tabs inside a text parameter outright, so this
-    // is a refusal the operator can act on rather than a 132000 from Graph.
-    if (/[\n\t]/.test(text)) throw new Error("template parameters cannot contain line breaks");
-    return text;
-  });
+  const values = elements(bodyParams).map(bodyValue);
+  const named = namedBodyValues(record.bodyValues);
+  if (values.length > 0 && named.length > 0) throw new Error("send bodyParams or bodyValues, not both");
   const rawButtons = record.buttonParams;
   if (rawButtons !== undefined && !Array.isArray(rawButtons)) {
     throw new Error("buttonParams must be an array");
@@ -611,9 +632,33 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
     templateName: record.templateName.trim(),
     languageCode: record.languageCode.trim(),
     ...(values.length > 0 ? { bodyParams: values } : {}),
+    ...(named.length > 0 ? { bodyValues: Object.fromEntries(named) } : {}),
     ...(buttons.length > 0 ? { buttonParams: buttons } : {}),
     ...(headerMedia ? { headerMedia } : {}),
   };
+}
+
+function bodyValue(value: unknown): string {
+  if (typeof value !== "string") throw new Error("template parameters must be strings");
+  const text = value.trim();
+  if (!text) throw new Error("every template parameter needs a value");
+  if (text.length > MAX_BODY_PARAM_LENGTH) throw new Error("template parameter is too long");
+  // Meta rejects newlines and tabs inside a text parameter outright, so this
+  // is a refusal the operator can act on rather than a 132000 from Graph.
+  if (/[\n\t]/.test(text)) throw new Error("template parameters cannot contain line breaks");
+  return text;
+}
+
+/** NAMED body values by parameter name. A numbered key belongs in `bodyParams`. */
+function namedBodyValues(value: unknown): [string, string][] {
+  if (value === undefined) return [];
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("bodyValues must be an object");
+  const entries = Object.entries(value);
+  if (entries.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+  return entries.map(([key, text]) => {
+    if (!NAMED_KEY.test(key) || /^\d+$/.test(key)) throw new Error("bodyValues keys must be parameter names");
+    return [key, bodyValue(text)];
+  });
 }
 
 /**
@@ -670,8 +715,7 @@ const MAX_HEADER_LINK_LENGTH = 2048;
  * skipped the UI cannot author a body the "Send test" sheet would later refuse.
  *
  * The refused set: AUTHENTICATION, media headers, quick-replies, carousels and
- * OTP/copy-code/flow buttons stay outside exactly as `analyzeTemplate` keeps
- * them unbuildable.
+ * OTP/copy-code/flow buttons are not authored here.
  */
 export function validateTemplateDraft(record: Record<string, unknown>): TemplateDraft {
   if (typeof record.name !== "string" || !TEMPLATE_NAME_PATTERN.test(record.name.trim())) {

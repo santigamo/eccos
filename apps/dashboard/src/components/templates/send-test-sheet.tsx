@@ -18,7 +18,7 @@ import {
 import { sendTemplateTest } from "../../server/gateway";
 import type { SendTemplateTestResult } from "../../server/gateway";
 import { failureCopy, sendTestFailureCopy } from "../../lib/failure";
-import { previewBody, type TemplateSendability } from "@eccos/core/template-rules";
+import { previewBody, type TemplateSendability, type TemplateVariables } from "@eccos/core/template-rules";
 import type { TemplateView } from "../../lib/template-view";
 import { WhatsAppPreview } from "./whatsapp-preview";
 import type {
@@ -86,7 +86,10 @@ export function assembleSendTestPayload(input: {
   recipient: string;
   templateName: string;
   languageCode: string;
-  params: string[];
+  /** The template's parameter format: NAMED values travel by name. */
+  format: TemplateVariables["format"];
+  /** Body values by key: `"1"`..`"n"`, or the parameter names. */
+  params: Record<string, string>;
   buttonParams: ButtonUrlParam[];
   /** The template's media header format, or null when it has none. */
   headerMedia: TemplateHeaderMediaFormat | null;
@@ -94,13 +97,20 @@ export function assembleSendTestPayload(input: {
   headerLink: string;
 }) {
   const headerLink = input.headerLink.trim();
+  const count = Object.keys(input.params).length;
+  const body =
+    count === 0
+      ? {}
+      : input.format === "named"
+        ? { bodyValues: input.params }
+        : { bodyParams: Array.from({ length: count }, (_, i) => input.params[String(i + 1)] ?? "") };
   return {
     wabaId: input.wabaId,
     phoneNumberId: input.phoneNumberId,
     to: input.recipient,
     templateName: input.templateName,
     languageCode: input.languageCode,
-    ...(input.params.length > 0 ? { bodyParams: input.params } : {}),
+    ...body,
     ...(input.buttonParams.some((p) => p.text.trim()) ? { buttonParams: input.buttonParams } : {}),
     // Rides only for a template that HAS a media header. Meta answers 132000
     // for a header parameter on a template with no header just as readily as
@@ -145,11 +155,13 @@ export function SendTestForm({
   sendLabel,
   view,
 }: SendTestFormProps) {
-  const paramCount = sendability.kind === "ready" ? sendability.paramCount : 0;
+  const variables = sendability.kind === "ready" ? sendability.body : [];
+  // Prefilled with Meta's stored examples, so the operator edits rather than types from scratch.
+  const examples = () => Object.fromEntries(variables.map((variable) => [variable.key, variable.example ?? ""]));
   const [phoneNumberId, setPhoneNumberId] = useState(initialPhoneNumberId ?? phones[0]?.phoneNumberId ?? "");
   const [typedRecipient, setTypedRecipient] = useState("");
   const recipient = fixedRecipient ?? typedRecipient;
-  const [params, setParams] = useState<string[]>(() => Array.from({ length: paramCount }, () => ""));
+  const [params, setParams] = useState<Record<string, string>>(examples);
   const buttonSlots = sendability.kind === "ready" ? sendability.buttons : [];
   const [buttonParams, setButtonParams] = useState<ButtonUrlParam[]>(() =>
     buttonSlots.map((slot) => ({ index: slot.index, text: "" })),
@@ -160,8 +172,8 @@ export function SendTestForm({
   const [phase, setPhase] = useState<SendPhase>("idle");
   const [notice, setNotice] = useState<Notice | null>(null);
 
-  function setParam(index: number, value: string) {
-    setParams((current) => current.map((entry, i) => (i === index ? value : entry)));
+  function setParam(key: string, value: string) {
+    setParams((current) => ({ ...current, [key]: value }));
   }
 
   function setButtonParam(index: number, value: string) {
@@ -182,6 +194,7 @@ export function SendTestForm({
           recipient,
           templateName,
           languageCode,
+          format: sendability.kind === "ready" ? sendability.format : "positional",
           params,
           buttonParams,
           headerMedia,
@@ -213,7 +226,7 @@ export function SendTestForm({
     setPhase("idle");
     setNotice(null);
     setTypedRecipient("");
-    setParams((current) => current.map(() => ""));
+    setParams(examples());
     setButtonParams((current) => current.map((entry) => ({ ...entry, text: "" })));
     setHeaderLink("");
   }
@@ -289,20 +302,17 @@ export function SendTestForm({
           </div>
         )}
 
-        {params.map((value, index) => (
-          // Positional parameters have no names, so the index IS the identity —
-          // the list never reorders and its length is fixed by the template.
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
-          <div key={index}>
-            <label htmlFor={`send-test-param-${index + 1}`} className={LABEL}>
-              {`{{${index + 1}}}`}
+        {variables.map(({ key }) => (
+          <div key={key}>
+            <label htmlFor={`send-test-param-${key}`} className={LABEL}>
+              {`{{${key}}}`}
             </label>
             <Input
-              id={`send-test-param-${index + 1}`}
+              id={`send-test-param-${key}`}
               required
               autoComplete="off"
-              value={value}
-              onChange={(event) => setParam(index, event.target.value)}
+              value={params[key] ?? ""}
+              onChange={(event) => setParam(key, event.target.value)}
             />
           </div>
         ))}
@@ -364,7 +374,7 @@ export function SendTestForm({
               headerImageUrl={headerMedia === "image" && /^https:\/\/\S+$/.test(headerLink.trim()) ? headerLink.trim() : undefined}
               body={view.body}
               bodyValues={Object.fromEntries(
-                params.flatMap((value, index) => (value.trim() ? [[String(index + 1), value.trim()]] : [])),
+                Object.entries(params).flatMap(([key, value]) => (value.trim() ? [[key, value.trim()]] : [])),
               )}
               footer={view.footer}
               buttons={view.buttons}

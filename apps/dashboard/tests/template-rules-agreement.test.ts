@@ -242,6 +242,7 @@ const sendFields: Record<string, unknown[]> = {
     new Set(["Ada", "42"]),
   ],
   "bodyParams.0": [...J, ...params],
+  bodyValues: [...J, { customer_name: " Ana " }, { "1": "Ada" }, { "first name": "Ada" }, { customer_name: "\n" }],
   buttonParams: [...J, [0, 1, 2, 3].map((index) => ({ index, text: "t" })), holed(1), arrayLike({ index: 1, text: "abc" })],
   "buttonParams.0": [...J, "x"],
   "buttonParams.0.index": [...J, 0, 9, 10, -1, 1.5, "1", 2 ** 53],
@@ -367,6 +368,9 @@ describe("the console and the gateway agree on template requests", () => {
         "template parameters must be strings",
         "button parameters must be objects",
         "bodyParams must be an array",
+        "bodyValues must be an object",
+        "bodyValues keys must be parameter names",
+        "send bodyParams or bodyValues, not both",
         "header media link must start with https://",
       ],
     );

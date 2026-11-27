@@ -4,11 +4,13 @@ import {
   analyzeDraftButtons,
   analyzeDraftFooter,
   analyzeTemplate,
+  buildSendComponents,
   canSendTemplate,
   draftWarnings,
   normalizeTemplateName,
   previewBody,
   templateRowsOf,
+  templateVariables,
   validateTemplateDraft,
   validateTemplateEdit,
   validateTemplateSend,
@@ -18,7 +20,7 @@ import {
  * What the "Send test" sheet is allowed to build (see
  * `packages/core/src/template-rules.ts`).
  *
- * The scope is deliberately narrow — positional body parameters only — so the
+ * The scope is deliberately narrow, so the
  * job of these tests is to pin the BOUNDARY: every shape the sheet cannot
  * honestly render has to come back `unsupported` with a sentence, never as a
  * button that fails at Meta.
@@ -42,7 +44,8 @@ describe("analyzeTemplate", () => {
     });
     expect(result).toEqual({
       kind: "ready",
-      paramCount: 0,
+      format: "positional",
+      body: [],
       bodyText: "Welcome and congratulations!",
       buttons: [],
       headerMedia: null,
@@ -55,7 +58,11 @@ describe("analyzeTemplate", () => {
     });
     expect(result).toEqual({
       kind: "ready",
-      paramCount: 2,
+      format: "positional",
+      body: [
+        { key: "1", example: null },
+        { key: "2", example: null },
+      ],
       bodyText: "Hi {{1}}, your order {{2}} shipped.",
       buttons: [],
       headerMedia: null,
@@ -70,25 +77,51 @@ describe("analyzeTemplate", () => {
     // "parameter_mismatch" line. This test exists so that stays a decision.
     expect(analyzeTemplate({ name: "hello_world" } as { components?: unknown })).toEqual({
       kind: "ready",
-      paramCount: 0,
+      format: "positional",
+      body: [],
       bodyText: null,
       buttons: [],
       headerMedia: null,
     });
   });
 
-  test("refuses named parameters, whether Meta declares them or the body shows them", () => {
-    const declared = analyzeTemplate({
-      parameter_format: "NAMED",
-      components: [bodyComponent("Hi {{customer_name}}")],
+  test("named parameters are keys in order of first use, with Meta's stored examples", () => {
+    const body = {
+      type: "BODY",
+      text: "Hi {{customer_name}}, order {{order_id}} is ready, {{customer_name}}.",
+      example: { body_text_named_params: [{ param_name: "customer_name", example: "Ana" }] },
+    };
+    const expected = {
+      format: "named",
+      body: [
+        { key: "customer_name", example: "Ana" },
+        { key: "order_id", example: null },
+      ],
+      buttons: [],
+      headerMedia: null,
+    };
+    expect(templateVariables({ parameter_format: "NAMED", components: [body] })).toEqual(expected);
+    // Inferred from the body when the row does not declare it.
+    expect(templateVariables({ components: [body] })).toEqual(expected);
+  });
+
+  test("positional examples come from Meta's body_text", () => {
+    const row = { components: [{ type: "BODY", text: "Hi {{1}} {{2}}", example: { body_text: [["Ana", "A-1"]] } }] };
+    expect(templateVariables(row)).toMatchObject({
+      format: "positional",
+      body: [
+        { key: "1", example: "Ana" },
+        { key: "2", example: "A-1" },
+      ],
     });
-    const inferred = analyzeTemplate({
-      components: [bodyComponent("Hi {{customer_name}}")],
-    });
-    for (const result of [declared, inferred]) {
-      expect(result.kind).toBe("unsupported");
-      if (result.kind === "unsupported") expect(result.reason).toContain("named parameters");
-    }
+  });
+
+  test("refuses a body that mixes numbered and named variables", () => {
+    expect(templateVariables({ components: [bodyComponent("Hi {{1}} and {{name}}")] })).toHaveProperty("unsupported");
+    expect(templateVariables({ parameter_format: "NAMED", components: [bodyComponent("Hi {{1}}")] })).toHaveProperty(
+      "unsupported",
+    );
+    expect(templateVariables({ components: [bodyComponent("Hi {{first name}}")] })).toHaveProperty("unsupported");
   });
 
   test("a media header is a slot to fill, not a dead end", () => {
@@ -105,7 +138,8 @@ describe("analyzeTemplate", () => {
         analyzeTemplate({ components: [{ type: "HEADER", format }, bodyComponent("hi")] }),
       ).toEqual({
         kind: "ready",
-        paramCount: 0,
+        format: "positional",
+        body: [],
         bodyText: "hi",
         buttons: [],
         headerMedia: expected,
@@ -139,14 +173,23 @@ describe("analyzeTemplate", () => {
     expect(new Set(reasons).size).toBe(2);
   });
 
-  test("refuses copy-code, OTP, flow and quick-reply buttons", () => {
+  test("a static quick-reply button needs no value, so the template is ready", () => {
+    const result = analyzeTemplate({
+      components: [
+        bodyComponent("Offers this week"),
+        { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Stop promotions" }] },
+      ],
+    });
+    expect(result).toMatchObject({ kind: "ready", body: [], buttons: [] });
+  });
+
+  test("refuses copy-code, OTP and flow buttons", () => {
     // Each of these is a button the console neither builds nor fills; a
     // template carrying one gets its own sentence rather than a dead send.
     const cases = [
       { type: "COPY_CODE", text: "Copy" },
       { type: "OTP", text: "Autofill" },
       { type: "FLOW", text: "Open" },
-      { type: "QUICK_REPLY", text: "Yes" },
     ];
     for (const button of cases) {
       const result = analyzeTemplate({
@@ -175,7 +218,8 @@ describe("analyzeTemplate", () => {
     });
     expect(result).toEqual({
       kind: "ready",
-      paramCount: 1,
+      format: "positional",
+      body: [{ key: "1", example: null }],
       bodyText: "Hi {{1}}",
       buttons: [{ index: 1, urlPrefix: "https://example.com/status?t=" }],
       headerMedia: null,
@@ -191,7 +235,7 @@ describe("analyzeTemplate", () => {
         { type: "BUTTONS", buttons: [{ type: "URL", text: "Open", url: "https://example.com" }] },
       ],
     });
-    expect(result).toMatchObject({ kind: "ready", paramCount: 1 });
+    expect(result).toMatchObject({ kind: "ready", body: [{ key: "1", example: null }] });
   });
 
   test("refuses carousels and limited-time offers", () => {
@@ -225,7 +269,79 @@ describe("previewBody", () => {
   test("substitutes what is typed and leaves empty slots as their placeholder", () => {
     // The preview must never pretend a value exists: an unfilled slot keeps
     // {{n}} so what the operator sees is what Meta would receive.
-    expect(previewBody("Hi {{1}}, order {{2}}", ["Ada", ""])).toBe("Hi Ada, order {{2}}");
+    expect(previewBody("Hi {{1}}, order {{2}}", { "1": "Ada", "2": "" })).toBe("Hi Ada, order {{2}}");
+    expect(previewBody("Hi {{ customer_name }}", { customer_name: "Ana" })).toBe("Hi Ana");
+  });
+});
+
+describe("buildSendComponents", () => {
+  test("positional values in order, header first and buttons last", () => {
+    expect(
+      buildSendComponents({
+        headerMedia: { format: "image", link: "https://cdn.example.com/a.png" },
+        body: ["Ada", "A-1"],
+        buttons: [{ index: 1, text: "T-4" }],
+      }),
+    ).toEqual([
+      { type: "header", parameters: [{ type: "image", image: { link: "https://cdn.example.com/a.png" } }] },
+      {
+        type: "body",
+        parameters: [
+          { type: "text", text: "Ada" },
+          { type: "text", text: "A-1" },
+        ],
+      },
+      { type: "button", sub_type: "url", index: "1", parameters: [{ type: "text", text: "T-4" }] },
+    ]);
+  });
+
+  test("named values carry their parameter_name", () => {
+    expect(buildSendComponents({ body: { customer_name: "Ana", order_id: "A-1" } })).toEqual([
+      {
+        type: "body",
+        parameters: [
+          { type: "text", parameter_name: "customer_name", text: "Ana" },
+          { type: "text", parameter_name: "order_id", text: "A-1" },
+        ],
+      },
+    ]);
+  });
+
+  test("nothing to fill builds no components", () => {
+    expect(buildSendComponents({})).toEqual([]);
+    expect(buildSendComponents({ body: [], buttons: [] })).toEqual([]);
+    expect(buildSendComponents({ body: {} })).toEqual([]);
+  });
+});
+
+describe("validateTemplateSend bodyValues", () => {
+  const send = { templateName: "order_update", languageCode: "en_US" };
+
+  test("keeps trimmed named values and omits an empty object", () => {
+    expect(validateTemplateSend({ ...send, bodyValues: { customer_name: " Ana " } })).toEqual({
+      ...send,
+      bodyValues: { customer_name: "Ana" },
+    });
+    expect(validateTemplateSend({ ...send, bodyValues: {} })).toEqual(send);
+  });
+
+  test("refuses a wrong shape, a numbered or odd key, a bad value, and both body fields", () => {
+    const refusals: [unknown, string][] = [
+      [["Ana"], "bodyValues must be an object"],
+      [null, "bodyValues must be an object"],
+      [{ "1": "Ana" }, "bodyValues keys must be parameter names"],
+      [{ "first name": "Ana" }, "bodyValues keys must be parameter names"],
+      [{ name: "" }, "every template parameter needs a value"],
+      [{ name: 1 }, "template parameters must be strings"],
+      [{ name: "two\nlines" }, "template parameters cannot contain line breaks"],
+      [Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`v${i}`, "x"])), "too many template parameters"],
+    ];
+    for (const [bodyValues, message] of refusals) {
+      expect(() => validateTemplateSend({ ...send, bodyValues }), JSON.stringify(bodyValues)).toThrow(message);
+    }
+    expect(() => validateTemplateSend({ ...send, bodyParams: ["Ana"], bodyValues: { name: "Ana" } })).toThrow(
+      "send bodyParams or bodyValues, not both",
+    );
   });
 });
 
@@ -306,7 +422,7 @@ describe("the agreement property (creation is the inverse of analysis)", () => {
       const row = analyzeTemplate({ components: [{ type: "BODY", text: body }] });
       expect(row.kind, body.slice(0, 40)).toBe("ready");
       if (row.kind === "ready") {
-        expect(row.paramCount, body.slice(0, 40)).toBe(draft.paramCount);
+        expect(row.body.length, body.slice(0, 40)).toBe(draft.paramCount);
         expect(row.bodyText).toBe(body);
       }
     }
@@ -333,7 +449,8 @@ describe("the agreement property (creation is the inverse of analysis)", () => {
         });
         expect(row).toEqual({
           kind: "ready",
-          paramCount: 1,
+          format: "positional",
+          body: [{ key: "1", example: null }],
           bodyText: "Hi {{1}}, your ticket is updated.",
           buttons: [{ index: 0, urlPrefix: "https://example.com/status?t=" }],
           headerMedia: null,
@@ -356,7 +473,7 @@ describe("the agreement property (creation is the inverse of analysis)", () => {
       expect(draft).toEqual({ ok: true, paramCount: n });
       expect(analyzeTemplate({ components: [{ type: "BODY", text: body }] })).toMatchObject({
         kind: "ready",
-        paramCount: n,
+        body: Array.from({ length: n }, (_, i) => ({ key: String(i + 1), example: null })),
       });
     }
   });

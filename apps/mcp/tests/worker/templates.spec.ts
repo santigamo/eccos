@@ -122,6 +122,24 @@ describe("templates_list", () => {
     expect(templates[0]).toMatchObject({ rejectedReason: null, quality: null, components: ORDER_UPDATE.components });
   });
 
+  it("says a named-parameter template cannot be test-sent here, since bodyParams are positional", async () => {
+    const named = {
+      id: "900500",
+      name: "named_promo",
+      language: "es",
+      status: "APPROVED",
+      category: "MARKETING",
+      parameter_format: "NAMED",
+      components: [{ type: "BODY", text: "Hola {{customer_name}}" }],
+    };
+    await seedA({ templates: { "waba-a": templatesOf(named) } });
+    const client = await as(["view"], ["eccos:view"]);
+    const result = await call(client, "templates_list");
+    await client.close();
+    const { templates } = result.structuredContent as { templates: Record<string, unknown>[] };
+    expect(templates[0]?.testSend).toEqual({ ready: false, reason: expect.stringContaining("named parameters") });
+  });
+
   it("filters by status and by name", async () => {
     await seedA();
     const client = await as(["view"]);
