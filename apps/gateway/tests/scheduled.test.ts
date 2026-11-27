@@ -25,6 +25,7 @@ describe("parseScheduledRequest", () => {
     expect(parseScheduledRequest(body({ sendAt: "2026-11-20T09:00:00" }), NOW)).toEqual({
       ok: false,
       error: "sendAt must be epoch milliseconds or an ISO 8601 time with a timezone",
+      time: true,
     });
   });
 
@@ -36,14 +37,17 @@ describe("parseScheduledRequest", () => {
     expect(parseScheduledRequest(body({ sendAt: NOW - 120_000, expiresAt: NOW - 60_000 }), NOW)).toEqual({
       ok: false,
       error: "expiresAt is in the past",
+      time: true,
     });
     expect(parseScheduledRequest(body({ expiresAt: NOW + 60_000 }), NOW)).toEqual({
       ok: false,
       error: "expiresAt must be after sendAt",
+      time: true,
     });
     expect(parseScheduledRequest(body({ expiresAt: "tomorrow" }), NOW)).toEqual({
       ok: false,
       error: "expiresAt must be epoch milliseconds or an ISO 8601 time with a timezone",
+      time: true,
     });
   });
 
@@ -53,6 +57,7 @@ describe("parseScheduledRequest", () => {
     expect(parseScheduledRequest(body({ expiresAt: sendAt + 7 * 24 * 3600_000 + 1 }), NOW)).toEqual({
       ok: false,
       error: "expiresAt can be at most 7 days after sendAt",
+      time: true,
     });
   });
 
@@ -60,6 +65,7 @@ describe("parseScheduledRequest", () => {
     expect(parseScheduledRequest(body({ sendAt: NOW + 91 * 24 * 3600_000 }), NOW)).toEqual({
       ok: false,
       error: "sendAt can be at most 90 days ahead",
+      time: true,
     });
   });
 

@@ -152,6 +152,19 @@ describe("/scheduled", () => {
     expect(html).not.toContain("scheduled sends by status");
   });
 
+  test("a role that may operate gets Schedule a send: the first run's primary, the populated header's outline", () => {
+    const operator = { ...readyState, canAdminister: false, canOperate: true, role: "member" };
+    const first = render([], { root: operator });
+    const outline = /bg-\(--ghost-fill\)[^>]*>Schedule a send</;
+    expect(first).toContain(">Schedule a send<");
+    expect(first).not.toMatch(outline);
+    expect(first).toContain("No booking system? Schedule one by hand");
+    expect(render([row()], { counts: { pending: 1 }, root: operator })).toMatch(outline);
+    const viewer = { ...readyState, canAdminister: false, canOperate: false, role: "viewer" };
+    expect(render([row()], { counts: { pending: 1 }, root: viewer })).not.toContain("Schedule a send");
+    expect(render([], { root: viewer })).not.toContain("Schedule a send");
+  });
+
   test("an empty pending tab beside ended sends says nothing is pending, not that there are none", () => {
     const pending = render([], { counts: { sent: 300 } });
     expect(pending).toContain("NOTHING PENDING");

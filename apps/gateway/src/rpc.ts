@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getGatewayStubForWaba } from "./gateway-stub";
 import { RECIPIENT_STATUSES, type RecipientStatus } from "./broadcasts";
-import { SCHEDULE_KEY, SCHEDULED_STATUSES } from "./scheduled";
+import { parseScheduledRequest, SCHEDULE_KEY, SCHEDULED_STATUSES } from "./scheduled";
 import { getControlPlaneStub } from "./control-plane-stub";
 import {
   exchangeAndRegisterAll,
@@ -24,8 +24,12 @@ import { getMedia as getStoredMedia } from "./media-store";
 import { isIdempotencyKey, resolveRetentionDays, sendBodyHash } from "./gateway";
 import { checkSendRate } from "./send-rate-limit";
 import { SUBSCRIPTION_REQUIRED } from "./connect-policy";
+import { broadcastPreflight, createConsoleBroadcast } from "./broadcast-rpc";
 import type {
   AccountKeyResource,
+  BroadcastPreflight,
+  CreateBroadcastInput,
+  CreateBroadcastResult,
   BroadcastDetail,
   BroadcastListOpts,
   BroadcastOpts,
@@ -96,6 +100,8 @@ import type {
   TemplatesResult,
   OrganizationAccountContext,
   ScheduledCancelResult,
+  ScheduleSendInput,
+  ScheduleSendResult,
   ScheduledListOpts,
   ScheduledPage,
   ScopedOrg,
@@ -447,6 +453,16 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     return stub.cancelBroadcast(accountId, input.broadcastId);
   }
 
+  async createBroadcast(input: CreateBroadcastInput, accountId: string): Promise<CreateBroadcastResult> {
+    const account = requireAccountId(accountId, "accountId is required");
+    return createConsoleBroadcast(this.env, (wabaId) => this.watchedFetch(wabaId), input, account);
+  }
+
+  async readBroadcastPreflight(org: ScopedOrg): Promise<ScopedRead<BroadcastPreflight>> {
+    const { scope } = await this.selected(org);
+    return { scope, data: await broadcastPreflight(this.env, scope.wabaId, scope.accountId) };
+  }
+
   async readScheduled(org: ScopedOrg, opts: ScheduledListOpts): Promise<ScopedRead<ScheduledPage>> {
     const { scope, stub } = await this.selected(org);
     const status = opts?.status ?? "pending";
@@ -467,6 +483,58 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     const stub = await this.ownedStub(input.wabaId, accountId);
     const { state, scheduled } = await stub.cancelScheduled(accountId, input.key);
     return { state, scheduled };
+  }
+
+  /**
+   * The console's scheduled send: the HTTP PUT's rules (ownership, billing, time limits, an
+   * approved template) with the template fields of `sendTemplateTest`, but create-only, so a
+   * typed key can never replace the send an integration holds under it.
+   */
+  async scheduleSend(input: ScheduleSendInput, accountId: string): Promise<ScheduleSendResult> {
+    const account = requireAccountId(accountId, "accountId is required");
+    if (!SCHEDULE_KEY.test(input?.key ?? "")) throw new Error("invalid key");
+    const waba = await getControlPlaneStub(this.env).getWabaForSend(account, input.wabaId);
+    if (waba === SUBSCRIPTION_REQUIRED) return { ok: false, code: SUBSCRIPTION_REQUIRED, detail: null };
+    if (!waba) throw new Error(`WABA "${input.wabaId}" is not owned by account "${account}"`);
+    if (!waba.phones.some((phone) => phone.phoneNumberId === input.phoneNumberId)) {
+      return { ok: false, code: "no_phone", detail: null };
+    }
+    if (!TO_PATTERN.test(input.to) && !isBsuid(input.to)) throw new Error(TO_ERROR);
+    const { templateName, languageCode, bodyParams, bodyValues, buttonParams, headerMedia } = templateSendRequest(input);
+    const components = buildSendComponents({ body: bodyValues ?? bodyParams, buttons: buttonParams, headerMedia });
+    const parsed = parseScheduledRequest(
+      {
+        to: input.to,
+        template: { name: templateName, language: languageCode, ...(components.length > 0 ? { components } : {}) },
+        sendAt: input.sendAt,
+        expiresAt: input.expiresAt,
+      },
+      Date.now(),
+    );
+    if (!parsed.ok) return { ok: false, code: parsed.time ? "invalid_time" : "invalid_request", detail: parsed.error };
+
+    const cfg = tenantConfig(getAppConfig(this.env), {
+      wabaId: waba.wabaId,
+      phoneNumberId: input.phoneNumberId,
+      metaAccessToken: waba.metaAccessToken,
+      fetch: this.watchedFetch(waba.wabaId),
+    });
+    const found = await findTemplate(cfg, templateName, languageCode, ["name", "language", "status"]);
+    if (!found.ok) return { ok: false, code: "templates_unreachable", detail: null };
+    if (!found.template) return { ok: false, code: "template_not_found", detail: null };
+    if (found.template.status !== "APPROVED") {
+      return { ok: false, code: "template_not_approved", detail: null, templateStatus: String(found.template.status) };
+    }
+
+    const { state, scheduled } = await this.stubFor(waba.wabaId).createScheduled({
+      accountId: account,
+      key: input.key,
+      phoneNumberId: input.phoneNumberId,
+      request: parsed.request,
+    });
+    if (state === "exists" && scheduled) return { ok: false, code: "key_exists", detail: null, existing: scheduled };
+    if (state === "created" && scheduled) return { ok: true, scheduled };
+    return { ok: false, code: "too_many_pending", detail: null };
   }
 
   async readConversations(

@@ -10,6 +10,7 @@
 
 import { isBsuid } from "@eccos/core/bsuid";
 import type { MetaErrorCodes } from "@eccos/core/send";
+import { MAX_RECIPIENT_COMPONENTS_BYTES } from "@eccos/gateway-contract/broadcast-create";
 import type {
   BroadcastRecipientRow,
   BroadcastRecipientStatus,
@@ -28,8 +29,6 @@ export const MAX_THROTTLED_ATTEMPTS = 8;
 export const MAX_RUNNING_BROADCASTS = 5;
 /** Request body ceiling for POST /broadcasts. */
 export const MAX_BROADCAST_BODY_BYTES = 8 * 1024 * 1024;
-/** Stored values ceiling per recipient. */
-const MAX_COMPONENTS_BYTES = 8 * 1024;
 /** A broadcast whose first sends all fail stops: the cause is almost never the recipients. */
 export const FAILURE_BREAKER = 20;
 /** Share of the account's rate a broadcast uses, so single sends (OTPs, replies) keep the rest. */
@@ -48,6 +47,8 @@ export const RECIPIENT_STATUSES: ReadonlySet<string> = new Set<RecipientStatus>(
 export interface BroadcastRequest {
   templateName: string;
   language: string;
+  /** The team's name for it, never sent to Meta. */
+  label?: string;
   /** Used for every recipient without its own `components`. */
   defaultComponents?: unknown[];
   recipients: { to: string; components?: unknown[] }[];
@@ -59,6 +60,7 @@ export type ParsedBroadcast =
 
 const TEMPLATE_NAME = /^[a-z0-9_]{1,512}$/;
 const LANGUAGE = /^[a-z]{2,3}(_[A-Z]{2})?$/;
+export const MAX_LABEL_LENGTH = 80;
 
 export function isRecipient(to: string): boolean {
   if (isBsuid(to)) return true;
@@ -91,7 +93,7 @@ export function parseTemplate(
     return { ok: false, error: "template.components must be an array" };
   }
   const components = template.components as unknown[] | undefined;
-  if (components && JSON.stringify(components).length > MAX_COMPONENTS_BYTES) {
+  if (components && JSON.stringify(components).length > MAX_RECIPIENT_COMPONENTS_BYTES) {
     return { ok: false, error: "template.components are too large" };
   }
   return { ok: true, name: template.name, language, ...(components ? { components } : {}) };
@@ -108,6 +110,10 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
   const template = parseTemplate(record.template);
   if (!template.ok) return template;
   const { name: templateName, language, components: defaults } = template;
+  const label = typeof record.label === "string" ? record.label.trim() : record.label;
+  if (label !== undefined && (typeof label !== "string" || label.length === 0 || label.length > MAX_LABEL_LENGTH)) {
+    return { ok: false, error: `label must be 1-${MAX_LABEL_LENGTH} characters` };
+  }
   if (!Array.isArray(record.recipients) || record.recipients.length === 0) {
     return { ok: false, error: "recipients must be a non-empty array" };
   }
@@ -129,7 +135,7 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
       invalid.push({ index, error: "components must be an array" });
       return;
     }
-    if (item.components !== undefined && JSON.stringify(item.components).length > MAX_COMPONENTS_BYTES) {
+    if (item.components !== undefined && JSON.stringify(item.components).length > MAX_RECIPIENT_COMPONENTS_BYTES) {
       invalid.push({ index, error: "components are too large" });
       return;
     }
@@ -147,7 +153,13 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
   }
   return {
     ok: true,
-    request: { templateName, language, ...(defaults ? { defaultComponents: defaults } : {}), recipients },
+    request: {
+      templateName,
+      language,
+      ...(label ? { label } : {}),
+      ...(defaults ? { defaultComponents: defaults } : {}),
+      recipients,
+    },
     duplicates,
   };
 }
@@ -219,6 +231,7 @@ export const BROADCAST_SCHEMA = [
     phone_number_id TEXT NOT NULL,
     template_name   TEXT NOT NULL,
     language        TEXT NOT NULL,
+    label           TEXT,
     status          TEXT NOT NULL,
     total           INTEGER NOT NULL,
     duplicates      INTEGER NOT NULL,
@@ -284,6 +297,7 @@ export function readBroadcast(sql: SqlStorage, id: string): BroadcastSummary | n
     status: row.status as BroadcastStatus,
     phoneNumberId: String(row.phone_number_id),
     template: { name: String(row.template_name), language: String(row.language) },
+    label: row.label == null ? null : String(row.label),
     total: Number(row.total),
     duplicatesSkipped: Number(row.duplicates),
     ratePerMinute: Number(row.rate_per_minute),

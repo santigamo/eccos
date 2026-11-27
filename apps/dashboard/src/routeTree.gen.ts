@@ -35,6 +35,7 @@ import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
 import { Route as TemplatesNewRouteImport } from './routes/templates_.new'
 import { Route as TemplatesNameRouteImport } from './routes/templates_.$name'
 import { Route as NumbersAttachTokenRouteImport } from './routes/numbers_.attach-token'
+import { Route as BroadcastsNewRouteImport } from './routes/broadcasts_.new'
 import { Route as BroadcastsBroadcastIdRouteImport } from './routes/broadcasts_.$broadcastId'
 
 const WebhooksRoute = WebhooksRouteImport.update({
@@ -167,6 +168,11 @@ const NumbersAttachTokenRoute = NumbersAttachTokenRouteImport.update({
   path: '/numbers/attach-token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BroadcastsNewRoute = BroadcastsNewRouteImport.update({
+  id: '/broadcasts_/new',
+  path: '/broadcasts/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BroadcastsBroadcastIdRoute = BroadcastsBroadcastIdRouteImport.update({
   id: '/broadcasts_/$broadcastId',
   path: '/broadcasts/$broadcastId',
@@ -197,6 +203,7 @@ export interface FileRoutesByFullPath {
   '/templates': typeof TemplatesRoute
   '/webhooks': typeof WebhooksRoute
   '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
+  '/broadcasts/new': typeof BroadcastsNewRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
   '/templates/$name': typeof TemplatesNameRoute
   '/templates/new': typeof TemplatesNewRoute
@@ -226,6 +233,7 @@ export interface FileRoutesByTo {
   '/templates': typeof TemplatesRoute
   '/webhooks': typeof WebhooksRoute
   '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
+  '/broadcasts/new': typeof BroadcastsNewRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
   '/templates/$name': typeof TemplatesNameRoute
   '/templates/new': typeof TemplatesNewRoute
@@ -256,6 +264,7 @@ export interface FileRoutesById {
   '/templates': typeof TemplatesRoute
   '/webhooks': typeof WebhooksRoute
   '/broadcasts_/$broadcastId': typeof BroadcastsBroadcastIdRoute
+  '/broadcasts_/new': typeof BroadcastsNewRoute
   '/numbers_/attach-token': typeof NumbersAttachTokenRoute
   '/templates_/$name': typeof TemplatesNameRoute
   '/templates_/new': typeof TemplatesNewRoute
@@ -287,6 +296,7 @@ export interface FileRouteTypes {
     | '/templates'
     | '/webhooks'
     | '/broadcasts/$broadcastId'
+    | '/broadcasts/new'
     | '/numbers/attach-token'
     | '/templates/$name'
     | '/templates/new'
@@ -316,6 +326,7 @@ export interface FileRouteTypes {
     | '/templates'
     | '/webhooks'
     | '/broadcasts/$broadcastId'
+    | '/broadcasts/new'
     | '/numbers/attach-token'
     | '/templates/$name'
     | '/templates/new'
@@ -345,6 +356,7 @@ export interface FileRouteTypes {
     | '/templates'
     | '/webhooks'
     | '/broadcasts_/$broadcastId'
+    | '/broadcasts_/new'
     | '/numbers_/attach-token'
     | '/templates_/$name'
     | '/templates_/new'
@@ -375,6 +387,7 @@ export interface RootRouteChildren {
   TemplatesRoute: typeof TemplatesRoute
   WebhooksRoute: typeof WebhooksRoute
   BroadcastsBroadcastIdRoute: typeof BroadcastsBroadcastIdRoute
+  BroadcastsNewRoute: typeof BroadcastsNewRoute
   NumbersAttachTokenRoute: typeof NumbersAttachTokenRoute
   TemplatesNameRoute: typeof TemplatesNameRoute
   TemplatesNewRoute: typeof TemplatesNewRoute
@@ -565,6 +578,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NumbersAttachTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/broadcasts_/new': {
+      id: '/broadcasts_/new'
+      path: '/broadcasts/new'
+      fullPath: '/broadcasts/new'
+      preLoaderRoute: typeof BroadcastsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/broadcasts_/$broadcastId': {
       id: '/broadcasts_/$broadcastId'
       path: '/broadcasts/$broadcastId'
@@ -599,6 +619,7 @@ const rootRouteChildren: RootRouteChildren = {
   TemplatesRoute: TemplatesRoute,
   WebhooksRoute: WebhooksRoute,
   BroadcastsBroadcastIdRoute: BroadcastsBroadcastIdRoute,
+  BroadcastsNewRoute: BroadcastsNewRoute,
   NumbersAttachTokenRoute: NumbersAttachTokenRoute,
   TemplatesNameRoute: TemplatesNameRoute,
   TemplatesNewRoute: TemplatesNewRoute,

@@ -35,7 +35,8 @@ const { afterCreate, movedCategory, refusal, requestFor, submitSerially, UNANSWE
   "../src/lib/template-submit"
 );
 const { createTemplateFailureCopy, editTemplateFailureCopy } = await import("../src/lib/failure");
-const { TemplateEditor, leaveBlocker } = await import("../src/components/templates/template-editor");
+const { TemplateEditor } = await import("../src/components/templates/template-editor");
+const { leaveBlocker } = await import("../src/lib/leave-blocker");
 const { dropHandoff, putHandoff } = await import("../src/lib/template-handoff");
 
 const draft = (language: string, body = "") => ({ language, body, examples: [], footer: "", buttons: [] });

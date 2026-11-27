@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -45,7 +45,33 @@ export function SendTemplateSheet({
           <SheetTitle>{title}</SheetTitle>
           {description ? <SheetDescription>{description}</SheetDescription> : null}
         </SheetHeader>
-        <TemplateChoice {...template} />
+        <TemplateChoice
+          wabaId={template.wabaId}
+          emptyDescription="Only an approved template can reach a customer outside the window. Approved templates appear here."
+        >
+          {(chosen, back) => (
+            <div className="flex flex-col gap-2">
+              <div className="px-4">
+                <Button type="button" variant="outline" size="sm" className="rounded-none" onClick={back}>
+                  ← Templates
+                </Button>
+              </div>
+              <SendTestForm
+                key={`${chosen.name}:${chosen.language}`}
+                wabaId={template.wabaId}
+                templateName={chosen.name ?? ""}
+                languageCode={chosen.language ?? ""}
+                sendability={analyzeTemplate(chosen)}
+                phones={template.phones}
+                initialPhoneNumberId={template.phoneNumberId}
+                recipient={template.waId}
+                onSent={template.onSent}
+                sendLabel="Send"
+                view={templateView(chosen)}
+              />
+            </div>
+          )}
+        </TemplateChoice>
       </SheetContent>
     </Sheet>
   );
@@ -68,8 +94,16 @@ function sendableRows(payload: unknown): TemplateListRow[] {
   );
 }
 
-/** Reads the list when the sheet opens; the chosen template then renders the send form in place of the list. */
-function TemplateChoice({ wabaId, waId, phoneNumberId, phones, onSent }: SendTemplateProps) {
+/** Reads the list when it mounts; the chosen template then renders `children` in place of the list. */
+export function TemplateChoice({
+  wabaId,
+  emptyDescription,
+  children,
+}: {
+  wabaId: string;
+  emptyDescription: string;
+  children: (chosen: TemplateListRow, back: () => void) => ReactNode;
+}) {
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   const [chosen, setChosen] = useState<TemplateListRow | null>(null);
 
@@ -115,38 +149,12 @@ function TemplateChoice({ wabaId, waId, phoneNumberId, phones, onSent }: SendTem
     );
   }
 
-  if (chosen) {
-    return (
-      <div className="flex flex-col gap-2">
-        <div className="px-4">
-          <Button type="button" variant="outline" size="sm" className="rounded-none" onClick={() => setChosen(null)}>
-            ← Templates
-          </Button>
-        </div>
-        <SendTestForm
-          key={`${chosen.name}:${chosen.language}`}
-          wabaId={wabaId}
-          templateName={chosen.name ?? ""}
-          languageCode={chosen.language ?? ""}
-          sendability={analyzeTemplate(chosen)}
-          phones={phones}
-          initialPhoneNumberId={phoneNumberId}
-          recipient={waId}
-          onSent={onSent}
-          sendLabel="Send"
-          view={templateView(chosen)}
-        />
-      </div>
-    );
-  }
+  if (chosen) return children(chosen, () => setChosen(null));
 
   if (loaded.rows.length === 0) {
     return (
       <div className="px-4 pb-4">
-        <GridEmptyState
-          label="NO APPROVED TEMPLATES"
-          description="Only an approved template can reach a customer outside the window. Approved templates appear here."
-        />
+        <GridEmptyState label="NO APPROVED TEMPLATES" description={emptyDescription} />
       </div>
     );
   }

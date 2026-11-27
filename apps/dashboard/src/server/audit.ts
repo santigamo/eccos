@@ -64,10 +64,21 @@ export type SensitiveAction =
    */
   | "broadcast_cancel"
   /**
+   * A broadcast started from the console. Ids and counts only (wabaId, phoneNumberId,
+   * template, language, the recipient count, broadcastId): never a recipient or a value,
+   * same rule as `template_test_send`.
+   */
+  | "broadcast_create"
+  /**
    * A pending scheduled send stopped from the console. Ids only (wabaId, key): never
    * the recipient, same rule as `broadcast_cancel`.
    */
   | "scheduled_cancel"
+  /**
+   * A scheduled send created from the console. Ids and counts only (wabaId, key, template,
+   * how many values): never the recipient or a value, same rule as `template_test_send`.
+   */
+  | "scheduled_create"
   /**
    * One free-text message sent from the conversation composer.
    *

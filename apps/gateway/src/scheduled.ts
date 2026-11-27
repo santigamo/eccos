@@ -42,7 +42,8 @@ export interface ScheduledRequest {
   expiresAt: number;
 }
 
-export type ParsedScheduled = { ok: true; request: ScheduledRequest } | { ok: false; error: string };
+/** `time` marks a refusal of sendAt or expiresAt, as opposed to the recipient or the template. */
+export type ParsedScheduled = { ok: true; request: ScheduledRequest } | { ok: false; error: string; time?: true };
 
 type Row = Record<string, SqlStorageValue>;
 
@@ -65,22 +66,22 @@ export function parseScheduledRequest(body: unknown, now: number): ParsedSchedul
   if (!template.ok) return template;
   const sendAt = parseInstant(record.sendAt);
   if (sendAt === null) {
-    return { ok: false, error: "sendAt must be epoch milliseconds or an ISO 8601 time with a timezone" };
+    return { ok: false, error: "sendAt must be epoch milliseconds or an ISO 8601 time with a timezone", time: true };
   }
-  if (sendAt > now + MAX_SCHEDULE_AHEAD_MS) return { ok: false, error: "sendAt can be at most 90 days ahead" };
+  if (sendAt > now + MAX_SCHEDULE_AHEAD_MS) return { ok: false, error: "sendAt can be at most 90 days ahead", time: true };
   let expiresAt = sendAt + DEFAULT_EXPIRY_MS;
   if (record.expiresAt !== undefined) {
     const parsed = parseInstant(record.expiresAt);
     if (parsed === null) {
-      return { ok: false, error: "expiresAt must be epoch milliseconds or an ISO 8601 time with a timezone" };
+      return { ok: false, error: "expiresAt must be epoch milliseconds or an ISO 8601 time with a timezone", time: true };
     }
     expiresAt = parsed;
   }
-  if (expiresAt <= sendAt) return { ok: false, error: "expiresAt must be after sendAt" };
+  if (expiresAt <= sendAt) return { ok: false, error: "expiresAt must be after sendAt", time: true };
   if (expiresAt > sendAt + MAX_EXPIRY_AFTER_SEND_MS) {
-    return { ok: false, error: "expiresAt can be at most 7 days after sendAt" };
+    return { ok: false, error: "expiresAt can be at most 7 days after sendAt", time: true };
   }
-  if (expiresAt <= now) return { ok: false, error: "expiresAt is in the past" };
+  if (expiresAt <= now) return { ok: false, error: "expiresAt is in the past", time: true };
   return {
     ok: true,
     request: {
@@ -207,11 +208,12 @@ export function countScheduled(sql: SqlStorage, accountId: string): Record<Sched
 }
 
 export type PutState = "created" | "replaced" | "not_pending" | "full";
+export type ScheduledPut = { accountId: string; key: string; phoneNumberId: string; request: ScheduledRequest };
 
 /** Creates or replaces the row under `key`. Sent, sending and unknown rows may have reached the customer: they stay. */
 export function upsertScheduled(
   sql: SqlStorage,
-  input: { accountId: string; key: string; phoneNumberId: string; request: ScheduledRequest },
+  input: ScheduledPut,
   now: number,
 ): { state: PutState; row: ScheduledSend | null } {
   const { accountId, key, phoneNumberId, request } = input;
@@ -219,16 +221,33 @@ export function upsertScheduled(
   if (existing && ["sending", "sent", "unknown"].includes(existing.status)) {
     return { state: "not_pending", row: existing };
   }
-  const components = request.components ? JSON.stringify(request.components) : null;
   if (existing?.status === "pending") {
     sql.exec(
       `UPDATE scheduled_sends SET phone_number_id = ?, recipient = ?, template_name = ?, language = ?, components = ?,
          send_at = ?, expires_at = ?, next_attempt_at = ?, attempts = 0, error = NULL, updated_at = ? WHERE account_id = ? AND key = ?`,
-      phoneNumberId, request.to, request.templateName, request.language, components,
+      phoneNumberId, request.to, request.templateName, request.language, storedComponents(request),
       request.sendAt, request.expiresAt, request.sendAt, now, accountId, key,
     );
     return { state: "replaced", row: readScheduled(sql, accountId, key) };
   }
+  return insertRow(sql, input, now);
+}
+
+/** Creates the row only while `key` is free in every status: the console never replaces an integration's send. */
+export function insertScheduled(
+  sql: SqlStorage,
+  input: ScheduledPut,
+  now: number,
+): { state: "created" | "exists" | "full"; row: ScheduledSend | null } {
+  const existing = readScheduled(sql, input.accountId, input.key);
+  if (existing) return { state: "exists", row: existing };
+  return insertRow(sql, input, now);
+}
+
+const storedComponents = (request: ScheduledRequest) => (request.components ? JSON.stringify(request.components) : null);
+
+function insertRow(sql: SqlStorage, input: ScheduledPut, now: number): { state: "created" | "full"; row: ScheduledSend | null } {
+  const { accountId, key, phoneNumberId, request } = input;
   const open = Number(
     sql.exec(`SELECT COUNT(*) AS n FROM scheduled_sends WHERE status IN ('pending', 'sending')`).toArray()[0]?.n ?? 0,
   );
@@ -237,7 +256,7 @@ export function upsertScheduled(
     `INSERT OR REPLACE INTO scheduled_sends (account_id, key, phone_number_id, recipient, template_name, language,
        components, status, send_at, expires_at, next_attempt_at, attempts, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 0, ?, ?)`,
-    accountId, key, phoneNumberId, request.to, request.templateName, request.language, components,
+    accountId, key, phoneNumberId, request.to, request.templateName, request.language, storedComponents(request),
     request.sendAt, request.expiresAt, request.sendAt, now, now,
   );
   return { state: "created", row: readScheduled(sql, accountId, key) };

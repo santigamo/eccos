@@ -7,11 +7,12 @@
 
 export type LocalTime = { day: string; clock: string; zone: string };
 
-export function localTime(at: number, timeZone?: string): LocalTime {
+/** `short` reads `Sat 28 Nov`; `long` reads `Saturday 28 November`. */
+export function localTime(at: number, timeZone?: string, width: "short" | "long" = "short"): LocalTime {
   const parts = new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
+    weekday: width,
     day: "numeric",
-    month: "short",
+    month: width,
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",

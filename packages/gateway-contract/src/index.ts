@@ -1,4 +1,7 @@
 import type { BillingStatus } from "./billing-status";
+import type { BroadcastPreflight, CreateBroadcastInput, CreateBroadcastResult } from "./broadcast-create";
+
+export type * from "./broadcast-create";
 
 /**
  * Single source of truth for the Eccos gateway operator RPC surface.
@@ -193,6 +196,8 @@ export interface BroadcastSummary {
   status: BroadcastStatus;
   phoneNumberId: string;
   template: { name: string; language: string };
+  /** The team's own name for it; null when none was given. */
+  label: string | null;
   total: number;
   duplicatesSkipped: number;
   ratePerMinute: number;
@@ -271,6 +276,41 @@ export interface ScheduledCancelResult {
   state: ScheduledCancelState;
   scheduled: ScheduledSend | null;
 }
+
+/** One send scheduled from the console: the template fields of {@link SendTemplateTestInput}, a key and a time. */
+export interface ScheduleSendInput extends Omit<SendTemplateTestInput, "idempotencyKey"> {
+  /** 1 to 128 letters, digits and `. _ : -`. Create-only: an existing key is refused, never replaced. */
+  key: string;
+  /** Epoch ms; the same limits as `PUT /scheduled/:key`. */
+  sendAt: number;
+  expiresAt: number;
+}
+
+export type ScheduleSendFailureCode =
+  | "subscription_required"
+  | "no_phone"
+  /** The key is taken in any status; `existing` is that send. */
+  | "key_exists"
+  | "too_many_pending"
+  /** `detail` names the broken time rule. */
+  | "invalid_time"
+  /** Any other refusal of the request (the recipient, the template's size); `detail` says which. */
+  | "invalid_request"
+  | "template_not_found"
+  /** `templateStatus` is Meta's status for it. */
+  | "template_not_approved"
+  /** Meta could not be asked about the template; nothing was scheduled. */
+  | "templates_unreachable";
+
+export type ScheduleSendResult =
+  | { ok: true; scheduled: ScheduledSend }
+  | {
+      ok: false;
+      code: ScheduleSendFailureCode;
+      detail: string | null;
+      existing?: ScheduledSend;
+      templateStatus?: string;
+    };
 
 /**
  * Which failed deliveries a bulk retry re-enqueues: those ENQUEUED inside
@@ -1401,10 +1441,17 @@ export interface GatewayApi {
   /** One stored media object of the account's WABA, or null when it is not stored (yet,
    * or any more). The bytes are streamed from R2; nothing is buffered in the gateway. */
   getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null>;
+  /**
+   * Start a broadcast from the console. Runs the same checks, replay and queueing as
+   * `POST /v1/wabas/:wabaId/broadcasts`; every refusal is a closed code.
+   */
+  createBroadcast(input: CreateBroadcastInput, accountId: string): Promise<CreateBroadcastResult>;
   /** Stop a running broadcast; recipients not yet attempted are cancelled. Null when it is not found. */
   cancelBroadcast(input: { wabaId: string; broadcastId: string }, accountId: string): Promise<BroadcastSummary | null>;
   /** Cancel a pending scheduled send. not_pending once it is sending or ended; missing when the key is not this account's. */
   cancelScheduled(input: { wabaId: string; key: string }, accountId: string): Promise<ScheduledCancelResult>;
+  /** Schedule one template send, create-only: never replaces a key an integration holds. */
+  scheduleSend(input: ScheduleSendInput, accountId: string): Promise<ScheduleSendResult>;
   /**
    * Resolve an organization to its account in ONE control-plane hop: link
    * (reconciling a missing one, contract §2), refusal of a pending/disabled link
@@ -1424,6 +1471,8 @@ export interface GatewayApi {
   readBroadcasts(org: ScopedOrg, opts: BroadcastListOpts): Promise<ScopedRead<CursorPage<BroadcastSummary>>>;
   /** One broadcast and one page of its recipients (seq order); null when it is not this account's. */
   readBroadcast(org: ScopedOrg, opts: BroadcastOpts): Promise<ScopedRead<BroadcastDetail | null>>;
+  /** The pace and the running count a new broadcast on the selected WABA would meet. */
+  readBroadcastPreflight(org: ScopedOrg): Promise<ScopedRead<BroadcastPreflight>>;
   /** Scheduled sends of the selected WABA in one status (default pending), with per-status counts. */
   readScheduled(org: ScopedOrg, opts: ScheduledListOpts): Promise<ScopedRead<ScheduledPage>>;
   readConversations(
