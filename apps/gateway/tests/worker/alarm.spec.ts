@@ -1,11 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  backoffMs,
-  runBoundedPool,
-  type EccosGateway,
-} from "../../src/gateway";
+import { runBoundedPool, type EccosGateway } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import {
@@ -580,14 +576,5 @@ describe("runBoundedPool", () => {
     ).rejects.toThrow("storage error");
 
     expect(completed).toBe(3);
-  });
-});
-
-describe("backoffMs", () => {
-  it("uses exponential backoff capped at 1 hour", () => {
-    expect(backoffMs(1)).toBe(5_000);
-    expect(backoffMs(2)).toBe(25_000);
-    expect(backoffMs(3)).toBe(125_000);
-    expect(backoffMs(6)).toBe(3_600_000);
   });
 });

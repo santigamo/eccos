@@ -456,20 +456,13 @@ afterEach(() => {
 });
 
 describe("oauthStateIsValid (F4a CSRF helper)", () => {
-  it("rejects a missing query state", () => {
-    expect(oauthStateIsValid(null, "cookie-state")).toBe(false);
-  });
-
-  it("rejects a missing cookie state", () => {
-    expect(oauthStateIsValid("query-state", undefined)).toBe(false);
-  });
-
-  it("rejects a mismatched state", () => {
-    expect(oauthStateIsValid("query-state", "other-state")).toBe(false);
-  });
-
-  it("accepts a matching state", () => {
-    expect(oauthStateIsValid("same-state", "same-state")).toBe(true);
+  it.each([
+    ["rejects a missing query state", null, "cookie-state", false],
+    ["rejects a missing cookie state", "query-state", undefined, false],
+    ["rejects a mismatched state", "query-state", "other-state", false],
+    ["accepts a matching state", "same-state", "same-state", true],
+  ])("%s", (_, query, cookie, valid) => {
+    expect(oauthStateIsValid(query, cookie)).toBe(valid);
   });
 });
 
@@ -591,30 +584,17 @@ describe("GET /connect OAuth state (F4a CSRF, route-level)", () => {
 });
 
 describe("POST /connect/exchange (account-bound, F4b)", () => {
-  it("rejects with 401 when no Authorization/x-api-key header is present (no config write)", async () => {
+  it.each([
+    ["no Authorization/x-api-key header is present", {}],
+    ["the account key is unknown", { authorization: "Bearer wrong-key" }],
+  ])("rejects with 401 when %s (no config write)", async (_, auth: Record<string, string>) => {
     const app = connectRoutes();
     const calls: Record<string, string>[] = [];
     const res = await app.request(
       "http://localhost/connect/exchange",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: "oauth-code", waba_id: "WABA123" }),
-      },
-      makeEnv(calls),
-    );
-    expect(res.status).toBe(401);
-    expect(calls).toHaveLength(0);
-  });
-
-  it("rejects with 401 when the account key is unknown (no config write)", async () => {
-    const app = connectRoutes();
-    const calls: Record<string, string>[] = [];
-    const res = await app.request(
-      "http://localhost/connect/exchange",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer wrong-key" },
+        headers: { "content-type": "application/json", ...auth },
         body: JSON.stringify({ code: "oauth-code", waba_id: "WABA123" }),
       },
       makeEnv(calls),

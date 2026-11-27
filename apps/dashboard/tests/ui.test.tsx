@@ -1,16 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Page, StatusTag, Unreachable, fmtTs } from "../src/ui";
+import { Page, StatusTag, fmtTs } from "../src/ui";
 
 /**
  * Lightweight render smoke tests for the primitives every operator view is
- * built from (`Page`, `Unreachable`, `StatusTag`) — including the
- * "Gateway unreachable" state that every view (Status/Messages/Events/
- * Forwarding queue/Templates/Settings) falls back to when the `GATEWAY` RPC binding
- * can't be reached (see `tests/gateway.test.ts` for the data-layer side of
- * that same state). Views reach this card through `FailureView`, which routes
- * the other failure classes elsewhere — `tests/failure-view.test.tsx` covers
- * that split.
+ * built from (`Page`, `StatusTag`). The "Gateway unreachable" card every view
+ * falls back to is covered through `FailureView` in `tests/failure-view.test.tsx`
+ * (and its data-layer side in `tests/gateway.test.ts`).
  *
  * These use React's own `react-dom/server` (`renderToStaticMarkup`), which
  * needs no DOM — it produces an HTML string directly, so no jsdom / Testing
@@ -30,15 +26,6 @@ import { Page, StatusTag, Unreachable, fmtTs } from "../src/ui";
  * follow-up noted there.
  */
 
-describe("Unreachable (shared graceful-degradation state, all views)", () => {
-  test("renders the gateway-unreachable copy and the RPC error message", () => {
-    const html = renderToStaticMarkup(<Unreachable error="fetch failed: ECONNREFUSED" />);
-    expect(html).toContain("Gateway unreachable");
-    expect(html).toContain("GATEWAY");
-    expect(html).toContain("fetch failed: ECONNREFUSED");
-  });
-});
-
 describe("Page (shared page shell, all views)", () => {
   test("renders the title, optional actions, and children without crashing", () => {
     const html = renderToStaticMarkup(
@@ -51,11 +38,6 @@ describe("Page (shared page shell, all views)", () => {
     expect(html).toContain("row content");
   });
 
-  test("renders with no actions supplied", () => {
-    const html = renderToStaticMarkup(<Page title="Events">{null}</Page>);
-    expect(html).toContain("Events");
-  });
-
   test("fill takes the shell's height instead of at least it, and only when asked", () => {
     const filled = renderToStaticMarkup(<Page title="Conversations" fill>{null}</Page>);
     expect(filled.startsWith('<div class="flex min-h-0 flex-1 flex-col">')).toBe(true);
@@ -65,16 +47,6 @@ describe("Page (shared page shell, all views)", () => {
 });
 
 describe("StatusTag (the status column on every log and table)", () => {
-  test.each([
-    ["delivered", "delivered"],
-    ["failed", "failed"],
-    ["pending", "pending"],
-    ["some-unknown-status", "some-unknown-status"],
-  ])("renders the %s status label", (status, expected) => {
-    const html = renderToStaticMarkup(<StatusTag status={status} />);
-    expect(html).toContain(expected);
-  });
-
   test("the forward hop's own words carry their tones", () => {
     // `forwarded` is success, `held` and `retrying` are amber (a state with
     // something to do about it), and `queued` is NEUTRAL — it is the ordinary

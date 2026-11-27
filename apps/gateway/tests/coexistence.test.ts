@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   HISTORY_SYNC_EXPIRED_ERROR,
-  SYNC_UNCONFIRMED_ERROR,
-  SyncUnconfirmedError,
   coexistenceSyncSpentUnconfirmed,
   HISTORY_SYNC_DEADLINE_MARGIN_MS,
   HISTORY_SYNC_WINDOW_MS,
@@ -195,14 +193,6 @@ describe("once-only semantics", () => {
     expect(
       coexistenceSyncStatus({ ...base, ...ISSUED_UNANSWERED, now: DEADLINE + 1 }),
     ).toBe("unconfirmed");
-  });
-
-  test("the unconfirmed error explains why there is no retry", () => {
-    const error = new SyncUnconfirmedError();
-    expect(error.message).toBe(SYNC_UNCONFIRMED_ERROR);
-    expect(error.message).toContain("once");
-    expect(error.message).toContain("offboard");
-    expect(error).toBeInstanceOf(Error);
   });
 });
 

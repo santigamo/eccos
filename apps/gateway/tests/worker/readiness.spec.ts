@@ -17,6 +17,7 @@ describe("GET /health", () => {
 });
 
 describe("GET /ready", () => {
+  // The account registry is empty here: readiness reports config, not tenants.
   it("returns 200 with all checks passing when app config and the control plane are healthy", async () => {
     const res = await exports.default.fetch("http://example.com/ready");
     expect(res.status).toBe(200);
@@ -47,13 +48,5 @@ describe("GET /ready", () => {
     } finally {
       (env as MutableEnv).META_APP_SECRET = saved;
     }
-  });
-
-  it("stays healthy when the account registry is empty — readiness reports config, not tenants", async () => {
-    const res = await exports.default.fetch("http://example.com/ready");
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; config: Record<string, boolean> };
-    expect(body.ok).toBe(true);
-    expect(body.config.META_APP_SECRET).toBe(true);
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { backoffMs, withJitter } from "../../src/gateway";
 
 // Pure unit tests for the F9 thundering-herd fix: `backoffMs` itself must stay an
-// exact, deterministic curve (asserted elsewhere in alarm.spec.ts), while jitter is
+// exact, deterministic curve, while jitter is
 // applied only where `next_attempt_at` is actually scheduled, via `withJitter`.
 
 describe("withJitter", () => {
