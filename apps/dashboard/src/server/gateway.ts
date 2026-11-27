@@ -46,10 +46,14 @@ import type { Grant } from "../auth/step-up";
 import { ForbiddenError, memberRole, resolveMemberships } from "../auth/tenant";
 import { roleAllows } from "../auth/identity";
 import type { ForbiddenReason, GatewayAction, Membership } from "../auth/tenant";
+import { validateCreateBroadcastInput } from "./broadcast-input";
+import type { ConsoleBroadcastFailureCode } from "../lib/broadcast-failure";
 import type {
   HeldEvents,
   ReplayHeldResult,
   BroadcastDetail,
+  BroadcastPreflight,
+  CreateBroadcastResult,
   BroadcastRecipientStatus,
   BroadcastSummary,
   ScheduledCancelResult,
@@ -112,6 +116,7 @@ export type {
   AccountKeyResource,
   AccountResources,
   BroadcastDetail,
+  BroadcastPreflight,
   BroadcastRecipientRow,
   BroadcastRecipientStatus,
   BroadcastStatus,
@@ -1586,6 +1591,53 @@ export const cancelBroadcast = createServerFn({ method: "POST" })
           ...(broadcast?.status === "cancelled" ? {} : { detail: broadcast ? "ended" : "not_found" }),
         });
         return broadcast;
+      }),
+  );
+
+/** The pace and running count a new broadcast would meet. `operate`: only the creation page reads it. */
+export const getBroadcastPreflight = createServerFn({ method: "GET" })
+  .validator(validateScopeInput)
+  .handler(({ data }): Promise<Result<BroadcastPreflight>> =>
+    withScopedData({ action: "operate", wabaId: data?.wabaId }, (gateway, org) => gateway.readBroadcastPreflight(org)),
+  );
+
+export type ConsoleBroadcastResult =
+  | Extract<CreateBroadcastResult, { ok: true }>
+  | (Omit<Extract<CreateBroadcastResult, { ok: false }>, "code"> & { code: ConsoleBroadcastFailureCode });
+
+/**
+ * Start a broadcast from the console (`operate`, like Send test). A workspace in its
+ * unpaid setup window is refused here: a list a paste away is not part of the trial.
+ * The audit line carries ids and counts only, never a recipient or a value.
+ */
+export const createBroadcast = createServerFn({ method: "POST" })
+  .validator(validateCreateBroadcastInput)
+  .handler(
+    ({ data }): Promise<Result<ConsoleBroadcastResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("operate");
+        const scope = await resolveScope(gateway, data.wabaId, true);
+        const result: ConsoleBroadcastResult =
+          scope.resources.account?.billingStatus === "setup"
+            ? { ok: false, code: "setup_window", detail: null }
+            : await gateway.createBroadcast({ ...data, wabaId: scope.wabaId }, scope.accountId);
+        auditEvent({
+          action: "broadcast_create",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: {
+            wabaId: scope.wabaId,
+            phoneNumberId: data.phoneNumberId,
+            template: data.templateName,
+            language: data.languageCode,
+            recipients: data.recipients.length,
+            ...(result.ok ? { broadcastId: result.broadcast.id, replayed: result.replayed ? 1 : 0 } : {}),
+          },
+          outcome: result.ok ? "success" : result.code === "setup_window" ? "denied" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
+        });
+        return result;
       }),
   );
 
