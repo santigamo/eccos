@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { normalizeTemplateName } from "@eccos/core/template-rules";
+import { analyzeTemplate, canSendTemplate, normalizeTemplateName } from "@eccos/core/template-rules";
 import { COUNT_LINK, Page, StatusTag } from "../../ui";
 import { IDENTITY_TIER, MACHINE_CLASS, SECONDARY_TIER, SectionHeading, SUPPORT_TIER } from "../dashboard/plain-table";
 import { Row, Rows, SectionFrame } from "../dashboard/settings-section";
@@ -39,10 +39,11 @@ import {
 import { dropHandoff, peekHandoff, putHandoff } from "../../lib/template-handoff";
 import { languageLabel, mostUsedLanguage, nextFreeLanguage } from "../../lib/template-languages";
 import { afterCreate, movedCategory, refusal, requestFor, submitSerially } from "../../lib/template-submit";
-import { authoringReading, categoryLabel, type TemplateRecord } from "../../lib/template-view";
+import { authoringReading, categoryLabel, templateView, type TemplateRecord } from "../../lib/template-view";
 import { DeleteTemplateDialog, type DeleteTarget } from "./delete-template-dialog";
 import { DiscardDraftDialog } from "./discard-draft-dialog";
 import { LanguagePanel } from "./language-panel";
+import { SendTestSheet, type SendTestPhone } from "./send-test-sheet";
 import { WhatsAppPreview } from "./whatsapp-preview";
 
 /** Everything the page holds beyond what Meta already has. */
@@ -59,6 +60,8 @@ export interface TemplateEditorProps {
   /** The `wabaId` search param, carried on every link. */
   wabaParam?: string;
   businessName: string;
+  /** The WABA's numbers, the senders a test can go from. */
+  phones: SendTestPhone[];
   /** Every template row the list loaded. */
   rows: TemplateRecord[];
   /** The template name being edited. */
@@ -127,13 +130,14 @@ function initialState({ mode, rows, name, language, from, add }: TemplateEditorP
  * primary that sends every language that needs sending, one call at a time.
  */
 export function TemplateEditor(props: TemplateEditorProps) {
-  const { mode, wabaId, wabaParam, businessName, rows, onLanguage } = props;
+  const { mode, wabaId, wabaParam, businessName, phones, rows, onLanguage } = props;
   const router = useRouter();
   const navigate = useNavigate();
   const [state, setState] = useState(() => initialState(props));
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState(() => (props.name && peekHandoff(props.name)?.receipt) || "");
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
+  const [testing, setTesting] = useState<TemplateRecord | null>(null);
   const name = state.name;
 
   const group = mode === "edit" ? rows.filter((row) => row.name === name) : [];
@@ -365,6 +369,11 @@ export function TemplateEditor(props: TemplateEditorProps) {
                           const rest = tabs.find((tab) => tab.language !== active.language);
                           if (rest) onLanguage(rest.language);
                         }}
+                        onSend={
+                          active.row && phones.length > 0 && canSendTemplate(active.row.status)
+                            ? () => setTesting(active.row)
+                            : undefined
+                        }
                         onDelete={
                           active.row?.id && active.row.status?.toUpperCase() !== "PENDING_DELETION"
                             ? () =>
@@ -463,6 +472,23 @@ export function TemplateEditor(props: TemplateEditorProps) {
 
       {leave.status === "blocked" ? (
         <DiscardDraftDialog submitting={submitting} editing={mode === "edit"} onKeep={leave.reset} onDiscard={leave.proceed} />
+      ) : null}
+
+      {testing ? (
+        <SendTestSheet
+          key={`${testing.name}:${testing.language}`}
+          open
+          onOpenChange={(open) => {
+            if (!open) setTesting(null);
+          }}
+          wabaId={wabaId}
+          templateName={testing.name ?? ""}
+          languageCode={testing.language ?? ""}
+          status={testing.status}
+          sendability={analyzeTemplate(testing)}
+          phones={phones}
+          view={templateView(testing)}
+        />
       ) : null}
 
       {deleting ? (

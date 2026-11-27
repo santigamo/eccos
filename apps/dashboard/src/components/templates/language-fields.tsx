@@ -15,7 +15,7 @@ import {
 import { MACHINE_CLASS } from "../dashboard/plain-table";
 import { coreButtons, exampleValues, type ButtonDraft, type LanguageDraft } from "../../lib/template-draft";
 import type { ReadOnlyContent } from "../../lib/template-group";
-import { managerUrl } from "./template-preview-sheet";
+import { managerUrl } from "../../lib/template-view";
 
 const LABEL = `mb-1 block ${MACHINE_CLASS}`;
 const HELP = "m-0 mt-1 max-w-prose text-xs text-pretty text-muted-foreground";

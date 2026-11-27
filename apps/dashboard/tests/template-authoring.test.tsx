@@ -429,6 +429,7 @@ function renderEditor(props: { mode?: "create" | "edit"; rows: unknown[]; langua
       mode={props.mode ?? "edit"}
       wabaId="WABA_A"
       businessName="Biz"
+      phones={[]}
       rows={props.rows as never}
       name={props.mode === "create" ? undefined : "order_update"}
       language={props.language}

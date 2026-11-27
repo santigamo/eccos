@@ -277,3 +277,8 @@ export function authoringReading(row: TemplateRecord): AuthoringReading {
     },
   };
 }
+
+/** Best-effort deep link into WhatsApp Manager's template list for this WABA. */
+export function managerUrl(wabaId: string): string {
+  return `https://business.facebook.com/wa/manage/message-templates/?waba_id=${encodeURIComponent(wabaId)}`;
+}

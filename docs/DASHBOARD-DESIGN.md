@@ -176,10 +176,7 @@ component" is therefore never the question. The register is.
    is why `Dialog` defaults to `sm:max-w-lg`. Measure before narrowing one.
 3. **Side Sheet — a task done beside the list, or one row inspected without acting on
    it.** Task: a form with its own primary submit whose neighbouring list is genuinely
-   relevant (`send-test-sheet.tsx`, `retry-failed-sheet.tsx`). Inspection:
-   `template-preview-sheet.tsx` (the template as the phone shows it, Meta's review
-   verdict, and buttons that hand off to the send sheet and to the authoring page —
-   it closes before the next surface opens, so one sheet is up at a time), and the two log sheets
+   relevant (`send-test-sheet.tsx`, `retry-failed-sheet.tsx`). Inspection: the two log sheets
    (`components/logs/message-sheet.tsx`, `event-sheet.tsx`) — one message or one event,
    hop by hop, with the full Meta ids, what the thing actually said, and the provider
    payload behind a disclosure (data rule 10).
@@ -209,6 +206,12 @@ sheet and moved to its own routes (`/templates/new`, `/templates/$name?language=
 - **It needs space.** Fields at `minmax(0,40rem)` beside a sticky `minmax(18rem,22.5rem)`
   preview, and a sticky action bar under the fields, at 1280px with the 240px sidebar.
   The list behind it is not consulted while writing, so it does not earn the screen.
+
+Reading a template is the same page. A template row opens `/templates/$name` on its
+language, editable or read-only (a template the form cannot hold reads as the greyed
+form, from what Meta stores), so there is one place to read a template, not a page and
+an inspection sheet saying the same thing. Send test stays a task sheet, opened from
+the language's menu on the page or from the row's menu on the list.
 
 A page has no backdrop to protect, so the dismissal rule below becomes a leave guard:
 TanStack Router's `useBlocker` with `enableBeforeUnload`, armed only while a draft is
