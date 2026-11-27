@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StatusTag } from "../../ui";
 import { MACHINE_CLASS, SECONDARY_TIER, SUPPORT_TIER } from "../dashboard/plain-table";
 import { APPROVED_EDIT_NOTICE, type LanguageDraft } from "../../lib/template-draft";
-import { refusalLine, type LanguageTab } from "../../lib/template-group";
+import { readOnlyContent, refusalLine, type LanguageTab } from "../../lib/template-group";
 import { languageLabel, languageOptions } from "../../lib/template-languages";
 import { authoringReading, lastUpdated, qualityReading, rejectionReason } from "../../lib/template-view";
 import { LanguageFields, LanguageReadOnly } from "./language-fields";
@@ -144,7 +144,7 @@ export function LanguagePanel({
               </>
             ) : null}
           </p>
-          <LanguageReadOnly draft={tab.draft} />
+          <LanguageReadOnly content={readOnlyContent(tab)} />
         </>
       ) : (
         <LanguageFields draft={tab.draft} onChange={onChange} wabaId={wabaId} />
