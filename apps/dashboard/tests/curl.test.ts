@@ -17,6 +17,8 @@ describe("API requests the console prints", () => {
     expect(curl).toStartWith("curl -X POST https://api.eccos.chat/v1/wabas/1029384756/broadcasts \\");
     expect(curl).toContain('-H "Authorization: Bearer <API_KEY>"');
     expect(curl).toContain('-H "Idempotency-Key: ');
+    expect(curl).toContain('"to": "<PHONE>"');
+    expect(curl).toContain('"name": "<TEMPLATE_NAME>"');
     expect(JSON.parse(curl.slice(curl.indexOf("-d '") + 4, -1)).recipients).toHaveLength(1);
   });
 

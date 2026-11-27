@@ -1459,6 +1459,11 @@ export const getGatewayOrigin = createServerFn({ method: "GET" }).handler(
   (): Promise<Result<string | null>> => withGateway((gateway) => gateway.getPublicOrigin(), "view"),
 );
 
+/** The same origin for a loader that only fills an example request: null on any failure. */
+export function gatewayOriginOrNull(): Promise<string | null> {
+  return getGatewayOrigin().then((r) => (r.ok ? r.data : null), () => null);
+}
+
 /** Issue an `ek_` key. The raw key crosses this boundary once, in the return
  * value, and never reaches a log or audit line. */
 export const issueApiKey = createServerFn({ method: "POST" })

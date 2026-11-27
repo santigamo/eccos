@@ -197,7 +197,7 @@ describe("/broadcasts/$broadcastId", () => {
 
   test("the meta line states the broadcast's pace, not the account's rate", () => {
     const html = renderDetail(page());
-    expect(html).toContain("sends 48 a minute");
+    expect(html).toContain("paced at up to 48 a minute");
     expect(html).not.toContain("60/min");
   });
 

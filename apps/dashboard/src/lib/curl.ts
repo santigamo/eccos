@@ -31,17 +31,20 @@ export function gatewayUrl(origin: string | null | undefined, path: string): str
   return `${origin ?? "<GATEWAY_URL>"}${path}`;
 }
 
+const TEMPLATE = `{ "name": "<TEMPLATE_NAME>", "language": { "code": "<LANGUAGE>" }`;
+const BODY_VALUES = `[{ "type": "body", "parameters": [
+          { "type": "text", "text": "<VALUE_1>" }, { "type": "text", "text": "<VALUE_2>" }] }]`;
+
 /** A broadcast to one recipient, the shape a list of them takes. */
 export function broadcastCurl(wabaId: string | undefined, origin: string | null | undefined): string {
   return curlCommand({
     method: "POST",
     url: gatewayUrl(origin, wabaPath(wabaId, "/broadcasts")),
-    headers: ["Idempotency-Key: order-ready-001"],
+    headers: ["Idempotency-Key: <UNIQUE_ID>"],
     body: `{
-    "template": { "name": "order_ready", "language": { "code": "es" } },
+    "template": ${TEMPLATE} },
     "recipients": [
-      { "to": "34600111222", "components": [{ "type": "body", "parameters": [
-          { "type": "text", "text": "Ana" }, { "type": "text", "text": "viernes" }] }] }
+      { "to": "<PHONE>", "components": ${BODY_VALUES} }
     ]
   }`,
   });
@@ -53,10 +56,9 @@ export function scheduledCurl(wabaId: string | undefined, origin: string | null 
     method: "PUT",
     url: gatewayUrl(origin, wabaPath(wabaId, "/scheduled/appt-8812")),
     body: `{
-    "to": "34600111222",
-    "template": { "name": "appointment_reminder", "language": { "code": "es" },
-      "components": [{ "type": "body", "parameters": [
-        { "type": "text", "text": "Ana" }, { "type": "text", "text": "13:30" }] }] },
+    "to": "<PHONE>",
+    "template": ${TEMPLATE},
+      "components": ${BODY_VALUES} },
     "sendAt": "${sendAt}"
   }`,
   });

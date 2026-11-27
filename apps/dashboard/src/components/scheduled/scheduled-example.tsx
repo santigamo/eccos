@@ -14,7 +14,7 @@ export function ScheduledExample() {
         <p className="m-0 font-mono text-xs text-muted-foreground">appt-8812</p>
         <p className="m-0 mt-1 text-lg font-medium text-foreground">Fri 20 Nov, 09:00</p>
         <p className="m-0 mt-1 font-mono text-[11px] text-muted-foreground">
-          appointment_reminder · es · +34 600 111 222
+          appointment_reminder · en · +34 600 111 222
         </p>
       </ExampleStep>
       <ExampleStep
@@ -38,7 +38,7 @@ export function ScheduledExample() {
         <WhatsAppPreview
           businessName="Your business"
           header={null}
-          body="Hola {{1}}, te recordamos tu cita de hoy a las {{2}}."
+          body="Hi {{1}}, a reminder of your appointment today at {{2}}."
           bodyValues={{ 1: "Ana", 2: "13:30" }}
           markValues
         />

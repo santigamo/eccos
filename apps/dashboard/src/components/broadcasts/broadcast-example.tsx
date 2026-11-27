@@ -3,8 +3,8 @@ import { ExampleStep } from "../sending/first-run";
 import { WhatsAppPreview } from "../templates/whatsapp-preview";
 
 const LIST = [
-  ["+34 600 111 222", "Ana", "viernes"],
-  ["+34 600 333 444", "Luis", "sábado"],
+  ["+34 600 111 222", "Ana", "Friday"],
+  ["+34 600 333 444", "Luis", "Saturday"],
 ];
 
 const REPORT = [
@@ -17,13 +17,13 @@ const REPORT = [
 export function BroadcastExample() {
   return (
     <>
-      <ExampleStep step={1} title="Your list" note="Paste it from a spreadsheet or upload a CSV.">
+      <ExampleStep step={1} title="Your list" note="Your system sends the list in one request.">
         <table className="w-full border-collapse font-mono text-xs">
           <thead>
             <tr className="border-b border-(--line) text-left text-muted-foreground">
-              <th className="pb-1 font-normal">teléfono</th>
-              <th className="pb-1 font-normal">nombre</th>
-              <th className="pb-1 font-normal">recogida</th>
+              <th className="pb-1 font-normal">phone</th>
+              <th className="pb-1 font-normal">name</th>
+              <th className="pb-1 font-normal">pickup</th>
             </tr>
           </thead>
           <tbody>
@@ -42,8 +42,8 @@ export function BroadcastExample() {
         <WhatsAppPreview
           businessName="Your business"
           header={null}
-          body="Hola {{1}}, tu pedido está listo. Puedes recogerlo el {{2}}."
-          bodyValues={{ 1: "Ana", 2: "viernes" }}
+          body="Hi {{1}}, your order is ready. Pick it up on {{2}}."
+          bodyValues={{ 1: "Ana", 2: "Friday" }}
           markValues
         />
       </ExampleStep>

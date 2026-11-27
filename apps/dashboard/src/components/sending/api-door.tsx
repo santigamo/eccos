@@ -1,12 +1,13 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { COUNT_LINK } from "../../ui";
 import { CopyButton } from "../dashboard/copy-button";
 import { MACHINE_CLASS } from "../dashboard/plain-table";
 
 export type DoorRequest = { method: "POST" | "PUT" | "DELETE"; path: string; note?: string };
 
-const FOOT_LINK = "text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground";
+const FOOT_LINK = `text-xs text-muted-foreground underline hover:text-foreground ${COUNT_LINK}`;
 
 /**
  * The API door of a first-run block: the request in one line per call, the full
@@ -62,7 +63,7 @@ export function ApiDoor({
             aria-expanded={open}
             aria-controls={panelId}
             onClick={onToggle}
-            className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-foreground underline underline-offset-4"
+            className={`inline-flex cursor-pointer items-center gap-1.5 text-sm text-foreground underline ${COUNT_LINK}`}
           >
             <ChevronRightIcon aria-hidden="true" className={cn("size-3.5 transition-transform", open && "rotate-90")} />
             {open ? "Hide the full request" : "Show the full request"}

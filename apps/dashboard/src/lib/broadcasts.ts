@@ -3,10 +3,11 @@ import type {
   BroadcastRecipientStatus,
   BroadcastSummary,
 } from "@eccos/gateway-contract";
+import { fmtCount } from "../ui";
 
 /**
- * How the console words a broadcast's states. Pure and type-only on the
- * contract, so it runs under plain `bun test`.
+ * How the console words a broadcast's states. Pure, so it runs under plain
+ * `bun test`.
  *
  * A broadcast speaks the Eccos → Meta hop (`sent` / `failed`) and nothing
  * else: `delivered` is a later receipt from Meta and is counted on the
@@ -35,7 +36,7 @@ export function broadcastState(
   sendingPaused: boolean,
 ): { label: string; reason: string | null } {
   if (summary.status === "running" && sendingPaused) {
-    return { label: "paused", reason: `${summary.counts.queued.toLocaleString("en-US")} waiting` };
+    return { label: "paused", reason: `${fmtCount(summary.counts.queued)} waiting` };
   }
   if (summary.status === "halted") return { label: "halted", reason: summary.haltReason };
   return { label: broadcastStateLabel(summary), reason: null };

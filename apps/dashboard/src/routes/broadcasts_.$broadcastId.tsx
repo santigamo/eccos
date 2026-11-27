@@ -38,7 +38,7 @@ import { invalidatePage } from "../lib/invalidate";
 import { EMPTY_CELL, wamidTail } from "../lib/logs";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchWabaId } from "../lib/search";
-import { sendsPaused } from "../lib/sends-paused";
+import { rootSendsPaused } from "../lib/sends-paused";
 import { getBroadcast } from "../server/gateway";
 import type { BroadcastRecipientRow } from "../server/gateway";
 import { FactCell, FactsStrip, Page, StatusTag, fmtCount, fmtTs } from "../ui";
@@ -171,7 +171,7 @@ function BroadcastPage() {
   const { broadcast, recipients } = result.data;
   const { counts, delivery } = broadcast;
   const running = broadcast.status === "running";
-  const state = broadcastState(broadcast, sendsPaused(root));
+  const state = broadcastState(broadcast, rootSendsPaused(root));
   const nextCursor = recipients.nextCursor;
 
   const filter = (
@@ -291,7 +291,7 @@ function BroadcastPage() {
       </FactsStrip>
       <p className="mt-3 text-sm text-muted-foreground">
         Created <span className="font-mono text-xs">{fmtTs(broadcast.createdAt)}</span> ·{" "}
-        sends {broadcastPace(broadcast.ratePerMinute)} a minute · finished{" "}
+        paced at up to {broadcastPace(broadcast.ratePerMinute)} a minute · finished{" "}
         <span className="font-mono text-xs">
           {broadcast.finishedAt === null ? EMPTY_CELL : fmtTs(broadcast.finishedAt)}
         </span>{" "}

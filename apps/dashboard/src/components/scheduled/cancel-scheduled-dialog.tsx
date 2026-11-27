@@ -1,3 +1,4 @@
+import { isBsuid } from "@eccos/core/bsuid";
 import type { ScheduledSend } from "@eccos/gateway-contract";
 import { cancelScheduled } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
@@ -12,7 +13,9 @@ import { CancelDialog } from "../sending/cancel-dialog";
  */
 export function cancelScheduledCopy(row: Pick<ScheduledSend, "to" | "sendAt">, timeZone?: string): string {
   const at = localTime(row.sendAt, timeZone);
-  return `It will not be sent to ${formatCustomerId(row.to)} on ${at.day} at ${at.clock} ${at.zone}. It can be scheduled again under the same key.`;
+  // Stored as the caller wrote it: a number may carry its own `+` and spaces.
+  const to = isBsuid(row.to) ? row.to : row.to.replace(/\D/g, "");
+  return `It will not be sent to ${formatCustomerId(to)} on ${at.day} at ${at.clock} ${at.zone}. It can be scheduled again under the same key.`;
 }
 
 /** Confirm and cancel a pending scheduled send. A send claimed meanwhile reads "Too late to cancel". */

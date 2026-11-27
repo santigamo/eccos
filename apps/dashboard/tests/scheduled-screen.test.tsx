@@ -193,4 +193,10 @@ describe("cancel confirmation", () => {
       "It will not be sent to +34600111222 on Fri 20 Nov at 09:00 CET. It can be scheduled again under the same key.",
     );
   });
+
+  test("a number stored with its own + and spaces prints one +", () => {
+    expect(cancelScheduledCopy({ to: "+34 600 111 222", sendAt: Date.UTC(2026, 10, 20, 8) }, "Europe/Madrid")).toContain(
+      "sent to +34600111222 on",
+    );
+  });
 });

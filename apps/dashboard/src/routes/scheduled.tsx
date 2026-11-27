@@ -34,8 +34,8 @@ import {
   scheduledOutcome,
 } from "../lib/scheduled";
 import { normalizeSearchWabaId } from "../lib/search";
-import { sendsPaused } from "../lib/sends-paused";
-import { getGatewayOrigin, listScheduled } from "../server/gateway";
+import { rootSendsPaused } from "../lib/sends-paused";
+import { gatewayOriginOrNull, listScheduled } from "../server/gateway";
 import type { ScheduledSend, ScheduledStatus } from "../server/gateway";
 import { Page, fmtCount, fmtTs } from "../ui";
 
@@ -64,7 +64,7 @@ export const Route = createFileRoute("/scheduled")({
     const list = await listScheduled({ data: deps }).catch(loaderFailure);
     // The origin only fills the first-run block's request.
     const firstRun = list.ok && scheduledFirstRun(list.data.counts);
-    const origin = firstRun ? await getGatewayOrigin().then((r) => (r.ok ? r.data : null), () => null) : null;
+    const origin = firstRun ? await gatewayOriginOrNull() : null;
     return { list, origin };
   },
   component: ScheduledPage,
@@ -284,7 +284,7 @@ function ScheduledPage() {
         </>
       }
     >
-      {sendsPaused(root) && counts.pending > 0 ? (
+      {rootSendsPaused(root) && counts.pending > 0 ? (
         <Callout tone="warning" className="mb-4">
           Sending is paused for this workspace. The {fmtCount(counts.pending)} pending{" "}
           {counts.pending === 1 ? "send waits" : "sends wait"}, and each one that has not gone out by its expiry is not

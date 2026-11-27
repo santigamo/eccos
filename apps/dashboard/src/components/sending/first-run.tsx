@@ -6,8 +6,7 @@ import { ApiDoor, FullRequest } from "./api-door";
 type DoorProps = Omit<ComponentProps<typeof ApiDoor>, "open" | "onToggle" | "panelId">;
 
 /**
- * What a list page says before it holds anything: what the thing is, the act that
- * makes one (when the console offers it and the role may take it), the API door,
+ * What a list page says before it holds anything: what the thing is, the API door,
  * and an example in its own frames, never a sample row in the live grid. A
  * filtered or tabbed view that is empty keeps `GridEmptyState`.
  */
@@ -15,7 +14,6 @@ export function FirstRun({
   label,
   title,
   lede,
-  action,
   door,
   fullRequestLabel,
   example,
@@ -24,8 +22,6 @@ export function FirstRun({
   label: string;
   title: string;
   lede: string;
-  /** The primary act and its note; absent until the console can do it. */
-  action?: ReactNode;
   door: DoorProps;
   fullRequestLabel: string;
   example: ReactNode;
@@ -34,15 +30,12 @@ export function FirstRun({
   const [open, setOpen] = useState(false);
   const panelId = useId();
   return (
-    <div className="flex max-w-[80rem] flex-col gap-9">
+    <div className="flex flex-col gap-9">
       <div className={SPLIT_GRID}>
-        <div className={`flex flex-col gap-5 ${SPLIT_MAIN}`}>
-          <div className="flex flex-col gap-2.5">
-            <p className={`m-0 ${MACHINE_CLASS}`}>{label}</p>
-            <h2 className="m-0 text-2xl font-semibold tracking-[-0.015em] text-foreground">{title}</h2>
-            <p className="m-0 max-w-prose text-[15px] leading-6 text-pretty text-muted-foreground">{lede}</p>
-          </div>
-          {action}
+        <div className={`flex flex-col gap-2.5 ${SPLIT_MAIN}`}>
+          <p className={`m-0 ${MACHINE_CLASS}`}>{label}</p>
+          <h2 className="m-0 text-2xl font-semibold tracking-[-0.015em] text-foreground">{title}</h2>
+          <p className="m-0 max-w-prose text-[15px] leading-6 text-pretty text-muted-foreground">{lede}</p>
         </div>
         <ApiDoor {...door} open={open} onToggle={() => setOpen((was) => !was)} panelId={panelId} />
       </div>

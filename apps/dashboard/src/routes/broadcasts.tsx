@@ -19,8 +19,8 @@ import { loaderFailure } from "../lib/failure";
 import { rootRole } from "../lib/root-role";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchWabaId } from "../lib/search";
-import { sendsPaused } from "../lib/sends-paused";
-import { getGatewayOrigin, listBroadcasts } from "../server/gateway";
+import { rootSendsPaused } from "../lib/sends-paused";
+import { gatewayOriginOrNull, listBroadcasts } from "../server/gateway";
 import type { BroadcastSummary } from "../server/gateway";
 import { COUNT_LINK, Page, StatusTag, fmtCount, fmtTs } from "../ui";
 
@@ -48,7 +48,7 @@ export const Route = createFileRoute("/broadcasts")({
     const list = await listBroadcasts({ data: deps }).catch(loaderFailure);
     // The origin only fills the first-run block's request.
     const firstRun = list.ok && broadcastsFirstRun(list.data.items, deps.cursor);
-    const origin = firstRun ? await getGatewayOrigin().then((r) => (r.ok ? r.data : null), () => null) : null;
+    const origin = firstRun ? await gatewayOriginOrNull() : null;
     return { list, origin };
   },
   component: BroadcastsPage,
@@ -210,7 +210,7 @@ function BroadcastsPage() {
           title="Send one template to your whole list"
           lede="Bring a list of up to 10,000 people and Eccos sends each one their own message: an offer, an order that is ready, a change in opening hours."
           door={{
-            sentence: "The same thing, in one request.",
+            sentence: "Your system sends the template and the list in one request.",
             requests: [{ method: "POST", path: wabaPath(selectedWabaId, "/broadcasts") }],
             curl: broadcastCurl(selectedWabaId, origin),
             guide: GUIDE,
@@ -218,7 +218,7 @@ function BroadcastsPage() {
           }}
           fullRequestLabel="The full request · one recipient shown"
           example={<BroadcastExample />}
-          footnote="A broadcast starts as soon as you confirm it. You can cancel it while it runs; messages already sent cannot be recalled."
+          footnote="A broadcast starts as soon as Eccos accepts the request. You can cancel it here while it runs; messages already sent cannot be recalled."
         />
       </Page>
     );
@@ -240,7 +240,7 @@ function BroadcastsPage() {
     >
       <LogGrid
         key={cursor ?? "first"}
-        columns={broadcastColumns({ wabaId: selectedWabaId, showPhone: phones.length > 1, paused: sendsPaused(root) })}
+        columns={broadcastColumns({ wabaId: selectedWabaId, showPhone: phones.length > 1, paused: rootSendsPaused(root) })}
         data={rows}
         emptyMessage={
           <GridEmptyState
