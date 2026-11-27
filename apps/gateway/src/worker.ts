@@ -22,7 +22,6 @@ import { WABA_ID_PATTERN, type AccountWaba } from "./control-plane";
 import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDrops } from "./webhook-diagnostics";
 import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
-import { runDailyCensus } from "./ops-census";
 import { parseEventsQuery } from "./events-query";
 import { exportStream } from "./export-stream";
 import { exportCooldownMs } from "./export-usage";
@@ -1280,7 +1279,6 @@ const worker = {
     await getControlPlane(env)
       .sendFunnelMail()
       .catch(() => console.warn(JSON.stringify({ level: "warn", area: "funnel", event: "mail-error" })));
-    await runDailyCensus(env).catch(() => console.warn(JSON.stringify({ level: "warn", area: "ops-census", event: "census-error" })));
   },
 };
 

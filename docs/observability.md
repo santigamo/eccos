@@ -82,7 +82,9 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 
 Alerts are for platform problems, not one customer's own systems. A customer's failing or
 paused endpoint (`delivery-failed`, `circuit_open`) and held webhooks that expired
-(`held_expired`) raise no alert: they appear only in the daily census below and in the logs.
+(`held_expired`) raise no alert: they appear only in the logs (see the queries below).
+Both alerts are off unless the `OPS_TELEGRAM_*` secrets are set; a post that failed is not retried
+and logs an `area = ops-alert` warning.
 
 - **Inbound messages are being dropped:** an active WABA's messages lack a field the parser needs,
   so Meta changed a shape and that customer's messages are neither stored nor forwarded. Fires at
@@ -90,30 +92,6 @@ paused endpoint (`delivery-failed`, `circuit_open`) and held webhooks that expir
   Matching logs: `webhook_dropped`.
 - **WhatsApp token rejected:** Meta answered a Graph call with error 190, so it revoked our access
   to that WABA (see [operations.md](operations.md#meta-token-expiry)).
-
-### Daily census (Telegram HQ, "Eccos ops")
-
-Once per UTC day, on the first cron tick at or after 07:00 UTC, the gateway posts a census to the
-same topic. It lists each account (with its organization id), its WABAs with status, onboarding
-type (and coexistence sync state), whether a forwarding target is set, and counts: pending,
-"held: no forwarding target" (deliveries waiting for a target), failed (those still within `DELIVERY_RETENTION_DAYS`, default 90), delivered among
-the deliveries queued in the last 24 h, and "held: WABA not active" (webhooks held for a WABA that
-is not active yet). A "Needs attention" block comes first:
-
-- a WABA whose provisioning failed, or is still pending and was registered over 24 h ago;
-- deliveries that failed in the last 24 h (older failures stay in the totals only);
-- events held for lack of a forwarding target, or because the WABA is not active;
-- a WABA whose forwarding circuit is open at census time (still paused, or with deliveries waiting
-  for its probe), with its failures in a row (the WABA's line also says `circuit open`);
-- a coexistence sync that ended `unconfirmed` or `expired`;
-- a WABA that called the data export more than 24 times on the previous UTC day, or had exports
-  refused by the cooldown (`EXPORT_COOLDOWN_SECONDS`) that day: a script polling the export;
-- a WABA whose data plane did not answer within 10 s.
-
-It carries ids, names and counts only: no phone numbers, message content or secrets. Like the
-alerts, it is off unless the `OPS_TELEGRAM_*` secrets are set. The day is claimed just before the
-send and a rejected send is not retried, so a missed census shows up as no message that day; look
-for `area = ops-alert` and `area = ops-census` warnings.
 
 ## Queries
 
@@ -133,6 +111,8 @@ for `area = ops-alert` and `area = ops-census` warnings.
    `$workers.event.rpcMethods`.
 7. **Paused subscribers.** Filter `event = circuit_open` (or `event = drain_yielded` and
    `reason = budget` for slow ones); group by `wabaId`; calculate `count`, `max(failures)`.
+8. **Held webhooks lost.** Filter `event = held_expired`; group by `wabaId`; calculate
+   `sum(eventCount)`.
 
 To follow one webhook end to end, filter on its `correlationId` (the `cf-ray`) for the worker
 lines. Then use `wabaId` and `deliveryId` for the Durable Object lines that follow.

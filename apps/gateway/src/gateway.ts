@@ -92,9 +92,9 @@ import {
   upsertScheduled,
 } from "./scheduled";
 import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-rate-limit";
-import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, holdBatch, replaceHeld } from "./held-webhooks";
+import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, holdBatch, replaceHeld } from "./held-webhooks";
 import { EXPORT_SECTIONS, type ExportCursor, type ExportPage, type ExportSection, readExportPage, readExportSection } from "./export-pages";
-import { claimExport, type ExportClaim, type ExportDay, exportDay } from "./export-usage";
+import { claimExport, type ExportClaim } from "./export-usage";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { watchGraph } from "./token-health";
@@ -1505,40 +1505,6 @@ export class EccosGateway extends DurableObject<Env> {
       inboundByType,
       outbound: byStatus("outbound_messages"),
       deliveries: byStatus("deliveries"),
-    };
-  }
-
-  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`, the circuit breaker while it is paused or has rows waiting for its probe, and the HTTP export counters of the UTC day `exportsOn`. Index-only scans. */
-  getCensus(sinceMs: number, exportsOn: string): {
-    hasTarget: boolean;
-    deliveries: Record<string, number>;
-    recent: { delivered: number; failed: number };
-    heldEventCount: number;
-    circuit: { openUntil: number; failures: number } | null;
-    exports: ExportDay;
-  } {
-    const deliveries: Record<string, number> = {};
-    for (const row of this.sql.exec("SELECT status, COUNT(*) AS c FROM deliveries GROUP BY status").toArray()) {
-      deliveries[row.status as string] = Number(row.c);
-    }
-    const recent = { delivered: 0, failed: 0 };
-    for (const row of this.sql
-      .exec("SELECT status, COUNT(*) AS c FROM deliveries WHERE created_at >= ? GROUP BY status", sinceMs)
-      .toArray()) {
-      if (row.status === "delivered" || row.status === "failed") recent[row.status] = Number(row.c);
-    }
-    const circuit = this.forwardCircuit();
-    return {
-      hasTarget: Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL")),
-      deliveries,
-      recent,
-      heldEventCount: heldEventCount(this.sql),
-      // A pause that has ended with nothing queued waits for no probe: not worth flagging.
-      circuit:
-        circuit.openUntil > Date.now() || (circuit.openUntil > 0 && (deliveries.pending ?? 0) > 0)
-          ? { openUntil: circuit.openUntil, failures: circuit.failures }
-          : null,
-      exports: exportDay(this.sql, exportsOn),
     };
   }
 

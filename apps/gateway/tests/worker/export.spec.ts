@@ -9,13 +9,12 @@ import { EccosGateway } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { EXPORT_PAGE_ROWS, EXPORT_SECTIONS } from "../../src/export-pages";
 import { type ExportEnd, exportStream } from "../../src/export-stream";
-import { claimExport, exportCooldownMs, exportDay } from "../../src/export-usage";
+import { exportCooldownMs } from "../../src/export-usage";
 import { GatewayRPC } from "../../src/rpc";
 import worker from "../../src/worker";
 import { bootstrapAccount, gatewayStub, holdAlarms, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 const OTHER_WABA = "WABA_EXPORT_OTHER";
-const today = () => new Date().toISOString().slice(0, 10);
 let apiKey = "";
 
 beforeEach(async () => {
@@ -244,10 +243,8 @@ describe("export cooldown", () => {
     expect(granted).toEqual({ ok: true });
     expect(refused).toMatchObject({ ok: false });
     expect([899, 900]).toContain((refused as { retryAfter: number }).retryAfter);
-    expect(claimedAtSync.map((value) => JSON.parse(String(value)).days)).toEqual([
-      { [today()]: { exports: 1, blocked: 0 } },
-      { [today()]: { exports: 1, blocked: 1 } },
-    ]);
+    expect(claimedAtSync).toHaveLength(2);
+    expect(JSON.parse(String(claimedAtSync[0])).lastAt).toBeGreaterThan(0);
     const lines = log.mock.calls.map(([l]) => JSON.parse(String(l))).filter((l) => l.event === "claim_export");
     expect(lines).toEqual([
       expect.objectContaining({ area: "export", wabaId: TEST_WABA_ID, granted: true, syncMs: expect.any(Number) }),
@@ -276,30 +273,5 @@ describe("export cooldown", () => {
     expect(exportCooldownMs({ EXPORT_COOLDOWN_SECONDS: "-5" })).toBe(900_000);
     expect(exportCooldownMs({ EXPORT_COOLDOWN_SECONDS: "0" })).toBe(0);
     expect(exportCooldownMs({ EXPORT_COOLDOWN_SECONDS: "3600" })).toBe(3_600_000);
-  });
-});
-
-describe("export counters", () => {
-  it("counts granted and refused exports per UTC day, keeping the day before", async () => {
-    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
-      const day = (d: number) => Date.UTC(2026, 10, d, 12);
-      expect(claimExport(i.sql, day(25), 900_000)).toEqual({ ok: true });
-      expect(claimExport(i.sql, day(26), 900_000)).toEqual({ ok: true });
-      expect(claimExport(i.sql, day(26) + 1_000, 900_000)).toEqual({ ok: false, retryAfter: 899 });
-      expect(claimExport(i.sql, day(27), 900_000)).toEqual({ ok: true });
-      expect(exportDay(i.sql, "2026-11-27")).toEqual({ exports: 1, blocked: 0 });
-      expect(exportDay(i.sql, "2026-11-26")).toEqual({ exports: 1, blocked: 1 });
-      expect(exportDay(i.sql, "2026-11-25")).toEqual({ exports: 0, blocked: 0 });
-      const stored = JSON.parse(i.sql.exec("SELECT value FROM ops_state WHERE key = 'export_usage'").one().value as string);
-      expect(Object.keys(stored.days).sort()).toEqual(["2026-11-26", "2026-11-27"]);
-    });
-  });
-
-  it("counts HTTP exports in the census read, and not the console's", async () => {
-    await new GatewayRPC(createExecutionContext(), env).exportData(TEST_WABA_ID, TEST_ACCOUNT_ID);
-    for (let n = 0; n < 3; n++) await statusOf(exportCall());
-    const today = new Date().toISOString().slice(0, 10);
-    const census = await getGatewayStubForWaba(env, TEST_WABA_ID).getCensus(0, today);
-    expect(census.exports).toEqual({ exports: 1, blocked: 2 });
   });
 });

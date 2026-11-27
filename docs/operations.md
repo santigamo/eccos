@@ -43,8 +43,7 @@ Two limits keep one slow or dead subscriber from tying up its WABA's alarm (`FOR
   settings and a manual retry also close it, and forwards still in flight at that moment do not
   count against it. Its
   state is one `forward_circuit` row in the Durable Object's `ops_state` table; it is logged as
-  `circuit_open` / `circuit_closed`, shown in the daily census (never alerted: it is the
-  customer's endpoint), and returned on
+  `circuit_open` / `circuit_closed` (never alerted: it is the customer's endpoint), and returned on
   `getSubscriberConfig` (`circuitOpenUntil`, `consecutiveFailures`), with the subscriber's p50/p95
   answer time over the newest 50 deliveries (`latency`, from `deliveries.last_duration_ms`).
 
@@ -149,14 +148,8 @@ Every line has the same envelope:
 The webhook pipeline's events, fields, alerts, and ready-made Observability queries are in
 [observability.md](observability.md).
 
-### Daily census
-
-When the `OPS_TELEGRAM_*` secrets are set, the existing 5-minute cron also posts a once-a-day
-census of every account and WABA to the Telegram ops topic (first tick at or after 07:00 UTC; see
-[observability.md](observability.md#daily-census-telegram-hq-eccos-ops)). No new cron trigger is
-needed. A self-host without those secrets does nothing. A census whose post failed is not
-retried: that day is simply skipped. One customer's delivery problems (failed deliveries, an open
-circuit, held events) are reported only there and in the logs, never as a separate alert.
+One customer's delivery problems (failed deliveries, an open circuit, held events) are never
+alerted: they are visible only in the logs (see the [queries](observability.md#queries)).
 
 ### Meta token expiry
 
@@ -167,30 +160,21 @@ Embedded Signup configs exist at Meta:
 - `2132668137322605` (`Eccos ES v4 - Cloud API`, system user): the token never expires.
 
 `META_ES_CONFIG_ID` selects the config. Tokens issued under the legacy one keep their 60-day expiry,
-so each stored token is checked rather than assumed.
+so each token's expiry is read at connect rather than assumed.
 
 - **Connect** reads Meta's `debug_token` once (the same call that discovers the WABAs) and stores
   `expires_at` on each WABA row in the same write as the token (`token_expires_at`, Unix ms; `0`
   means it never expires, `NULL` means unknown or never read). Registering a WABA again with a new
   token replaces the stored values.
-- **Daily census** checks every active WABA inside the control plane (the token never leaves it),
-  refreshes the stored expiry and shows validity and expiry on each WABA line ("expiry unknown" when
-  Meta gave none). It sends a separate alert, with WABA and account ids only, when Meta reports a
-  token invalid or its token or data access expires within 14 days. When the check got no answer,
-  the stored expiries are used instead and labelled "expiry from last check". A token that cannot be checked
-  is one separate "cannot check WhatsApp tokens" alert with the reason: `META_APP_ID` unset, no
-  stored token, a stored token that cannot be decrypted, a token issued by another Meta app, an
-  answer without a validity verdict, or no usable answer from `debug_token` (a Graph error,
-  including a top-level 190 that can mean a bad `META_APP_SECRET`, or a timeout). The stored values
-  stay as they were, and a slow check never marks a WABA's data plane unreadable.
+- Nothing warns before a stored expiry passes: the stored value is returned with the WABA
+  (`tokenExpiresAt`), and an expired token shows up as the Graph error 190 alert below.
 - **Graph error 190 on a send, a template call or a media download** (including scheduled sends and
   broadcasts): the first one gives the operator one alert, reported off the request path. Calls
   that do not go through the WABA's watched `fetch` (provisioning, diagnostics, discovery, phone
-  number reads) are not watched; the census still catches their token. A bare 401 on a media
-  download does not count. Nothing is claimed while ops alerts are off. The post is
-  one attempt, never retried: if it failed, the next census says once that the alert may not have
-  arrived. A token the census already alerted as invalid stays quiet on sends until a valid reading,
-  and so does one reconnected through Embedded Signup.
+  number reads) are not watched. A bare 401 on a media download does not count. Nothing is
+  claimed while ops alerts are off. The post is one attempt, never retried: if it failed, only the
+  `area = ops-alert` warning in the logs says so. An alerted token stays quiet until the WABA is
+  reconnected through Embedded Signup.
 
 To renew an expiring token, reconnect the number through Embedded Signup under the current config.
 
@@ -229,7 +213,7 @@ for the current early volume; revisit if traffic grows enough to make log volume
      Fix: re-register the WABA through the admin bootstrap API (or reconnect it through
      `/connect`) so the control-plane credential is replaced; no Worker redeploy is needed.
    - Wrong or down per-WABA subscriber URL → deliveries piling up in `pending`/`failed`, and
-     usually a `circuit_open` log line and the circuit in the daily census: while the circuit is open the backlog
+     usually a `circuit_open` log line: while the circuit is open the backlog
      advances one probe per pause. Fix: rotate it from the dashboard's Webhooks page
      (`setSubscriberConfig`), which updates the WABA's DO config without a deploy and closes the
      circuit, so the backlog drains at once.
@@ -458,7 +442,7 @@ and broadcasts first: they stay in the old WABA's Durable Object, are not moved 
 keep retrying until they expire.
 
 - **Removed:** the control plane's `wabas` row and its `phones` rows. The console stops listing the
-  WABA, `mayAddNumber`, billing and the ops census stop counting its numbers, and the `/v1/wabas/<id>`
+  WABA, `mayAddNumber` and billing stop counting its numbers, and the `/v1/wabas/<id>`
   routes and console RPCs answer as for a WABA the account does not own (export and erasure
   included). Pending subscriber-secret claims for it are cancelled.
 - **Kept:** the WABA's Durable Object (history, contacts, deliveries, held webhooks, forwarding URL

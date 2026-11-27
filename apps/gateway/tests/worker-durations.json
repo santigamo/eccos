@@ -37,7 +37,6 @@
   "operator-scope.spec.ts": 200,
   "operator.spec.ts": 500,
   "ops-alert.spec.ts": 100,
-  "ops-census.spec.ts": 2100,
   "organization-accounts.spec.ts": 300,
   "organization-scope.spec.ts": 500,
   "outbound-send-logs.spec.ts": 200,

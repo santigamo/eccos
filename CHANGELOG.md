@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Operator alerts
+
+- The daily Telegram census is gone, and with it the daily token check and expiry warnings.
+  Telegram now gets only the dropped-inbound and Graph 190 alerts; one customer's delivery
+  problems are in the logs (`docs/observability.md`, Queries).
+
 ### Console auth dependency
 
 - `better-auth` 1.7.14 → 1.7.27 (exact pin, `apps/dashboard` and `packages/auth-baseline`). Clears the
@@ -22,7 +28,7 @@
 - **Deploy the gateway first** for workspace rename too: the console calls the new
   `GatewayRPC.setAccountName()` after renaming a workspace. Against an older gateway the rename
   still succeeds in the console, but the gateway's account name keeps the old value (reported to
-  Sentry, not retried), so the Overview's account name and the ops census drift.
+  Sentry, not retried), so the Overview's account name drifts.
 - **Link previews** (`og:url`, `og:image`) use the host that served the page.
 
 ### Production config out of the public templates

@@ -79,8 +79,7 @@ import {
   wabaTokenAad,
 } from "./token-crypto";
 import { opsAlertsEnabled, sendOpsAlert } from "./ops-alert";
-import { getAppConfig } from "./tenant-config";
-import { readTokenHealth, type TokenCheck, type TokenHealth, tokenFingerprint } from "./token-health";
+import { type TokenHealth, tokenFingerprint } from "./token-health";
 import { AWAITING_PHONE_NUMBER_ERROR } from "./provisioning-messages";
 
 /**
@@ -797,11 +796,6 @@ export class EccosControlPlane extends DurableObject<Env> {
           this.sql.exec(`ALTER TABLE secret_claims ADD COLUMN ${column} INTEGER`);
         }
       }
-      // Operator-only bookkeeping (the daily census guard); never read by the console.
-      this.sql.exec(`CREATE TABLE IF NOT EXISTS ops_state (
-        key   TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );`);
       // Identity-plane link (docs/auth-tenancy-contract.md section 2): one Better
       // Auth organization <-> one Eccos account. PRIMARY KEY on organization_id +
       // UNIQUE on account_id enforce the one-to-one mapping at the storage layer;
@@ -1061,81 +1055,9 @@ export class EccosControlPlane extends DurableObject<Env> {
   }
 
   /**
-   * Stores what Meta reported about a WABA's token. A valid reading also clears an earlier
-   * rejection; an invalid one keeps the stored expiry, and a value Meta did not give keeps the
-   * stored one (null is "unknown", 0 is "never expires"). `sealed` is the stored token the
-   * reading is about: a reconnect that replaced it meanwhile is not overwritten.
-   */
-  recordTokenHealth(wabaId: string, health: TokenHealth, sealed?: string): void {
-    const id = validateWabaId(wabaId, "wabaId");
-    if (!health.valid) return;
-    this.sql.exec(
-      `UPDATE wabas SET token_expires_at = COALESCE(?, token_expires_at),
-         token_data_access_expires_at = COALESCE(?, token_data_access_expires_at),
-         token_rejected_at = NULL, token_alert_lost = NULL
-       WHERE waba_id = ? AND (? IS NULL OR meta_access_token = ?)`,
-      health.expiresAt,
-      health.dataAccessExpiresAt,
-      id,
-      sealed ?? null,
-      sealed ?? null,
-    );
-  }
-
-  /**
-   * Asks Meta about a WABA's token, stores the answer and returns it. The plaintext token never
-   * leaves this object. When it cannot be checked the stored values are untouched and the reason
-   * says why, so a missing app id or an unreadable token is not blamed on Meta.
-   */
-  async checkTokenHealth(wabaId: string): Promise<TokenCheck> {
-    const id = validateWabaId(wabaId, "wabaId");
-    const cfg = getAppConfig(this.env);
-    if (!cfg.META_APP_ID) return { unchecked: "no_app_id" };
-    const row = this.sql.exec("SELECT account_id, meta_access_token FROM wabas WHERE waba_id = ?", id).toArray()[0];
-    if (!row) return { unchecked: "no_token" };
-    let token: string;
-    try {
-      token = await this.decryptStoredToken(row.account_id as string, id, row.meta_access_token);
-    } catch {
-      return { unchecked: "token_unreadable" };
-    }
-    const check = await readTokenHealth(cfg, token);
-    if (!("health" in check)) return check;
-    const sealed = row.meta_access_token as string;
-    this.recordTokenHealth(id, check.health, sealed);
-    return { health: check.health, sealed };
-  }
-
-  /** The census just alerted these tokens as invalid: a send 190 must not alert again until a valid reading. Only for the token it checked. */
-  markTokensAlerted(tokens: Array<{ wabaId: string; sealed: string }>): void {
-    for (const { wabaId, sealed } of tokens) {
-      this.sql.exec(
-        "UPDATE wabas SET token_rejected_at = ? WHERE waba_id = ? AND meta_access_token = ? AND token_rejected_at IS NULL",
-        Date.now(),
-        wabaId,
-        sealed,
-      );
-    }
-  }
-
-  /** WABAs whose 190 alert may not have reached Telegram, . */
-  lostTokenAlerts(): Array<{ wabaId: string; accountId: string }> {
-    return this.sql
-      .exec("SELECT waba_id, account_id FROM wabas WHERE token_alert_lost = 1")
-      .toArray()
-      .map((row) => ({ wabaId: row.waba_id as string, accountId: row.account_id as string }));
-  }
-
-  /** The census post that mentioned these went out. */
-  clearLostTokenAlerts(wabaIds: string[]): void {
-    for (const id of wabaIds) this.sql.exec("UPDATE wabas SET token_alert_lost = NULL WHERE waba_id = ?", id);
-  }
-
-  /**
    * Meta rejected the WABA's token (Graph error 190): alerts the operator the first time only.
    * Nothing is claimed while ops alerts are off. The WABA is claimed before the alert, and the
-   * post is one attempt, never retried (ops-alert contract): a failed post is recorded in
-   * `token_alert_lost` for the next census to mention once.
+   * post is one attempt, never retried (ops-alert contract).
    */
   async reportRejectedToken(wabaId: string, fingerprint: string): Promise<"sent" | "already" | "stale" | "disabled" | "failed"> {
     const id = validateWabaId(wabaId, "wabaId");
@@ -1162,9 +1084,7 @@ export class EccosControlPlane extends DurableObject<Env> {
       this.env,
       `Eccos: Meta rejected a WABA token (Graph error 190)\nWABA ${id} · account ${row.account_id}`,
     );
-    if (sent === "sent") return "sent";
-    this.sql.exec("UPDATE wabas SET token_alert_lost = 1 WHERE waba_id = ?", id);
-    return "failed";
+    return sent === "sent" ? "sent" : "failed";
   }
 
   /** Stores the retention and returns it. */
@@ -1657,7 +1577,6 @@ export class EccosControlPlane extends DurableObject<Env> {
              token_expires_at = NULL,
              token_data_access_expires_at = NULL,
              token_rejected_at = NULL,
-             token_alert_lost = NULL,
              callback_url = COALESCE(excluded.callback_url, wabas.callback_url),
              status = excluded.status,
              provisioning_error = NULL,
@@ -1777,7 +1696,6 @@ export class EccosControlPlane extends DurableObject<Env> {
              token_expires_at = excluded.token_expires_at,
              token_data_access_expires_at = excluded.token_data_access_expires_at,
              token_rejected_at = NULL,
-             token_alert_lost = NULL,
              callback_url = excluded.callback_url,
              status = 'pending',
              provisioning_error = NULL,
@@ -2412,38 +2330,6 @@ export class EccosControlPlane extends DurableObject<Env> {
       );
     });
     return this.getWabaRecord(account, id);
-  }
-
-  /** Every account with its organization link and WABAs, credentials stripped. For the operator census. */
-  listCensusAccounts(): Array<{ accountId: string; name: string; organizationId: string | null; wabas: WabaAccess[] }> {
-    return this.sql
-      .exec(
-        `SELECT a.account_id, a.name, oa.organization_id FROM accounts a
-         LEFT JOIN organization_accounts oa ON oa.account_id = a.account_id ORDER BY a.created_at, a.account_id`,
-      )
-      .toArray()
-      .map((row) => ({
-        accountId: row.account_id as string,
-        name: row.name as string,
-        organizationId: (row.organization_id as string | null) ?? null,
-        wabas: this.listAccountResources(row.account_id as string).wabas,
-      }));
-  }
-
-  /** Whether the census of this UTC day (`YYYY-MM-DD`) or a later one was already claimed. Read-only. */
-  censusClaimed(day: string): boolean {
-    const last = this.sql.exec("SELECT value FROM ops_state WHERE key = 'census_day'").toArray()[0]?.value;
-    return last !== undefined && String(last) >= day;
-  }
-
-  /** True for the first caller of a UTC day; false once taken. Synchronous, so the single-threaded object makes it atomic. */
-  claimDailyCensus(day: string): boolean {
-    if (this.censusClaimed(day)) return false;
-    this.sql.exec(
-      "INSERT INTO ops_state (key, value) VALUES ('census_day', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      day,
-    );
-    return true;
   }
 
   /** Everything an account owns, with every credential stripped (no API-key

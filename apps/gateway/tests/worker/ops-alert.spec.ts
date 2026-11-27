@@ -1,7 +1,7 @@
 /**
  * eccos-r8x0: a failed forward writes one structured log line per attempt. A
  * customer's failing endpoint is not a platform problem, so it raises no Telegram
- * alert; the daily census lists it. The throttle serves the platform alerts only.
+ * alert; only the logs show it. The throttle serves the platform alerts only.
  */
 import { env } from "cloudflare:workers";
 import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
