@@ -7,6 +7,8 @@ import {
   composeNote,
   fmtMinutes,
   MAX_BROADCAST_BYTES,
+  reviewKey,
+  reviewOpen,
 } from "../src/lib/broadcast-draft";
 import { broadcastFailureCopy } from "../src/lib/broadcast-failure";
 import type { ListTable } from "../src/lib/list-file";
@@ -71,9 +73,11 @@ describe("broadcastPayload", () => {
 describe("composeNote", () => {
   const ready: ComposeState = {
     blocked: null,
+    noSender: false,
     hasTemplate: true,
     hasList: true,
     tooManyRows: null,
+    maxRecipients: 10_000,
     phoneMapped: true,
     unmapped: null,
     headerMissing: null,
@@ -95,6 +99,12 @@ describe("composeNote", () => {
     expect(composeNote({ ...ready, sendable: 0 }).blocker).toBe("No row in this list can be sent. Check the phone column.");
     expect(composeNote({ ...ready, bytes: MAX_BROADCAST_BYTES + 1 }).blocker).toContain("too large");
     expect(composeNote({ ...ready, blocked: "Sending is paused." }).blocker).toBe("Sending is paused.");
+    expect(composeNote({ ...ready, noSender: true }).blocker).toBe(
+      "This WhatsApp Business Account has no phone number to send from yet.",
+    );
+    expect(composeNote({ ...ready, tooManyRows: 12_000, maxRecipients: 10_000 }).blocker).toBe(
+      "This list has 12,000 rows. A broadcast holds up to 10,000: split it into two.",
+    );
   });
 });
 
@@ -117,17 +127,46 @@ test("broadcastTemplates lists the approved ones the console can build, and sets
 });
 
 test("each refusal has its own sentence and next step", () => {
-  const context = { template: "order_ready (es)", sender: "+34 911 000 111" };
+  const context = { template: "order_ready (es)", sender: "+34 911 000 111", maxRunning: 5 };
   expect(broadcastFailureCopy({ code: "template_not_approved", detail: null, templateStatus: "PAUSED" }, context)).toEqual({
     title: "order_ready (es) is no longer approved: Meta now lists it as PAUSED. Nothing was sent.",
     detail: null,
     actions: ["template", "edit"],
   });
-  expect(broadcastFailureCopy({ code: "too_many_running", detail: null }, context).actions).toEqual(["broadcasts", "retry"]);
+  expect(broadcastFailureCopy({ code: "too_many_running", detail: null }, context)).toMatchObject({
+    title: expect.stringContaining("5 broadcasts are already running on this WhatsApp Business Account"),
+    actions: ["broadcasts", "retry"],
+  });
+  expect(broadcastFailureCopy({ code: "key_reused", detail: null }, context).actions).toEqual(["broadcasts", "edit"]);
+  expect(
+    broadcastFailureCopy({ code: "invalid_recipients", detail: null, invalid: Array.from({ length: 100 }, () => ({})) }, context).title,
+  ).toBe("Eccos refused at least 100 rows of this list. Nothing was sent.");
   expect(broadcastFailureCopy({ code: "no_phone", detail: null }, context).title).toContain("+34 911 000 111");
   expect(broadcastFailureCopy({ code: "invalid_recipients", detail: null, invalid: [{}, {}] }, context).title).toBe(
     "Eccos refused 2 rows of this list. Nothing was sent.",
   );
+});
+
+describe("review lifecycle", () => {
+  const mint = (() => {
+    let n = 0;
+    return () => `key-${++n}`;
+  })();
+
+  test("the key is kept on an unchanged re-entry and new on any change", () => {
+    const first = { json: '{"a":1}', key: reviewKey(null, '{"a":1}', mint) };
+    expect(first.key).toBe("key-1");
+    expect(reviewKey(first, '{"a":1}', mint)).toBe("key-1");
+    expect(reviewKey(first, '{"a":2}', mint)).toBe("key-2");
+  });
+
+  test("review is open only while what it froze is what compose holds now", () => {
+    expect(reviewOpen(true, '{"a":1}', '{"a":1}')).toBe(true);
+    // Back to edit, a change, then Forward: the stale review is not shown.
+    expect(reviewOpen(true, '{"a":1}', '{"a":2}')).toBe(false);
+    expect(reviewOpen(true, null, '{"a":1}')).toBe(false);
+    expect(reviewOpen(false, '{"a":1}', '{"a":1}')).toBe(false);
+  });
 });
 
 describe("broadcastBlock", () => {

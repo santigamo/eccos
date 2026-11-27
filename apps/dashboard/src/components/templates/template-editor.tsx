@@ -88,7 +88,6 @@ const STATE_INK: Record<TabState, string> = {
   "EDIT REFUSED": "text-destructive-foreground",
 };
 
-export { leaveBlocker };
 
 function initialState({ mode, rows, name, language, from, add }: TemplateEditorProps): AuthoringState {
   const start = (category: TemplateCategory, languages: Record<string, LanguageState>, ownName = "") => ({

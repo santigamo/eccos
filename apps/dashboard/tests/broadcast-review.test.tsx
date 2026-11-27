@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BroadcastReview } from "../src/components/broadcasts/broadcast-review";
+import { BroadcastReview, ReviewFacts } from "../src/components/broadcasts/broadcast-review";
 import { RecipientTable } from "../src/components/broadcasts/recipient-table";
 import type { ListTable } from "../src/lib/list-file";
 import { checkList, type Mapping, slotsOf } from "../src/lib/recipient-list";
@@ -14,20 +14,22 @@ const table: ListTable = {
 const mapping: Mapping = { header: false, phone: 0, sources: { "body:1": { column: 1 } }, fallback: {}, country: "ES" };
 const check = checkList(table, mapping, slots);
 
-const review = (consent: boolean | null) =>
+const review = (consent: boolean | null, running = { now: 1, max: 5 }) =>
   renderToStaticMarkup(
-    <BroadcastReview
-      check={check}
-      pacePerMinute={48}
-      label="Friday pickups"
-      templateName="order_ready"
-      language="es"
-      category="MARKETING"
-      sender="+34 911 000 111"
-      consent={consent}
-      onConsent={() => {}}
-      onDownload={() => {}}
-    />,
+    <>
+      <ReviewFacts check={check} pacePerMinute={48} onDownload={() => {}} />
+      <BroadcastReview
+        check={check}
+        label="Friday pickups"
+        templateName="order_ready"
+        language="es"
+        category="MARKETING"
+        sender="+34 911 000 111"
+        running={running}
+        consent={consent}
+        onConsent={() => {}}
+      />
+    </>,
   );
 
 describe("BroadcastReview", () => {
@@ -40,6 +42,11 @@ describe("BroadcastReview", () => {
     expect(html).toContain("Eccos charges nothing per message");
     expect(html).not.toContain("Meta caps how many people");
     expect(html).not.toContain("Consent");
+    expect(html).not.toContain("already running");
+  });
+
+  test("says when the account already runs as many broadcasts as it may", () => {
+    expect(review(null, { now: 5, max: 5 })).toContain("5 broadcasts are already running on this WhatsApp Business Account");
   });
 
   test("a marketing template asks for consent", () => {

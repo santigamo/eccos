@@ -7,9 +7,16 @@ import { MACHINE_CLASS } from "../dashboard/plain-table";
 import { WhatsAppPreview } from "../templates/whatsapp-preview";
 
 /** A row's body values by template key, for the preview and a test send. */
-export function rowValues(slots: Slot[], row: RowCheck | undefined): Record<string, string> {
+export function rowValues(
+  slots: Slot[],
+  row: RowCheck | undefined,
+): Record<string, string> {
   return Object.fromEntries(
-    slots.flatMap((slot, i) => (slot.kind === "body" && row?.values[i] ? [[slot.key, row.values[i] as string]] : [])),
+    slots.flatMap((slot, i) =>
+      slot.kind === "body" && row?.values[i]
+        ? [[slot.key, row.values[i] as string]]
+        : [],
+    ),
   );
 }
 
@@ -43,11 +50,21 @@ export function RowPreview({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <p className={`m-0 ${MACHINE_CLASS}`}>
-          Preview{row ? ` · ${noun} ${fmtCount(index + 1)} of ${fmtCount(rows.length)}` : ""}
+          Preview
+          {row
+            ? ` · ${noun} ${fmtCount(index + 1)} of ${fmtCount(rows.length)}`
+            : ""}
         </p>
         {rows.length > 1 ? (
           <div className="flex gap-1">
-            <Button type="button" variant="outline" size="icon-xs" aria-label={`Previous ${noun.toLowerCase()}`} disabled={index === 0} onClick={() => onIndex(index - 1)}>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-xs"
+              aria-label={`Previous ${noun.toLowerCase()}`}
+              disabled={index === 0}
+              onClick={() => onIndex(index - 1)}
+            >
               <ChevronLeftIcon aria-hidden="true" />
             </Button>
             <Button

@@ -5,7 +5,6 @@ import { NewBroadcast } from "../components/broadcasts/new-broadcast";
 import { FailureView } from "../components/dashboard/failure";
 import { TemplateEditorPending } from "../components/templates/template-editor";
 import { loaderFailure } from "../lib/failure";
-import { countryOf } from "../lib/phone-number";
 import { CONFIG_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchLanguage, normalizeSearchWabaId } from "../lib/search";
 import { broadcastBlock } from "../lib/sends-paused";
@@ -71,7 +70,6 @@ function NewBroadcastPage() {
       templates={rows}
       preflight={preflight.data}
       phones={phones}
-      country={countryOf(phones[0]?.displayPhoneNumber)}
       blocked={broadcastBlock(root)}
       initialTemplate={template && language ? `${template}:${language}` : undefined}
       reviewing={step === "review"}
