@@ -326,10 +326,26 @@ An **unverified** number is different: it registers and provisions normally, and
 something tries to send. Eccos does not call `POST /<PHONE_NUMBER_ID>/register` yet, so a number the
 customer never verified surfaces as an error on the outbound message.
 
+## Billing status
+
+An operator sets an account's billing status by hand (a managed client to `open`, say) with
+`scripts/ops-billing.ts`. It reaches `GatewayRPC` over a wrangler remote binding to the deployed
+`eccos` Worker (`scripts/ops.wrangler.jsonc`, never deployed), so it needs `wrangler login`:
+
+```bash
+bun run ops:billing <organizationId|accountId>               # read-only
+bun run ops:billing <organizationId|accountId> --set open    # any BillingStatus
+```
+
+It prints the organization link, the billing state, and after `--set` the stored result. Stored
+customer and subscription ids are kept. The script runs under Node; Bun hangs on the remote proxy.
+Call the other operator RPCs below the same way: `getPlatformProxy` with that config.
+
 ## Ending early access
 
 Accounts that connected before the funnel (`connected_at = 0`) have no clock. To end their early
-access on a date, schedule a pause over a remote binding (operator-only, outside `GatewayApi`):
+access on a date, schedule a pause over a remote binding (operator-only, outside `GatewayApi`; see
+[Billing status](#billing-status) for the tool):
 
 - `GatewayRPC.setEarlyAccessEnd(accountId, endsAt)`: `endsAt` in Unix ms, or `null` to clear it.
   It refuses an operator-`open` account (a reseller, or a payer still stored as `open`): set its
