@@ -1,13 +1,16 @@
 import { basename } from "node:path";
 import durations from "./worker-durations.json";
 
-// Milliseconds each spec file took in one full run. Refresh it when a file is added or gets much
-// slower: `vitest run --reporter=json --outputFile=r.json`, then each file's endTime - startTime.
+// The milliseconds CI's vitest reporter printed for each spec file. Refresh them from a CI log when
+// a file is added or gets much slower; a file not listed counts as a typical one.
 const recorded: Record<string, number> = durations;
 const typical = Object.values(recorded).sort((a, b) => a - b)[Math.floor(Object.keys(recorded).length / 2)]!;
 
-/** How long a spec file is expected to take; a file not recorded yet counts as a typical one. */
-export const weight = (file: string): number => recorded[basename(file)] ?? typical;
+// On top of its tests, every file imports the worker afresh: about 1.3s on a CI runner.
+const IMPORT_MS = 1300;
+
+/** How long a spec file is expected to take on CI. */
+export const weight = (file: string): number => IMPORT_MS + (recorded[basename(file)] ?? typical);
 
 /**
  * Splits files into `count` shards of about equal duration: longest first, each into the lightest
