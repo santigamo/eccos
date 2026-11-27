@@ -15,7 +15,7 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 
 | `event` | When | Fields |
 |---|---|---|
-| `webhook_ingested` | One per stored batch (WABA + phone) | `wabaId`, `phoneNumberId`, `eventCount`, `received`, one `n_<type>` count per event type: `n_reply`, `n_echo`, `n_status_sent` / `_delivered` / `_read` / `_failed`, `n_message_<messageType>`, `n_message_echo_<messageType>` |
+| `webhook_ingested` | One per stored batch (WABA + phone) | `wabaId`, `phoneNumberId`, `eventCount`, `received`, `ingestMs` (the Durable Object's `ingest` call as the worker waited for it), one `n_<type>` count per event type: `n_reply`, `n_echo`, `n_status_sent` / `_delivered` / `_read` / `_failed`, `n_message_<messageType>`, `n_message_echo_<messageType>` |
 | `webhook_ignored` | A batch was parsed but not stored, or the webhook parsed to no event | `reason`, plus `wabaId`, `phoneNumberId`, `eventCount` for a batch, or `wabaIds`, `bodyBytes`, `shape` for `no_events` and `sync_only` |
 | `webhook_dropped` | Messages or echoes of a WABA parsed to no event | `wabaId`, `dropped` (count), `missing` (required fields absent, e.g. `from`; empty when they only carried nothing), `types` (`text+reaction`, `echo_text`), `keys` (their top-level key names) |
 | `webhook_held` | A batch of a WABA that is not active (`pending`: provisioning or a re-run Embedded Signup; or `failed`) was held in its Durable Object, to be ingested once it is active | `wabaId`, `phoneNumberId`, `eventCount`, `heldEvents` (total now held for the WABA) |
@@ -49,6 +49,12 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 |---|---|---|
 | `events_list` | One per request | `wabaId`; on success (`status` 200) `count` (events returned) and `hasMore` (another page waits). Refused requests carry only `wabaId`: 400 bad query, 404 WABA not owned, 429 `READ_RATE_LIMITER` |
 
+### Worker: `GET /v1/wabas/:wabaId/export`
+
+| `event` | When | Fields |
+|---|---|---|
+| `export` | Once per request: refused by the cooldown (`status` 429) or when the stream ends (200, or 500 if it failed) | `wabaId`, `claimMs` (the Durable Object's `claimExport` call as the worker waited for it); 429: `retryAfter`; otherwise `inbound`, `outbound`, `deliveries` (rows sent) and `end` unless the stream finished (`cancelled`, `failed`) |
+
 ### Durable Object `EccosGateway` and `GatewayRPC`
 
 | `event` | `area` | Fields |
@@ -63,6 +69,12 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 | `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
 | `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
 | `outbound_send` | `rpc` | A console send: `source` (`send_test` for a template test, `send_text` for the composer), then the same fields as the worker's `outbound_send` (no `invalid_target`) |
+| `alarm_step_slow` | `alarm` | `wabaId`, `step`, `ms`: one alarm step took 3 s or more. Logged as the step ends, so an alarm the runtime cancels still leaves the slow steps it completed (not the one still running). Steps: `billingHold`, `drain`, `sweep`, `activation`, `sync`, `scheduled`, `broadcast`, `media`, `rearm` |
+| `alarm_slow` | `alarm` | `wabaId`, `totalMs`, the ms of each step above, `wakeArrived` (work landed during the run), `dueMedia`: an alarm that took 5 s or more, logged at its end |
+| `media_batch_start` | `media` | `wabaId`, `dueMedia`: the alarm's media step found this many ids to download. Logged before the token lookup, so also when the token is missing or unavailable |
+| `media_download_start` | `media` | `wabaId`, `mediaId` (Meta's id), `attempt`: logged before each download, so an alarm the runtime cancels mid-download still names the ids it was fetching |
+| `media_download_slow` | `media` | `wabaId`, `mediaId` (Meta's id), `ms`, `state` (`stored`, `failed` or `gone`), `size` (bytes; null when `failed` or `gone`): one media download took 3 s or more |
+| `claim_export` | `export` | `wabaId`, `granted`, `syncMs` (flushing the claim to storage before answering). Compare with the worker's `export.claimMs` |
 | `rpc_scope` | `rpc` | `accountId`, `wabaId` of a console RPC call (Workers Logs adds the RPC method) |
 | `sync-failed`, `item-skipped`, `history-error`, ... | `history` / `retention` / `media` | `wabaId`, `error` |
 

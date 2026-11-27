@@ -4,7 +4,7 @@ import { putMedia } from "./media-store";
 /** Meta's largest media is a document at 100 MB. A bigger file is refused before any byte is read. */
 export const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 const GRAPH_TIMEOUT_MS = 10_000;
-const DOWNLOAD_TIMEOUT_MS = 120_000;
+export const DOWNLOAD_TIMEOUT_MS = 120_000;
 /** Graph subcode for "object does not exist", which is what an expired media id returns. */
 const GRAPH_SUBCODE_NONEXISTENT = 33;
 

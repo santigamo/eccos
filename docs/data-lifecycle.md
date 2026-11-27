@@ -241,7 +241,12 @@ only code that touches them.
 - **Download.** The DO's alarm finds the messages that reference a media id with no stored object,
   and downloads up to five per alarm (`src/media-download.ts`). Meta's media ids expire (about 30
   days for live messages, 14 for history), so a download is attempted on the next alarm, not on a
-  schedule. A transient failure retries with backoff up to five attempts. An id that Meta no longer
+  schedule. A transient failure retries with backoff up to five attempts. The attempt is counted
+  before the download starts, so an alarm the runtime cancels mid-download still spends it and the
+  id waits out its backoff; an id whose fifth attempt never finished is given up once a download
+  could have taken (two minutes). An alarm starts
+  downloads for 8 s at most (`MEDIA_BUDGET_MS` in `src/gateway.ts`): the ones in flight finish,
+  and the alarm re-arms at once for the rest. An id that Meta no longer
   has, or a file over 100 MB, is given up at once. A rejected token (401, or Graph code 190) counts no
   attempt: the media waits, and is retried once the token is fixed. A WABA the control plane does not
   know gets no timed retry: the next webhook or sync wakes the alarm, and the download is tried again. The bytes stream from Meta into R2 with Meta's
