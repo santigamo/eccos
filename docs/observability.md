@@ -50,9 +50,9 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 | `ingested` | `ingest` | `wabaId`, `eventCount`, `inserted` (new rows; the rest were duplicates). Ties a `$workers.durableObjectId` to its WABA |
 | `delivered` | `forward` | `wabaId`, `phoneNumberId`, `deliveryId`, `attempt`, `httpStatus`, `durationMs` (subscriber response time), `lagMs` (time since the webhook was stored) |
 | `attempt-failed` / `delivery-failed` | `forward` | Same as `delivered`, plus `error`. `delivery-failed` means it exhausted every retry |
-| `drain_yielded` | `forward` | `wabaId`, `sent`, `left`: the alarm stopped starting forwards, after its 8 s budget or because the circuit opened; the rows left go out on the next wakes |
+| `drain_yielded` | `forward` | `wabaId`, `reason`, `sent`, `left`: the alarm stopped starting forwards, after its 8 s budget (`reason: "budget"`) or because the circuit opened (`"circuit"`); the rows left go out on the next wakes |
 | `circuit_open` | `forward` | `wabaId`, `failures` (timeouts, network errors, 5xx or 429 in a row), `openUntil` (epoch ms): forwarding paused until then, then one probe delivery. Also raises the "Forwarding paused" alert |
-| `circuit_closed` | `forward` | `wabaId`, `failures`, `openUntil` (of the pause it ends), `reason`: `answered` (the subscriber answered), `config` (target saved) or `retry` (manual retry) |
+| `circuit_closed` | `forward` | `wabaId`, `failures`, `openUntil` (of the pause it ends), `reason`: `answered` (the subscriber answered anything but 5xx or 429), `config` (webhook settings saved) or `retry` (manual retry) |
 | `held_released` | `ingest` | `wabaId`, `released`, `discarded` (events of a phone the active WABA does not register). Runs when provisioning activates the WABA (from `pending`, or from `failed` through a retry or re-check), or on its next webhook if activation raced a hold |
 | `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
 | `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
@@ -88,8 +88,8 @@ is not active yet). A "Needs attention" block comes first:
 - a WABA whose provisioning failed, or is still pending and was registered over 24 h ago;
 - deliveries that failed in the last 24 h (older failures stay in the totals only);
 - events held for lack of a forwarding target, or because the WABA is not active;
-- a WABA whose forwarding circuit is open at census time, with its failures in a row (the WABA's
-  line also says `circuit open`);
+- a WABA whose forwarding circuit is open at census time (still paused, or with deliveries waiting
+  for its probe), with its failures in a row (the WABA's line also says `circuit open`);
 - a coexistence sync that ended `unconfirmed` or `expired`;
 - a WABA whose data plane did not answer within 10 s.
 
@@ -114,8 +114,8 @@ for `area = ops-alert` and `area = ops-census` warnings.
    outside the 24-hour window; `httpStatus = 0` is a network failure, with no Meta codes.
 6. **What a customer's console did.** Filter `event = rpc_scope` and `accountId = <id>`; group by
    `$workers.event.rpcMethods`.
-7. **Paused subscribers.** Filter `event = circuit_open` (or `drain_yielded` for slow ones); group
-   by `wabaId`; calculate `count`, `max(failures)`.
+7. **Paused subscribers.** Filter `event = circuit_open` (or `event = drain_yielded` and
+   `reason = budget` for slow ones); group by `wabaId`; calculate `count`, `max(failures)`.
 
 To follow one webhook end to end, filter on its `correlationId` (the `cf-ray`) for the worker
 lines. Then use `wabaId` and `deliveryId` for the Durable Object lines that follow.

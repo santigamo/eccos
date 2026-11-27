@@ -33,13 +33,15 @@ Two limits keep one slow or dead subscriber from tying up its WABA's alarm (`FOR
 - **Time budget.** After 8 s of forwarding no new request starts; the ones in flight finish, the
   rest of the alarm (retention, scheduled sends, broadcasts, media) runs, and the alarm re-arms at
   once for the rows left. A fast subscriber drains its 40 rows well inside it. Logged as
-  `drain_yielded`.
+  `drain_yielded` with `reason: "budget"`.
 - **Circuit breaker.** Five timeouts, network errors, 5xx or 429 answers in a row open the circuit:
   forwarding pauses for 30 s, then 1, 2, 5 and 10 minutes (the cap) for each trip in a row. While
   open nothing is sent, no attempt is spent and rows stay `pending`. When the pause ends one
   delivery goes out as a probe and spends a normal attempt, so a dead subscriber still ends in
-  `failed` and the "Deliveries are failing" alert. Any other answer (a 2xx, or a 4xx rejecting one
-  payload) closes it, and so do saving the target on the Webhooks page and a manual retry. Its
+  `failed` and the "Deliveries are failing" alert. Any other answer (a 2xx, a 3xx, or a 4xx
+  rejecting one payload) closes it and never counts toward opening it. Any save of the webhook
+  settings and a manual retry also close it, and forwards still in flight at that moment do not
+  count against it. Its
   state is one `forward_circuit` row in the Durable Object's `ops_state` table; it is logged as
   `circuit_open` / `circuit_closed`, alerted, shown in the daily census, and returned on
   `getSubscriberConfig` (`circuitOpenUntil`, `consecutiveFailures`), with the subscriber's p50/p95

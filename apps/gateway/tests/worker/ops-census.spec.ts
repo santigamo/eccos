@@ -188,6 +188,19 @@ describe("daily census", () => {
     expect(text).toContain(`WABA ${TEST_WABA_ID}, active, standard, target set, circuit open, token never expires: 1 pending`);
   });
 
+  it("does not flag a circuit whose pause ended with nothing queued", async () => {
+    await seedDeliveries(TEST_WABA_ID, [["failed", NOON]], "https://subscriber.example/hook");
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.sql.exec(
+        "INSERT INTO ops_state (key, value) VALUES ('forward_circuit', ?)",
+        JSON.stringify({ failures: 7, trips: 2, openUntil: 1 }),
+      );
+    });
+
+    const [text] = await census();
+    expect(text).not.toContain("circuit open");
+  });
+
   it("flags only the coexistence syncs that need the operator", () => {
     const line = (wabaId: string, sync: string) => ({
       wabaId, status: "active", onboarding: "coexistence", sync, hasTarget: true, pending: 0, held: 0, failed: 0,

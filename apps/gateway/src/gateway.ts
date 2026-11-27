@@ -381,6 +381,9 @@ export class EccosGateway extends DurableObject<Env> {
   /** Set when a payload or webhook lands while alarm() runs. alarm()'s final setAlarm would
    * overwrite that wake with a later one, so alarm() checks this and wakes again at once. */
   private wakeArrived = false;
+  /** Bumped when the operator resets the circuit breaker, so forwards already in flight
+   * (to the old target, or before the retry) do not count against it. */
+  private circuitGeneration = 0;
   private templateDefinitions = new TemplateDefinitions((name, language) => this.loadTemplateDefinition(name, language));
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -1058,7 +1061,7 @@ export class EccosGateway extends DurableObject<Env> {
     // A target now exists, so release whatever the drain was holding for want of
     // one (see `alarm()`). Without this the backlog would sit until the next
     // ingest happened to set an alarm, i.e. until the next inbound message.
-    if (url !== null) this.ctx.storage.setAlarm(Date.now());
+    if (url !== null) this.wakeNow();
   }
 
   /** Replaces only the signing secret, for a redeemed secret claim: the target is left as it is.
@@ -1488,7 +1491,7 @@ export class EccosGateway extends DurableObject<Env> {
     };
   }
 
-  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`, and the circuit breaker when it is not closed. Index-only scans. */
+  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`, and the circuit breaker while it is paused or has rows waiting for its probe. Index-only scans. */
   getCensus(sinceMs: number): {
     hasTarget: boolean;
     deliveries: Record<string, number>;
@@ -1512,7 +1515,11 @@ export class EccosGateway extends DurableObject<Env> {
       deliveries,
       recent,
       heldEventCount: heldEventCount(this.sql),
-      circuit: circuit.openUntil > 0 ? { openUntil: circuit.openUntil, failures: circuit.failures } : null,
+      // A pause that has ended with nothing queued waits for no probe: not worth flagging.
+      circuit:
+        circuit.openUntil > Date.now() || (circuit.openUntil > 0 && (deliveries.pending ?? 0) > 0)
+          ? { openUntil: circuit.openUntil, failures: circuit.failures }
+          : null,
     };
   }
 
@@ -1535,7 +1542,7 @@ export class EccosGateway extends DurableObject<Env> {
       id,
     );
     this.resetCircuit("retry");
-    this.ctx.storage.setAlarm(now);
+    this.wakeNow();
     return { ok: true, previousStatus: row.status as string };
   }
 
@@ -1586,7 +1593,7 @@ export class EccosGateway extends DurableObject<Env> {
         REDACTED_PAYLOAD,
       );
       this.resetCircuit("retry");
-      this.ctx.storage.setAlarm(now);
+      this.wakeNow();
     }
     return { requeued, skippedRedacted };
   }
@@ -2783,7 +2790,15 @@ export class EccosGateway extends DurableObject<Env> {
       );
       if (left > 0) {
         console.log(
-          JSON.stringify({ level: "info", area: "forward", event: "drain_yielded", wabaId: this.wabaIdForOps(), sent: rows.length - left, left }),
+          JSON.stringify({
+            level: "info",
+            area: "forward",
+            event: "drain_yielded",
+            wabaId: this.wabaIdForOps(),
+            reason: this.forwardCircuit().openUntil > Date.now() ? "circuit" : "budget",
+            sent: rows.length - left,
+            left,
+          }),
         );
       }
     } catch (error) {
@@ -3564,6 +3579,7 @@ export class EccosGateway extends DurableObject<Env> {
     let error: string | null = null;
     let httpStatus: number | null = null;
     let threw = false;
+    const generation = this.circuitGeneration;
     const startedAt = Date.now();
     try {
       const outcome = await this.forwardOne(row.payload);
@@ -3574,7 +3590,9 @@ export class EccosGateway extends DurableObject<Env> {
       threw = true;
       error = e instanceof Error ? e.message : String(e);
     }
-    const durationMs = Date.now() - startedAt;
+    // No answer and no request (the target vanished mid-drain) says nothing about the subscriber.
+    const sent = threw || httpStatus !== null;
+    const durationMs = sent ? Date.now() - startedAt : null;
     const attempts = row.attempts + 1;
     // One line per attempt, never the payload: per-WABA volume, success rate and latency.
     // `durationMs` is the subscriber's answer time, `lagMs` the time since the webhook was stored.
@@ -3618,9 +3636,8 @@ export class EccosGateway extends DurableObject<Env> {
         row.id,
       );
     }
-    // No answer and no request (the target vanished mid-drain) says nothing about the subscriber.
     const tripped =
-      threw || httpStatus !== null
+      sent && generation === this.circuitGeneration
         ? this.recordCircuit(httpStatus !== null && httpStatus < 500 && httpStatus !== 429, Date.now())
         : null;
     if (ok) {
@@ -3683,6 +3700,7 @@ export class EccosGateway extends DurableObject<Env> {
 
   /** Closes the breaker: the subscriber answered, or the operator saved the target or retried. */
   private resetCircuit(reason: "answered" | "config" | "retry"): void {
+    if (reason !== "answered") this.circuitGeneration++;
     const { failures, openUntil } = this.forwardCircuit();
     if (failures === 0 && openUntil === 0) return;
     this.sql.exec("DELETE FROM ops_state WHERE key = ?", CIRCUIT_KEY);

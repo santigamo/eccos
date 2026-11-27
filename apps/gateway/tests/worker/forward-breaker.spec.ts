@@ -5,7 +5,7 @@
  */
 import { env } from "cloudflare:workers";
 import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import {
   CIRCUIT_BACKOFF_MS,
   CIRCUIT_THRESHOLD,
@@ -25,6 +25,7 @@ import {
 } from "./helpers";
 
 let clock = 0;
+let setAlarm: MockInstance;
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -37,6 +38,9 @@ beforeEach(async () => {
   await gatewayStub().saveConfig({ SUBSCRIBER_WEBHOOK_URL: SUBSCRIBER_URL });
   clock = Date.now();
   vi.spyOn(Date, "now").mockImplementation(() => clock);
+  await runInDurableObject(gatewayStub(), (_i: EccosGateway, state: DurableObjectState) => {
+    setAlarm = vi.spyOn(state.storage, "setAlarm");
+  });
 });
 
 function rpc() {
@@ -85,9 +89,11 @@ async function alarmAt() {
   return runInDurableObject(gatewayStub(), (_i: EccosGateway, state: DurableObjectState) => state.storage.getAlarm());
 }
 
-/** An alarm armed in the past fires (held, so a no-op) at once and reads back as null. */
-async function expectWakeNow() {
-  expect((await alarmAt()) ?? clock).toBeLessThanOrEqual(clock);
+/** The last alarm armed is due now. Read off setAlarm: one armed in the past fires (held, so a no-op) at once. */
+function expectWakeNow() {
+  const at = setAlarm.mock.calls.at(-1)?.[0];
+  expect(at).toBeTypeOf("number");
+  expect(at).toBeLessThanOrEqual(clock);
 }
 
 describe("forward time budget", () => {
@@ -114,7 +120,7 @@ describe("forward time budget", () => {
     // The steps after the drain still ran in the same wake.
     expect(media).toHaveBeenCalledOnce();
     // The rows left are due, so the next wake is now.
-    await expectWakeNow();
+    expectWakeNow();
 
     for (let wake = 0; wake < 10 && (await deliveries()).some((row) => row.status === "pending"); wake++) {
       await runAlarm();
@@ -233,9 +239,75 @@ describe("forward circuit breaker", () => {
     const closed = log.mock.calls.map(([line]) => JSON.parse(String(line))).find((line) => line.event === "circuit_closed");
     expect(closed).toMatchObject({ area: "forward", reason: "answered", failures: 6 });
     // The rest are due (their retry backoff ran out during the pause), so the drain resumes at once.
-    await expectWakeNow();
+    expectWakeNow();
     await runAlarm();
     expect((await deliveries()).every((row) => row.status === "delivered")).toBe(true);
+  });
+
+  it.each([400, 302])("closes when the probe gets a %i", async (code) => {
+    await seedDue(CIRCUIT_THRESHOLD + 1);
+    const fetchMock = subscriber(status(503));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await runAlarm();
+    clock += CIRCUIT_BACKOFF_MS[0];
+    fetchMock.mockImplementation(async () => new Response(null, { status: code }));
+    const calls = fetchMock.mock.calls.length;
+    await runAlarm();
+    expect(fetchMock.mock.calls.length - calls).toBe(1);
+    expect(await subscriberConfig()).toMatchObject({ circuitOpenUntil: null, consecutiveFailures: 0 });
+  });
+
+  it("does not count, or time, a row whose target vanished before it was sent", async () => {
+    await seedDue(1);
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      i.sql.exec(
+        "INSERT INTO ops_state (key, value) VALUES ('forward_circuit', ?)",
+        JSON.stringify({ failures: CIRCUIT_THRESHOLD - 1, trips: 0, openUntil: 0 }),
+      );
+      i.sql.exec("DELETE FROM config WHERE key = 'SUBSCRIBER_WEBHOOK_URL'");
+      const row = i.sql.exec("SELECT * FROM deliveries").toArray()[0];
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await (i as unknown as { processDelivery: (row: unknown, max: number) => Promise<void> }).processDelivery(row, 3);
+      expect(i.forwardCircuit().failures).toBe(CIRCUIT_THRESHOLD - 1);
+    });
+    expect((await deliveries())[0]).toMatchObject({ attempts: 1, last_duration_ms: null });
+  });
+
+  it("does not count forwards still in flight when the operator saves a new target", async () => {
+    await seedDue(CIRCUIT_THRESHOLD);
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      let saved = false;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        if (!saved) {
+          saved = true;
+          i.setSubscriberConfig({ url: "https://fixed.example/hook" });
+        }
+        return new Response("down", { status: 503 });
+      });
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await alarmOf(i);
+      expect(i.forwardCircuit()).toEqual({ failures: 0, trips: 0, openUntil: 0 });
+    });
+  });
+
+  it("keeps a retry's wake when the alarm running at the time had armed the end of the pause", async () => {
+    await seedDue(CIRCUIT_THRESHOLD);
+    subscriber(status(503));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await runAlarm();
+    expect((await subscriberConfig()).circuitOpenUntil).toBeGreaterThan(clock);
+
+    await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
+      // The retry lands during a step after the delivery wake was computed.
+      const step = i as unknown as { mediaStep: (now: number) => Promise<number | null> };
+      const mediaStep = step.mediaStep.bind(i);
+      step.mediaStep = async (now) => {
+        i.retryDelivery(1);
+        return mediaStep(now);
+      };
+      await alarmOf(i);
+    });
+    expectWakeNow();
   });
 
   it("closes when the operator saves the target", async () => {

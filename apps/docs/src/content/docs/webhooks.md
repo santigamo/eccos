@@ -67,8 +67,8 @@ requests after about 8 seconds and picks up the rest straight after. After 5 tim
 errors, `5xx` or `429` answers in a row, forwarding pauses for 30 seconds, then 1, 2, 5 and up to
 10 minutes while the failures continue; during a pause no attempt is spent and events wait in the
 queue. When a pause ends a single batch goes out as a test, using one of its attempts. Any other
-answer resumes normal forwarding, as do saving the webhook URL and **Retry**. A `4xx` other than
-`429` never pauses forwarding.
+answer (a `2xx`, a `3xx`, or a `4xx` other than `429`) resumes normal forwarding, as do saving
+the webhook settings and **Retry**. A `3xx` or a `4xx` other than `429` never pauses forwarding.
 
 ## Verifying the signature
 
