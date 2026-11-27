@@ -47,8 +47,11 @@ Answer with any `2xx` within **5 seconds**. Anything else (non-2xx, timeout, con
 is retried. **Redirects are not followed**: a `3xx` counts as a failure, so configure the final
 URL.
 
-Acknowledge first and do the work afterwards (a queue or a background job): a slow answer
-holds up the batches queued behind it.
+Aim to answer in **under 2 seconds**: store the batch, answer `2xx`, and do the work afterwards
+(a queue or a background job). A slow answer holds up the batches queued behind it.
+
+Every event is also stored, so [`GET /v1/wabas/{wabaId}/events`](/data-endpoints#events) can
+catch you up after your endpoint was down, or replace the webhook if you would rather poll.
 
 There are 6 attempts in total. After failed attempt n, the next one waits 5 s x 5^(n-1), capped
 at 1 hour, with +/-10% jitter:

@@ -256,6 +256,7 @@ function TemplatesPage() {
     return {
       onSend: sendable ? () => setSending(row) : undefined,
       onEdit: editable && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, language } }) : undefined,
+      onView: !editable && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, language } }) : undefined,
       onAddLanguage: authoring.ok && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, add: true } }) : undefined,
       onDuplicate: authoring.ok && name ? () => navigate({ to: "/templates/new", search: { wabaId, from: name, language } }) : undefined,
       onDelete:
@@ -278,7 +279,7 @@ function TemplatesPage() {
     cell: (info) => {
       const row = info.row.original;
       const actions = actionsFor(row);
-      if (!actions.onSend && !actions.onEdit && !actions.onAddLanguage && !actions.onDuplicate && !actions.onDelete) {
+      if (!actions.onSend && !actions.onEdit && !actions.onView && !actions.onAddLanguage && !actions.onDuplicate && !actions.onDelete) {
         return <span className="text-muted-foreground">—</span>;
       }
       return <TemplateRowActions name={row.name ?? ""} language={row.language} {...actions} />;
@@ -477,6 +478,7 @@ function TemplateRowActions({
   language,
   onSend,
   onEdit,
+  onView,
   onAddLanguage,
   onDuplicate,
   onDelete,
@@ -485,6 +487,8 @@ function TemplateRowActions({
   language: string | undefined;
   onSend?: () => void;
   onEdit?: () => void;
+  /** The authoring page, read-only: the template cannot be edited here. */
+  onView?: () => void;
   onAddLanguage?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
@@ -511,6 +515,7 @@ function TemplateRowActions({
         <DropdownMenuContent align="end" className="min-w-40">
           {onSend ? <DropdownMenuItem onClick={onSend}>Send test</DropdownMenuItem> : null}
           {onEdit ? <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem> : null}
+          {onView ? <DropdownMenuItem onClick={onView}>View</DropdownMenuItem> : null}
           {onAddLanguage ? <DropdownMenuItem onClick={onAddLanguage}>Add language</DropdownMenuItem> : null}
           {onDuplicate ? <DropdownMenuItem onClick={onDuplicate}>Duplicate</DropdownMenuItem> : null}
           {onDelete ? (

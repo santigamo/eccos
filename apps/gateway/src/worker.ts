@@ -23,6 +23,7 @@ import { eventCounts, messageDrops, webhookShape, webhookWabaIds, type MessageDr
 import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway";
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { runDailyCensus } from "./ops-census";
+import { parseEventsQuery } from "./events-query";
 import { isSubscriptionRequired, SEND_REFUSED_ERROR, SUBSCRIPTION_REQUIRED } from "./connect-policy";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
@@ -1154,6 +1155,36 @@ app.get("/v1/wabas/:wabaId/scheduled", async (c) => {
     ok: true,
     scheduled: rows.map(scheduledJson),
     ...(rows.length === limit && last ? { next: last.key } : {}),
+  });
+});
+
+app.get("/v1/wabas/:wabaId/events", async (c) => {
+  const cid = correlationId(c);
+  const account = c.get("account") ?? null;
+  // Trimmed as ownership and the stub trim it, so a padded id cannot open its own rate-limit bucket.
+  const wabaId = requestedWabaId(c).trim();
+  if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const parsed = parseEventsQuery((name) => c.req.query(name));
+  if (!parsed.ok) {
+    logEvent("events_list", cid, 400, { wabaId });
+    return c.json({ ok: false, error: parsed.error }, 400);
+  }
+  if (!(await ownsWaba(c.env, account, wabaId))) {
+    logEvent("events_list", cid, 404, { wabaId });
+    return c.json({ ok: false, error: "WABA is not configured" }, 404);
+  }
+  const limiter = c.env.READ_RATE_LIMITER;
+  if (limiter && !(await limiter.limit({ key: `${account.accountId}:${wabaId}` })).success) {
+    logEvent("events_list", cid, 429, { wabaId });
+    return c.json({ ok: false, error: "rate limited" }, 429);
+  }
+  const page = await getGatewayStubForWaba(c.env, wabaId).listEventsAfter(parsed.query);
+  logEvent("events_list", cid, 200, { wabaId, count: page.events.length, hasMore: page.next !== null });
+  noStore(c);
+  return c.json({
+    ok: true,
+    events: page.events.map(({ id, receivedAt, payload }) => ({ id, receivedAt, event: JSON.parse(payload) })),
+    next: page.next,
   });
 });
 
