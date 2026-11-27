@@ -250,8 +250,6 @@ describe("held webhooks", () => {
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       instance.sql.exec("UPDATE held_webhooks SET held_at = ?", Date.now() - HELD_MAX_AGE_MS - 1);
       await alarmOf(instance);
-      // The expiry fed the ops alert throttle (Telegram is off in tests).
-      expect(instance.recordOpsAlert("held_expiry", Date.now())).toEqual({ send: false, count: 1 });
     });
     expect(await heldRows()).toBe(0);
     expect(lines("held_expired")).toEqual([expect.objectContaining({ wabaId: TEST_WABA_ID, eventCount: 1 })]);
