@@ -504,6 +504,7 @@ export class EccosGateway extends DurableObject<Env> {
       // The origin of a send (EventOrigin JSON, e.g. its broadcast), copied onto the events about it.
       ensureColumn("outbound_messages", "origin");
       ensureColumn("deliveries", "phone_number_id");
+      ensureColumn("broadcasts", "label");
       // When a delivery reached its terminal state (`delivered` or `failed`).
       // `created_at` alone can only say when the batch was ENQUEUED, so "last
       // delivery 15 days ago" was, until now, a sentence the gateway could not
@@ -1699,22 +1700,20 @@ export class EccosGateway extends DurableObject<Env> {
       if (replay.state === "existing") return replay;
       if (replay.state === "reused") return { state: "reused", broadcast: null };
     }
-    const running = Number(
-      this.sql.exec(`SELECT COUNT(*) AS n FROM broadcasts WHERE status = 'running'`).toArray()[0]?.n ?? 0,
-    );
-    if (running >= MAX_RUNNING_BROADCASTS) return { state: "busy", broadcast: null };
+    if ((await this.runningBroadcasts()) >= MAX_RUNNING_BROADCASTS) return { state: "busy", broadcast: null };
     const id = `bc_${crypto.randomUUID().replaceAll("-", "")}`;
     const { request } = input;
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        `INSERT INTO broadcasts (id, account_id, phone_number_id, template_name, language, status, total,
+        `INSERT INTO broadcasts (id, account_id, phone_number_id, template_name, language, label, status, total,
            duplicates, rate_per_minute, default_components, idempotency_key, body_hash, next_send_at, created_at)
-         VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         input.accountId,
         input.phoneNumberId,
         request.templateName,
         request.language,
+        request.label ?? null,
         request.recipients.length,
         input.duplicates,
         input.ratePerMinute,
@@ -1739,6 +1738,11 @@ export class EccosGateway extends DurableObject<Env> {
     this.ctx.storage.setAlarm(now);
     this.wakeArrived = true;
     return { state: "created", broadcast: readBroadcast(this.sql, id) };
+  }
+
+  /** Broadcasts running on this WABA, the count MAX_RUNNING_BROADCASTS caps. */
+  async runningBroadcasts(): Promise<number> {
+    return Number(this.sql.exec(`SELECT COUNT(*) AS n FROM broadcasts WHERE status = 'running'`).toArray()[0]?.n ?? 0);
   }
 
   async getBroadcast(accountId: string, id: string): Promise<BroadcastSummary | null> {

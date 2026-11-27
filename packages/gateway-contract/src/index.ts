@@ -1,4 +1,7 @@
 import type { BillingStatus } from "./billing-status";
+import type { BroadcastPreflight, CreateBroadcastInput, CreateBroadcastResult } from "./broadcast-create";
+
+export type * from "./broadcast-create";
 
 /**
  * Single source of truth for the Eccos gateway operator RPC surface.
@@ -193,6 +196,8 @@ export interface BroadcastSummary {
   status: BroadcastStatus;
   phoneNumberId: string;
   template: { name: string; language: string };
+  /** The team's own name for it; null when none was given. */
+  label: string | null;
   total: number;
   duplicatesSkipped: number;
   ratePerMinute: number;
@@ -1436,6 +1441,11 @@ export interface GatewayApi {
   /** One stored media object of the account's WABA, or null when it is not stored (yet,
    * or any more). The bytes are streamed from R2; nothing is buffered in the gateway. */
   getMedia(input: MediaRequest, accountId: string): Promise<MediaObject | null>;
+  /**
+   * Start a broadcast from the console. Runs the same checks, replay and queueing as
+   * `POST /v1/wabas/:wabaId/broadcasts`; every refusal is a closed code.
+   */
+  createBroadcast(input: CreateBroadcastInput, accountId: string): Promise<CreateBroadcastResult>;
   /** Stop a running broadcast; recipients not yet attempted are cancelled. Null when it is not found. */
   cancelBroadcast(input: { wabaId: string; broadcastId: string }, accountId: string): Promise<BroadcastSummary | null>;
   /** Cancel a pending scheduled send. not_pending once it is sending or ended; missing when the key is not this account's. */
@@ -1461,6 +1471,8 @@ export interface GatewayApi {
   readBroadcasts(org: ScopedOrg, opts: BroadcastListOpts): Promise<ScopedRead<CursorPage<BroadcastSummary>>>;
   /** One broadcast and one page of its recipients (seq order); null when it is not this account's. */
   readBroadcast(org: ScopedOrg, opts: BroadcastOpts): Promise<ScopedRead<BroadcastDetail | null>>;
+  /** The pace and the running count a new broadcast on the selected WABA would meet. */
+  readBroadcastPreflight(org: ScopedOrg): Promise<ScopedRead<BroadcastPreflight>>;
   /** Scheduled sends of the selected WABA in one status (default pending), with per-status counts. */
   readScheduled(org: ScopedOrg, opts: ScheduledListOpts): Promise<ScopedRead<ScheduledPage>>;
   readConversations(

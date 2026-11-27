@@ -14,6 +14,7 @@ of every recipient.
 ```json
 {
   "phone_number_id": "1098765432",
+  "label": "Ramadan appeal",
   "template": {
     "name": "ramadan_appeal",
     "language": { "code": "en_US" },
@@ -31,6 +32,8 @@ of every recipient.
 - `recipients` holds 1 to 10,000 entries. `to` is a phone number or a BSUID. A recipient's
   `components` replace the template's: it is where each person's values go, in the same shape
   as a [single template send](/sending-messages).
+- `label` (optional, 1 to 80 characters) is your own name for the broadcast. It is never sent to
+  Meta; it comes back on the broadcast and names it in the console.
 - `phone_number_id` (or `/v1/wabas/{wabaId}/phones/{phoneNumberId}/broadcasts`) is needed only
   when the WhatsApp Business Account has more than one number.
 - Send an [Idempotency-Key](/idempotency) header: retrying with the same key returns the same
@@ -96,6 +99,7 @@ is the `transportMessageId` of its statuses.
     "status": "running",
     "phoneNumberId": "1098765432",
     "template": { "name": "ramadan_appeal", "language": "en_US" },
+    "label": "Ramadan appeal",
     "total": 5000,
     "duplicatesSkipped": 3,
     "ratePerMinute": 600,

@@ -47,6 +47,17 @@ describe("parseBroadcastRequest", () => {
     expect(parseBroadcastRequest({ template, recipients: many }).ok).toBe(false);
   });
 
+  test("keeps an optional label, trimmed, and refuses an empty or long one", () => {
+    const recipients = [{ to: "34600000001" }];
+    expect(parseBroadcastRequest({ template, recipients, label: " Friday pickups " })).toMatchObject({
+      ok: true,
+      request: { label: "Friday pickups" },
+    });
+    for (const label of ["  ", "x".repeat(81), 7]) {
+      expect(parseBroadcastRequest({ template, recipients, label })).toMatchObject({ ok: false, error: "label must be 1-80 characters" });
+    }
+  });
+
   test("a BSUID is a recipient", () => {
     expect(parseBroadcastRequest({ template, recipients: [{ to: "US.13491208655302741918" }] }).ok).toBe(true);
   });
