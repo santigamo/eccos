@@ -56,6 +56,26 @@ function tabs(input: Partial<Input> & { rows: Input["rows"] }) {
   return G.buildTabs({ languages: {}, category: "UTILITY", initialCategory: "UTILITY", ...input });
 }
 
+describe("a language the form cannot hold", () => {
+  test("still shows the body and footer Meta stores", () => {
+    const [tab] = tabs({
+      rows: [
+        row("es", "APPROVED", {
+          parameter_format: "NAMED",
+          components: [
+            { type: "BODY", text: "Hola, {{customer_name}}." },
+            { type: "FOOTER", text: "Equipo" },
+          ],
+        }),
+      ],
+    });
+    expect(tab?.readOnly).toContain("named variables");
+    expect(tab?.draft.body).toBe("Hola, {{customer_name}}.");
+    expect(tab?.draft.footer).toBe("Equipo");
+    expect(tab?.dirty).toBe(false);
+  });
+});
+
 describe("the tab's state word", () => {
   test("one word per situation, never a dot", () => {
     const all = tabs({
