@@ -8,9 +8,8 @@ import { MACHINE_CLASS, SECONDARY_TIER, SUPPORT_TIER } from "../dashboard/plain-
 import { APPROVED_EDIT_NOTICE, type LanguageDraft } from "../../lib/template-draft";
 import { readOnlyContent, refusalLine, type LanguageTab } from "../../lib/template-group";
 import { languageLabel, languageOptions } from "../../lib/template-languages";
-import { authoringReading, lastUpdated, qualityReading, rejectionReason } from "../../lib/template-view";
+import { authoringReading, lastUpdated, managerUrl, qualityReading, rejectionReason } from "../../lib/template-view";
 import { LanguageFields, LanguageReadOnly } from "./language-fields";
-import { managerUrl } from "./template-preview-sheet";
 
 /** The line beside an existing language's status tag. */
 function metaLine(tab: LanguageTab): string {
@@ -34,6 +33,7 @@ export function LanguagePanel({
   onChange,
   onLanguageChange,
   onRemove,
+  onSend,
   onDelete,
 }: {
   tab: LanguageTab;
@@ -44,6 +44,7 @@ export function LanguagePanel({
   onChange: (draft: LanguageDraft) => void;
   onLanguageChange: (code: string) => void;
   onRemove: () => void;
+  onSend?: () => void;
   onDelete?: () => void;
 }) {
   const label = languageLabel(tab.language);
@@ -85,7 +86,7 @@ export function LanguagePanel({
         <div className="flex items-center gap-3">
           {tab.status ? <StatusTag status={tab.status} /> : null}
           <span className={`min-w-0 flex-1 ${SECONDARY_TIER}`}>{metaLine(tab)}</span>
-          {onDelete ? (
+          {onSend || onDelete ? (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -95,9 +96,12 @@ export function LanguagePanel({
                 <MoreHorizontalIcon aria-hidden="true" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-40">
-                <DropdownMenuItem variant="destructive" onClick={onDelete}>
-                  Delete
-                </DropdownMenuItem>
+                {onSend ? <DropdownMenuItem onClick={onSend}>Send test</DropdownMenuItem> : null}
+                {onDelete ? (
+                  <DropdownMenuItem variant="destructive" onClick={onDelete}>
+                    Delete
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}

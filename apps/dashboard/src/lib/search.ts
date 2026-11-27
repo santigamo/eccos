@@ -29,12 +29,6 @@ export function normalizeSearchBefore(value: unknown): number | undefined {
   return normalizeSearchRowId(value);
 }
 
-/** A Meta Graph id in the URL (`?template=`): digits only, kept as a string. */
-export function normalizeSearchGraphId(value: unknown): string | undefined {
-  const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
-  return /^[0-9]{1,32}$/.test(text) ? text : undefined;
-}
-
 /** A template name in the path or `?from=`: Meta's own charset. */
 export function normalizeSearchTemplateName(value: unknown): string | undefined {
   return typeof value === "string" && /^[a-z0-9_]{1,512}$/.test(value) ? value : undefined;

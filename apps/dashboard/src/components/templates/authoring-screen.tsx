@@ -19,7 +19,7 @@ export function AuthoringScreen({
   result,
   title,
   ...editor
-}: Omit<TemplateEditorProps, "wabaId" | "businessName" | "rows"> & { result: Result<TemplatesResult>; title: string }) {
+}: Omit<TemplateEditorProps, "wabaId" | "businessName" | "rows" | "phones"> & { result: Result<TemplatesResult>; title: string }) {
   const root = useLoaderData({ from: "__root__" });
   // Latched: the editor drops the handoff on mount, and the list may not hold the new name yet.
   const [handedOff] = useState(() => Boolean(editor.name && peekHandoff(editor.name)));
@@ -70,5 +70,5 @@ export function AuthoringScreen({
     );
   }
 
-  return <TemplateEditor {...editor} wabaId={wabaId} businessName={businessName} rows={rows} />;
+  return <TemplateEditor {...editor} wabaId={wabaId} businessName={businessName} rows={rows} phones={phones} />;
 }

@@ -32,24 +32,21 @@ import {
   type TemplateRecord,
 } from "../lib/template-view";
 import { plainWhatsApp } from "../lib/whatsapp-format";
-import { normalizeSearchGraphId, normalizeSearchQuery, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
+import { normalizeSearchQuery, normalizeSearchStatus, normalizeSearchWabaId } from "../lib/search";
 import { SendTestSheet, type SendTestPhone } from "../components/templates/send-test-sheet";
-import { TemplateDetail, TemplatePreviewSheet } from "../components/templates/template-preview-sheet";
 import { DeleteTemplateDialog, type DeleteTarget } from "../components/templates/delete-template-dialog";
 import { CONFIG_STALE_MS } from "../lib/route-stale";
 
-type TemplatesSearch = { wabaId?: string; template?: string; status?: string; q?: string };
+type TemplatesSearch = { wabaId?: string; status?: string; q?: string };
 
 export const Route = createFileRoute("/templates")({
   staleTime: CONFIG_STALE_MS,
   validateSearch: (search: Record<string, unknown>): TemplatesSearch => ({
     wabaId: normalizeSearchWabaId(search.wabaId),
-    template: normalizeSearchGraphId(search.template),
     status: normalizeSearchStatus(search.status),
     q: normalizeSearchQuery(search.q),
   }),
-  // Only the WABA is a loader dep: the sheet and the filters read rows the
-  // page already has.
+  // Only the WABA is a loader dep: the filters read rows the page already has.
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
   loader: ({ deps }) => listTemplates({ data: { wabaId: deps.wabaId } }),
   component: TemplatesPage,
@@ -68,7 +65,7 @@ const UPDATED_WIDTH = "w-[12%]";
 
 const STATUS_FILTERS = ["APPROVED", "PENDING", "REJECTED", "PAUSED", "DISABLED"];
 
-/** The row's own door into the template sheet: the name, plus a line of its body. */
+/** The row's own door into the template page: the name, plus a line of its body. */
 function nameColumn(onOpen?: (row: TemplateRecord) => void) {
   return columnHelper.accessor("name", {
     id: "name",
@@ -84,7 +81,7 @@ function nameColumn(onOpen?: (row: TemplateRecord) => void) {
           {onOpen ? (
             <button
               type="button"
-              // The row handles the same click; letting it through would open the sheet twice.
+              // The row handles the same click; letting it through would navigate twice.
               onClick={(event) => {
                 event.stopPropagation();
                 onOpen(row);
@@ -190,7 +187,7 @@ export function filterTemplates(rows: TemplateRecord[], status?: string, query?:
 
 function TemplatesPage() {
   const result = Route.useLoaderData();
-  const { wabaId, template, status, q } = Route.useSearch();
+  const { wabaId, status, q } = Route.useSearch();
   const navigate = Route.useNavigate();
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
@@ -240,14 +237,14 @@ function TemplatesPage() {
 
   const rows = templateRowsOf(templates.data) as TemplateRecord[];
   const visible = filterTemplates(rows, status, q);
-  const opened = template ? rows.find((row) => row.id === template) : undefined;
 
+  /** A row opens its template's page on its own language, editable or read-only. */
   const openTemplate = (row: TemplateRecord) => {
-    if (row.id) navigate({ search: (prev) => ({ ...prev, template: row.id }) });
+    const { name, language } = row;
+    if (name) navigate({ to: "/templates/$name", params: { name }, search: { wabaId, language } });
   };
-  const closeTemplate = () => navigate({ search: (prev) => ({ ...prev, template: undefined }), replace: true });
 
-  /** What each row allows, decided once for the menu and the sheet alike. */
+  /** What each row's menu allows. */
   function actionsFor(row: TemplateRecord) {
     const authoring = authoringReading(row);
     const sendable = canSend && canSendTemplate(row.status) && Boolean(row.name && row.language);
@@ -269,7 +266,6 @@ function TemplatesPage() {
                 status: row.status,
               })
           : undefined,
-      authoringBlocked: authoring.ok ? null : authoring.reason,
     };
   }
 
@@ -391,33 +387,6 @@ function TemplatesPage() {
         getRowId={(row) => row.id ?? `${row.name ?? "?"}-${row.language ?? "?"}`}
       />
 
-      {template && selectedWabaId ? (
-        <TemplatePreviewSheet
-          key={`template:${template}`}
-          open
-          onOpenChange={(open) => {
-            if (!open) closeTemplate();
-          }}
-          title={opened ? `${opened.name ?? "—"} · ${opened.language ?? "—"}` : "Template"}
-        >
-          {opened ? (
-            <TemplateDetail
-              row={opened}
-              wabaId={selectedWabaId}
-              businessName={businessName}
-              actions={handOff(actionsFor(opened), closeTemplate)}
-            />
-          ) : (
-            <div className="px-4 pb-4">
-              <GridEmptyState
-                label="NOT FOUND"
-                description="No template with this id is on this WhatsApp Business Account. It may have been deleted."
-              />
-            </div>
-          )}
-        </TemplatePreviewSheet>
-      ) : null}
-
       {sending && selectedWabaId ? (
         <SendTestSheet
           key={`${sending.name}:${sending.language}`}
@@ -444,7 +413,6 @@ function TemplatesPage() {
             if (!open) setDeleteTarget(null);
           }}
           onDeleted={() => {
-            if (template === deleteTarget.templateId) closeTemplate();
             invalidatePage(router);
           }}
         />
@@ -453,20 +421,6 @@ function TemplatesPage() {
   );
 }
 
-/** An act started from the template sheet closes it first: one sheet at a time. */
-function handOff<T extends Record<string, unknown>>(actions: T, close: () => void): T {
-  return Object.fromEntries(
-    Object.entries(actions).map(([key, value]) => [
-      key,
-      typeof value === "function"
-        ? () => {
-            close();
-            value();
-          }
-        : value,
-    ]),
-  ) as T;
-}
 
 /**
  * The row's acts behind one kebab: they all leave the console or open a form,
