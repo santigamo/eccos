@@ -529,6 +529,9 @@ describe("account-scoped control plane", () => {
         url: "https://tenant-a.example/webhook",
         hasSecret: true,
         lastForward: null,
+        latency: null,
+        circuitOpenUntil: null,
+        consecutiveFailures: 0,
       });
     });
 

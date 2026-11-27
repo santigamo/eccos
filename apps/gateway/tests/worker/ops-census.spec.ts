@@ -174,10 +174,37 @@ describe("daily census", () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ chat_id: "-100123", message_thread_id: 131 });
   });
 
+  it("flags a WABA whose forwarding circuit is open", async () => {
+    await seedDeliveries(TEST_WABA_ID, [["pending", NOON]], "https://subscriber.example/hook");
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.sql.exec(
+        "INSERT INTO ops_state (key, value) VALUES ('forward_circuit', ?)",
+        JSON.stringify({ failures: 7, trips: 2, openUntil: NOON + 60_000 }),
+      );
+    });
+
+    const [text] = await census();
+    expect(text).toContain(`${TEST_ACCOUNT_ID} / WABA ${TEST_WABA_ID}: forwarding paused (circuit open), 7 failed forwards in a row`);
+    expect(text).toContain(`WABA ${TEST_WABA_ID}, active, standard, target set, circuit open, token never expires: 1 pending`);
+  });
+
+  it("does not flag a circuit whose pause ended with nothing queued", async () => {
+    await seedDeliveries(TEST_WABA_ID, [["failed", NOON]], "https://subscriber.example/hook");
+    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
+      i.sql.exec(
+        "INSERT INTO ops_state (key, value) VALUES ('forward_circuit', ?)",
+        JSON.stringify({ failures: 7, trips: 2, openUntil: 1 }),
+      );
+    });
+
+    const [text] = await census();
+    expect(text).not.toContain("circuit open");
+  });
+
   it("flags only the coexistence syncs that need the operator", () => {
     const line = (wabaId: string, sync: string) => ({
       wabaId, status: "active", onboarding: "coexistence", sync, hasTarget: true, pending: 0, held: 0, failed: 0,
-      recentFailed: 0, delivered24h: 0, heldWebhooks: 0, stuckPending: false, readable: true, token: null,
+      recentFailed: 0, delivered24h: 0, heldWebhooks: 0, circuitFailures: null, stuckPending: false, readable: true, token: null,
     });
     const text = formatCensus("2026-11-08", [
       {
