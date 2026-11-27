@@ -1,5 +1,5 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, jest, test } from "bun:test";
 
 /** The one clipboard control (`components/dashboard/copy-button.tsx`). */
 
@@ -59,9 +59,16 @@ describe("CopyButton", () => {
 
   test("the label comes back after a moment", async () => {
     setClipboard({ writeText: async () => {} });
-    const button = await clickCopy();
-    expect(button.textContent).toBe("Copied");
-    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 2_100))));
-    expect(button.textContent).toBe("Copy");
+    jest.useFakeTimers();
+    try {
+      const button = await clickCopy();
+      expect(button.textContent).toBe("Copied");
+      act(() => jest.advanceTimersByTime(1_900));
+      expect(button.textContent).toBe("Copied");
+      act(() => jest.advanceTimersByTime(200));
+      expect(button.textContent).toBe("Copy");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

@@ -5,7 +5,7 @@ import { installServerFnMocks } from "./helpers/server-fn-mocks";
 
 /** The invite form in a real DOM (happy-dom): a thrown call and the field's own validity. */
 
-GlobalRegistrator.register();
+GlobalRegistrator.register({ url: "http://localhost:3000/" });
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });

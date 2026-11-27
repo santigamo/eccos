@@ -1,5 +1,5 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
 
 /**
@@ -81,7 +81,13 @@ afterAll(async () => {
   await GlobalRegistrator.unregister();
 });
 
-const settle = () => act(async () => void (await new Promise((resolve) => setTimeout(resolve, 5))));
+/** Lets pending reads land; under fake timers it moves the clock by as much. */
+const settle = (ms = 5) =>
+  act(async () => {
+    if (!jest.isFakeTimers()) return void (await new Promise((resolve) => setTimeout(resolve, ms)));
+    jest.advanceTimersByTime(ms);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  });
 
 async function wizard(props: Partial<Parameters<typeof SetupWizard>[0]> = {}): Promise<HTMLElement> {
   const host = document.createElement("div");
@@ -306,6 +312,7 @@ describe("path B: connect my tool", () => {
 
 describe("path C: send from my software", () => {
   test("a key, a copy-paste example to the operator's phone, and a delivered send: the paywall", async () => {
+    jest.useFakeTimers();
     const host = await wizard();
     await press(host, "Send from my software");
     expect(heading(host)).toBe("Create your API key");
@@ -333,7 +340,8 @@ describe("path C: send from my software", () => {
       languageCode: "en_US",
     });
     // The poll's next tick reads the delivered send.
-    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 3_100))));
+    await settle(3_100);
+    jest.useRealTimers();
     expectPaywall(host);
     expect(host.textContent).toContain("Hello World");
   });
@@ -420,12 +428,17 @@ describe("paused and page-load states", () => {
   });
 
   test("the activation dialog opens after the page settles, not during hydration", async () => {
-    let opened = 0;
-    openAfterHydration(() => opened++);
-    const cancel = openAfterHydration(() => opened++);
-    cancel();
-    expect(opened).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    expect(opened).toBe(1);
+    jest.useFakeTimers();
+    try {
+      let opened = 0;
+      openAfterHydration(() => opened++);
+      const cancel = openAfterHydration(() => opened++);
+      cancel();
+      expect(opened).toBe(0);
+      jest.advanceTimersByTime(1_100);
+      expect(opened).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

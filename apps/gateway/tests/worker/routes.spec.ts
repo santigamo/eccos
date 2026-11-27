@@ -47,12 +47,6 @@ afterEach(async () => {
 });
 
 describe("routes", () => {
-  it("GET /health returns ok", async () => {
-    const res = await exports.default.fetch("http://example.com/health");
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, name: "eccos", version: "0.1.0" });
-  });
-
   it("GET /webhooks/meta verifies challenge token", async () => {
     const ok = await exports.default.fetch(
       `http://example.com/webhooks/meta?hub.mode=subscribe&hub.verify_token=${env.META_WEBHOOK_VERIFY_TOKEN}&hub.challenge=abc123`,

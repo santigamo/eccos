@@ -16,7 +16,16 @@ function stubWorker(name: string, path: string) {
 export default defineConfig({
   test: {
     include: ["tests/worker/**/*.spec.ts"],
-    fileParallelism: false,
+    // Files run in parallel, each in its own Miniflare; dependencies are pre-bundled once (see apps/gateway).
+    deps: {
+      optimizer: {
+        ssr: {
+          enabled: true,
+          include: ["@modelcontextprotocol/server", "@modelcontextprotocol/client", "agents/mcp/server", "@cloudflare/workers-oauth-provider", "hono", "zod"],
+          rolldownOptions: { external: [/^node:/, /^cloudflare:/] },
+        },
+      },
+    },
   },
   plugins: [
     cloudflareTest({

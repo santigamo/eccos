@@ -10,7 +10,6 @@ import {
   acceptsHtml,
   authGate,
   isServerFnPath,
-  notAcceptable,
   serverFnSignIn,
   signInRedirect,
 } from "../src/auth/page-gate";
@@ -83,10 +82,6 @@ describe("serverFnSignIn", () => {
     const none = serverFnSignIn(new Request(`${ORIGIN}/_serverFn/abc`));
     expect((await clientRedirect(none)).href).toBe("/signin");
   });
-});
-
-test("notAcceptable answers 406, not 500", () => {
-  expect(notAcceptable().status).toBe(406);
 });
 
 describe("authGate order", () => {

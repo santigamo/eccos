@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { broadcastCurl, scheduledCurl, tomorrowAtNine } from "../src/lib/curl";
-import { sendSnippet } from "../src/components/dashboard/api-keys";
+import { installServerFnMocks } from "./helpers/server-fn-mocks";
+
+installServerFnMocks({ env: {} });
+const { sendSnippet } = await import("../src/components/dashboard/api-keys");
 
 describe("API requests the console prints", () => {
   test("the send request keeps its layout", () => {

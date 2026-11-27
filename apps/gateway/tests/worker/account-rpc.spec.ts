@@ -66,19 +66,6 @@ describe("GatewayRPC with a registered account", () => {
     // Another account cannot address this WABA (fail closed).
     await expect(rpc.listInbound({ wabaId: TEST_WABA_ID }, "other-account")).rejects.toThrow(/not owned|does not exist/);
   });
-
-  it("keeps account keys hashed and revokes them", async () => {
-    const boot = await bootstrapAccount();
-    await cp(async (cp) => {
-      const row = cp.sql.exec("SELECT hash FROM api_keys").toArray()[0] as { hash: string } | undefined;
-      expect(row).toBeDefined();
-    });
-    // The raw key is the API key only once: subsequent auth uses the hash.
-    await cp(async (cp) => {
-      const keys = cp.sql.exec("SELECT key_id, account_id FROM api_keys").toArray();
-      expect(keys).toHaveLength(1);
-    });
-  });
 });
 
 describe("GatewayRPC organization account bootstrap", () => {

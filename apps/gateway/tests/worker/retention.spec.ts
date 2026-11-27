@@ -164,31 +164,32 @@ describe("split retention", () => {
 });
 
 describe("resolveRetentionDays", () => {
-  it("defaults to 30 content / 90 delivery days", () => {
-    expect(resolveRetentionDays({})).toEqual({ contentDays: 30, deliveryDays: 90 });
+  it.each([
+    ["the defaults", {}, { contentDays: 30, deliveryDays: 90 }],
+    ["a content window below 7 days", { CONTENT_RETENTION_DAYS: "3" }, { contentDays: 7 }],
+    ["a 7-day content window", { CONTENT_RETENTION_DAYS: "7" }, { contentDays: 7 }],
+    ["a content window inside [7, 90]", { CONTENT_RETENTION_DAYS: "45" }, { contentDays: 45 }],
+    ["a 90-day content window", { CONTENT_RETENTION_DAYS: "90" }, { contentDays: 90 }],
+    ["a content window above 90 days", { CONTENT_RETENTION_DAYS: "365" }, { contentDays: 90 }],
+    ["the removed RETENTION_DAYS", { RETENTION_DAYS: "60" } as Record<string, string>, { contentDays: 30 }],
+    ["a content window that is not a number", { CONTENT_RETENTION_DAYS: "banana" }, { contentDays: 30 }],
+    ["a negative content window", { CONTENT_RETENTION_DAYS: "-5" }, { contentDays: 30 }],
+    ["an empty content window", { CONTENT_RETENTION_DAYS: "" }, { contentDays: 30 }],
+    ["a zero delivery window", { DELIVERY_RETENTION_DAYS: "0" }, { deliveryDays: 90 }],
+    ["a delivery window that is not a number", { DELIVERY_RETENTION_DAYS: "abc" }, { deliveryDays: 90 }],
+    ["a custom delivery window", { DELIVERY_RETENTION_DAYS: "30" }, { deliveryDays: 30 }],
+    ["a long delivery window", { DELIVERY_RETENTION_DAYS: "180" }, { deliveryDays: 180 }],
+    [
+      "a delivery window shorter than the content window",
+      { CONTENT_RETENTION_DAYS: "60", DELIVERY_RETENTION_DAYS: "30" },
+      { contentDays: 60, deliveryDays: 60 },
+    ],
+  ])("resolves %s", (_, vars, expected) => {
+    expect(resolveRetentionDays(vars)).toMatchObject(expected);
   });
+});
 
-  it("clamps the content window to [7, 90]", () => {
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "3" }).contentDays).toBe(7);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "7" }).contentDays).toBe(7);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "45" }).contentDays).toBe(45);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "90" }).contentDays).toBe(90);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "365" }).contentDays).toBe(90);
-  });
-
-  it("honors only the split content window (RETENTION_DAYS is removed)", () => {
-    expect(resolveRetentionDays({}).contentDays).toBe(30);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "60" }).contentDays).toBe(60);
-  });
-
-  it("guards destructive windows against invalid values", () => {
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "banana" }).contentDays).toBe(30);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "-5" }).contentDays).toBe(30);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "" }).contentDays).toBe(30);
-    expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "0" }).deliveryDays).toBe(90);
-    expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "abc" }).deliveryDays).toBe(90);
-  });
-
+describe("retention sweep", () => {
   it("sweeps at most once an hour instead of on every alarm", async () => {
     // The sweep used to run at the end of every alarm(), i.e. once per ingest,
     // scanning the whole table to delete the same zero rows. It is now throttled.
@@ -208,15 +209,6 @@ describe("resolveRetentionDays", () => {
       instance.pruneExpired(Date.now(), 30, 90);
       const after = instance.sql.exec("SELECT COUNT(*) AS c FROM deliveries").toArray();
       expect(Number(after[0]!.c)).toBe(0);
-    });
-  });
-
-  it("honors a custom delivery window", () => {
-    expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "30" }).deliveryDays).toBe(30);
-    expect(resolveRetentionDays({ DELIVERY_RETENTION_DAYS: "180" }).deliveryDays).toBe(180);
-    expect(resolveRetentionDays({ CONTENT_RETENTION_DAYS: "60", DELIVERY_RETENTION_DAYS: "30" })).toEqual({
-      contentDays: 60,
-      deliveryDays: 60,
     });
   });
 });

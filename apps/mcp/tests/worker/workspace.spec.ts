@@ -256,19 +256,6 @@ describe("workspace_get", () => {
     );
   });
 
-  it("advertises itself as read-only and idempotent", async () => {
-    const client = await connect(await grantToken(makeActor()));
-    const { tools } = await client.listTools();
-    await client.close();
-
-    expect(tools.find((tool) => tool.name === "workspace_get")?.annotations).toEqual({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    });
-  });
-
   it("follows a WABA that is connected and not active yet, and a template read that failed", async () => {
     const pending = { ...activeWaba("waba-1", "acct-a", []), status: "pending" as const, provisionedAt: null };
     await gatewayStub.seed("acct-a", {

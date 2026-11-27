@@ -10,7 +10,7 @@ The repo is a **Bun workspace**: shared `@eccos/core` package + per-target apps.
 ```bash
 bun install            # install dependencies
 bun run dev            # Bun target, watch mode (http://localhost:3000)
-bun run check          # CI's test-and-build job, in CI's order; run it before every push
+bun run check          # every step of CI's parallel jobs; run it before every push
 ./scripts/check-pr-title.sh "<title>"   # CI's separate PR title job: type(scope): subject
 bun run lint           # Biome lint (first step of check)
 bun run typecheck      # regenerates the Workers types, then tsc --noEmit
@@ -78,7 +78,7 @@ cannot happen.
 
 | Rule | Enforced by |
 | --- | --- |
-| Run CI's test-and-build job before you push | `bun run check` is the only step of `.github/workflows/ci.yml` |
+| Run CI's steps before you push | `bun run check` runs exactly the steps of `.github/workflows/ci.yml`'s jobs: `apps/gateway/tests/ci-check.test.ts` |
 | Lint is clean on every commit | `bun run lint`, first step of `bun run check` |
 | A new test file runs without registering it | `bun run test` globs `packages/*/tests/*.test.ts` and `apps/gateway/tests/*.test.ts` |
 | PR titles read `type(scope): subject` | `scripts/check-pr-title.sh`, run by `.github/workflows/pr-title.yml` |

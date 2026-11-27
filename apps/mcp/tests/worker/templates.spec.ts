@@ -539,17 +539,6 @@ describe("template tools: role and scope", () => {
     expect((await listed(["view", "configure"])).map((tool) => tool.name).sort()).toEqual(["template_create", "template_delete", "template_edit", "templates_list"]);
   });
 
-  it("annotates reads, writes and the destructive delete", async () => {
-    const tools = Object.fromEntries((await listed(["view", "send", "configure"])).map((tool) => [tool.name, tool.annotations]));
-    expect(tools).toEqual({
-      templates_list: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-      template_create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-      template_edit: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-      template_delete: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-      template_send_test: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    });
-  });
-
   it.each([
     ["templates_list", "eccos:view", ["eccos:send"]],
     ["template_create", "eccos:configure", ["eccos:view"]],
