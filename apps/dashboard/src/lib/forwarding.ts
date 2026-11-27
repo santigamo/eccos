@@ -6,8 +6,8 @@ import { eventKindNoun } from "./logs";
  * are easy to get quietly wrong can be asserted without a DOM.
  */
 
-/** The header tag. A FACT about configuration, never a switch — Eccos has no
- * pause semantics, so there is nothing here to toggle. */
+/** The header tag. A FACT about configuration, never a switch: there is nothing
+ * here to toggle. A breaker pause is the gateway's own (`circuitReading`). */
 export function forwardingTag(config: SubscriberConfig): "forwarding" | "no target" {
   return config.url === null ? "no target" : "forwarding";
 }
@@ -31,6 +31,8 @@ export interface LastForwardReading {
   attempts: number;
   /** Verbatim from `deliveries.last_error`; only ever set on a real attempt. */
   lastError: string | null;
+  /** How long the receiver took on the last attempt; null when untimed. */
+  durationMs: number | null;
 }
 
 export function readLastForward(last: LastForward | null): LastForwardReading | null {
@@ -42,7 +44,43 @@ export function readLastForward(last: LastForward | null): LastForwardReading | 
     at: finished ? (last.finishedAt as number) : last.createdAt,
     attempts: last.attempts,
     lastError: last.lastError,
+    durationMs: last.durationMs ?? null,
   };
+}
+
+/** The answer time the docs ask receivers to stay under (`webhooks.md`). */
+export const SLOW_ANSWER_MS = 2_000;
+
+export function fmtDuration(ms: number): string {
+  return ms < 1_000 ? `${Math.round(ms)}ms` : `${(ms / 1_000).toFixed(1)}s`;
+}
+
+/** The receiver's slow answers (p95) are past the 2s the docs ask for. Null
+ * when nothing has been timed, or the gateway predates the reading. */
+export function slowAnswerMs(config: SubscriberConfig): number | null {
+  const p95 = config.latency?.p95Ms;
+  return p95 !== undefined && p95 > SLOW_ANSWER_MS ? p95 : null;
+}
+
+/**
+ * The circuit breaker, read at `now`. `circuitOpenUntil` stays set past its
+ * time while the single test delivery is out, so a past value is `testing`,
+ * not closed. Null when closed, and on a gateway that predates the breaker.
+ */
+export type CircuitReading =
+  | { state: "paused"; until: number; failures: number | null }
+  | { state: "testing"; failures: number | null };
+
+export function circuitReading(config: SubscriberConfig, now: number): CircuitReading | null {
+  const until = config.circuitOpenUntil;
+  if (until == null) return null;
+  const failures = config.consecutiveFailures ?? null;
+  return until > now ? { state: "paused", until, failures } : { state: "testing", failures };
+}
+
+export function failedAttempts(failures: number | null): string {
+  if (failures === null) return "repeated failed attempts";
+  return `${failures} failed ${failures === 1 ? "attempt" : "attempts"}`;
 }
 
 /**

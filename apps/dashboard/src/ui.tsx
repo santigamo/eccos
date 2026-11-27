@@ -216,15 +216,22 @@ export function StatusCounts({
  */
 export function FactsStrip({
   label,
+  columns = 3,
   children,
 }: {
   label: string
+  columns?: 3 | 4
   children: ReactNode
 }) {
   return (
     <section
       aria-label={label}
-      className="grid grid-cols-1 divide-y divide-(--line) border-y border-(--line) sm:grid-cols-3 sm:divide-x sm:divide-y-0"
+      className={cn(
+        "grid grid-cols-1 divide-y divide-(--line) border-y border-(--line)",
+        columns === 4
+          ? "lg:grid-cols-4 lg:divide-x lg:divide-y-0"
+          : "sm:grid-cols-3 sm:divide-x sm:divide-y-0",
+      )}
     >
       {children}
     </section>
