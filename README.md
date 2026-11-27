@@ -319,6 +319,7 @@ Integrating with Eccos Cloud? See the [API guide](https://docs.eccos.chat) (auth
 | GET    | `/v1/templates`   | Bearer `ECCOS_API_KEY` | Bun    | List message templates              |
 | GET    | `/v1/wabas/<id>/templates` | Bearer account key | Workers | List templates for an owned WABA |
 | POST   | `/v1/wabas/<id>/privacy/erasure` | Bearer account key | Workers | Erase within an owned WABA |
+| GET    | `/v1/wabas/<id>/events` | Bearer account key | Workers | Page through an owned WABA's stored events |
 | GET    | `/v1/wabas/<id>/export` | Bearer account key | Workers | Export an owned WABA's retained data |
 | GET    | `/connect`        | account key / Meta OAuth | Workers| Embedded Signup (coexistence) flow  |
 | POST   | `/connect/exchange` | account key + OAuth state | Workers| Exchange OAuth code → register WABA/phone |

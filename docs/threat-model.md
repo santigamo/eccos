@@ -115,7 +115,8 @@ knowing this surface exists and is unauthenticated, but it does not leak secrets
   Limiting binding (`SEND_RATE_LIMITER`, 60/min per key, `wrangler.jsonc`; accounts in `HIGH_THROUGHPUT_ACCOUNTS` get `SEND_RATE_LIMITER_HIGH`, 600/min) — it is
   per-location and eventually consistent: spike protection, not an exact global quota. The check
   runs after the WABA is resolved and owned, keyed on the stored WABA id, so URL encoding cannot
-  open a fresh bucket.
+  open a fresh bucket. `GET /v1/wabas/<WABA_ID>/events` is checked the same way against
+  `READ_RATE_LIMITER` (120/min per key) when that binding is present.
 - **Scope:** every account key is scoped to its account; unknown/revoked keys and cross-account
   WABA, phone, retry, export, and erasure access are rejected (fail closed).
 

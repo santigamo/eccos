@@ -202,6 +202,12 @@ export type SendKeyClaim =
   | { state: "reused" }
   | { state: "done"; result: string };
 
+/** A page of the public events read; `payload` is the stored event JSON, parsed by the Worker. */
+export type EventPage = {
+  events: Array<{ id: number; receivedAt: number; payload: string }>;
+  next: number | null;
+};
+
 function parseIpv4Address(hostname: string): number[] | null {
   const octets = hostname.split(".");
   if (octets.length !== 4 || !octets.every((part) => /^\d+$/.test(part))) return null;
@@ -1021,6 +1027,35 @@ export class EccosGateway extends DurableObject<Env> {
       this.bumpSubscriberSecretRevision();
       return true;
     });
+  }
+
+  /** Events with an id above `after`, oldest first. `next` is set only when another page waits.
+   * Ids grow with `received_at`, so `since` becomes an id bound and every page stays a seek. */
+  listEventsAfter(opts: { after?: number; since?: number; type?: string; limit: number }): EventPage {
+    let after = opts.after ?? 0;
+    if (opts.since !== undefined) {
+      const first = this.sql
+        .exec(`SELECT id FROM inbound_events WHERE received_at >= ? ORDER BY received_at, id LIMIT 1`, opts.since)
+        .toArray()[0];
+      if (!first) return { events: [], next: null };
+      after = Math.max(after, Number(first.id) - 1);
+    }
+    const byType = opts.type === undefined ? [] : [opts.type];
+    const rows = this.sql
+      .exec(
+        `SELECT id, received_at, payload FROM inbound_events
+         WHERE id > ? ${byType.length ? "AND type = ?" : ""} ORDER BY id LIMIT ?`,
+        after,
+        ...byType,
+        opts.limit + 1,
+      )
+      .toArray();
+    const events = rows.slice(0, opts.limit).map((row) => ({
+      id: Number(row.id),
+      receivedAt: Number(row.received_at),
+      payload: String(row.payload),
+    }));
+    return { events, next: rows.length > opts.limit ? (events.at(-1)?.id ?? null) : null };
   }
 
   // --- Operator API (read models + retry trigger; consumed via GatewayRPC) ---

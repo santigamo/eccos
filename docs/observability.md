@@ -43,6 +43,12 @@ grouped by in the Query Builder (Workers & Pages → Observability → Investiga
 
 Meta's error `message` and `error_data` are never logged: they can echo the recipient or content.
 
+### Worker: `GET /v1/wabas/:wabaId/events`
+
+| `event` | When | Fields |
+|---|---|---|
+| `events_list` | One per request | `wabaId`; on success (`status` 200) `count` (events returned) and `hasMore` (another page waits). Refused requests carry only `wabaId`: 400 bad query, 404 WABA not owned, 429 `READ_RATE_LIMITER` |
+
 ### Durable Object `EccosGateway` and `GatewayRPC`
 
 | `event` | `area` | Fields |
