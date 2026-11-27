@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EccosGateway } from "../../src/gateway";
 import { getGatewayStubForWaba } from "../../src/gateway-stub";
 import { EXPORT_PAGE_ROWS, EXPORT_SECTIONS } from "../../src/export-pages";
+import { type ExportEnd, exportStream } from "../../src/export-stream";
 import { claimExport, exportCooldownMs, exportDay } from "../../src/export-usage";
 import { GatewayRPC } from "../../src/rpc";
 import worker from "../../src/worker";
@@ -39,6 +40,15 @@ async function statusOf(res: Response | Promise<Response>): Promise<number> {
   const done = await res;
   await done.arrayBuffer();
   return done.status;
+}
+
+/** The seconds a 429 asks to wait: header and body agree, and are `expected` or one less (a clock tick). */
+async function retryAfterOf(res: Response, expected: number): Promise<number> {
+  expect(res.status).toBe(429);
+  const header = Number(res.headers.get("retry-after"));
+  expect(await res.json()).toEqual({ ok: false, error: "export rate limited", retryAfter: header });
+  expect([expected - 1, expected]).toContain(header);
+  return header;
 }
 
 /** Moves this WABA's last granted export `ms` into the past. */
@@ -157,22 +167,47 @@ describe("streamed export", () => {
   });
 });
 
+describe("export stream", () => {
+  it("ends once, as cancelled, when the client leaves during a read", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ends: Array<[ExportEnd, number, unknown]> = [];
+    const stream = exportStream(
+      {
+        page: async () => {
+          await gate;
+          return { rows: [{ id: 1 }], next: null };
+        },
+        config: async () => ({}),
+      },
+      (end, counts, error) => ends.push([end, counts.inbound, error]),
+    );
+    const reader = stream.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('{"ok":true,"data":{');
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('"inbound":[');
+    const reading = reader.read();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const cancelling = reader.cancel();
+    release();
+    await Promise.all([cancelling, reading]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(ends).toEqual([["cancelled", 0, undefined]]);
+  });
+});
+
 describe("export cooldown", () => {
   it("refuses a second export with 429 and the seconds left, until the cooldown passes", async () => {
     const log = vi.spyOn(console, "log");
     expect(await statusOf(exportCall())).toBe(200);
 
-    const refused = await exportCall();
-    expect(refused.status).toBe(429);
-    expect(refused.headers.get("retry-after")).toBe("900");
-    expect(await refused.json()).toEqual({ ok: false, error: "export rate limited", retryAfter: 900 });
+    const retryAfter = await retryAfterOf(await exportCall(), 900);
     const lines = log.mock.calls.map(([l]) => JSON.parse(String(l))).filter((l) => l.event === "export");
-    expect(lines.at(-1)).toMatchObject({ status: 429, level: "warn", wabaId: TEST_WABA_ID, retryAfter: 900 });
+    expect(lines.at(-1)).toMatchObject({ status: 429, level: "warn", wabaId: TEST_WABA_ID, retryAfter });
 
     await ageLastExport(600_000);
-    const later = await exportCall();
-    expect(later.status).toBe(429);
-    expect(later.headers.get("retry-after")).toBe("300");
+    await retryAfterOf(await exportCall(), 300);
 
     await ageLastExport(300_000);
     expect(await statusOf(exportCall())).toBe(200);
@@ -201,9 +236,7 @@ describe("export cooldown", () => {
   it("follows EXPORT_COOLDOWN_SECONDS, and 0 turns it off", async () => {
     expect(await statusOf(exportWith({ EXPORT_COOLDOWN_SECONDS: "0" }))).toBe(200);
     expect(await statusOf(exportWith({ EXPORT_COOLDOWN_SECONDS: "0" }))).toBe(200);
-    const refused = await exportWith({ EXPORT_COOLDOWN_SECONDS: "60" });
-    expect(refused.status).toBe(429);
-    expect(refused.headers.get("retry-after")).toBe("60");
+    await retryAfterOf(await exportWith({ EXPORT_COOLDOWN_SECONDS: "60" }), 60);
   });
 
   it("reads the cooldown from the env, defaulting to 900 s", () => {

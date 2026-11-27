@@ -346,13 +346,16 @@ describe("errors-and-rate-limits.md export cooldown", () => {
     const section = errorsMd.slice(errorsMd.indexOf("## Export cooldown"));
     expect(section).toContain("15 minutes");
     const [, body] = statusAndJson(`429 ${section.match(/`(\{"ok":false,"error":"export rate limited"[^`]*\})`/)![1]}`);
-    expect((await exportCall()).status).toBe(200);
+    const first = await exportCall();
+    await first.text();
+    expect(first.status).toBe(200);
     const res = await exportCall();
     expect(res.status).toBe(429);
     const answer = (await res.json()) as { retryAfter: number };
     expect(answer).toEqual({ ...body, retryAfter: answer.retryAfter });
-    expect(answer.retryAfter).toBe(900);
-    expect(res.headers.get("retry-after")).toBe("900");
+    // 15 minutes, or one second less when the clock ticked between the two calls.
+    expect([899, 900]).toContain(answer.retryAfter);
+    expect(res.headers.get("retry-after")).toBe(String(answer.retryAfter));
   });
 });
 

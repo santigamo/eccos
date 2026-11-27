@@ -21,8 +21,9 @@ export async function* exportJson(source: ExportSource, counts: ExportCounts): A
     do {
       const page: ExportPage = await source.page(section, after);
       if (page.rows.length > 0) {
-        yield `${counts[section] > 0 ? "," : ""}${page.rows.map((row) => JSON.stringify(row)).join(",")}`;
+        const comma = counts[section] > 0 ? "," : "";
         counts[section] += page.rows.length;
+        yield `${comma}${page.rows.map((row) => JSON.stringify(row)).join(",")}`;
       }
       after = page.next;
     } while (after);
@@ -31,7 +32,7 @@ export async function* exportJson(source: ExportSource, counts: ExportCounts): A
   yield `,"config":${JSON.stringify(await source.config())}}}`;
 }
 
-/** Streams the export; `onEnd` gets how it ended, the rows sent so far and, when a read failed, the error. */
+/** Streams the export; `onEnd` runs once, with how it ended, the rows read so far and, when a read failed, the error. */
 export function exportStream(
   source: ExportSource,
   onEnd: (end: ExportEnd, counts: ExportCounts, error?: unknown) => void,
@@ -39,21 +40,29 @@ export function exportStream(
   const counts = Object.fromEntries(EXPORT_SECTIONS.map((section) => [section, 0])) as ExportCounts;
   const chunks = exportJson(source, counts);
   const encoder = new TextEncoder();
+  let ended = false;
+  const end = (how: ExportEnd, error?: unknown) => {
+    ended = true;
+    onEnd(how, counts, error);
+  };
   return new ReadableStream({
     async pull(controller) {
       try {
         const { value, done } = await chunks.next();
+        // The client left while this read was in flight: the stream is already closed.
+        if (ended) return;
         if (done) {
           controller.close();
-          onEnd("done", counts);
+          end("done");
         } else controller.enqueue(encoder.encode(value));
       } catch (error) {
-        onEnd("failed", counts, error);
+        if (ended) return;
+        end("failed", error);
         controller.error(error);
       }
     },
     async cancel() {
-      onEnd("cancelled", counts);
+      end("cancelled");
       await chunks.return(undefined);
     },
   });

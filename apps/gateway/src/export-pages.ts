@@ -2,7 +2,7 @@
  * The data-plane export, read in keyset pages. `exportData()` reads each section in one page; the
  * streamed HTTP export reads short pages so no single read holds the Durable Object for long.
  * Every page seeks on the section's own sort order (an index or the primary key), never OFFSET,
- * and binds at most four parameters.
+ * and binds at most three parameters.
  */
 import { MESSAGE_COLUMNS, toMessageRecord } from "./conversations";
 
@@ -54,10 +54,10 @@ const READERS: Record<ExportSection, Reader> = {
   ),
   messages: {
     select: `SELECT rowid AS seq, ${MESSAGE_COLUMNS} FROM messages`,
-    // `at <= ?` keeps the seek on idx_messages_at.
-    after: "at <= ? AND (at < ? OR rowid < ?)",
+    // A row value: SQLite seeks idx_messages_at on `(at, rowid)` together.
+    after: "(at, rowid) < (?, ?)",
     order: "at DESC, rowid DESC",
-    cursor: (raw) => [Number(raw.at), Number(raw.at), Number(raw.seq)],
+    cursor: (raw) => [Number(raw.at), Number(raw.seq)],
     row: toMessageRecord,
   },
   contacts: {
