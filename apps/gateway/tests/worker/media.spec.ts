@@ -5,6 +5,7 @@ import type { WhatsAppCallbackEvent } from "@eccos/core/types";
 import { type EccosGateway, MEDIA_BUDGET_MS } from "../../src/gateway";
 import { GatewayRPC } from "../../src/rpc";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
+import { DOWNLOAD_TIMEOUT_MS } from "../../src/media-download";
 import { getMedia } from "../../src/media-store";
 import dataMd from "../../../docs/src/content/docs/data-endpoints.md?raw";
 import { codeSpans, tableRows } from "../docs-md";
@@ -355,34 +356,44 @@ describe("media download (DO alarm) under a rejected token and a mid-alarm webho
   });
 });
 
+/** Holds every CDN download open until `finish`; `downloading` resolves once one has started. */
+function holdDownloads(meta: ReturnType<typeof fakeMeta>) {
+  const serve = meta.getMockImplementation()!;
+  let started!: () => void;
+  const downloading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let finish!: () => void;
+  const held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  meta.mockImplementation(async (input, init) => {
+    if (String(input).startsWith(LOOKASIDE)) {
+      started();
+      await held;
+    }
+    return serve(input, init);
+  });
+  return { downloading, finish };
+}
+
+function mediaRowIn(instance: EccosGateway, mediaId: string) {
+  return instance.sql
+    .exec(`SELECT state, attempts, last_error, next_attempt_at FROM media WHERE media_id = ?`, mediaId)
+    .toArray()[0];
+}
+
 describe("media attempts and time budget (DO alarm)", () => {
   it("counts the attempt before the download, so a cancelled alarm does not pick the id again at once", async () => {
     const meta = fakeMeta();
-    const serve = meta.getMockImplementation()!;
-    let started!: () => void;
-    const downloading = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    let finish!: () => void;
-    const held = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    meta.mockImplementation(async (input, init) => {
-      if (String(input).startsWith(LOOKASIDE)) {
-        started();
-        await held;
-      }
-      return serve(input, init);
-    });
+    const { downloading, finish } = holdDownloads(meta);
     await gatewayStub().ingest([imageEvent("9001")]);
 
     await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
       const first = alarmOf(instance);
       await downloading;
       // What a cancellation mid-download leaves behind.
-      const row = instance.sql
-        .exec(`SELECT state, attempts, last_error, next_attempt_at FROM media WHERE media_id = '9001'`)
-        .toArray()[0];
+      const row = mediaRowIn(instance, "9001");
       expect(row).toMatchObject({ state: "failed", attempts: 1, last_error: "download did not finish" });
       expect(Number(row!.next_attempt_at)).toBeGreaterThan(Date.now());
 
@@ -427,7 +438,49 @@ describe("media attempts and time budget (DO alarm)", () => {
     expect(await mediaRow("9003")).toMatchObject({ state: "failed", attempts: 2, last_error: "media lookup failed with 503", next_attempt_at: 0 });
   });
 
-  it("starts no download past the budget, runs the other alarm work, and wakes at once for the rest", async () => {
+  it("holds the id through its last attempt only as long as a download can take", async () => {
+    const meta = fakeMeta();
+    const { downloading, finish } = holdDownloads(meta);
+    await gatewayStub().ingest([imageEvent("9004")]);
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) =>
+      instance.sql.exec(
+        `INSERT INTO media (media_id, state, attempts, last_error, next_attempt_at, updated_at)
+         VALUES ('9004', 'failed', 4, 'media lookup failed with 503', 0, 0)`,
+      ),
+    );
+
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+      const run = alarmOf(instance);
+      await downloading;
+      const row = mediaRowIn(instance, "9004");
+      expect(row).toMatchObject({ state: "failed", attempts: 5 });
+      expect(Number(row!.next_attempt_at)).toBeLessThanOrEqual(Date.now() + DOWNLOAD_TIMEOUT_MS);
+      finish();
+      await run;
+    });
+  });
+
+  it("records nothing for media erased while the alarm looked up the token", async () => {
+    const meta = fakeMeta();
+    await gatewayStub().ingest([imageEvent("9005")]);
+
+    await runInDurableObject(gatewayStub(), async (instance: EccosGateway) => {
+      const step = instance as unknown as { metaToken: (area: string) => Promise<string> };
+      const metaToken = step.metaToken.bind(instance);
+      step.metaToken = async (area) => {
+        const token = await metaToken(area);
+        expect((await instance.eraseByPhone(WA)).ok).toBe(true);
+        return token;
+      };
+      await alarmOf(instance);
+    });
+
+    expect(await mediaRow("9005")).toBeNull();
+    expect(graphCalls(meta)).toHaveLength(0);
+    expect(await storedIds()).toEqual([]);
+  });
+
+  it("starts no download past the budget and re-arms at once for the rest; the alarm still completes", async () => {
     let clock = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => clock);
     const meta = fakeMeta();

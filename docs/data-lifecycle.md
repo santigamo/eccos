@@ -243,7 +243,8 @@ only code that touches them.
   days for live messages, 14 for history), so a download is attempted on the next alarm, not on a
   schedule. A transient failure retries with backoff up to five attempts. The attempt is counted
   before the download starts, so an alarm the runtime cancels mid-download still spends it and the
-  id waits out its backoff; an id whose fifth attempt never finished is given up. An alarm starts
+  id waits out its backoff; an id whose fifth attempt never finished is given up once a download
+  could have taken (two minutes). An alarm starts
   downloads for 8 s at most (`MEDIA_BUDGET_MS` in `src/gateway.ts`): the ones in flight finish,
   and the alarm re-arms at once for the rest. An id that Meta no longer
   has, or a file over 100 MB, is given up at once. A rejected token (401, or Graph code 190) counts no
