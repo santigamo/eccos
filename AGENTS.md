@@ -87,6 +87,8 @@ cannot happen.
 | The public docs' event examples and tables match the parser | `apps/gateway/tests/docs-events.test.ts`, `apps/gateway/tests/worker/docs-contract.spec.ts` |
 | The gateway enforces the core template rules for every GatewayRPC caller, with the console's messages | `apps/dashboard/tests/template-rules-agreement.test.ts`, `apps/gateway/tests/worker/create-template.spec.ts`, `apps/gateway/tests/worker/send-test.spec.ts` |
 | Template restated types match `packages/gateway-contract`, optional fields included | `apps/dashboard/src/lib/template-contract-drift.ts`, run by `bun run typecheck:dashboard` |
+| A hung gateway Workers test fails within a minute, naming its file | `apps/gateway/tests/stall-watchdog.ts`, a reporter in `apps/gateway/vitest.config.ts` |
+| Gateway Workers tests never reach the network | `outboundService` in `apps/gateway/vitest.config.ts` answers 503 |
 | Every field Meta documents on the messages webhook reaches the event, or is ignored on purpose with a reason and severity | `packages/core/tests/meta-coverage.test.ts` over `packages/core/tests/fixtures/meta/` (one fixture per Meta reference page) |
 | `packages/core` stays free of HTTP and DB code | Prose only (see Rules) |
 | No secrets in the repository | Prose only (see Rules) |
