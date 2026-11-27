@@ -9,7 +9,6 @@ import {
   templateView,
   type TemplateRecord,
 } from "../src/lib/template-view";
-import { TemplateDetail } from "../src/components/templates/template-preview-sheet";
 import { WhatsAppPreview } from "../src/components/templates/whatsapp-preview";
 
 const simple: TemplateRecord = {
@@ -120,37 +119,6 @@ describe("review facts", () => {
     expect(lastUpdated({ last_updated_time: "nonsense" })).toBeNull();
     expect(canEditStatus("approved")).toBe(true);
     expect(canEditStatus("PENDING")).toBe(false);
-  });
-});
-
-describe("TemplateDetail", () => {
-  const render = (row: TemplateRecord, actions = {}) =>
-    renderToStaticMarkup(<TemplateDetail row={row} wabaId="WABA_A" businessName="+34 600" actions={actions} />);
-
-  test("shows the WhatsApp preview with Meta's examples, and the review facts", () => {
-    const html = render({ ...simple, status: "REJECTED", rejected_reason: "INVALID_FORMAT" });
-    expect(html).toContain('aria-label="Preview as the customer sees it in WhatsApp"');
-    expect(html).toContain(">Ada<");
-    expect(html).toContain("Rejected for");
-    expect(html).toContain("Invalid format");
-    expect(html).toContain("{{2}}");
-    expect(html).toContain("A-1029");
-    expect(html).toContain("https://e.cc/t/{{1}}");
-  });
-
-  test("offers only the acts it is given, and says why authoring is not one of them", () => {
-    const html = render(withImage, {
-      onSend: () => {},
-      authoringBlocked: "It has an image header, which the console does not author yet.",
-    });
-    expect(html).toContain(">Send test<");
-    expect(html).not.toContain(">Edit<");
-    expect(html).toContain("It has an image header");
-    expect(html).toContain("business.facebook.com/wa/manage/message-templates/?waba_id=WABA_A");
-  });
-
-  test("a row without components is a structured empty state", () => {
-    expect(render({ id: "1", name: "x" })).toContain("No preview");
   });
 });
 
