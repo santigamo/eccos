@@ -47,10 +47,10 @@ const STATUS_TONES: Record<string, StatusTone> = {
   sent: "success",
   completed: "success",
   approved: "success",
-  // The Webhooks page's own two states. `forwarding` is a FACT, not a switch:
-  // Eccos has no pause semantics, and a tag that reads as a toggle but is not
-  // one lies about the interaction contract.
+  // The Webhooks page's own states. Each is a FACT, not a switch: `paused` is
+  // the gateway's circuit breaker, which the operator does not toggle.
   forwarding: "success",
+  paused: "warning",
   // ── The forward hop's own words (lib/forwarding.ts) ──────────────────────
   // `forwarded` exists so `delivered` never has to mean two things on one
   // screen: here it is Eccos → subscriber, and on the event log `delivered` is
@@ -227,10 +227,12 @@ export function FactsStrip({
     <section
       aria-label={label}
       className={cn(
-        "grid grid-cols-1 divide-y divide-(--line) border-y border-(--line)",
+        "grid grid-cols-1 border-y border-(--line)",
         columns === 4
-          ? "lg:grid-cols-4 lg:divide-x lg:divide-y-0"
-          : "sm:grid-cols-3 sm:divide-x sm:divide-y-0",
+          ? // Four cells are two rows of two until `xl`; `divide-*` only draws
+            // between siblings, so the 2×2 hairlines are placed per cell.
+            "[&>*]:border-(--line) [&>*:not(:last-child)]:border-b sm:grid-cols-2 sm:[&>*:nth-child(odd)]:border-r sm:[&>*:nth-child(n+3)]:border-b-0 xl:grid-cols-4 xl:[&>*:nth-child(-n+3)]:border-r xl:[&>*:nth-child(-n+2)]:border-b-0"
+          : "divide-y divide-(--line) sm:grid-cols-3 sm:divide-x sm:divide-y-0",
       )}
     >
       {children}

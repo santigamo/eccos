@@ -31,7 +31,8 @@ const { ForwardingTargetPanel, RemoveTargetConfirm, SigningSecretField } = await
 const { FromMetaPanel, ReceiverNotices, ReceiverReference, ResponseTimeCell } = await import(
   "../src/routes/webhooks"
 );
-const { circuitReading, fmtDuration, forwardingTag, readLastForward, slowAnswerMs } = await import(
+const { circuitReading, failedAttempts, fmtDuration, forwardingTag, readLastForward, slowAnswerMs } =
+  await import(
   "../src/lib/forwarding"
 );
 
@@ -54,11 +55,18 @@ function stripRounded(html: string): string {
 
 describe("forwardingTag", () => {
   test("reports configuration, and offers nothing to toggle", () => {
-    // Eccos has no pause semantics. A tag that reads as a switch but is not one
-    // lies about the interaction contract, so this is a fact with two values
-    // and no third "paused" state to invent.
+    // A tag that reads as a switch but is not one lies about the interaction
+    // contract: every value here is a fact, including `paused`, which is the
+    // gateway's circuit breaker and not the operator's.
     expect(forwardingTag(CONFIGURED)).toBe("forwarding");
     expect(forwardingTag(EMPTY)).toBe("no target");
+  });
+
+  test("reads paused while the breaker is set, without the clock", () => {
+    // Past or future, `circuitOpenUntil` set means not forwarding normally.
+    expect(forwardingTag({ ...CONFIGURED, circuitOpenUntil: 1 })).toBe("paused");
+    expect(forwardingTag({ ...CONFIGURED, circuitOpenUntil: null })).toBe("forwarding");
+    expect(forwardingTag({ ...EMPTY, circuitOpenUntil: 1 })).toBe("no target");
   });
 });
 
@@ -122,6 +130,8 @@ describe("receiver latency", () => {
   test("formats answer times the way the reference states them", () => {
     expect(fmtDuration(850)).toBe("850ms");
     expect(fmtDuration(2_800)).toBe("2.8s");
+    // Rounded before the threshold, so a near-second never reads "1000ms".
+    expect(fmtDuration(999.6)).toBe("1.0s");
   });
 
   test("shows the typical and slow answer, with the sample count", () => {
@@ -134,6 +144,24 @@ describe("receiver latency", () => {
     expect(html).toContain("1.2s");
     expect(html).toContain("50</span> deliveries");
     expect(html).not.toContain("text-warning-foreground");
+  });
+
+  test("the value says its caption to assistive tech, which the caption cannot", () => {
+    const html = renderToStaticMarkup(
+      <ResponseTimeCell latency={{ p50Ms: 850, p95Ms: 1_200, samples: 50 }} />,
+    );
+    expect(html).toContain('<span class="sr-only"> typical answer (p50)</span>');
+    expect(renderToStaticMarkup(<ResponseTimeCell latency={null} />)).toContain(
+      '<span class="sr-only"> no answers timed yet</span>',
+    );
+  });
+
+  test("one sample is one delivery", () => {
+    const html = renderToStaticMarkup(
+      <ResponseTimeCell latency={{ p50Ms: 400, p95Ms: 400, samples: 1 }} />,
+    );
+    expect(html).toContain("1</span> delivery");
+    expect(html).not.toContain("deliveries");
   });
 
   test("a p95 past 2s takes the warning ink", () => {
@@ -157,6 +185,13 @@ describe("receiver latency", () => {
     expect(slowAnswerMs({ ...CONFIGURED, latency: null })).toBeNull();
     expect(slowAnswerMs(CONFIGURED)).toBeNull();
   });
+
+  test("with no target there is no receiver to call slow", () => {
+    // The samples are delivery rows, and they outlive a removed target.
+    expect(
+      slowAnswerMs({ ...EMPTY, latency: { p50Ms: 1_000, p95Ms: 2_800, samples: 50 } }),
+    ).toBeNull();
+  });
 });
 
 describe("circuitReading", () => {
@@ -169,28 +204,50 @@ describe("circuitReading", () => {
     ).toEqual({ state: "testing", failures: 6 });
   });
 
-  test("closed, and absent on an older gateway, read as no breaker at all", () => {
+  test("closed, absent on an older gateway, or with no target, read as no breaker", () => {
     expect(circuitReading({ ...CONFIGURED, circuitOpenUntil: null }, NOW)).toBeNull();
     expect(circuitReading(CONFIGURED, NOW)).toBeNull();
+    expect(circuitReading({ ...EMPTY, circuitOpenUntil: NOW + 60_000 }, NOW)).toBeNull();
+  });
+
+  test("a missing or zero failure count is never printed as a number", () => {
+    expect(failedAttempts(null)).toBe("repeated failed attempts");
+    expect(failedAttempts(0)).toBe("repeated failed attempts");
+    expect(failedAttempts(1)).toBe("1 failed attempt");
   });
 });
 
 describe("ReceiverNotices", () => {
-  const render = (config: SubscriberConfig) =>
-    renderToStaticMarkup(<ReceiverNotices config={config} now={NOW} />);
+  const render = (config: SubscriberConfig, retentionDays?: number) =>
+    renderToStaticMarkup(
+      <ReceiverNotices config={config} now={NOW} retentionDays={retentionDays} />,
+    );
 
-  test("an open breaker says until when, why, and that nothing is lost", () => {
-    const html = render({ ...CONFIGURED, circuitOpenUntil: NOW + 60_000, consecutiveFailures: 5 });
+  test("an open breaker says until when, why, and how long events wait", () => {
+    const html = render(
+      { ...CONFIGURED, circuitOpenUntil: NOW + 60_000, consecutiveFailures: 5 },
+      30,
+    );
     expect(html).toContain("Forwarding paused until");
     expect(html).toContain("2027-01-15 08:01:00 UTC");
     expect(html).toContain("after 5 failed attempts");
-    expect(html).toContain("Events are kept and will be sent when your server answers.");
+    expect(html).toContain("forwarding resumes if it answers");
+    // `pruneExpired` deletes waiting rows, so the copy states the bound.
+    expect(html).toContain("Queued events wait; each is deleted 30 days after it arrived.");
+    expect(html).not.toContain("kept");
   });
 
-  test("a pending test delivery says one is going out", () => {
+  test("an omitted failure count still reads as a sentence", () => {
+    const html = render({ ...CONFIGURED, circuitOpenUntil: NOW + 60_000 });
+    expect(html).toContain("after repeated failed attempts");
+    expect(html).toContain("when its retention window ends");
+  });
+
+  test("a pause that has ended says the next delivery is the test, not that one is out", () => {
     const html = render({ ...CONFIGURED, circuitOpenUntil: NOW - 1, consecutiveFailures: 5 });
-    expect(html).toContain("A test delivery is going out");
+    expect(html).toContain("The pause has ended: the next delivery tests your server");
     expect(html).not.toContain("paused until");
+    expect(html).not.toContain("going out");
   });
 
   test("a slow receiver is told what to do, with the docs", () => {
@@ -200,7 +257,20 @@ describe("ReceiverNotices", () => {
     expect(html).toContain("https://docs.eccos.chat/webhooks#acknowledging-and-retrying");
   });
 
+  test("a paused, slow receiver gets both notices", () => {
+    const html = render({
+      ...CONFIGURED,
+      latency: { p50Ms: 1_000, p95Ms: 2_800, samples: 50 },
+      circuitOpenUntil: NOW + 60_000,
+      consecutiveFailures: 5,
+    });
+    expect(html).toContain("Forwarding paused until");
+    expect(html).toContain("Answer 2xx as soon as the batch is stored");
+  });
+
   test("says nothing on a healthy receiver, or on a gateway without the fields", () => {
+    // The live region stays mounted, empty, so a later notice is announced.
+    const empty = '<output aria-live="polite"></output>';
     expect(
       render({
         ...CONFIGURED,
@@ -208,8 +278,8 @@ describe("ReceiverNotices", () => {
         circuitOpenUntil: null,
         consecutiveFailures: 0,
       }),
-    ).toBe("");
-    expect(render(CONFIGURED)).toBe("");
+    ).toBe(empty);
+    expect(render(CONFIGURED)).toBe(empty);
   });
 });
 

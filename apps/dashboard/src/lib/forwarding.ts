@@ -6,10 +6,12 @@ import { eventKindNoun } from "./logs";
  * are easy to get quietly wrong can be asserted without a DOM.
  */
 
-/** The header tag. A FACT about configuration, never a switch: there is nothing
- * here to toggle. A breaker pause is the gateway's own (`circuitReading`). */
-export function forwardingTag(config: SubscriberConfig): "forwarding" | "no target" {
-  return config.url === null ? "no target" : "forwarding";
+/** The header tag. A FACT, never a switch: `paused` is the gateway's circuit
+ * breaker, not something the operator toggles. Read without the clock, so it
+ * covers the test-delivery phase too. */
+export function forwardingTag(config: SubscriberConfig): "forwarding" | "paused" | "no target" {
+  if (config.url === null) return "no target";
+  return config.circuitOpenUntil != null ? "paused" : "forwarding";
 }
 
 export interface LastForwardReading {
@@ -52,20 +54,22 @@ export function readLastForward(last: LastForward | null): LastForwardReading | 
 export const SLOW_ANSWER_MS = 2_000;
 
 export function fmtDuration(ms: number): string {
-  return ms < 1_000 ? `${Math.round(ms)}ms` : `${(ms / 1_000).toFixed(1)}s`;
+  const rounded = Math.round(ms);
+  return rounded < 1_000 ? `${rounded}ms` : `${(ms / 1_000).toFixed(1)}s`;
 }
 
 /** The receiver's slow answers (p95) are past the 2s the docs ask for. Null
- * when nothing has been timed, or the gateway predates the reading. */
+ * when nothing has been timed, the gateway predates the reading, or there is
+ * no target left for the warning to be about (the samples outlive it). */
 export function slowAnswerMs(config: SubscriberConfig): number | null {
   const p95 = config.latency?.p95Ms;
-  return p95 !== undefined && p95 > SLOW_ANSWER_MS ? p95 : null;
+  return config.url !== null && p95 !== undefined && p95 > SLOW_ANSWER_MS ? p95 : null;
 }
 
 /**
  * The circuit breaker, read at `now`. `circuitOpenUntil` stays set past its
- * time while the single test delivery is out, so a past value is `testing`,
- * not closed. Null when closed, and on a gateway that predates the breaker.
+ * time until a delivery tests the receiver, so a past value is `testing`, not
+ * closed. Null when closed, with no target, and on a gateway that predates it.
  */
 export type CircuitReading =
   | { state: "paused"; until: number; failures: number | null }
@@ -73,13 +77,13 @@ export type CircuitReading =
 
 export function circuitReading(config: SubscriberConfig, now: number): CircuitReading | null {
   const until = config.circuitOpenUntil;
-  if (until == null) return null;
+  if (config.url === null || until == null) return null;
   const failures = config.consecutiveFailures ?? null;
   return until > now ? { state: "paused", until, failures } : { state: "testing", failures };
 }
 
 export function failedAttempts(failures: number | null): string {
-  if (failures === null) return "repeated failed attempts";
+  if (failures === null || failures <= 0) return "repeated failed attempts";
   return `${failures} failed ${failures === 1 ? "attempt" : "attempts"}`;
 }
 
@@ -238,6 +242,10 @@ export function heldCount(pending: number): string {
  */
 export function heldSentence(pending: number, retentionDays?: number | null): string {
   const one = pending === 1;
-  const deadline = retentionDays ? `${retentionDays} days after it arrived` : "when its retention window ends";
-  return `${heldCount(pending)} Save one and ${one ? "it is" : "they are"} sent right away. ${one ? "It" : "Each"} is deleted ${deadline}.`;
+  return `${heldCount(pending)} Save one and ${one ? "it is" : "they are"} sent right away. ${one ? "It" : "Each"} is deleted ${retentionDeadline(retentionDays)}.`;
+}
+
+/** When `pruneExpired` deletes a waiting event: per event, from its arrival. */
+export function retentionDeadline(retentionDays?: number | null): string {
+  return retentionDays ? `${retentionDays} days after it arrived` : "when its retention window ends";
 }

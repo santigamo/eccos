@@ -30,6 +30,7 @@ import {
   fmtDuration,
   forwardingTag,
   readLastForward,
+  retentionDeadline,
   slowAnswerMs,
 } from "../lib/forwarding";
 import {
@@ -59,7 +60,12 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
 export const Route = createFileRoute("/webhooks")({
   staleTime: CONFIG_STALE_MS,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
-  loader: ({ deps }) => getSubscriberConfig({ data: { wabaId: deps.wabaId } }),
+  // `readAt` is stamped with the read so SSR and hydration compare the breaker
+  // against the same instant.
+  loader: async ({ deps }) => ({
+    result: await getSubscriberConfig({ data: { wabaId: deps.wabaId } }),
+    readAt: Date.now(),
+  }),
   component: WebhooksPage,
   pendingComponent: WebhooksPending,
 });
@@ -80,7 +86,7 @@ function WebhooksPending() {
 }
 
 function WebhooksPage() {
-  const result = Route.useLoaderData();
+  const { result, readAt } = Route.useLoaderData();
   const { wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
@@ -109,7 +115,7 @@ function WebhooksPage() {
       title="Webhooks"
       kicker="Integration"
       // Data-derived, and never a control: the tag says whether a target is
-      // configured, which is the one thing the page is about.
+      // configured and whether the gateway has paused it.
       actions={<StatusTag status={forwardingTag(config)} />}
     >
       <HeldNotice
@@ -117,7 +123,7 @@ function WebhooksPage() {
         hasForwardingTarget={config.url !== null}
         countOnly
       />
-      <ReceiverNotices config={config} now={Date.now()} />
+      <ReceiverNotices config={config} now={readAt} retentionDays={retentionDays} />
       <ForwardingFacts
         config={config}
         counts={ready?.status.counts ?? null}
@@ -226,7 +232,7 @@ function ForwardingFacts({
               {last.attempts === 1 ? "attempt" : "attempts"}
               {last.durationMs !== null ? (
                 <>
-                  {" · answered in "}
+                  {" · took "}
                   <span className="normal-case tabular-nums">{fmtDuration(last.durationMs)}</span>
                 </>
               ) : null}
@@ -289,11 +295,18 @@ function ForwardingFacts({
 /** The receiver's answer times over the newest tried deliveries. Exported, and
  * free of `Link`s, so it can be rendered in tests. */
 export function ResponseTimeCell({ latency }: { latency: SubscriberLatency | null }) {
+  const caption = latency ? "typical answer (p50)" : "no answers timed yet";
   return (
     <FactCell
       kicker="Response time"
-      value={latency ? fmtDuration(latency.p50Ms) : "—"}
-      caption={latency ? "typical answer (p50)" : "no answers timed yet"}
+      value={
+        <>
+          {latency ? fmtDuration(latency.p50Ms) : "—"}
+          {/* FactCell hides its caption from assistive tech; a bare value needs it said. */}
+          <span className="sr-only"> {caption}</span>
+        </>
+      }
+      caption={caption}
     >
       {latency ? (
         <p className="m-0 mt-3 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -319,29 +332,41 @@ const RECEIVER_GUIDE_URL = "https://docs.eccos.chat/webhooks#acknowledging-and-r
 
 /**
  * What is wrong with the receiver right now: forwarding paused by the circuit
- * breaker, or answers slow enough to hold up the queue. Renders nothing on a
- * healthy receiver, and on a gateway that predates these fields.
+ * breaker, or answers slow enough to hold up the queue. Says nothing on a
+ * healthy receiver, and on a gateway that predates these fields; the live
+ * region stays mounted so a change after a save is announced, as `HeldNotice`.
  */
-export function ReceiverNotices({ config, now }: { config: SubscriberConfig; now: number }) {
+export function ReceiverNotices({
+  config,
+  now,
+  retentionDays,
+}: {
+  config: SubscriberConfig;
+  now: number;
+  retentionDays?: number | null;
+}) {
   const circuit = circuitReading(config, now);
   const slow = slowAnswerMs(config);
-  if (!circuit && slow === null) return null;
+  const waiting = `Queued events wait; each is deleted ${retentionDeadline(retentionDays)}.`;
   return (
-    <div className="mb-4 flex flex-col gap-3">
+    <output
+      className={circuit || slow !== null ? "mb-4 flex flex-col gap-3" : undefined}
+      aria-live="polite"
+    >
       {circuit?.state === "paused" ? (
         <Callout tone="warning">
           Forwarding paused until{" "}
           <time dateTime={fmtTs(circuit.until)} title={fmtTs(circuit.until)}>
             {fmtTsShort(circuit.until)}
           </time>{" "}
-          after {failedAttempts(circuit.failures)}. Events are kept and will be sent when your
-          server answers.
+          after {failedAttempts(circuit.failures)}. Then one delivery tests your server, and
+          forwarding resumes if it answers. {waiting}
         </Callout>
       ) : null}
       {circuit?.state === "testing" ? (
         <Callout tone="warning">
-          Forwarding paused after {failedAttempts(circuit.failures)}. A test delivery is going
-          out; when your server answers, the rest are sent. Events are kept.
+          Forwarding paused after {failedAttempts(circuit.failures)}. The pause has ended: the
+          next delivery tests your server, and forwarding resumes if it answers. {waiting}
         </Callout>
       ) : null}
       {slow !== null ? (
@@ -354,7 +379,7 @@ export function ReceiverNotices({ config, now }: { config: SubscriberConfig; now
           </a>
         </Callout>
       ) : null}
-    </div>
+    </output>
   );
 }
 
