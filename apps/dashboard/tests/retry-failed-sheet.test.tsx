@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  *
  * WHAT IS RENDERED AND WHY. A closed Base UI dialog renders nothing, so the
  * sheet itself is never the subject of a markup assertion (the first test pins
- * that). `RetryFailedFields` is controlled, like `CreateTemplateFields`, so
+ * that). `RetryFailedFields` is controlled, like `LanguageFields`, so
  * every state renders without a browser. What a static frame cannot do is click
  * the button, so the request a click builds is asserted through
  * `submitRetryFailed` with a spy for the server function: that is the function

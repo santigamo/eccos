@@ -4,7 +4,7 @@
  * the template sheet show. Pure, so every branch is asserted without a DOM.
  */
 
-import type { TemplateDraft } from "../components/templates/create-template-sheet";
+import { exampleValueOf, type TemplateDraft } from "./template-draft";
 import { analyzeDraftBody, type TemplateListRow } from "@eccos/core/template-rules";
 
 export type HeaderFormat = "IMAGE" | "VIDEO" | "DOCUMENT" | "LOCATION";
@@ -272,7 +272,7 @@ export function authoringReading(row: TemplateRecord): AuthoringReading {
       buttons: view.buttons.map((button) => ({
         text: button.text,
         url: button.url ?? "",
-        exampleUrl: button.exampleUrl ?? "",
+        example: exampleValueOf(button.url ?? "", button.exampleUrl ?? ""),
       })),
     },
   };

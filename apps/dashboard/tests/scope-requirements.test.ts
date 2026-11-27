@@ -77,6 +77,9 @@ describe("SCOPE_REQUIREMENTS", () => {
       // still waiting for its phone number.
       "/webhooks": "waba",
       "/templates": "waba",
+      // Authoring is a page of its own and needs what the list needs: the WABA.
+      "/templates/new": "waba",
+      "/templates/$name": "waba",
       // Still `"none"` — but on the Workspace panel's merits now, not the token
       // panel's: the account id is an account-level fact and does not wait on a
       // number. The token panel left for /numbers/attach-token.
@@ -131,6 +134,10 @@ describe("scope predicates", () => {
     const limbo = accountReady(1);
     expect(requirementSatisfied("/numbers", limbo)).toBe(true);
     expect(requirementSatisfied("/templates", limbo)).toBe(true);
+    // The authoring pages, a real template name standing for `$name`.
+    expect(requirementSatisfied("/templates/new", limbo)).toBe(true);
+    expect(requirementSatisfied("/templates/order_update", limbo)).toBe(true);
+    expect(requirementSatisfied("/templates/order_update/extra", limbo)).toBe(false);
     expect(requirementSatisfied("/webhooks", limbo)).toBe(true);
     expect(requirementSatisfied("/settings", limbo)).toBe(true);
     expect(requirementSatisfied("/", limbo)).toBe(false);

@@ -1,4 +1,5 @@
 import type { DashboardState } from "../server/gateway";
+import { matchesRoute } from "./route-pattern";
 
 /**
  * What a route needs from the tenant's scope before it is a destination.
@@ -49,6 +50,8 @@ export const SCOPE_REQUIREMENTS: Record<string, ScopeRequirement> = {
   "/workspaces/new": "none",
   "/webhooks": "waba",
   "/templates": "waba",
+  "/templates/new": "waba",
+  "/templates/$name": "waba",
   "/settings": "none",
   "/members": "none",
   "/billing": "none",
@@ -68,7 +71,9 @@ export const PRE_WORKSPACE_ROUTES: ReadonlySet<string> = new Set(["/onboarding",
 const DEFAULT_REQUIREMENT: ScopeRequirement = "number";
 
 export function requirementFor(pathname: string): ScopeRequirement {
-  return SCOPE_REQUIREMENTS[pathname] ?? DEFAULT_REQUIREMENT;
+  const route =
+    pathname in SCOPE_REQUIREMENTS ? pathname : Object.keys(SCOPE_REQUIREMENTS).find((key) => matchesRoute(key, pathname));
+  return (route && SCOPE_REQUIREMENTS[route]) || DEFAULT_REQUIREMENT;
 }
 
 /** An active WABA with a number behind it: the data plane is readable. */

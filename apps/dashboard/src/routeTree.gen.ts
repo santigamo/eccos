@@ -32,6 +32,8 @@ import { Route as BillingRouteImport } from './routes/billing'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
+import { Route as TemplatesNewRouteImport } from './routes/templates_.new'
+import { Route as TemplatesNameRouteImport } from './routes/templates_.$name'
 import { Route as NumbersAttachTokenRouteImport } from './routes/numbers_.attach-token'
 import { Route as BroadcastsBroadcastIdRouteImport } from './routes/broadcasts_.$broadcastId'
 
@@ -150,6 +152,16 @@ const WorkspacesNewRoute = WorkspacesNewRouteImport.update({
   path: '/workspaces/new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TemplatesNewRoute = TemplatesNewRouteImport.update({
+  id: '/templates_/new',
+  path: '/templates/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesNameRoute = TemplatesNameRouteImport.update({
+  id: '/templates_/$name',
+  path: '/templates/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const NumbersAttachTokenRoute = NumbersAttachTokenRouteImport.update({
   id: '/numbers_/attach-token',
   path: '/numbers/attach-token',
@@ -186,6 +198,8 @@ export interface FileRoutesByFullPath {
   '/webhooks': typeof WebhooksRoute
   '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
+  '/templates/$name': typeof TemplatesNameRoute
+  '/templates/new': typeof TemplatesNewRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesByTo {
@@ -213,6 +227,8 @@ export interface FileRoutesByTo {
   '/webhooks': typeof WebhooksRoute
   '/broadcasts/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers/attach-token': typeof NumbersAttachTokenRoute
+  '/templates/$name': typeof TemplatesNameRoute
+  '/templates/new': typeof TemplatesNewRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesById {
@@ -241,6 +257,8 @@ export interface FileRoutesById {
   '/webhooks': typeof WebhooksRoute
   '/broadcasts_/$broadcastId': typeof BroadcastsBroadcastIdRoute
   '/numbers_/attach-token': typeof NumbersAttachTokenRoute
+  '/templates_/$name': typeof TemplatesNameRoute
+  '/templates_/new': typeof TemplatesNewRoute
   '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRouteTypes {
@@ -270,6 +288,8 @@ export interface FileRouteTypes {
     | '/webhooks'
     | '/broadcasts/$broadcastId'
     | '/numbers/attach-token'
+    | '/templates/$name'
+    | '/templates/new'
     | '/workspaces/new'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -297,6 +317,8 @@ export interface FileRouteTypes {
     | '/webhooks'
     | '/broadcasts/$broadcastId'
     | '/numbers/attach-token'
+    | '/templates/$name'
+    | '/templates/new'
     | '/workspaces/new'
   id:
     | '__root__'
@@ -324,6 +346,8 @@ export interface FileRouteTypes {
     | '/webhooks'
     | '/broadcasts_/$broadcastId'
     | '/numbers_/attach-token'
+    | '/templates_/$name'
+    | '/templates_/new'
     | '/workspaces/new'
   fileRoutesById: FileRoutesById
 }
@@ -352,6 +376,8 @@ export interface RootRouteChildren {
   WebhooksRoute: typeof WebhooksRoute
   BroadcastsBroadcastIdRoute: typeof BroadcastsBroadcastIdRoute
   NumbersAttachTokenRoute: typeof NumbersAttachTokenRoute
+  TemplatesNameRoute: typeof TemplatesNameRoute
+  TemplatesNewRoute: typeof TemplatesNewRoute
   WorkspacesNewRoute: typeof WorkspacesNewRoute
 }
 
@@ -518,6 +544,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspacesNewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/templates_/new': {
+      id: '/templates_/new'
+      path: '/templates/new'
+      fullPath: '/templates/new'
+      preLoaderRoute: typeof TemplatesNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/templates_/$name': {
+      id: '/templates_/$name'
+      path: '/templates/$name'
+      fullPath: '/templates/$name'
+      preLoaderRoute: typeof TemplatesNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/numbers_/attach-token': {
       id: '/numbers_/attach-token'
       path: '/numbers/attach-token'
@@ -560,6 +600,8 @@ const rootRouteChildren: RootRouteChildren = {
   WebhooksRoute: WebhooksRoute,
   BroadcastsBroadcastIdRoute: BroadcastsBroadcastIdRoute,
   NumbersAttachTokenRoute: NumbersAttachTokenRoute,
+  TemplatesNameRoute: TemplatesNameRoute,
+  TemplatesNewRoute: TemplatesNewRoute,
   WorkspacesNewRoute: WorkspacesNewRoute,
 }
 export const routeTree = rootRouteImport

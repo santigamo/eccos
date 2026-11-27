@@ -80,7 +80,8 @@ function NavGroupSection({
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.25">
           {group.items.map((item) => {
-            const isActive = pathname === item.href
+            // A page's sub-pages (/templates/new, /broadcasts/$id) keep its row active.
+            const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`))
             const locked =
               item.requires === "number"
                 ? !hasNumber

@@ -80,7 +80,8 @@ describe("authoringReading", () => {
         body: "Hi {{1}}, order {{2}} shipped.",
         examples: ["Ada", "A-1029"],
         footer: "Powered by Eccos",
-        buttons: [{ text: "Track", url: "https://e.cc/t/{{1}}", exampleUrl: "https://e.cc/t/A-1029" }],
+        // Only the {{1}} value: the console rebuilds the example URL from the template.
+        buttons: [{ text: "Track", url: "https://e.cc/t/{{1}}", example: "A-1029" }],
       },
     });
   });

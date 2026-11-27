@@ -1490,7 +1490,7 @@ describe("scheduled", () => {
   });
 });
 
-// --- New template (routes/templates.tsx + components/templates/create-template-sheet.tsx) ---
+// --- New template (routes/templates_.new.tsx + components/templates/template-editor.tsx) ---
 
 /**
  * These live here, next to `sendTemplateTest`, rather than in a file of their
@@ -1499,7 +1499,7 @@ describe("scheduled", () => {
  * the header, and `helpers/server-fn-mocks`). A second file re-registering them
  * would be a fresh instance of exactly the hazard that helper exists to close.
  */
-describe("createTemplate (New template sheet)", () => {
+describe("createTemplate (New template page)", () => {
   const DRAFT = {
     wabaId: "waba-a",
     name: "order_update",

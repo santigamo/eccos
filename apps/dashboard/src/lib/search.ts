@@ -35,6 +35,16 @@ export function normalizeSearchGraphId(value: unknown): string | undefined {
   return /^[0-9]{1,32}$/.test(text) ? text : undefined;
 }
 
+/** A template name in the path or `?from=`: Meta's own charset. */
+export function normalizeSearchTemplateName(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-z0-9_]{1,512}$/.test(value) ? value : undefined;
+}
+
+/** A template language code (`es`, `en_US`, `zh_HANS`). */
+export function normalizeSearchLanguage(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z]{2,3}(_[A-Za-z]{2,4})?$/.test(value) ? value : undefined;
+}
+
 /** Free text typed into a filter box. */
 export function normalizeSearchQuery(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

@@ -1,87 +1,101 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { installServerFnMocks } from "./helpers/server-fn-mocks";
 
 /**
- * Editing an APPROVED template sends it back to Meta's review, and it cannot be
- * sent while it is PENDING. The toast says so as the edit sheet opens; the notice
- * above the submit and the success notice say so where the operator submits.
+ * One language's panel on the authoring page
+ * (`components/templates/language-panel.tsx`): editing an APPROVED language
+ * sends it back to Meta's review, so the panel says so in an amber callout once
+ * it is edited; a PENDING one is read-only; a REJECTED one says why.
  */
 
-installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
-
-const { APPROVED_EDIT_NOTICE, CreateTemplateFields, EMPTY_DRAFT, editApprovedWarning } = await import(
-  "../src/components/templates/create-template-sheet"
-);
+const { LanguagePanel } = await import("../src/components/templates/language-panel");
+const { APPROVED_EDIT_NOTICE } = await import("../src/lib/template-draft");
+const { buildTabs } = await import("../src/lib/template-group");
 const { Toaster } = await import("../src/components/ui/sonner");
 
 const noop = () => {};
 
-function renderEdit(
-  notice: Parameters<typeof CreateTemplateFields>[0]["notice"] = null,
-  status = "APPROVED",
-): string {
-  const draft = { ...EMPTY_DRAFT, name: "order_update", body: "Hi there" };
+function row(status: string, extra: Record<string, unknown> = {}) {
+  return {
+    id: "T1",
+    name: "order_update",
+    language: "en_US",
+    status,
+    category: "UTILITY",
+    components: [{ type: "BODY", text: "Hi there" }],
+    ...extra,
+  };
+}
+
+function render(status: string, body?: string, extra: Record<string, unknown> = {}): string {
+  const languages = body ? { en_US: { draft: { language: "en_US", body, examples: [], footer: "", buttons: [] } } } : {};
+  const [tab] = buildTabs({ rows: [row(status, extra)], languages, category: "UTILITY", initialCategory: "UTILITY" });
   return renderToStaticMarkup(
-    <CreateTemplateFields
+    <LanguagePanel
+      tab={tab!}
       wabaId="WABA_A"
-      mode={{ kind: "edit", initial: draft, templateId: "T1", status }}
-      draft={draft}
-      onDraftChange={noop}
-      submitting={false}
-      notice={notice}
-      onSubmit={noop}
+      takenLanguages={[]}
+      canRemove={false}
+      onChange={noop}
+      onLanguageChange={noop}
+      onRemove={noop}
+      onDelete={noop}
     />,
   );
 }
 
-describe("editApprovedWarning", () => {
-  test("warns for an approved template, in any case", () => {
-    const warning = editApprovedWarning("APPROVED");
-    expect(warning).toBe(
-      "Editing an approved template sends it back to review. Until Meta approves it again it shows as Pending and can't be sent.",
-    );
-    expect(editApprovedWarning("approved")).toBe(warning);
+describe("an approved language", () => {
+  test("says nothing until it is edited", () => {
+    expect(render("APPROVED")).not.toContain("This template is approved.");
   });
 
-  test("stays quiet for statuses that were not sendable before the edit", () => {
-    for (const status of ["REJECTED", "PAUSED", "PENDING", undefined]) {
-      expect(editApprovedWarning(status)).toBeNull();
-    }
-  });
-});
-
-describe("where the operator submits", () => {
-  test("the note under the submit says a pending template cannot be sent", () => {
-    expect(renderEdit()).toContain("be sent until it is approved");
-  });
-
-  test("an approved template's edit states the review, the edit limits and the alternative before saving", () => {
-    const html = renderEdit();
+  test("once edited, states the review, the edit limits and the alternative", () => {
+    const html = render("APPROVED", "Hi there!");
+    expect(APPROVED_EDIT_NOTICE).toContain("This template is approved.");
     expect(html).toContain("sends it back to Meta&#x27;s review");
     expect(html).toContain("up to 24 hours");
     expect(html).toContain("once every 24 hours and up to 10 times in 30 days");
     expect(html).toContain("duplicate it as a new template instead");
-    expect(html.indexOf("sends it back to Meta")).toBeLessThan(html.indexOf("Submit changes for review"));
+    expect(html).toContain("border-l-warning");
   });
 
-  test("no approved notice for a rejected or paused template, nor once the edit is submitted", () => {
-    const marker = "This template is approved.";
-    expect(APPROVED_EDIT_NOTICE).toContain(marker);
-    expect(renderEdit(null, "REJECTED")).not.toContain(marker);
-    expect(renderEdit(null, "PAUSED")).not.toContain(marker);
-    expect(renderEdit({ ok: true, edited: true })).not.toContain(marker);
+  test("shows the real status tag and the actions menu", () => {
+    const html = render("APPROVED");
+    expect(html).toContain(">APPROVED<");
+    expect(html).toContain('aria-label="Actions for English (US)"');
   });
+});
 
-  test("the success notice says the template is pending and cannot be sent", () => {
-    expect(renderEdit({ ok: true, edited: true })).toContain(
-      "The template is pending review and can&#x27;t be sent until Meta approves it.",
-    );
+describe("a language in review", () => {
+  test("is read-only: one support line, no inputs", () => {
+    const html = render("PENDING");
+    expect(html).toContain("Meta is reviewing English (US), usually for a few minutes. It can be edited again once Meta answers.");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<textarea");
+    expect(html).toContain("Hi there");
+  });
+});
+
+describe("a language the console cannot author", () => {
+  test("says why, and where it can be edited or duplicated instead", () => {
+    const html = render("APPROVED", undefined, { components: [{ type: "BODY", text: "Hi" }, { type: "CAROUSEL", cards: [] }] });
+    expect(html).toContain("It has a carousel component, which the console does not author.");
+    expect(html).toContain("Edit or duplicate it in");
+    expect(html).toContain("waba_id=WABA_A");
+  });
+});
+
+describe("a rejected language", () => {
+  test("says why in a red callout and stays editable", () => {
+    const html = render("REJECTED", undefined, { rejected_reason: "PROMOTIONAL" });
+    expect(html).toContain("Meta rejected English (US): Promotional content.");
+    expect(html).toContain("border-l-destructive");
+    expect(html).toContain("<textarea");
   });
 });
 
 describe("Toaster", () => {
-  test("server-renders an empty live region, so a toast raised under an open sheet is still announced", () => {
+  test("server-renders an empty live region, so a toast raised on navigation is still announced", () => {
     const html = renderToStaticMarkup(<Toaster />);
     expect(html).toContain('aria-label="Notifications');
     expect(html).toContain('aria-live="polite"');
