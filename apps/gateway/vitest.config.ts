@@ -38,7 +38,17 @@ const TEST_BINDINGS = {
 export default defineConfig({
   test: {
     include: ["tests/worker/**/*.spec.ts"],
-    fileParallelism: false,
+    // Files run in parallel, each in its own Miniflare. Every file re-imports the worker, so the
+    // heavy dependencies are pre-bundled once: workerd then loads one module, not hundreds.
+    deps: {
+      optimizer: {
+        ssr: {
+          enabled: true,
+          include: ["@sentry/cloudflare", "hono", "zod"],
+          rolldownOptions: { external: [/^node:/, /^cloudflare:/] },
+        },
+      },
+    },
   },
   plugins: [
     docsTsFence,
