@@ -74,7 +74,7 @@ retention model so message content ages out before the operational audit trail d
     and `outbound_messages` rows are **deleted**, and terminal (`delivered`/`failed`)
     `deliveries` rows are **redacted in place** — `payload` (the stored copy of the forwarded
     event batch, i.e. the message content) is emptied while `id`, `status`, `attempts`,
-    `last_error`, `next_attempt_at`, `created_at`, `finished_at`, and the business
+    `last_error`, `next_attempt_at`, `created_at`, `finished_at`, `last_duration_ms`, and the business
     `phone_number_id` survive. A `deliveries` row still **`pending`** past this window is
     **deleted outright**, not redacted: it was never forwarded, so redacting it would leave a
     row that still drains later and reaches the subscriber as an empty body. This covers events

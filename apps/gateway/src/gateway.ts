@@ -26,6 +26,7 @@ import type {
   ScheduledCancelResult,
   SetSubscriberConfigInput,
   SubscriberConfig,
+  SubscriberLatency,
   ThreadView,
 } from "@eccos/gateway-contract";
 import {
@@ -126,6 +127,15 @@ interface DeliveryRow {
   created_at: number;
 }
 
+/** The forwarding circuit breaker, one JSON row in `ops_state`. `openUntil` 0 is closed;
+ * once it has passed the circuit is half-open and the next alarm sends one probe.
+ * `trips` counts opens in a row and picks the next pause. */
+interface ForwardCircuit {
+  failures: number;
+  trips: number;
+  openUntil: number;
+}
+
 /** Result of one forward attempt. The failure branch carries why, so the reason
  * can be stored in `deliveries.last_error` and read back by an operator. */
 type ForwardOutcome = { ok: true; httpStatus: number } | { ok: false; reason: string; httpStatus?: number };
@@ -148,6 +158,17 @@ const SYNC_RETRY_MS = 60_000;
 const SHARING_OFF_KEY = "__history_sharing_off__";
 const ALARM_BATCH = 40;
 const ALARM_MAX_CONCURRENCY = 6;
+/** Wall-clock budget for one alarm's forwards: past it no new row starts, the rest of
+ * alarm() runs, and the alarm re-arms for the rows left. A slow subscriber cannot hold
+ * retention, scheduled sends, broadcasts and media back. */
+export const FORWARD_BUDGET_MS = 8_000;
+/** Circuit breaker: consecutive timeouts, network errors, 5xx or 429 answers that pause
+ * forwarding, and the pause after each trip in a row (the last one repeats). */
+export const CIRCUIT_THRESHOLD = 5;
+export const CIRCUIT_BACKOFF_MS = [30_000, 60_000, 120_000, 300_000, 600_000];
+const CIRCUIT_KEY = "forward_circuit";
+/** Newest delivery rows sampled for the subscriber's latency summary. */
+const LATENCY_SAMPLE_ROWS = 50;
 /** Media downloads per alarm, and how many stream at once: each can move up to 100 MB. */
 const MEDIA_BATCH = 5;
 const MEDIA_CONCURRENCY = 2;
@@ -473,6 +494,8 @@ export class EccosGateway extends DurableObject<Env> {
       // column exists to stop. NULL is also the live meaning — queued, held for
       // want of a forwarding target, or waiting between retries.
       ensureColumn("deliveries", "finished_at", "INTEGER");
+      // How long the subscriber took to answer the row's last attempt; NULL until one is made.
+      ensureColumn("deliveries", "last_duration_ms", "INTEGER");
       // The EVENT→BATCH KEY. Until now the only thing linking an event to the
       // delivery that carried it was that `ingest()` stamped both with the same
       // `now` — a coincidence, not a key: two callbacks landing in the same
@@ -950,7 +973,31 @@ export class EccosGateway extends DurableObject<Env> {
   getSubscriberConfig(): SubscriberConfig {
     const url = this.getConfigValue("SUBSCRIBER_WEBHOOK_URL") ?? null;
     const hasSecret = Boolean(this.getConfigValue("SUBSCRIBER_SECRET"));
-    return { url, hasSecret, lastForward: this.lastForward() };
+    const circuit = this.forwardCircuit();
+    return {
+      url,
+      hasSecret,
+      lastForward: this.lastForward(),
+      latency: this.forwardLatency(),
+      circuitOpenUntil: circuit.openUntil || null,
+      consecutiveFailures: circuit.failures,
+    };
+  }
+
+  /** p50/p95 over the last attempt of each tried row among the newest LATENCY_SAMPLE_ROWS:
+   * a bounded walk down the rowid index. */
+  private forwardLatency(): SubscriberLatency | null {
+    const durations = this.sql
+      .exec(
+        `SELECT last_duration_ms AS ms FROM (SELECT last_duration_ms FROM deliveries ORDER BY id DESC LIMIT ?)
+         WHERE last_duration_ms IS NOT NULL ORDER BY last_duration_ms`,
+        LATENCY_SAMPLE_ROWS,
+      )
+      .toArray()
+      .map((row) => Number(row.ms));
+    if (durations.length === 0) return null;
+    const percentile = (q: number): number => durations[Math.ceil(q * durations.length) - 1] as number;
+    return { p50Ms: percentile(0.5), p95Ms: percentile(0.95), samples: durations.length };
   }
 
   /**
@@ -963,7 +1010,7 @@ export class EccosGateway extends DurableObject<Env> {
   private lastForward(): SubscriberConfig["lastForward"] {
     const row = this.sql
       .exec(
-        `SELECT status, attempts, last_error, created_at, finished_at
+        `SELECT status, attempts, last_error, created_at, finished_at, last_duration_ms
          FROM deliveries ORDER BY id DESC LIMIT 1`,
       )
       .toArray()[0];
@@ -976,6 +1023,7 @@ export class EccosGateway extends DurableObject<Env> {
       // row must never borrow `created_at` as its completion moment.
       finishedAt: row.finished_at == null ? null : Number(row.finished_at),
       lastError: (row.last_error as string | null) ?? null,
+      durationMs: row.last_duration_ms == null ? null : Number(row.last_duration_ms),
     };
   }
 
@@ -1005,6 +1053,8 @@ export class EccosGateway extends DurableObject<Env> {
       else if (secret !== undefined) put("SUBSCRIBER_SECRET", secret);
       if (secret !== undefined) this.bumpSubscriberSecretRevision();
     });
+    // A new or fixed target gets a fresh try instead of waiting out the old one's pause.
+    this.resetCircuit("config");
     // A target now exists, so release whatever the drain was holding for want of
     // one (see `alarm()`). Without this the backlog would sit until the next
     // ingest happened to set an alarm, i.e. until the next inbound message.
@@ -1438,12 +1488,13 @@ export class EccosGateway extends DurableObject<Env> {
     };
   }
 
-  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, and (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`. Index-only scans. */
+  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`, and the circuit breaker when it is not closed. Index-only scans. */
   getCensus(sinceMs: number): {
     hasTarget: boolean;
     deliveries: Record<string, number>;
     recent: { delivered: number; failed: number };
     heldEventCount: number;
+    circuit: { openUntil: number; failures: number } | null;
   } {
     const deliveries: Record<string, number> = {};
     for (const row of this.sql.exec("SELECT status, COUNT(*) AS c FROM deliveries GROUP BY status").toArray()) {
@@ -1455,11 +1506,13 @@ export class EccosGateway extends DurableObject<Env> {
       .toArray()) {
       if (row.status === "delivered" || row.status === "failed") recent[row.status] = Number(row.c);
     }
+    const circuit = this.forwardCircuit();
     return {
       hasTarget: Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL")),
       deliveries,
       recent,
       heldEventCount: heldEventCount(this.sql),
+      circuit: circuit.openUntil > 0 ? { openUntil: circuit.openUntil, failures: circuit.failures } : null,
     };
   }
 
@@ -1477,10 +1530,11 @@ export class EccosGateway extends DurableObject<Env> {
     // row is queued again, and a pending row that claims a completion moment
     // would be lying to every reader of that column.
     this.sql.exec(
-      "UPDATE deliveries SET status='pending', attempts=0, last_error=NULL, finished_at=NULL, next_attempt_at=? WHERE id=?",
+      "UPDATE deliveries SET status='pending', attempts=0, last_error=NULL, finished_at=NULL, last_duration_ms=NULL, next_attempt_at=? WHERE id=?",
       now,
       id,
     );
+    this.resetCircuit("retry");
     this.ctx.storage.setAlarm(now);
     return { ok: true, previousStatus: row.status as string };
   }
@@ -1523,13 +1577,15 @@ export class EccosGateway extends DurableObject<Env> {
       const now = Date.now();
       this.sql.exec(
         `UPDATE deliveries
-         SET status = 'pending', attempts = 0, last_error = NULL, finished_at = NULL, next_attempt_at = ?
+         SET status = 'pending', attempts = 0, last_error = NULL, finished_at = NULL, last_duration_ms = NULL,
+             next_attempt_at = ?
          WHERE status = 'failed' AND created_at BETWEEN ? AND ? AND payload != ?`,
         now,
         from,
         to,
         REDACTED_PAYLOAD,
       );
+      this.resetCircuit("retry");
       this.ctx.storage.setAlarm(now);
     }
     return { requeued, skippedRedacted };
@@ -2694,17 +2750,22 @@ export class EccosGateway extends DurableObject<Env> {
     const hasTarget = Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL"));
     const billingHeld = await this.holdForBilling();
 
+    // While the circuit is open nothing is sent and no attempt is spent; once its pause
+    // has passed, one row goes out as the probe (recordCircuit).
+    const circuit = this.forwardCircuit();
+    const batch = circuit.openUntil > now ? 0 : circuit.openUntil > 0 ? 1 : ALARM_BATCH;
+
     // alarm() may fire more than once; the drain is idempotent because it only
     // processes status='pending' rows, transitions them by id, and forwardOne()
     // sends x-idempotency-key for subscriber-side dedupe.
-    const rows = hasTarget && !billingHeld
+    const rows = hasTarget && !billingHeld && batch > 0
       ? (this.sql
           .exec(
             `SELECT id, payload, attempts, next_attempt_at, phone_number_id, created_at FROM deliveries
        WHERE status = 'pending' AND next_attempt_at <= ?
        ORDER BY id LIMIT ?`,
             now,
-            ALARM_BATCH,
+            batch,
           )
           .toArray() as unknown as DeliveryRow[])
       : [];
@@ -2712,9 +2773,19 @@ export class EccosGateway extends DurableObject<Env> {
     let workerError: unknown;
     let hasWorkerError = false;
     try {
-      await runBoundedPool(rows, ALARM_MAX_CONCURRENCY, (row) =>
-        this.processDelivery(row, maxAttempts),
+      // No new row starts past the budget or once the circuit opens; rows in flight finish.
+      const deadline = Date.now() + FORWARD_BUDGET_MS;
+      const left = await runBoundedPool(
+        rows,
+        ALARM_MAX_CONCURRENCY,
+        (row) => this.processDelivery(row, maxAttempts),
+        () => Date.now() >= deadline || this.forwardCircuit().openUntil > Date.now(),
       );
+      if (left > 0) {
+        console.log(
+          JSON.stringify({ level: "info", area: "forward", event: "drain_yielded", wabaId: this.wabaIdForOps(), sent: rows.length - left, left }),
+        );
+      }
     } catch (error) {
       workerError = error;
       hasWorkerError = true;
@@ -2753,7 +2824,8 @@ export class EccosGateway extends DurableObject<Env> {
         .toArray();
       const nextRow = nextRows[0];
       const next = nextRow ? (nextRow.next as number | null) : null;
-      if (next != null) wakes.push(next);
+      // Rows left by the budget are due already, so this wakes at once; an open circuit holds it to the probe.
+      if (next != null) wakes.push(Math.max(next, this.forwardCircuit().openUntil));
     } else if (this.hasPendingDeliveries()) {
       /**
        * Held, but not forgotten: a slow tick so RETENTION still runs.
@@ -3491,6 +3563,7 @@ export class EccosGateway extends DurableObject<Env> {
     let ok = false;
     let error: string | null = null;
     let httpStatus: number | null = null;
+    let threw = false;
     const startedAt = Date.now();
     try {
       const outcome = await this.forwardOne(row.payload);
@@ -3498,8 +3571,10 @@ export class EccosGateway extends DurableObject<Env> {
       httpStatus = outcome.httpStatus ?? null;
       if (!outcome.ok) error = outcome.reason;
     } catch (e) {
+      threw = true;
       error = e instanceof Error ? e.message : String(e);
     }
+    const durationMs = Date.now() - startedAt;
     const attempts = row.attempts + 1;
     // One line per attempt, never the payload: per-WABA volume, success rate and latency.
     // `durationMs` is the subscriber's answer time, `lagMs` the time since the webhook was stored.
@@ -3510,7 +3585,7 @@ export class EccosGateway extends DurableObject<Env> {
       deliveryId: row.id,
       attempt: attempts,
       httpStatus,
-      durationMs: Date.now() - startedAt,
+      durationMs,
       lagMs: Date.now() - row.created_at,
     };
     // `finished_at` is written on BOTH terminal transitions and on neither retry:
@@ -3518,28 +3593,36 @@ export class EccosGateway extends DurableObject<Env> {
     // would make "last delivery" mean "last attempt".
     if (ok) {
       this.sql.exec(
-        `UPDATE deliveries SET status='delivered', attempts=?, last_error=NULL, finished_at=? WHERE id=?`,
+        `UPDATE deliveries SET status='delivered', attempts=?, last_error=NULL, finished_at=?, last_duration_ms=? WHERE id=?`,
         attempts,
         Date.now(),
+        durationMs,
         row.id,
       );
     } else if (attempts >= maxAttempts) {
       this.sql.exec(
-        `UPDATE deliveries SET status='failed', attempts=?, last_error=?, finished_at=? WHERE id=?`,
+        `UPDATE deliveries SET status='failed', attempts=?, last_error=?, finished_at=?, last_duration_ms=? WHERE id=?`,
         attempts,
         error,
         Date.now(),
+        durationMs,
         row.id,
       );
     } else {
       this.sql.exec(
-        `UPDATE deliveries SET attempts=?, last_error=?, next_attempt_at=? WHERE id=?`,
+        `UPDATE deliveries SET attempts=?, last_error=?, next_attempt_at=?, last_duration_ms=? WHERE id=?`,
         attempts,
         error,
         Date.now() + withJitter(backoffMs(attempts)),
+        durationMs,
         row.id,
       );
     }
+    // No answer and no request (the target vanished mid-drain) says nothing about the subscriber.
+    const tripped =
+      threw || httpStatus !== null
+        ? this.recordCircuit(httpStatus !== null && httpStatus < 500 && httpStatus !== 429, Date.now())
+        : null;
     if (ok) {
       this.noteActivation("webhook_2xx", Date.now());
       console.log(JSON.stringify({ level: "info", event: "delivered", ...attempt }));
@@ -3554,7 +3637,59 @@ export class EccosGateway extends DurableObject<Env> {
         error: error?.slice(0, 200) ?? null,
       }),
     );
+    if (tripped) await this.alertCircuitOpen(tripped);
     if (terminal) await this.alertTerminalFailure(row.phone_number_id, error);
+  }
+
+  /** The forwarding circuit breaker (see `ForwardCircuit`). */
+  forwardCircuit(): ForwardCircuit {
+    const value = this.sql.exec("SELECT value FROM ops_state WHERE key = ?", CIRCUIT_KEY).toArray()[0]?.value;
+    return value ? (JSON.parse(value as string) as ForwardCircuit) : { failures: 0, trips: 0, openUntil: 0 };
+  }
+
+  /**
+   * Feeds one forward to the breaker. `answered` is any HTTP answer but 5xx or 429:
+   * the subscriber is reachable, so the count resets and an open circuit closes, even
+   * on a 4xx that rejects one payload. A timeout, network error, 5xx or 429 counts; the
+   * CIRCUIT_THRESHOLD-th in a row, or a failed probe, opens the circuit with the next
+   * pause. Failures of forwards still in flight when it opened only add to the count.
+   * Synchronous SQL, like recordOpsAlert: concurrent forwards must not both trip it.
+   * Returns the circuit when this call opened it.
+   */
+  private recordCircuit(answered: boolean, now: number): ForwardCircuit | null {
+    if (answered) {
+      this.resetCircuit("answered");
+      return null;
+    }
+    const circuit = this.forwardCircuit();
+    circuit.failures += 1;
+    const opens = circuit.openUntil === 0 ? circuit.failures >= CIRCUIT_THRESHOLD : circuit.openUntil <= now;
+    if (opens) {
+      circuit.trips += 1;
+      circuit.openUntil = now + (CIRCUIT_BACKOFF_MS[Math.min(circuit.trips, CIRCUIT_BACKOFF_MS.length) - 1] as number);
+    }
+    this.sql.exec(
+      "INSERT INTO ops_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      CIRCUIT_KEY,
+      JSON.stringify(circuit),
+    );
+    if (!opens) return null;
+    const { failures, openUntil } = circuit;
+    console.warn(
+      JSON.stringify({ level: "warn", area: "forward", event: "circuit_open", wabaId: this.wabaIdForOps(), failures, openUntil }),
+    );
+    return circuit;
+  }
+
+  /** Closes the breaker: the subscriber answered, or the operator saved the target or retried. */
+  private resetCircuit(reason: "answered" | "config" | "retry"): void {
+    const { failures, openUntil } = this.forwardCircuit();
+    if (failures === 0 && openUntil === 0) return;
+    this.sql.exec("DELETE FROM ops_state WHERE key = ?", CIRCUIT_KEY);
+    if (openUntil === 0) return;
+    console.log(
+      JSON.stringify({ level: "info", area: "forward", event: "circuit_closed", wabaId: this.wabaIdForOps(), failures, openUntil, reason }),
+    );
   }
 
   /**
@@ -3568,7 +3703,7 @@ export class EccosGateway extends DurableObject<Env> {
    * concurrent forwards of one alarm run in this same object, and two of them
    * must not both decide to send.
    */
-  recordOpsAlert(kind: "failure" | "drop" | "held_expiry", now: number, added = 1): { send: boolean; count: number } {
+  recordOpsAlert(kind: "failure" | "drop" | "held_expiry" | "circuit", now: number, added = 1): { send: boolean; count: number } {
     const read = (key: string): number =>
       Number(this.sql.exec("SELECT value FROM ops_state WHERE key = ?", key).toArray()[0]?.value ?? 0);
     const write = (key: string, value: number): void => {
@@ -3619,6 +3754,22 @@ export class EccosGateway extends DurableObject<Env> {
     );
   }
 
+  private async alertCircuitOpen({ failures, openUntil }: ForwardCircuit): Promise<void> {
+    const { send, count } = this.recordOpsAlert("circuit", Date.now());
+    if (!send) return;
+    await sendOpsAlert(
+      this.env,
+      [
+        "Eccos: forwarding paused, the subscriber keeps failing",
+        `WABA ${this.wabaIdForOps()}`,
+        `${failures} timeouts, network errors, 5xx or 429 answers in a row`,
+        `Paused until ${new Date(openUntil).toISOString()}, then one probe delivery; queued events wait, nothing is dropped`,
+        `${count} ${count === 1 ? "pause" : "pauses"} since the last alert`,
+        "Logs: event circuit_open",
+      ].join("\n"),
+    );
+  }
+
   private async alertTerminalFailure(phoneNumberId: string | null, error: string | null): Promise<void> {
     const { send, count } = this.recordOpsAlert("failure", Date.now());
     if (!send) return;
@@ -3648,15 +3799,19 @@ export function backoffMs(attempts: number): number {
   return Math.min(5_000 * 5 ** (attempts - 1), 3_600_000);
 }
 
+/** Runs `work` over `items`, at most `concurrency` at a time. Once `stop` answers true no
+ * new item starts; resolves to the number of items left unstarted. */
 export async function runBoundedPool<T>(
   items: T[],
   concurrency: number,
   work: (item: T) => Promise<void>,
-): Promise<void> {
+  stop: () => boolean = () => false,
+): Promise<number> {
   const errors: unknown[] = [];
   const queue = items.map((item) => ({ item }));
   const worker = async (): Promise<void> => {
     while (true) {
+      if (stop()) return;
       const next = queue.shift();
       if (!next) return;
       try {
@@ -3675,6 +3830,7 @@ export async function runBoundedPool<T>(
   const workerFailure = workerResults.find((result) => result.status === "rejected");
   if (workerFailure?.status === "rejected") throw workerFailure.reason;
   if (errors.length > 0) throw errors[0];
+  return queue.length;
 }
 
 /**

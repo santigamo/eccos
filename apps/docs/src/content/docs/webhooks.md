@@ -62,6 +62,14 @@ is not retried automatically. The console's **Forwarding queue** page (opened fr
 Webhooks page; it is not in the sidebar) lists each batch with its status and last error, and has
 a **Retry** action to send a failed batch again.
 
+A slow or failing receiver is paused, never dropped. Each round of forwarding stops starting new
+requests after about 8 seconds and picks up the rest straight after. After 5 timeouts, connection
+errors, `5xx` or `429` answers in a row, forwarding pauses for 30 seconds, then 1, 2, 5 and up to
+10 minutes while the failures continue; during a pause no attempt is spent and events wait in the
+queue. When a pause ends a single batch goes out as a test, using one of its attempts. Any other
+answer resumes normal forwarding, as do saving the webhook URL and **Retry**. A `4xx` other than
+`429` never pauses forwarding.
+
 ## Verifying the signature
 
 Node:

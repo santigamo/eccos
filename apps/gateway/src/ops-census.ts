@@ -47,6 +47,8 @@ interface WabaLine {
   delivered24h: number;
   /** Events held because the WABA is not active (held_webhooks). */
   heldWebhooks: number;
+  /** Consecutive failed forwards while the circuit breaker is open; null when it is closed. */
+  circuitFailures: number | null;
   stuckPending: boolean;
   readable: boolean;
   /** Null when the WABA is not active or the check got no answer. */
@@ -100,6 +102,7 @@ export async function runDailyCensus(
       recentFailed: 0,
       delivered24h: 0,
       heldWebhooks: 0,
+      circuitFailures: null,
       stuckPending: w.status === "pending" && now - w.createdAt > DAY_MS,
       readable: true,
       token: null,
@@ -119,6 +122,7 @@ export async function runDailyCensus(
       line.recentFailed = census.recent.failed;
       line.delivered24h = census.recent.delivered;
       line.heldWebhooks = census.heldEventCount;
+      line.circuitFailures = census.circuit?.failures ?? null;
     } catch {
       line.readable = false;
     }
@@ -231,6 +235,9 @@ export function formatCensus(day: string, blocks: AccountBlock[]): string {
       if (w.recentFailed > 0) {
         attention.push(`${who}: ${w.recentFailed} ${w.recentFailed === 1 ? "delivery" : "deliveries"} failed in the last 24 h`);
       }
+      if (w.circuitFailures !== null) {
+        attention.push(`${who}: forwarding paused (circuit open), ${w.circuitFailures} failed forwards in a row`);
+      }
       if (w.held > 0) attention.push(`${who}: ${events(w.held)} held: no forwarding target`);
       if (w.heldWebhooks > 0) attention.push(`${who}: ${events(w.heldWebhooks)} held: WABA not active`);
       if (SYNC_NEEDS_ACTION.has(w.sync)) attention.push(`${who}: coexistence sync ${w.sync}`);
@@ -251,7 +258,9 @@ export function formatCensus(day: string, blocks: AccountBlock[]): string {
     if (b.wabas.length === 0) lines.push("  no WABAs");
     for (const w of b.wabas) {
       const kind = w.onboarding === "coexistence" ? `coexistence, sync ${w.sync}` : w.onboarding;
-      const target = w.hasTarget === null ? "" : w.hasTarget ? ", target set" : ", no target";
+      const target =
+        (w.hasTarget === null ? "" : w.hasTarget ? ", target set" : ", no target") +
+        (w.circuitFailures === null ? "" : ", circuit open");
       const counts = w.readable
         ? `: ${w.pending} pending, ${w.held} held: no forwarding target, ${w.failed} failed, ${w.delivered24h} delivered (queued 24 h), ${w.heldWebhooks} held: WABA not active`
         : ": unreadable";

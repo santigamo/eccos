@@ -418,6 +418,17 @@ export interface LastForward {
   /** Why the last attempt failed, verbatim from `deliveries.last_error`. Null on
    * success, and on a row no attempt has been made against. */
   lastError: string | null;
+  /** How long the subscriber took to answer the last attempt, in ms. Null on a row
+   * no attempt has been made against; absent from a gateway that predates it. */
+  durationMs?: number | null;
+}
+
+/** The subscriber's answer times: one sample per delivery row (its last attempt),
+ * over the rows tried among the newest 50. */
+export interface SubscriberLatency {
+  p50Ms: number;
+  p95Ms: number;
+  samples: number;
 }
 
 /** Outbound-forwarding target as seen by the operator. The secret is NEVER exposed. */
@@ -431,6 +442,18 @@ export interface SubscriberConfig {
    * than a second round-trip over the service binding.
    */
   lastForward: LastForward | null;
+  /** Null when no attempt has been timed yet; absent from a gateway that predates it. */
+  latency?: SubscriberLatency | null;
+  /**
+   * Set while the circuit breaker is open: after repeated timeouts, network
+   * errors, 5xx or 429 answers, forwarding is paused until this epoch ms. From
+   * then on a single delivery goes out as a probe, and the value stays set until
+   * an answer closes the circuit. Null when closed; absent from a gateway that
+   * predates it.
+   */
+  circuitOpenUntil?: number | null;
+  /** Timeouts, network errors, 5xx and 429 answers in a row since the last answer. */
+  consecutiveFailures?: number;
 }
 
 /**

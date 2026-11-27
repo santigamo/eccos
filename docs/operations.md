@@ -27,6 +27,24 @@ timeout. Delivery rows do not have a FIFO guarantee across the pool; event order
 forwarded batch is preserved, and subscribers must deduplicate retries with
 `x-idempotency-key`.
 
+Two limits keep one slow or dead subscriber from tying up its WABA's alarm (`FORWARD_BUDGET_MS`,
+`CIRCUIT_*` in `apps/gateway/src/gateway.ts`):
+
+- **Time budget.** After 8 s of forwarding no new request starts; the ones in flight finish, the
+  rest of the alarm (retention, scheduled sends, broadcasts, media) runs, and the alarm re-arms at
+  once for the rows left. A fast subscriber drains its 40 rows well inside it. Logged as
+  `drain_yielded`.
+- **Circuit breaker.** Five timeouts, network errors, 5xx or 429 answers in a row open the circuit:
+  forwarding pauses for 30 s, then 1, 2, 5 and 10 minutes (the cap) for each trip in a row. While
+  open nothing is sent, no attempt is spent and rows stay `pending`. When the pause ends one
+  delivery goes out as a probe and spends a normal attempt, so a dead subscriber still ends in
+  `failed` and the "Deliveries are failing" alert. Any other answer (a 2xx, or a 4xx rejecting one
+  payload) closes it, and so do saving the target on the Webhooks page and a manual retry. Its
+  state is one `forward_circuit` row in the Durable Object's `ops_state` table; it is logged as
+  `circuit_open` / `circuit_closed`, alerted, shown in the daily census, and returned on
+  `getSubscriberConfig` (`circuitOpenUntil`, `consecutiveFailures`), with the subscriber's p50/p95
+  answer time over the newest 50 deliveries (`latency`, from `deliveries.last_duration_ms`).
+
 ## Health vs. readiness
 
 Two endpoints, deliberately different in cost and meaning:
@@ -205,9 +223,11 @@ for the current early volume; revisit if traffic grows enough to make log volume
    - Expired/rotated per-WABA Meta access token → `outbound_send`/`templates_list` lines at 502.
      Fix: re-register the WABA through the admin bootstrap API (or reconnect it through
      `/connect`) so the control-plane credential is replaced; no Worker redeploy is needed.
-   - Wrong or down per-WABA subscriber URL → deliveries piling up in `pending`/`failed`.
-     Fix: rotate it from the dashboard's Webhooks page (`setSubscriberConfig`), which updates the
-     WABA's DO config without a deploy.
+   - Wrong or down per-WABA subscriber URL → deliveries piling up in `pending`/`failed`, and
+     usually a "Forwarding paused" alert (`circuit_open`): while the circuit is open the backlog
+     advances one probe per pause. Fix: rotate it from the dashboard's Webhooks page
+     (`setSubscriberConfig`), which updates the WABA's DO config without a deploy and closes the
+     circuit, so the backlog drains at once.
    - **No** subscriber URL configured at all → deliveries piling up in `pending` only, and health
      reading `degraded` past ten rows. This is not a fault: the alarm HOLDS the drain while no
      forwarding target exists rather than spending each row's attempts on a destination that does
@@ -252,7 +272,7 @@ button on a failed one**: replaying a delivered batch lands a second copy in the
 system, and a duplicate-maker is not a one-click row action. A deliberate re-send of a
 delivered batch is an RPC call, not a click. That calls `GatewayRPC.retryDelivery(id)` →
 `EccosGateway.retryDelivery(id)`, which resets `status='pending'`, `attempts=0`, clears
-`last_error` and `finished_at`, and re-arms the alarm — the next alarm tick attempts the forward again. This is a
+`last_error`, `finished_at` and `last_duration_ms`, closes the circuit breaker, and re-arms the alarm — the next alarm tick attempts the forward again. This is a
 one-row-at-a-time operator action; there is no "retry all failed" bulk action.
 
 **Caveat:** replay only works while the row still holds its payload. Once the content window
