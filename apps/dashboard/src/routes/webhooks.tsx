@@ -1,12 +1,14 @@
 import { createFileRoute, Link, useLoaderData, useRouter } from "@tanstack/react-router";
 import { invalidateRoutes, rootRouteId } from "../lib/invalidate";
 import type { ReactNode } from "react";
+import type { SubscriberLatency } from "@eccos/gateway-contract";
 import { getSubscriberConfig } from "../server/gateway";
 import type { OperatorCounts, Result, SubscriberConfig } from "../server/gateway";
 import {
   COUNT_LINK,
   FactCell,
   FactsStrip,
+  INLINE_LINK,
   Page,
   StatusCounts,
   StatusTag,
@@ -15,12 +17,22 @@ import {
   fmtTsShort,
 } from "../ui";
 import { cn } from "@/lib/utils";
+import { Callout } from "@/components/ui/callout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FailureView } from "../components/dashboard/failure";
 import { ForwardingTargetPanel } from "../components/dashboard/forwarding-target";
 import { ResubscribeAction } from "../components/dashboard/resubscribe-action";
 import { HeldNotice } from "../components/logs/held-notice";
-import { forwardingTag, readLastForward } from "../lib/forwarding";
+import {
+  SLOW_ANSWER_MS,
+  circuitReading,
+  failedAttempts,
+  fmtDuration,
+  forwardingTag,
+  readLastForward,
+  retentionDeadline,
+  slowAnswerMs,
+} from "../lib/forwarding";
 import {
   Frame,
   FrameDescription,
@@ -48,7 +60,12 @@ import { CONFIG_STALE_MS } from "../lib/route-stale";
 export const Route = createFileRoute("/webhooks")({
   staleTime: CONFIG_STALE_MS,
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId }),
-  loader: ({ deps }) => getSubscriberConfig({ data: { wabaId: deps.wabaId } }),
+  // `readAt` is stamped with the read so SSR and hydration compare the breaker
+  // against the same instant.
+  loader: async ({ deps }) => ({
+    result: await getSubscriberConfig({ data: { wabaId: deps.wabaId } }),
+    readAt: Date.now(),
+  }),
   component: WebhooksPage,
   pendingComponent: WebhooksPending,
 });
@@ -69,7 +86,7 @@ function WebhooksPending() {
 }
 
 function WebhooksPage() {
-  const result = Route.useLoaderData();
+  const { result, readAt } = Route.useLoaderData();
   const { wabaId } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
@@ -98,7 +115,7 @@ function WebhooksPage() {
       title="Webhooks"
       kicker="Integration"
       // Data-derived, and never a control: the tag says whether a target is
-      // configured, which is the one thing the page is about.
+      // configured and whether the gateway has paused it.
       actions={<StatusTag status={forwardingTag(config)} />}
     >
       <HeldNotice
@@ -106,6 +123,7 @@ function WebhooksPage() {
         hasForwardingTarget={config.url !== null}
         countOnly
       />
+      <ReceiverNotices config={config} now={readAt} retentionDays={retentionDays} />
       <ForwardingFacts
         config={config}
         counts={ready?.status.counts ?? null}
@@ -174,8 +192,10 @@ function ForwardingFacts({
   const last = readLastForward(config.lastForward);
   const search = selectedWabaId ? { wabaId: selectedWabaId } : undefined;
   const deliveries = counts ? countTotal(counts.deliveries) : 0;
+  // Absent on a gateway that predates the reading: the strip stays as it was.
+  const timed = config.latency !== undefined;
   return (
-    <FactsStrip label="Forwarding at a glance">
+    <FactsStrip label="Forwarding at a glance" columns={timed ? 4 : 3}>
       <FactCell
         kicker="Last forward"
         scale="word"
@@ -210,6 +230,12 @@ function ForwardingFacts({
               {" · "}
               <span className="tabular-nums">{last.attempts}</span>{" "}
               {last.attempts === 1 ? "attempt" : "attempts"}
+              {last.durationMs !== null ? (
+                <>
+                  {" · took "}
+                  <span className="normal-case tabular-nums">{fmtDuration(last.durationMs)}</span>
+                </>
+              ) : null}
             </p>
             {last.lastError ? (
               <p className="m-0 text-xs break-words text-destructive-foreground">{last.lastError}</p>
@@ -250,6 +276,8 @@ function ForwardingFacts({
         )}
       </FactCell>
 
+      {timed ? <ResponseTimeCell latency={config.latency ?? null} /> : null}
+
       <FactCell
         kicker="Signing"
         scale="word"
@@ -261,6 +289,97 @@ function ForwardingFacts({
         }
       />
     </FactsStrip>
+  );
+}
+
+/** The receiver's answer times over the newest tried deliveries. Exported, and
+ * free of `Link`s, so it can be rendered in tests. */
+export function ResponseTimeCell({ latency }: { latency: SubscriberLatency | null }) {
+  const caption = latency ? "typical answer (p50)" : "no answers timed yet";
+  return (
+    <FactCell
+      kicker="Response time"
+      value={
+        <>
+          {latency ? fmtDuration(latency.p50Ms) : "—"}
+          {/* FactCell hides its caption from assistive tech; a bare value needs it said. */}
+          <span className="sr-only"> {caption}</span>
+        </>
+      }
+      caption={caption}
+    >
+      {latency ? (
+        <p className="m-0 mt-3 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+          p95{" "}
+          <span
+            className={cn(
+              "normal-case tabular-nums",
+              latency.p95Ms > SLOW_ANSWER_MS && "text-warning-foreground",
+            )}
+          >
+            {fmtDuration(latency.p95Ms)}
+          </span>
+          {" · "}
+          <span className="tabular-nums">{latency.samples}</span>{" "}
+          {latency.samples === 1 ? "delivery" : "deliveries"}
+        </p>
+      ) : null}
+    </FactCell>
+  );
+}
+
+const RECEIVER_GUIDE_URL = "https://docs.eccos.chat/webhooks#acknowledging-and-retrying";
+
+/**
+ * What is wrong with the receiver right now: forwarding paused by the circuit
+ * breaker, or answers slow enough to hold up the queue. Says nothing on a
+ * healthy receiver, and on a gateway that predates these fields; the live
+ * region stays mounted so a change after a save is announced, as `HeldNotice`.
+ */
+export function ReceiverNotices({
+  config,
+  now,
+  retentionDays,
+}: {
+  config: SubscriberConfig;
+  now: number;
+  retentionDays?: number | null;
+}) {
+  const circuit = circuitReading(config, now);
+  const slow = slowAnswerMs(config);
+  const waiting = `Queued events wait; each is deleted ${retentionDeadline(retentionDays)}.`;
+  return (
+    <output
+      className={circuit || slow !== null ? "mb-4 flex flex-col gap-3" : undefined}
+      aria-live="polite"
+    >
+      {circuit?.state === "paused" ? (
+        <Callout tone="warning">
+          Forwarding paused until{" "}
+          <time dateTime={fmtTs(circuit.until)} title={fmtTs(circuit.until)}>
+            {fmtTsShort(circuit.until)}
+          </time>{" "}
+          after {failedAttempts(circuit.failures)}. Then one delivery tests your server, and
+          forwarding resumes if it answers. {waiting}
+        </Callout>
+      ) : null}
+      {circuit?.state === "testing" ? (
+        <Callout tone="warning">
+          Forwarding paused after {failedAttempts(circuit.failures)}. The pause has ended: the
+          next delivery tests your server, and forwarding resumes if it answers. {waiting}
+        </Callout>
+      ) : null}
+      {slow !== null ? (
+        <Callout tone="warning">
+          Your server takes {fmtDuration(slow)} to answer its slowest deliveries (p95), over the
+          2s it should stay under. Answer 2xx as soon as the batch is stored and process it
+          afterwards.{" "}
+          <a href={RECEIVER_GUIDE_URL} target="_blank" rel="noreferrer" className={INLINE_LINK}>
+            Read the webhook guide
+          </a>
+        </Callout>
+      ) : null}
+    </output>
   );
 }
 
@@ -322,7 +441,10 @@ export function FromMetaPanel({
  *  - `FORWARD_MAX_ATTEMPTS` is 6 (wrangler.jsonc, and the code's own default),
  *    `backoffMs` is `min(5s · 5^(n-1), 1h)` and `withJitter` spreads it ±10%;
  *  - `FORWARD_FETCH_TIMEOUT_MS` is 5s and the fetch is `redirect: "manual"`
- *    (a 3xx comes back as the response and fails the attempt).
+ *    (a 3xx comes back as the response and fails the attempt);
+ *  - the docs ask for an answer in under 2s (`apps/docs/.../webhooks.md`);
+ *  - `CIRCUIT_*` opens the breaker after 5 timeouts, network errors, 5xx or
+ *    429 in a row, for 30s up to 10min, and spends no attempt while open.
  * If any of them changes there, it changes here.
  */
 export function ReceiverReference() {
@@ -358,10 +480,20 @@ export function ReceiverReference() {
             note="Anything else is retried, and so is a timeout."
           />
           <ReferenceRow
+            label="Answer time"
+            value="under 2s"
+            note="Answer 2xx once the batch is stored, then process it. A slow answer holds up the batches behind it."
+          />
+          <ReferenceRow
             label="Retries"
             value="6 attempts · 5s to 1h, ×5 each time, ±10% jitter"
           />
           <ReferenceRow label="Timeout" value="5s per attempt" />
+          <ReferenceRow
+            label="Pauses"
+            value="after 5 failures in a row · 30s up to 10min"
+            note="Timeouts, connection errors, 5xx and 429 count. Events wait in the queue; forwarding resumes when a test delivery gets an answer."
+          />
           <ReferenceRow
             label="Redirects"
             value="refused"
