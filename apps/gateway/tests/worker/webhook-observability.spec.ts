@@ -68,7 +68,13 @@ describe("webhook log lines", () => {
         n_status_read: 1,
       }),
     ]);
-    expect(lines("ingested")[0]).toMatchObject({ area: "ingest", wabaId: TEST_WABA_ID, eventCount: 3, inserted: 3 });
+    expect(lines("ingested")[0]).toMatchObject({
+      area: "ingest",
+      wabaId: TEST_WABA_ID,
+      eventCount: 3,
+      inserted: 3,
+      workMs: expect.any(Number),
+    });
     expect(JSON.stringify(log.mock.calls)).not.toMatch(/secret text|34600000000/);
   });
 

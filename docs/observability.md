@@ -53,7 +53,7 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 
 | `event` | `area` | Fields |
 |---|---|---|
-| `ingested` | `ingest` | `wabaId`, `eventCount`, `inserted` (new rows; the rest were duplicates). Ties a `$workers.durableObjectId` to its WABA |
+| `ingested` | `ingest` | `wabaId`, `eventCount`, `inserted` (new rows; the rest were duplicates), `workMs` (time inside the call; the Workers clock only moves on I/O, so a wall time far above it is time spent waiting, not working). Ties a `$workers.durableObjectId` to its WABA |
 | `delivered` | `forward` | `wabaId`, `phoneNumberId`, `deliveryId`, `attempt`, `httpStatus`, `durationMs` (subscriber response time), `lagMs` (time since the webhook was stored) |
 | `attempt-failed` / `delivery-failed` | `forward` | Same as `delivered`, plus `error`. `delivery-failed` means it exhausted every retry |
 | `drain_yielded` | `forward` | `wabaId`, `reason`, `sent`, `left`: the alarm stopped starting forwards, after its 8 s budget (`reason: "budget"`) or because the circuit opened (`"circuit"`); the rows left go out on the next wakes |
@@ -63,6 +63,11 @@ Meta's error `message` and `error_data` are never logged: they can echo the reci
 | `held_expired` | `ingest` | `wabaId`, `eventCount`: held events older than 3 days, deleted by the retention sweep. Also raises the "Held webhooks expired" alert |
 | `held_release_failed` | `ingest` | `wabaId`, `errorType`: a release failed; the events stay held until the next webhook's ingest retries it, or they expire |
 | `outbound_send` | `rpc` | A console send: `source` (`send_test` for a template test, `send_text` for the composer), then the same fields as the worker's `outbound_send` (no `invalid_target`) |
+| `alarm_step_slow` | `alarm` | `wabaId`, `step`, `ms`: one alarm step took 3 s or more. Logged as the step ends, so an alarm the runtime cancels still leaves it. Steps: `billingHold`, `drain`, `sweep`, `activation`, `sync`, `scheduled`, `broadcast`, `media`, `rearm` |
+| `alarm_slow` | `alarm` | `wabaId`, `totalMs`, the ms of each step above, `wakeArrived` (work landed during the run), `dueMedia`: an alarm that took 5 s or more, logged at its end |
+| `media_batch_start` | `media` | `wabaId`, `dueMedia`: the alarm's media step starts downloading this many ids |
+| `media_download_slow` | `media` | `wabaId`, `mediaId` (Meta's id), `ms`, `state` (`stored`, `failed` or `gone`), `size` (bytes, null when the download failed): one media download took 3 s or more |
+| `claim_export` | `export` | `wabaId`, `granted`, `workMs` (the cooldown claim), `syncMs` (flushing it to storage before answering) |
 | `rpc_scope` | `rpc` | `accountId`, `wabaId` of a console RPC call (Workers Logs adds the RPC method) |
 | `sync-failed`, `item-skipped`, `history-error`, ... | `history` / `retention` / `media` | `wabaId`, `error` |
 

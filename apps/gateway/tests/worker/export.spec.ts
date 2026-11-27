@@ -225,6 +225,22 @@ describe("export cooldown", () => {
     expect(statuses.sort()).toEqual([200, 429]);
   });
 
+  it("claims before flushing storage, then logs the claim's work and flush times", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const sync = await runInDurableObject(gatewayStub(), (_i: EccosGateway, state: DurableObjectState) =>
+      vi.spyOn(state.storage, "sync"),
+    );
+    const claims = await Promise.all([gatewayStub().claimExport(900_000), gatewayStub().claimExport(900_000)]);
+
+    expect(claims).toEqual([{ ok: true }, { ok: false, retryAfter: 900 }]);
+    expect(sync).toHaveBeenCalledTimes(2);
+    const lines = log.mock.calls.map(([l]) => JSON.parse(String(l))).filter((l) => l.event === "claim_export");
+    expect(lines).toEqual([
+      expect.objectContaining({ area: "export", wabaId: TEST_WABA_ID, granted: true, workMs: expect.any(Number), syncMs: expect.any(Number) }),
+      expect.objectContaining({ granted: false, workMs: expect.any(Number), syncMs: expect.any(Number) }),
+    ]);
+  });
+
   it("does not apply to the console's RPC export, and that export does not start it", async () => {
     const rpc = new GatewayRPC(createExecutionContext(), env);
     await rpc.exportData(TEST_WABA_ID, TEST_ACCOUNT_ID);

@@ -163,6 +163,10 @@ const ALARM_MAX_CONCURRENCY = 6;
  * alarm() runs, and the alarm re-arms for the rows left. A slow subscriber cannot hold
  * retention, scheduled sends, broadcasts and media back. */
 export const FORWARD_BUDGET_MS = 8_000;
+/** Diagnostics: an alarm past ALARM_SLOW_MS logs its step timings, and any step (or media
+ * download) past SLOW_STEP_MS logs at once, so a canceled alarm still leaves a trace. */
+export const ALARM_SLOW_MS = 5_000;
+export const SLOW_STEP_MS = 3_000;
 /** Circuit breaker: consecutive timeouts, network errors, 5xx or 429 answers that pause
  * forwarding, and the pause after each trip in a row (the last one repeats). */
 export const CIRCUIT_THRESHOLD = 5;
@@ -783,6 +787,7 @@ export class EccosGateway extends DurableObject<Env> {
         wabaId: this.wabaIdForOps(),
         eventCount: events.length,
         inserted: insertedIds.length,
+        workMs: Date.now() - now,
       }),
     );
     if (insertedIds.length > 0) this.wakeNow();
@@ -1450,9 +1455,25 @@ export class EccosGateway extends DurableObject<Env> {
     return Object.fromEntries(Object.entries(this.getAllConfig()).filter(([key]) => isPublicConfigKey(key)));
   }
 
-  /** Claims this WABA's HTTP export slot against the cooldown (export-usage.ts). */
-  claimExport(cooldownMs: number): ExportClaim {
-    return claimExport(this.sql, Date.now(), cooldownMs);
+  /** Claims this WABA's HTTP export slot against the cooldown (export-usage.ts). The claim is
+   * synchronous, so it stays atomic; the one await after it flushes the write before answering. */
+  async claimExport(cooldownMs: number): Promise<ExportClaim> {
+    const started = Date.now();
+    const claim = claimExport(this.sql, started, cooldownMs);
+    const synced = Date.now();
+    await this.ctx.storage.sync();
+    console.log(
+      JSON.stringify({
+        level: "info",
+        area: "export",
+        event: "claim_export",
+        wabaId: this.wabaIdForOps(),
+        granted: claim.ok,
+        workMs: synced - started,
+        syncMs: Date.now() - synced,
+      }),
+    );
+    return claim;
   }
 
   getCounts(): OperatorCounts {
@@ -2707,6 +2728,18 @@ export class EccosGateway extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const now = Date.now();
     this.wakeArrived = false;
+    const timings: Record<string, number> = {};
+    let mark = now;
+    const lap = (step: string) => {
+      const at = Date.now();
+      timings[step] = at - mark;
+      mark = at;
+      if (timings[step] >= SLOW_STEP_MS) {
+        console.warn(
+          JSON.stringify({ level: "warn", area: "alarm", event: "alarm_step_slow", wabaId: this.wabaIdForOps(), step, ms: timings[step] }),
+        );
+      }
+    };
     const maxAttempts = Number(this.env.FORWARD_MAX_ATTEMPTS) || 6;
     // Guarded + clamped (not just `||`) because misconfigured values here feed
     // destructive DELETE/UPDATE windows, unlike maxAttempts above.
@@ -2749,6 +2782,7 @@ export class EccosGateway extends DurableObject<Env> {
      */
     const hasTarget = Boolean(this.getConfigValue("SUBSCRIBER_WEBHOOK_URL"));
     const billingHeld = await this.holdForBilling();
+    lap("billingHold");
 
     // While the circuit is open nothing is sent and no attempt is spent; once its pause
     // has passed, one row goes out as the probe (recordCircuit).
@@ -2798,6 +2832,7 @@ export class EccosGateway extends DurableObject<Env> {
       workerError = error;
       hasWorkerError = true;
     }
+    lap("drain");
 
     // Split retention (docs/data-lifecycle.md):
     //  - content window: message content is removed everywhere — inbound/outbound
@@ -2819,6 +2854,7 @@ export class EccosGateway extends DurableObject<Env> {
       this.saveConfig({ [LAST_SWEEP_KEY]: String(now) });
       nextSweepAt = now + SWEEP_INTERVAL_MS;
     }
+    lap("sweep");
 
     // One alarm serves delivery, retention, sync and media: arm the earliest of their wakes, so
     // a sync backlog or retry cannot push a due delivery back.
@@ -2858,24 +2894,46 @@ export class EccosGateway extends DurableObject<Env> {
 
     if (hasHeld(this.sql) || this.hasBillingHeld()) wakes.push(nextSweepAt);
     await this.reportActivation();
+    lap("activation");
 
     // After the delivery wake is known: a slow control-plane call in sync must not hold it back.
     const syncWake = await this.runSyncBatch(now);
+    lap("sync");
     if (syncWake !== null) wakes.push(Date.now() + syncWake);
     const scheduled = await this.runScheduledStep();
+    lap("scheduled");
     if (scheduled.retryAt !== null) wakes.push(scheduled.retryAt);
     const broadcastWakeAt = await this.runBroadcastStep(scheduled.claimed);
+    lap("broadcast");
     if (broadcastWakeAt !== null) wakes.push(broadcastWakeAt);
     // Last, after the sweep, so the media of the messages it just pruned is purged in this same alarm.
-    const mediaWakeAt = await this.mediaStep(now);
-    if (mediaWakeAt !== null) wakes.push(mediaWakeAt);
+    const media = await this.mediaStep(now);
+    lap("media");
+    if (media.wakeAt !== null) wakes.push(media.wakeAt);
     // After the last await, so a send scheduled during the run is not overwritten.
     // Not after a failed step: its rows stay due, and a wake in the past would spin past the retry.
     const scheduledWakeAt = scheduled.retryAt === null ? this.scheduledWakeAt() : null;
     if (scheduledWakeAt !== null) wakes.push(scheduledWakeAt);
     // Work that arrived during this run was armed for now, and the earlier wakes above would overwrite it.
     if (this.wakeArrived) wakes.push(Date.now());
-    if (wakes.length > 0) this.ctx.storage.setAlarm(Math.min(...wakes));
+    if (wakes.length > 0) await this.ctx.storage.setAlarm(Math.min(...wakes));
+    else await this.ctx.storage.sync();
+    lap("rearm");
+    const totalMs = Date.now() - now;
+    if (totalMs >= ALARM_SLOW_MS) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          area: "alarm",
+          event: "alarm_slow",
+          wabaId: this.wabaIdForOps(),
+          totalMs,
+          ...timings,
+          wakeArrived: this.wakeArrived,
+          dueMedia: media.due,
+        }),
+      );
+    }
     if (hasWorkerError) throw workerError;
   }
 
@@ -3212,13 +3270,16 @@ export class EccosGateway extends DurableObject<Env> {
    * batch of media that messages reference and that is not yet settled. Nothing
    * here runs in a webhook request: ingest only schedules the alarm.
    *
-   * Returns when the alarm must run again, or null when nothing is waiting.
+   * Returns when the alarm must run again (null when nothing is waiting) and how many ids were due.
    * Never throws: a media failure must not hold up deliveries or the sweep.
    */
-  private async mediaStep(now: number): Promise<number | null> {
+  private async mediaStep(now: number): Promise<{ wakeAt: number | null; due: number }> {
     const wakes: number[] = [];
     const due = this.dueMediaIds(now);
     if (due.length > 0) {
+      console.log(
+        JSON.stringify({ level: "info", area: "media", event: "media_batch_start", wabaId: this.wabaIdForOps(), dueMedia: due.length }),
+      );
       const token = await this.metaToken("media");
       if (token === "unavailable") {
         wakes.push(now + MEDIA_RETRY_MS);
@@ -3244,7 +3305,7 @@ export class EccosGateway extends DurableObject<Env> {
       .exec(`SELECT MIN(next_attempt_at) AS next FROM media WHERE state = 'failed' AND next_attempt_at > ?`, now)
       .toArray()[0]?.next;
     if (next != null) wakes.push(Number(next));
-    return wakes.length > 0 ? Math.min(...wakes) : null;
+    return { wakeAt: wakes.length > 0 ? Math.min(...wakes) : null, due: due.length };
   }
 
   /** Media ids a message references that need a download: no row yet, or a failed
@@ -3322,15 +3383,16 @@ export class EccosGateway extends DurableObject<Env> {
     let state: "stored" | "failed" | "gone" = "stored";
     let lastError: string | null = null;
     let nextAttemptAt: number | null = null;
+    let size: number | null = null;
     try {
-      await downloadMetaMedia({
+      ({ size } = await downloadMetaMedia({
         bucket: this.env.MEDIA,
         wabaId: this.wabaIdForOps(),
         mediaId,
         token,
         graphVersion: this.env.META_GRAPH_VERSION?.trim() || "v25.0",
         fetch: this.watchedFetch(),
-      });
+      }));
     } catch (error) {
       // A rejected token is the WABA's fault, not the media's: nothing is recorded and no attempt counted.
       if (error instanceof MediaTokenError) throw error;
@@ -3338,6 +3400,12 @@ export class EccosGateway extends DurableObject<Env> {
       state = error instanceof MediaPermanentError || attempts >= MEDIA_MAX_ATTEMPTS ? "gone" : "failed";
       lastError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
       nextAttemptAt = state === "failed" ? now + withJitter(backoffMs(attempts)) : null;
+    }
+    const ms = Date.now() - now;
+    if (ms >= SLOW_STEP_MS) {
+      console.warn(
+        JSON.stringify({ level: "warn", area: "media", event: "media_download_slow", wabaId: this.wabaIdForOps(), mediaId, ms, state, size }),
+      );
     }
     // The message may have been erased or pruned while the bytes were in flight. Then nothing
     // may be recorded as stored: the id is tombstoned, and the purge after this batch deletes
