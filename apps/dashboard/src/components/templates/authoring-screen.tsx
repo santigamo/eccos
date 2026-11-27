@@ -70,5 +70,6 @@ export function AuthoringScreen({
     );
   }
 
-  return <TemplateEditor {...editor} wabaId={wabaId} businessName={businessName} rows={rows} phones={phones} />;
+  const canOperate = root.ok && "canOperate" in root.data && root.data.canOperate;
+  return <TemplateEditor {...editor} wabaId={wabaId} businessName={businessName} rows={rows} phones={phones} canOperate={canOperate} />;
 }

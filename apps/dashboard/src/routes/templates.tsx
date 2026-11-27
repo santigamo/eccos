@@ -36,6 +36,7 @@ import { normalizeSearchQuery, normalizeSearchStatus, normalizeSearchWabaId } fr
 import { SendTestSheet, type SendTestPhone } from "../components/templates/send-test-sheet";
 import { DeleteTemplateDialog, type DeleteTarget } from "../components/templates/delete-template-dialog";
 import { CONFIG_STALE_MS } from "../lib/route-stale";
+import { rootRole } from "../lib/root-role";
 
 type TemplatesSearch = { wabaId?: string; status?: string; q?: string };
 
@@ -204,6 +205,7 @@ function TemplatesPage() {
   const phones: SendTestPhone[] =
     ready?.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
   const canSend = Boolean(selectedWabaId) && phones.length > 0;
+  const canOperate = rootRole(root)?.canOperate ?? false;
   const businessName = phones[0]?.displayPhoneNumber || "Your business";
 
   if (!result.ok) {
@@ -252,6 +254,10 @@ function TemplatesPage() {
     const { name, language } = row;
     return {
       onSend: sendable ? () => setSending(row) : undefined,
+      onSendList:
+        sendable && canOperate && name
+          ? () => navigate({ to: "/broadcasts/new", search: { wabaId, template: name, language } })
+          : undefined,
       onEdit: editable && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, language } }) : undefined,
       onView: !editable && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, language } }) : undefined,
       onAddLanguage: authoring.ok && name ? () => navigate({ to: "/templates/$name", params: { name }, search: { wabaId, add: true } }) : undefined,
@@ -275,7 +281,7 @@ function TemplatesPage() {
     cell: (info) => {
       const row = info.row.original;
       const actions = actionsFor(row);
-      if (!actions.onSend && !actions.onEdit && !actions.onView && !actions.onAddLanguage && !actions.onDuplicate && !actions.onDelete) {
+      if (!actions.onSend && !actions.onSendList && !actions.onEdit && !actions.onView && !actions.onAddLanguage && !actions.onDuplicate && !actions.onDelete) {
         return <span className="text-muted-foreground">—</span>;
       }
       return <TemplateRowActions name={row.name ?? ""} language={row.language} {...actions} />;
@@ -431,6 +437,7 @@ function TemplateRowActions({
   name,
   language,
   onSend,
+  onSendList,
   onEdit,
   onView,
   onAddLanguage,
@@ -440,6 +447,8 @@ function TemplateRowActions({
   name: string;
   language: string | undefined;
   onSend?: () => void;
+  /** A broadcast of this template: `/broadcasts/new` with it chosen. */
+  onSendList?: () => void;
   onEdit?: () => void;
   /** The authoring page, read-only: the template cannot be edited here. */
   onView?: () => void;
@@ -468,6 +477,7 @@ function TemplateRowActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-40">
           {onSend ? <DropdownMenuItem onClick={onSend}>Send test</DropdownMenuItem> : null}
+          {onSendList ? <DropdownMenuItem onClick={onSendList}>Send to a list</DropdownMenuItem> : null}
           {onEdit ? <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem> : null}
           {onView ? <DropdownMenuItem onClick={onView}>View</DropdownMenuItem> : null}
           {onAddLanguage ? <DropdownMenuItem onClick={onAddLanguage}>Add language</DropdownMenuItem> : null}

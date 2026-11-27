@@ -41,6 +41,7 @@ import { languageLabel, mostUsedLanguage, nextFreeLanguage } from "../../lib/tem
 import { afterCreate, movedCategory, refusal, requestFor, submitSerially } from "../../lib/template-submit";
 import { authoringReading, categoryLabel, templateView, type TemplateRecord } from "../../lib/template-view";
 import { DeleteTemplateDialog, type DeleteTarget } from "./delete-template-dialog";
+import { leaveBlocker } from "../../lib/leave-blocker";
 import { DiscardDraftDialog } from "./discard-draft-dialog";
 import { LanguagePanel } from "./language-panel";
 import { SendTestSheet, type SendTestPhone } from "./send-test-sheet";
@@ -74,6 +75,8 @@ export interface TemplateEditorProps {
   add?: boolean;
   /** Selects a tab, replacing `?language=` (and dropping `?add`). */
   onLanguage: (code: string) => void;
+  /** The member may send (`operate`): "Send to a list" is offered only then. */
+  canOperate?: boolean;
 }
 
 const STATE_INK: Record<TabState, string> = {
@@ -85,19 +88,7 @@ const STATE_INK: Record<TabState, string> = {
   "EDIT REFUSED": "text-destructive-foreground",
 };
 
-/**
- * The router blocker for a page holding unsent work: the browser's leave-page
- * warning, and a block on in-app navigation to another path. A change of
- * `?language=` is a tab switch on the same page, never a departure.
- */
-export function leaveBlocker(guarded: boolean) {
-  return {
-    shouldBlockFn: ({ current, next }: { current: { pathname: string }; next: { pathname: string } }) =>
-      guarded && current.pathname !== next.pathname,
-    enableBeforeUnload: guarded,
-    withResolver: true as const,
-  };
-}
+export { leaveBlocker };
 
 function initialState({ mode, rows, name, language, from, add }: TemplateEditorProps): AuthoringState {
   const start = (category: TemplateCategory, languages: Record<string, LanguageState>, ownName = "") => ({
@@ -374,6 +365,11 @@ export function TemplateEditor(props: TemplateEditorProps) {
                             ? () => setTesting(active.row)
                             : undefined
                         }
+                        onSendList={
+                          props.canOperate && active.row && phones.length > 0 && canSendTemplate(active.row.status)
+                            ? () => navigate({ to: "/broadcasts/new", search: { wabaId: wabaParam, template: name, language: active.language } })
+                            : undefined
+                        }
                         onDelete={
                           active.row?.id && active.row.status?.toUpperCase() !== "PENDING_DELETION"
                             ? () =>
@@ -561,9 +557,9 @@ function CategoryField({
 }
 
 /** The page's own shape while the template list loads. */
-export function TemplateEditorPending({ title }: { title: string }) {
+export function TemplateEditorPending({ title, kicker = "Cloud API" }: { title: string; kicker?: string }) {
   return (
-    <Page title={title} kicker="Cloud API">
+    <Page title={title} kicker={kicker}>
       <div className={SPLIT_GRID} aria-busy="true">
         <div className={`flex flex-col gap-6 ${SPLIT_MAIN}`}>
           <Skeleton className="h-24" />

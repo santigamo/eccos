@@ -1,0 +1,529 @@
+import { type ReactNode, useMemo, useRef, useState } from "react";
+import { Link, useBlocker, useNavigate, useRouter } from "@tanstack/react-router";
+import { ChevronLeftIcon } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
+import { analyzeTemplate } from "@eccos/core/template-rules";
+import type { BroadcastPreflight } from "@eccos/gateway-contract";
+import {
+  type BroadcastPayload,
+  broadcastPayload,
+  broadcastTemplates,
+  composeNote,
+  payloadBytes,
+  templateId,
+} from "../../lib/broadcast-draft";
+import { type BroadcastFailureCopy, broadcastFailureCopy, NO_ANSWER } from "../../lib/broadcast-failure";
+import { downloadCsv } from "../../lib/download-csv";
+import { failureCopy } from "../../lib/failure";
+import { invalidateRoutes } from "../../lib/invalidate";
+import { leaveBlocker } from "../../lib/leave-blocker";
+import { MAX_LIST_ROWS, type ListTable } from "../../lib/list-file";
+import type { CountryCode } from "../../lib/phone-number";
+import {
+  autoMapping,
+  checkList,
+  type ListCheck,
+  type Mapping,
+  type Slot,
+  exampleCsv,
+  skippedCsv,
+  slotsOf,
+} from "../../lib/recipient-list";
+import { runSend, type SendGate } from "../../lib/send-gate";
+import { templateView, type TemplateRecord } from "../../lib/template-view";
+import { createBroadcast } from "../../server/gateway";
+import { COUNT_LINK, fmtCount, Page, SPLIT_GRID, SPLIT_MAIN } from "../../ui";
+import { SectionHeading, SUPPORT_TIER } from "../dashboard/plain-table";
+import { SectionFrame } from "../dashboard/settings-section";
+import { DiscardDraftDialog } from "../templates/discard-draft-dialog";
+import { SendTestSheet, type SendTestPhone } from "../templates/send-test-sheet";
+import { BroadcastReview } from "./broadcast-review";
+import { ColumnMapping } from "./column-mapping";
+import { ComposeMessage } from "./compose-message";
+import { ListInput } from "./list-input";
+import { RecipientTable } from "./recipient-table";
+import { RowPreview, rowValues } from "./row-preview";
+
+/** What a review froze: the exact payload, its idempotency key, and the check it came from. */
+interface Frozen {
+  payload: BroadcastPayload;
+  json: string;
+  key: string;
+  check: ListCheck;
+}
+
+interface Failure {
+  copy: BroadcastFailureCopy;
+  /** Rows the gateway refused, as "# 118 · reason". */
+  rows?: string[];
+}
+
+const HTTPS_LINK = /^https:\/\/\S+$/;
+const slug = (text: string) => text.replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "-") || "list";
+
+/**
+ * `/broadcasts/new`: compose (template, list, mapping, row checks) and review
+ * (`?step=review`) on one page. The list lives in this component's memory only;
+ * entering review freezes one payload and mints its idempotency key.
+ */
+export function NewBroadcast({
+  wabaId,
+  wabaParam,
+  templates,
+  preflight,
+  phones,
+  country,
+  blocked,
+  initialTemplate,
+  reviewing: wantsReview,
+  onStep,
+}: {
+  wabaId: string;
+  wabaParam?: string;
+  templates: TemplateRecord[];
+  preflight: BroadcastPreflight;
+  phones: SendTestPhone[];
+  country: CountryCode | null;
+  /** Why no broadcast can start now (billing), or null. */
+  blocked: string | null;
+  initialTemplate?: string;
+  reviewing: boolean;
+  onStep: (review: boolean) => void;
+}) {
+  const router = useRouter();
+  const navigate = useNavigate();
+  const { ready } = useMemo(() => broadcastTemplates(templates), [templates]);
+  const [templateKey, setTemplateKey] = useState(() =>
+    ready.some((row) => templateId(row) === initialTemplate) ? (initialTemplate ?? null) : null,
+  );
+  const [phoneNumberId, setPhoneNumberId] = useState(phones[0]?.phoneNumberId ?? "");
+  const [label, setLabel] = useState("");
+  const [headerLink, setHeaderLink] = useState("");
+  const [table, setTable] = useState<ListTable | null>(null);
+  const [mapping, setMapping] = useState<Mapping | null>(null);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const [frozen, setFrozen] = useState<Frozen | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const gate = useRef<SendGate>({ phase: "idle" });
+
+  const template = ready.find((row) => templateId(row) === templateKey) ?? null;
+  const sendability = template ? analyzeTemplate(template) : null;
+  const vars = sendability?.kind === "ready" ? sendability : null;
+  const slots: Slot[] = useMemo(() => (vars ? slotsOf(vars) : []), [vars]);
+  const view = template ? templateView(template) : null;
+  const check = useMemo(() => (table && mapping ? checkList(table, mapping, slots) : null), [table, mapping, slots]);
+  const sender = phones.find((phone) => phone.phoneNumberId === phoneNumberId);
+  const senderLabel = sender?.displayPhoneNumber || phoneNumberId;
+  const businessName = senderLabel || "Your business";
+  const link = headerLink.trim();
+  const headerMedia = vars?.headerMedia ?? null;
+  const dataRowCount = table && mapping ? table.rows.length - (mapping.header ? 1 : 0) : 0;
+
+  const payload = useMemo(
+    () =>
+      template && check && mapping
+        ? broadcastPayload({
+            wabaId,
+            phoneNumberId,
+            templateName: template.name ?? "",
+            languageCode: template.language ?? "",
+            label,
+            slots,
+            mapping,
+            check,
+            headerMedia: headerMedia ? { format: headerMedia, link } : null,
+          })
+        : null,
+    [template, check, mapping, wabaId, phoneNumberId, label, slots, headerMedia, link],
+  );
+  const bytes = useMemo(() => (payload ? payloadBytes(payload) : 0), [payload]);
+  const compose = composeNote({
+    blocked,
+    hasTemplate: template !== null,
+    hasList: table !== null,
+    tooManyRows: dataRowCount > MAX_LIST_ROWS ? dataRowCount : null,
+    phoneMapped: mapping?.phone != null,
+    unmapped: slots.find((slot) => {
+      const source = mapping?.sources[slot.id];
+      return !source || ("fixed" in source && !source.fixed.trim());
+    }) ?? null,
+    headerMissing: headerMedia && !HTTPS_LINK.test(link) ? headerMedia : null,
+    sendable: check?.counts.send ?? 0,
+    total: check?.rows.length ?? 0,
+    bytes,
+    pacePerMinute: preflight.pacePerMinute,
+  });
+
+  const dirty = table !== null || label.trim() !== "";
+  const leave = useBlocker(leaveBlocker(dirty));
+  const review = wantsReview && frozen !== null;
+
+  function chooseTemplate(id: string) {
+    setTemplateKey(id);
+    setHeaderLink("");
+    const row = ready.find((entry) => templateId(entry) === id);
+    const next = row ? analyzeTemplate(row) : null;
+    if (table && next?.kind === "ready") setMapping(autoMapping(table, slotsOf(next), mapping?.country ?? country));
+  }
+
+  function takeList(list: ListTable) {
+    setTable(list);
+    setMapping(autoMapping(list, slots, country));
+    setPreviewIndex(0);
+  }
+
+  function downloadSkipped(of: ListCheck) {
+    if (table && mapping) downloadCsv(`${slug(table.name ?? "list")}-skipped.csv`, skippedCsv(table, mapping, of));
+  }
+
+  function enterReview() {
+    if (compose.blocker || !payload || !check) return;
+    const json = JSON.stringify(payload);
+    // The same payload keeps its key: a review left and re-entered unchanged cannot send twice.
+    setFrozen((prev) => ({ payload, json, check, key: prev?.json === json ? prev.key : crypto.randomUUID() }));
+    setConsent(false);
+    setFailure(null);
+    setReviewIndex(0);
+    onStep(true);
+    window.scrollTo({ top: 0 });
+  }
+
+  async function send() {
+    if (!frozen) return;
+    await runSend(gate.current, async () => {
+      setSubmitting(true);
+      setFailure(null);
+      try {
+        const result = await createBroadcast({ data: { ...frozen.payload, idempotencyKey: frozen.key } });
+        if (!result.ok) {
+          const copy = failureCopy(result);
+          setFailure({ copy: { title: copy.title, detail: copy.detail, actions: [] } });
+          return false;
+        }
+        const answer = result.data;
+        if (answer.ok) {
+          toast(`Broadcast started · ${fmtCount(answer.broadcast.total)} recipients`);
+          await invalidateRoutes(router, "/broadcasts");
+          navigate({
+            to: "/broadcasts/$broadcastId",
+            params: { broadcastId: answer.broadcast.id },
+            search: wabaParam ? { wabaId: wabaParam } : {},
+            ignoreBlocker: true,
+          });
+          return true;
+        }
+        if (answer.code === "key_reused") setFrozen({ ...frozen, key: crypto.randomUUID() });
+        const sent = frozen.check.rows.filter((row) => row.state === "send");
+        setFailure({
+          copy: broadcastFailureCopy(answer, {
+            template: `${frozen.payload.templateName} (${frozen.payload.languageCode})`,
+            sender: senderLabel,
+          }),
+          rows: answer.invalid?.map((entry) => `# ${sent[entry.index]?.row ?? entry.index + 1} · ${entry.error}`),
+        });
+        return false;
+      } catch {
+        setFailure({ copy: NO_ANSWER });
+        return false;
+      } finally {
+        setSubmitting(false);
+      }
+    });
+  }
+
+  const reviewRows = frozen?.check.rows.filter((row) => row.state === "send") ?? [];
+  const testRow = reviewRows[reviewIndex];
+  const marketing = template?.category?.toUpperCase() === "MARKETING";
+  const reviewNote = blocked ?? (marketing && !consent ? "Tick the consent box to send." : "");
+  const listSearch = wabaParam ? { wabaId: wabaParam } : {};
+  const back = review ? (
+    <button
+      type="button"
+      onClick={() => onStep(false)}
+      className={`inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground ${COUNT_LINK}`}
+    >
+      <ChevronLeftIcon aria-hidden="true" className="size-4" />
+      Edit
+    </button>
+  ) : (
+    <Link to="/broadcasts" search={listSearch} className={`inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground ${COUNT_LINK}`}>
+      <ChevronLeftIcon aria-hidden="true" className="size-4" />
+      Broadcasts
+    </Link>
+  );
+
+  return (
+    <Page title={review ? "Review broadcast" : "New broadcast"} kicker="Sending" actions={back}>
+      {review && frozen && template ? (
+        <div className={SPLIT_GRID}>
+          <div className={`flex flex-col gap-8 ${SPLIT_MAIN}`}>
+            <BroadcastReview
+              check={frozen.check}
+              pacePerMinute={preflight.pacePerMinute}
+              label={frozen.payload.label ?? ""}
+              templateName={frozen.payload.templateName}
+              language={frozen.payload.languageCode}
+              category={template.category}
+              sender={senderLabel}
+              consent={marketing ? consent : null}
+              onConsent={setConsent}
+              onDownload={() => downloadSkipped(frozen.check)}
+            />
+            <output aria-live="polite" aria-atomic="true">
+              {failure ? <FailureNote failure={failure} template={template} wabaParam={wabaParam} onEdit={() => onStep(false)} onRetry={send} onReload={() => {
+                void router.invalidate();
+                onStep(false);
+              }} /> : null}
+            </output>
+            <ActionBar note={reviewNote}>
+              <Button type="button" variant="outline" disabled={submitting || !testRow} onClick={() => setTesting(true)}>
+                Send a test first
+              </Button>
+              <Button type="button" aria-busy={submitting} disabled={Boolean(blocked) || (marketing && !consent) || submitting} onClick={send}>
+                {submitting ? "Starting…" : `Send to ${fmtCount(frozen.payload.recipients.length)} recipients`}
+              </Button>
+            </ActionBar>
+          </div>
+          <aside className="flex flex-col gap-6 lg:sticky lg:top-4" aria-label="Preview">
+            <RowPreview
+              noun="Recipient"
+              rows={reviewRows}
+              index={reviewIndex}
+              onIndex={setReviewIndex}
+              slots={slots}
+              view={view}
+              businessName={businessName}
+              headerImageUrl={headerMedia === "image" && HTTPS_LINK.test(link) ? link : null}
+            />
+          </aside>
+        </div>
+      ) : (
+        <div className={SPLIT_GRID}>
+          <div className={`flex flex-col gap-8 ${SPLIT_MAIN}`}>
+            <section aria-labelledby="broadcast-message-title" className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <SectionHeading id="broadcast-message-title" title="Message" />
+                <p className={`m-0 ${SUPPORT_TIER}`}>One approved template, sent to everyone on the list.</p>
+              </div>
+              <SectionFrame flush>
+                <ComposeMessage
+                  wabaId={wabaParam}
+                  rows={templates}
+                  template={template}
+                  onTemplate={chooseTemplate}
+                  phones={phones}
+                  phoneNumberId={phoneNumberId}
+                  onPhone={setPhoneNumberId}
+                  label={label}
+                  onLabel={setLabel}
+                  headerMedia={headerMedia}
+                  headerLink={headerLink}
+                  onHeaderLink={setHeaderLink}
+                />
+              </SectionFrame>
+            </section>
+
+            <section aria-labelledby="broadcast-recipients-title" className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <SectionHeading id="broadcast-recipients-title" title="Recipients" />
+                <p className={`m-0 ${SUPPORT_TIER}`}>One row per person. Up to {fmtCount(MAX_LIST_ROWS)} rows.</p>
+              </div>
+              <SectionFrame flush>
+                {table && mapping && check ? (
+                  <ColumnMapping
+                    table={table}
+                    slots={slots}
+                    mapping={mapping}
+                    check={check}
+                    onMapping={setMapping}
+                    onReplace={() => {
+                      setTable(null);
+                      setMapping(null);
+                    }}
+                  />
+                ) : (
+                  <ListInput
+                    onList={takeList}
+                    onExample={template ? () => downloadCsv(`${template.name}-example.csv`, exampleCsv(slots)) : undefined}
+                  />
+                )}
+              </SectionFrame>
+              {check && check.rows.length > 0 ? (
+                <RecipientTable
+                  slots={slots}
+                  check={check}
+                  previewRow={check.rows[previewIndex]?.row ?? null}
+                  onPreview={(row) => setPreviewIndex(row - 1)}
+                  onDownload={() => downloadSkipped(check)}
+                />
+              ) : null}
+            </section>
+
+            <ActionBar
+              note={
+                compose.blocker ? (
+                  compose.note
+                ) : (
+                  <>
+                    <span className="text-foreground">{compose.note}</span>
+                    <br />
+                    Nothing is sent until you confirm on the next step.
+                  </>
+                )
+              }
+            >
+              <Button type="button" variant="outline" onClick={() => navigate({ to: "/broadcasts", search: listSearch })}>
+                Cancel
+              </Button>
+              <Button type="button" disabled={Boolean(compose.blocker)} onClick={enterReview}>
+                Review broadcast
+              </Button>
+            </ActionBar>
+          </div>
+          <aside className="flex flex-col gap-6 lg:sticky lg:top-4" aria-label="Preview">
+            <RowPreview
+              noun="Row"
+              rows={check?.rows ?? []}
+              index={previewIndex}
+              onIndex={setPreviewIndex}
+              slots={slots}
+              view={view}
+              businessName={businessName}
+              headerImageUrl={headerMedia === "image" && HTTPS_LINK.test(link) ? link : null}
+            />
+          </aside>
+        </div>
+      )}
+
+      {leave.status === "blocked" ? (
+        <DiscardDraftDialog
+          submitting={submitting}
+          editing={false}
+          onKeep={leave.reset}
+          onDiscard={leave.proceed}
+          copy={{
+            title: "Discard this broadcast?",
+            description: submitting
+              ? "This broadcast is still being started. Leaving now abandons Eccos' answer; it may already be running."
+              : "Nothing has been sent. The list is not saved anywhere.",
+          }}
+        />
+      ) : null}
+
+      {testing && template && sendability && testRow ? (
+        <SendTestSheet
+          open
+          onOpenChange={(open) => {
+            if (!open) setTesting(false);
+          }}
+          wabaId={wabaId}
+          templateName={template.name ?? ""}
+          languageCode={template.language ?? ""}
+          status={template.status}
+          sendability={sendability}
+          phones={phones}
+          initialPhoneNumberId={phoneNumberId}
+          view={view}
+          initial={{
+            params: rowValues(slots, testRow),
+            buttons: slots.flatMap((slot, i) => (slot.kind === "button" ? [testRow.values[i] ?? ""] : [])),
+            headerLink: link,
+          }}
+        />
+      ) : null}
+    </Page>
+  );
+}
+
+/** The sticky bar under the fields: why the primary waits, or what it will do, beside it. */
+function ActionBar({ note, children }: { note: ReactNode; children: ReactNode }) {
+  return (
+    <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-4 border-t border-(--line) bg-background py-4">
+      <p className="m-0 min-w-0 flex-1 text-sm text-pretty text-muted-foreground">{note}</p>
+      <div className="flex shrink-0 items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+function FailureNote({
+  failure,
+  template,
+  wabaParam,
+  onEdit,
+  onRetry,
+  onReload,
+}: {
+  failure: Failure;
+  template: TemplateRecord;
+  wabaParam?: string;
+  onEdit: () => void;
+  onRetry: () => void;
+  onReload: () => void;
+}) {
+  const { copy, rows } = failure;
+  const action = "text-sm text-foreground underline underline-offset-4";
+  return (
+    <Callout tone="error">
+      <p className="m-0">{copy.title}</p>
+      {copy.detail ? <p className="m-0 mt-1 font-mono text-xs break-words text-muted-foreground">{copy.detail}</p> : null}
+      {rows && rows.length > 0 ? (
+        <ul className="m-0 mt-1 list-none p-0 font-mono text-xs text-muted-foreground">
+          {rows.slice(0, 10).map((row) => (
+            <li key={row}>{row}</li>
+          ))}
+        </ul>
+      ) : null}
+      {copy.actions.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-4">
+          {copy.actions.map((kind) => {
+            switch (kind) {
+              case "edit":
+                return (
+                  <button key={kind} type="button" className={action} onClick={onEdit}>
+                    Back to edit
+                  </button>
+                );
+              case "retry":
+                return (
+                  <button key={kind} type="button" className={action} onClick={onRetry}>
+                    Try again
+                  </button>
+                );
+              case "reload":
+                return (
+                  <button key={kind} type="button" className={action} onClick={onReload}>
+                    Reload the template
+                  </button>
+                );
+              case "broadcasts":
+                return (
+                  <Link key={kind} to="/broadcasts" search={wabaParam ? { wabaId: wabaParam } : {}} target="_blank" className={action}>
+                    View broadcasts ↗
+                  </Link>
+                );
+              case "template":
+                return (
+                  <Link
+                    key={kind}
+                    to="/templates/$name"
+                    params={{ name: template.name ?? "" }}
+                    search={{ wabaId: wabaParam, language: template.language }}
+                    target="_blank"
+                    className={action}
+                  >
+                    Open template ↗
+                  </Link>
+                );
+            }
+          })}
+        </div>
+      ) : null}
+    </Callout>
+  );
+}

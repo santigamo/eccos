@@ -55,6 +55,8 @@ interface SendTestFormProps {
   prefillExamples?: boolean;
   /** Schedule the composed message instead of sending it now. */
   schedule?: ScheduleSlot;
+  /** Values to start from, such as a broadcast's previewed row: body values by key, button fills in slot order, the header link. */
+  initial?: { params?: Record<string, string>; buttons?: string[]; headerLink?: string };
 }
 
 export type SendTestPayload = ReturnType<typeof assembleSendTestPayload>;
@@ -170,6 +172,7 @@ export function SendTestForm({
   view,
   prefillExamples = false,
   schedule,
+  initial,
 }: SendTestFormProps) {
   const variables = sendability.kind === "ready" ? sendability.body : [];
   const examples = () =>
@@ -177,17 +180,17 @@ export function SendTestForm({
   const [phoneNumberId, setPhoneNumberId] = useState(initialPhoneNumberId ?? phones[0]?.phoneNumberId ?? "");
   const [typedRecipient, setTypedRecipient] = useState("");
   const recipient = fixedRecipient ?? typedRecipient;
-  const [params, setParams] = useState<Record<string, string>>(examples);
+  const [params, setParams] = useState<Record<string, string>>(() => ({ ...examples(), ...initial?.params }));
   const buttonSlots = sendability.kind === "ready" ? sendability.buttons : [];
   const [buttonParams, setButtonParams] = useState<ButtonUrlParam[]>(() =>
-    buttonSlots.map((slot) => ({
+    buttonSlots.map((slot, i) => ({
       index: slot.index,
-      text: "",
+      text: initial?.buttons?.[i] ?? "",
       ...(slot.parameterName ? { parameterName: slot.parameterName } : {}),
     })),
   );
   const headerMedia = sendability.kind === "ready" ? sendability.headerMedia : null;
-  const [headerLink, setHeaderLink] = useState("");
+  const [headerLink, setHeaderLink] = useState(initial?.headerLink ?? "");
   const gate = useRef<SendGate>({ phase: "idle" });
   const [phase, setPhase] = useState<SendPhase>("idle");
   const [notice, setNotice] = useState<Notice | null>(null);
