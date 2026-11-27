@@ -36,6 +36,7 @@
     "test:workers:mcp": "cd apps/mcp && vitest run",
     "test:all": "bun run test && bun run test:workers",
     "lint": "biome lint .",
+    "ops:billing": "node scripts/ops-billing.ts",
     "check": "bun run lint && bun run typecheck && bun run test && bun run test:workers && bun run check:site && bun run check:docs && bun run check:dashboard",
     "check:dashboard": "bun run typecheck:dashboard && bun run test:dashboard && bun run build:dashboard",
     "typecheck:dashboard": "cd apps/dashboard && bun run typecheck",
