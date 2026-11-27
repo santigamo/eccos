@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EccosGateway, backoffMs, withJitter } from "../../src/gateway";
 import { getControlPlaneStub } from "../../src/control-plane-stub";
 import { signPayload } from "@eccos/core/signature";
+import type { WhatsAppCallbackEvent } from "@eccos/core/types";
+import { EVENTS_PAGE_DEFAULT, EVENTS_PAGE_MAX } from "../../src/events-query";
 import { codeSpans, fences, jsonFences, quoted, tableRows } from "../docs-md";
 import authMd from "../../../docs/src/content/docs/authentication.md?raw";
 import dataMd from "../../../docs/src/content/docs/data-endpoints.md?raw";
@@ -56,6 +58,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete (env as { SEND_RATE_LIMITER?: RateLimit }).SEND_RATE_LIMITER;
+  delete (env as { READ_RATE_LIMITER?: RateLimit }).READ_RATE_LIMITER;
   vi.restoreAllMocks();
   await reset();
 });
@@ -852,11 +855,9 @@ describe("webhooks.md", () => {
 // --- data-endpoints.md -----------------------------------------------------------
 
 describe("data-endpoints.md", () => {
-  const [erasureExample] = jsonFences(dataMd) as Array<{
-    ok: true;
-    phone: string;
-    counts: Record<string, number>;
-  }>;
+  const erasureExample = jsonFences(dataMd).find((f) => "counts" in f) as
+    | { ok: true; phone: string; counts: Record<string, number> }
+    | undefined;
   const erasePath = `/v1/wabas/${TEST_WABA_ID}/privacy/erasure`;
 
   it("GET /health needs no authentication and returns { ok: true, ... }", async () => {
@@ -908,7 +909,9 @@ describe("data-endpoints.md", () => {
   });
 
   it("erasure errors: 400 for a missing or invalid phone, 404 for an unknown WABA, 503 when it did not finish", async () => {
-    const errors = dataMd.match(/Errors: (.*)$/s)![1]!;
+    const errors = dataMd
+      .slice(dataMd.indexOf("**Erasure**"))
+      .match(/Errors: (.*)$/s)![1]!;
     const documented = Object.fromEntries(
       [...errors.matchAll(/`(\d{3})`/g)].map((m) => [m[1], true]),
     );
@@ -937,5 +940,77 @@ describe("data-endpoints.md", () => {
       (await call({ path: erasePath, body: { phone: "34600000000" } })).status,
       "repeating the same request works",
     ).toBe(200);
+  });
+});
+
+describe("data-endpoints.md events", () => {
+  const section = dataMd.slice(
+    dataMd.indexOf("## Events"),
+    dataMd.indexOf("## Data endpoints"),
+  );
+  const [example] = jsonFences(section) as Array<{
+    events: Array<{ event: WhatsAppCallbackEvent }>;
+  }>;
+  const params = tableRows(section, "| Parameter");
+  const events = (query = "", wabaId = TEST_WABA_ID) =>
+    call({ path: `/v1/wabas/${wabaId}/events${query}`, method: "GET" });
+
+  it("is where webhooks.md sends readers to catch up", () => {
+    expect(webhooksMd).toContain("(/data-endpoints#events)");
+    expect(section.startsWith("## Events\n")).toBe(true);
+  });
+
+  it("answers the documented shape", async () => {
+    await gatewayStub().ingest([example!.events[0]!.event]);
+    const res = await events();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as typeof example & { next: unknown };
+    expect(Object.keys(body).sort()).toEqual(Object.keys(example!).sort());
+    expect(Object.keys(body.events[0]!).sort()).toEqual(
+      Object.keys(example!.events[0]!).sort(),
+    );
+    expect(body.events[0]!.event).toEqual(example!.events[0]!.event);
+    expect(body.next).toBeNull();
+  });
+
+  it("accepts every documented parameter, with the documented page sizes", async () => {
+    const values: Record<string, string> = {
+      after: "0",
+      since: "0",
+      type: "reply",
+      limit: "1",
+    };
+    expect(params.map(([cell]) => codeSpans(cell!)[0])).toEqual(
+      Object.keys(values),
+    );
+    for (const [name, value] of Object.entries(values))
+      expect((await events(`?${name}=${value}`)).status, name).toBe(200);
+    const limitRow = params.find(([cell]) => cell === "`limit`")![1]!;
+    const [, byDefault, max] = limitRow.match(
+      /(\d+) by default, at most (\d+)/,
+    )!;
+    expect([Number(byDefault), Number(max)]).toEqual([
+      EVENTS_PAGE_DEFAULT,
+      EVENTS_PAGE_MAX,
+    ]);
+  });
+
+  it("errors: 400 for an invalid parameter, 404 for an unknown WABA, 429 with the documented body", async () => {
+    const errors = section.match(/Errors: (.*)$/s)![1]!;
+    expect([...errors.matchAll(/`(\d{3})`/g)].map((m) => m[1])).toEqual([
+      "400",
+      "404",
+      "429",
+    ]);
+    expect((await events("?limit=many")).status).toBe(400);
+    expect((await events("", "WABA_FOREIGN")).status).toBe(404);
+    (env as { READ_RATE_LIMITER?: RateLimit }).READ_RATE_LIMITER = {
+      limit: async () => ({ success: false }),
+    };
+    const limited = await events();
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual(
+      JSON.parse(errors.match(/`(\{"ok":false[^`]*\})`/)![1]!),
+    );
   });
 });

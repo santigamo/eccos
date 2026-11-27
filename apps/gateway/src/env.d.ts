@@ -26,6 +26,8 @@ interface Env {
   SEND_RATE_LIMITER?: RateLimit;
   SEND_RATE_LIMITER_HIGH?: RateLimit;
   HIGH_THROUGHPUT_ACCOUNTS?: string;
+  /** Limits `GET /v1/wabas/:wabaId/events` per account and WABA; unbound means no limit. */
+  READ_RATE_LIMITER?: RateLimit;
   /**
    * Optional Durable Object jurisdiction ("eu", "fedramp", "fedramp-high").
    * Empty/absent = no jurisdiction (current behavior). Validated in
