@@ -4,7 +4,7 @@ import {
   getCountryCallingCode,
   parsePhoneNumberFromString,
   validatePhoneNumberLength,
-} from "libphonenumber-js/min";
+} from "libphonenumber-js/max";
 import { isBsuid } from "@eccos/core/bsuid";
 
 export type { CountryCode };

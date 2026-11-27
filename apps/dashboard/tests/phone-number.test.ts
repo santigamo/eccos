@@ -60,6 +60,16 @@ describe("readPhone", () => {
     expect(readPhone("015123456789", "DE")).toMatchObject({ ok: true, digits: "4915123456789", national: true });
   });
 
+  test("valid means the country's digit patterns, not just its lengths", () => {
+    // Right length, but no Spanish or Singaporean number starts like this.
+    expect(readPhone("751 111 111", "ES")).toEqual({ ok: false, reason: "no_code" });
+    expect(readPhone("34751111111", "ES")).toEqual({ ok: false, reason: "no_code" });
+    expect(readPhone("3011 1111", "SG")).toEqual({ ok: false, reason: "no_code" });
+    expect(readPhone("6530111111", "SG")).toEqual({ ok: false, reason: "no_code" });
+    // A German mobile without its 0 is not ambiguous: +1 784 444 4444 is no Saint Vincent number.
+    expect(readPhone("17844444444", "DE")).toMatchObject({ ok: true, digits: "4917844444444", national: true });
+  });
+
   test("invisible direction marks around a number are dropped", () => {
     expect(readPhone("\u200E+34 600 111 222\u2069", "ES")).toMatchObject({ ok: true, digits: "34600111222" });
     expect(readPhone("\u202E600111222", "ES")).toMatchObject({ ok: true, digits: "34600111222" });
