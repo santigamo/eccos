@@ -5,13 +5,15 @@
 
 import {
   blankDraft,
+  exampleValueOf,
+  exampleValues,
   isDraftDirty,
   languageBlocker,
   type LanguageDraft,
   type TemplateCategory,
 } from "./template-draft";
 import { languageLabel } from "./template-languages";
-import { authoringReading, canEditStatus, templateView, type TemplateRecord } from "./template-view";
+import { authoringReading, canEditStatus, templateView, type TemplateRecord, type TemplateView } from "./template-view";
 
 /** A refusal in the console's words, with Meta's own sentence when it explains. */
 export interface Notice {
@@ -89,13 +91,6 @@ export function groupCategory(rows: TemplateRecord[]): TemplateCategory {
   return marketing > utility ? "MARKETING" : "UTILITY";
 }
 
-/** A template the form cannot hold, as text to read: what Meta stores, never sent back. */
-function shownDraft(row: TemplateRecord, language: string): LanguageDraft {
-  const view = templateView(row);
-  if (!view) return blankDraft(language);
-  return { ...blankDraft(language), body: view.body, footer: view.footer };
-}
-
 export function buildTabs({ rows, languages, category, initialCategory }: GroupInput): LanguageTab[] {
   const tabs: LanguageTab[] = [];
   const seen = new Set<string>();
@@ -108,7 +103,7 @@ export function buildTabs({ rows, languages, category, initialCategory }: GroupI
     const status = own.sent ? "PENDING" : (row.status?.toUpperCase() ?? null);
     const reading = authoringReading(row);
     const initial = reading.ok ? withoutShared(reading.draft) : null;
-    const draft = own.draft ?? own.sent ?? initial ?? shownDraft(row, language);
+    const draft = own.draft ?? own.sent ?? initial ?? blankDraft(language);
     const readOnly =
       status === "PENDING"
         ? pendingLine(language)
@@ -232,4 +227,55 @@ export function barNote(mode: AuthoringMode, sending: LanguageTab[], created: st
   }
   if (mode === "create" || sending.length === 0) return null;
   return `${listLanguages(sending.map((tab) => tab.language))} ${sending.length > 1 ? "have" : "has"} unsent changes.`;
+}
+
+/** What Meta stores for a language the form cannot hold; `null` when the draft says it all. */
+export function storedView(tab: LanguageTab): TemplateView | null {
+  return tab.row && !authoringReading(tab.row).ok ? templateView(tab.row) : null;
+}
+
+export interface ReadOnlyContent {
+  header: string | null;
+  body: string;
+  /** Placeholder (`{{1}}`, `{{customer_name}}`) and the example Meta reviewed. */
+  examples: [string, string][];
+  footer: string;
+  buttons: { text: string; target: string; example: string }[];
+}
+
+const BUTTON_KIND_LABEL: Record<string, string> = {
+  quick_reply: "Quick reply",
+  copy_code: "Copy code",
+  otp: "One-time password",
+  flow: "Flow",
+};
+
+/** A language that cannot be edited, laid out as the form would show it. */
+export function readOnlyContent(tab: LanguageTab): ReadOnlyContent {
+  const view = storedView(tab);
+  if (!view) {
+    return {
+      header: null,
+      body: tab.draft.body,
+      examples: exampleValues(tab.draft).map((value, index) => [`{{${index + 1}}}`, value]),
+      footer: tab.draft.footer,
+      buttons: tab.draft.buttons.map((button) => ({ text: button.text, target: button.url, example: button.example })),
+    };
+  }
+  const header = view.header
+    ? view.header.format === "TEXT"
+      ? view.header.text
+      : `${view.header.format.charAt(0)}${view.header.format.slice(1).toLowerCase()} header`
+    : null;
+  return {
+    header,
+    body: view.body,
+    examples: Object.entries(view.bodyExamples).map(([key, value]) => [`{{${key}}}`, value]),
+    footer: view.footer,
+    buttons: view.buttons.map((button) => ({
+      text: button.text,
+      target: button.url ?? button.phone ?? BUTTON_KIND_LABEL[button.kind] ?? "",
+      example: button.url ? exampleValueOf(button.url, button.exampleUrl ?? "") : "",
+    })),
+  };
 }

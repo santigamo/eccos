@@ -14,6 +14,7 @@ import {
 } from "@eccos/core/template-rules";
 import { MACHINE_CLASS } from "../dashboard/plain-table";
 import { coreButtons, exampleValues, type ButtonDraft, type LanguageDraft } from "../../lib/template-draft";
+import type { ReadOnlyContent } from "../../lib/template-group";
 import { managerUrl } from "./template-preview-sheet";
 
 const LABEL = `mb-1 block ${MACHINE_CLASS}`;
@@ -223,12 +224,64 @@ export function LanguageFields({
   );
 }
 
-/** A language the console cannot edit right now: its body as text. The preview draws the rest. */
-export function LanguageReadOnly({ draft }: { draft: LanguageDraft }) {
+/** A field's value as the form would hold it, greyed and not editable. */
+function Shown({ label, value, tall = false }: { label?: string; value: string; tall?: boolean }) {
   return (
-    <div>
-      <p className={LABEL}>Body</p>
-      <p className="m-0 text-sm text-pretty whitespace-pre-wrap break-words text-foreground">{draft.body || "—"}</p>
+    <div className="min-w-0">
+      {label ? <p className={LABEL}>{label}</p> : null}
+      <p
+        className={`m-0 border border-(--line) bg-muted px-3 py-2 text-sm text-pretty whitespace-pre-wrap break-words text-foreground ${tall ? "min-h-16" : ""}`}
+      >
+        {value || "—"}
+      </p>
+    </div>
+  );
+}
+
+/** A language the console cannot edit right now, laid out as the form would show it. */
+export function LanguageReadOnly({ content }: { content: ReadOnlyContent }) {
+  return (
+    <div className="flex flex-col gap-6">
+      {content.header ? <Shown label="Header" value={content.header} /> : null}
+      <div>
+        <Shown label="Body" value={content.body} tall />
+        {content.examples.length > 0 ? (
+          <div className="mt-3 flex flex-col gap-3 border-l border-(--line) pl-4">
+            <p className="m-0 text-xs text-muted-foreground">Sample values for Meta's reviewers. Never sent to anyone.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {content.examples.map(([key, value]) => (
+                <Shown key={key} label={`Example ${key}`} value={value} />
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+      {content.footer ? (
+        <div>
+          <Shown label="Footer" value={content.footer} />
+          <p className={HELP}>Static text under the body. No variables.</p>
+        </div>
+      ) : null}
+      {content.buttons.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          <p className={LABEL}>Buttons</p>
+          {content.buttons.map((button, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional by definition
+            <div key={index} className="flex flex-col gap-2">
+              <div className={BUTTON_ROW}>
+                <Shown value={button.text} />
+                <Shown value={button.target} />
+              </div>
+              {button.example ? (
+                <div className={BUTTON_ROW}>
+                  <span className={`justify-self-end ${MACHINE_CLASS}`}>{"Example {{1}}"}</span>
+                  <Shown value={button.example} />
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

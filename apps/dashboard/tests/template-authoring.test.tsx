@@ -57,22 +57,33 @@ function tabs(input: Partial<Input> & { rows: Input["rows"] }) {
 }
 
 describe("a language the form cannot hold", () => {
-  test("still shows the body and footer Meta stores", () => {
+  test("reads as the form would show it, from what Meta stores", () => {
     const [tab] = tabs({
       rows: [
         row("es", "APPROVED", {
           parameter_format: "NAMED",
           components: [
-            { type: "BODY", text: "Hola, {{customer_name}}." },
+            {
+              type: "BODY",
+              text: "Hola, {{customer_name}}.",
+              example: { body_text_named_params: [{ param_name: "customer_name", example: "María" }] },
+            },
             { type: "FOOTER", text: "Equipo" },
+            { type: "BUTTONS", buttons: [{ type: "PHONE_NUMBER", text: "Llamar", phone_number: "+34600000000" }] },
           ],
         }),
       ],
     });
-    expect(tab?.readOnly).toContain("named variables");
-    expect(tab?.draft.body).toBe("Hola, {{customer_name}}.");
-    expect(tab?.draft.footer).toBe("Equipo");
-    expect(tab?.dirty).toBe(false);
+    if (!tab) throw new Error("no tab");
+    expect(tab.readOnly).toContain("named variables");
+    expect(tab.dirty).toBe(false);
+    expect(G.readOnlyContent(tab)).toEqual({
+      header: null,
+      body: "Hola, {{customer_name}}.",
+      examples: [["{{customer_name}}", "María"]],
+      footer: "Equipo",
+      buttons: [{ text: "Llamar", target: "+34600000000", example: "" }],
+    });
   });
 });
 
@@ -105,7 +116,7 @@ describe("the tab's state word", () => {
 
   test("the state is in the tab's accessible name", () => {
     const html = renderEditor({ rows: [row("en_US", "APPROVED"), row("it", "PENDING")], language: "en_US" });
-    expect(html).toContain('aria-label="Italian, it, in review"');
+    expect(html).toContain('aria-label="Italiano, it, in review"');
     expect(html).toContain('aria-label="English (US), en_US"');
     expect(html).toContain(">IN REVIEW<");
   });
@@ -142,14 +153,14 @@ describe("a refused edit is not a refused creation", () => {
     expect(G.barNote("edit", G.submission([tab!]), [])).toBe("Meta refused the changes to English (US).");
     expect(G.primaryLabel("edit", G.submission([tab!]), "en_US")).toBe("Retry English (US)");
     const [draftTab] = tabs({ rows: [], languages: { es: { added: true, draft: ready("es"), error: refused } } });
-    expect(G.refusalLine(draftTab!)).toBe("Meta did not create Spanish.");
+    expect(G.refusalLine(draftTab!)).toBe("Meta did not create Español.");
   });
 });
 
 describe("a language in review", () => {
   test("is read-only, and the page shows no submit bar for it", () => {
     const html = renderEditor({ rows: [row("en_US", "APPROVED"), row("it", "PENDING")], language: "it" });
-    expect(html).toContain("Meta is reviewing Italian, usually for a few minutes.");
+    expect(html).toContain("Meta is reviewing Italiano, usually for a few minutes.");
     expect(html).not.toContain("<textarea");
     expect(html).not.toContain(">Cancel<");
   });
@@ -210,7 +221,7 @@ describe("the category", () => {
     const sending = G.submission(after);
     expect(sending.map((tab) => tab.language)).toEqual(["es"]);
     expect(G.barBlocker("edit", "order_update", sending)).toBeNull();
-    expect(G.primaryLabel("edit", sending, "es")).toBe("Retry Spanish");
+    expect(G.primaryLabel("edit", sending, "es")).toBe("Retry Español");
   });
 });
 
@@ -220,7 +231,7 @@ describe("the primary action", () => {
     expect(G.primaryLabel("create", G.submission(created), "es")).toBe("Create 2 languages");
     expect(G.primaryLabel("create", G.submission(created).slice(0, 1), "es")).toBe("Create template");
     const edited = tabs({ rows: [row("en_US", "APPROVED"), row("es", "APPROVED")], languages: { es: { draft: ready("es") } } });
-    expect(G.primaryLabel("edit", G.submission(edited), "es")).toBe("Submit Spanish for review");
+    expect(G.primaryLabel("edit", G.submission(edited), "es")).toBe("Submit Español for review");
     const both = tabs({
       rows: [row("en_US", "APPROVED"), row("es", "APPROVED")],
       languages: { es: { draft: ready("es") }, en_US: { draft: ready("en_US") } },
@@ -233,7 +244,7 @@ describe("the primary action", () => {
     expect(G.barBlocker("create", "", G.submission(blocked))).toBe("Name the template before it can be created.");
     expect(G.barBlocker("create", "shipping_delay", G.submission(blocked))).toBe("English (US) needs a body before it can be created.");
     const edited = tabs({ rows: [row("es", "APPROVED")], languages: { es: { draft: ready("es") } } });
-    expect(G.barNote("edit", G.submission(edited), [])).toBe("Spanish has unsent changes.");
+    expect(G.barNote("edit", G.submission(edited), [])).toBe("Español has unsent changes.");
   });
 });
 
@@ -314,7 +325,7 @@ describe("serial send", () => {
       ["en_US", "IN REVIEW", true],
       ["es", "NOT CREATED", false],
     ]);
-    expect(G.barNote("edit", G.submission(landed), ["en_US"])).toBe("English (US) was created. Spanish was not.");
+    expect(G.barNote("edit", G.submission(landed), ["en_US"])).toBe("English (US) was created. Español was not.");
   });
 });
 
@@ -362,10 +373,10 @@ describe("the page", () => {
     });
     expect(html).toContain(">New template<");
     expect(html).toContain('id="template-name"');
-    expect(html).toContain('aria-label="Spanish, es, incomplete"');
+    expect(html).toContain('aria-label="Español, es, incomplete"');
     expect(html).toContain(">Create template<");
     expect(html).not.toContain(">Meta review<");
-    expect(html).toContain("Preview · Spanish");
+    expect(html).toContain("Preview · Español");
     expect(html).toMatch(/<output[^>]*aria-live="polite"/);
   });
 
