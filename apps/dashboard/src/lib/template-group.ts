@@ -11,7 +11,7 @@ import {
   type TemplateCategory,
 } from "./template-draft";
 import { languageLabel } from "./template-languages";
-import { authoringReading, canEditStatus, type TemplateRecord } from "./template-view";
+import { authoringReading, canEditStatus, templateView, type TemplateRecord } from "./template-view";
 
 /** A refusal in the console's words, with Meta's own sentence when it explains. */
 export interface Notice {
@@ -89,6 +89,13 @@ export function groupCategory(rows: TemplateRecord[]): TemplateCategory {
   return marketing > utility ? "MARKETING" : "UTILITY";
 }
 
+/** A template the form cannot hold, as text to read: what Meta stores, never sent back. */
+function shownDraft(row: TemplateRecord, language: string): LanguageDraft {
+  const view = templateView(row);
+  if (!view) return blankDraft(language);
+  return { ...blankDraft(language), body: view.body, footer: view.footer };
+}
+
 export function buildTabs({ rows, languages, category, initialCategory }: GroupInput): LanguageTab[] {
   const tabs: LanguageTab[] = [];
   const seen = new Set<string>();
@@ -101,7 +108,7 @@ export function buildTabs({ rows, languages, category, initialCategory }: GroupI
     const status = own.sent ? "PENDING" : (row.status?.toUpperCase() ?? null);
     const reading = authoringReading(row);
     const initial = reading.ok ? withoutShared(reading.draft) : null;
-    const draft = own.draft ?? own.sent ?? initial ?? blankDraft(language);
+    const draft = own.draft ?? own.sent ?? initial ?? shownDraft(row, language);
     const readOnly =
       status === "PENDING"
         ? pendingLine(language)
