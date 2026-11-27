@@ -92,6 +92,46 @@ describe("GatewayRPC.sendTemplateTest", () => {
     });
   });
 
+  it("sends a NAMED template's values with their parameter_name", async () => {
+    const fetchSpy = mockSendOk();
+    const result = await makeRpc().sendTemplateTest(
+      input({ bodyValues: { customer_name: " Ana ", order_id: "A-1" } }),
+      TEST_ACCOUNT_ID,
+    );
+    expect(result).toEqual({ ok: true, messageId: "wamid.SENT" });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.template.components).toEqual([
+      {
+        type: "body",
+        parameters: [
+          { type: "text", parameter_name: "customer_name", text: "Ana" },
+          { type: "text", parameter_name: "order_id", text: "A-1" },
+        ],
+      },
+    ]);
+  });
+
+  it("sends a NAMED dynamic URL button's value with its parameter_name", async () => {
+    const fetchSpy = mockSendOk();
+    await makeRpc().sendTemplateTest(
+      input({
+        bodyValues: { customer_name: "Ana" },
+        buttonParams: [{ index: 0, text: "A-1", parameterName: "order_id" }],
+      }),
+      TEST_ACCOUNT_ID,
+    );
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body));
+    expect(body.template.components).toEqual([
+      { type: "body", parameters: [{ type: "text", parameter_name: "customer_name", text: "Ana" }] },
+      {
+        type: "button",
+        sub_type: "url",
+        index: "0",
+        parameters: [{ type: "text", parameter_name: "order_id", text: "A-1" }],
+      },
+    ]);
+  });
+
   it("omits the components array entirely for a zero-parameter template", async () => {
     // `hello_world` — the App Review screencast template. Meta rejects an empty
     // `components` array, so the body must simply not carry one. The same holds
@@ -333,6 +373,11 @@ describe("GatewayRPC.sendTemplateTest", () => {
       { headerMedia: { format: "image", link: "not a url" } },
       { headerMedia: { format: "image", link: "https:" } },
       { bodyParams: ["a\nb"] },
+      { bodyValues: { "1": "Ana" } },
+      { bodyValues: ["Ana"] },
+      { bodyParams: ["Ana"], bodyValues: { name: "Ana" } },
+      { bodyValues: { name: "Ana", NAME: "Bea" } },
+      { buttonParams: [{ index: 0, text: "A-1", parameterName: "1" }] },
       { templateName: "Hello" },
     ]) {
       const request = input(bad);
