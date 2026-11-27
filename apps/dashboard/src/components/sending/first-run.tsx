@@ -30,7 +30,7 @@ export function FirstRun({
   const [open, setOpen] = useState(false);
   const panelId = useId();
   return (
-    <div className="flex flex-col gap-9">
+    <div className="flex max-w-[80rem] flex-col gap-9">
       <div className={SPLIT_GRID}>
         <div className={`flex flex-col gap-2.5 ${SPLIT_MAIN}`}>
           <p className={`m-0 ${MACHINE_CLASS}`}>{label}</p>
