@@ -289,6 +289,7 @@ const {
   cancelBroadcast,
   listScheduled,
   cancelScheduled,
+  scheduleSend,
 } = await import("../src/server/gateway");
 
 afterEach(() => {
@@ -556,14 +557,17 @@ describe("session bootstrap (auth-aware state)", () => {
     const result = await getDashboardState();
     expect(result).toEqual({
       ok: true,
-      data: { stage: "account-ready", canAdminister: true, role: "owner", resources: {
+      data: { stage: "account-ready", canAdminister: true, canOperate: true, role: "owner", resources: {
         account: { accountId: "account-a", name: "Account A", createdAt: 1 },
         keys: [], wabas: [], phones: [],
       } },
     });
     // A role that may not connect is told so by the state, which is what hides the controls.
     fakeDeniedActions = new Set(["administer", "erase"]);
-    expect(await getDashboardState()).toMatchObject({ ok: true, data: { canAdminister: false, role: "operator" } });
+    expect(await getDashboardState()).toMatchObject({
+      ok: true,
+      data: { canAdminister: false, canOperate: true, role: "operator" },
+    });
   });
 
   test("an account whose only WABA is awaiting a phone number stays inside the app", async () => {
@@ -1440,6 +1444,54 @@ describe("scheduled", () => {
     expect(audit).toContain('"action":"scheduled_cancel"');
     expect(audit).toContain('"resource":{"wabaId":"waba-a","key":"appt-1"}');
     expect(audit).not.toContain('"to"');
+  });
+
+  test("scheduleSend: an operator schedules with the session's account and an audit line without recipient or values", async () => {
+    const calls: unknown[][] = [];
+    withResources({
+      scheduleSend: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: false, code: "key_exists", detail: null, existing: { key: "appt-1", status: "pending" } };
+      },
+    });
+    const input = {
+      wabaId: "waba-a",
+      phoneNumberId: "phone-a",
+      to: "+34 600 111 222",
+      templateName: "reminder",
+      languageCode: "es",
+      bodyValues: { nombre: "Ana" },
+      key: "appt-1",
+      sendAt: 1_800_000_000_000,
+      expiresAt: 1_800_003_600_000,
+      accountId: "evil",
+    };
+    const { res, audit } = await audited(() => scheduleSend({ data: input as never }));
+    expect(res).toMatchObject({ ok: true, data: { ok: false, code: "key_exists" } });
+    const { accountId: _evil, ...sent } = input;
+    expect(calls).toEqual([[{ ...sent, to: "34600111222" }, "account-a"]]);
+    expect(audit).toContain('"action":"scheduled_create"');
+    expect(audit).toContain('"key":"appt-1"');
+    expect(audit).toContain('"values":1');
+    expect(audit).toContain('"detail":"key_exists"');
+    expect(audit).not.toContain("600");
+    expect(audit).not.toContain("Ana");
+  });
+
+  test("scheduleSend refuses a bad key or time before the gateway", () => {
+    const base = {
+      wabaId: "waba-a",
+      phoneNumberId: "phone-a",
+      to: "34600111222",
+      templateName: "reminder",
+      languageCode: "es",
+      sendAt: 1_800_000_000_000,
+      expiresAt: 1_800_003_600_000,
+    };
+    expect(() => scheduleSend({ data: { ...base, key: "a/b" } })).toThrow("invalid key");
+    expect(() => scheduleSend({ data: { ...base, key: "k", sendAt: "tomorrow" } as never })).toThrow(
+      "sendAt must be epoch milliseconds",
+    );
   });
 
   test("cancelScheduled: not_pending is audited as failed with its state", async () => {
