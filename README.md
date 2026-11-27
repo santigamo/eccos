@@ -274,7 +274,7 @@ The `bun install → wrangler secret put → bun run deploy` steps above are the
 [`docs/deployment.md`](./docs/deployment.md) for the full env matrix, smoke test, and rollback.
 
 Non-secret vars (`META_GRAPH_VERSION`, `GATEWAY_PUBLIC_URL`, `FORWARD_MAX_ATTEMPTS`,
-`CONTENT_RETENTION_DAYS`, `DELIVERY_RETENTION_DAYS`, and optionally `DO_JURISDICTION`) live in
+`CONTENT_RETENTION_DAYS`, `DELIVERY_RETENTION_DAYS`, `EXPORT_COOLDOWN_SECONDS`, and optionally `DO_JURISDICTION`) live in
 `wrangler.production.jsonc` (add `GATEWAY_PUBLIC_URL` there before connecting numbers).
 The root `bun run deploy` reads your own gitignored
 `apps/gateway/wrangler.production.jsonc` (see

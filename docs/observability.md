@@ -97,6 +97,8 @@ is not active yet). A "Needs attention" block comes first:
 - a WABA whose forwarding circuit is open at census time (still paused, or with deliveries waiting
   for its probe), with its failures in a row (the WABA's line also says `circuit open`);
 - a coexistence sync that ended `unconfirmed` or `expired`;
+- a WABA that called the data export more than 24 times on the previous UTC day, or had exports
+  refused by the cooldown (`EXPORT_COOLDOWN_SECONDS`) that day: a script polling the export;
 - a WABA whose data plane did not answer within 10 s.
 
 It carries ids, names and counts only: no phone numbers, message content or secrets. Like the

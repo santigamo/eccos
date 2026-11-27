@@ -215,12 +215,14 @@ account's WABA registry before the data-plane object is touched (the Bun target 
 operator account).
 
 **Export (Workers target):**
-- `GET /v1/wabas/<WABA_ID>/export` returns the full retained snapshot of inbound, outbound, delivery,
+- `GET /v1/wabas/<WABA_ID>/export` returns everything retained: inbound, outbound, delivery,
   conversation (messages, contacts, phone ↔ BSUID pairs), held webhook batches (`held`, see
   [data-lifecycle.md](./data-lifecycle.md)) and non-secret config rows. It requires the owning
   account key. Export and erasure only check ownership, so they also work on a WABA that is not
-  active (pending or failed provisioning). The RPC surface also exposes
-  `exportData()` for the private dashboard binding.
+  active (pending or failed provisioning). The response is streamed in pages, one collection
+  after another, so it is not one snapshot across collections, and a WABA can export once per
+  `EXPORT_COOLDOWN_SECONDS` (default 900; `429` with `Retry-After` inside it). The RPC surface also
+  exposes `exportData()` for the private dashboard binding: one snapshot, no cooldown.
 - The paginated `listInbound`, `listOutbound`, and `listDeliveries` methods remain available for
   cursor-based reads. Export rows include the business `phone_number_id` when the event or send had
   a known phone.

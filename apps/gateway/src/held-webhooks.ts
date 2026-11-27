@@ -1,5 +1,4 @@
 import type { WhatsAppCallbackEvent } from "@eccos/core/types";
-import type { HeldWebhookRow } from "@eccos/gateway-contract";
 import { getGatewayStubForWaba } from "./gateway-stub";
 
 /**
@@ -57,12 +56,6 @@ export function heldBatches(sql: SqlStorage): HeldBatch[] {
       phoneNumberId: (row.phone_number_id as string | null) ?? null,
       events: JSON.parse(row.events as string) as WhatsAppCallbackEvent[],
     }));
-}
-
-export function heldRows(sql: SqlStorage): HeldWebhookRow[] {
-  return sql
-    .exec("SELECT id, phone_number_id, events, event_count, held_at FROM held_webhooks ORDER BY id")
-    .toArray() as unknown as HeldWebhookRow[];
 }
 
 export function hasHeld(sql: SqlStorage): boolean {

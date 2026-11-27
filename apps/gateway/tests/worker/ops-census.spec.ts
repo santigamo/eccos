@@ -222,6 +222,25 @@ describe("daily census", () => {
     expect(text).toContain("WABA W_UNAVAIL, active, coexistence, sync unavailable");
   });
 
+  it("flags a WABA that polled the export or hit its cooldown on the previous UTC day", async () => {
+    await runInDurableObject(getControlPlaneStub(env), (cp: EccosControlPlane) =>
+      cp.registerWaba({ accountId: TEST_ACCOUNT_ID, wabaId: "WABA_BLOCKED", metaAccessToken: "t", provisioningStatus: "active", phones: [{ phoneNumberId: "PN7" }] }),
+    );
+    const usage = (wabaId: string, days: Record<string, { exports: number; blocked: number }>) =>
+      runInDurableObject(getGatewayStubForWaba(env, wabaId), (i: EccosGateway) => {
+        i.sql.exec("INSERT INTO ops_state (key, value) VALUES ('export_usage', ?)", JSON.stringify({ lastAt: 0, days }));
+      });
+    await usage(TEST_WABA_ID, { "2026-11-07": { exports: 480, blocked: 0 }, "2026-11-08": { exports: 2, blocked: 9 } });
+    await usage("WABA_BLOCKED", { "2026-11-07": { exports: 24, blocked: 1 } });
+
+    const [text] = await census();
+    const attention = text!.slice(text!.indexOf("Needs attention"), text!.indexOf("\n\n", text!.indexOf("Needs attention")));
+    expect(attention).toContain(`${TEST_ACCOUNT_ID} / WABA ${TEST_WABA_ID}: 480 data exports yesterday (UTC)`);
+    expect(attention).not.toContain(`WABA ${TEST_WABA_ID}: 9`);
+    expect(attention).toContain(`${TEST_ACCOUNT_ID} / WABA WABA_BLOCKED: 1 data export refused by the cooldown yesterday (UTC)`);
+    expect(attention).not.toContain("WABA_BLOCKED: 24 data exports");
+  });
+
   it("reports a data plane that does not answer in time and still sends", async () => {
     vi.spyOn(EccosGateway.prototype, "getCensus").mockImplementation(() => new Promise(() => {}));
     const fetchMock = telegramOk();

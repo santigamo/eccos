@@ -7,7 +7,6 @@ import { fillTemplate } from "@eccos/core/template-copy";
 import { findTemplate } from "@eccos/core/templates";
 import type { EventOrigin, WhatsAppCallbackEvent } from "@eccos/core/types";
 import type {
-  ContactRecord,
   ConversationSummary,
   CursorPage,
   DeliveryRecord,
@@ -17,9 +16,7 @@ import type {
   HeldEvents,
   InboundRow,
   MessageDirection,
-  MessageOrigin,
   MessageRecord,
-  MessageStatus,
   OperatorCounts,
   OutboundRow,
   OutboundTrailEvent,
@@ -30,6 +27,7 @@ import type {
   ThreadView,
 } from "@eccos/gateway-contract";
 import {
+  MESSAGE_COLUMNS,
   type NewMessage,
   type Position,
   decodeCursor,
@@ -39,6 +37,7 @@ import {
   messageFromOutbound,
   statusFromEvent,
   type TemplateSend,
+  toMessageRecord,
   waIdOf,
   withTemplateCopy,
 } from "./conversations";
@@ -90,7 +89,9 @@ import {
   upsertScheduled,
 } from "./scheduled";
 import { checkSendRate, sendRatePerMinute, type SendRateLimitEnv } from "./send-rate-limit";
-import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, heldRows, holdBatch, replaceHeld } from "./held-webhooks";
+import { expireHeld, hasHeld, HELD_WEBHOOKS_TABLE, heldBatches, heldEventCount, holdBatch, replaceHeld } from "./held-webhooks";
+import { EXPORT_SECTIONS, type ExportCursor, type ExportPage, type ExportSection, readExportPage, readExportSection } from "./export-pages";
+import { claimExport, type ExportClaim, type ExportDay, exportDay } from "./export-usage";
 import { SMB_APP_DATA_HISTORY_SHARING_OFF_CODE } from "./meta/smb-app-data";
 import { type OpsAlertEnv, sendOpsAlert } from "./ops-alert";
 import { watchGraph } from "./token-health";
@@ -596,6 +597,8 @@ export class EccosGateway extends DurableObject<Env> {
           created_at      INTEGER NOT NULL
         );`);
         this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_wa_at ON messages (wa_id, at);`);
+        // The export's order, `(at, rowid)` newest first: its pages seek on this instead of sorting the table.
+        this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_at ON messages (at);`);
         // Read state per conversation: inbound live messages with rowid above read_seq are unread.
         // marked_unread is the operator's flag. Created before the backfills, which write it.
         this.sql.exec(`CREATE TABLE IF NOT EXISTS conversation_reads (
@@ -1403,54 +1406,6 @@ export class EccosGateway extends DurableObject<Env> {
       .toArray() as unknown as DeliveryRecord[];
   }
 
-  private listAllInbound(): InboundRow[] {
-    // The export is the STORED rows, so `delivery_id` belongs in it (it is a
-    // column) and the joins do not (they are derived at read time).
-    return this.sql
-      .exec(
-        `SELECT id, type, transport_message_id, message_id, phone_number_id, payload, received_at, delivery_id
-         FROM inbound_events ORDER BY id DESC`,
-      )
-      .toArray() as unknown as InboundRow[];
-  }
-
-  private listAllOutbound(): OutboundRow[] {
-    return this.sql
-      .exec(
-        `SELECT id, transport_message_id, recipient, phone_number_id, request, status, error, created_at
-         FROM outbound_messages ORDER BY id DESC`,
-      )
-      .toArray() as unknown as OutboundRow[];
-  }
-
-  private listAllMessages(): MessageRecord[] {
-    return this.sql
-      .exec(`SELECT ${MESSAGE_COLUMNS} FROM messages ORDER BY at DESC, rowid DESC`)
-      .toArray()
-      .map(toMessageRecord);
-  }
-
-  private listAllContacts(): ContactRecord[] {
-    return this.sql
-      .exec(`SELECT wa_id, name, source, updated_at FROM contacts ORDER BY wa_id`)
-      .toArray()
-      .map((row) => ({
-        waId: row.wa_id as string,
-        name: (row.name as string | null) ?? null,
-        source: row.source as string,
-        updatedAt: Number(row.updated_at),
-      }));
-  }
-
-  private listAllDeliveries(): DeliveryRecord[] {
-    return this.sql
-      .exec(
-        `SELECT id, phone_number_id, status, attempts, last_error, next_attempt_at, created_at, finished_at, payload
-         FROM deliveries ORDER BY id DESC`,
-      )
-      .toArray() as unknown as DeliveryRecord[];
-  }
-
   getDelivery(id: number): DeliveryRecord | null {
     const rows = this.sql
       .exec(
@@ -1478,25 +1433,26 @@ export class EccosGateway extends DurableObject<Env> {
    * see isPublicConfigKey). JSON-serializable, with a fixed key
    * order: inbound, outbound, deliveries, messages, contacts, held, customerIds, config. Inbound,
    * outbound and deliveries are newest first by id; messages newest first by
-   * `(at, rowid)`; contacts by `wa_id`; pairs by `user_id`. Single snapshot: no limit/pagination —
-   * a tenant's full retained history at single-tenant v1 volumes.
+   * `(at, rowid)`; contacts by `wa_id`; held by id; pairs by `user_id`. One snapshot in one read,
+   * for the console; the HTTP export reads the same sections in pages (exportPage).
    */
   exportData(): GatewayExport {
-    return {
-      inbound: this.listAllInbound(),
-      outbound: this.listAllOutbound(),
-      deliveries: this.listAllDeliveries(),
-      messages: this.listAllMessages(),
-      contacts: this.listAllContacts(),
-      held: heldRows(this.sql),
-      customerIds: this.sql
-        .exec(`SELECT user_id, wa_id FROM customer_ids ORDER BY user_id`)
-        .toArray()
-        .map((row) => ({ userId: row.user_id as string, waId: row.wa_id as string })),
-      config: Object.fromEntries(
-        Object.entries(this.getAllConfig()).filter(([key]) => isPublicConfigKey(key)),
-      ),
-    };
+    const sections = Object.fromEntries(EXPORT_SECTIONS.map((section) => [section, readExportSection(this.sql, section)]));
+    return { ...sections, config: this.exportConfig() } as GatewayExport;
+  }
+
+  /** One short page of an export section (export-pages.ts), for the streamed HTTP export. */
+  exportPage(section: ExportSection, after: ExportCursor | null): ExportPage {
+    return readExportPage(this.sql, section, after);
+  }
+
+  exportConfig(): Record<string, string> {
+    return Object.fromEntries(Object.entries(this.getAllConfig()).filter(([key]) => isPublicConfigKey(key)));
+  }
+
+  /** Claims this WABA's HTTP export slot against the cooldown (export-usage.ts). */
+  claimExport(cooldownMs: number): ExportClaim {
+    return claimExport(this.sql, Date.now(), cooldownMs);
   }
 
   getCounts(): OperatorCounts {
@@ -1526,13 +1482,14 @@ export class EccosGateway extends DurableObject<Env> {
     };
   }
 
-  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`, and the circuit breaker while it is paused or has rows waiting for its probe. Index-only scans. */
-  getCensus(sinceMs: number): {
+  /** What the operator census reads: delivery counts by status, whether a target is set, the held-webhook event count, (for deliveries queued since `sinceMs`) how many reached `delivered` or `failed`, the circuit breaker while it is paused or has rows waiting for its probe, and the HTTP export counters of the UTC day `exportsOn`. Index-only scans. */
+  getCensus(sinceMs: number, exportsOn: string): {
     hasTarget: boolean;
     deliveries: Record<string, number>;
     recent: { delivered: number; failed: number };
     heldEventCount: number;
     circuit: { openUntil: number; failures: number } | null;
+    exports: ExportDay;
   } {
     const deliveries: Record<string, number> = {};
     for (const row of this.sql.exec("SELECT status, COUNT(*) AS c FROM deliveries GROUP BY status").toArray()) {
@@ -1555,6 +1512,7 @@ export class EccosGateway extends DurableObject<Env> {
         circuit.openUntil > Date.now() || (circuit.openUntil > 0 && (deliveries.pending ?? 0) > 0)
           ? { openUntil: circuit.openUntil, failures: circuit.failures }
           : null,
+      exports: exportDay(this.sql, exportsOn),
     };
   }
 
@@ -3954,9 +3912,6 @@ function readEventMoment(payload: string, receivedAt: number): { at: number; err
   }
 }
 
-const MESSAGE_COLUMNS =
-  "id, wa_id, direction, origin, type, text, content, at, status, error, target_id, phone_number_id";
-
 /** The `(at, rowid)` of the last row a page keeps: the oldest one, in the newest-first query. */
 function lastPosition(rows: Record<string, unknown>[], limit: number): Position {
   const row = rows[limit - 1];
@@ -3965,23 +3920,6 @@ function lastPosition(rows: Record<string, unknown>[], limit: number): Position 
 
 /** The messages that count as unread once past a conversation's read point; `m` is `messages`. */
 const UNREAD_INBOUND = "m.direction = 'in' AND m.origin = 'live' AND m.type NOT IN ('system', 'reaction', 'edit', 'revoke')";
-
-function toMessageRecord(row: Record<string, unknown>): MessageRecord {
-  return {
-    id: row.id as string,
-    waId: row.wa_id as string,
-    direction: row.direction as MessageDirection,
-    origin: row.origin as MessageOrigin,
-    type: row.type as string,
-    text: (row.text as string | null) ?? null,
-    content: (row.content as string | null) ?? null,
-    at: Number(row.at),
-    status: (row.status as MessageStatus | null) ?? null,
-    error: (row.error as string | null) ?? null,
-    targetId: (row.target_id as string | null) ?? null,
-    phoneNumberId: (row.phone_number_id as string | null) ?? null,
-  };
-}
 
 /** The `q` filter of the conversation list: a contact name or a customer id. A phone-like
  * query matches the id by its digits; any other text matches the id as typed (a BSUID). */

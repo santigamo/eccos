@@ -24,6 +24,8 @@ import { isIdempotencyKey, sendBodyHash, validateSubscriberUrl } from "./gateway
 import type { EraseByPhoneResult } from "@eccos/gateway-contract";
 import { runDailyCensus } from "./ops-census";
 import { parseEventsQuery } from "./events-query";
+import { exportStream } from "./export-stream";
+import { exportCooldownMs } from "./export-usage";
 import { isSubscriptionRequired, SEND_REFUSED_ERROR, SUBSCRIPTION_REQUIRED } from "./connect-policy";
 import { reconcilePendingWabas, reconcileWaba } from "./provisioning";
 import { syncFieldsByWaba } from "./sync-capture";
@@ -1194,13 +1196,27 @@ app.get("/v1/wabas/:wabaId/export", async (c) => {
   const wabaId = requestedWabaId(c);
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
   if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
-  const exported = await getGatewayStubForWaba(c.env, wabaId).exportData();
-  logEvent("export", cid, 200, {
-    inbound: exported.inbound.length,
-    outbound: exported.outbound.length,
-    deliveries: exported.deliveries.length,
-  });
-  return c.json({ ok: true, data: exported });
+  const stub = getGatewayStubForWaba(c.env, wabaId);
+  const claim = await stub.claimExport(exportCooldownMs(c.env));
+  if (!claim.ok) {
+    logEvent("export", cid, 429, { wabaId, retryAfter: claim.retryAfter });
+    c.header("Retry-After", String(claim.retryAfter));
+    return c.json({ ok: false, error: "export rate limited", retryAfter: claim.retryAfter }, 429);
+  }
+  const body = exportStream(
+    { page: (section, after) => stub.exportPage(section, after), config: () => stub.exportConfig() },
+    (end, counts, error) => {
+      if (error) Sentry.captureException(error);
+      logEvent("export", cid, end === "failed" ? 500 : 200, {
+        wabaId,
+        ...(end === "done" ? {} : { end }),
+        inbound: counts.inbound,
+        outbound: counts.outbound,
+        deliveries: counts.deliveries,
+      });
+    },
+  );
+  return c.body(body, 200, { "Content-Type": "application/json" });
 });
 
 const MEDIA_ID_PATTERN = /^\d{1,32}$/;

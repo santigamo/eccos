@@ -116,6 +116,10 @@
     // Delivery-audit window: after these days, terminal (delivered/failed)
     // deliveries rows are deleted entirely. Optional; default 90.
     "DELIVERY_RETENTION_DAYS": "90",
+    // Fair use of GET /v1/wabas/<id>/export: one export per WABA per this many
+    // seconds; a call inside the window gets 429 with Retry-After. Optional;
+    // default 900, "0" turns the cooldown off. The console's export is exempt.
+    "EXPORT_COOLDOWN_SECONDS": "900",
     // EU data residency: the Durable Object is pinned to Cloudflare's EU
     // jurisdiction (docs/deployment.md).
     "DO_JURISDICTION": "eu"

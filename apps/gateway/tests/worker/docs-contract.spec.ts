@@ -95,6 +95,7 @@ function call({ path, method = "POST", headers = {}, body }: Call) {
 }
 
 const MSG = `/v1/wabas/${TEST_WABA_ID}/messages`;
+const exportCall = () => call({ path: `/v1/wabas/${TEST_WABA_ID}/export`, method: "GET" });
 const text = (to = "34600000000") => ({
   to,
   type: "text",
@@ -148,7 +149,7 @@ describe("authentication.md", () => {
     unauthorizedSpec!.code.trim(),
   );
   const probe = (headers: Call["headers"]) =>
-    call({ path: `/v1/wabas/${TEST_WABA_ID}/export`, method: "GET", headers });
+    call({ path: `/v1/wabas/${TEST_WABA_ID}/scheduled`, method: "GET", headers });
 
   it("documents both header forms, and both work", async () => {
     const headerBlock = fences(authMd)[0]!.code;
@@ -238,6 +239,10 @@ describe("errors-and-rate-limits.md error table", () => {
     "Rate limit": async () => {
       limiter(false);
       return send();
+    },
+    "Export repeated within its cooldown": async () => {
+      await (await exportCall()).text();
+      return exportCall();
     },
     "Meta did not accept the message": async () => {
       mockMeta(() => json(metaError.error, 400));
@@ -333,6 +338,24 @@ describe("errors-and-rate-limits.md rate limit", () => {
     await send(text(), { "idempotency-key": "k" });
     await send(text(), { "idempotency-key": "k" });
     expect(limit).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("errors-and-rate-limits.md export cooldown", () => {
+  it("answers the documented 429 body with Retry-After equal to retryAfter", async () => {
+    const section = errorsMd.slice(errorsMd.indexOf("## Export cooldown"));
+    expect(section).toContain("15 minutes");
+    const [, body] = statusAndJson(`429 ${section.match(/`(\{"ok":false,"error":"export rate limited"[^`]*\})`/)![1]}`);
+    const first = await exportCall();
+    await first.text();
+    expect(first.status).toBe(200);
+    const res = await exportCall();
+    expect(res.status).toBe(429);
+    const answer = (await res.json()) as { retryAfter: number };
+    expect(answer).toEqual({ ...body, retryAfter: answer.retryAfter });
+    // 15 minutes, or one second less when the clock ticked between the two calls.
+    expect([899, 900]).toContain(answer.retryAfter);
+    expect(res.headers.get("retry-after")).toBe(String(answer.retryAfter));
   });
 });
 
