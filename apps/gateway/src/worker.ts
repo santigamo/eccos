@@ -376,7 +376,11 @@ app.post("/webhooks/meta", async (c) => {
   // A failed ingest answers 5xx so Meta retries; ingest dedups, so a batch that
   // did land is not stored twice.
   const results = await Promise.all(
-    known.map(({ batch }) => getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events)),
+    known.map(async ({ batch }) => {
+      const started = Date.now();
+      const result = await getGatewayStubForWaba(c.env, batch.wabaId).ingest(batch.events);
+      return { ...result, ingestMs: Date.now() - started };
+    }),
   ).catch((error: unknown) => {
     Sentry.captureException(error);
     logEvent("webhook_ingest_failed", cid, 503, {
@@ -387,7 +391,7 @@ app.post("/webhooks/meta", async (c) => {
     return null;
   });
   if (!results) return c.json({ ok: false, error: "ingest failed" }, 503);
-  results.forEach(({ received, heldPending }, i) => {
+  results.forEach(({ received, heldPending, ingestMs }, i) => {
     const entry = known[i];
     if (!entry) return;
     const { batch } = entry;
@@ -398,6 +402,7 @@ app.post("/webhooks/meta", async (c) => {
       phoneNumberId: batch.phoneNumberId,
       eventCount: batch.events.length,
       received,
+      ingestMs,
       ...eventCounts(batch.events),
     });
   });
@@ -1197,9 +1202,11 @@ app.get("/v1/wabas/:wabaId/export", async (c) => {
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
   if (!(await ownsWaba(c.env, account, wabaId))) return c.json({ ok: false, error: "WABA is not configured" }, 404);
   const stub = getGatewayStubForWaba(c.env, wabaId);
+  const claimStarted = Date.now();
   const claim = await stub.claimExport(exportCooldownMs(c.env));
+  const claimMs = Date.now() - claimStarted;
   if (!claim.ok) {
-    logEvent("export", cid, 429, { wabaId, retryAfter: claim.retryAfter });
+    logEvent("export", cid, 429, { wabaId, retryAfter: claim.retryAfter, claimMs });
     c.header("Retry-After", String(claim.retryAfter));
     return c.json({ ok: false, error: "export rate limited", retryAfter: claim.retryAfter }, 429);
   }
@@ -1210,6 +1217,7 @@ app.get("/v1/wabas/:wabaId/export", async (c) => {
       logEvent("export", cid, end === "failed" ? 500 : 200, {
         wabaId,
         ...(end === "done" ? {} : { end }),
+        claimMs,
         inbound: counts.inbound,
         outbound: counts.outbound,
         deliveries: counts.deliveries,
