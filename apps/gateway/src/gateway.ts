@@ -787,7 +787,6 @@ export class EccosGateway extends DurableObject<Env> {
         wabaId: this.wabaIdForOps(),
         eventCount: events.length,
         inserted: insertedIds.length,
-        workMs: Date.now() - now,
       }),
     );
     if (insertedIds.length > 0) this.wakeNow();
@@ -1460,7 +1459,6 @@ export class EccosGateway extends DurableObject<Env> {
   async claimExport(cooldownMs: number): Promise<ExportClaim> {
     const started = Date.now();
     const claim = claimExport(this.sql, started, cooldownMs);
-    const synced = Date.now();
     await this.ctx.storage.sync();
     console.log(
       JSON.stringify({
@@ -1469,8 +1467,8 @@ export class EccosGateway extends DurableObject<Env> {
         event: "claim_export",
         wabaId: this.wabaIdForOps(),
         granted: claim.ok,
-        workMs: synced - started,
-        syncMs: Date.now() - synced,
+        // The clock stands still in synchronous code, so this is the flush alone.
+        syncMs: Date.now() - started,
       }),
     );
     return claim;
@@ -3384,6 +3382,10 @@ export class EccosGateway extends DurableObject<Env> {
     let lastError: string | null = null;
     let nextAttemptAt: number | null = null;
     let size: number | null = null;
+    // Names the id in flight when the runtime cancels the alarm mid-download.
+    console.log(
+      JSON.stringify({ level: "info", area: "media", event: "media_download_start", wabaId: this.wabaIdForOps(), mediaId, attempt: attempts }),
+    );
     try {
       ({ size } = await downloadMetaMedia({
         bucket: this.env.MEDIA,

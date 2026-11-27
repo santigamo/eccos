@@ -150,29 +150,62 @@ describe("alarm timings", () => {
   });
 });
 
+/** A Meta that takes `ms` per download: `lookup` answers the Graph id lookup, `cdn` the bytes. */
+function fakeMeta(ms: number, lookup?: () => Response, cdn: () => Response = () => new Response(BYTES)) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("https://graph.facebook.com/")) {
+      const mediaId = url.split("/").pop();
+      if (lookup) clock += ms;
+      return lookup?.() ?? Response.json({ url: `${LOOKASIDE}/${mediaId}`, mime_type: "image/jpeg", file_size: BYTES.length, id: mediaId });
+    }
+    if (url.startsWith(LOOKASIDE)) {
+      clock += ms;
+      return cdn();
+    }
+    throw new Error(`unexpected fetch to ${url}`);
+  });
+}
+
 describe("media diagnostics", () => {
-  it("logs the batch and a slow download, with no URL or token", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.startsWith("https://graph.facebook.com/")) {
-        return Response.json({ url: `${LOOKASIDE}/9001`, mime_type: "image/jpeg", file_size: BYTES.length, id: "9001" });
-      }
-      if (url.startsWith(LOOKASIDE)) {
-        clock += SLOW_STEP_MS + 500;
-        return new Response(BYTES);
-      }
-      throw new Error(`unexpected fetch to ${url}`);
-    });
+  it("logs the batch, each download's start and a slow download, with no URL or token", async () => {
+    fakeMeta(SLOW_STEP_MS + 500);
     await gatewayStub().ingest([image("9001")]);
 
     await runAlarm();
 
     expect(lines(log, "media_batch_start")).toEqual([expect.objectContaining({ area: "media", dueMedia: 1 })]);
+    expect(lines(log, "media_download_start")).toEqual([expect.objectContaining({ area: "media", mediaId: "9001", attempt: 1 })]);
     expect(lines(warn, "media_download_slow")).toEqual([
       expect.objectContaining({ area: "media", mediaId: "9001", ms: 3_500, state: "stored", size: BYTES.length }),
     ]);
     expect(lines(warn, "alarm_step_slow")).toEqual([expect.objectContaining({ step: "media", ms: 3_500 })]);
     expect(JSON.stringify([...warn.mock.calls, ...log.mock.calls])).not.toMatch(/lookaside|tenant-token/);
+  });
+
+  it("logs a slow failed or given-up download with no size", async () => {
+    // Gone first: it is never due again, so the second alarm downloads only the new id.
+    fakeMeta(SLOW_STEP_MS, () => new Response("gone", { status: 404 }));
+    await gatewayStub().ingest([image("9003")]);
+    await runAlarm();
+    fakeMeta(SLOW_STEP_MS, undefined, () => new Response("busy", { status: 503 }));
+    await gatewayStub().ingest([image("9002")]);
+    await runAlarm();
+
+    expect(lines(warn, "media_download_slow")).toEqual([
+      expect.objectContaining({ mediaId: "9003", ms: SLOW_STEP_MS, state: "gone", size: null }),
+      expect.objectContaining({ mediaId: "9002", ms: SLOW_STEP_MS, state: "failed", size: null }),
+    ]);
+  });
+
+  it("does not log a fast download as slow", async () => {
+    fakeMeta(SLOW_STEP_MS - 1);
+    await gatewayStub().ingest([image("9004")]);
+
+    await runAlarm();
+
+    expect(lines(log, "media_download_start")).toHaveLength(1);
+    expect(lines(warn, "media_download_slow")).toEqual([]);
   });
 
   it("logs no batch when no media is due", async () => {

@@ -15,6 +15,7 @@ import worker from "../../src/worker";
 import { bootstrapAccount, gatewayStub, holdAlarms, TEST_ACCOUNT_ID, TEST_WABA_ID } from "./helpers";
 
 const OTHER_WABA = "WABA_EXPORT_OTHER";
+const today = () => new Date().toISOString().slice(0, 10);
 let apiKey = "";
 
 beforeEach(async () => {
@@ -204,7 +205,10 @@ describe("export cooldown", () => {
 
     const retryAfter = await retryAfterOf(await exportCall(), 900);
     const lines = log.mock.calls.map(([l]) => JSON.parse(String(l))).filter((l) => l.event === "export");
-    expect(lines.at(-1)).toMatchObject({ status: 429, level: "warn", wabaId: TEST_WABA_ID, retryAfter });
+    expect(lines).toEqual([
+      expect.objectContaining({ status: 200, claimMs: expect.any(Number) }),
+      expect.objectContaining({ status: 429, level: "warn", wabaId: TEST_WABA_ID, retryAfter, claimMs: expect.any(Number) }),
+    ]);
 
     await ageLastExport(600_000);
     await retryAfterOf(await exportCall(), 300);
@@ -225,19 +229,29 @@ describe("export cooldown", () => {
     expect(statuses.sort()).toEqual([200, 429]);
   });
 
-  it("claims before flushing storage, then logs the claim's work and flush times", async () => {
+  it("claims before flushing storage, then logs the flush time", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const sync = await runInDurableObject(gatewayStub(), (_i: EccosGateway, state: DurableObjectState) =>
-      vi.spyOn(state.storage, "sync"),
-    );
-    const claims = await Promise.all([gatewayStub().claimExport(900_000), gatewayStub().claimExport(900_000)]);
+    const claimedAtSync: unknown[] = [];
+    await runInDurableObject(gatewayStub(), (i: EccosGateway, state: DurableObjectState) => {
+      const sync = state.storage.sync.bind(state.storage);
+      vi.spyOn(state.storage, "sync").mockImplementation(() => {
+        claimedAtSync.push(i.sql.exec("SELECT value FROM ops_state WHERE key = 'export_usage'").toArray()[0]?.value);
+        return sync();
+      });
+    });
+    const [granted, refused] = await Promise.all([gatewayStub().claimExport(900_000), gatewayStub().claimExport(900_000)]);
 
-    expect(claims).toEqual([{ ok: true }, { ok: false, retryAfter: 900 }]);
-    expect(sync).toHaveBeenCalledTimes(2);
+    expect(granted).toEqual({ ok: true });
+    expect(refused).toMatchObject({ ok: false });
+    expect([899, 900]).toContain((refused as { retryAfter: number }).retryAfter);
+    expect(claimedAtSync.map((value) => JSON.parse(String(value)).days)).toEqual([
+      { [today()]: { exports: 1, blocked: 0 } },
+      { [today()]: { exports: 1, blocked: 1 } },
+    ]);
     const lines = log.mock.calls.map(([l]) => JSON.parse(String(l))).filter((l) => l.event === "claim_export");
     expect(lines).toEqual([
-      expect.objectContaining({ area: "export", wabaId: TEST_WABA_ID, granted: true, workMs: expect.any(Number), syncMs: expect.any(Number) }),
-      expect.objectContaining({ granted: false, workMs: expect.any(Number), syncMs: expect.any(Number) }),
+      expect.objectContaining({ area: "export", wabaId: TEST_WABA_ID, granted: true, syncMs: expect.any(Number) }),
+      expect.objectContaining({ granted: false, syncMs: expect.any(Number) }),
     ]);
   });
 

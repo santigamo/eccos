@@ -63,6 +63,7 @@ describe("webhook log lines", () => {
         phoneNumberId: "PNID1",
         eventCount: 3,
         received: 3,
+        ingestMs: expect.any(Number),
         n_reply: 1,
         n_message_location: 1,
         n_status_read: 1,
@@ -73,7 +74,6 @@ describe("webhook log lines", () => {
       wabaId: TEST_WABA_ID,
       eventCount: 3,
       inserted: 3,
-      workMs: expect.any(Number),
     });
     expect(JSON.stringify(log.mock.calls)).not.toMatch(/secret text|34600000000/);
   });
