@@ -5,6 +5,7 @@ import { defineConfig, type Plugin } from "vitest/config";
 import ts from "typescript";
 import { fences } from "./tests/docs-md";
 import { shards, weight } from "./tests/shards";
+import { StallWatchdog } from "./tests/stall-watchdog";
 
 /** `--shard=i/n` splits by recorded duration, not file count, and each shard starts its slowest files first. */
 class DurationSequencer extends BaseSequencer {
@@ -53,6 +54,16 @@ export default defineConfig({
   test: {
     include: ["tests/worker/**/*.spec.ts"],
     sequence: { sequencer: DurationSequencer },
+    testTimeout: 10_000,
+    hookTimeout: 10_000,
+    teardownTimeout: 10_000,
+    // A hang after the last test is invisible to the timeouts above (eccos-yjnq).
+    reporters: ["default", new StallWatchdog(60_000)],
+    // Vitest sends every console call to the main process as an RPC it waits for before the file
+    // finishes. A log from a Durable Object (an alarm) travels through that object's I/O context,
+    // and the afterEach reset() that aborts the object drops it: the file then never finishes.
+    // Without the intercept, logs go straight to workerd's stdout.
+    disableConsoleIntercept: true,
     // Files run in parallel, each in its own Miniflare. Every file re-imports the worker, so the
     // heavy dependencies are pre-bundled once: workerd then loads one module, not hundreds.
     deps: {
@@ -69,7 +80,13 @@ export default defineConfig({
     docsTsFence,
     cloudflareTest({
       wrangler: { configPath: "./wrangler.vitest.jsonc" },
-      miniflare: { bindings: { ...TEST_BINDINGS } },
+      miniflare: {
+        bindings: { ...TEST_BINDINGS },
+        // No test reaches the internet: an alarm left running (a media download to Meta) would
+        // depend on the network and outlive its test.
+        outboundService: (request: Request) =>
+          new Response(`tests have no network: ${request.method} ${request.url}`, { status: 503 }),
+      },
     }),
   ],
 });
