@@ -69,11 +69,14 @@ const readyState = {
 
 function render(
   items: unknown[],
-  opts: { counts?: Record<string, number>; search?: Record<string, string> } = {},
+  opts: { counts?: Record<string, number>; search?: Record<string, string>; root?: unknown } = {},
 ): string {
-  loaderData = { ok: true, data: { items, nextCursor: null, counts: { ...zeros, ...opts.counts } } };
+  loaderData = {
+    list: { ok: true, data: { items, nextCursor: null, counts: { ...zeros, ...opts.counts } } },
+    origin: null,
+  };
   searchParams = { wabaId: "waba-a", ...opts.search };
-  rootData = { ok: true, data: readyState };
+  rootData = { ok: true, data: opts.root ?? readyState };
   return renderToStaticMarkup(<screen.Route.component />);
 }
 
@@ -124,8 +127,8 @@ describe("/scheduled", () => {
   });
 
   test("the tabs list all six statuses, zeros included, and mark the current one", () => {
-    const html = render([], { search: { status: "sent" } });
-    for (const status of ["pending", "sending", "sent", "failed", "unknown", "cancelled"]) {
+    const html = render([], { counts: { cancelled: 1 }, search: { status: "sent" } });
+    for (const status of ["pending", "sending", "sent", "failed", "unknown"]) {
       expect(html).toContain(`${status} <span class="tabular-nums">0</span>`);
     }
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
@@ -138,33 +141,56 @@ describe("/scheduled", () => {
     expect(failing).not.toMatch(/amber|warning/);
   });
 
-  test("empty pending links the guide; another status offers pending", () => {
-    const pending = render([]);
-    expect(pending).toContain("NO SCHEDULED SENDS");
-    expect(pending).toContain("https://docs.eccos.chat/scheduled-sends");
-    const sent = render([], { search: { status: "sent" } });
-    expect(sent).toContain("NO SENT SENDS");
+  test("first run: nothing under any status shows the block, with the API door and no dead button", () => {
+    const html = render([]);
+    expect(html).toContain("No scheduled sends yet");
+    expect(html).toContain("Send a template at a time you choose");
+    expect(html).toContain("…/scheduled/appt-8812");
+    expect(html).toContain("Copy as curl");
+    expect(html).toContain("https://docs.eccos.chat/scheduled-sends");
+    expect(html).not.toContain("Schedule a send");
+    expect(html).not.toContain("scheduled sends by status");
+  });
+
+  test("an empty pending tab beside ended sends says nothing is pending, not that there are none", () => {
+    const pending = render([], { counts: { sent: 300 } });
+    expect(pending).toContain("NOTHING PENDING");
+    expect(pending).not.toContain("NO SCHEDULED SENDS");
+    expect(pending).toContain("A pending send goes out at its time, or expires.");
+    const sent = render([], { counts: { pending: 1 }, search: { status: "sent" } });
+    expect(sent).toContain("NONE SENT YET");
     expect(sent).toContain("Show pending");
   });
 
+  test("sending paused with sends pending: they wait, and expire", () => {
+    const paused = {
+      ...readyState,
+      scope: { ...readyState.scope, resources: { ...readyState.scope.resources, account: { billingStatus: "closed" } } },
+    };
+    const html = render([row()], { counts: { pending: 37 }, root: paused });
+    expect(html).toContain("The 37 pending sends wait, and each one that has not gone out by its expiry is not sent.");
+    expect(render([row()], { counts: { pending: 37 } })).not.toContain("Sending is paused");
+    expect(render([], { counts: { sent: 2 }, root: paused })).not.toContain("Sending is paused");
+  });
+
   test("a cursor page with no rows offers the way back", () => {
-    const html = render([], { search: { cursor: "gone" } });
+    const html = render([], { counts: { pending: 1 }, search: { cursor: "gone" } });
     expect(html).toContain("NO MATCHES");
     expect(html).toContain("back to the first page");
   });
 
   test("a failed read renders the failure, not the grid", () => {
-    loaderData = { ok: false, kind: "unreachable", error: "boom" };
+    loaderData = { list: { ok: false, kind: "unreachable", error: "boom" }, origin: null };
     searchParams = {};
     rootData = { ok: true, data: readyState };
-    expect(renderToStaticMarkup(<screen.Route.component />)).not.toContain("NO SCHEDULED SENDS");
+    expect(renderToStaticMarkup(<screen.Route.component />)).not.toContain("No scheduled sends yet");
   });
 });
 
 describe("cancel confirmation", () => {
-  test("names the number and the time", () => {
-    expect(cancelScheduledCopy({ to: "34600000001", sendAt: SEND_AT })).toBe(
-      `It will not be sent to 34600000001 at ${fmtTs(SEND_AT)}. A PUT on the same key schedules it again.`,
+  test("names the number and the time, in the operator's words", () => {
+    expect(cancelScheduledCopy({ to: "34600111222", sendAt: Date.UTC(2026, 10, 20, 8) }, "Europe/Madrid")).toBe(
+      "It will not be sent to +34600111222 on Fri 20 Nov at 09:00 CET. It can be scheduled again under the same key.",
     );
   });
 });

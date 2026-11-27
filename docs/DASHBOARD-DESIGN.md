@@ -118,6 +118,13 @@ Every route renders the same skeleton (the `Page` component in `src/ui.tsx`):
    the viewport (`flex min-h-full flex-col`) so structure reaches the bottom and
    the void reads as intentional.
 
+### Widths
+
+Lists and logs take the full content width. A page that pairs a main column with an aside
+(authoring, a first-run block) uses `SPLIT_GRID` from `src/ui.tsx`: from `xl` the main column takes
+two thirds and the aside one third, from `lg` the aside is a fixed 18rem, and the grid stops at
+80rem. The main column is `SPLIT_MAIN`; the aside is sticky (`lg:sticky lg:top-4`).
+
 ### Type tiers
 
 Inter carries three weights, each with one job, so a row reads at a glance. The machine voice
@@ -203,8 +210,8 @@ sheet and moved to its own routes (`/templates/new`, `/templates/$name?language=
   create that half succeeded are places an operator has to return to, paste, or be sent
   to (`/templates/$name?language=es` after a partial create). An overlay has no address
   of its own.
-- **It needs space.** Fields at `minmax(0,40rem)` beside a sticky `minmax(18rem,22.5rem)`
-  preview, and a sticky action bar under the fields, at 1280px with the 240px sidebar.
+- **It needs space.** Fields beside a sticky preview on the split grid (see "Widths"), and a
+  sticky action bar under the fields, at 1280px with the 240px sidebar.
   The list behind it is not consulted while writing, so it does not earn the screen.
 
 Reading a template is the same page. A template row opens `/templates/$name` on its
@@ -424,6 +431,10 @@ Eccos system — the practices, not the brand):
    a real action exists (clear filters, configure a target). Never a lone tiny
    muted sentence. A next step on a page that is working is the same anatomy as a
    note under its table (`NextNote` on /numbers), never a green success banner.
+   A list that holds nothing at all opens with a first-run block instead of the grid
+   (`FirstRun` in `components/sending/first-run.tsx`): what the thing is, the act that fills
+   it when the console offers one, the API request, and an example in its own frames, never a
+   sample row in the live grid. A filtered or tabbed view that is empty keeps `GridEmptyState`.
 7. **A failure names only what it knows.** Server functions return a typed
    failure class (`unreachable` / `unauthenticated` / `forbidden`, decided from
    the thrown error's type in `src/server/gateway.ts`), and `FailureView`
@@ -498,6 +509,11 @@ Eccos system — the practices, not the brand):
     the console has no reading of that payload at all — `/templates`' load-failure card
     is the outstanding case (eccos-1ri). Where the console *can* read a payload, the
     disclosure is where the payload lives.
+
+11. **Timestamps are exact UTC**, so a reading matches a log line. One exception: a pending
+    scheduled send's time is a plan a person checks, not evidence, so `/scheduled` reads it in
+    the viewer's zone with the zone named and the UTC instant beneath, rendered after hydration
+    (`lib/send-at.ts`); every other row stays UTC first.
 
 ## Component base
 

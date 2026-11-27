@@ -26,13 +26,38 @@ export function broadcastStateLabel(summary: Pick<BroadcastSummary, "status">): 
   return summary.status === "running" ? "sending" : summary.status;
 }
 
-export function recipientStateLabel(row: Pick<BroadcastRecipientRow, "status">): string {
-  return row.status === "unknown" ? "unknown outcome" : row.status;
+/**
+ * A broadcast's state with the reason beside it: `paused · 1,241 waiting` while the
+ * workspace's sending is paused (billing), `halted · <reason>` when it stopped itself.
+ */
+export function broadcastState(
+  summary: Pick<BroadcastSummary, "status" | "counts" | "haltReason">,
+  sendingPaused: boolean,
+): { label: string; reason: string | null } {
+  if (summary.status === "running" && sendingPaused) {
+    return { label: "paused", reason: `${summary.counts.queued.toLocaleString("en-US")} waiting` };
+  }
+  if (summary.status === "halted") return { label: "halted", reason: summary.haltReason };
+  return { label: broadcastStateLabel(summary), reason: null };
 }
 
-/** Recipients Eccos has attempted: cancelled and still-queued ones are not. */
-export function attemptedCount(counts: BroadcastSummary["counts"]): number {
-  return counts.sent + counts.failed + counts.unknown;
+/**
+ * Messages a minute a broadcast sends: 80% of the account's rate, in whole ticks,
+ * as the gateway paces it (`pacing()` in apps/gateway/src/broadcasts.ts).
+ */
+export function broadcastPace(ratePerMinute: number): number {
+  const budget = Math.max(1, ratePerMinute * 0.8);
+  if (budget >= 60) return Math.floor(budget / 60) * 60;
+  return Math.round(60_000 / Math.ceil(60_000 / budget));
+}
+
+/** The list holds nothing at all: no rows on the first page. */
+export function broadcastsFirstRun(items: readonly unknown[], cursor: string | undefined): boolean {
+  return items.length === 0 && cursor === undefined;
+}
+
+export function recipientStateLabel(row: Pick<BroadcastRecipientRow, "status">): string {
+  return row.status === "unknown" ? "unknown outcome" : row.status;
 }
 
 /** A recipient status from the URL, or undefined. */

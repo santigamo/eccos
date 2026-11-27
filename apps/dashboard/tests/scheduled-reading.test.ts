@@ -4,8 +4,11 @@ import {
   normalizeScheduleKey,
   endedPhrase,
   readsSoonestFirst,
+  SCHEDULED_EMPTY,
+  scheduledFirstRun,
   scheduledOutcome,
 } from "../src/lib/scheduled";
+import { expiresPhrase, localTime, utcInstant } from "../src/lib/send-at";
 
 describe("normalizeScheduledStatus", () => {
   test("accepts the six statuses and nothing else", () => {
@@ -81,5 +84,34 @@ describe("endedPhrase", () => {
     expect(endedPhrase({ status: "failed", failureReason: "expired" })).toBe("expired");
     expect(endedPhrase({ status: "failed", failureReason: "rejected" })).toBe("failed");
     expect(endedPhrase({ status: "unknown", failureReason: "unknown" })).toBe("has an unknown outcome");
+  });
+});
+
+describe("first run and empty tabs", () => {
+  const zeros = { pending: 0, sending: 0, sent: 0, failed: 0, unknown: 0, cancelled: 0 };
+
+  test("first run only while every status is empty", () => {
+    expect(scheduledFirstRun(zeros)).toBe(true);
+    expect(scheduledFirstRun({ ...zeros, sent: 300 })).toBe(false);
+  });
+
+  test("each empty tab says what it is missing, never the page-wide NO SCHEDULED SENDS", () => {
+    expect(SCHEDULED_EMPTY.pending.label).toBe("NOTHING PENDING");
+    expect(Object.values(SCHEDULED_EMPTY).map((copy) => copy.label)).not.toContain("NO SCHEDULED SENDS");
+    expect(Object.values(SCHEDULED_EMPTY).every((copy) => !copy.description.includes("WABA"))).toBe(true);
+  });
+});
+
+describe("send-at readings", () => {
+  const SEND_AT = Date.UTC(2026, 10, 28, 8, 0, 0, 123);
+
+  test("the local reading names its zone; the instant stays UTC without milliseconds", () => {
+    expect(localTime(SEND_AT, "Europe/Madrid")).toEqual({ day: "Sat 28 Nov", clock: "09:00", zone: "CET" });
+    expect(utcInstant(SEND_AT)).toBe("2026-11-28T08:00:00Z");
+  });
+
+  test("expiry reads as a clock, with the day when it falls on another one", () => {
+    expect(expiresPhrase(SEND_AT, SEND_AT + 3_600_000, "Europe/Madrid")).toBe("expires 10:00");
+    expect(expiresPhrase(SEND_AT, SEND_AT + 86_400_000, "Europe/Madrid")).toBe("expires Sun 29 Nov, 09:00");
   });
 });

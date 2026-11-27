@@ -74,12 +74,20 @@ const readyState = {
   },
 };
 
-function renderList(items: unknown[], nextCursor: string | null = null): string {
-  loaderData = { ok: true, data: { items, nextCursor } };
-  searchParams = { wabaId: "waba-a" };
-  rootData = { ok: true, data: readyState };
+function renderList(
+  items: unknown[],
+  opts: { cursor?: string; root?: unknown; origin?: string | null } = {},
+): string {
+  loaderData = { list: { ok: true, data: { items, nextCursor: null } }, origin: opts.origin ?? null };
+  searchParams = { wabaId: "waba-a", ...(opts.cursor ? { cursor: opts.cursor } : {}) };
+  rootData = { ok: true, data: opts.root ?? readyState };
   return renderToStaticMarkup(<list.Route.component />);
 }
+
+const pausedState = {
+  ...readyState,
+  scope: { ...readyState.scope, resources: { ...readyState.scope.resources, account: { billingStatus: "paused" } } },
+};
 
 function renderDetail(data: unknown, search: Record<string, string> = { wabaId: "waba-a" }): string {
   loaderData = { ok: true, data };
@@ -89,13 +97,31 @@ function renderDetail(data: unknown, search: Record<string, string> = { wabaId: 
 }
 
 describe("/broadcasts", () => {
-  test("a row names the template, links to its page and reads progress against the total", () => {
-    const html = renderList([summary()]);
+  test("a row names the template, links to its page and reads the funnel", () => {
+    const html = renderList([summary({ total: 2431, delivery: { delivered: 1102, read: 640, failed: 0 } })]);
     expect(html).toContain("promo_autumn");
     expect(html).toContain('href="/broadcasts/$broadcastId"');
     expect(html).toContain(">sending<");
-    expect(html).toContain("7 / 12");
-    expect(html).toContain("4 · 2");
+    for (const header of ["Recipients", "Sent", "Delivered", "Read", "Failed"]) expect(html).toContain(header);
+    expect(html).toContain(">2,431<");
+    expect(html).toContain(">1,102<");
+    expect(html).toContain(">640<");
+  });
+
+  test("a running broadcast reads paused with its queue while the workspace's sending is paused", () => {
+    expect(renderList([summary()], { root: pausedState })).toContain("5 waiting");
+    expect(renderList([summary()], { root: pausedState })).toContain(">paused<");
+    expect(renderList([summary()])).not.toContain("waiting");
+  });
+
+  test("a halted row states its reason beside the tag", () => {
+    expect(renderList([summary({ status: "halted", haltReason: "first 20 sends failed" })])).toContain(
+      "first 20 sends failed",
+    );
+  });
+
+  test("populated: the intro line says what the page is for", () => {
+    expect(renderList([summary()])).toContain("Eccos paces the sends and reports every recipient here.");
   });
 
   test("failed is red only when there is something to act on", () => {
@@ -112,17 +138,39 @@ describe("/broadcasts", () => {
     expect(html.match(/text-destructive-foreground/g)).toHaveLength(1);
   });
 
-  test("empty: says what will appear and links the guide", () => {
-    const html = renderList([]);
-    expect(html).toContain("NO BROADCASTS YET");
+  test("first run: the block replaces the grid, with the API door filled in and no dead button", () => {
+    const html = renderList([], { origin: "https://api.eccos.chat" });
+    expect(html).toContain("No broadcasts yet");
+    expect(html).toContain("Send one template to your whole list");
+    expect(html).toContain("/v1/wabas/waba-a/broadcasts");
+    expect(html).toContain("Show the full request");
+    expect(html).toContain("Copy as curl");
     expect(html).toContain("https://docs.eccos.chat/bulk-sending");
+    expect(html).toContain(">Example<");
+    expect(html).not.toContain("New broadcast");
+    expect(html).not.toContain("Created");
+    expect(html).not.toContain("Eccos paces the sends");
+  });
+
+  test("first run: an admin is sent to create a key; anyone else is told to ask one", () => {
+    expect(renderList([], { root: { ...readyState, canAdminister: true, role: "admin" } })).toContain("Create an API key");
+    const member = renderList([], { root: { ...readyState, canAdminister: false, role: "member" } });
+    expect(member).toContain("Ask an admin of this workspace for an API key.");
+    expect(member).not.toContain("Create an API key");
+  });
+
+  test("an empty page past the first is not a first run", () => {
+    const html = renderList([], { cursor: ID });
+    expect(html).toContain("NO MORE BROADCASTS");
+    expect(html).toContain("Back to the newest");
+    expect(html).not.toContain("Send one template to your whole list");
   });
 
   test("a failed read renders the failure, not the grid", () => {
-    loaderData = { ok: false, kind: "unreachable", error: "boom" };
+    loaderData = { list: { ok: false, kind: "unreachable", error: "boom" }, origin: null };
     searchParams = {};
     rootData = { ok: true, data: readyState };
-    expect(renderToStaticMarkup(<list.Route.component />)).not.toContain("NO BROADCASTS YET");
+    expect(renderToStaticMarkup(<list.Route.component />)).not.toContain("No broadcasts yet");
   });
 });
 
@@ -145,6 +193,25 @@ describe("/broadcasts/$broadcastId", () => {
     expect(renderDetail(page())).not.toContain("Stopped:");
     const html = renderDetail(page({ status: "halted", haltReason: "Meta rejected the template (132001)" }));
     expect(html).toContain("Stopped: Meta rejected the template (132001)");
+  });
+
+  test("the meta line states the broadcast's pace, not the account's rate", () => {
+    const html = renderDetail(page());
+    expect(html).toContain("sends 48 a minute");
+    expect(html).not.toContain("60/min");
+  });
+
+  test("paused by billing: the tag, the queue and what happens to it", () => {
+    rootData = { ok: true, data: pausedState };
+    loaderData = { ok: true, data: page() };
+    searchParams = { wabaId: "waba-a" };
+    const html = renderToStaticMarkup(<detail.Route.component />);
+    expect(html).toContain(">paused<");
+    expect(html).toContain("The 5 queued recipients are waiting; nothing is lost.");
+  });
+
+  test("one skipped duplicate reads singular", () => {
+    expect(renderDetail(page({ duplicatesSkipped: 1 }))).toContain("1 duplicate skipped");
   });
 
   test("the facts strip carries totals and the per-status counts as filter links", () => {

@@ -1,13 +1,18 @@
 import type { ScheduledSend } from "@eccos/gateway-contract";
 import { cancelScheduled } from "../../server/gateway";
 import { failureCopy } from "../../lib/failure";
+import { formatCustomerId } from "../../lib/customer-id";
 import { endedPhrase } from "../../lib/scheduled";
-import { fmtTs } from "../../ui";
+import { localTime } from "../../lib/send-at";
 import { CancelDialog } from "../sending/cancel-dialog";
 
-/** What cancelling THIS scheduled send costs, in the system's own terms. */
-export function cancelScheduledCopy(row: Pick<ScheduledSend, "to" | "sendAt">): string {
-  return `It will not be sent to ${row.to} at ${fmtTs(row.sendAt)}. A PUT on the same key schedules it again.`;
+/**
+ * What cancelling THIS scheduled send costs. Opened only by a click, so it reads the
+ * time in the viewer's zone, as the pending row did.
+ */
+export function cancelScheduledCopy(row: Pick<ScheduledSend, "to" | "sendAt">, timeZone?: string): string {
+  const at = localTime(row.sendAt, timeZone);
+  return `It will not be sent to ${formatCustomerId(row.to)} on ${at.day} at ${at.clock} ${at.zone}. It can be scheduled again under the same key.`;
 }
 
 /** Confirm and cancel a pending scheduled send. A send claimed meanwhile reads "Too late to cancel". */
