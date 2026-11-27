@@ -1,5 +1,8 @@
 import type { BroadcastSummary, TemplateHeaderMedia } from "./index";
 
+/** The gateway refuses a recipient whose components, as JSON, are longer than this. */
+export const MAX_RECIPIENT_COMPONENTS_BYTES = 8 * 1024;
+
 /**
  * One variable a broadcast fills, in the order of each recipient's `values`.
  * `fixed` is one value for every recipient; such a column takes no entry in `values`.

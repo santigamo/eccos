@@ -555,7 +555,8 @@ export const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 export const LANGUAGE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2})?$/;
 /** Graph template ids (`hsm_id`) are numeric. */
 export const TEMPLATE_ID_PATTERN = /^[0-9]{1,32}$/;
-const MAX_BODY_PARAM_LENGTH = 1024;
+/** Meta's ceiling for one text parameter, in characters. */
+export const MAX_BODY_PARAM_LENGTH = 1024;
 /** A BUTTONS component carries at most 3 URL buttons (Meta's own cap). */
 const MAX_BUTTON_PARAMS = 3;
 /** Upper bound for a URL button's 0-based slot index in the BUTTONS component. */

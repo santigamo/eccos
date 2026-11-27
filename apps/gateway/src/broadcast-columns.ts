@@ -1,14 +1,19 @@
-import { buildSendComponents, templateVariables, validateTemplateSend, type TemplateRow } from "@eccos/core/template-rules";
+import {
+  buildSendComponents,
+  MAX_BODY_PARAM_LENGTH,
+  templateVariables,
+  validateTemplateSend,
+  type TemplateRow,
+} from "@eccos/core/template-rules";
 import type { CreateBroadcastInput, CreateBroadcastResult } from "@eccos/gateway-contract";
 
 type Refusal = Extract<CreateBroadcastResult, { ok: false }>;
 
-const MAX_VALUE_LENGTH = 1024;
 const VALUE_ERROR = "every value must be 1-1024 characters on one line";
 const MAX_INVALID = 100;
 
 function validValue(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_VALUE_LENGTH && !/[\n\t]/.test(value);
+  return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_BODY_PARAM_LENGTH && !/[\n\t]/.test(value);
 }
 
 const sameKeys = (a: string[], b: string[]) =>

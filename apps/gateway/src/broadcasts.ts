@@ -10,6 +10,7 @@
 
 import { isBsuid } from "@eccos/core/bsuid";
 import type { MetaErrorCodes } from "@eccos/core/send";
+import { MAX_RECIPIENT_COMPONENTS_BYTES } from "@eccos/gateway-contract/broadcast-create";
 import type {
   BroadcastRecipientRow,
   BroadcastRecipientStatus,
@@ -28,8 +29,6 @@ export const MAX_THROTTLED_ATTEMPTS = 8;
 export const MAX_RUNNING_BROADCASTS = 5;
 /** Request body ceiling for POST /broadcasts. */
 export const MAX_BROADCAST_BODY_BYTES = 8 * 1024 * 1024;
-/** Stored values ceiling per recipient. */
-const MAX_COMPONENTS_BYTES = 8 * 1024;
 /** A broadcast whose first sends all fail stops: the cause is almost never the recipients. */
 export const FAILURE_BREAKER = 20;
 /** Share of the account's rate a broadcast uses, so single sends (OTPs, replies) keep the rest. */
@@ -94,7 +93,7 @@ export function parseTemplate(
     return { ok: false, error: "template.components must be an array" };
   }
   const components = template.components as unknown[] | undefined;
-  if (components && JSON.stringify(components).length > MAX_COMPONENTS_BYTES) {
+  if (components && JSON.stringify(components).length > MAX_RECIPIENT_COMPONENTS_BYTES) {
     return { ok: false, error: "template.components are too large" };
   }
   return { ok: true, name: template.name, language, ...(components ? { components } : {}) };
@@ -136,7 +135,7 @@ export function parseBroadcastRequest(body: unknown): ParsedBroadcast {
       invalid.push({ index, error: "components must be an array" });
       return;
     }
-    if (item.components !== undefined && JSON.stringify(item.components).length > MAX_COMPONENTS_BYTES) {
+    if (item.components !== undefined && JSON.stringify(item.components).length > MAX_RECIPIENT_COMPONENTS_BYTES) {
       invalid.push({ index, error: "components are too large" });
       return;
     }
