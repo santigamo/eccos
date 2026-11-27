@@ -820,6 +820,11 @@ describe("webhooks.md", () => {
           instance.sql.exec(
             "UPDATE deliveries SET next_attempt_at = 0 WHERE status = 'pending'",
           );
+          // Skipping the backoff skips the circuit breaker's pause with it: by the
+          // fifth failure the backoff (52 min) is far longer than the pause.
+          instance.sql.exec(
+            "UPDATE ops_state SET value = json_set(value, '$.openUntil', 1) WHERE key = 'forward_circuit' AND json_extract(value, '$.openUntil') > 0",
+          );
         });
       }
       expect(forwards).toHaveLength(attempts);

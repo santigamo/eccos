@@ -95,7 +95,7 @@ describe("subscriber config (feature A)", () => {
     });
 
     const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
-    expect(cfg).toEqual({ url: "https://new.example/hook", hasSecret: true, lastForward: null });
+    expect(cfg).toEqual({ url: "https://new.example/hook", hasSecret: true, lastForward: null, latency: null, circuitOpenUntil: null, consecutiveFailures: 0 });
     // The secret must not leak through the read model in any shape.
     expect(JSON.stringify(cfg)).not.toContain(secret);
     expect(Object.values(cfg)).not.toContain(secret);
@@ -112,7 +112,7 @@ describe("subscriber config (feature A)", () => {
     await rpc.setSubscriberConfig({ url: "https://second.example/hook" }, TEST_WABA_ID, TEST_ACCOUNT_ID);
 
     const cfg = await rpc.getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
-    expect(cfg).toEqual({ url: "https://second.example/hook", hasSecret: true, lastForward: null });
+    expect(cfg).toEqual({ url: "https://second.example/hook", hasSecret: true, lastForward: null, latency: null, circuitOpenUntil: null, consecutiveFailures: 0 });
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       expect(i.getConfigValue("SUBSCRIBER_SECRET")).toBe("keep-me");
     });
@@ -120,7 +120,7 @@ describe("subscriber config (feature A)", () => {
 
   it("reports an unset forwarding target when no DO config exists (no env fallback)", async () => {
     const cfg = await makeRpc().getSubscriberConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
-    expect(cfg).toEqual({ url: null, hasSecret: false, lastForward: null });
+    expect(cfg).toEqual({ url: null, hasSecret: false, lastForward: null, latency: null, circuitOpenUntil: null, consecutiveFailures: 0 });
   });
 
   // Removing the target and removing the secret are SEPARATE intentions, spelled

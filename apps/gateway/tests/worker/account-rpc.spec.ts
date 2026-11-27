@@ -50,7 +50,17 @@ describe("GatewayRPC with a registered account", () => {
     expect(cfg).toEqual({
       url: null,
       hasSecret: false,
-      lastForward: { status: "pending", attempts: 0, createdAt: expect.any(Number), finishedAt: null, lastError: null },
+      lastForward: {
+        status: "pending",
+        attempts: 0,
+        createdAt: expect.any(Number),
+        finishedAt: null,
+        lastError: null,
+        durationMs: null,
+      },
+      latency: null,
+      circuitOpenUntil: null,
+      consecutiveFailures: 0,
     });
 
     // Another account cannot address this WABA (fail closed).

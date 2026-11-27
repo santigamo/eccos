@@ -137,7 +137,7 @@ what error) should outlive the content itself:
 
 | Var (`apps/gateway/wrangler.jsonc` → `vars`) | Default | Effect when a row ages past it |
 |---|---|---|
-| `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, `created_at`, and `finished_at` survive; **`pending` `deliveries` rows are deleted** (by `created_at`) |
+| `CONTENT_RETENTION_DAYS` | **30**, clamped to **7–90** | `inbound_events` (by `received_at`) and `outbound_messages` (by `created_at`) rows are **deleted**; terminal (`delivered`/`failed`) `deliveries` rows are **redacted in place** — `payload` is emptied, while `id`, `status`, `attempts`, `last_error`, `next_attempt_at`, `created_at`, `finished_at`, and `last_duration_ms` survive; **`pending` `deliveries` rows are deleted** (by `created_at`) |
 | `DELIVERY_RETENTION_DAYS` | **90** | terminal `deliveries` rows are **deleted** entirely, by `created_at` |
 
 Send idempotency keys (`send_keys`: account, key, a SHA-256 of the phone and Meta body, and the
