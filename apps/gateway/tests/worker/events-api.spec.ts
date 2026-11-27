@@ -122,6 +122,15 @@ describe("GET /v1/wabas/:wabaId/events", () => {
     expect(await page("?since=3001")).toEqual({ ok: true, events: [], next: null });
   });
 
+  it("since with type starts at the first event since, even when that event is of another type", async () => {
+    await ingest([delivered(0), reply(1), delivered(2), reply(3)]);
+    await runInDurableObject(gatewayStub(), (instance: EccosGateway) => {
+      instance.sql.exec("UPDATE inbound_events SET received_at = id * 1000");
+    });
+    expect((await page("?since=2000&type=delivered")).events.map((e) => e.id)).toEqual([3]);
+    expect((await page("?since=2000&type=reply")).events.map((e) => e.id)).toEqual([2, 4]);
+  });
+
   it("type keeps one event type, and pages within it", async () => {
     await ingest(Array.from({ length: 6 }, (_, i) => (i % 2 ? delivered(i) : reply(i))));
     const pages = await drain("type=delivered&limit=2");
@@ -211,5 +220,18 @@ describe("GET /v1/wabas/:wabaId/events", () => {
       { status: 200, wabaId: TEST_WABA_ID, count: 1, hasMore: false },
     ]);
     expect(JSON.stringify(lines)).not.toContain("wamid.IN1");
+  });
+
+  it("an encoded or padded WABA id shares the canonical rate-limit bucket", async () => {
+    const limit = vi.fn(async (_options: { key: string }) => ({ success: false }));
+    (env as { READ_RATE_LIMITER?: RateLimit }).READ_RATE_LIMITER = { limit };
+    for (const segment of ["%57ABA_TEST", "%20WABA_TEST", "WABA_TEST%20"]) {
+      expect((await list("", apiKey, segment)).status, segment).toBe(429);
+    }
+    expect(limit.mock.calls.map(([arg]) => arg.key)).toEqual(Array(3).fill(`${TEST_ACCOUNT_ID}:${TEST_WABA_ID}`));
+  });
+
+  it("is never cached", async () => {
+    expect((await list()).headers.get("cache-control")).toBe("no-store");
   });
 });

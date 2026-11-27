@@ -1161,7 +1161,8 @@ app.get("/v1/wabas/:wabaId/scheduled", async (c) => {
 app.get("/v1/wabas/:wabaId/events", async (c) => {
   const cid = correlationId(c);
   const account = c.get("account") ?? null;
-  const wabaId = requestedWabaId(c);
+  // Trimmed as ownership and the stub trim it, so a padded id cannot open its own rate-limit bucket.
+  const wabaId = requestedWabaId(c).trim();
   if (!account) return c.json({ ok: false, error: "unauthorized" }, 401);
   const parsed = parseEventsQuery((name) => c.req.query(name));
   if (!parsed.ok) {
@@ -1179,6 +1180,7 @@ app.get("/v1/wabas/:wabaId/events", async (c) => {
   }
   const page = await getGatewayStubForWaba(c.env, wabaId).listEventsAfter(parsed.query);
   logEvent("events_list", cid, 200, { wabaId, count: page.events.length, hasMore: page.next !== null });
+  noStore(c);
   return c.json({
     ok: true,
     events: page.events.map(({ id, receivedAt, payload }) => ({ id, receivedAt, event: JSON.parse(payload) })),
