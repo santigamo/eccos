@@ -2858,7 +2858,6 @@ export class EccosGateway extends DurableObject<Env> {
         console.log(
           JSON.stringify({ level: "warn", area: "ingest", event: "held_expired", wabaId: this.wabaIdForOps(), eventCount: expired }),
         );
-        await this.alertHeldExpired(expired);
       }
       await this.pruneConversations(now);
       this.saveConfig({ [LAST_SWEEP_KEY]: String(now) });
@@ -3773,26 +3772,22 @@ export class EccosGateway extends DurableObject<Env> {
         row.id,
       );
     }
-    const tripped =
-      sent && generation === this.circuitGeneration
-        ? this.recordCircuit(httpStatus !== null && httpStatus < 500 && httpStatus !== 429, Date.now())
-        : null;
+    if (sent && generation === this.circuitGeneration) {
+      this.recordCircuit(httpStatus !== null && httpStatus < 500 && httpStatus !== 429, Date.now());
+    }
     if (ok) {
       this.noteActivation("webhook_2xx", Date.now());
       console.log(JSON.stringify({ level: "info", event: "delivered", ...attempt }));
       return;
     }
-    const terminal = attempts >= maxAttempts;
     console.warn(
       JSON.stringify({
         level: "warn",
-        event: terminal ? "delivery-failed" : "attempt-failed",
+        event: attempts >= maxAttempts ? "delivery-failed" : "attempt-failed",
         ...attempt,
         error: error?.slice(0, 200) ?? null,
       }),
     );
-    if (tripped) await this.alertCircuitOpen(tripped);
-    if (terminal) await this.alertTerminalFailure(row.phone_number_id, error);
   }
 
   /** The forwarding circuit breaker (see `ForwardCircuit`). */
@@ -3808,12 +3803,11 @@ export class EccosGateway extends DurableObject<Env> {
    * CIRCUIT_THRESHOLD-th in a row, or a failed probe, opens the circuit with the next
    * pause. Failures of forwards still in flight when it opened only add to the count.
    * Synchronous SQL, like recordOpsAlert: concurrent forwards must not both trip it.
-   * Returns the circuit when this call opened it.
    */
-  private recordCircuit(answered: boolean, now: number): ForwardCircuit | null {
+  private recordCircuit(answered: boolean, now: number): void {
     if (answered) {
       this.resetCircuit("answered");
-      return null;
+      return;
     }
     const circuit = this.forwardCircuit();
     circuit.failures += 1;
@@ -3827,12 +3821,11 @@ export class EccosGateway extends DurableObject<Env> {
       CIRCUIT_KEY,
       JSON.stringify(circuit),
     );
-    if (!opens) return null;
+    if (!opens) return;
     const { failures, openUntil } = circuit;
     console.warn(
       JSON.stringify({ level: "warn", area: "forward", event: "circuit_open", wabaId: this.wabaIdForOps(), failures, openUntil }),
     );
-    return circuit;
   }
 
   /** Closes the breaker: the subscriber answered, or the operator saved the target or retried. */
@@ -3848,17 +3841,16 @@ export class EccosGateway extends DurableObject<Env> {
   }
 
   /**
-   * Counts `added` occurrences of an alert `kind` (a delivery that exhausted its
-   * attempts, an inbound message dropped) and decides whether they earn an alert.
+   * Counts `added` occurrences of an alert `kind` (an inbound message dropped) and
+   * decides whether they earn an alert.
    * At most one alert per kind per OPS_ALERT_INTERVAL_MS; the occurrences in
    * between are counted and reported by the next alert, so a fault that lasts
    * all day costs 24 messages, not one per event.
    *
-   * Synchronous SQL with no await between the read and the write: the six
-   * concurrent forwards of one alarm run in this same object, and two of them
-   * must not both decide to send.
+   * Synchronous SQL with no await between the read and the write: concurrent
+   * calls into this same object must not both decide to send.
    */
-  recordOpsAlert(kind: "failure" | "drop" | "held_expiry" | "circuit", now: number, added = 1): { send: boolean; count: number } {
+  recordOpsAlert(kind: "drop", now: number, added = 1): { send: boolean; count: number } {
     const read = (key: string): number =>
       Number(this.sql.exec("SELECT value FROM ops_state WHERE key = ?", key).toArray()[0]?.value ?? 0);
     const write = (key: string, value: number): void => {
@@ -3891,50 +3883,6 @@ export class EccosGateway extends DurableObject<Env> {
         `${count} ${count === 1 ? "message" : "messages"} since the last alert, neither stored nor forwarded`,
         `Latest: ${types} without ${missing}`,
         "Logs: event webhook_dropped",
-      ].join("\n"),
-    );
-  }
-
-  private async alertHeldExpired(expired: number): Promise<void> {
-    const { send, count } = this.recordOpsAlert("held_expiry", Date.now(), expired);
-    if (!send) return;
-    await sendOpsAlert(
-      this.env,
-      [
-        "Eccos: held webhooks expired",
-        `WABA ${this.wabaIdForOps()}`,
-        `${count} ${count === 1 ? "event" : "events"} held over 3 days since the last alert were deleted, never forwarded`,
-        "Logs: event held_expired",
-      ].join("\n"),
-    );
-  }
-
-  private async alertCircuitOpen({ failures, openUntil }: ForwardCircuit): Promise<void> {
-    const { send, count } = this.recordOpsAlert("circuit", Date.now());
-    if (!send) return;
-    await sendOpsAlert(
-      this.env,
-      [
-        "Eccos: forwarding paused, the subscriber keeps failing",
-        `WABA ${this.wabaIdForOps()}`,
-        `${failures} timeouts, network errors, 5xx or 429 answers in a row`,
-        `Paused until ${new Date(openUntil).toISOString()}, then one probe delivery; queued events wait, nothing is dropped`,
-        `${count} ${count === 1 ? "pause" : "pauses"} since the last alert`,
-        "Logs: event circuit_open",
-      ].join("\n"),
-    );
-  }
-
-  private async alertTerminalFailure(phoneNumberId: string | null, error: string | null): Promise<void> {
-    const { send, count } = this.recordOpsAlert("failure", Date.now());
-    if (!send) return;
-    await sendOpsAlert(
-      this.env,
-      [
-        "Eccos: deliveries are failing",
-        `WABA ${this.wabaIdForOps()} · phone number id ${phoneNumberId ?? "unknown"}`,
-        `${count} ${count === 1 ? "delivery" : "deliveries"} exhausted every retry since the last alert`,
-        `Last error: ${error?.slice(0, 200) ?? "unknown"}`,
       ].join("\n"),
     );
   }

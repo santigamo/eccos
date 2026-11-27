@@ -156,10 +156,6 @@ describe("forward circuit breaker", () => {
       .find((line) => line.event === "circuit_open");
     expect(opened).toMatchObject({ area: "forward", failures: CIRCUIT_THRESHOLD, openUntil: clock + CIRCUIT_BACKOFF_MS[0] });
     expect(opened.wabaId).toContain(TEST_WABA_ID);
-    // The alert went through the throttle: the next one inside the window is held back.
-    await runInDurableObject(gatewayStub(), (i: EccosGateway) => {
-      expect(i.recordOpsAlert("circuit", clock)).toEqual({ send: false, count: 1 });
-    });
   });
 
   it.each([

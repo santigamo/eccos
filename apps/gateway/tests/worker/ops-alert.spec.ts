@@ -1,8 +1,7 @@
 /**
- * eccos-r8x0: a failed forward has to reach the operator. Each failed attempt
- * writes one structured log line, and a delivery that exhausts its attempts
- * feeds a throttled Telegram HQ alert (off here: the test env sets no
- * OPS_TELEGRAM_* secret, so nothing may leave for api.telegram.org).
+ * eccos-r8x0: a failed forward writes one structured log line per attempt. A
+ * customer's failing endpoint is not a platform problem, so it raises no Telegram
+ * alert; the daily census lists it. The throttle serves the platform alerts only.
  */
 import { env } from "cloudflare:workers";
 import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
@@ -21,21 +20,21 @@ beforeEach(async () => {
   await holdAlarms();
 });
 
-describe("failed-delivery alert throttle", () => {
+describe("ops alert throttle", () => {
   it("sends the first alert, then counts quietly until the window has passed", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
       const t0 = 1_800_000_000_000;
-      expect(i.recordOpsAlert("failure", t0)).toEqual({ send: true, count: 1 });
-      expect(i.recordOpsAlert("failure", t0 + 1_000)).toEqual({ send: false, count: 1 });
-      expect(i.recordOpsAlert("failure", t0 + 2_000)).toEqual({ send: false, count: 2 });
+      expect(i.recordOpsAlert("drop", t0)).toEqual({ send: true, count: 1 });
+      expect(i.recordOpsAlert("drop", t0 + 1_000)).toEqual({ send: false, count: 1 });
+      expect(i.recordOpsAlert("drop", t0 + 2_000)).toEqual({ send: false, count: 2 });
       // The next alert reports the two it held back plus its own.
-      expect(i.recordOpsAlert("failure", t0 + OPS_ALERT_INTERVAL_MS)).toEqual({ send: true, count: 3 });
+      expect(i.recordOpsAlert("drop", t0 + OPS_ALERT_INTERVAL_MS)).toEqual({ send: true, count: 3 });
     });
   });
 
   it("keeps its bookkeeping out of the config the console reads", async () => {
     await runInDurableObject(gatewayStub(), async (i: EccosGateway) => {
-      i.recordOpsAlert("failure", 1_800_000_000_000);
+      i.recordOpsAlert("drop", 1_800_000_000_000);
     });
     const config = await new GatewayRPC(createExecutionContext(), env).getConfig(TEST_WABA_ID, TEST_ACCOUNT_ID);
     expect(Object.keys(config).some((key) => key.includes("alert") || key.includes("failures"))).toBe(false);
@@ -43,7 +42,7 @@ describe("failed-delivery alert throttle", () => {
 });
 
 describe("a delivery that exhausts its attempts", () => {
-  it("logs every failed attempt and reaches the alert path without calling Telegram", async () => {
+  it("logs every failed attempt and raises no ops alert", async () => {
     await new GatewayRPC(createExecutionContext(), env).setSubscriberConfig(
       { url: "https://subscriber.example/hook" },
       TEST_WABA_ID,
@@ -62,8 +61,7 @@ describe("a delivery that exhausts its attempts", () => {
         await alarmOf(i);
       }
       expect(i.getDelivery(1)).toMatchObject({ status: "failed", last_error: "subscriber returned 503" });
-      // The terminal failure was counted, so the next one inside the window is held.
-      expect(i.recordOpsAlert("failure", Date.now())).toEqual({ send: false, count: 1 });
+      expect(i.sql.exec("SELECT key FROM ops_state WHERE key LIKE '%alert%'").toArray()).toEqual([]);
     });
 
     const lines = warn.mock.calls

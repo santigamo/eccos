@@ -38,12 +38,13 @@ Two limits keep one slow or dead subscriber from tying up its WABA's alarm (`FOR
   forwarding pauses for 30 s, then 1, 2, 5 and 10 minutes (the cap) for each trip in a row. While
   open nothing is sent, no attempt is spent and rows stay `pending`. When the pause ends one
   delivery goes out as a probe and spends a normal attempt, so a dead subscriber still ends in
-  `failed` and the "Deliveries are failing" alert. Any other answer (a 2xx, a 3xx, or a 4xx
+  `failed`. Any other answer (a 2xx, a 3xx, or a 4xx
   rejecting one payload) closes it and never counts toward opening it. Any save of the webhook
   settings and a manual retry also close it, and forwards still in flight at that moment do not
   count against it. Its
   state is one `forward_circuit` row in the Durable Object's `ops_state` table; it is logged as
-  `circuit_open` / `circuit_closed`, alerted, shown in the daily census, and returned on
+  `circuit_open` / `circuit_closed`, shown in the daily census (never alerted: it is the
+  customer's endpoint), and returned on
   `getSubscriberConfig` (`circuitOpenUntil`, `consecutiveFailures`), with the subscriber's p50/p95
   answer time over the newest 50 deliveries (`latency`, from `deliveries.last_duration_ms`).
 
@@ -154,7 +155,8 @@ When the `OPS_TELEGRAM_*` secrets are set, the existing 5-minute cron also posts
 census of every account and WABA to the Telegram ops topic (first tick at or after 07:00 UTC; see
 [observability.md](observability.md#daily-census-telegram-hq-eccos-ops)). No new cron trigger is
 needed. A self-host without those secrets does nothing. A census whose post failed is not
-retried: that day is simply skipped.
+retried: that day is simply skipped. One customer's delivery problems (failed deliveries, an open
+circuit, held events) are reported only there and in the logs, never as a separate alert.
 
 ### Meta token expiry
 
@@ -227,7 +229,7 @@ for the current early volume; revisit if traffic grows enough to make log volume
      Fix: re-register the WABA through the admin bootstrap API (or reconnect it through
      `/connect`) so the control-plane credential is replaced; no Worker redeploy is needed.
    - Wrong or down per-WABA subscriber URL → deliveries piling up in `pending`/`failed`, and
-     usually a "Forwarding paused" alert (`circuit_open`): while the circuit is open the backlog
+     usually a `circuit_open` log line and the circuit in the daily census: while the circuit is open the backlog
      advances one probe per pause. Fix: rotate it from the dashboard's Webhooks page
      (`setSubscriberConfig`), which updates the WABA's DO config without a deploy and closes the
      circuit, so the backlog drains at once.
