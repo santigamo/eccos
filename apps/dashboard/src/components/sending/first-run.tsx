@@ -14,6 +14,7 @@ export function FirstRun({
   label,
   title,
   lede,
+  action,
   door,
   fullRequestLabel,
   example,
@@ -22,6 +23,8 @@ export function FirstRun({
   label: string;
   title: string;
   lede: string;
+  /** The act that fills the list, when the console offers one: the block's one primary. */
+  action?: ReactNode;
   door: DoorProps;
   fullRequestLabel: string;
   example: ReactNode;
@@ -36,6 +39,7 @@ export function FirstRun({
           <p className={`m-0 ${MACHINE_CLASS}`}>{label}</p>
           <h2 className="m-0 text-2xl font-semibold tracking-[-0.015em] text-foreground">{title}</h2>
           <p className="m-0 max-w-prose text-[15px] leading-6 text-pretty text-muted-foreground">{lede}</p>
+          {action ? <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 pt-3">{action}</div> : null}
         </div>
         <ApiDoor {...door} open={open} onToggle={() => setOpen((was) => !was)} panelId={panelId} />
       </div>

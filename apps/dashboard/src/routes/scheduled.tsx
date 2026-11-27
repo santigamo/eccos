@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { createFileRoute, useLoaderData, useRouter } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 
@@ -13,6 +14,7 @@ import { normalizeSearchTrail, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { CancelScheduledDialog } from "../components/scheduled/cancel-scheduled-dialog";
+import { ScheduleSendSheet } from "../components/scheduled/schedule-send-sheet";
 import { ScheduledExample } from "../components/scheduled/scheduled-example";
 import { ScheduledStatusTabs } from "../components/scheduled/scheduled-status-tabs";
 import { SendAtCell } from "../components/scheduled/send-at-cell";
@@ -33,6 +35,7 @@ import {
   scheduledFirstRun,
   scheduledOutcome,
 } from "../lib/scheduled";
+import { shortWhen } from "../lib/schedule-draft";
 import { normalizeSearchWabaId } from "../lib/search";
 import { rootSendsPaused } from "../lib/sends-paused";
 import { gatewayOriginOrNull, listScheduled } from "../server/gateway";
@@ -188,6 +191,7 @@ function ScheduledPage() {
   const liveRefresh = useLiveRefresh("scheduled");
   const refreshControls = <RefreshControls {...liveRefresh} />;
   const [cancelling, setCancelling] = useState<ScheduledSend | null>(null);
+  const [scheduling, setScheduling] = useState(false);
   const rows = useMemo(() => (result.ok ? result.data.items : []), [result]);
 
   if (!result.ok) {
@@ -203,6 +207,22 @@ function ScheduledPage() {
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
   const { counts, nextCursor } = result.data;
+  const canSchedule = Boolean(rootRole(root)?.canOperate && selectedWabaId && phones.length > 0);
+  const scheduleSheet =
+    scheduling && selectedWabaId ? (
+      <ScheduleSendSheet
+        wabaId={selectedWabaId}
+        phones={phones}
+        onOpenChange={setScheduling}
+        onScheduled={(scheduled) => {
+          setScheduling(false);
+          toast(`Scheduled for ${shortWhen(scheduled.sendAt)}`);
+          // The new row is pending: show that tab from its first page, or re-read the one on screen.
+          if (status !== "pending" || cursor !== undefined) navigate({ search: () => (wabaId ? { wabaId } : {}) });
+          else void invalidatePage(router);
+        }}
+      />
+    ) : null;
 
   if (scheduledFirstRun(counts)) {
     const path = "…/scheduled/appt-8812";
@@ -212,6 +232,18 @@ function ScheduledPage() {
           label="No scheduled sends yet"
           title="Send a template at a time you choose"
           lede="One approved template to one person at a set time: an appointment reminder, a renewal notice, a follow-up. Your booking system schedules it, moves it and cancels it; Eccos sends it on time."
+          action={
+            canSchedule ? (
+              <>
+                <Button type="button" onClick={() => setScheduling(true)}>
+                  Schedule a send
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  No booking system? Schedule one by hand: one template, one person, one time.
+                </span>
+              </>
+            ) : undefined
+          }
           door={{
             sentence: "One request per reminder, under your own id.",
             requests: [
@@ -227,6 +259,7 @@ function ScheduledPage() {
           example={<ScheduledExample />}
           footnote="Every send is scheduled one by one, up to 90 days ahead. Nothing repeats on its own."
         />
+        {scheduleSheet}
       </Page>
     );
   }
@@ -273,7 +306,16 @@ function ScheduledPage() {
     <Page
       title={TITLE}
       kicker="Sending"
-      actions={refreshControls}
+      actions={
+        <>
+          {refreshControls}
+          {canSchedule ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => setScheduling(true)}>
+              Schedule a send
+            </Button>
+          ) : null}
+        </>
+      }
       intro={
         <>
           One template to one person at a set time, under a key from your system. A pending send goes out at its
@@ -317,6 +359,7 @@ function ScheduledPage() {
           onCancelled={() => invalidatePage(router)}
         />
       ) : null}
+      {scheduleSheet}
     </Page>
   );
 }
