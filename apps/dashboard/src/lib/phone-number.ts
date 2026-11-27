@@ -40,7 +40,7 @@ export const PHONE_PROBLEMS: Record<PhoneProblem, string> = {
   letters: "letters in the number",
   too_short: "too short",
   too_long: "too long",
-  invalid: "not a phone number",
+  invalid: "not a valid number",
   no_phone: "no phone number",
   no_code: "no country code",
   ambiguous: "no country code",
@@ -55,6 +55,11 @@ export function phoneProblemDetail(
   if (problem === "excel")
     return `Excel turned this number into ${raw}. Format the column as text and export again.`;
   if (problem === "no_phone") return "No phone number";
+  if (problem === "invalid") {
+    const number = parsePhoneNumberFromString(raw.replace(/[^\d+]/g, "").replace(/^00/, "+"));
+    const where = number?.country ? countryName(number.country) : number && `+${number.countryCallingCode}`;
+    return where ? `Not a valid ${where} number` : "Not a phone number";
+  }
   if (problem === "ambiguous") {
     return "No country code, and it reads as a number of another country too. Write it with its + code.";
   }
@@ -81,8 +86,8 @@ const fail = (reason: PhoneProblem): PhoneReading => ({ ok: false, reason });
 
 /**
  * Spaces, dots, dashes and brackets go; a leading 00 is a +. With a + the number
- * is international. Without one it is accepted only as a valid number of
- * `country`: written with that country's code (tried first), or as a national
+ * is international and must be a valid number of its country. Without one it
+ * is accepted only as a valid number of `country`: written with that country's code (tried first), or as a national
  * number. It is never read as another country's number, and a number that
  * reads as both a local one and another country's is refused: that guess is how
  * a stranger abroad gets the message.
@@ -99,7 +104,7 @@ export function readPhone(raw: string, country: CountryCode | null): PhoneReadin
 
   if (cleaned.startsWith("+")) {
     const parsed = parsePhoneNumberFromString(cleaned);
-    if (parsed?.isPossible()) {
+    if (parsed?.isValid()) {
       return { ok: true, digits: parsed.number.slice(1), display: parsed.formatInternational(), national: false, decimals };
     }
     const length = validatePhoneNumberLength(cleaned);

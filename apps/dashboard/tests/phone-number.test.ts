@@ -66,6 +66,19 @@ describe("readPhone", () => {
     expect(readPhone("34751111111", "ES")).toEqual({ ok: false, reason: "no_code" });
     expect(readPhone("3011 1111", "SG")).toEqual({ ok: false, reason: "no_code" });
     expect(readPhone("6530111111", "SG")).toEqual({ ok: false, reason: "no_code" });
+    // With its code too: a + or 00 does not make a number valid.
+    for (const raw of ["+34 751 111 111", "0034 751 111 111"]) {
+      expect(readPhone(raw, "ES")).toEqual({ ok: false, reason: "invalid" });
+      expect(phoneProblemDetail("invalid", raw, "ES")).toBe("Not a valid Spain number");
+    }
+    expect(phoneProblemDetail("invalid", "+1 123 456 7890", "ES")).toBe("Not a valid +1 number");
+    for (const [plus, zeros, digits] of [
+      ["+34 612 345 678", "0034 612 345 678", "34612345678"],
+      ["+33 6 12 34 56 78", "0033 6 12 34 56 78", "33612345678"],
+    ]) {
+      expect(readPhone(plus, "ES")).toMatchObject({ ok: true, digits, national: false });
+      expect(readPhone(zeros, "ES")).toEqual(readPhone(plus, "ES"));
+    }
     // A German mobile without its 0 is not ambiguous: +1 784 444 4444 is no Saint Vincent number.
     expect(readPhone("17844444444", "DE")).toMatchObject({ ok: true, digits: "4917844444444", national: true });
   });
