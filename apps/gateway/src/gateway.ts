@@ -76,11 +76,13 @@ import {
   countScheduled,
   type EndedRow,
   expireDue,
+  insertScheduled,
   listScheduled,
   listScheduledByTime,
   nextScheduledWake,
   readScheduled,
   type ScheduledFailure,
+  type ScheduledPut,
   type ScheduledRequest,
   type ScheduledSend,
   type ScheduledStatus,
@@ -1802,23 +1804,25 @@ export class EccosGateway extends DurableObject<Env> {
 
   // --- Scheduled sends (src/scheduled.ts) ---------------------------------
 
-  async putScheduled(input: {
-    accountId: string;
-    key: string;
-    phoneNumberId: string;
-    request: ScheduledRequest;
-  }): Promise<{ state: "created" | "replaced" | "not_pending" | "full"; scheduled: ScheduledSend | null }> {
+  async putScheduled(input: ScheduledPut): Promise<{ state: "created" | "replaced" | "not_pending" | "full"; scheduled: ScheduledSend | null }> {
     const now = Date.now();
     const { state, row } = this.ctx.storage.transactionSync(() => upsertScheduled(this.sql, input, now));
-    if (state === "created" || state === "replaced") {
-      const at = input.request.sendAt;
-      if (at <= now) this.wakeNow();
-      else {
-        const armed = await this.ctx.storage.getAlarm();
-        if (armed === null || armed > at) this.ctx.storage.setAlarm(at);
-      }
-    }
+    if (state === "created" || state === "replaced") await this.armScheduled(input.request.sendAt, now);
     return { state, scheduled: row };
+  }
+
+  /** The console's put: create-only, so an existing key in any status comes back untouched. */
+  async createScheduled(input: ScheduledPut): Promise<{ state: "created" | "exists" | "full"; scheduled: ScheduledSend | null }> {
+    const now = Date.now();
+    const { state, row } = this.ctx.storage.transactionSync(() => insertScheduled(this.sql, input, now));
+    if (state === "created") await this.armScheduled(input.request.sendAt, now);
+    return { state, scheduled: row };
+  }
+
+  private async armScheduled(at: number, now: number): Promise<void> {
+    if (at <= now) return this.wakeNow();
+    const armed = await this.ctx.storage.getAlarm();
+    if (armed === null || armed > at) this.ctx.storage.setAlarm(at);
   }
 
   async getScheduled(accountId: string, key: string): Promise<ScheduledSend | null> {

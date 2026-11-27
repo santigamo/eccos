@@ -69,6 +69,11 @@ export type SensitiveAction =
    */
   | "scheduled_cancel"
   /**
+   * A scheduled send created from the console. Ids and counts only (wabaId, key, template,
+   * how many values): never the recipient or a value, same rule as `template_test_send`.
+   */
+  | "scheduled_create"
+  /**
    * One free-text message sent from the conversation composer.
    *
    * Same rule as `template_test_send`, and for the same reason: the body is

@@ -625,4 +625,48 @@ function type(field: HTMLInputElement, value: string) {
 
     expect(onSent).toHaveBeenCalledWith("15550100001");
   });
+
+  test("schedule mode hands the composed payload to the slot instead of sending, and shows its refusal", async () => {
+    sendTemplateTest = mock(async () => SENT);
+    const submitSchedule = mock(async (_payload: unknown) => ({ title: "Not scheduled", detail: "Choose another key." }));
+    const named = analyzeTemplate({
+      parameter_format: "NAMED",
+      components: [{ type: "BODY", text: "Hola {{nombre}}", example: { body_text_named_params: [{ param_name: "nombre", example: "Ana" }] } }],
+    });
+    const host = await mount(
+      <SendTestForm
+        wabaId="waba-a"
+        templateName="reminder"
+        languageCode="es"
+        sendability={named}
+        phones={PHONES}
+        schedule={{ label: "Schedule for Sat 28 Nov, 09:00", submit: submitSchedule, fields: <p>WHEN-SLOT</p> }}
+      />,
+    );
+    // The recipient is a real person: Meta's example is a placeholder, never a value.
+    const param = host.querySelector<HTMLInputElement>("#send-test-param-nombre")!;
+    expect(param.value).toBe("");
+    expect(param.placeholder).toBe("Ana");
+    expect(host.textContent).toContain("Message");
+    expect(host.textContent).toContain("WHEN-SLOT");
+    expect(host.textContent).not.toContain("Send test message");
+
+    await act(async () => type(host.querySelector<HTMLInputElement>("#send-test-recipient")!, "34600111222"));
+    await act(async () => type(param, "Ana"));
+    const submit = [...host.querySelectorAll("button")].find((b) => b.type === "submit")!;
+    expect(submit.textContent).toBe("Schedule for Sat 28 Nov, 09:00");
+    await act(async () => submit.click());
+
+    expect(sendTemplateTest).not.toHaveBeenCalled();
+    expect(submitSchedule).toHaveBeenCalledWith({
+      wabaId: "waba-a",
+      phoneNumberId: "PNID1",
+      to: "34600111222",
+      templateName: "reminder",
+      languageCode: "es",
+      bodyValues: { nombre: "Ana" },
+    });
+    expect(host.querySelector("output")?.textContent).toContain("Choose another key.");
+    expect(submit.disabled).toBe(false);
+  });
 });

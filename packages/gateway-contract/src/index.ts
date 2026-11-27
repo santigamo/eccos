@@ -272,6 +272,41 @@ export interface ScheduledCancelResult {
   scheduled: ScheduledSend | null;
 }
 
+/** One send scheduled from the console: the template fields of {@link SendTemplateTestInput}, a key and a time. */
+export interface ScheduleSendInput extends Omit<SendTemplateTestInput, "idempotencyKey"> {
+  /** 1 to 128 letters, digits and `. _ : -`. Create-only: an existing key is refused, never replaced. */
+  key: string;
+  /** Epoch ms; the same limits as `PUT /scheduled/:key`. */
+  sendAt: number;
+  expiresAt: number;
+}
+
+export type ScheduleSendFailureCode =
+  | "subscription_required"
+  | "no_phone"
+  /** The key is taken in any status; `existing` is that send. */
+  | "key_exists"
+  | "too_many_pending"
+  /** `detail` names the broken time rule. */
+  | "invalid_time"
+  /** Any other refusal of the request (the recipient, the template's size); `detail` says which. */
+  | "invalid_request"
+  | "template_not_found"
+  /** `templateStatus` is Meta's status for it. */
+  | "template_not_approved"
+  /** Meta could not be asked about the template; nothing was scheduled. */
+  | "templates_unreachable";
+
+export type ScheduleSendResult =
+  | { ok: true; scheduled: ScheduledSend }
+  | {
+      ok: false;
+      code: ScheduleSendFailureCode;
+      detail: string | null;
+      existing?: ScheduledSend;
+      templateStatus?: string;
+    };
+
 /**
  * Which failed deliveries a bulk retry re-enqueues: those ENQUEUED inside
  * [from, to] (epoch ms, both inclusive). The window is always explicit because
@@ -1405,6 +1440,8 @@ export interface GatewayApi {
   cancelBroadcast(input: { wabaId: string; broadcastId: string }, accountId: string): Promise<BroadcastSummary | null>;
   /** Cancel a pending scheduled send. not_pending once it is sending or ended; missing when the key is not this account's. */
   cancelScheduled(input: { wabaId: string; key: string }, accountId: string): Promise<ScheduledCancelResult>;
+  /** Schedule one template send, create-only: never replaces a key an integration holds. */
+  scheduleSend(input: ScheduleSendInput, accountId: string): Promise<ScheduleSendResult>;
   /**
    * Resolve an organization to its account in ONE control-plane hop: link
    * (reconciling a missing one, contract §2), refusal of a pending/disabled link

@@ -68,6 +68,10 @@ The template must be `APPROVED` in exactly that language when you schedule: ther
   outcome cannot be moved or cancelled: it was, or may have been, sent. Use a new key.
 - **Start over.** A `PUT` on a key that was cancelled or failed schedules it again from scratch.
 
+The console's **Schedule a send** (on Scheduled) creates one send by hand. It never moves one:
+a key that already exists, in any status, is refused, so it cannot replace a send your system
+holds. Cancel works from the list for any pending send.
+
 ## How it is sent
 
 - At `sendAt`, usually within seconds. Scheduled sends go ahead of

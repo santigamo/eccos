@@ -53,6 +53,8 @@ import type {
   BroadcastRecipientStatus,
   BroadcastSummary,
   ScheduledCancelResult,
+  ScheduleSendInput,
+  ScheduleSendResult,
   ScheduledPage,
   ScheduledStatus,
   AccountFunnel,
@@ -118,6 +120,8 @@ export type {
   ScheduledPage,
   ScheduledSend,
   ScheduledStatus,
+  ScheduleSendFailureCode,
+  ScheduleSendResult,
   ConnectExchangeResult,
   ConnectStartResult,
   ConversationSummary,
@@ -251,9 +255,10 @@ export type DashboardState =
   | ({ stage: "ready"; status: GatewayStatus; scope: DashboardScope; billing?: BillingFlag } & RoleFlag);
 /**
  * `canAdminister`: the member's role may connect numbers, manage keys and settings; the server refuses either way.
+ * `canOperate`: the role may send, schedule and cancel from the console; the server refuses either way.
  * `role`: Better Auth's role string, for display.
  */
-export type RoleFlag = { canAdminister: boolean; role: string };
+export type RoleFlag = { canAdminister: boolean; canOperate: boolean; role: string };
 /**
  * Present only while billing is on. `subscribed`: a closed account whose
  * subscription still exists, so billing opens its portal. `canManage`: the
@@ -528,6 +533,23 @@ export function validateCancelScheduledInput(input: unknown): { wabaId: string; 
   const wabaId = optionalWabaId(record.wabaId);
   if (!wabaId) throw new Error("wabaId is required");
   return { wabaId, key: requiredScheduleKey(record.key) };
+}
+
+export function validateScheduleSendInput(input: unknown): ScheduleSendInput {
+  const record = inputRecord(input);
+  return {
+    ...validateSendTestInput({ ...record, idempotencyKey: undefined }),
+    key: requiredScheduleKey(record.key),
+    sendAt: epochMs(record.sendAt, "sendAt"),
+    expiresAt: epochMs(record.expiresAt, "expiresAt"),
+  };
+}
+
+function epochMs(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${field} must be epoch milliseconds`);
+  }
+  return value;
 }
 
 function validateRetryInput(input: unknown): { id: number; wabaId: string } {
@@ -1032,6 +1054,7 @@ export const getDashboardState = createServerFn({ method: "GET" })
         // numbers.tsx) already do the right thing with resources present.
         const role = await memberRole(auth, request.headers, organizationId);
         const canAdminister = roleAllows(role, "administer");
+        const canOperate = roleAllows(role, "operate");
         const billing = billingEnabled(env)
           ? {
               billing: {
@@ -1041,10 +1064,11 @@ export const getDashboardState = createServerFn({ method: "GET" })
               },
             }
           : {};
-        if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, role, ...billing };
+        if (!state.status) return { stage: "account-ready", resources: state.resources, canAdminister, canOperate, role, ...billing };
         return {
           stage: "ready",
           canAdminister,
+          canOperate,
           role,
           status: state.status.data,
           scope: dashboardScope(state.status.scope),
@@ -1596,6 +1620,35 @@ export const cancelScheduled = createServerFn({ method: "POST" })
           resource: { wabaId: scope.wabaId, key: data.key },
           outcome: done ? "success" : "failed",
           ...(done ? {} : { detail: result.state === "unchanged" ? "ended" : result.state }),
+        });
+        return result;
+      }),
+  );
+
+/** Schedule one template send (`operate`, like Send test). Create-only at the gateway; the audit line carries ids and counts, never the recipient or a value. */
+export const scheduleSend = createServerFn({ method: "POST" })
+  .validator(validateScheduleSendInput)
+  .handler(
+    ({ data }): Promise<Result<ScheduleSendResult>> =>
+      withGateway(async (gateway) => {
+        const actor = await requireActor("operate");
+        const scope = await resolveScope(gateway, data.wabaId, true);
+        const result = await gateway.scheduleSend({ ...data, wabaId: scope.wabaId }, scope.accountId);
+        auditEvent({
+          action: "scheduled_create",
+          actorUserId: actor.session.userId,
+          organizationId: actor.organizationId,
+          accountId: scope.accountId,
+          resource: {
+            wabaId: scope.wabaId,
+            phoneNumberId: data.phoneNumberId,
+            key: data.key,
+            template: data.templateName,
+            language: data.languageCode,
+            values: Object.keys(data.bodyValues ?? data.bodyParams ?? {}).length + (data.buttonParams?.length ?? 0),
+          },
+          outcome: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { detail: result.code }),
         });
         return result;
       }),

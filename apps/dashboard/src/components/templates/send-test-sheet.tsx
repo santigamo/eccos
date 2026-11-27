@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,18 +53,29 @@ interface SendTestFormProps {
   /** Fill the variables with Meta's stored examples. Only for a test send to
    * yourself: to a real customer the examples would go out as if they were true. */
   prefillExamples?: boolean;
+  /** Schedule the composed message instead of sending it now. */
+  schedule?: ScheduleSlot;
 }
 
-type Notice =
-  | { ok: true; messageId: string }
-  | { ok: false; title: string; detail: string; secondary?: string };
+export type SendTestPayload = ReturnType<typeof assembleSendTestPayload>;
+export type FailureNotice = { title: string; detail: string; secondary?: string };
+
+export interface ScheduleSlot {
+  /** The "When" group, under the message and inside the form's disabled fieldset. */
+  fields: ReactNode;
+  label: string;
+  /** Replaces the send. Resolves to the failure to show, or null once scheduled; never throws. */
+  submit: (payload: SendTestPayload) => Promise<FailureNotice | null>;
+}
+
+type Notice = { ok: true; messageId: string } | ({ ok: false } & FailureNotice);
 
 const SEND_THREW = {
   title: "Send failed",
   detail: "The console could not complete the send. Check Messages before trying again.",
 };
 
-const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
+export const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 
 /**
  * "Send test" — one template message from the console, to prove a template
@@ -158,6 +169,7 @@ export function SendTestForm({
   sendLabel,
   view,
   prefillExamples = false,
+  schedule,
 }: SendTestFormProps) {
   const variables = sendability.kind === "ready" ? sendability.body : [];
   const examples = () =>
@@ -208,6 +220,11 @@ export function SendTestForm({
           headerMedia,
           headerLink,
         });
+        if (schedule) {
+          const failure = await schedule.submit(payload);
+          if (failure) setNotice({ ok: false, ...failure });
+          return failure === null;
+        }
         const result = await sendKeyed(gate.current, payload, (data) => sendTemplateTest({ data }));
         if (!result.ok) {
           // A boundary failure (unreachable / unauthenticated / forbidden) is a
@@ -261,6 +278,7 @@ export function SendTestForm({
   return (
     <form onSubmit={onSubmit} aria-busy={phase === "sending"} className="flex flex-col gap-4 px-4 pb-4">
       <fieldset disabled={phase !== "idle"} className="contents">
+        {schedule ? <h3 className="m-0 text-sm font-semibold text-foreground">Message</h3> : null}
         <div>
           <span className={LABEL}>From</span>
           {phones.length === 1 ? (
@@ -305,7 +323,9 @@ export function SendTestForm({
               placeholder="+34 600 00 00 11"
             />
             <p className="mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground">
-              With a Cloud API test number, only recipients on its allowed list can receive messages.
+              {schedule
+                ? "Include the country code."
+                : "With a Cloud API test number, only recipients on its allowed list can receive messages."}
             </p>
           </div>
         )}
@@ -423,9 +443,10 @@ export function SendTestForm({
           </div>
         ) : null}
 
+        {schedule?.fields}
       </fieldset>
 
-      <SendTestAction phase={phase} onSendAnother={sendAnother} label={sendLabel} />
+      {schedule ? null : <SendTestAction phase={phase} onSendAnother={sendAnother} label={sendLabel} />}
 
       {/* Mounted even when empty: a live region that appears with its message is
           not reliably announced, one that fills up is. */}
@@ -436,7 +457,21 @@ export function SendTestForm({
       >
         {notice ? <NoticeBody notice={notice} wabaId={wabaId} /> : null}
       </output>
+
+      {schedule ? <ScheduleAction label={schedule.label} busy={phase !== "idle"} /> : null}
     </form>
+  );
+}
+
+/** The schedule's primary, pinned under the form: it names the time, so the click confirms it. */
+function ScheduleAction({ label, busy }: { label: string; busy: boolean }) {
+  return (
+    <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-(--line) bg-popover px-4 pt-4 pb-1">
+      <Button type="submit" className="w-full" aria-busy={busy} disabled={busy}>
+        {busy ? "Scheduling…" : label}
+      </Button>
+      <p className="m-0 text-center text-xs text-muted-foreground">You can cancel it from the list until it is sent.</p>
+    </div>
   );
 }
 
