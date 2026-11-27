@@ -46,6 +46,7 @@ import type { EccosControlPlane } from "./control-plane";
 import { getControlPlaneStub } from "./control-plane-stub";
 import { type HistoryMessage, type SyncItem, mapSyncItem, syncItems } from "./history";
 import {
+  DOWNLOAD_TIMEOUT_MS,
   downloadMetaMedia,
   isChecksumMismatch,
   MediaPermanentError,
@@ -177,6 +178,9 @@ const LATENCY_SAMPLE_ROWS = 50;
 /** Media downloads per alarm, and how many stream at once: each can move up to 100 MB. */
 const MEDIA_BATCH = 5;
 const MEDIA_CONCURRENCY = 2;
+/** Wall-clock budget for one alarm's media: past it no new download starts, and the alarm
+ * re-arms at once for the rest. As FORWARD_BUDGET_MS, so large files cannot hold the DO. */
+export const MEDIA_BUDGET_MS = 8_000;
 /** Attempts before a media id is given up. Backoff between them runs 5s, 25s, 2m, 10m. */
 const MEDIA_MAX_ATTEMPTS = 5;
 /** How long a failed token lookup or R2 purge waits before the alarm tries again. */
@@ -3283,9 +3287,15 @@ export class EccosGateway extends DurableObject<Env> {
         wakes.push(now + MEDIA_RETRY_MS);
       } else if (token !== "missing") {
         try {
-          await runBoundedPool(due, MEDIA_CONCURRENCY, (mediaId) => this.downloadOneMedia(mediaId, token));
-          // Ids that arrived while this batch ran are due now. A webhook arms the alarm, but the
-          // setAlarm at the end of this run would overwrite that, so come back at once.
+          const deadline = Date.now() + MEDIA_BUDGET_MS;
+          await runBoundedPool(
+            due,
+            MEDIA_CONCURRENCY,
+            (mediaId) => this.downloadOneMedia(mediaId, token),
+            () => Date.now() >= deadline,
+          );
+          // Ids the budget left, or that arrived while this batch ran, are due now. A webhook arms
+          // the alarm, but the setAlarm at the end of this run would overwrite that, so come back at once.
           if (this.dueMediaIds(Date.now()).length > 0) wakes.push(now);
         } catch (error) {
           if (!(error instanceof MediaTokenError)) throw error;
@@ -3373,10 +3383,25 @@ export class EccosGateway extends DurableObject<Env> {
     // Checked again here, with no await before the write: the due list was read before
     // the token lookup, and an overlapping run may have settled this id since.
     const prior = this.sql
-      .exec(`SELECT state, attempts, next_attempt_at FROM media WHERE media_id = ?`, mediaId)
+      .exec(`SELECT state, attempts, last_error, next_attempt_at FROM media WHERE media_id = ?`, mediaId)
       .toArray()[0];
     if (prior && (prior.state !== "failed" || Number(prior.next_attempt_at) > now)) return;
+    // An erasure or prune during the token lookup has purged the id: no row may come back for it.
+    if (!this.isReferenced(mediaId)) return;
     const attempts = Number(prior?.attempts ?? 0) + 1;
+    // Only an attempt the runtime cancelled ends past the limit: a finished one settles below.
+    if (attempts > MEDIA_MAX_ATTEMPTS) {
+      this.sql.exec(`UPDATE media SET state = 'gone', next_attempt_at = NULL, updated_at = ? WHERE media_id = ?`, now, mediaId);
+      return;
+    }
+    // Counted and flushed before the download, as processSyncBatch does: an alarm cancelled
+    // mid-download still spends the attempt and backs off, instead of picking the id again at once.
+    // The last attempt holds the id only as long as a download can take, so a cancelled one ends soon.
+    const holdMs = attempts === MEDIA_MAX_ATTEMPTS ? DOWNLOAD_TIMEOUT_MS : withJitter(backoffMs(attempts));
+    this.writeMedia(mediaId, "failed", attempts, "download did not finish", now + holdMs, now);
+    await this.ctx.storage.sync();
+    // An erasure during the flush has tombstoned the id already: nothing to download.
+    if (!this.isReferenced(mediaId)) return;
 
     let state: "stored" | "failed" | "gone" = "stored";
     let lastError: string | null = null;
@@ -3396,12 +3421,28 @@ export class EccosGateway extends DurableObject<Env> {
         fetch: this.watchedFetch(),
       }));
     } catch (error) {
-      // A rejected token is the WABA's fault, not the media's: nothing is recorded and no attempt counted.
-      if (error instanceof MediaTokenError) throw error;
+      // A rejected token is the WABA's fault, not the media's: the counted attempt is taken back,
+      // unless an overlapping run has moved the row on since.
+      if (error instanceof MediaTokenError) {
+        if (prior) {
+          this.sql.exec(
+            `UPDATE media SET attempts = ?, last_error = ?, next_attempt_at = ?
+             WHERE media_id = ? AND state = 'failed' AND attempts = ?`,
+            prior.attempts,
+            prior.last_error,
+            prior.next_attempt_at,
+            mediaId,
+            attempts,
+          );
+        } else {
+          this.sql.exec(`DELETE FROM media WHERE media_id = ? AND state = 'failed' AND attempts = ?`, mediaId, attempts);
+        }
+        throw error;
+      }
       if (isChecksumMismatch(error)) this.logMedia("checksum-mismatch");
       state = error instanceof MediaPermanentError || attempts >= MEDIA_MAX_ATTEMPTS ? "gone" : "failed";
       lastError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
-      nextAttemptAt = state === "failed" ? now + withJitter(backoffMs(attempts)) : null;
+      nextAttemptAt = state === "failed" ? Date.now() + withJitter(backoffMs(attempts)) : null;
     }
     const ms = Date.now() - now;
     if (ms >= SLOW_STEP_MS) {
@@ -3416,6 +3457,31 @@ export class EccosGateway extends DurableObject<Env> {
       this.markErased(mediaId, now);
       return;
     }
+    if (state === "stored") {
+      this.writeMedia(mediaId, state, attempts, null, null, now);
+      return;
+    }
+    // A failure settles only its own attempt: an overlapping run may have stored or retried the id since.
+    this.sql.exec(
+      `UPDATE media SET state = ?, last_error = ?, next_attempt_at = ?, updated_at = ?
+       WHERE media_id = ? AND state = 'failed' AND attempts = ?`,
+      state,
+      lastError,
+      nextAttemptAt,
+      Date.now(),
+      mediaId,
+      attempts,
+    );
+  }
+
+  private writeMedia(
+    mediaId: string,
+    state: "stored" | "failed",
+    attempts: number,
+    lastError: string | null,
+    nextAttemptAt: number | null,
+    now: number,
+  ): void {
     this.sql.exec(
       `INSERT INTO media (media_id, state, attempts, last_error, next_attempt_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
