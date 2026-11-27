@@ -18,6 +18,8 @@ Each forward is:
 ```
 POST <your URL>
 content-type: application/json
+accept: */*
+user-agent: Eccos-Webhooks/1.0 (+https://eccos.chat)
 x-eccos-signature: sha256=<hex>
 x-webhook-event: <type of the first event in the batch>
 x-idempotency-key: <SHA-256 hex of the raw body>

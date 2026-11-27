@@ -131,6 +131,7 @@ interface DeliveryRow {
 type ForwardOutcome = { ok: true; httpStatus: number } | { ok: false; reason: string; httpStatus?: number };
 
 const FORWARD_FETCH_TIMEOUT_MS = 5_000;
+const FORWARD_USER_AGENT = "Eccos-Webhooks/1.0 (+https://eccos.chat)";
 /** Sync items (history messages, contacts) applied per alarm wake. Bounds the CPU and
  * memory one invocation spends on a huge history; a backlog keeps the alarm running. */
 const SYNC_BATCH_UNITS = 200;
@@ -3446,7 +3447,12 @@ export class EccosGateway extends DurableObject<Env> {
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
-    const headers: Record<string, string> = { "content-type": "application/json" };
+    // Firewalls such as ModSecurity's core rules refuse a request without them (403/406).
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "*/*",
+      "user-agent": FORWARD_USER_AGENT,
+    };
     if (secret) {
       headers["x-eccos-signature"] = await signPayload(payload, secret);
     }
