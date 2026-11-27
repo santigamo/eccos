@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-  attemptedCount,
+  broadcastPace,
+  broadcastState,
   broadcastStateLabel,
+  broadcastsFirstRun,
   normalizeBroadcastId,
   normalizeRecipientStatus,
   normalizeSeqCursor,
@@ -26,9 +28,47 @@ describe("broadcast state words", () => {
   });
 });
 
-describe("counts", () => {
-  test("attempted excludes queued, sending and cancelled", () => {
-    expect(attemptedCount(counts)).toBe(13);
+describe("state with its reason", () => {
+  test("a running broadcast reads paused, with its queue, while the workspace's sending is paused", () => {
+    expect(broadcastState({ status: "running", counts: { ...counts, queued: 1241 }, haltReason: null }, true)).toEqual({
+      label: "paused",
+      reason: "1,241 waiting",
+    });
+    expect(broadcastState({ status: "running", counts, haltReason: null }, false)).toEqual({
+      label: "sending",
+      reason: null,
+    });
+    expect(broadcastState({ status: "completed", counts, haltReason: null }, true)).toEqual({
+      label: "completed",
+      reason: null,
+    });
+  });
+
+  test("a halted broadcast carries its reason", () => {
+    expect(broadcastState({ status: "halted", counts, haltReason: "first 20 sends failed" }, false)).toEqual({
+      label: "halted",
+      reason: "first 20 sends failed",
+    });
+  });
+});
+
+describe("pace", () => {
+  test("agrees with the gateway's ticks: 80% of the account rate", async () => {
+    const { pacing } = await import("../../gateway/src/broadcasts");
+    for (const rate of [1, 7, 10, 60, 80, 600, 1000]) {
+      const { perTick, tickMs } = pacing(rate);
+      expect(broadcastPace(rate)).toBe(Math.round((perTick * 60_000) / tickMs));
+    }
+    expect(broadcastPace(60)).toBe(48);
+    expect(broadcastPace(600)).toBe(480);
+  });
+});
+
+describe("first run", () => {
+  test("only the first page with no rows is a first run", () => {
+    expect(broadcastsFirstRun([], undefined)).toBe(true);
+    expect(broadcastsFirstRun([], "bc_x")).toBe(false);
+    expect(broadcastsFirstRun([{}], undefined)).toBe(false);
   });
 });
 

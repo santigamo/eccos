@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { createFileRoute, Link, useLoaderData } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
 
+import { BroadcastExample } from "../components/broadcasts/broadcast-example";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
@@ -10,14 +11,18 @@ import { normalizeSearchTrail, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { FailureView } from "../components/dashboard/failure";
+import { FirstRun } from "../components/sending/first-run";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
-import { attemptedCount, broadcastStateLabel, normalizeBroadcastId } from "../lib/broadcasts";
+import { broadcastState, broadcastsFirstRun, normalizeBroadcastId } from "../lib/broadcasts";
+import { broadcastCurl, wabaPath } from "../lib/curl";
 import { loaderFailure } from "../lib/failure";
+import { rootRole } from "../lib/root-role";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchWabaId } from "../lib/search";
-import { listBroadcasts } from "../server/gateway";
+import { rootSendsPaused } from "../lib/sends-paused";
+import { gatewayOriginOrNull, listBroadcasts } from "../server/gateway";
 import type { BroadcastSummary } from "../server/gateway";
-import { COUNT_LINK, Page, StatusTag, fmtTs } from "../ui";
+import { COUNT_LINK, Page, StatusTag, fmtCount, fmtTs } from "../ui";
 
 /**
  * ── BROADCASTS ──────────────────────────────────────────────────────────────
@@ -29,6 +34,8 @@ import { COUNT_LINK, Page, StatusTag, fmtTs } from "../ui";
 
 type BroadcastsSearch = { wabaId?: string; cursor?: string; trail?: PageTrail };
 
+const GUIDE = { href: "https://docs.eccos.chat/bulk-sending", label: "Bulk sending guide" };
+
 export const Route = createFileRoute("/broadcasts")({
   staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): BroadcastsSearch => ({
@@ -37,10 +44,16 @@ export const Route = createFileRoute("/broadcasts")({
     trail: normalizeSearchTrail(search.trail, search.cursor),
   }),
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, cursor: search.cursor }),
-  loader: ({ deps }) => listBroadcasts({ data: deps }).catch(loaderFailure),
+  loader: async ({ deps }) => {
+    const list = await listBroadcasts({ data: deps }).catch(loaderFailure);
+    // The origin only fills the first-run block's request.
+    const firstRun = list.ok && broadcastsFirstRun(list.data.items, deps.cursor);
+    const origin = firstRun ? await gatewayOriginOrNull() : null;
+    return { list, origin };
+  },
   component: BroadcastsPage,
   pendingComponent: () => (
-    <GridPending title="Broadcasts" kicker="Sending" columns={broadcastColumns()} />
+    <GridPending title="Broadcasts" kicker="Sending" columns={broadcastColumns({ paused: false })} />
   ),
 });
 
@@ -51,18 +64,14 @@ const numeric = {
   cellClassName: "text-right whitespace-nowrap",
 };
 
-function broadcastColumns(wabaId?: string, showPhone = false) {
+const countCell = (value: number) => <span className="font-mono text-xs tabular-nums">{fmtCount(value)}</span>;
+
+function broadcastColumns({ wabaId, showPhone = false, paused }: { wabaId?: string; showPhone?: boolean; paused: boolean }) {
   return [
-    columnHelper.accessor("createdAt", {
-      id: "created",
-      header: "Created",
-      cell: (info) => <span className="font-mono text-xs">{fmtTs(info.getValue())}</span>,
-      meta: { cellClassName: "whitespace-nowrap" },
-    }),
     // The row's door: the same anatomy as the MESSAGE cell on /messages.
     columnHelper.accessor("template", {
-      id: "template",
-      header: "Template",
+      id: "broadcast",
+      header: "Broadcast",
       cell: (info) => {
         const row = info.row.original;
         return (
@@ -80,29 +89,48 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
       },
       meta: { cellClassName: "whitespace-nowrap" },
     }),
+    columnHelper.accessor("createdAt", {
+      id: "created",
+      header: "Created",
+      cell: (info) => <span className="font-mono text-xs">{fmtTs(info.getValue())}</span>,
+      meta: { cellClassName: "whitespace-nowrap" },
+    }),
     columnHelper.accessor("status", {
       id: "state",
       header: "State",
-      cell: (info) => <StatusTag status={broadcastStateLabel(info.row.original)} />,
-      meta: { cellClassName: "whitespace-nowrap" },
-    }),
-    columnHelper.display({
-      id: "progress",
-      header: "Progress",
       cell: (info) => {
-        const { counts, total } = info.row.original;
+        const { label, reason } = broadcastState(info.row.original, paused);
         return (
-          <span className="font-mono text-xs tabular-nums">
-            {attemptedCount(counts)} / {total}
+          <span className="inline-flex items-center gap-2">
+            <StatusTag status={label} />
+            {reason ? <span className="max-w-64 truncate text-xs text-muted-foreground" title={reason}>{reason}</span> : null}
           </span>
         );
       },
+      meta: { cellClassName: "whitespace-nowrap" },
+    }),
+    columnHelper.accessor("total", {
+      id: "recipients",
+      header: "Recipients",
+      cell: (info) => countCell(info.getValue()),
       meta: numeric,
     }),
     columnHelper.display({
       id: "sent",
       header: "Sent",
-      cell: (info) => <span className="font-mono text-xs tabular-nums">{info.row.original.counts.sent}</span>,
+      cell: (info) => countCell(info.row.original.counts.sent),
+      meta: numeric,
+    }),
+    columnHelper.display({
+      id: "delivered",
+      header: "Delivered",
+      cell: (info) => countCell(info.row.original.delivery.delivered),
+      meta: numeric,
+    }),
+    columnHelper.display({
+      id: "read",
+      header: "Read",
+      cell: (info) => countCell(info.row.original.delivery.read),
       meta: numeric,
     }),
     columnHelper.display({
@@ -110,7 +138,7 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
       header: "Failed",
       cell: (info) => {
         const { failed, unknown } = info.row.original.counts;
-        if (failed + unknown === 0) return <span className="font-mono text-xs tabular-nums">0</span>;
+        if (failed + unknown === 0) return countCell(0);
         return (
           <span className="inline-flex gap-2">
             {(
@@ -129,23 +157,10 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
                   onClick={(event) => event.stopPropagation()}
                   className={`font-mono text-xs tabular-nums text-destructive-foreground ${COUNT_LINK}`}
                 >
-                  {count}
+                  {fmtCount(count)}
                   {status === "unknown" ? " unknown" : ""}
                 </Link>
               ))}
-          </span>
-        );
-      },
-      meta: numeric,
-    }),
-    columnHelper.display({
-      id: "receipts",
-      header: "Delivered · Read",
-      cell: (info) => {
-        const { delivered, read } = info.row.original.delivery;
-        return (
-          <span className="font-mono text-xs tabular-nums">
-            {delivered} · {read}
           </span>
         );
       },
@@ -165,7 +180,7 @@ function broadcastColumns(wabaId?: string, showPhone = false) {
 }
 
 function BroadcastsPage() {
-  const result = Route.useLoaderData();
+  const { list: result, origin } = Route.useLoaderData();
   const { wabaId, cursor, trail } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const navigate = Route.useNavigate();
@@ -185,27 +200,56 @@ function BroadcastsPage() {
   const selectedWabaId = wabaId ?? ready?.scope.selectedWabaId;
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
-  const nextCursor = result.data.nextCursor;
+  const backSearch = selectedWabaId ? { wabaId: selectedWabaId } : {};
+
+  if (broadcastsFirstRun(rows, cursor)) {
+    return (
+      <Page title="Broadcasts" kicker="Sending" actions={refreshControls}>
+        <FirstRun
+          label="No broadcasts yet"
+          title="Send one template to your whole list"
+          lede="Bring a list of up to 10,000 people and Eccos sends each one their own message: an offer, an order that is ready, a change in opening hours."
+          door={{
+            sentence: "Your system sends the template and the list in one request.",
+            requests: [{ method: "POST", path: wabaPath(selectedWabaId, "/broadcasts") }],
+            curl: broadcastCurl(selectedWabaId, origin),
+            guide: GUIDE,
+            canCreateKey: rootRole(root)?.canAdminister ?? false,
+          }}
+          fullRequestLabel="The full request · one recipient shown"
+          example={<BroadcastExample />}
+          footnote="A broadcast starts as soon as Eccos accepts the request. You can cancel it here while it runs; messages already sent cannot be recalled."
+        />
+      </Page>
+    );
+  }
 
   return (
-    <Page title="Broadcasts" kicker="Sending" actions={refreshControls}>
+    <Page
+      title="Broadcasts"
+      kicker="Sending"
+      actions={refreshControls}
+      intro={
+        <>
+          One approved template to up to 10,000 people. Eccos paces the sends and reports every recipient here.{" "}
+          <a href={GUIDE.href} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">
+            {GUIDE.label} ↗
+          </a>
+        </>
+      }
+    >
       <LogGrid
         key={cursor ?? "first"}
-        columns={broadcastColumns(selectedWabaId, phones.length > 1)}
+        columns={broadcastColumns({ wabaId: selectedWabaId, showPhone: phones.length > 1, paused: rootSendsPaused(root) })}
         data={rows}
         emptyMessage={
           <GridEmptyState
-            label="NO BROADCASTS YET"
-            description="Broadcasts you send with POST /v1/wabas/{wabaId}/broadcasts appear here."
+            label="NO MORE BROADCASTS"
+            description="There are no older broadcasts."
             action={
-              <a
-                href="https://docs.eccos.chat/bulk-sending"
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm underline underline-offset-4"
-              >
-                Read the bulk sending guide
-              </a>
+              <Link to="/broadcasts" search={backSearch} className="text-sm underline underline-offset-4">
+                Back to the newest
+              </Link>
             }
           />
         }
@@ -214,11 +258,11 @@ function BroadcastsPage() {
           navigate({
             to: "/broadcasts/$broadcastId",
             params: { broadcastId: row.id },
-            search: selectedWabaId ? { wabaId: selectedWabaId } : {},
+            search: backSearch,
           })
         }
       />
-      <LogPager param="cursor" cursor={cursor} trail={trail} nextCursor={nextCursor} />
+      <LogPager param="cursor" cursor={cursor} trail={trail} nextCursor={result.data.nextCursor} />
     </Page>
   );
 }

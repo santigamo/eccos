@@ -14,6 +14,24 @@ export const SCHEDULED_STATUSES: readonly ScheduledStatus[] = [
   "cancelled",
 ];
 
+/** No scheduled send under any status: the page opens with its first-run block. */
+export function scheduledFirstRun(counts: Record<ScheduledStatus, number>): boolean {
+  return SCHEDULED_STATUSES.every((status) => counts[status] === 0);
+}
+
+/** What an empty tab says while other tabs hold rows. */
+export const SCHEDULED_EMPTY: Record<ScheduledStatus, { label: string; description: string }> = {
+  pending: {
+    label: "NOTHING PENDING",
+    description: "No sends are waiting to go out. The ones that ended are under the other tabs.",
+  },
+  sending: { label: "NOTHING SENDING", description: "No send is going out right now." },
+  sent: { label: "NONE SENT YET", description: "Sends that went out appear here." },
+  failed: { label: "NO FAILED SENDS", description: "No scheduled send was refused by Meta or expired." },
+  unknown: { label: "NO UNKNOWN OUTCOMES", description: "Every send that was attempted got an answer from Meta." },
+  cancelled: { label: "NONE CANCELLED", description: "No scheduled send was cancelled." },
+};
+
 /** A scheduled status from the URL, or undefined. */
 export function normalizeScheduledStatus(value: unknown): ScheduledStatus | undefined {
   return SCHEDULED_STATUSES.find((status) => status === value);

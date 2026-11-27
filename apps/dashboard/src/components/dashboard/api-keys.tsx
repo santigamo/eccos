@@ -6,6 +6,7 @@ import {
   type IssuedApiKey,
   type Result,
 } from "../../server/gateway";
+import { curlCommand, gatewayUrl, wabaPath } from "../../lib/curl";
 import { failureCopy } from "../../lib/failure";
 import { INLINE_LINK, fmtTs, fmtTsShort } from "../../ui";
 import {
@@ -311,10 +312,12 @@ type SnippetInput = { wabaId?: string; gatewayOrigin?: string | null; apiKey?: s
 
 /** The send request, with this workspace's WABA, a just-issued key and a recipient when known. */
 export function sendSnippet({ wabaId, gatewayOrigin, apiKey, to }: SnippetInput): string {
-  return `curl -X POST ${gatewayOrigin ?? "<GATEWAY_URL>"}/v1/wabas/${wabaId ?? "<WABA_ID>"}/messages \\
-  -H "Authorization: Bearer ${apiKey ?? "<API_KEY>"}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"to": "${to || "<PHONE>"}", "type": "template", "template": {"name": "hello_world", "language": {"code": "en_US"}}}'`;
+  return curlCommand({
+    method: "POST",
+    url: gatewayUrl(gatewayOrigin, wabaPath(wabaId, "/messages")),
+    apiKey,
+    body: `{"to": "${to || "<PHONE>"}", "type": "template", "template": {"name": "hello_world", "language": {"code": "en_US"}}}`,
+  });
 }
 
 /** How a key is used: the send endpoint, with this workspace's WABA and a just-issued key when known. */

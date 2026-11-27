@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { analyzeTemplate, canSendTemplate, normalizeTemplateName } from "@eccos/core/template-rules";
-import { COUNT_LINK, Page, StatusTag } from "../../ui";
+import { COUNT_LINK, Page, SPLIT_GRID, SPLIT_MAIN, StatusTag } from "../../ui";
 import { IDENTITY_TIER, MACHINE_CLASS, SECONDARY_TIER, SectionHeading, SUPPORT_TIER } from "../dashboard/plain-table";
 import { Row, Rows, SectionFrame } from "../dashboard/settings-section";
 import { createTemplate, editTemplate } from "../../server/gateway";
@@ -267,8 +267,8 @@ export function TemplateEditor(props: TemplateEditorProps) {
         </Link>
       }
     >
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,40rem)_minmax(18rem,22.5rem)] lg:items-start">
-        <div className="flex min-w-0 flex-col gap-8">
+      <div className={SPLIT_GRID}>
+        <div className={`flex flex-col gap-8 ${SPLIT_MAIN}`}>
           {/* Nothing changes under a send in flight: the fields are what is being sent. */}
           <fieldset disabled={submitting} className="m-0 flex min-w-0 flex-col gap-8 border-0 p-0">
             <section aria-labelledby="template-shared-title" className="flex flex-col gap-3">
@@ -564,8 +564,8 @@ function CategoryField({
 export function TemplateEditorPending({ title }: { title: string }) {
   return (
     <Page title={title} kicker="Cloud API">
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,40rem)_minmax(18rem,22.5rem)]" aria-busy="true">
-        <div className="flex flex-col gap-6">
+      <div className={SPLIT_GRID} aria-busy="true">
+        <div className={`flex flex-col gap-6 ${SPLIT_MAIN}`}>
           <Skeleton className="h-24" />
           <Skeleton className="h-96" />
         </div>

@@ -34,6 +34,20 @@ export function fmtTsShort(ms: number | string | null | undefined): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 19)} UTC`
 }
 
+/** A count as the console prints it in prose and funnels: `1,241`. */
+export function fmtCount(n: number): string {
+  return n.toLocaleString("en-US")
+}
+
+/**
+ * The width rule for a page that pairs a main column with an aside (authoring,
+ * first run): 2/3 + 1/3 from `xl`, a fixed aside below it, capped at 80rem.
+ * Lists and logs take the full width instead.
+ */
+export const SPLIT_GRID =
+  "grid max-w-[80rem] gap-8 lg:items-start lg:grid-cols-[minmax(0,1fr)_18rem] xl:grid-cols-3"
+export const SPLIT_MAIN = "min-w-0 xl:col-span-2"
+
 /**
  * Landing tag anatomy: square, 1px edge, machine voice. Four families only —
  * anything unmapped falls back to the neutral "soon" tone.
@@ -331,12 +345,15 @@ export function Page({
   title,
   kicker = "Operator console",
   actions,
+  intro,
   fill,
   children,
 }: {
   title: string
   kicker?: string
   actions?: ReactNode
+  /** One sentence saying what the page is for, opening its content. */
+  intro?: ReactNode
   /** Takes the shell's height instead of at least that, for panes that scroll inside it. */
   fill?: boolean
   children: ReactNode
@@ -361,6 +378,7 @@ export function Page({
       </header>
       <div className="hatch-band" aria-hidden="true" />
       <div className="flex min-h-0 flex-1 flex-col pt-6">
+        {intro ? <p className="m-0 mb-4 text-sm text-pretty text-muted-foreground">{intro}</p> : null}
         {notice}
         {children}
       </div>

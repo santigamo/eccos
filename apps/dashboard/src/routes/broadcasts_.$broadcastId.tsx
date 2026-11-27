@@ -14,6 +14,8 @@ import { MetaErrorCell } from "../components/broadcasts/meta-error-cell";
 import { CancelBroadcastDialog } from "../components/broadcasts/cancel-broadcast-dialog";
 import { RecipientCounts } from "../components/broadcasts/recipient-counts";
 import { FailureView } from "../components/dashboard/failure";
+import { SectionHeading } from "../components/dashboard/plain-table";
+import { Callout } from "../components/ui/callout";
 import { GridEmptyState } from "../components/grid/empty-state";
 import { GridPending } from "../components/grid/grid-pending";
 import { LogGrid } from "../components/grid/log-grid";
@@ -24,7 +26,8 @@ import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
 import {
   RECIPIENT_STATUSES,
-  broadcastStateLabel,
+  broadcastPace,
+  broadcastState,
   normalizeBroadcastId,
   normalizeRecipientStatus,
   normalizeSeqCursor,
@@ -35,9 +38,10 @@ import { invalidatePage } from "../lib/invalidate";
 import { EMPTY_CELL, wamidTail } from "../lib/logs";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import { normalizeSearchWabaId } from "../lib/search";
+import { rootSendsPaused } from "../lib/sends-paused";
 import { getBroadcast } from "../server/gateway";
 import type { BroadcastRecipientRow } from "../server/gateway";
-import { FactCell, FactsStrip, Page, StatusTag, fmtTs } from "../ui";
+import { FactCell, FactsStrip, Page, StatusTag, fmtCount, fmtTs } from "../ui";
 
 /**
  * ── ONE BROADCAST ───────────────────────────────────────────────────────────
@@ -167,6 +171,7 @@ function BroadcastPage() {
   const { broadcast, recipients } = result.data;
   const { counts, delivery } = broadcast;
   const running = broadcast.status === "running";
+  const state = broadcastState(broadcast, rootSendsPaused(root));
   const nextCursor = recipients.nextCursor;
 
   const filter = (
@@ -244,13 +249,21 @@ function BroadcastPage() {
         </>
       }
     >
-      <div className="mb-3 flex items-center gap-3">
-        <StatusTag status={broadcastStateLabel(broadcast)} />
+      <div className="mb-3 flex items-center gap-2">
+        <StatusTag status={state.label} />
+        {state.label === "paused" ? (
+          <span className="text-xs text-muted-foreground">{state.reason}</span>
+        ) : null}
       </div>
       {broadcast.status === "halted" ? (
-        <output className="mb-4 block border-l-2 border-destructive px-3 py-2 text-sm text-destructive-foreground">
+        <Callout tone="error" className="mb-4">
           Stopped: {broadcast.haltReason ?? "the gateway stopped this broadcast"}
-        </output>
+        </Callout>
+      ) : state.label === "paused" ? (
+        <Callout tone="warning" className="mb-4">
+          Sending is paused for this workspace. The {fmtCount(counts.queued)} queued recipients are waiting; nothing is
+          lost. The broadcast goes on by itself once the subscription is active.
+        </Callout>
       ) : null}
 
       <FactsStrip label="Broadcast totals">
@@ -258,9 +271,9 @@ function BroadcastPage() {
           kicker="Recipients"
           value={broadcast.total}
           caption={
-            broadcast.duplicatesSkipped > 0
-              ? `${broadcast.duplicatesSkipped} duplicates skipped`
-              : "no duplicates"
+            broadcast.duplicatesSkipped === 0
+              ? "no duplicates"
+              : `${fmtCount(broadcast.duplicatesSkipped)} ${broadcast.duplicatesSkipped === 1 ? "duplicate" : "duplicates"} skipped`
           }
         >
           <RecipientCounts
@@ -278,7 +291,7 @@ function BroadcastPage() {
       </FactsStrip>
       <p className="mt-3 text-sm text-muted-foreground">
         Created <span className="font-mono text-xs">{fmtTs(broadcast.createdAt)}</span> ·{" "}
-        {broadcast.ratePerMinute}/min · finished{" "}
+        paced at up to {broadcastPace(broadcast.ratePerMinute)} a minute · finished{" "}
         <span className="font-mono text-xs">
           {broadcast.finishedAt === null ? EMPTY_CELL : fmtTs(broadcast.finishedAt)}
         </span>{" "}
@@ -287,7 +300,7 @@ function BroadcastPage() {
       </p>
 
       <div className="mt-6 flex items-center justify-between gap-3 pb-3">
-        <h2 className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground">Recipients</h2>
+        <SectionHeading title="Recipients" />
         {filter}
       </div>
       <LogGrid

@@ -14,7 +14,7 @@ import { SendingNotice } from "../components/dashboard/subscription-notice"
 import { SetupWindowStrip } from "../components/dashboard/setup-window-strip"
 import { setupWindowOf, type SetupWindow } from "../lib/setup-window"
 import { PageNotice } from "../ui"
-import { blocksSends } from "@eccos/gateway-contract/billing-status"
+import { sendingPaused } from "../lib/sends-paused"
 import { BackupCodesSheet } from "../components/dashboard/backup-codes-sheet"
 import { StepUpSheet } from "../components/dashboard/step-up-sheet"
 import { ActivationDialog } from "../components/setup-paths/activation-dialog"
@@ -242,20 +242,6 @@ export function rootRedirect(pathname: string, state: RootState): "/onboarding" 
 function redirectFor(pathname: string, state: RootState): void {
   const to = rootRedirect(pathname, state)
   if (to) throw redirect({ to })
-}
-
-/**
- * A workspace whose billing status blocks sends and holds forwarding, said above
- * every page. Null when there is nothing to say.
- */
-export function sendingPaused(
-  state: DashboardState,
-): { billing: boolean; subscribed: boolean; canManage: boolean } | null {
-  const resources =
-    state.stage === "ready" ? state.scope.resources : state.stage === "account-ready" ? state.resources : null
-  if (!resources?.account || !blocksSends(resources.account.billingStatus) || resources.wabas.length === 0) return null
-  const billing = "billing" in state ? state.billing : undefined
-  return { billing: billing !== undefined, subscribed: billing?.subscribed === true, canManage: billing?.canManage === true }
 }
 
 /** The setup window's timers while billing is on and the workspace has not subscribed; null otherwise. */

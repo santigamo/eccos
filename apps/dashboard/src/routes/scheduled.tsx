@@ -13,22 +13,31 @@ import { normalizeSearchTrail, type PageTrail } from "../lib/page-trail";
 import { RefreshControls } from "../components/logs/refresh-controls";
 import type { DataGridFeatures } from "../components/reui/data-grid/data-grid";
 import { CancelScheduledDialog } from "../components/scheduled/cancel-scheduled-dialog";
+import { ScheduledExample } from "../components/scheduled/scheduled-example";
 import { ScheduledStatusTabs } from "../components/scheduled/scheduled-status-tabs";
+import { SendAtCell } from "../components/scheduled/send-at-cell";
+import { FirstRun } from "../components/sending/first-run";
+import { Callout } from "../components/ui/callout";
 import { useLiveRefresh } from "../hooks/use-live-refresh";
+import { scheduledCurl, tomorrowAtNine } from "../lib/curl";
 import { loaderFailure } from "../lib/failure";
 import { invalidatePage } from "../lib/invalidate";
 import { EMPTY_CELL, wamidTail } from "../lib/logs";
+import { rootRole } from "../lib/root-role";
 import { LIVE_STALE_MS } from "../lib/route-stale";
 import {
+  SCHEDULED_EMPTY,
   normalizeScheduledStatus,
   normalizeScheduleKey,
   readsSoonestFirst,
+  scheduledFirstRun,
   scheduledOutcome,
 } from "../lib/scheduled";
 import { normalizeSearchWabaId } from "../lib/search";
-import { listScheduled } from "../server/gateway";
+import { rootSendsPaused } from "../lib/sends-paused";
+import { gatewayOriginOrNull, listScheduled } from "../server/gateway";
 import type { ScheduledSend, ScheduledStatus } from "../server/gateway";
-import { Page, fmtTs } from "../ui";
+import { Page, fmtCount, fmtTs } from "../ui";
 
 /**
  * ── SCHEDULED ───────────────────────────────────────────────────────────────
@@ -39,6 +48,9 @@ import { Page, fmtTs } from "../ui";
 
 type ScheduledSearch = { wabaId?: string; status?: ScheduledStatus; cursor?: string; trail?: PageTrail };
 
+const TITLE = "Scheduled sends";
+const GUIDE = { href: "https://docs.eccos.chat/scheduled-sends", label: "Scheduled sends guide" };
+
 export const Route = createFileRoute("/scheduled")({
   staleTime: LIVE_STALE_MS,
   validateSearch: (search: Record<string, unknown>): ScheduledSearch => ({
@@ -48,9 +60,15 @@ export const Route = createFileRoute("/scheduled")({
     trail: normalizeSearchTrail(search.trail, search.cursor),
   }),
   loaderDeps: ({ search }) => ({ wabaId: search.wabaId, status: search.status, cursor: search.cursor }),
-  loader: ({ deps }) => listScheduled({ data: deps }).catch(loaderFailure),
+  loader: async ({ deps }) => {
+    const list = await listScheduled({ data: deps }).catch(loaderFailure);
+    // The origin only fills the first-run block's request.
+    const firstRun = list.ok && scheduledFirstRun(list.data.counts);
+    const origin = firstRun ? await gatewayOriginOrNull() : null;
+    return { list, origin };
+  },
   component: ScheduledPage,
-  pendingComponent: () => <GridPending title="Scheduled" kicker="Sending" columns={scheduledColumns()} />,
+  pendingComponent: () => <GridPending title={TITLE} kicker="Sending" columns={scheduledColumns()} />,
 });
 
 const columnHelper = createColumnHelper<DataGridFeatures, ScheduledSend>();
@@ -60,18 +78,7 @@ function scheduledColumns(opts: { showPhone?: boolean; onCancel?: (row: Schedule
     columnHelper.accessor("sendAt", {
       id: "send_at",
       header: "Send at",
-      cell: (info) => {
-        const row = info.row.original;
-        const open = row.status === "pending" || row.status === "sending";
-        return (
-          <>
-            <span className="font-mono text-xs">{fmtTs(row.sendAt)}</span>
-            {open ? (
-              <span className="block text-xs text-muted-foreground">expires {fmtTs(row.expiresAt)}</span>
-            ) : null}
-          </>
-        );
-      },
+      cell: (info) => <SendAtCell row={info.row.original} />,
       meta: { cellClassName: "whitespace-nowrap" },
     }),
     columnHelper.accessor("key", {
@@ -173,7 +180,7 @@ function scheduledColumns(opts: { showPhone?: boolean; onCancel?: (row: Schedule
 }
 
 function ScheduledPage() {
-  const result = Route.useLoaderData();
+  const { list: result, origin } = Route.useLoaderData();
   const { wabaId, status = "pending", cursor, trail } = Route.useSearch();
   const root = useLoaderData({ from: "__root__" });
   const router = useRouter();
@@ -185,7 +192,7 @@ function ScheduledPage() {
 
   if (!result.ok) {
     return (
-      <Page title="Scheduled" kicker="Sending" actions={refreshControls}>
+      <Page title={TITLE} kicker="Sending" actions={refreshControls}>
         <FailureView failure={result} />
       </Page>
     );
@@ -195,56 +202,96 @@ function ScheduledPage() {
   const selectedWabaId = wabaId ?? ready?.scope.selectedWabaId;
   const phones =
     ready?.scope.resources.wabas.find((waba) => waba.wabaId === selectedWabaId)?.phones ?? [];
-  const nextCursor = result.data.nextCursor;
-  const goFirst = () => navigate({ search: (prev) => ({ ...prev, cursor: undefined }) });
+  const { counts, nextCursor } = result.data;
 
+  if (scheduledFirstRun(counts)) {
+    const path = "…/scheduled/appt-8812";
+    return (
+      <Page title={TITLE} kicker="Sending" actions={refreshControls}>
+        <FirstRun
+          label="No scheduled sends yet"
+          title="Send a template at a time you choose"
+          lede="One approved template to one person at a set time: an appointment reminder, a renewal notice, a follow-up. Your booking system schedules it, moves it and cancels it; Eccos sends it on time."
+          door={{
+            sentence: "One request per reminder, under your own id.",
+            requests: [
+              { method: "PUT", path, note: "schedule" },
+              { method: "PUT", path, note: "move" },
+              { method: "DELETE", path, note: "cancel" },
+            ],
+            curl: scheduledCurl(selectedWabaId, origin, tomorrowAtNine(new Date())),
+            guide: GUIDE,
+            canCreateKey: rootRole(root)?.canAdminister ?? false,
+          }}
+          fullRequestLabel="The full request · schedule one send"
+          example={<ScheduledExample />}
+          footnote="Every send is scheduled one by one, up to 90 days ahead. Nothing repeats on its own."
+        />
+      </Page>
+    );
+  }
+
+  const empty = SCHEDULED_EMPTY[status];
   const emptyState =
     cursor !== undefined ? (
       <GridEmptyState
         label="NO MATCHES"
         description="No scheduled sends are left on this page."
         action={
-          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-sm" onClick={goFirst}>
-            ← back to the first page
-          </Button>
-        }
-      />
-    ) : status === "pending" ? (
-      <GridEmptyState
-        label="NO SCHEDULED SENDS"
-        description="Sends you schedule with PUT /v1/wabas/{wabaId}/scheduled/{key} appear here until they go out."
-        action={
-          <a
-            href="https://docs.eccos.chat/scheduled-sends"
-            target="_blank"
-            rel="noreferrer"
-            className="text-sm underline underline-offset-4"
-          >
-            Read the scheduled sends guide
-          </a>
-        }
-      />
-    ) : (
-      <GridEmptyState
-        label={`NO ${status.toUpperCase()} SENDS`}
-        description={`None of this WABA's scheduled sends is ${status}.`}
-        action={
           <Button
             type="button"
             variant="link"
             size="sm"
             className="h-auto p-0 text-sm"
-            onClick={() => navigate({ search: () => (wabaId ? { wabaId } : {}) })}
+            onClick={() => navigate({ search: (prev) => ({ ...prev, cursor: undefined }) })}
           >
-            Show pending
+            ← back to the first page
           </Button>
+        }
+      />
+    ) : (
+      <GridEmptyState
+        label={empty.label}
+        description={empty.description}
+        action={
+          status === "pending" ? undefined : (
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-sm"
+              onClick={() => navigate({ search: () => (wabaId ? { wabaId } : {}) })}
+            >
+              Show pending
+            </Button>
+          )
         }
       />
     );
 
   return (
-    <Page title="Scheduled" kicker="Sending" actions={refreshControls}>
-      <ScheduledStatusTabs counts={result.data.counts} status={status} wabaId={wabaId} />
+    <Page
+      title={TITLE}
+      kicker="Sending"
+      actions={refreshControls}
+      intro={
+        <>
+          One template to one person at a set time, under a key from your system. A pending send goes out at its
+          time, or expires.{" "}
+          <a href={GUIDE.href} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">
+            {GUIDE.label} ↗
+          </a>
+        </>
+      }
+    >
+      {rootSendsPaused(root) && counts.pending > 0 ? (
+        <Callout tone="warning" className="mb-4">
+          Sending is paused for this workspace. The {fmtCount(counts.pending)} pending{" "}
+          {counts.pending === 1 ? "send waits" : "sends wait"}, and each one that has not gone out by its expiry is not
+          sent.
+        </Callout>
+      ) : null}
+      <ScheduledStatusTabs counts={counts} status={status} wabaId={wabaId} />
       <LogGrid
         key={cursor ?? "first"}
         columns={scheduledColumns({
