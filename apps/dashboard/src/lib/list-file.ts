@@ -57,18 +57,26 @@ export function decodeList(bytes: Uint8Array): string {
 
 const DELIMITERS = ["\t", ";", ","] as const;
 
-/** Tab (a spreadsheet paste), `;` (Spanish Excel) or `,`: the one splitting the first lines most evenly. */
+/** A phone-like field ending in a spreadsheet's `,00`: the comma is a decimal, not a delimiter. */
+const DECIMAL_COMMA = /^(\s*\+?[\d\s().\-]{6,}),\d{2}\s*$/;
+
+/**
+ * Tab (a spreadsheet paste), `;` (Spanish Excel) or `,`: the one splitting the first
+ * lines most evenly. With none, the list is one column.
+ */
 export function sniffDelimiter(text: string): string {
   const lines = text
     .split(/\r?\n/)
     .filter((line) => line.trim())
     .slice(0, 20);
-  let best = ",";
+  let best = "\t";
   let bestScore = 0;
   for (const delimiter of DELIMITERS) {
-    const counts = lines.map(
-      (line) => line.replace(/"[^"]*"/g, "").split(delimiter).length - 1,
-    );
+    const counts = lines.map((line) => {
+      const unquoted = line.replace(/"[^"]*"/g, "");
+      const scrubbed = delimiter === "," ? unquoted.replace(DECIMAL_COMMA, "$1") : unquoted;
+      return scrubbed.split(delimiter).length - 1;
+    });
     const first = counts[0] ?? 0;
     const score =
       first > 0 ? counts.filter((count) => count === first).length : 0;
@@ -80,10 +88,15 @@ export function sniffDelimiter(text: string): string {
   return best;
 }
 
+/** A token that reads like a phone number. */
+const PHONE_TOKEN = /\+?\d[\d \-().]{5,}\d/;
+
 /**
  * RFC 4180: quoted fields may hold the delimiter, quotes ("") and line breaks. Blank
- * lines are dropped. A quote never closed would swallow the rest of the file, so it
- * is refused with the line it opened on.
+ * lines are dropped. A quote never closed, or a quoted cell that runs over a line
+ * break and holds the delimiter or a phone number, is a stray quote merging rows:
+ * sent as is, it would hand one person other people's numbers. Both are refused
+ * with the line the quote opened on.
  */
 export function parseDelimited(
   text: string,
@@ -108,8 +121,12 @@ export function parseDelimited(
       if (char === '"' && text[i + 1] === '"') {
         cell += '"';
         i++;
-      } else if (char === '"') quoted = false;
-      else cell += char;
+      } else if (char === '"') {
+        quoted = false;
+        if (/[\r\n]/.test(cell) && (cell.includes(delimiter) || PHONE_TOKEN.test(cell))) {
+          return { unclosedQuote: quoteLine };
+        }
+      } else cell += char;
     } else if (char === '"' && cell === "") {
       quoted = true;
       quoteLine = line;
@@ -170,7 +187,7 @@ export function listRefusalCopy(refusal: ListRefusal): string {
     case "too_many_rows":
       return `This list has ${fmtCount(refusal.rows)} rows. A broadcast holds up to ${fmtCount(refusal.max)}. Split it into two files and send two broadcasts.`;
     case "unclosed_quote":
-      return `A quote opened on line ${fmtCount(refusal.line)} is never closed, so the rest of the list cannot be read. Fix that line and try again.`;
+      return `A quote opened on line ${fmtCount(refusal.line)} runs past the end of its row, so rows would run together and one person could get another's details. Fix that line and try again.`;
     case "empty":
       return "The console could not read any rows from this.";
   }

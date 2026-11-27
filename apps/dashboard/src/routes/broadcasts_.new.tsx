@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { createFileRoute, useLoaderData } from "@tanstack/react-router";
 import { TEMPLATE_NAME_PATTERN, templateRowsOf } from "@eccos/core/template-rules";
 import { Callout } from "@/components/ui/callout";
@@ -40,6 +41,11 @@ function NewBroadcastPage() {
   const { wabaId, template, language, step } = Route.useSearch();
   const navigate = Route.useNavigate();
   const root = useLoaderData({ from: "__root__" });
+  const onStep = useCallback(
+    (review: boolean, replace = false) =>
+      navigate({ search: (prev) => ({ ...prev, step: review ? "review" : undefined }), replace }),
+    [navigate],
+  );
 
   const failure = !preflight.ok ? preflight : !templates.ok ? templates : null;
   if (failure) {
@@ -73,7 +79,7 @@ function NewBroadcastPage() {
       blocked={broadcastBlock(root)}
       initialTemplate={template && language ? `${template}:${language}` : undefined}
       reviewing={step === "review"}
-      onStep={(review) => navigate({ search: (prev) => ({ ...prev, step: review ? "review" : undefined }) })}
+      onStep={onStep}
     />
   );
 }

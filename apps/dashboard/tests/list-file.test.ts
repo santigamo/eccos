@@ -32,13 +32,31 @@ describe("parseDelimited", () => {
   });
 });
 
+test("a stray quote merging rows is refused, never sent as one cell", () => {
+  // The probe: Ana's {{1}} would have carried Luis's and Eva's numbers.
+  const probe = 'phone,name\n+34600111222,"Ana\n+34600333444,Luis\n+34600555666,Eva"\n';
+  expect(readList(probe, null, MAX)).toEqual({ kind: "unclosed_quote", line: 2 });
+  // A line break in a quoted cell that carries no other row is still a cell.
+  expect(readList('phone,note\n600111222,"ring\ntwice"\n', null, MAX)).toMatchObject({
+    rows: [["phone", "note"], ["600111222", "ring\ntwice"]],
+  });
+});
+
+test("a one-column list of 612345678,00 is one column", () => {
+  expect(readList("612345678,00\n600111222,00\n", null, MAX)).toMatchObject({
+    rows: [["612345678,00"], ["600111222,00"]],
+    columns: 1,
+  });
+  expect(sniffDelimiter("phone,name\n612345678,Ana")).toBe(",");
+});
+
 test("an unclosed quote is refused with the line it opened on, never swallowing the rest", () => {
   expect(parseDelimited('a,b\n"c,d\ne,f\n', ",")).toEqual({ unclosedQuote: 2 });
   expect(readList('phone,name\n600111222,Ana\n600333444,"Luis\n600555666,Eva', null, MAX)).toEqual({
     kind: "unclosed_quote",
     line: 3,
   });
-  expect(listRefusalCopy({ kind: "unclosed_quote", line: 3 })).toContain("A quote opened on line 3 is never closed");
+  expect(listRefusalCopy({ kind: "unclosed_quote", line: 3 })).toContain("A quote opened on line 3 runs past the end of its row");
 });
 
 describe("decodeList", () => {

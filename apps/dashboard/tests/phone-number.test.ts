@@ -44,6 +44,32 @@ describe("readPhone", () => {
     expect(phoneProblemDetail("no_code", "6123456789", "ES")).toBe("No country code, and not a valid Spain number");
   });
 
+  test("only a bare-digit number loses a trailing .00; a dotted one keeps every digit", () => {
+    expect(readPhone("06.12.34.56.00", "FR")).toMatchObject({ ok: true, digits: "33612345600", decimals: false });
+    expect(readPhone("91.555.12.00", "ES")).toMatchObject({ ok: true, digits: "34915551200", decimals: false });
+    expect(readPhone("+49 30 12.34.56.00", "ES")).toMatchObject({ ok: true, digits: "493012345600", decimals: false });
+  });
+
+  test("a country code without + counts only when it is the chosen country's", () => {
+    expect(readPhone("4915123456789", "DE")).toMatchObject({ ok: true, digits: "4915123456789", national: false });
+    // A Spanish number with its code but no +, with Germany chosen: not read as a German one.
+    expect(readPhone("34600111222", "DE")).toMatchObject({ ok: false });
+    expect(readPhone("34600111222", "AT")).toMatchObject({ ok: false });
+    // Spain writes no trunk 0, so a local number that would also read as Indonesian stays Spanish.
+    expect(readPhone("622 000 111", "ES")).toMatchObject({ ok: true, digits: "34622000111", national: true });
+    expect(readPhone("015123456789", "DE")).toMatchObject({ ok: true, digits: "4915123456789", national: true });
+  });
+
+  test("invisible direction marks around a number are dropped", () => {
+    expect(readPhone("\u200E+34 600 111 222\u2069", "ES")).toMatchObject({ ok: true, digits: "34600111222" });
+    expect(readPhone("\u202E600111222", "ES")).toMatchObject({ ok: true, digits: "34600111222" });
+  });
+
+  test("an empty cell has no phone number, whatever the country", () => {
+    expect(readPhone("  ", "ES")).toEqual({ ok: false, reason: "no_phone" });
+    expect(phoneProblemDetail("no_phone", "", "ES")).toBe("No phone number");
+  });
+
   test("a BSUID passes as it is", () => {
     expect(readPhone("US.13491208655302741918", "ES")).toMatchObject({ ok: true, digits: "US.13491208655302741918" });
   });

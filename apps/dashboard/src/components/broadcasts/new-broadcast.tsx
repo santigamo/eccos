@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   useBlocker,
@@ -84,6 +84,9 @@ interface Frozen {
   view: TemplateView | null;
   headerLink: string;
   sender: string;
+  /** The list and mapping it was checked from, for its skipped-rows file. */
+  table: ListTable;
+  mapping: Mapping;
 }
 
 interface Failure {
@@ -123,7 +126,8 @@ export function NewBroadcast({
   blocked: string | null;
   initialTemplate?: string;
   reviewing: boolean;
-  onStep: (review: boolean) => void;
+  /** `replace` drops a step from history instead of adding one. */
+  onStep: (review: boolean, replace?: boolean) => void;
 }) {
   const router = useRouter();
   const navigate = useNavigate();
@@ -238,6 +242,11 @@ export function NewBroadcast({
   const leave = useBlocker(leaveBlocker(dirty));
   const review =
     reviewOpen(wantsReview, frozen?.json ?? null, json) && frozen !== null;
+  // A stale `?step=review` (Back, Forward, a reload) goes, so typing back to the
+  // frozen payload never flips the page to Review mid-edit.
+  useEffect(() => {
+    if (wantsReview && !review) onStep(false, true);
+  }, [wantsReview, review, onStep]);
 
   function chooseTemplate(id: string) {
     setTemplateKey(id);
@@ -266,12 +275,8 @@ export function NewBroadcast({
     setPreviewIndex(0);
   }
 
-  function downloadSkipped(of: ListCheck) {
-    if (table && mapping)
-      downloadCsv(
-        `${slug(table.name ?? "list")}-skipped.csv`,
-        skippedCsv(table, mapping, of),
-      );
+  function downloadSkipped(list: ListTable, by: Mapping, of: ListCheck) {
+    downloadCsv(`${slug(list.name ?? "list")}-skipped.csv`, skippedCsv(list, by, of));
   }
 
   function enterReview() {
@@ -281,7 +286,9 @@ export function NewBroadcast({
       !json ||
       !check ||
       !template ||
-      !sendability
+      !sendability ||
+      !table ||
+      !mapping
     )
       return;
     setFrozen((prev) => ({
@@ -295,6 +302,8 @@ export function NewBroadcast({
       view,
       headerLink: link,
       sender: senderLabel,
+      table,
+      mapping,
     }));
     setFailure(null);
     setReviewIndex(0);
@@ -408,7 +417,7 @@ export function NewBroadcast({
           submitting={submitting}
           onSend={send}
           onTest={() => setTesting(true)}
-          onDownload={() => downloadSkipped(frozen.check)}
+          onDownload={() => downloadSkipped(frozen.table, frozen.mapping, frozen.check)}
           notes={
             <>
               {earlier}
@@ -511,7 +520,7 @@ export function NewBroadcast({
                   check={check}
                   previewRow={check.rows[previewIndex]?.row ?? null}
                   onPreview={(row) => setPreviewIndex(row - 1)}
-                  onDownload={() => downloadSkipped(check)}
+                  onDownload={() => table && mapping && downloadSkipped(table, mapping, check)}
                 />
               ) : null}
             </section>
