@@ -197,9 +197,15 @@ function testSendOf(row: TemplateListRow): z.input<typeof testSend> {
   const analysis = analyzeTemplate(row);
   if (analysis.kind === "unsupported")
     return { ready: false, reason: analysis.reason };
+  if (analysis.format === "named")
+    return {
+      ready: false,
+      reason:
+        "This template uses named parameters, which template_send_test cannot fill in yet. Send it through the API instead.",
+    };
   return {
     ready: true,
-    bodyParamCount: analysis.paramCount,
+    bodyParamCount: analysis.body.length,
     buttonParams: analysis.buttons,
     headerMedia: analysis.headerMedia,
   };

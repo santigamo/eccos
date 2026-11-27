@@ -1000,6 +1000,9 @@ export interface ButtonUrlParam {
   index: number;
   /** Substitution for the placeholder (`{{n}}`) inside that button's URL. */
   text: string;
+  /** A NAMED template's placeholder name (`order_id` for `{{order_id}}`), sent
+   * as `parameter_name`. Absent for a positional `{{1}}`. */
+  parameterName?: string;
 }
 
 /**
@@ -1020,6 +1023,9 @@ export interface SendTemplateTestInput {
   languageCode: string;
   /** Positional {{1}}..{{n}} body values, in order. */
   bodyParams?: string[];
+  /** A NAMED template's body values by parameter name (`{ customer_name: "Ana" }`);
+   * each is sent with its `parameter_name`. Never together with `bodyParams`. */
+  bodyValues?: Record<string, string>;
   /** One entry per DYNAMIC URL button the template carries. `index` is the
    * 0-based slot of that URL button in the template's BUTTONS component;
    * `text` fills its `{{n}}` placeholder. Typed only, never a passthrough:

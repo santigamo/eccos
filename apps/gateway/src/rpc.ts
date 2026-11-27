@@ -14,7 +14,7 @@ import { getAppConfig, tenantConfig, type TenantConfig } from "./tenant-config";
 import { type TokenHealth, watchGraph } from "./token-health";
 import { createTemplate, deleteTemplate, editTemplate, findTemplate, listTemplates } from "@eccos/core/templates";
 import { isBsuid } from "@eccos/core/bsuid";
-import { TEMPLATE_ID_PATTERN, TEMPLATE_NAME_PATTERN } from "@eccos/core/template-rules";
+import { TEMPLATE_ID_PATTERN, TEMPLATE_NAME_PATTERN, buildSendComponents } from "@eccos/core/template-rules";
 import { templateDraftRequest, templateEditRequest, templateSendRequest } from "./template-requests";
 import { metaErrorCodes, sendMessage, sendOutcomeUnknown, type SendResult } from "@eccos/core/send";
 import { isPublicConfigKey } from "./private-config-keys";
@@ -951,42 +951,15 @@ export class GatewayRPC extends WorkerEntrypoint<Env> implements GatewayApi {
     // same core rules first, so its messages are unchanged. Only the
     // normalized values reach Meta.
     if (!TO_PATTERN.test(input.to) && !isBsuid(input.to)) throw new Error(TO_ERROR);
-    const { templateName, languageCode, bodyParams = [], buttonParams = [], headerMedia } = templateSendRequest(input);
+    const { templateName, languageCode, bodyParams, bodyValues, buttonParams, headerMedia } = templateSendRequest(input);
 
     if (!(await checkSendRate(this.env, account, waba.wabaId))) {
       return { ok: false, code: "rate_limited", detail: null };
     }
 
-    const components: Record<string, unknown>[] = [];
-    // Header first, which is both Meta's documented order and the order the
-    // message renders in. `{ type: "image", image: { link } }` — Meta fetches
-    // the link itself, so this path uploads nothing and Eccos makes no request
-    // of its own.
-    if (headerMedia) {
-      components.push({
-        type: "header",
-        parameters: [{ type: headerMedia.format, [headerMedia.format]: { link: headerMedia.link } }],
-      });
-    }
-    if (bodyParams.length > 0) {
-      components.push({
-        type: "body",
-        parameters: bodyParams.map((text) => ({ type: "text", text })),
-      });
-    }
-    // One component per button param, after the body — lowercase orthography,
-    // exactly like `body` above: UPPER is the CREATE-side Graph shape, this is
-    // the SEND-side one. A wrong fill maps to parameter_mismatch via
-    // GRAPH_ERROR_CODES; the console validator plus the re-checks above are what
-    // keep a wrong fill from getting here.
-    for (const button of buttonParams) {
-      components.push({
-        type: "button",
-        sub_type: "url",
-        index: String(button.index),
-        parameters: [{ type: "text", text: button.text }],
-      });
-    }
+    // Meta fetches a header link itself, so this path uploads nothing. A wrong
+    // fill maps to parameter_mismatch via GRAPH_ERROR_CODES.
+    const components = buildSendComponents({ body: bodyValues ?? bodyParams, buttons: buttonParams, headerMedia });
 
     const metaBody: Record<string, unknown> = {
       to: input.to,
