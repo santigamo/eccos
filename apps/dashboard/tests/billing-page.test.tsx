@@ -1,9 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+import type { ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { BillingStatus } from "@eccos/gateway-contract";
 import { installServerFnMocks } from "./helpers/server-fn-mocks";
-import { renderInRouter } from "./helpers/router";
 
 installServerFnMocks({ env: { BETTER_AUTH_URL: "http://localhost:3000" } });
+// Router Links render as plain anchors and useRouter is a stub, so no RouterProvider is needed.
+// Declared here, not in a helper: under `bun test --isolate` a mock registered by an imported
+// module does not reach the modules this file imports next.
+const routerModule = await import("@tanstack/react-router");
+mock.module("@tanstack/react-router", () => ({
+  ...routerModule,
+  Link: (props: { to: string; children: ReactNode; className?: string }) => (
+    <a href={props.to} className={props.className}>
+      {props.children}
+    </a>
+  ),
+  useRouter: () => ({ invalidate: async () => {}, navigate: async () => {} }),
+}));
 
 const { BillingScreen } = await import("../src/routes/billing");
 const { billingStage, paymentStatusWord } = await import("../src/components/dashboard/billing-view");
@@ -44,7 +58,7 @@ function page(billingStatus: BillingStatus, over: Partial<BillingPage> = {}): Bi
 }
 
 const render = (data: BillingPage, returned = false) =>
-  renderInRouter(<BillingScreen page={{ ok: true, data }} returned={returned} now={NOW} />);
+  renderToStaticMarkup(<BillingScreen page={{ ok: true, data }} returned={returned} now={NOW} />);
 
 describe("/billing states", () => {
   test("active: running, the per-number plan, the next charge and the payments, with the portal for the rest", async () => {
@@ -199,20 +213,20 @@ describe("72h strip", () => {
   const window = (left: number) => ({ activatedAt: NOW - HOUR, pausesAt: NOW + left, pauseReason: "window_ended" as const });
 
   test("neutral with more than a day left, amber inside the last day, nothing without the timers", async () => {
-    const neutral = await renderInRouter(<SetupWindowStrip window={window(71 * HOUR)} canManage now={NOW} />);
+    const neutral = renderToStaticMarkup(<SetupWindowStrip window={window(71 * HOUR)} canManage now={NOW} />);
     expect(neutral).toContain("2 d 23 h left");
     expect(neutral).toContain("unless you subscribe");
     expect(neutral).not.toContain("border-l-warning");
-    const amber = await renderInRouter(<SetupWindowStrip window={window(23 * HOUR)} canManage now={NOW} />);
+    const amber = renderToStaticMarkup(<SetupWindowStrip window={window(23 * HOUR)} canManage now={NOW} />);
     expect(amber).toContain("23 h left");
     expect(amber).toContain("border-l-warning");
     expect(stripMessage(NOW + 48 * 60_000, NOW)).toBe("Subscribe now to avoid a pause.");
-    expect(await renderInRouter(<SetupWindowStrip window={{ activatedAt: null, pausesAt: null, pauseReason: null }} canManage now={NOW} />)).toBe("");
-    expect(await renderInRouter(<SetupWindowStrip window={window(-1)} canManage now={NOW} />)).toBe("");
+    expect(renderToStaticMarkup(<SetupWindowStrip window={{ activatedAt: null, pausesAt: null, pauseReason: null }} canManage now={NOW} />)).toBe("");
+    expect(renderToStaticMarkup(<SetupWindowStrip window={window(-1)} canManage now={NOW} />)).toBe("");
   });
 
   test("a member sees the countdown without the button", async () => {
-    const html = await renderInRouter(<SetupWindowStrip window={window(5 * HOUR)} canManage={false} now={NOW} />);
+    const html = renderToStaticMarkup(<SetupWindowStrip window={window(5 * HOUR)} canManage={false} now={NOW} />);
     expect(html).toContain("5 h left");
     expect(html).not.toContain("Start subscription");
   });
@@ -244,7 +258,7 @@ describe("early access end", () => {
   const early = { activatedAt: null, pausesAt: NOW + 9 * 24 * HOUR, pauseReason: "early_access_ended" as const };
 
   test("the strip and /billing count the days down to the scheduled pause", async () => {
-    const strip = await renderInRouter(<SetupWindowStrip window={early} canManage now={NOW} />);
+    const strip = renderToStaticMarkup(<SetupWindowStrip window={early} canManage now={NOW} />);
     expect(strip).toContain("Early access ends in 9 days. Subscribe to keep sending.");
     expect(strip).toContain("Start subscription");
     const data = page("open", { phones: ["+34 612 345 678"], window: early });

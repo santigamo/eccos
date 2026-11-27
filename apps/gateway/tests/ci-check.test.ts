@@ -17,6 +17,11 @@ function steps(script: string): string[] {
 
 it("CI runs every step of bun run check, once", () => {
   const ci = readFileSync(`${root}.github/workflows/ci.yml`, "utf8");
-  const ciSteps = [...ci.matchAll(/^\s+(?:- )?run: bun run (\S+)$/gm)].flatMap((m) => steps(String(m[1])));
+  // A sharded step runs its script once across the matrix: each job takes one --shard of it.
+  const shard = " --shard=${{ matrix.shard }}/${{ strategy.job-total }}";
+  const ciSteps = [...ci.matchAll(/^\s+(?:- )?run: bun run (\S+)(.*)$/gm)].flatMap((m) => {
+    if (m[2] && m[2] !== shard) throw new Error(`CI step passes arguments a local check does not: ${m[0]}`);
+    return steps(String(m[1]));
+  });
   expect(ciSteps.sort()).toEqual(steps("check").sort());
 });

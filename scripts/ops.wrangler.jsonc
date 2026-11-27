@@ -1,0 +1,7 @@
+// Operator scripts only: a remote binding to the deployed gateway's GatewayRPC,
+// opened through wrangler's local proxy. Never deployed.
+{
+  "name": "eccos-ops",
+  "compatibility_date": "2026-06-12",
+  "services": [{ "binding": "GATEWAY", "service": "eccos", "entrypoint": "GatewayRPC", "remote": true }]
+}

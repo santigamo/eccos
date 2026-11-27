@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "incremental": true,
     "noUncheckedIndexedAccess": true,
     "types": ["vite/client"],
     "paths": {
