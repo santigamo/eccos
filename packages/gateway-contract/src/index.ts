@@ -1000,6 +1000,9 @@ export interface ButtonUrlParam {
   index: number;
   /** Substitution for the placeholder (`{{n}}`) inside that button's URL. */
   text: string;
+  /** A NAMED template's placeholder name (`order_id` for `{{order_id}}`), sent
+   * as `parameter_name`. Absent for a positional `{{1}}`. */
+  parameterName?: string;
 }
 
 /**

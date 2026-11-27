@@ -197,7 +197,7 @@ function testSendOf(row: TemplateListRow): z.input<typeof testSend> {
   const analysis = analyzeTemplate(row);
   if (analysis.kind === "unsupported")
     return { ready: false, reason: analysis.reason };
-  if (analysis.format === "named" && analysis.body.length > 0)
+  if (analysis.format === "named")
     return {
       ready: false,
       reason:

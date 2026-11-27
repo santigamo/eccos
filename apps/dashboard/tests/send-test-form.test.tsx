@@ -74,6 +74,10 @@ function render(
   );
 }
 
+function SendTestSheetForm(props: { sendability: ReturnType<typeof analyzeTemplate>; prefillExamples?: boolean; recipient?: string }) {
+  return <SendTestForm wabaId="waba-a" templateName="promo" languageCode="es" phones={PHONES} {...props} />;
+}
+
 const ready = (body: string) => analyzeTemplate({ components: [{ type: "BODY", text: body }] });
 
 describe("SendTestForm", () => {
@@ -106,24 +110,33 @@ describe("SendTestForm", () => {
     expect(zero).not.toContain("send-test-param-");
   });
 
-  test("a named template gets one input per variable, labelled as written and prefilled with Meta's example", () => {
-    const html = render(
-      analyzeTemplate({
-        parameter_format: "NAMED",
-        components: [
-          {
-            type: "BODY",
-            text: "Hi {{customer_name}}, order {{order_id}}",
-            example: { body_text_named_params: [{ param_name: "customer_name", example: "Ana" }] },
-          },
-          { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Stop promotions" }] },
-        ],
-      }),
+  const NAMED = analyzeTemplate({
+    parameter_format: "NAMED",
+    components: [
+      {
+        type: "BODY",
+        text: "Hi {{customer_name}}, order {{order_id}}",
+        example: { body_text_named_params: [{ param_name: "customer_name", example: "Ana" }] },
+      },
+      { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Stop promotions" }] },
+    ],
+  });
+
+  test("Send test (to yourself) prefills a named template's inputs with Meta's example", () => {
+    const html = renderToStaticMarkup(
+      <SendTestSheetForm sendability={NAMED} prefillExamples />,
     );
     expect(html).toContain("{{customer_name}}");
-    expect(html).toMatch(/id="send-test-param-customer_name"[^>]*value="Ana"/);
+    expect(html).toMatch(/<input[^>]*id="send-test-param-customer_name"[^>]*value="Ana"/);
     expect(html).toContain('id="send-test-param-order_id"');
     expect(html).toContain("Send test message");
+  });
+
+  test("a send to a customer shows Meta's example only as a placeholder, never as a value", () => {
+    const html = renderToStaticMarkup(<SendTestSheetForm sendability={NAMED} recipient="34600000011" />);
+    const input = html.match(/<input[^>]*id="send-test-param-customer_name"[^>]*>/)?.[0] ?? "";
+    expect(input).toContain('placeholder="Ana"');
+    expect(input).toContain('value=""');
   });
 
   test("an unsupported template gets the reason and NO send button", () => {
@@ -308,6 +321,16 @@ describe("assembleSendTestPayload", () => {
     const positional = assembleSendTestPayload({ ...BASE, params: { "2": "A-1", "1": "Ana" }, buttonParams: [] });
     expect(positional.bodyParams).toEqual(["Ana", "A-1"]);
     expect("bodyValues" in positional).toBe(false);
+  });
+
+  test("a named URL button's parameter name rides the request", () => {
+    const payload = assembleSendTestPayload({
+      ...BASE,
+      format: "named",
+      params: {},
+      buttonParams: [{ index: 0, text: "A-1", parameterName: "order_id" }],
+    });
+    expect(payload.buttonParams).toEqual([{ index: 0, text: "A-1", parameterName: "order_id" }]);
   });
 
   test("TRIPWIRE: collected button params actually ride the request", () => {

@@ -40,8 +40,9 @@ export interface TemplateVariables {
   body: { key: string; example: string | null }[];
   /** The dynamic URL button slots, in BUTTONS order. `index` is the 0-based
    * slot of that URL button in the template's BUTTONS component; `urlPrefix` is
-   * the URL up to its placeholder, for the input's hint. */
-  buttons: { index: number; urlPrefix: string }[];
+   * the URL up to its placeholder, for the input's hint. `parameterName` is
+   * set for a NAMED template's `{{order_id}}`, which Meta wants sent by name. */
+  buttons: { index: number; urlPrefix: string; parameterName?: string }[];
   /** Set when the template's HEADER carries an asset, so the send asks for one
    * link. `null` for a text header or no header at all. */
   headerMedia: TemplateHeaderMediaFormat | null;
@@ -88,7 +89,12 @@ const POSITIONAL = /\{\{\s*(\d+)\s*\}\}/g;
 const ANY_PLACEHOLDER = /\{\{\s*([^}]+?)\s*\}\}/g;
 /** A named parameter as Meta writes it. Shared with the send validator, so a key
  * this analysis offers is a key the gateway accepts. */
-const NAMED_KEY = /^[a-z0-9_]+$/i;
+const NAMED_KEY = /^[a-z0-9_]{1,128}$/i;
+
+/** A parameter name: Meta's charset, and never a bare number, which is positional. */
+function isNamedKey(key: string): boolean {
+  return NAMED_KEY.test(key) && !/^\d+$/.test(key);
+}
 
 const SEND_THROUGH_API = "Send it through the API instead.";
 
@@ -154,7 +160,7 @@ export function templateVariables(row: TemplateRow): TemplateVariables | { unsup
     return { format: declaredNamed ? "named" : "positional", body: [], buttons: [], headerMedia: null };
   }
 
-  const buttonSlots: { index: number; urlPrefix: string }[] = [];
+  const buttonSlots: TemplateVariables["buttons"] = [];
   let headerMedia: TemplateHeaderMediaFormat | null = null;
 
   for (const part of parts) {
@@ -189,7 +195,12 @@ export function templateVariables(row: TemplateRow): TemplateVariables | { unsup
         }
         const url = (button as { url?: unknown }).url;
         if (typeof url === "string" && url.includes("{{")) {
-          buttonSlots.push({ index, urlPrefix: url.slice(0, url.indexOf("{{")) });
+          const key = /\{\{\s*([^}]+?)\s*\}\}/.exec(url)?.[1] ?? "";
+          buttonSlots.push({
+            index,
+            urlPrefix: url.slice(0, url.indexOf("{{")),
+            ...(/^\d+$/.test(key) ? {} : { parameterName: key }),
+          });
         }
       }
     }
@@ -207,8 +218,13 @@ export function templateVariables(row: TemplateRow): TemplateVariables | { unsup
     headerMedia,
   });
 
-  if (declaredNamed || named.length > 0) {
-    if (named.length !== keys.length || !named.every((key) => NAMED_KEY.test(key))) {
+  const namedSlots = buttonSlots.filter((slot) => slot.parameterName !== undefined);
+  if (declaredNamed || named.length > 0 || namedSlots.length > 0) {
+    const lined =
+      named.length === keys.length &&
+      namedSlots.length === buttonSlots.length &&
+      [...named, ...namedSlots.map((slot) => slot.parameterName ?? "")].every(isNamedKey);
+    if (!lined) {
       return unsupported("This template's variables cannot be lined up with inputs.");
     }
     return variables("named", named);
@@ -239,15 +255,15 @@ export function analyzeTemplate(row: TemplateRow): TemplateSendability {
  * name), dynamic URL button values, and a media header link. */
 export interface TemplateValues {
   body?: string[] | Record<string, string>;
-  buttons?: { index: number; text: string }[];
+  buttons?: { index: number; text: string; parameterName?: string }[];
   headerMedia?: TemplateHeaderMedia;
 }
 
 /**
  * Meta's send-side `components` for these values, in Meta's documented order:
  * header, body, buttons. Lowercase types: UPPER is the CREATE-side Graph shape,
- * this is the SEND-side one. A body given by name carries each `parameter_name`,
- * which is what a NAMED template requires.
+ * this is the SEND-side one. A body given by name, and a button with a
+ * `parameterName`, carry `parameter_name`, which is what a NAMED template requires.
  */
 export function buildSendComponents(values: TemplateValues): Record<string, unknown>[] {
   const { headerMedia, body, buttons = [] } = values;
@@ -267,7 +283,9 @@ export function buildSendComponents(values: TemplateValues): Record<string, unkn
       type: "button",
       sub_type: "url",
       index: String(button.index),
-      parameters: [{ type: "text", text: button.text }],
+      parameters: [
+        { type: "text", ...(button.parameterName ? { parameter_name: button.parameterName } : {}), text: button.text },
+      ],
     });
   }
   return result;
@@ -573,7 +591,7 @@ export interface TemplateSendRequest {
   languageCode: string;
   bodyParams?: string[];
   bodyValues?: Record<string, string>;
-  buttonParams?: { index: number; text: string }[];
+  buttonParams?: { index: number; text: string; parameterName?: string }[];
   headerMedia?: TemplateHeaderMedia;
 }
 
@@ -625,7 +643,11 @@ export function validateTemplateSend(record: Record<string, unknown>): TemplateS
     if (/[\n\t]/.test(text)) {
       throw new Error("button parameters cannot contain line breaks");
     }
-    return { index: button.index, text };
+    const name = button.parameterName;
+    if (name !== undefined && (typeof name !== "string" || !isNamedKey(name))) {
+      throw new Error("button parameterName must be a parameter name");
+    }
+    return { index: button.index, text, ...(name !== undefined ? { parameterName: name } : {}) };
   });
   const headerMedia = validateHeaderMedia(record.headerMedia);
   return {
@@ -652,11 +674,15 @@ function bodyValue(value: unknown): string {
 /** NAMED body values by parameter name. A numbered key belongs in `bodyParams`. */
 function namedBodyValues(value: unknown): [string, string][] {
   if (value === undefined) return [];
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("bodyValues must be an object");
-  const entries = Object.entries(value);
+  const proto = value && typeof value === "object" ? Object.getPrototypeOf(value) : undefined;
+  if (proto !== Object.prototype && proto !== null) throw new Error("bodyValues must be an object");
+  const entries = Object.entries(value as object);
   if (entries.length > MAX_BODY_PARAMS) throw new Error("too many template parameters");
+  if (new Set(entries.map(([key]) => key.toLowerCase())).size !== entries.length) {
+    throw new Error("bodyValues keys must be distinct");
+  }
   return entries.map(([key, text]) => {
-    if (!NAMED_KEY.test(key) || /^\d+$/.test(key)) throw new Error("bodyValues keys must be parameter names");
+    if (!isNamedKey(key)) throw new Error("bodyValues keys must be parameter names");
     return [key, bodyValue(text)];
   });
 }

@@ -105,6 +105,39 @@ describe("analyzeTemplate", () => {
     expect(templateVariables({ components: [body] })).toEqual(expected);
   });
 
+  test("a NAMED dynamic URL button carries its parameter name; a positional one does not", () => {
+    const named = templateVariables({
+      parameter_format: "NAMED",
+      components: [
+        bodyComponent("Hi {{customer_name}}"),
+        { type: "BUTTONS", buttons: [{ type: "URL", text: "Track", url: "https://e.cc/t?name={{order_id}}" }] },
+      ],
+    });
+    expect(named).toMatchObject({
+      format: "named",
+      buttons: [{ index: 0, urlPrefix: "https://e.cc/t?name=", parameterName: "order_id" }],
+    });
+    // A named button alone makes the template NAMED.
+    const buttonOnly = templateVariables({
+      components: [
+        bodyComponent("Ready"),
+        { type: "BUTTONS", buttons: [{ type: "URL", text: "Track", url: "https://e.cc/t/{{order_id}}" }] },
+      ],
+    });
+    expect(buttonOnly).toMatchObject({ format: "named", body: [] });
+    const positional = templateVariables({
+      components: [bodyComponent("Hi {{1}}"), { type: "BUTTONS", buttons: [{ type: "URL", text: "T", url: "https://e.cc/{{1}}" }] }],
+    });
+    expect(positional).toMatchObject({ format: "positional", buttons: [{ index: 0, urlPrefix: "https://e.cc/" }] });
+    expect("unsupported" in positional ? null : positional.buttons[0]).not.toHaveProperty("parameterName");
+    // A numbered body with a named button cannot be lined up.
+    expect(
+      templateVariables({
+        components: [bodyComponent("Hi {{1}}"), { type: "BUTTONS", buttons: [{ type: "URL", text: "T", url: "https://e.cc/{{order_id}}" }] }],
+      }),
+    ).toHaveProperty("unsupported");
+  });
+
   test("positional examples come from Meta's body_text", () => {
     const row = { components: [{ type: "BODY", text: "Hi {{1}} {{2}}", example: { body_text: [["Ana", "A-1"]] } }] };
     expect(templateVariables(row)).toMatchObject({
@@ -307,6 +340,20 @@ describe("buildSendComponents", () => {
     ]);
   });
 
+  test("a named URL button value carries its parameter_name", () => {
+    expect(
+      buildSendComponents({
+        body: { customer_name: "Ana" },
+        buttons: [{ index: 0, text: "A-1", parameterName: "order_id" }],
+      })[1],
+    ).toEqual({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", parameter_name: "order_id", text: "A-1" }],
+    });
+  });
+
   test("nothing to fill builds no components", () => {
     expect(buildSendComponents({})).toEqual([]);
     expect(buildSendComponents({ body: [], buttons: [] })).toEqual([]);
@@ -331,6 +378,11 @@ describe("validateTemplateSend bodyValues", () => {
       [null, "bodyValues must be an object"],
       [{ "1": "Ana" }, "bodyValues keys must be parameter names"],
       [{ "first name": "Ana" }, "bodyValues keys must be parameter names"],
+      [{ ["a".repeat(129)]: "Ana" }, "bodyValues keys must be parameter names"],
+      [{ name: "Ana", Name: "Bea" }, "bodyValues keys must be distinct"],
+      [new Map([["name", "Ana"]]), "bodyValues must be an object"],
+      [new Date(0), "bodyValues must be an object"],
+      ["Ana", "bodyValues must be an object"],
       [{ name: "" }, "every template parameter needs a value"],
       [{ name: 1 }, "template parameters must be strings"],
       [{ name: "two\nlines" }, "template parameters cannot contain line breaks"],
@@ -342,6 +394,17 @@ describe("validateTemplateSend bodyValues", () => {
     expect(() => validateTemplateSend({ ...send, bodyParams: ["Ana"], bodyValues: { name: "Ana" } })).toThrow(
       "send bodyParams or bodyValues, not both",
     );
+  });
+
+  test("a button value may name its parameter", () => {
+    expect(
+      validateTemplateSend({ ...send, buttonParams: [{ index: 0, text: " A-1 ", parameterName: "order_id" }] }).buttonParams,
+    ).toEqual([{ index: 0, text: "A-1", parameterName: "order_id" }]);
+    for (const parameterName of ["1", "order id", "", 7]) {
+      expect(() => validateTemplateSend({ ...send, buttonParams: [{ index: 0, text: "A-1", parameterName }] })).toThrow(
+        "button parameterName must be a parameter name",
+      );
+    }
   });
 });
 

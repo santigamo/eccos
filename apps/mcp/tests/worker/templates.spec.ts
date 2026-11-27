@@ -132,12 +132,24 @@ describe("templates_list", () => {
       parameter_format: "NAMED",
       components: [{ type: "BODY", text: "Hola {{customer_name}}" }],
     };
-    await seedA({ templates: { "waba-a": templatesOf(named) } });
+    const namedButtonOnly = {
+      ...named,
+      id: "900600",
+      name: "named_link",
+      components: [
+        { type: "BODY", text: "Your order is ready." },
+        { type: "BUTTONS", buttons: [{ type: "URL", text: "Track", url: "https://shop.example/t?o={{order_id}}" }] },
+      ],
+    };
+    await seedA({ templates: { "waba-a": templatesOf(named, namedButtonOnly) } });
     const client = await as(["view"], ["eccos:view"]);
     const result = await call(client, "templates_list");
     await client.close();
     const { templates } = result.structuredContent as { templates: Record<string, unknown>[] };
-    expect(templates[0]?.testSend).toEqual({ ready: false, reason: expect.stringContaining("named parameters") });
+    for (const row of templates) {
+      expect(row.testSend, String(row.name)).toEqual({ ready: false, reason: expect.stringContaining("named parameters") });
+    }
+    expect(templates).toHaveLength(2);
   });
 
   it("filters by status and by name", async () => {

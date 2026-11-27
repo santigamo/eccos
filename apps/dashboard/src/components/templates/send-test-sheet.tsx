@@ -50,6 +50,9 @@ interface SendTestFormProps {
   sendLabel?: string;
   /** The template's parts, for the WhatsApp preview. Without it the preview is plain text. */
   view?: TemplateView | null;
+  /** Fill the variables with Meta's stored examples. Only for a test send to
+   * yourself: to a real customer the examples would go out as if they were true. */
+  prefillExamples?: boolean;
 }
 
 type Notice =
@@ -154,17 +157,22 @@ export function SendTestForm({
   onSent,
   sendLabel,
   view,
+  prefillExamples = false,
 }: SendTestFormProps) {
   const variables = sendability.kind === "ready" ? sendability.body : [];
-  // Prefilled with Meta's stored examples, so the operator edits rather than types from scratch.
-  const examples = () => Object.fromEntries(variables.map((variable) => [variable.key, variable.example ?? ""]));
+  const examples = () =>
+    Object.fromEntries(variables.map((variable) => [variable.key, prefillExamples ? (variable.example ?? "") : ""]));
   const [phoneNumberId, setPhoneNumberId] = useState(initialPhoneNumberId ?? phones[0]?.phoneNumberId ?? "");
   const [typedRecipient, setTypedRecipient] = useState("");
   const recipient = fixedRecipient ?? typedRecipient;
   const [params, setParams] = useState<Record<string, string>>(examples);
   const buttonSlots = sendability.kind === "ready" ? sendability.buttons : [];
   const [buttonParams, setButtonParams] = useState<ButtonUrlParam[]>(() =>
-    buttonSlots.map((slot) => ({ index: slot.index, text: "" })),
+    buttonSlots.map((slot) => ({
+      index: slot.index,
+      text: "",
+      ...(slot.parameterName ? { parameterName: slot.parameterName } : {}),
+    })),
   );
   const headerMedia = sendability.kind === "ready" ? sendability.headerMedia : null;
   const [headerLink, setHeaderLink] = useState("");
@@ -302,7 +310,7 @@ export function SendTestForm({
           </div>
         )}
 
-        {variables.map(({ key }) => (
+        {variables.map(({ key, example }) => (
           <div key={key}>
             <label htmlFor={`send-test-param-${key}`} className={LABEL}>
               {`{{${key}}}`}
@@ -313,6 +321,7 @@ export function SendTestForm({
               autoComplete="off"
               value={params[key] ?? ""}
               onChange={(event) => setParam(key, event.target.value)}
+              placeholder={example ?? undefined}
             />
           </div>
         ))}
@@ -533,7 +542,7 @@ export function SendTestSheet({
             </span>
           ) : null}
         </SheetHeader>
-        <SendTestForm {...form} />
+        <SendTestForm prefillExamples {...form} />
       </SheetContent>
     </Sheet>
   );
