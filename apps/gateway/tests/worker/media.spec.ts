@@ -454,6 +454,7 @@ describe("media attempts and time budget (DO alarm)", () => {
       await downloading;
       const row = mediaRowIn(instance, "9004");
       expect(row).toMatchObject({ state: "failed", attempts: 5 });
+      expect(Number(row!.next_attempt_at)).toBeGreaterThan(Date.now());
       expect(Number(row!.next_attempt_at)).toBeLessThanOrEqual(Date.now() + DOWNLOAD_TIMEOUT_MS);
       finish();
       await run;

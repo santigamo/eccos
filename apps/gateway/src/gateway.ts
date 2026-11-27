@@ -3400,6 +3400,8 @@ export class EccosGateway extends DurableObject<Env> {
     const holdMs = attempts === MEDIA_MAX_ATTEMPTS ? DOWNLOAD_TIMEOUT_MS : withJitter(backoffMs(attempts));
     this.writeMedia(mediaId, "failed", attempts, "download did not finish", now + holdMs, now);
     await this.ctx.storage.sync();
+    // An erasure during the flush has tombstoned the id already: nothing to download.
+    if (!this.isReferenced(mediaId)) return;
 
     let state: "stored" | "failed" | "gone" = "stored";
     let lastError: string | null = null;
