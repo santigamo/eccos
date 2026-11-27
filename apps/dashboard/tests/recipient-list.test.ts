@@ -98,6 +98,8 @@ describe("checkList", () => {
     ["34600111222", "Ana", "Monday"],
     ["611 902 337", "Carmen", ""],
     ["622 000 111", "Eva\nMaría", "Sunday"],
+    ["6123456789", "Tom", "Friday"],
+    ["633 444 555.00", "Rosa      Mari", "Monday"],
   ]);
 
   test("gives every row one state, keeping the first of a repeated number", () => {
@@ -109,14 +111,21 @@ describe("checkList", () => {
       [4, "duplicate", "same number as row 1"],
       [5, "missing", null],
       [6, "send", null],
+      [7, "invalid", "no country code"],
+      [8, "send", null],
     ]);
-    expect(check.counts).toEqual({ send: 3, duplicate: 1, invalid: 1, missing: 1, too_long: 0 });
-    expect(skippedCount(check)).toBe(3);
+    expect(check.counts).toEqual({ send: 4, duplicate: 1, invalid: 2, missing: 1, too_long: 0 });
+    expect(skippedCount(check)).toBe(4);
     expect(check.rows[1]).toMatchObject({ to: "+34 600 33 34 44", digits: "34600333444" });
-    expect(check.national).toBe(3);
+    expect(check.rows[6]?.detail).toBe("No country code, and not a valid Spain number");
+    // Six numbers lack a + (the Excel one is not a number at all); four took Spain's code.
+    expect(check.noCode).toBe(6);
+    expect(check.national).toBe(4);
+    expect(check.decimals).toBe(1);
     expect(check.empty).toEqual({ "body:2": 1 });
     expect(check.rows[5]?.values).toEqual(["Eva María", "Sunday"]);
-    expect(check.cleaned).toBe(1);
+    expect(check.rows[7]?.values).toEqual(["Rosa Mari", "Monday"]);
+    expect(check.cleaned).toBe(2);
   });
 
   test("an empty cell takes the fallback text, and a fixed value fills every row", () => {
@@ -131,9 +140,23 @@ describe("checkList", () => {
       "3.46E+10,Marta,Friday,invalid number: Excel turned this number into 3.46E+10. Format the column as text and export again.",
       "34600111222,Ana,Monday,duplicate: same number as row 1",
       "611 902 337,Carmen,,no value for {{2}}",
+      '6123456789,Tom,Friday,"invalid number: No country code, and not a valid Spain number"',
       "",
     ]);
   });
+});
+
+test("a row whose values add up past the gateway's 8 KB is too long", () => {
+  const wide = slotsOf({
+    format: "positional",
+    body: Array.from({ length: 10 }, (_, i) => ({ key: String(i + 1), example: null })),
+    buttons: [],
+    headerMedia: null,
+  });
+  const list = table([["600111222", ...Array.from({ length: 10 }, () => "x".repeat(900))]]);
+  const sources = Object.fromEntries(wide.map((slot, i) => [slot.id, { column: i + 1 }]));
+  const check = checkList(list, { header: false, phone: 0, sources, fallback: {}, country: "ES" }, wide);
+  expect(check.rows[0]).toMatchObject({ state: "too_long", reason: "its values together are over 8 KB" });
 });
 
 test("exampleCsv starts a file for the template from Meta's examples", () => {
