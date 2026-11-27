@@ -29,6 +29,8 @@ const WABA_READ_TIMEOUT_MS = 10_000;
 const TOKEN_CHECK_TIMEOUT_MS = 20_000;
 // Telegram rejects text over 4096 characters.
 const CHUNK_CHARS = 3800;
+// More HTTP exports than this in one UTC day reads as a script polling the export.
+const EXPORTS_PER_DAY_ATTENTION = 24;
 
 interface WabaLine {
   wabaId: string;
@@ -49,6 +51,9 @@ interface WabaLine {
   heldWebhooks: number;
   /** Consecutive failed forwards while the circuit breaker is open; null when it is closed. */
   circuitFailures: number | null;
+  /** HTTP exports granted, and refused by the cooldown, on the previous UTC day. */
+  exports: number;
+  exportsBlocked: number;
   stuckPending: boolean;
   readable: boolean;
   /** Null when the WABA is not active or the check got no answer. */
@@ -103,6 +108,8 @@ export async function runDailyCensus(
       delivered24h: 0,
       heldWebhooks: 0,
       circuitFailures: null,
+      exports: 0,
+      exportsBlocked: 0,
       stuckPending: w.status === "pending" && now - w.createdAt > DAY_MS,
       readable: true,
       token: null,
@@ -113,7 +120,10 @@ export async function runDailyCensus(
 
   const readDataPlane = async (line: WabaLine) => {
     try {
-      const census = await withTimeout(getGatewayStubForWaba(env, line.wabaId).getCensus(now - DAY_MS), readTimeoutMs);
+      const census = await withTimeout(
+        getGatewayStubForWaba(env, line.wabaId).getCensus(now - DAY_MS, formatDay(now - DAY_MS)),
+        readTimeoutMs,
+      );
       const waiting = census.deliveries.pending ?? 0;
       if (line.status === "active") line.hasTarget = census.hasTarget;
       line.held = census.hasTarget ? 0 : waiting;
@@ -123,6 +133,8 @@ export async function runDailyCensus(
       line.delivered24h = census.recent.delivered;
       line.heldWebhooks = census.heldEventCount;
       line.circuitFailures = census.circuit?.failures ?? null;
+      line.exports = census.exports.exports;
+      line.exportsBlocked = census.exports.blocked;
     } catch {
       line.readable = false;
     }
@@ -241,6 +253,10 @@ export function formatCensus(day: string, blocks: AccountBlock[]): string {
       if (w.held > 0) attention.push(`${who}: ${events(w.held)} held: no forwarding target`);
       if (w.heldWebhooks > 0) attention.push(`${who}: ${events(w.heldWebhooks)} held: WABA not active`);
       if (SYNC_NEEDS_ACTION.has(w.sync)) attention.push(`${who}: coexistence sync ${w.sync}`);
+      if (w.exports > EXPORTS_PER_DAY_ATTENTION) attention.push(`${who}: ${w.exports} data exports yesterday (UTC)`);
+      if (w.exportsBlocked > 0) {
+        attention.push(`${who}: ${w.exportsBlocked} data ${w.exportsBlocked === 1 ? "export" : "exports"} refused by the cooldown yesterday (UTC)`);
+      }
     }
   }
 

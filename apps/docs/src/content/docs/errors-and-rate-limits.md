@@ -1,6 +1,6 @@
 ---
 title: Errors and rate limits
-description: "Error statuses and bodies returned by the Eccos Cloud API, and the 60 messages per minute per WABA send limit."
+description: "Error statuses and bodies returned by the Eccos Cloud API, the 60 messages per minute per WABA send limit and the export cooldown."
 ---
 
 ## Errors
@@ -21,6 +21,7 @@ Every error body has `"ok": false` and an `error` field.
 | 409 | Idempotency key in progress or unknown outcome | see [Idempotency](/idempotency) |
 | 422 | Idempotency key reused with a different body | `"idempotency_key_reused"` |
 | 429 | Rate limit | `"rate limited"` |
+| 429 | Export repeated within its cooldown | `"export rate limited"`, see [Export cooldown](#export-cooldown) |
 | 502 | Meta did not accept the message | Meta's whole JSON error body under `error`, see below |
 
 A synchronous rejection from Meta (for example an unknown template or a bad parameter) looks like
@@ -54,3 +55,10 @@ validation, including idempotent replays and sends Meta rejects; requests reject
 `400` or `404` do not count. It is enforced at Cloudflare's edge, per location, so
 it is approximate rather than an exact global counter. Over the limit you get `429`
 `{"ok":false,"error":"rate limited"}`. No `Retry-After` header is sent: back off and retry.
+
+## Export cooldown
+
+A WABA can call the [data export](/data-endpoints#data-endpoints) once every **15 minutes**. A call
+inside that window gets `429` with a `Retry-After` header giving the seconds left, and the same
+number in the body: `{"ok":false,"error":"export rate limited","retryAfter":<seconds>}`. The
+cooldown starts when an export is accepted, and refused calls do not extend it.

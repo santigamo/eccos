@@ -1,7 +1,7 @@
 import { isBsuid } from "@eccos/core/bsuid";
 import type { TemplateCopy } from "@eccos/core/template-copy";
 import type { MessageContent, WhatsAppCallbackEvent } from "@eccos/core/types";
-import type { MessageDirection, MessageOrigin, MessageStatus } from "@eccos/gateway-contract";
+import type { MessageDirection, MessageOrigin, MessageRecord, MessageStatus } from "@eccos/gateway-contract";
 
 /** One row of the `messages` table, as the write paths produce it. */
 export interface NewMessage {
@@ -202,4 +202,24 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
+}
+
+export const MESSAGE_COLUMNS =
+  "id, wa_id, direction, origin, type, text, content, at, status, error, target_id, phone_number_id";
+
+export function toMessageRecord(row: Record<string, unknown>): MessageRecord {
+  return {
+    id: row.id as string,
+    waId: row.wa_id as string,
+    direction: row.direction as MessageDirection,
+    origin: row.origin as MessageOrigin,
+    type: row.type as string,
+    text: (row.text as string | null) ?? null,
+    content: (row.content as string | null) ?? null,
+    at: Number(row.at),
+    status: (row.status as MessageStatus | null) ?? null,
+    error: (row.error as string | null) ?? null,
+    targetId: (row.target_id as string | null) ?? null,
+    phoneNumberId: (row.phone_number_id as string | null) ?? null,
+  };
 }

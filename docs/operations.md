@@ -136,7 +136,7 @@ Every line has the same envelope:
    | `waba_reconcile` | `POST /v1/accounts/<accountId>/wabas/<WABA_ID>/reconcile` | Provisioning reconciliation result (200/404/502) |
    | `privacy_erasure` | `POST /v1/wabas/<WABA_ID>/privacy/erasure` | Phone erasure result (200/400) |
    | `events_list` | `GET /v1/wabas/<WABA_ID>/events` | One page of the events read: `wabaId`, and `count`, `hasMore` on success (200/400/404/429) |
-   | `export` | `GET /v1/wabas/<WABA_ID>/export` | Account-scoped data export result (200) |
+   | `export` | `GET /v1/wabas/<WABA_ID>/export` | Account-scoped data export, with `wabaId` and row counts: streamed to the end (200), refused by the cooldown with `retryAfter` (429), a failed read (500), or `end: "cancelled"` when the client left |
    | `readiness_check` | `GET /ready` | Result of the readiness probe (200/503) |
 
 - Everything else in a line is **safe metadata only** — ids (`messageId`), counts

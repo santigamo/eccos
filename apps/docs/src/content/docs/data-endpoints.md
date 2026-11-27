@@ -1,6 +1,6 @@
 ---
 title: Health, media and data endpoints
-description: "The health check, media file downloads, the stored events read, the WABA data export and the per-customer erasure endpoints of the Eccos Cloud API."
+description: "The health check, media file downloads, the stored events read, the WABA data export (streamed, one every 15 minutes) and the per-customer erasure endpoints of the Eccos Cloud API."
 ---
 
 ## Health
@@ -68,8 +68,19 @@ POST /v1/wabas/{wabaId}/privacy/erasure     {"phone": "34600000000"}
 
 **Export** returns `{ "ok": true, "data": { ... } }` with everything Eccos still holds for the
 WABA, in one unpaginated response: incoming events (`inbound`), sent messages (`outbound`), delivery
-attempts (`deliveries`), conversations (`messages`) and `contacts`. Message
-content is kept for 30 days by default; delivery records are kept longer.
+attempts (`deliveries`), conversations (`messages`), `contacts`, webhooks held while the WABA was
+not active yet (`held`), phone number and BSUID pairs (`customerIds`) and the connection settings
+without secrets (`config`). Message content is kept for 30 days by default; delivery records are
+kept longer.
+
+The response is streamed while Eccos reads it, so parse it once it has fully arrived; a body that
+ends early is a failed export. The collections are read one after another, not as one snapshot: a
+message that arrives during the export can be in one collection and missing from another.
+
+The export is for backups and one-off copies, not for polling. A WABA can export once every 15
+minutes. A call inside that window gets `429` with a `Retry-After` header (in seconds) and
+`{"ok":false,"error":"export rate limited","retryAfter":<seconds>}`. To keep up with new events,
+use your [webhook](/webhooks) or read them page by page from [Events](#events).
 
 **Erasure** deletes or redacts every stored trace of one customer, named by phone number or BSUID
 in the `phone` field of the JSON body (never in the URL). A phone number is matched on its
