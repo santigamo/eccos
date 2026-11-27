@@ -221,6 +221,7 @@ function ScheduledPage() {
           if (status !== "pending" || cursor !== undefined) navigate({ search: () => (wabaId ? { wabaId } : {}) });
           else void invalidatePage(router);
         }}
+        onStale={() => void invalidatePage(router)}
       />
     ) : null;
 

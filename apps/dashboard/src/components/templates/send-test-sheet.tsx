@@ -75,7 +75,7 @@ const SEND_THREW = {
   detail: "The console could not complete the send. Check Messages before trying again.",
 };
 
-const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
+export const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 
 /**
  * "Send test" — one template message from the console, to prove a template
@@ -323,7 +323,9 @@ export function SendTestForm({
               placeholder="+34 600 00 00 11"
             />
             <p className="mt-1 m-0 max-w-prose text-xs text-pretty text-muted-foreground">
-              With a Cloud API test number, only recipients on its allowed list can receive messages.
+              {schedule
+                ? "Include the country code."
+                : "With a Cloud API test number, only recipients on its allowed list can receive messages."}
             </p>
           </div>
         )}

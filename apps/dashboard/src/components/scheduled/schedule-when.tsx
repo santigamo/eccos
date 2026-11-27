@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DELAYS, dayBounds, longDay, type When, zoneName } from "../../lib/schedule-draft";
+import { DELAYS, dayBounds, dstNote, longDay, type When, zoneName } from "../../lib/schedule-draft";
 import { utcInstant } from "../../lib/send-at";
 import { IDENTITY_TIER, MACHINE_CLASS } from "../dashboard/plain-table";
+import { LABEL } from "../templates/send-test-sheet";
 
-const LABEL = "mb-1 block text-[11px] font-medium tracking-wider text-muted-foreground uppercase";
 const CHANGE = "shrink-0 cursor-pointer text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground";
 
 export interface WhenDraft {
@@ -36,6 +36,7 @@ export function ScheduleWhen({
   const [editing, setEditing] = useState<{ delay: boolean; key: boolean }>({ delay: false, key: false });
   const bounds = dayBounds(now);
   const delayLabel = DELAYS.find((delay) => delay.ms === draft.delayMs)?.label ?? "";
+  const note = dstNote(draft.when, sendAt, timeZone);
   const setWhen = (patch: Partial<When>) => onChange({ ...draft, when: { ...draft.when, ...patch } });
 
   return (
@@ -81,6 +82,7 @@ export function ScheduleWhen({
               {longDay(sendAt)} <span className="font-normal text-muted-foreground">{zoneName(timeZone)}</span>
             </p>
             <p className="m-0 font-mono text-xs text-muted-foreground">{utcInstant(sendAt)}</p>
+            {note ? <p className="m-0 mt-1 text-xs text-warning-foreground">{note}</p> : null}
           </>
         ) : null}
       </div>

@@ -1,4 +1,6 @@
+import { isBsuid } from "@eccos/core/bsuid";
 import type { ScheduledSend, ScheduleSendFailureCode } from "@eccos/gateway-contract";
+import { normalizeCustomerId } from "./customer-id";
 import { localTime } from "./send-at";
 
 /**
@@ -11,6 +13,8 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 /** The gateway's MAX_SCHEDULE_AHEAD_MS. */
 const MAX_AHEAD_MS = 90 * DAY;
+
+export const NOT_SCHEDULED = "Not scheduled";
 
 export const DELAYS = [
   { ms: 15 * MINUTE, label: "15 minutes" },
@@ -35,11 +39,30 @@ export function dayBounds(now: Date): { min: string; max: string } {
   return { min: dayOf(now), max: dayOf(new Date(now.getTime() + MAX_AHEAD_MS)) };
 }
 
-/** Epoch ms of a local day and time, or null while either is incomplete. */
+/** Epoch ms of a local day and time, or null while either is incomplete. A time in a DST gap resolves forward. */
 export function instantOf({ day, time }: When): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}$/.test(time)) return null;
   const at = new Date(`${day}T${time}`).getTime();
   return Number.isFinite(at) ? at : null;
+}
+
+/** The day and time the send will actually go out at, which a DST gap moves. */
+export function resolvedWhen(when: When, at: number | null, timeZone?: string): When {
+  return at === null ? when : { day: when.day, time: localTime(at, timeZone).clock };
+}
+
+/** One line when the typed time is not one instant in `timeZone`: skipped by DST, or repeated. */
+export function dstNote(when: When, at: number | null, timeZone: string): string | null {
+  if (at === null) return null;
+  const resolved = localTime(at, timeZone);
+  const date = resolved.day.split(" ").slice(1).join(" ");
+  if (resolved.clock !== when.time) {
+    return `${when.time} does not exist on ${date} in ${timeZone}; it will send at ${resolved.clock}.`;
+  }
+  if (localTime(at + HOUR, timeZone).clock === when.time) {
+    return `${when.time} happens twice on ${date} in ${timeZone}; it will send at the first, ${when.time} ${resolved.zone}.`;
+  }
+  return null;
 }
 
 /** `console-20261128-0900-x7k2`: dated, so it reads in the list, and suffixed, so two never collide. */
@@ -65,19 +88,33 @@ export function whenProblem(sendAt: number | null, now: number): string | null {
   return null;
 }
 
+/** A recipient must carry its country code: a national number would reach someone in another country. */
+export function recipientProblem(value: string): string | null {
+  const to = value.trim();
+  return isBsuid(to) || to.startsWith("+") ? null : "Include the country code, starting with +.";
+}
+
+/**
+ * Whether the send a `key_exists` names is this very draft: a retry whose first answer was
+ * lost. Then it was scheduled, and saying "choose another key" would invite a second send.
+ */
+export function isSameSend(
+  existing: Pick<ScheduledSend, "status" | "to" | "sendAt" | "template">,
+  draft: { to: string; sendAt: number; templateName: string; languageCode: string },
+): boolean {
+  return (
+    existing.status === "pending" &&
+    existing.to === normalizeCustomerId(draft.to) &&
+    existing.sendAt === draft.sendAt &&
+    existing.template.name === draft.templateName &&
+    existing.template.language === draft.languageCode
+  );
+}
+
 /** `Saturday 28 November, 09:00`, for the readback. */
 export function longDay(at: number, timeZone?: string): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-    timeZone,
-  }).formatToParts(new Date(at));
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
-  return `${part("weekday")} ${part("day")} ${part("month")}, ${part("hour")}:${part("minute")}`;
+  const { day, clock } = localTime(at, timeZone, "long");
+  return `${day}, ${clock}`;
 }
 
 /** `Madrid time` from `Europe/Madrid`: the zone as a person names it. */
@@ -102,7 +139,8 @@ export function scheduleFailureCopy(
   template: string,
   timeZone?: string,
 ): { title: string; detail: string; secondary?: string } {
-  const title = "Not scheduled";
+  const title = NOT_SCHEDULED;
+  const secondary = failure.detail ? { secondary: failure.detail } : {};
   switch (failure.code) {
     case "key_exists": {
       const existing = failure.existing;
@@ -110,7 +148,9 @@ export function scheduleFailureCopy(
       return { title, detail: `A send with this key already exists${state}. Choose another key.` };
     }
     case "invalid_time":
-      return { title, detail: "That time cannot be scheduled.", ...(failure.detail ? { secondary: failure.detail } : {}) };
+      return { title, detail: "That time cannot be scheduled.", ...secondary };
+    case "invalid_request":
+      return { title, detail: "Eccos refused this request.", ...secondary };
     case "subscription_required":
       return { title, detail: "Sending is paused for this workspace, so nothing can be scheduled." };
     case "no_phone":

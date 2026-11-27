@@ -1478,6 +1478,44 @@ describe("scheduled", () => {
     expect(audit).not.toContain("Ana");
   });
 
+  const SCHEDULE = {
+    wabaId: "waba-a",
+    phoneNumberId: "phone-a",
+    to: "34600111222",
+    templateName: "reminder",
+    languageCode: "es",
+    key: "appt-1",
+    sendAt: 1_800_000_000_000,
+    expiresAt: 1_800_003_600_000,
+  };
+
+  test("scheduleSend: a viewer is refused typed forbidden and the gateway is untouched", async () => {
+    let called = false;
+    withResources({
+      scheduleSend: async () => {
+        called = true;
+        return { ok: true, scheduled: {} };
+      },
+    });
+    fakeDeniedActions = new Set(["operate"]);
+    const res = await scheduleSend({ data: SCHEDULE });
+    expect(res).toMatchObject({ ok: false, kind: "forbidden", reason: "missing-permission" });
+    expect(called).toBe(false);
+  });
+
+  test("scheduleSend: a WABA the account does not own is refused before the gateway", async () => {
+    let calls = 0;
+    withResources({
+      scheduleSend: async () => {
+        calls++;
+        return { ok: true, scheduled: {} };
+      },
+    });
+    const foreign = await scheduleSend({ data: { ...SCHEDULE, wabaId: "waba-foreign" } });
+    expect(foreign).toMatchObject({ ok: false, kind: "unreachable" });
+    expect(calls).toBe(0);
+  });
+
   test("scheduleSend refuses a bad key or time before the gateway", () => {
     const base = {
       wabaId: "waba-a",
